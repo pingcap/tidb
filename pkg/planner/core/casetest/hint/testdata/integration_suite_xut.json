@@ -325,7 +325,7 @@
           "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]leading hint is inapplicable, check if the leading hint table is valid"
+          "[planner:1815]There are no matching table names for (v, t2) in optimizer hint /*+ LEADING(v, t2) */. Maybe you can use the table alias name"
         ]
       },
       {
@@ -347,7 +347,7 @@
           "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]leading hint is inapplicable, check if the leading hint table is valid"
+          "[planner:1815]There are no matching table names for (v, t2) in optimizer hint /*+ LEADING(v, t2) */. Maybe you can use the table alias name"
         ]
       },
       {
@@ -368,7 +368,9 @@
           "      └─Selection cop[tikv]  not(isnull(test.t2.b))",
           "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name"
+        ]
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ qb_name(qb_v1, v1), leading(t3@qb_v1, t2@qb_v1) */ * from v1;",
@@ -388,7 +390,9 @@
           "      └─Selection cop[tikv]  not(isnull(test.t2.b))",
           "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name"
+        ]
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ qb_name(qb_v1, v1), qb_name(qb_v, v1.v), leading(t2@qb_v1, t@qb_v) */ * from v1;",
@@ -409,7 +413,7 @@
           "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]Only one query block name is allowed in a view hint, otherwise the hint will be invalid"
+          "[planner:1815]There are no matching table names for (t2, t) in optimizer hint /*+ LEADING(t2, t) */. Maybe you can use the table alias name"
         ]
       },
       {
@@ -908,16 +912,16 @@
         "SQL": "explain format = 'plan_tree' select /*+ leading(t3), hash_join(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
         "Plan": [
           "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
+          "└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  CARTESIAN inner join",
           "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "    │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "    └─TableReader(Probe) root  data:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "        └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo"
+          "    │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
+          "    │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  data:TableFullScan",
+          "      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -925,16 +929,16 @@
         "SQL": "explain format = 'plan_tree' select /*+ leading(t2), hash_join(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
         "Plan": [
           "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "└─HashJoin root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
           "    ├─TableReader(Build) root  data:Selection",
           "    │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
           "    │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "    └─TableReader(Probe) root  data:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "        └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo"
+          "    └─TableReader(Probe) root  data:TableFullScan",
+          "      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -942,18 +946,16 @@
         "SQL": "explain format = 'plan_tree' select /*+ leading(t3), merge_join(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
         "Plan": [
           "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─MergeJoin root  inner join, left key:test.t2.a, right key:test.t1.a",
-          "  ├─Sort(Build) root  test.t1.a",
-          "  │ └─TableReader root  data:TableFullScan",
-          "  │   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─Sort(Probe) root  test.t2.a",
-          "    └─HashJoin root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
-          "      ├─TableReader(Build) root  data:Selection",
-          "      │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "      │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) root  data:Selection",
-          "        └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "          └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo"
+          "└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─MergeJoin(Probe) root  inner join",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  data:Selection",
+          "      └─Selection cop[tikv]  not(isnull(test.t3.b))",
+          "        └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -961,15 +963,15 @@
         "SQL": "explain format = 'plan_tree' select /*+ leading(t2), merge_join(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
         "Plan": [
           "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─MergeJoin(Probe) root  inner join, left key:test.t2.b, right key:test.t3.b",
-          "    ├─Sort(Build) root  test.t3.b",
-          "    │ └─TableReader root  data:Selection",
-          "    │   └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "    │     └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "    └─Sort(Probe) root  test.t2.b",
+          "└─HashJoin root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─MergeJoin(Probe) root  inner join, left key:test.t2.a, right key:test.t1.a",
+          "    ├─Sort(Build) root  test.t1.a",
+          "    │ └─TableReader root  data:TableFullScan",
+          "    │   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─Sort(Probe) root  test.t2.a",
           "      └─TableReader root  data:Selection",
           "        └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
           "          └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
@@ -980,17 +982,16 @@
         "SQL": "explain format = 'plan_tree' select /*+ leading(t3), inl_join(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
         "Plan": [
           "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─IndexJoin root  inner join, inner:IndexLookUp, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
-          "  ├─HashJoin(Build) root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
-          "  │ ├─TableReader(Build) root  data:Selection",
-          "  │ │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "  │ │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  │ └─TableReader(Probe) root  data:Selection",
-          "  │   └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "  │     └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "  └─IndexLookUp(Probe) root  ",
-          "    ├─IndexRangeScan(Build) cop[tikv] table:t1, index:idx_a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo",
-          "    └─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  CARTESIAN inner join",
+          "    ├─TableReader(Build) root  data:Selection",
+          "    │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
+          "    │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  data:TableFullScan",
+          "      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -998,17 +999,17 @@
         "SQL": "explain format = 'plan_tree' select /*+ leading(t2), inl_join(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
         "Plan": [
           "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─IndexJoin(Probe) root  inner join, inner:IndexLookUp, outer key:test.t3.b, inner key:test.t2.b, equal cond:eq(test.t3.b, test.t2.b)",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "    │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─IndexJoin(Probe) root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
           "    └─IndexLookUp(Probe) root  ",
-          "      ├─Selection(Build) cop[tikv]  not(isnull(test.t2.b))",
-          "      │ └─IndexRangeScan cop[tikv] table:t2, index:idx_b(b) range: decided by [eq(test.t2.b, test.t3.b)], keep order:false, stats:pseudo",
-          "      └─Selection(Probe) cop[tikv]  not(isnull(test.t2.a))",
+          "      ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))",
+          "      │ └─IndexRangeScan cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "      └─Selection(Probe) cop[tikv]  not(isnull(test.t2.b))",
           "        └─TableRowIDScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -1017,13 +1018,13 @@
         "SQL": "explain format = 'plan_tree' select /*+ leading(t3), hash_join_build(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
         "Plan": [
           "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "    │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  CARTESIAN inner join",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
           "    └─TableReader(Probe) root  data:Selection",
           "      └─Selection cop[tikv]  not(isnull(test.t3.b))",
           "        └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo"
@@ -1034,16 +1035,16 @@
         "SQL": "explain format = 'plan_tree' select /*+ leading(t2), hash_join_build(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
         "Plan": [
           "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "└─HashJoin root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
           "    ├─TableReader(Build) root  data:Selection",
           "    │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
           "    │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "    └─TableReader(Probe) root  data:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "        └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo"
+          "    └─TableReader(Probe) root  data:TableFullScan",
+          "      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1051,16 +1052,16 @@
         "SQL": "explain format = 'plan_tree' select /*+ leading(t3), hash_join_probe(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
         "Plan": [
           "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "  ├─HashJoin(Build) root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
-          "  │ ├─TableReader(Build) root  data:Selection",
-          "  │ │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "  │ │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  │ └─TableReader(Probe) root  data:Selection",
-          "  │   └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "  │     └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) root  data:TableFullScan",
-          "    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  CARTESIAN inner join",
+          "    ├─TableReader(Build) root  data:Selection",
+          "    │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
+          "    │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  data:TableFullScan",
+          "      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1068,13 +1069,13 @@
         "SQL": "explain format = 'plan_tree' select /*+ leading(t2), hash_join_probe(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
         "Plan": [
           "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "    │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
           "    └─TableReader(Probe) root  data:Selection",
           "      └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
           "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
@@ -1087,20 +1088,18 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
+          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t4.a, test.t5.a) eq(test.t6.b, test.t5.b)]",
           "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t4.a, collate: binary]",
-          "      │   └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
-          "      │     └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo",
-          "      └─ExchangeReceiver(Probe) mpp[tiflash]  ",
-          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t5.a, collate: binary]",
-          "          └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t6.b, test.t5.b)]",
-          "            ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "            │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "            │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "            │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
-          "            └─Selection(Probe) mpp[tiflash]  not(isnull(test.t6.b))",
-          "              └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo"
+          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
+          "      │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) mpp[tiflash]  CARTESIAN inner join",
+          "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "        │   └─Selection mpp[tiflash]  not(isnull(test.t6.b))",
+          "        │     └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) mpp[tiflash]  not(isnull(test.t4.a))",
+          "          └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1133,18 +1132,18 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
+          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t4.a, test.t5.a) eq(test.t6.b, test.t5.b)]",
           "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
-          "      │     └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) mpp[tiflash]  inner join, equal:[eq(test.t6.b, test.t5.b)]",
+          "      │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
+          "      │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) mpp[tiflash]  CARTESIAN inner join",
           "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "        │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
-          "        └─Selection(Probe) mpp[tiflash]  not(isnull(test.t6.b))",
-          "          └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo"
+          "        │   └─Selection mpp[tiflash]  not(isnull(test.t6.b))",
+          "        │     └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) mpp[tiflash]  not(isnull(test.t4.a))",
+          "          └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1184,56 +1183,61 @@
           "      └─Selection cop[tikv]  not(isnull(test.t2.a))",
           "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]cartesian join for leading hint is not allowed with outer join",
+          "[planner:1815]leading hint is inapplicable, check if the leading hint table is valid"
+        ]
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ leading(t2), hash_join(t2) */ * from t1 join t2 on t1.a = t2.a left join t3 on t2.b = t3.b;",
         "Plan": [
           "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) root  left outer join, left side:TableReader, equal:[eq(test.t2.b, test.t3.b)]",
+          "└─HashJoin root  left outer join, left side:HashJoin, equal:[eq(test.t2.b, test.t3.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
           "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "    │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "    └─TableReader(Probe) root  data:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "    │ └─Selection cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  data:TableFullScan",
+          "      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ leading(t3), merge_join(t1) */ * from t1 right join t2 on t1.a = t2.a join t3 on t2.b = t3.b;",
         "Plan": [
-          "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─MergeJoin root  right outer join, left side:Sort, left key:test.t1.a, right key:test.t2.a",
-          "  ├─Sort(Build) root  test.t1.a",
-          "  │ └─TableReader root  data:TableFullScan",
-          "  │   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─Sort(Probe) root  test.t2.a",
-          "    └─HashJoin root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
-          "      ├─TableReader(Build) root  data:Selection",
-          "      │ └─Selection cop[tikv]  not(isnull(test.t2.b))",
-          "      │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) root  data:Selection",
-          "        └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "          └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo"
+          "MergeJoin root  right outer join, left side:Sort, left key:test.t1.a, right key:test.t2.a",
+          "├─Sort(Build) root  test.t1.a",
+          "│ └─TableReader root  data:TableFullScan",
+          "│   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Sort(Probe) root  test.t2.a",
+          "  └─HashJoin root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "    ├─TableReader(Build) root  data:Selection",
+          "    │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
+          "    │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  data:Selection",
+          "      └─Selection cop[tikv]  not(isnull(test.t2.b))",
+          "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]cartesian join for leading hint is not allowed with outer join",
+          "[planner:1815]leading hint is inapplicable, check if the leading hint table is valid"
+        ]
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ leading(t2), merge_join(t2) */ * from t1 right join t2 on t1.a = t2.a join t3 on t2.b = t3.b;",
         "Plan": [
-          "HashJoin root  right outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
-          "├─TableReader(Build) root  data:TableFullScan",
-          "│ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─MergeJoin(Probe) root  inner join, left key:test.t2.b, right key:test.t3.b",
-          "  ├─Sort(Build) root  test.t3.b",
-          "  │ └─TableReader root  data:Selection",
-          "  │   └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "  │     └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "  └─Sort(Probe) root  test.t2.b",
+          "HashJoin root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  not(isnull(test.t3.b))",
+          "│   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─MergeJoin(Probe) root  right outer join, left side:Sort, left key:test.t1.a, right key:test.t2.a",
+          "  ├─Sort(Build) root  test.t1.a",
+          "  │ └─TableReader root  data:TableFullScan",
+          "  │   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─Sort(Probe) root  test.t2.a",
           "    └─TableReader root  data:Selection",
           "      └─Selection cop[tikv]  not(isnull(test.t2.b))",
           "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
@@ -1283,13 +1287,13 @@
         "SQL": "explain format = 'plan_tree' select /*+ leading(t3), hash_join_build(t1) */ * from t1 cross join t2 on t1.a = t2.a join t3 on t2.b = t3.b;",
         "Plan": [
           "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "    │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  CARTESIAN inner join",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
           "    └─TableReader(Probe) root  data:Selection",
           "      └─Selection cop[tikv]  not(isnull(test.t3.b))",
           "        └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo"
@@ -1300,13 +1304,13 @@
         "SQL": "explain format = 'plan_tree' select /*+ leading(t2), hash_join_probe(t2) */ * from t1 cross join t2 on t1.a = t2.a join t3 on t2.b = t3.b;",
         "Plan": [
           "Projection root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "  ├─TableReader(Build) root  data:TableFullScan",
-          "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
-          "    │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
           "    └─TableReader(Probe) root  data:Selection",
           "      └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
           "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
@@ -1316,32 +1320,31 @@
       {
         "SQL": "explain format = 'plan_tree' select * from v",
         "Plan": [
-          "HashJoin root  inner join, equal:[eq(test.t1.a, test.t.a)]",
+          "HashJoin root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
           "├─IndexReader(Build) root  index:IndexFullScan",
-          "│ └─IndexFullScan cop[tikv] table:t, index:idx_a(a) keep order:false, stats:pseudo",
-          "└─IndexJoin(Probe) root  inner join, inner:IndexLookUp, outer key:test.t2.b, inner key:test.t1.b, equal cond:eq(test.t2.b, test.t1.b)",
+          "│ └─IndexFullScan cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo",
+          "└─IndexJoin(Probe) root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t1.a, equal cond:eq(test.t.a, test.t1.a)",
           "  ├─IndexReader(Build) root  index:IndexFullScan",
-          "  │ └─IndexFullScan cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo",
+          "  │ └─IndexFullScan cop[tikv] table:t, index:idx_a(a) keep order:false, stats:pseudo",
           "  └─IndexLookUp(Probe) root  ",
-          "    ├─Selection(Build) cop[tikv]  not(isnull(test.t1.b))",
-          "    │ └─IndexRangeScan cop[tikv] table:t1, index:idx_b(b) range: decided by [eq(test.t1.b, test.t2.b)], keep order:false, stats:pseudo",
-          "    └─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "    ├─IndexRangeScan(Build) cop[tikv] table:t1, index:idx_a(a) range: decided by [eq(test.t1.a, test.t.a)], keep order:false, stats:pseudo",
+          "    └─Selection(Probe) cop[tikv]  not(isnull(test.t1.b))",
+          "      └─TableRowIDScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'plan_tree' select * from v1",
         "Plan": [
-          "MergeJoin root  inner join, left key:test.t1.a, right key:test.t.a",
-          "├─IndexReader(Build) root  index:IndexFullScan",
-          "│ └─IndexFullScan cop[tikv] table:t, index:idx_a(a) keep order:true, stats:pseudo",
-          "└─Sort(Probe) root  test.t1.a",
-          "  └─HashJoin root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
-          "    ├─IndexReader(Build) root  index:IndexFullScan",
-          "    │ └─IndexFullScan cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo",
-          "    └─TableReader(Probe) root  data:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t1.b))",
-          "        └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin root  inner join, equal:[eq(test.t.a, test.t1.a) eq(test.t2.b, test.t1.b)]",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  not(isnull(test.t1.b))",
+          "│   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─MergeJoin(Probe) root  inner join",
+          "  ├─IndexReader(Build) root  index:IndexFullScan",
+          "  │ └─IndexFullScan cop[tikv] table:t, index:idx_a(a) keep order:false, stats:pseudo",
+          "  └─IndexReader(Probe) root  index:IndexFullScan",
+          "    └─IndexFullScan cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1352,14 +1355,16 @@
           "├─IndexReader(Build) root  index:IndexFullScan",
           "│ └─IndexFullScan cop[tikv] table:t, index:idx_a(a) keep order:true, stats:pseudo",
           "└─Sort(Probe) root  test.t1.a",
-          "  └─HashJoin root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
+          "  └─HashJoin root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
           "    ├─IndexReader(Build) root  index:IndexFullScan",
           "    │ └─IndexFullScan cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo",
           "    └─TableReader(Probe) root  data:Selection",
           "      └─Selection cop[tikv]  not(isnull(test.t1.b))",
           "        └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]There are no matching table names for (t2) in optimizer hint /*+ LEADING(t2) */. Maybe you can use the table alias name"
+        ]
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ qb_name(qb, v2), leading(t1@qb), inl_join(t1@qb) */ * from v2",
@@ -1375,7 +1380,9 @@
           "    │ └─IndexRangeScan cop[tikv] table:t1, index:idx_b(b) range: decided by [eq(test.t1.b, test.t2.b)], keep order:false, stats:pseudo",
           "    └─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]There are no matching table names for (t1) in optimizer hint /*+ LEADING(t1) */. Maybe you can use the table alias name"
+        ]
       },
       {
         "SQL": "explain format = 'plan_tree' with tt as (select /*+ leading(t3), merge_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
@@ -1386,16 +1393,15 @@
           "└─Selection(Probe) root  not(isnull(test.t1.a))",
           "  └─CTEFullScan root CTE:tt AS t1 data:CTE_0",
           "CTE_0 root  Non-Recursive CTE",
-          "└─MergeJoin(Seed Part) root  inner join, left key:test.t2.a, right key:test.t1.a",
-          "  ├─IndexReader(Build) root  index:IndexFullScan",
-          "  │ └─IndexFullScan cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
-          "  └─Sort(Probe) root  test.t2.a",
-          "    └─HashJoin root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
-          "      ├─IndexReader(Build) root  index:IndexFullScan",
-          "      │ └─IndexFullScan cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) root  data:Selection",
-          "        └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "          └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "└─HashJoin(Seed Part) root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─MergeJoin(Probe) root  inner join",
+          "    ├─IndexReader(Build) root  index:IndexFullScan",
+          "    │ └─IndexFullScan cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
+          "    └─IndexReader(Probe) root  index:IndexFullScan",
+          "      └─IndexFullScan cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1408,16 +1414,16 @@
           "└─Selection(Probe) root  not(isnull(test.t1.a))",
           "  └─CTEFullScan root CTE:tt AS t1 data:CTE_0",
           "CTE_0 root  Non-Recursive CTE",
-          "└─HashJoin(Seed Part) root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "└─HashJoin(Seed Part) root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
           "  ├─IndexReader(Build) root  index:IndexFullScan",
-          "  │ └─IndexFullScan cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
-          "  └─IndexJoin(Probe) root  inner join, inner:IndexLookUp, outer key:test.t3.b, inner key:test.t2.b, equal cond:eq(test.t3.b, test.t2.b)",
+          "  │ └─IndexFullScan cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
+          "  └─IndexJoin(Probe) root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           "    ├─IndexReader(Build) root  index:IndexFullScan",
-          "    │ └─IndexFullScan cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
+          "    │ └─IndexFullScan cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "    └─IndexLookUp(Probe) root  ",
-          "      ├─Selection(Build) cop[tikv]  not(isnull(test.t2.b))",
-          "      │ └─IndexRangeScan cop[tikv] table:t2, index:idx_b(b) range: decided by [eq(test.t2.b, test.t3.b)], keep order:false, stats:pseudo",
-          "      └─Selection(Probe) cop[tikv]  not(isnull(test.t2.a))",
+          "      ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))",
+          "      │ └─IndexRangeScan cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "      └─Selection(Probe) cop[tikv]  not(isnull(test.t2.b))",
           "        └─TableRowIDScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -1519,20 +1525,17 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT /*+ leading(t2@sel_2), merge_join(t) */ * FROM t join t1 on t.a = t1.a WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t2 WHERE t2.b = t1.b);",
         "Plan": [
-          "Projection root  test.t.a, test.t.b, test.t1.a, test.t1.b",
-          "└─MergeJoin root  inner join, left key:test.t1.a, right key:test.t.a",
-          "  ├─Sort(Build) root  test.t.a",
-          "  │ └─TableReader root  data:TableFullScan",
-          "  │   └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo",
-          "  └─Sort(Probe) root  test.t1.a",
-          "    └─HashJoin root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
-          "      ├─StreamAgg(Build) root  group by:test.t2.b, funcs:firstrow(test.t2.b)->test.t2.b",
-          "      │ └─IndexReader root  index:StreamAgg",
-          "      │   └─StreamAgg cop[tikv]  group by:test.t2.b, ",
-          "      │     └─IndexFullScan cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
-          "      └─TableReader(Probe) root  data:Selection",
-          "        └─Selection cop[tikv]  not(isnull(test.t1.b))",
-          "          └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin root  inner join, equal:[eq(test.t.a, test.t1.a) eq(test.t2.b, test.t1.b)]",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  not(isnull(test.t1.b))",
+          "│   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─MergeJoin(Probe) root  inner join",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo",
+          "  └─StreamAgg(Probe) root  group by:test.t2.b, funcs:firstrow(test.t2.b)->test.t2.b",
+          "    └─IndexReader root  index:StreamAgg",
+          "      └─StreamAgg cop[tikv]  group by:test.t2.b, ",
+          "        └─IndexFullScan cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1646,14 +1649,14 @@
         "SQL": "explain format = 'plan_tree' select /*+ leading(t9), hash_join(t7) */ * from t7 join t8 join t9 where t7.a = t8.a and t8.b = t9.b;",
         "Plan": [
           "Projection root  test.t7.a, test.t7.b, test.t8.a, test.t8.b, test.t9.a, test.t9.b",
-          "└─HashJoin root  inner join, equal:[eq(test.t8.a, test.t7.a)]",
+          "└─HashJoin root  inner join, equal:[eq(test.t7.a, test.t8.a) eq(test.t9.b, test.t8.b)]",
           "  ├─TableReader(Build) root partition:all data:Selection",
-          "  │ └─Selection cop[tikv]  not(isnull(test.t7.a))",
-          "  │   └─TableFullScan cop[tikv] table:t7 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t9.b, test.t8.b)]",
+          "  │ └─Selection cop[tikv]  not(isnull(test.t8.a)), not(isnull(test.t8.b))",
+          "  │   └─TableFullScan cop[tikv] table:t8 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  CARTESIAN inner join",
           "    ├─TableReader(Build) root partition:all data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.t8.a)), not(isnull(test.t8.b))",
-          "    │   └─TableFullScan cop[tikv] table:t8 keep order:false, stats:pseudo",
+          "    │ └─Selection cop[tikv]  not(isnull(test.t7.a))",
+          "    │   └─TableFullScan cop[tikv] table:t7 keep order:false, stats:pseudo",
           "    └─TableReader(Probe) root partition:all data:Selection",
           "      └─Selection cop[tikv]  not(isnull(test.t9.b))",
           "        └─TableFullScan cop[tikv] table:t9 keep order:false, stats:pseudo"
@@ -1682,15 +1685,15 @@
         "SQL": "explain format = 'plan_tree' select /*+ read_from_storage(tikv[t4, t6]), leading(t6), hash_join_build(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
           "Projection root  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
-          "└─HashJoin root  inner join, equal:[eq(test.t5.a, test.t4.a)]",
-          "  ├─TableReader(Build) root  data:Selection",
-          "  │ └─Selection cop[tikv]  not(isnull(test.t4.a))",
-          "  │   └─TableFullScan cop[tikv] table:t4 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t6.b, test.t5.b)]",
-          "    ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
-          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "    │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
+          "└─HashJoin root  inner join, equal:[eq(test.t4.a, test.t5.a) eq(test.t6.b, test.t5.b)]",
+          "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
+          "  │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  CARTESIAN inner join",
+          "    ├─TableReader(Build) root  data:Selection",
+          "    │ └─Selection cop[tikv]  not(isnull(test.t4.a))",
+          "    │   └─TableFullScan cop[tikv] table:t4 keep order:false, stats:pseudo",
           "    └─TableReader(Probe) root  data:Selection",
           "      └─Selection cop[tikv]  not(isnull(test.t6.b))",
           "        └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
@@ -1723,16 +1726,16 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
+          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t4.a, test.t5.a) eq(test.t6.b, test.t5.b)]",
           "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
-          "      │     └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) mpp[tiflash]  inner join, equal:[eq(test.t6.b, test.t5.b)]",
+          "      │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
+          "      │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) mpp[tiflash]  CARTESIAN inner join",
           "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "        │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
+          "        │   └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
+          "        │     └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo",
           "        └─Selection(Probe) mpp[tiflash]  not(isnull(test.t6.b))",
           "          └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo"
         ],
@@ -1921,9 +1924,7 @@
           "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "Warning 1815 leading hint is inapplicable, check if the leading hint table has join conditions with other tables"
-        ]
+        "Warn": null
       }
     ]
   },

@@ -109,6 +109,7 @@
           "            └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -116,27 +117,30 @@
         "SQL": "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
         "Plan": [
           "Projection 24365.26 root  test.t4.a, test.t4.b, test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─HashJoin 24365.26 root  left outer join, left side:HashJoin, equal:[eq(test.t.a, test.t1.a)]",
+          "└─HashJoin 24365.26 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
           "  ├─TableReader(Build) 9990.00 root partition:all data:Selection",
-          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 19492.21 root  inner join, equal:[eq(test.t.a, test.t4.a)]",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 19492.21 root  inner join, equal:[eq(test.t.b, test.t2.b)]",
           "    ├─TableReader(Build) 9990.00 root partition:all data:Selection",
-          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
-          "    │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
-          "    └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t2.b, test.t.b)]",
-          "      ├─TableReader(Build) 9980.01 root partition:all data:Selection",
-          "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "      │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
-          "        ├─TableReader(Build) 9990.00 root partition:all data:Selection",
-          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
-          "        │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 15593.77 root  left outer join, left side:HashJoin, equal:[eq(test.t.a, test.t1.a)]",
+          "      ├─TableReader(Build) 9990.00 root partition:all data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t.a, test.t4.a)]",
+          "        ├─TableReader(Build) 9980.01 root partition:all data:Selection",
+          "        │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
           "        └─TableReader(Probe) 9990.00 root partition:all data:Selection",
-          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
-          "            └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "            └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
       },
       {
         "SQL": "select /*+ leading(t4, t3, t2, t, t1) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
@@ -163,6 +167,7 @@
           "            └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -191,6 +196,7 @@
           "            └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -251,7 +257,9 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 table t2 in leading hint is not found in join group",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid",
+          "Warning 1815 table t1 in leading hint is not found in join group",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -274,7 +282,9 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 table t2 in leading hint is not found in join group",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid",
+          "Warning 1815 table t3 in leading hint is not found in join group",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -359,6 +369,7 @@
           "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
           "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
@@ -391,12 +402,39 @@
           "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 table t5 in leading hint is not found in join group",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid",
+          "Warning 1815 table t3 in leading hint is not found in join group",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
       {
         "SQL": "select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+        "Plan": [
+          "HashJoin 24389.65 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "├─TableReader(Build) 9990.00 root partition:all data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 19511.72 root  right outer join, left side:HashJoin, equal:[eq(test.t.a, test.t1.a)]",
+          "  ├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "  │ ├─TableReader(Build) 9990.00 root partition:all data:Selection",
+          "  │ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "  │ │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  │ └─TableReader(Probe) 9990.00 root partition:all data:Selection",
+          "  │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t4.a, test.t.a)]",
+          "    ├─TableReader(Build) 9990.00 root partition:all data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root partition:all data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
         "Plan": [
           "HashJoin 24389.65 root  right outer join, left side:HashJoin, equal:[eq(test.t.a, test.t1.a)]",
           "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t4.a, test.t.a)]",
@@ -418,33 +456,10 @@
           "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": null
-      },
-      {
-        "SQL": "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
-        "Plan": [
-          "Projection 24389.65 root  test.t4.a, test.t4.b, test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─HashJoin 24389.65 root  right outer join, left side:HashJoin, equal:[eq(test.t.a, test.t1.a)]",
-          "  ├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t4.a, test.t.a)]",
-          "  │ ├─TableReader(Build) 9990.00 root partition:all data:Selection",
-          "  │ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "  │ │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "  │ └─TableReader(Probe) 9990.00 root partition:all data:Selection",
-          "  │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
-          "    ├─TableReader(Build) 9990.00 root partition:all data:Selection",
-          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
-          "      ├─TableReader(Build) 9990.00 root partition:all data:Selection",
-          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
-          "      │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) 9990.00 root partition:all data:Selection",
-          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
-          "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
       },
       {
         "SQL": "select /*+ leading(t1, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
@@ -470,24 +485,28 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
       {
         "SQL": "select /*+ leading(t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
         "Plan": [
-          "HashJoin 15593.77 root  right outer join, left side:TableReader, equal:[eq(test.t2.b, test.t1.b)]",
+          "HashJoin 15593.77 root  left outer join, left side:HashJoin, equal:[eq(test.t1.a, test.t3.a)]",
           "├─TableReader(Build) 9990.00 root partition:all data:Selection",
-          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─HashJoin(Probe) 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t1.a, test.t3.a)]",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  right outer join, left side:TableReader, equal:[eq(test.t2.b, test.t1.b)]",
           "  ├─TableReader(Build) 9990.00 root partition:all data:Selection",
-          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─TableReader(Probe) 10000.00 root partition:all data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
       },
       {
         "SQL": "select /*+ leading(t2, t1, t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
@@ -526,6 +545,7 @@
           "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -533,44 +553,47 @@
         "SQL": "select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
         "Plan": [
           "Projection 19492.21 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
-          "└─HashJoin 19492.21 root  right outer join, left side:TableReader, equal:[eq(test.t2.b, test.t1.b)]",
+          "└─HashJoin 19492.21 root  inner join, equal:[eq(test.t3.b, test.t4.b)]",
           "  ├─TableReader(Build) 9990.00 root partition:all data:Selection",
-          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15593.77 root  right outer join, left side:TableReader, equal:[eq(test.t2.b, test.t1.b)]",
           "    ├─TableReader(Build) 9990.00 root partition:all data:Selection",
-          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "    └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t4.b)]",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
           "      ├─TableReader(Build) 9980.01 root partition:all data:Selection",
           "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
           "      │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
           "      └─TableReader(Probe) 9990.00 root partition:all data:Selection",
-          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
-          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
       },
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
         "Plan": [
-          "Projection 30456.57 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
-          "└─HashJoin 30456.57 root  inner join, equal:[eq(test.t5.b, test.t6.b)]",
+          "Projection 243165526.37 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
+          "└─HashJoin 243165526.37 root  inner join, equal:[eq(test.t5.b, test.t6.b)]",
           "  ├─TableReader(Build) 9990.00 root partition:all data:Selection",
           "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t6.b))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 24365.26 root  inner join, equal:[eq(test.t2.a, test.t5.a)]",
+          "  └─HashJoin(Probe) 194532421.09 root  inner join, equal:[eq(test.t2.a, test.t5.a)]",
           "    ├─TableReader(Build) 9980.01 root partition:all data:Selection",
           "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
           "    │   └─TableFullScan 10000.00 cop[tikv] table:t5 keep order:false, stats:pseudo",
-          "    └─HashJoin(Probe) 19492.21 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "    └─HashJoin(Probe) 155625936.88 root  inner join, equal:[eq(test.t3.a, test.t1.a) eq(test.t2.b, test.t1.b)]",
           "      ├─TableReader(Build) 9980.01 root partition:all data:Selection",
-          "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 124500749.50 root  CARTESIAN inner join",
           "        ├─TableReader(Build) 9980.01 root partition:all data:Selection",
-          "        │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "        │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "        │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "        └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t4.b)]",
           "          ├─TableReader(Build) 9980.01 root partition:all data:Selection",
           "          │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
@@ -610,6 +633,7 @@
           "              └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
           "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
@@ -832,21 +856,21 @@
       {
         "SQL": "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 15593.77 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t3.b, test.t2.b)]",
-          "        ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
-          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
+          "TableReader 124625374.88 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 124625374.88 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 124625374.88 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "    └─HashJoin 124625374.88 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]",
+          "      ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 99800100.00 mpp[tiflash]  CARTESIAN inner join",
+          "        ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
@@ -943,6 +967,7 @@
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -952,30 +977,33 @@
           "TableReader 24365.26 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 24365.26 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 24365.26 mpp[tiflash]  test.t4.a, test.t4.b, test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "    └─HashJoin 24365.26 mpp[tiflash]  left outer join, left side:HashJoin, equal:[eq(test.t.a, test.t1.a)]",
+          "    └─HashJoin 24365.26 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t3.b)]",
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) 19492.21 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t4.a)]",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 19492.21 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t2.b)]",
           "        ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
-          "        └─HashJoin(Probe) 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t.b)]",
-          "          ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
-          "          │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "          │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "          └─HashJoin(Probe) 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t3.b)]",
-          "            ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "            │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "            │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.b))",
-          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
-          "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
+          "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.b))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "        └─HashJoin(Probe) 15593.77 mpp[tiflash]  left outer join, left side:HashJoin, equal:[eq(test.t.a, test.t1.a)]",
+          "          ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "          │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "          │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "          └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t4.a)]",
+          "            ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
+          "            │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "            │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
       },
       {
         "SQL": "select /*+ leading(t4, t3, t2, t, t1) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
@@ -1007,6 +1035,7 @@
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -1040,6 +1069,7 @@
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -1115,7 +1145,9 @@
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 table t2 in leading hint is not found in join group",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid",
+          "Warning 1815 table t1 in leading hint is not found in join group",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -1144,7 +1176,9 @@
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 table t2 in leading hint is not found in join group",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid",
+          "Warning 1815 table t3 in leading hint is not found in join group",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -1251,6 +1285,7 @@
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
           "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
@@ -1291,12 +1326,46 @@
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 table t5 in leading hint is not found in join group",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid",
+          "Warning 1815 table t3 in leading hint is not found in join group",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
       {
         "SQL": "select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+        "Plan": [
+          "TableReader 24389.65 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 24389.65 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 24389.65 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 19511.72 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t1.a)]",
+          "      ├─ExchangeReceiver(Build) 12487.50 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "      │   └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t4.a, test.t.a)]",
+          "      │     ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "      │     │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │     │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
+          "      │     │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
+          "      │     └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "      │       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─ExchangeReceiver(Probe) 12487.50 mpp[tiflash]  ",
+          "        └─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.a, collate: binary]",
+          "          └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "            ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "            │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "            │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.b))",
+          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t2.b))",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
         "Plan": [
           "TableReader 24389.65 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 24389.65 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1325,40 +1394,10 @@
           "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t2.b))",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": null
-      },
-      {
-        "SQL": "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
-        "Plan": [
-          "TableReader 24389.65 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 24389.65 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 24389.65 mpp[tiflash]  test.t4.a, test.t4.b, test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "    └─HashJoin 24389.65 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t1.a)]",
-          "      ├─ExchangeReceiver(Build) 12487.50 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "      │   └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t4.a, test.t.a)]",
-          "      │     ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "      │     │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │     │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
-          "      │     │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
-          "      │     └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      │       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─ExchangeReceiver(Probe) 15609.38 mpp[tiflash]  ",
-          "        └─ExchangeSender 15609.38 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.a, collate: binary]",
-          "          └─HashJoin 15609.38 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t1.b)]",
-          "            ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "            │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "            │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.b))",
-          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-          "            └─HashJoin(Probe) 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t3.b)]",
-          "              ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "              │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "              │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.b))",
-          "              │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
-          "              └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
-        ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
       },
       {
         "SQL": "select /*+ leading(t1, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
@@ -1391,6 +1430,7 @@
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -1399,19 +1439,22 @@
         "Plan": [
           "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 15593.77 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t2.b, test.t1.b)]",
+          "  └─HashJoin 15593.77 mpp[tiflash]  left outer join, left side:HashJoin, equal:[eq(test.t1.a, test.t3.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.b))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
-          "    └─HashJoin(Probe) 12487.50 mpp[tiflash]  left outer join, left side:TableFullScan, equal:[eq(test.t1.a, test.t3.a)]",
+          "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.a))",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t2.b, test.t1.b)]",
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.a))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.b))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
       },
       {
         "SQL": "select /*+ leading(t2, t1, t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
@@ -1457,6 +1500,7 @@
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -1466,52 +1510,55 @@
           "TableReader 19492.21 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 19492.21 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 19492.21 mpp[tiflash]  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
-          "    └─HashJoin 19492.21 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t2.b, test.t1.b)]",
+          "    └─HashJoin 19492.21 mpp[tiflash]  inner join, equal:[eq(test.t3.b, test.t4.b)]",
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.b))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t4.b))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 15593.77 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t2.b, test.t1.b)]",
           "        ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-          "        └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t3.b, test.t4.b)]",
+          "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.b))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "        └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t3.a, test.t1.a)]",
           "          ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
           "          │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "          │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
           "          │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
-          "          └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t4.b))",
-          "            └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo"
+          "          └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 cartesian join for leading hint is not allowed with outer join",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
       },
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
         "Plan": [
-          "TableReader 30456.57 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 30456.57 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 30456.57 mpp[tiflash]  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
-          "    └─HashJoin 30456.57 mpp[tiflash]  inner join, equal:[eq(test.t5.b, test.t6.b)]",
+          "TableReader 243165526.37 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 243165526.37 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 243165526.37 mpp[tiflash]  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
+          "    └─HashJoin 243165526.37 mpp[tiflash]  inner join, equal:[eq(test.t5.b, test.t6.b)]",
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t6.b))",
           "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t6 keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) 24365.26 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t5.a)]",
+          "      └─HashJoin(Probe) 194532421.09 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t5.a)]",
           "        ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
           "        │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
           "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 keep order:false, stats:pseudo",
-          "        └─HashJoin(Probe) 19492.21 mpp[tiflash]  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "        └─HashJoin(Probe) 155625936.88 mpp[tiflash]  inner join, equal:[eq(test.t3.a, test.t1.a) eq(test.t2.b, test.t1.b)]",
           "          ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
           "          │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "          │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
-          "          └─HashJoin(Probe) 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "          │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "          └─HashJoin(Probe) 124500749.50 mpp[tiflash]  CARTESIAN inner join",
           "            ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
           "            │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "            │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "            │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "            └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t3.b, test.t4.b)]",
           "              ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
           "              │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
@@ -1557,6 +1604,7 @@
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
+          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
           "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },

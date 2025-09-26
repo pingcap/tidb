@@ -15,10 +15,10 @@
 package parser
 
 import (
-	"math"
-	"strconv"
+"math"
+"strconv"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
+"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 %}
@@ -31,12 +31,14 @@ import (
 	hints []*ast.TableOptimizerHint
 	table 	ast.HintTable
 	modelIdents []ast.CIStr
+    leadingList *ast.LeadingList
+    leadingElement interface{} // Modified: Represents either *ast.HintTable or *ast.LeadingList
 }
 
 %token	<number>
 
-	/*yy:token "%d" */
-	hintIntLit "a 64-bit unsigned integer"
+/*yy:token "%d" */
+hintIntLit "a 64-bit unsigned integer"
 
 %token	<ident>
 
@@ -44,14 +46,14 @@ import (
 	hintIdentifier
 	hintInvalid    "a special token never used by parser, used by lexer to indicate error"
 
-	/*yy:token "@%c" */
-	hintSingleAtIdentifier "identifier with single leading at"
+/*yy:token "@%c" */
+hintSingleAtIdentifier "identifier with single leading at"
 
-	/*yy:token "'%c'" */
-	hintStringLit
+/*yy:token "'%c'" */
+hintStringLit
 
-	/* MySQL 8.0 hint names */
-	hintJoinFixedOrder      "JOIN_FIXED_ORDER"
+/* MySQL 8.0 hint names */
+hintJoinFixedOrder      "JOIN_FIXED_ORDER"
 	hintJoinOrder           "JOIN_ORDER"
 	hintJoinPrefix          "JOIN_PREFIX"
 	hintJoinSuffix          "JOIN_SUFFIX"
@@ -81,7 +83,7 @@ import (
 	hintQBName              "QB_NAME"
 	hintHypoIndex           "HYPO_INDEX"
 
-	/* TiDB hint names */
+/* TiDB hint names */
 	hintAggToCop              "AGG_TO_COP"
 	hintIgnorePlanCache       "IGNORE_PLAN_CACHE"
 	hintHashAgg               "HASH_AGG"
@@ -124,7 +126,7 @@ import (
 	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
 	hintNoDecorrelate         "NO_DECORRELATE"
 
-	/* Other keywords */
+/* Other keywords */
 	hintOLAP            "OLAP"
 	hintOLTP            "OLTP"
 	hintPartition       "PARTITION"
@@ -185,6 +187,11 @@ import (
 	PartitionList    "partition name list in optimizer hint"
 	PartitionListOpt "optional partition name list in optimizer hint"
 
+%type	<leadingList>
+    LeadingTableList "leading table list"
+
+%type	<leadingElement>
+	LeadingTableElement "leading element (table or list)"
 
 %start	Start
 
@@ -241,6 +248,13 @@ TableOptimizerHintOpt:
 		h := $3
 		h.HintName = ast.NewCIStr($1)
 		$$ = h
+	}
+|	"LEADING" '(' LeadingTableList ')'
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: ast.NewCIStr($1),
+			HintData: $3,
+		}
 	}
 |	UnsupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
 	{
@@ -405,6 +419,48 @@ HintStorageTypeAndTable:
 		h.HintData = ast.NewCIStr($1)
 		$$ = h
 	}
+
+LeadingTableList:
+    LeadingTableElement
+    {
+        $$ = &ast.LeadingList{Items: []interface{}{$1}}
+	}
+|   LeadingTableList ',' LeadingTableElement
+    {
+        $$ = &ast.LeadingList{Items: append($1.Items, $3)}
+    }
+
+LeadingTableElement:
+    HintTable
+    {
+        tmp := $1
+		tmp.FormatStyle = ast.QBNameAfterTable
+		$$ = &tmp
+    }
+|   hintSingleAtIdentifier Identifier PartitionListOpt
+    {
+		tmp := ast.HintTable{
+			TableName:     ast.NewCIStr($2),
+            QBName:        ast.NewCIStr($1),
+            PartitionList: $3,
+			FormatStyle:   ast.QBNameBeforeTable,
+		}
+		$$ = &tmp
+	}
+|   hintSingleAtIdentifier Identifier '.' Identifier PartitionListOpt
+    {
+        tmp := ast.HintTable{
+            DBName:        ast.NewCIStr($2),
+            TableName:     ast.NewCIStr($4),
+            QBName:        ast.NewCIStr($1),
+            PartitionList: $5,
+        }
+        $$ = &tmp
+    }
+|   '(' LeadingTableList ')'
+    {
+        $$ = $2
+    }
 
 QueryBlockOpt:
 	/* empty */
@@ -645,11 +701,10 @@ SupportedTableLevelOptimizerHintName:
 |	"NO_HASH_JOIN"
 |	"HASH_JOIN_BUILD"
 |	"HASH_JOIN_PROBE"
-|	"LEADING"
 |	"HYPO_INDEX"
 
 UnsupportedIndexLevelOptimizerHintName:
-	"INDEX_MERGE"
+"INDEX_MERGE"
 /* NO_INDEX_MERGE is currently a nullary hint in TiDB */
 |	"MRR"
 |	"NO_MRR"
