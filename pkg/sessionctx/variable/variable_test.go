@@ -612,7 +612,7 @@ func TestInstanceScope(t *testing.T) {
 	// Now Instance scope is a valid scope, and it can be used with GLOBAL scope at the same time.
 	for _, sv := range GetSysVars() {
 		// But instance scope should not have Set/GetSession
-		if sv.Name != vardef.TiDBInstancePlanCacheMaxMemSize && sv.HasInstanceScope() {
+		if sv.HasInstanceScope() {
 			require.Nil(t, sv.GetSession)
 			require.Nil(t, sv.SetSession)
 		}

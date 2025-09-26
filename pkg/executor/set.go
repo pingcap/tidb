@@ -152,9 +152,9 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrSettingNoopVariable.FastGenByArgs(sysVar.Name))
 	}
 	if sysVar.HasInstanceScope() && !v.IsGlobal && sessionVars.EnableLegacyInstanceScope {
-		// For backward compatibility we will change the v.IsGlobal to true,
+		// For backward compatibility we will change the v.IsInstance to true,
 		// and append a warning saying this will not be supported in future.
-		v.IsGlobal = true
+		v.IsInstance = true
 		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.FastGenByArgs(sysVar.Name))
 	}
 
