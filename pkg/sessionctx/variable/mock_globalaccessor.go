@@ -99,10 +99,7 @@ func (m *MockGlobalAccessor) SetInstanceSysVar(ctx context.Context, name string,
 	if value, err = sv.Validate(m.SessionVars, value, vardef.ScopeGlobal); err != nil {
 		return err
 	}
-	if err = sv.SetGlobalFromHook(ctx, m.SessionVars, value, false); err != nil {
-		return err
-	}
-	return nil
+	return sv.SetGlobalFromHook(ctx, m.SessionVars, value, false)
 }
 
 // SetGlobalSysVarOnly implements GlobalVarAccessor.SetGlobalSysVarOnly interface.
