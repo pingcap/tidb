@@ -434,11 +434,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 	}
 
 	defer func() {
-		for partIdx, seg := range segs {
-			if len(seg.hashValues) == 0 {
-				continue
-			}
-
+		for partIdx := range segs {
 			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partIdx, b, true)
 		}
 	}()
