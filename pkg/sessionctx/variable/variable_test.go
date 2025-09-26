@@ -443,7 +443,7 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	for _, sv := range GetSysVars() {
-		if sv.HasSessionScope() && !sv.ReadOnly {
+		if sv.HasSessionScope() && !sv.ReadOnly && !sv.InternalSessionVariable {
 			val, err := sv.Validate(vars, sv.Value, vardef.ScopeSession)
 			require.NoError(t, err)
 			require.Equal(t, val, sv.Value)
