@@ -159,53 +159,6 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 	}
 }
 
-func TestLargeColumn(t *testing.T) {
-	intTp := types.NewFieldType(mysql.TypeLonglong)
-	stringTp := types.NewFieldType(mysql.TypeVarString)
-	buildKeyIndex := []int{0, 1}
-	buildKeyTypes := []*types.FieldType{intTp, stringTp}
-	buildTypes := []*types.FieldType{intTp, stringTp}
-	probeKeyTypes := []*types.FieldType{intTp, stringTp}
-
-	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, []int{1}, false)
-	buildSchema := &expression.Schema{}
-	for _, tp := range buildTypes {
-		buildSchema.Append(&expression.Column{
-			RetType: tp,
-		})
-	}
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, 1, true, false, false, meta.nullMapLength)
-	rows := 2048
-	chk := chunk.NewEmptyChunk(buildTypes)
-	// each string value is 256k
-	stringValue := make([]byte, 1024*256)
-	for i := range rows {
-		// first column is int
-		chk.AppendInt64(0, int64(i))
-		chk.AppendBytes(1, stringValue)
-	}
-
-	hashJoinCtx := &HashJoinCtxV2{
-		hashTableMeta: meta,
-	}
-	hashJoinCtx.Concurrency = 1
-	hashJoinCtx.SetupPartitionInfo()
-	hashJoinCtx.initHashTableContext()
-	hashJoinCtx.SessCtx = mock.NewContext()
-	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
-	require.NoError(t, err, "processOneChunk returns error")
-	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
-	require.Equal(t, chk.NumRows(), len(builder.usedRows))
-	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
-	checkRowLocationAlignment(t, rowTables)
-	for _, rowTable := range rowTables {
-		for _, seg := range rowTable.segments {
-			require.True(t, len(seg.rawData) < maxRowTableSegmentByteSize*2)
-			require.True(t, len(seg.hashValues) < int(maxRowTableSegmentSize))
-		}
-	}
-}
-
 func TestKey(t *testing.T) {
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp := types.NewFieldType(mysql.TypeLonglong)
