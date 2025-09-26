@@ -3656,27 +3656,23 @@ var defaultSysVars = []*SysVar{
 			return vardef.AdvancerCheckPointLagLimit.Load().String(), nil
 		},
 	},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBSlowLogRules, Value: vardef.DefTiDBSlowLogRules, Type: vardef.TypeStr,
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBSlowLogRules, Value: "", Type: vardef.TypeStr,
 		SetSession: func(s *SessionVars, val string) error {
-			logutil.BgLogger().Warn(fmt.Sprintf("zzz----------------------------------------- SetSession, raw rule:%s", val))
 			slowLogRules, err := ParseSessionSlowLogRules(val)
 			if err != nil {
 				return err
 			}
 			s.SlowLogRules.SlowLogRules = slowLogRules
 			s.SlowLogRules.NeedUpdateEffectiveFields = true
-			logutil.BgLogger().Warn(fmt.Sprintf("zzz----------------------------------------- SetSession, rules:%#v", s.SlowLogRules))
 			return nil
 		},
 		GetSession: func(vars *SessionVars) (string, error) {
 			if vars.SlowLogRules.SlowLogRules != nil {
-				logutil.BgLogger().Warn(fmt.Sprintf("zzz----------------------------------------- GetSession, rules:%#v", vars.SlowLogRules.RawRules))
 				return vars.SlowLogRules.RawRules, nil
 			}
 			return "", nil
 		},
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-			logutil.BgLogger().Warn("zzz----------------------------------------- SetGlobal")
 			gRules, err := ParseGlobalSlowLogRules(s)
 			if err != nil {
 				return err

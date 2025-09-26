@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -445,7 +444,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogPlanFromCache, strconv.FormatBool(logItems.PlanFromCache))
 	writeSlowLogItem(&buf, SlowLogPlanFromBinding, strconv.FormatBool(logItems.PlanFromBinding))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
-	logutil.BgLogger().Warn(fmt.Sprintf("xxx---------------------------------- kvED: %#v", logItems.KVExecDetail))
 	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(time.Duration(logItems.KVExecDetail.WaitKVRespDuration).Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(time.Duration(logItems.KVExecDetail.WaitPDRespDuration).Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(time.Duration(logItems.KVExecDetail.BackoffDuration).Seconds(), 'f', -1, 64))
@@ -564,7 +562,6 @@ func makeKVExecDetailAccessor(parse func(string) (any, error),
 		Setter: func(ctx context.Context, _ *SessionVars, items *SlowQueryLogItems) {
 			if items.KVExecDetail == nil {
 				tikvExecDetailRaw := ctx.Value(util.ExecDetailsKey)
-				logutil.BgLogger().Warn(fmt.Sprintf("map --------------------------------- setter waitKV:%v", tikvExecDetailRaw))
 				if tikvExecDetailRaw != nil {
 					items.KVExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
 				} else {
@@ -880,7 +877,6 @@ func parseSlowLogRuleEntry(rawRule string, allowConnID bool) (int64, *slowlogrul
 	}
 
 	matches := slowLogFieldRe.FindAllStringSubmatch(rawRule, -1)
-	logutil.BgLogger().Warn(fmt.Sprintf("xxx----------------------------------------- parseSlowLogRuleEntry, raw:%v, matches:%#v", rawRule, matches))
 	if len(matches) == 0 {
 		return connID, nil, fmt.Errorf("invalid slow log rule format:%s", rawRule)
 	}
@@ -960,15 +956,12 @@ func parseSlowLogRuleSet(rawRules string, allowConnID bool) (map[int64]*slowlogr
 				Rules:  make([]*slowlogrule.SlowLogRule, 0, len(rules)),
 			}
 			result[connID] = slowLogRules
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx----------------------------------------- parseSlowLogRuleSet, allow:%v, id:%d, raw rules:%#v, rule:%#v",
-				allowConnID, connID, rules, slowLogRule))
 		}
 		for _, cond := range slowLogRule.Conditions {
 			slowLogRules.Fields[cond.Field] = struct{}{}
 		}
 		slowLogRules.Rules = append(slowLogRules.Rules, slowLogRule)
 	}
-	logutil.BgLogger().Warn(fmt.Sprintf("xxx----------------------------------------- parseSlowLogRuleSet, rules:%v, len:%d, result:%#v", rules, len(rules), result))
 	return result, nil
 }
 

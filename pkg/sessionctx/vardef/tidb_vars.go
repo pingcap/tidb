@@ -1478,7 +1478,6 @@ const (
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
 	DefTiDBDDLSlowOprThreshold              = 300
-	DefTiDBSlowLogRules                     = "Query_time: 0.3"
 	DefTiDBUseFastAnalyze                   = false
 	DefTiDBSkipIsolationLevelCheck          = false
 	DefTiDBExpensiveQueryTimeThreshold      = 60      // 60s
