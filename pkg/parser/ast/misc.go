@@ -4006,33 +4006,27 @@ func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName CIStr, needP
 
 			// left element must have a QBName that needs to be injected and is not the QBName provided by the table.
 			if i == 0 && currentQBName.L != "" && !qbOnTable {
-				// @qb table format
 				ctx.WriteKeyWord("@")
 				ctx.WriteName(currentQBName.String())
 				ctx.WritePlain(" ")
 
 				tmp.Restore(ctx)
 				currentQBName = CIStr{}
-
 			} else {
 				tmp.Restore(ctx)
 			}
-
 		case *LeadingList:
 			if err := t.RestoreWithQB(ctx, currentQBName, true, false, qbOnTable); err != nil {
 				return err
 			}
 			currentQBName = CIStr{}
-
 		default:
 			return fmt.Errorf("unexpected type in LeadingList: %T", t)
 		}
 	}
-
 	if needParen {
 		ctx.WritePlain(")")
 	}
-
 	return nil
 }
 
