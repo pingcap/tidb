@@ -1727,8 +1727,7 @@ func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
 	if err != nil {
 		return err
 	}
-	defer clean()
-	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.ShowProcess().ID}
+	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.ShowProcess().ID, clean: clean}
 	err = lock.GetLock(lockName, timeout)
 	if err != nil {
 		return err
@@ -1750,7 +1749,7 @@ func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
 		return 0
 	}
 	defer clean()
-	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.ShowProcess().ID}
+	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.ShowProcess().ID, clean: clean}
 	err = lock.IsUsedLock(lockName)
 	if err != nil {
 		// TODO: Return actual owner pid
@@ -1772,7 +1771,6 @@ func (s *session) ReleaseAdvisoryLock(lockName string) (released bool) {
 		if lock.ReferenceCount() <= 0 {
 			lock.Close()
 			delete(s.advisoryLocks, lockName)
-			infosync.DeleteInternalSession(lock.session)
 		}
 		return true
 	}
@@ -1789,7 +1787,6 @@ func (s *session) ReleaseAllAdvisoryLocks() int {
 		lock.Close()
 		count += lock.ReferenceCount()
 		delete(s.advisoryLocks, lockName)
-		infosync.DeleteInternalSession(lock.session)
 	}
 	return count
 }
