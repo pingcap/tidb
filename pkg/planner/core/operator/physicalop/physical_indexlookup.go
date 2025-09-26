@@ -54,18 +54,6 @@ func buildPushDownIndexLookUpPlan(
 	resetPlanIDRecursively(ctx, tablePlan)
 
 	tableScanPlan, parentOfTableScan := detachRootTableScanPlan(tablePlan)
-	// to make sure tableScanPlan can be cloned,
-	// runtimeFilterList has tag `plan-cache-clone:"must-nil"`
-	if len(tableScanPlan.runtimeFilterList) == 0 {
-		tableScanPlan.runtimeFilterList = nil
-	}
-
-	// to make sure tableScanPlan can be cloned,
-	// UsedColumnarIndexes has tag `plan-cache-clone:"must-nil"`
-	if len(tableScanPlan.UsedColumnarIndexes) == 0 {
-		tableScanPlan.UsedColumnarIndexes = nil
-	}
-
 	indexLookUpPlan = PhysicalLocalIndexLookUp{
 		// Only int handle is supported now, so the handle is always the last column of index schema.
 		IndexHandleOffsets: []uint32{uint32(indexPlan.Schema().Len()) - 1},
