@@ -301,13 +301,13 @@ func (p *PhysicalTableReader) ResolveIndices() error {
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalTableReader) GetPlanCostVer1(_ property.TaskType,
-	option *optimizetrace.PlanCostOption) (float64, error) {
+	option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalTableReader(p, option)
 }
 
 // GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalTableReader(p, taskType, option)
 }
 
