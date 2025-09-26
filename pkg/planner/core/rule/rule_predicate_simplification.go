@@ -55,8 +55,7 @@ const (
 	falsePredicate
 	// TruePredicate TODO: make it lower case after rule_decorrelate is migrated.
 	TruePredicate
-	andPredicateWithIsNullColumns // a is null AND b is null ...
-	equalColumnPredicate          // col1 = col2
+	equalColumnPredicate // col1 = col2
 	otherPredicate
 )
 
@@ -105,11 +104,6 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) ([]*expr
 			})
 		}()
 		if v.FuncName.L == ast.LogicAnd {
-			args := v.GetArgs()
-			cols := expression.ExtractIsNullColumns(args)
-			if len(cols) > 0 {
-				return cols, andPredicateWithIsNullColumns
-			}
 			return nil, andPredicate
 		}
 		args := v.GetArgs()
@@ -486,7 +480,7 @@ func processCondition(sctx base.PlanContext, condition expression.Expression) (e
 
 	if conditionType == orPredicate {
 		condition, applied = shortCircuitANDORLogicalConstants(sctx, condition, true)
-	} else if conditionType == andPredicate || conditionType == andPredicateWithIsNullColumns {
+	} else if conditionType == andPredicate {
 		condition, applied = shortCircuitANDORLogicalConstants(sctx, condition, false)
 	}
 
@@ -569,66 +563,91 @@ func equalOrNullSimplification(sctx base.PlanContext, predicates []expression.Ex
 		return predicates
 	}
 	oldlist := make([]expression.Expression, 0, len(predicates))
-	isNullList := make([]*expression.ScalarFunction, 0, 8)
-	isNullColsList := make([]map[int64]struct{}, 0, 8)
+	andPredicateList := make([]expression.Expression, 0, len(predicates))
 	equalConditionList := make([]expression.Expression, 0, 8)
 	equalConditionColsList := make([][]*expression.Column, 0, 8)
 	for _, predicate := range predicates {
 		cols, tp := FindPredicateType(sctx, predicate)
 		switch tp {
-		case andPredicateWithIsNullColumns:
-			isNullList = append(isNullList, predicate.(*expression.ScalarFunction))
-			m := make(map[int64]struct{}, len(cols))
-			for _, col := range cols {
-				m[col.UniqueID] = struct{}{}
-			}
-			isNullColsList = append(isNullColsList, m)
+		case andPredicate:
+			andPredicateList = append(andPredicateList, predicate)
 		case equalColumnPredicate:
 			equalConditionList = append(equalConditionList, predicate)
-			equalConditionColsList = append(equalConditionColsList, expression.SortColumns(cols))
+			equalConditionColsList = append(equalConditionColsList, cols)
 		default:
 			oldlist = append(oldlist, predicate)
 		}
 	}
-	removeIsNull := make(map[int]struct{}, len(isNullList))
-	intest.Assert(len(isNullList) == len(isNullColsList) && len(equalConditionList) == len(equalConditionColsList),
-		"length of isNullList and isNullColsList or equalConditionList and equalConditionColsList are not equal")
-	if len(equalConditionList) < len(isNullList) || len(isNullList) == 0 || len(equalConditionColsList) == 0 {
+	if len(equalConditionList) > 0 {
 		return predicates
 	}
-	for i := range equalConditionList {
-		cols := equalConditionColsList[i]
-		canTransfer := false
-		for j, isNullCols := range isNullColsList {
-			if _, ok := removeIsNull[j]; ok {
-				continue
-			}
+	doEqualOrNullSimplification(sctx, equalConditionColsList, equalConditionList, andPredicateList)
+	oldlist = append(oldlist, equalConditionList...)
+	oldlist = append(oldlist, andPredicateList...)
+	return oldlist
+}
+
+// doEqualOrNullSimplification tries to simplify equal conditions with IsNull predicates.
+// It modifies equalConditionList and andPredicateList in place.
+func doEqualOrNullSimplification(sctx base.PlanContext, equalConditionColsList [][]*expression.Column, equalConditionList, andPredicateList []expression.Expression) {
+	columnsSets := make(map[int64]struct{}, len(equalConditionColsList)*2)
+	for andPredicateIdx, predicate := range andPredicateList {
+		andFunc := predicate.(*expression.ScalarFunction)
+		andList := expression.SplitCNFItems(andFunc)
+		isNullCols := expression.ExtractIsNullColumns(andList)
+		for i := range equalConditionList {
+			cols := equalConditionColsList[i]
 			if slices.ContainsFunc(cols, func(i *expression.Column) bool {
 				_, ok := isNullCols[i.UniqueID]
 				return ok
 			}) {
-				removeIsNull[j] = struct{}{}
-				canTransfer = true
-				break
+				// we can rewrite a=b => a <=> b
+				equalConditionList[i] = expression.NewFunctionInternal(sctx.GetExprCtx(),
+					ast.NullEQ,
+					types.NewFieldType(mysql.TypeTiny),
+					expression.DeepCopyExpression(cols[0], cols[1])...)
+				columnsSets[cols[0].UniqueID] = struct{}{}
+				columnsSets[cols[1].UniqueID] = struct{}{}
+				// Pleas don't skip this equalConditionList, maybe it can remove more IsNull predicates.
 			}
 		}
-		if canTransfer {
-			equalConditionList[i] = expression.NewFunctionInternal(sctx.GetExprCtx(),
-				ast.NullEQ,
-				types.NewFieldType(mysql.TypeTiny),
-				expression.DeepCopyExpression(cols[0], cols[1])...)
+		if len(andList) == len(columnsSets) {
+			// all predicates in this AND list have been simplified.
+			andPredicateList[andPredicateIdx] = nil
+		} else {
+			andList = removeIsNullPredicates(andList, columnsSets)
+			intest.Assert(len(andList) > 0, "all predicates in this AND list have been simplified, should be removed.")
+			if len(andList) > 1 {
+				andPredicateList[andPredicateIdx] = expression.ComposeCNFCondition(sctx.GetExprCtx(), andList...)
+			} else {
+				andPredicateList[andPredicateIdx] = andList[0]
+			}
 		}
+		// reuse the columnsSets
+		clear(columnsSets)
 	}
-	if len(removeIsNull) == 0 {
-		return predicates
+	andPredicateList = slices.DeleteFunc(andPredicateList, func(expr expression.Expression) bool {
+		return expr == nil
+	})
+}
+
+func removeIsNullPredicates(andList []expression.Expression, columnsSets map[int64]struct{}) []expression.Expression {
+	if len(andList) == 0 || len(columnsSets) == 0 {
+		return andList
 	}
-	oldlist = append(oldlist, equalConditionList...)
-	for i, isNullFunc := range isNullList {
-		if _, ok := removeIsNull[i]; !ok {
-			oldlist = append(oldlist, isNullFunc)
+	andList = slices.DeleteFunc(andList, func(expr expression.Expression) bool {
+		fn, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			return false
 		}
-	}
-	return oldlist
+		col, ok := expression.IsIsNullColumn(fn)
+		if !ok {
+			return false
+		}
+		_, ok = columnsSets[col.UniqueID]
+		return ok
+	})
+	return andList
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.

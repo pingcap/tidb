@@ -2300,11 +2300,11 @@ func IsIsNullColumn(expr Expression) (*Column, bool) {
 }
 
 // ExtractIsNullColumns extracts all columns from expressions in the form of `isnull(col)`.
-func ExtractIsNullColumns(exprs []Expression) []*Column {
-	cols := make([]*Column, 0, len(exprs))
+func ExtractIsNullColumns(exprs []Expression) map[int64]struct{} {
+	cols := make(map[int64]struct{}, len(exprs))
 	for _, expr := range exprs {
 		if col, ok := IsIsNullColumn(expr); ok {
-			cols = append(cols, col)
+			cols[col.UniqueID] = struct{}{}
 		}
 	}
 	return cols
