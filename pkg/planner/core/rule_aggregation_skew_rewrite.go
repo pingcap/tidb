@@ -48,7 +48,7 @@ type SkewDistinctAggRewriter struct {
 // - The aggregate has 1 and only 1 distinct aggregate function (limited to count, avg, sum)
 //
 // This rule is disabled by default. Use tidb_opt_skew_distinct_agg to enable the rule.
-func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalAggregation, _ *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// only group aggregate is applicable
 	if len(agg.GroupByItems) == 0 {
 		return nil

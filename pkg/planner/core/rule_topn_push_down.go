@@ -26,7 +26,7 @@ type PushDownTopNOptimizer struct {
 }
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
-func (*PushDownTopNOptimizer) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*PushDownTopNOptimizer) Optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return p.PushDownTopN(nil), planChanged, nil
 }
