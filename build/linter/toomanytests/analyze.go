@@ -63,7 +63,7 @@ func isTestFile(file *token.File) bool {
 func checkRule(pkg string) int {
 	switch pkg {
 	case "pkg/planner/core":
-		return 2885
+		return 285
 	case "pkg/executor/test/analyzetest":
 		return 52
 	default:
