@@ -1835,7 +1835,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		return true
 	})
 	for k, v := range columnPrivTable {
-		privCols := privOnColumnsToString(v)
+		privCols := privOnColumnsToString(v, sqlMode)
 		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
 		gs = append(gs, s)
 	}
@@ -2065,7 +2065,7 @@ type columnStr = string
 type columnStrs = map[columnStr]struct{}
 type privOnColumns = map[mysql.PrivilegeType]columnStrs
 
-func privOnColumnsToString(p privOnColumns) string {
+func privOnColumnsToString(p privOnColumns, sqlMode mysql.SQLMode) string {
 	var buf bytes.Buffer
 	idx := 0
 	for _, priv := range mysql.AllColumnPrivs {
@@ -2088,7 +2088,7 @@ func privOnColumnsToString(p privOnColumns) string {
 			if i > 0 {
 				fmt.Fprintf(&buf, ", ")
 			}
-			buf.WriteString(col)
+			buf.WriteString(stringutil.Escape(col, sqlMode))
 		}
 		buf.WriteString(")")
 		idx++

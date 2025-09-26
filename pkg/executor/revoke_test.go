@@ -235,7 +235,7 @@ func TestRevokeColumnPriv(t *testing.T) {
 	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	tk.MustQuery("show grants for u1").Check(testkit.Rows("GRANT USAGE ON *.* TO 'u1'@'%'",
 		"GRANT SELECT,INSERT,UPDATE ON `test`.`t1` TO 'u1'@'%'",
-		"GRANT SELECT(c1), INSERT(c1), UPDATE(c1), REFERENCES(c1) ON `test`.`t1` TO 'u1'@'%'"))
+		"GRANT SELECT(`c1`), INSERT(`c1`), UPDATE(`c1`), REFERENCES(`c1`) ON `test`.`t1` TO 'u1'@'%'"))
 	tk.MustQuery("select table_priv,column_priv from mysql.tables_priv where user='u1'").
 		Check(testkit.RowsWithSep(" | ", "Select,Insert,Update | Select,Insert,Update,References"))
 

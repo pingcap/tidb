@@ -1242,7 +1242,7 @@ func TestShowGrantsWithRoles(t *testing.T) {
 	require.NoError(t, usertk.Session().Auth(&auth.UserIdentity{Username: "u", Hostname: "%"}, nil, nil, nil))
 	usertk.MustQuery("show grants").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'u'@'%'",
-		"GRANT SELECT(c1, c2) ON `test`.`t` TO 'u'@'%'",
+		"GRANT SELECT(`c1`, `c2`) ON `test`.`t` TO 'u'@'%'",
 		"GRANT 'r1'@'%', 'r2'@'%' TO 'u'@'%'",
 	))
 }
