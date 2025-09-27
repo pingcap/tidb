@@ -123,7 +123,7 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	// Mock roll back at model.StateNone.
 	customizeHookRollbackAtState(t, tbl, model.StateNone)
 	// Alter sql will modify column c2 to bigint not null.
-	SQL := "alter table t modify column c2 int not null"
+	SQL := "alter table t modify column c2 varchar(16) not null"
 	err := tk.ExecToErr(SQL)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-none")
 	assertRollBackedColUnchanged(t, tk)
@@ -202,20 +202,11 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 		})
 	}
 
-	// Change int to tinyint.
-	// Although display length is increased, the default flen is decreased, reorg is needed.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int(1))")
-	tbl := external.GetTableByName(t, tk, "test", "t")
-	assertHasAlterWriteReorg(tbl)
-	tk.MustExec("alter table t modify column a tinyint(3)")
-	require.True(t, assertResult)
-
 	// Change tinyint to tinyint
 	// Although display length is decreased, default flen is the same, reorg is not needed.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a tinyint(3))")
-	tbl = external.GetTableByName(t, tk, "test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	assertHasAlterWriteReorg(tbl)
 	tk.MustExec("alter table t modify column a tinyint(1)")
 	require.False(t, assertResult)
@@ -361,7 +352,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 			i++
 		}
 	})
-	tk.MustExec("alter table t modify column b tinyint NOT NULL")
+	tk.MustExec("alter table t modify column b varchar(16) NOT NULL")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	require.NoError(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
@@ -588,7 +579,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		if job.Query == "alter table ctc_goroutine_leak modify column a tinyint" {
+		if job.Query == "alter table ctc_goroutine_leak modify column a varchar(16)" {
 			jobID = job.ID
 		}
 	})
@@ -601,7 +592,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 	)
 	wg.Run(func() {
 		// This ddl will be hang over in the failpoint loop, waiting for outside cancel.
-		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a tinyint")
+		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a varchar(16)")
 	})
 
 	<-ddl.TestReorgGoroutineRunning
