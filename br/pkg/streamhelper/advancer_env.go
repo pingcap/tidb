@@ -17,6 +17,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -143,7 +144,7 @@ func CliEnv(cli *utils.StoreManager, tikvStore tikv.Storage, etcdCli *clientv3.C
 	return clusterEnv{
 		clis:                 cli,
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
-		PDRegionScanner:      PDRegionScanner{cli.PDClient()},
+		PDRegionScanner:      PDRegionScanner{cli.PDClient().WithCallerComponent(caller.Pitr)},
 		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
 	}
 }
@@ -160,7 +161,7 @@ func TiDBEnv(tikvStore tikv.Storage, pdCli pd.Client, etcdCli *clientv3.Client, 
 			Timeout: time.Duration(conf.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
 		}, tconf),
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
-		PDRegionScanner:      PDRegionScanner{Client: pdCli},
+		PDRegionScanner:      PDRegionScanner{Client: pdCli.WithCallerComponent(caller.Pitr)},
 		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
 	}
 

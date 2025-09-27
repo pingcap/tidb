@@ -60,6 +60,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	pdgc "github.com/tikv/pd/client/clients/gc"
 	"github.com/tikv/pd/client/constants"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 )
 
@@ -99,7 +100,7 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 		desc:                 fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		store:                store,
 		tikvStore:            tikvStore,
-		pdClient:             pdClient,
+		pdClient:             pdClient.WithCallerComponent(caller.GcWorker),
 		pdGCControllerClient: pdClient.GetGCInternalController(uint32(store.GetCodec().GetKeyspaceID())),
 		gcIsRunning:          false,
 		lastFinish:           time.Now(),
@@ -1757,7 +1758,7 @@ func RunDistributedGCJob(ctx context.Context, regionLockResolver tikv.RegionLock
 	gcWorker := &GCWorker{
 		tikvStore:            s,
 		uuid:                 identifier,
-		pdClient:             pd,
+		pdClient:             pd.WithCallerComponent(caller.DistributedGcJob),
 		pdGCControllerClient: pd.GetGCInternalController(constants.NullKeyspaceID),
 		regionLockResolver:   regionLockResolver,
 	}
