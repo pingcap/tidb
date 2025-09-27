@@ -832,6 +832,8 @@ func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) (err erro
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
 // If tableIDs is provided, we only load the stats for the specified tables.
 func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) (err error) {
+	initstats.InitStatsPercentage.Store(0)
+	defer initstats.InitStatsPercentage.Store(100)
 	totalMemory, err := memory.MemTotal()
 	if err != nil {
 		return err
