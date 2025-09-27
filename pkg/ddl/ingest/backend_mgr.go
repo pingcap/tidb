@@ -60,9 +60,19 @@ type BackendCtxBuilder struct {
 	etcdClient *clientv3.Client
 	importTS   uint64
 
+	// For Non-DXF checkpoint manager
 	sessPool   *sess.Pool
 	physicalID int64
-	checkDup   bool
+
+	// For DXF checkpoint manager
+	subtaskID   int64
+	updateFunc  func(context.Context, int64, any) error
+	getFunc     func(context.Context, int64) (string, error)
+	useDistTask bool
+
+	checkDup bool
+
+	minimalStartKey kv.Key
 }
 
 // WithImportDistributedLock needs a etcd client to maintain a distributed lock during partial import.
@@ -76,9 +86,28 @@ func (b *BackendCtxBuilder) WithImportDistributedLock(etcdCli *clientv3.Client, 
 func (b *BackendCtxBuilder) WithCheckpointManagerParam(
 	sessPool *sess.Pool,
 	physicalID int64,
+	startKey kv.Key,
 ) *BackendCtxBuilder {
 	b.sessPool = sessPool
 	b.physicalID = physicalID
+	b.minimalStartKey = startKey
+	return b
+}
+
+// WithDistTaskCheckpointManagerParam is used by DXF distributed task mode.
+func (b *BackendCtxBuilder) WithDistTaskCheckpointManagerParam(
+	subtaskID int64,
+	physicalID int64,
+	updateFunc func(context.Context, int64, any) error,
+	getFunc func(context.Context, int64) (string, error),
+	start kv.Key,
+) *BackendCtxBuilder {
+	b.subtaskID = subtaskID
+	b.physicalID = physicalID
+	b.updateFunc = updateFunc
+	b.getFunc = getFunc
+	b.useDistTask = true
+	b.minimalStartKey = start
 	return b
 }
 
@@ -109,26 +138,56 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 
 	//nolint: forcetypeassert
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
-	var cpMgr *CheckpointManager
-	if b.sessPool != nil {
-		cpMgr, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)
+	var cpOp CheckpointOperator
+
+	// Create checkpoint manager based on the configuration
+	if b.useDistTask {
+		// Use DXF checkpoint manager
+		cpOp, err = NewCheckpointManagerForDistTask(
+			ctx,
+			b.subtaskID,
+			b.physicalID,
+			jobSortPath,
+			pdCli,
+			b.updateFunc,
+			b.getFunc,
+			b.minimalStartKey,
+		)
 		if err != nil {
-			logutil.Logger(ctx).Warn("create checkpoint manager failed",
+			logutil.Logger(ctx).Warn("create DXF checkpoint manager failed",
 				zap.Int64("jobID", job.ID),
+				zap.Int64("subtaskID", b.subtaskID),
 				zap.Error(err))
 			return nil, err
+		}
+	} else {
+		// Use Non-DXF checkpoint manager
+		if b.sessPool != nil {
+			cpOp, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli, b.minimalStartKey)
+			if err != nil {
+				logutil.Logger(ctx).Warn("create checkpoint manager failed",
+					zap.Int64("jobID", job.ID),
+					zap.Error(err))
+				return nil, err
+			}
 		}
 	}
 
 	var mockBackend BackendCtx
-	failpoint.InjectCall("mockNewBackendContext", b.job, cpMgr, &mockBackend)
+	// Wrap cpOp for failpoint.Call: reflect can't take a zero (nil interface) argument.
+	fpCpOp := cpOp
+	if fpCpOp == nil {
+		var nilMgr *CheckpointManager
+		fpCpOp = nilMgr
+	}
+	failpoint.InjectCall("mockNewBackendContext", b.job, fpCpOp, &mockBackend)
 	if mockBackend != nil {
 		BackendCounterForTest.Inc()
 		return mockBackend, nil
 	}
 
 	bCtx := newBackendContext(ctx, job.ID, bd, cfg,
-		defaultImportantVariables, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpMgr)
+		defaultImportantVariables, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpOp)
 
 	LitDiskRoot.Add(job.ID, bCtx)
 	BackendCounterForTest.Add(1)
@@ -218,7 +277,7 @@ func newBackendContext(
 	memRoot MemRoot,
 	etcdClient *clientv3.Client,
 	initTS, importTS uint64,
-	cpMgr *CheckpointManager,
+	cpOp CheckpointOperator,
 ) *litBackendCtx {
 	bCtx := &litBackendCtx{
 		engines:        make(map[int64]*engineInfo, 10),
@@ -232,7 +291,7 @@ func newBackendContext(
 		etcdClient:     etcdClient,
 		initTS:         initTS,
 		importTS:       importTS,
-		checkpointMgr:  cpMgr,
+		checkpointMgr:  cpOp,
 	}
 	bCtx.timeOfLastFlush.Store(time.Now())
 	return bCtx

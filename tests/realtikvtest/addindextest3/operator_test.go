@@ -173,7 +173,7 @@ func TestBackfillOperators(t *testing.T) {
 		reorgMeta := ddl.NewDDLReorgMeta(tk.Session())
 		ingestOp := ddl.NewIndexIngestOperator(
 			opCtx, copCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine},
-			srcChkPool, 3, reorgMeta)
+			srcChkPool, 3, reorgMeta, bcCtx, nil)
 		sink := testutil.NewOperatorTestSink[ddl.IndexWriteResult]()
 
 		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
@@ -445,7 +445,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		defer bcCtx.Close()
 		mockEngine := ingest.NewMockEngineInfo(nil)
 		ingestOp := ddl.NewIndexIngestOperator(opCtx, copCtx, sessPool, pTbl, []table.Index{index},
-			[]ingest.Engine{mockEngine}, nil, 2, nil)
+			[]ingest.Engine{mockEngine}, nil, 2, nil, bcCtx, nil)
 
 		ingestOp.Open()
 		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(2))
