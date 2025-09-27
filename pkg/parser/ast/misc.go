@@ -4086,20 +4086,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			if err := list.RestoreWithQB(ctx, n.QBName, false, true, qbOnTable); err != nil {
 				return err
 			}
-		} else {
-			for i, table := range n.Tables {
-				if i != 0 {
-					ctx.WritePlain(", ")
-				}
-				if i == 0 && n.QBName.L != "" {
-					tmp := *(&table)
-					tmp.Restore(ctx)
-				} else {
-					table.Restore(ctx)
-				}
-			}
 		}
-
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
 		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "no_hash_join", "no_merge_join",
 		"no_index_join", "no_index_hash_join", "no_index_merge_join":
