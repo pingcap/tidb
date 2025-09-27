@@ -150,3 +150,4 @@ FROM t0
 RIGHT OUTER JOIN t1 ON t0.c0 = t1.c0
 WHERE (t1.c0 AND (t0.c0 != NULL)) IS FALSE;
 ref0	ref1
+NULL	0
