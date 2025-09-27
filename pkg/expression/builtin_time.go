@@ -2953,7 +2953,7 @@ func (du *baseDateArithmetical) getDateFromString(ctx EvalContext, args []Expres
 			return types.ZeroTime, true, err
 		}
 		return date, true, handleInvalidTimeError(ctx, err)
-	} else if sqlMode(ctx).HasNoZeroDateMode() && (date.Year() == 0 || date.Month() == 0 || date.Day() == 0) {
+	} else if sqlMode(ctx).HasNoZeroDateMode() && (date.Year() == 0 && date.Month() == 0 && date.Day() == 0) {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, dateStr))
 	}
 	return date, false, handleInvalidTimeError(ctx, err)
