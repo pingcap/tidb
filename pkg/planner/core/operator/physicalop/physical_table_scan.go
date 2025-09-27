@@ -278,15 +278,19 @@ func (p *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	clonedScan.Ranges = util.CloneRanges(p.Ranges)
 	clonedScan.TableAsName = p.TableAsName
 	clonedScan.RangeInfo = p.RangeInfo
-	clonedScan.runtimeFilterList = make([]*RuntimeFilter, 0, len(p.runtimeFilterList))
-	for _, rf := range p.runtimeFilterList {
-		clonedRF := rf.Clone()
-		clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
+	if p.runtimeFilterList != nil {
+		clonedScan.runtimeFilterList = make([]*RuntimeFilter, 0, len(p.runtimeFilterList))
+		for _, rf := range p.runtimeFilterList {
+			clonedRF := rf.Clone()
+			clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
+		}
 	}
-	clonedScan.UsedColumnarIndexes = make([]*ColumnarIndexExtra, 0, len(p.UsedColumnarIndexes))
-	for _, colIdx := range p.UsedColumnarIndexes {
-		colIdxClone := *colIdx
-		clonedScan.UsedColumnarIndexes = append(clonedScan.UsedColumnarIndexes, &colIdxClone)
+	if p.UsedColumnarIndexes != nil {
+		clonedScan.UsedColumnarIndexes = make([]*ColumnarIndexExtra, 0, len(p.UsedColumnarIndexes))
+		for _, colIdx := range p.UsedColumnarIndexes {
+			colIdxClone := *colIdx
+			clonedScan.UsedColumnarIndexes = append(clonedScan.UsedColumnarIndexes, &colIdxClone)
+		}
 	}
 	return clonedScan, nil
 }
