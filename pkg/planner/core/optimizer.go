@@ -375,8 +375,13 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 	// merge continuous selections in a coprocessor task of tiflash
 	tableReader, isTableReader := p.(*PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
+<<<<<<< HEAD
 		mergeContinuousSelections(tableReader.tablePlan)
 		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+=======
+		mergeContinuousSelections(tableReader.TablePlan)
+		tableReader.TablePlans = physicalop.FlattenListPushDownPlan(tableReader.TablePlan)
+>>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
 	}
 }
 

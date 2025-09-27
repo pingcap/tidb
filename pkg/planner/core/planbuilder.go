@@ -1204,7 +1204,49 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 		lock.LockType == ast.SelectLockForUpdateWaitN
 }
 
+<<<<<<< HEAD
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName pmodel.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+=======
+func isTiKVIndexByName(idxName ast.CIStr, indexInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
+	// when the PKIsHandle of table is true, the primary key is not in the indices list.
+	if idxName.L == "primary" && tblInfo.PKIsHandle {
+		return true
+	}
+	return indexInfo != nil && !indexInfo.IsColumnarIndex()
+}
+
+func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
+	unSupportedReason := ""
+	sessionVars := ctx.GetSessionVars()
+	if tblInfo.IsCommonHandle {
+		unSupportedReason = "common handle table is not supported"
+	} else if tblInfo.Partition != nil {
+		unSupportedReason = "partition table is not supported"
+	} else if tblInfo.TempTableType != model.TempTableNone {
+		unSupportedReason = "temporary table is not supported"
+	} else if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		unSupportedReason = "cached table is not supported"
+	} else if index.MVIndex {
+		unSupportedReason = "multi-valued index is not supported"
+	} else if !sessionVars.IsIsolation(ast.RepeatableRead) {
+		unSupportedReason = "transaction isolation level is not REPEATABLE-READ"
+	} else if sessionVars.GetReplicaRead() != kv.ReplicaReadLeader {
+		unSupportedReason = "only leader read is supported"
+	} else if sessionVars.TxnCtx.IsStaleness {
+		unSupportedReason = "stale read is not supported"
+	} else if sessionVars.SnapshotTS != 0 {
+		unSupportedReason = "historical read is not supported"
+	}
+
+	if unSupportedReason != "" {
+		ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, %s", unSupportedReason))
+		return false
+	}
+	return true
+}
+
+func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+>>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1308,11 +1350,18 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
+	var indexLookUpPushDownHints map[int]struct{}
 	if tableHints != nil {
 		for i, hint := range tableHints.IndexHintList {
 			if hint.Match(dbName, tblName) {
 				indexHints = append(indexHints, hint.IndexHint)
 				tableHints.IndexHintList[i].Matched = true
+				if hint.ShouldPushDownIndexLookUp() {
+					if indexLookUpPushDownHints == nil {
+						indexLookUpPushDownHints = make(map[int]struct{}, 1)
+					}
+					indexLookUpPushDownHints[len(indexHints)-1] = struct{}{}
+				}
 			}
 		}
 	}
@@ -1371,6 +1420,14 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			}
 			if hint.HintType == ast.HintNoOrderIndex {
 				path.ForceNoKeepOrder = true
+			}
+			if i >= indexHintsLen {
+				// Currently we only support to hint the index look up push down for comment-style sql hints.
+				// So only i >= indexHintsLen may have the hints here.
+				_, path.IsIndexLookUpPushDown = indexLookUpPushDownHints[i]
+				if path.IsIndexLookUpPushDown && !checkIndexLookUpPushDownSupported(ctx, tblInfo, path.Index) {
+					continue
+				}
 			}
 			available = append(available, path)
 		}

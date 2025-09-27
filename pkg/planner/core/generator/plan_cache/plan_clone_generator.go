@@ -35,12 +35,27 @@ import (
 // If a field is tagged with `plan-cache-clone:"must-nil"`, then it will be checked for nil before cloning.
 // If a field is not tagged, then it will be deep cloned.
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
+<<<<<<< HEAD
 	var structures = []any{core.PhysicalTableScan{}, core.PhysicalIndexScan{}, core.PhysicalSelection{},
 		core.PhysicalProjection{}, core.PhysicalSort{}, core.PhysicalTopN{}, core.PhysicalStreamAgg{},
 		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalMergeJoin{}, core.PhysicalTableReader{},
 		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{}, core.PhysicalLimit{},
 		core.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
 		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}, core.PhysicalUnionScan{}, core.PhysicalUnionAll{}}
+=======
+	var structures = []any{
+		physicalop.Update{}, physicalop.Delete{}, physicalop.Insert{},
+		physicalop.PhysicalTableScan{}, physicalop.PhysicalIndexScan{},
+		physicalop.PhysicalSelection{}, physicalop.PhysicalProjection{}, physicalop.PhysicalTopN{}, physicalop.PhysicalLimit{},
+		physicalop.PhysicalStreamAgg{}, physicalop.PhysicalHashAgg{},
+		physicalop.PhysicalHashJoin{}, physicalop.PhysicalMergeJoin{}, physicalop.PhysicalIndexJoin{},
+		physicalop.PhysicalIndexHashJoin{},
+		physicalop.PhysicalIndexReader{}, physicalop.PhysicalTableReader{}, physicalop.PhysicalIndexMergeReader{},
+		physicalop.PhysicalIndexLookUpReader{}, physicalop.PhysicalLocalIndexLookUp{},
+		physicalop.BatchPointGetPlan{}, physicalop.PointGetPlan{},
+		physicalop.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}, physicalop.PhysicalTableDual{},
+	}
+>>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
 	c := new(codeGen)
 	c.write(codeGenPlanCachePrefix)
 	for _, s := range structures {
@@ -72,23 +87,48 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 
 		fullFieldName := fmt.Sprintf("%v.%v", vType.String(), vType.Field(i).Name)
 		switch fullFieldName { // handle some fields specially
+<<<<<<< HEAD
 		case "core.PhysicalTableReader.TablePlans", "core.PhysicalIndexLookUpReader.TablePlans",
 			"core.PhysicalIndexMergeReader.TablePlans":
 			c.write("cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)")
 			continue
 		case "core.PhysicalIndexReader.IndexPlans", "core.PhysicalIndexLookUpReader.IndexPlans":
 			c.write("cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)")
+=======
+		case "physicalop.PhysicalTableReader.TablePlans", "physicalop.PhysicalIndexLookUpReader.TablePlans",
+			"physicalop.PhysicalIndexMergeReader.TablePlans":
+			c.write("cloned.TablePlans = FlattenListPushDownPlan(cloned.TablePlan)")
+			continue
+		case "physicalop.PhysicalIndexReader.IndexPlans":
+			c.write("cloned.IndexPlans = FlattenListPushDownPlan(cloned.IndexPlan)")
+			continue
+		case "physicalop.PhysicalIndexLookUpReader.IndexPlans":
+			c.write("if cloned.IndexLookUpPushDown {")
+			c.write("cloned.IndexPlans, cloned.IndexPlansUnNatureOrders = FlattenTreePushDownPlan(cloned.IndexPlan)")
+			c.write("} else {")
+			c.write("cloned.IndexPlans = FlattenListPushDownPlan(cloned.IndexPlan)")
+			c.write("}")
+>>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
 			continue
 		case "core.PhysicalIndexMergeReader.PartialPlans":
 			c.write("cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))")
+<<<<<<< HEAD
 			c.write("for i, plan := range cloned.partialPlans {")
 			c.write("cloned.PartialPlans[i] = flattenPushDownPlan(plan)")
+=======
+			c.write("for i, plan := range cloned.PartialPlansRaw {")
+			c.write("cloned.PartialPlans[i] = FlattenListPushDownPlan(plan)")
+>>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
 			c.write("}")
 			continue
 		}
 
 		switch f.Type.String() {
+<<<<<<< HEAD
 		case "[]int", "[]byte", "[]float", "[]bool", "[]string": // simple slice
+=======
+		case "[]int", "[]byte", "[]float", "[]bool", "[]uint32": // simple slice
+>>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
 			c.write("copy(cloned.%v, op.%v)", f.Name, f.Name)
 		case "core.physicalSchemaProducer", "core.basePhysicalAgg", "core.basePhysicalJoin":
@@ -162,6 +202,12 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = make(map[int64]*expression.Column, len(op.%v))", f.Name, f.Name)
 			c.write("for k, v := range op.%v {", f.Name)
 			c.write("cloned.%v[k] = v.Clone().(*expression.Column)", f.Name)
+			c.write("}}")
+		case "map[int]int":
+			c.write("if op.%v != nil {", f.Name)
+			c.write("cloned.%v = make(map[int]int, len(op.%v))", f.Name, f.Name)
+			c.write("for k, v := range op.%v {", f.Name)
+			c.write("cloned.%v[k] = v", f.Name)
 			c.write("}}")
 		default:
 			return nil, fmt.Errorf("can't generate Clone method for type %v in %v", f.Type.String(), vType.String())

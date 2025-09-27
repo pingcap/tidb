@@ -524,12 +524,19 @@ func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 		indexPlan:        t.indexPlan,
 		ExtraHandleCol:   t.extraHandleCol,
 		CommonHandleCols: t.commonHandleCols,
+<<<<<<< HEAD
 		expectedCnt:      t.expectCnt,
 		keepOrder:        t.keepOrder,
 	}.Init(ctx, t.tablePlan.QueryBlockOffset())
 	p.PlanPartInfo = t.physPlanPartInfo
 	setTableScanToTableRowIDScan(p.tablePlan)
 	p.SetStats(t.tablePlan.StatsInfo())
+=======
+		ExpectedCnt:      t.expectCnt,
+		KeepOrder:        t.keepOrder,
+		PlanPartInfo:     t.physPlanPartInfo,
+	}.Init(ctx, t.tablePlan.QueryBlockOffset(), t.indexLookUpPushDown)
+>>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
 	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
 	// the final agg would be broken. Please reference comments for the similar logic in
 	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
@@ -779,11 +786,15 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t base.Task) bool {
 		Offset: p.Offset,
 		Count:  p.Count,
 	}
-	originStats := ts.StatsInfo()
-	ts.SetStats(p.StatsInfo())
-	if originStats != nil {
-		// keep the original stats version
-		ts.StatsInfo().StatsVersion = originStats.StatsVersion
+	if originStats := ts.StatsInfo(); originStats.RowCount >= p.StatsInfo().RowCount {
+		// Only reset the table scan stats when its row estimation is larger than the limit count.
+		// When indexLookUp push down is enabled, some rows have been looked up in TiKV side,
+		// and the rows processed by the TiDB table scan may be less than the limit count.
+		ts.SetStats(p.StatsInfo())
+		if originStats != nil {
+			// keep the original stats version
+			ts.StatsInfo().StatsVersion = originStats.StatsVersion
+		}
 	}
 	reader.SetStats(p.StatsInfo())
 	if isProj {

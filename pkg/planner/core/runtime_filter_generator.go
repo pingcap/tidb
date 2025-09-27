@@ -69,7 +69,11 @@ func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan base.Physica
 		generator.childIdxForParentPhysicalPlan = 0
 		generator.GenerateRuntimeFilter(physicalPlan.tablePlan)
 		if physicalPlan.StoreType == kv.TiFlash {
+<<<<<<< HEAD
 			physicalPlan.TablePlans = flattenPushDownPlan(physicalPlan.tablePlan)
+=======
+			physicalPlan.TablePlans = physicalop.FlattenListPushDownPlan(physicalPlan.TablePlan)
+>>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
 		}
 	}
 

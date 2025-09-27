@@ -58,9 +58,15 @@ func (pe *projInjector) inject(plan base.PhysicalPlan) base.PhysicalPlan {
 		plan.Children()[i] = pe.inject(child)
 	}
 
+<<<<<<< HEAD
 	if tr, ok := plan.(*PhysicalTableReader); ok && tr.StoreType == kv.TiFlash {
 		tr.tablePlan = pe.inject(tr.tablePlan)
 		tr.TablePlans = flattenPushDownPlan(tr.tablePlan)
+=======
+	if tr, ok := plan.(*physicalop.PhysicalTableReader); ok && tr.StoreType == kv.TiFlash {
+		tr.TablePlan = pe.inject(tr.TablePlan)
+		tr.TablePlans = physicalop.FlattenListPushDownPlan(tr.TablePlan)
+>>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
 	}
 
 	switch p := plan.(type) {
