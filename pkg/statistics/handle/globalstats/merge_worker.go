@@ -150,7 +150,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool, v
 					count, _ := allHists[j].EqualRowCount(nil, datum, isIndex)
 					if count != 0 {
 						// Remove the value corresponding to encodedVal from the histogram.
-						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(statistics.TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(&datum, int64(count))
 					}
 					worker.shardMutex[j].Unlock()
 					if count != 0 {
