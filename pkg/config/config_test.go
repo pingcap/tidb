@@ -1182,6 +1182,25 @@ func TestTableColumnCountLimit(t *testing.T) {
 	checkValid(DefMaxOfTableColumnCountLimit, true)
 	checkValid(DefMaxOfTableColumnCountLimit+1, false)
 }
+func TestPluginAuditLog(t *testing.T) {
+	conf := NewConfig()
+	checkValid := func(bufferSize int, shouldBeValid bool) {
+		conf.Instance.PluginAuditLogBufferSize = bufferSize
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkValid(-1, false)
+	checkValid(MaxPluginAuditLogBufferSize, true)
+	checkValid(MaxPluginAuditLogBufferSize+1, false)
+
+	conf = NewConfig()
+	checkValid = func(flushInterval int, shouldBeValid bool) {
+		conf.Instance.PluginAuditLogFlushInterval = flushInterval
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkValid(-1, false)
+	checkValid(MaxPluginAuditLogFlushInterval, true)
+	checkValid(MaxPluginAuditLogFlushInterval+1, false)
+}
 
 func TestTokenLimit(t *testing.T) {
 	storeDir := t.TempDir()
