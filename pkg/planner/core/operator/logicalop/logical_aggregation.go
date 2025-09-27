@@ -29,8 +29,6 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -105,14 +103,14 @@ func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	condsToPush, ret := la.splitCondForAggregation(predicates)
-	_, _, err := la.BaseLogicalPlan.PredicatePushDown(condsToPush, opt)
+	_, _, err := la.BaseLogicalPlan.PredicatePushDown(condsToPush)
 	return ret, la, err
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	child := la.Children()[0]
 	used := expression.GetUsedList(la.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, la.Schema())
 	prunedColumns := make([]*expression.Column, 0)
@@ -134,13 +132,11 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 			allRemainFirstRow = false
 		}
 	}
-	logicaltrace.AppendColumnPruneTraceStep(la, prunedColumns, opt)
-	logicaltrace.AppendFunctionPruneTraceStep(la, prunedFunctions, opt)
 	selfUsedCols := make([]*expression.Column, 0, 5)
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = append(selfUsedCols, expression.ExtractColumnsFromExpressions(aggrFunc.Args, nil)...)
 		var cols []*expression.Column
-		aggrFunc.OrderByItems, cols = pruneByItems(la, aggrFunc.OrderByItems, opt)
+		aggrFunc.OrderByItems, cols = pruneByItems(la, aggrFunc.OrderByItems)
 		selfUsedCols = append(selfUsedCols, cols...)
 	}
 	if len(la.AggFuncs) == 0 || (!allFirstRow && allRemainFirstRow) {
@@ -182,9 +178,8 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 			la.GroupByItems = []expression.Expression{expression.NewOne()}
 		}
 	}
-	logicaltrace.AppendGroupByItemsPruneTraceStep(la, prunedGroupByItems, opt)
 	var err error
-	la.Children()[0], err = child.PruneColumns(selfUsedCols, opt)
+	la.Children()[0], err = child.PruneColumns(selfUsedCols)
 	if err != nil {
 		return nil, err
 	}

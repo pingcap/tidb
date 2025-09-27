@@ -137,26 +137,26 @@ func (p *BaseLogicalPlan) HashCode() []byte {
 }
 
 // PredicatePushDown implements LogicalPlan.<1st> interface.
-func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	if len(p.children) == 0 {
 		return predicates, p.self, nil
 	}
 	child := p.children[0]
-	rest, newChild, err := child.PredicatePushDown(predicates, opt)
+	rest, newChild, err := child.PredicatePushDown(predicates)
 	if err != nil {
 		return nil, p.self, err
 	}
-	AddSelection(p.self, newChild, rest, 0, opt)
+	AddSelection(p.self, newChild, rest, 0)
 	return nil, p.self, nil
 }
 
 // PruneColumns implements LogicalPlan.<2nd> interface.
-func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	if len(p.children) == 0 {
 		return p.self, nil
 	}
 	var err error
-	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
+	p.children[0], err = p.children[0].PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
@@ -179,16 +179,16 @@ func (p *BaseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Sch
 }
 
 // PushDownTopN implements the LogicalPlan.<5th> interface.
-func (p *BaseLogicalPlan) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	return pushDownTopNForBaseLogicalPlan(p, topNLogicalPlan, opt)
+func (p *BaseLogicalPlan) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
+	return pushDownTopNForBaseLogicalPlan(p, topNLogicalPlan)
 }
 
 // DeriveTopN implements the LogicalPlan.<6th> interface.
-func (p *BaseLogicalPlan) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *BaseLogicalPlan) DeriveTopN() base.LogicalPlan {
 	s := p.self
 	if s.SCtx().GetSessionVars().AllowDeriveTopN {
 		for i, child := range s.Children() {
-			newChild := child.DeriveTopN(opt)
+			newChild := child.DeriveTopN()
 			s.SetChild(i, newChild)
 		}
 	}
@@ -196,17 +196,17 @@ func (p *BaseLogicalPlan) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.
 }
 
 // PredicateSimplification implements the LogicalPlan.<7th> interface.
-func (p *BaseLogicalPlan) PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *BaseLogicalPlan) PredicateSimplification() base.LogicalPlan {
 	s := p.self
 	for i, child := range s.Children() {
-		newChild := child.PredicateSimplification(opt)
+		newChild := child.PredicateSimplification()
 		s.SetChild(i, newChild)
 	}
 	return s
 }
 
 // ConstantPropagation implements the LogicalPlan.<8th> interface.
-func (*BaseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int, _ *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+func (*BaseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int) (newRoot base.LogicalPlan) {
 	// Only LogicalJoin can apply constant propagation
 	// Other Logical plan do nothing
 	return nil

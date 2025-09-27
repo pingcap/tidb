@@ -23,8 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -76,14 +74,14 @@ func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	// Note that, grouping column related predicates can't be pushed down, since grouping column has nullability change after Expand OP itself.
 	// condition related with grouping column shouldn't be pushed down through it.
 	// currently, since expand is adjacent to aggregate, any filter above aggregate wanted to be push down through expand only have two cases:
 	// 		1. agg function related filters. (these condition is always above aggregate)
 	// 		2. group-by item related filters. (there condition is always related with grouping sets columns, which can't be pushed down)
 	// As a whole, we banned all the predicates pushing-down logic here that remained in Expand OP, and constructing a new selection above it if any.
-	remained, child, err := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
+	remained, child, err := p.BaseLogicalPlan.PredicatePushDown(nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -96,7 +94,7 @@ func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, op
 // the level projection expressions construction is left to the last logical optimize rule)
 //
 // so when do the rule_column_pruning here, we just prune the schema is enough.
-func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	// Expand need those extra redundant distinct group by columns projected from underlying projection.
 	// distinct GroupByCol must be used by aggregate above, to make sure this, append DistinctGroupByCol again.
 	parentUsedCols = append(parentUsedCols, p.DistinctGroupByCol...)
@@ -109,10 +107,9 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *o
 			p.SetOutputNames(slices.Delete(p.OutputNames(), i, i+1))
 		}
 	}
-	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
 	// Underlying still need to keep the distinct group by columns and parent used columns.
 	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)
+	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}

@@ -15,11 +15,8 @@
 package core
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 
-	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -219,7 +216,6 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 				proj.Exprs[i] = foldedExpr
 			}
 			p.Children()[0] = child.Children()[0]
-			appendDupProjEliminateTraceStep(proj, child, opt)
 		}
 	}
 
@@ -230,41 +226,10 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 	for i, col := range proj.Schema().Columns {
 		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
 	}
-	appendProjEliminateTraceStep(proj, opt)
 	return p.Children()[0]
 }
 
 // Name implements the logicalOptRule.<1st> interface.
 func (*ProjectionEliminator) Name() string {
 	return "projection_eliminate"
-}
-
-func appendDupProjEliminateTraceStep(parent, child *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
-	ectx := parent.SCtx().GetExprCtx().GetEvalCtx()
-	action := func() string {
-		buffer := bytes.NewBufferString(
-			fmt.Sprintf("%v_%v is eliminated, %v_%v's expressions changed into[", child.TP(), child.ID(), parent.TP(), parent.ID()))
-		for i, expr := range parent.Exprs {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(expr.StringWithCtx(ectx, perrors.RedactLogDisable))
-		}
-		buffer.WriteString("]")
-		return buffer.String()
-	}
-	reason := func() string {
-		return fmt.Sprintf("%v_%v's child %v_%v is redundant", parent.TP(), parent.ID(), child.TP(), child.ID())
-	}
-	opt.AppendStepToCurrent(child.ID(), child.TP(), reason, action)
-}
-
-func appendProjEliminateTraceStep(proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
-	reason := func() string {
-		return fmt.Sprintf("%v_%v's Exprs are all Columns", proj.TP(), proj.ID())
-	}
-	action := func() string {
-		return fmt.Sprintf("%v_%v is eliminated", proj.TP(), proj.ID())
-	}
-	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }

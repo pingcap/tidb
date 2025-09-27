@@ -22,7 +22,6 @@ import (
 	"math/bits"
 	"slices"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -37,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
@@ -154,7 +152,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 // HashCode inherits the BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
-func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
@@ -166,7 +164,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 			p.Children()[0].Schema(), p.Children()[1].Schema(), false, nil)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
-			AppendTableDualTraceStep(p, dual, predicates, opt)
 			return ret, dual, nil
 		}
 		// Handle where conditions
@@ -187,7 +184,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		predicates = p.outerJoinPropConst(predicates, p.isVaildConstantPropagationExpressionForRightOuterJoin)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
-			AppendTableDualTraceStep(p, dual, predicates, opt)
 			return ret, dual, nil
 		}
 		// Handle where conditions
@@ -216,7 +212,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
-			AppendTableDualTraceStep(p, dual, tempCond, opt)
 			return ret, dual, nil
 		}
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
@@ -234,7 +229,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
-			AppendTableDualTraceStep(p, dual, predicates, opt)
 			return ret, dual, nil
 		}
 		// `predicates` should only contain left conditions or constant filters.
@@ -256,16 +250,16 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	leftChild := children[0]
 	rightCond = constraint.DeleteTrueExprsBySchema(evalCtx, rightChild.Schema(), rightCond)
 	leftCond = constraint.DeleteTrueExprsBySchema(evalCtx, leftChild.Schema(), leftCond)
-	leftRet, lCh, err := leftChild.PredicatePushDown(leftCond, opt)
+	leftRet, lCh, err := leftChild.PredicatePushDown(leftCond)
 	if err != nil {
 		return nil, nil, err
 	}
-	rightRet, rCh, err := rightChild.PredicatePushDown(rightCond, opt)
+	rightRet, rCh, err := rightChild.PredicatePushDown(rightCond)
 	if err != nil {
 		return nil, nil, err
 	}
-	AddSelection(p, lCh, leftRet, 0, opt)
-	AddSelection(p, rCh, rightRet, 1, opt)
+	AddSelection(p, lCh, leftRet, 0)
+	AddSelection(p, rCh, rightRet, 1)
 	p.updateEQCond()
 	ruleutil.BuildKeyInfoPortal(p)
 	newnChild, err := p.SemiJoinRewrite()
@@ -381,16 +375,16 @@ func specialNullRejectedCase1(ctx planctx.PlanContext, schema *expression.Schema
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
-func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	leftCols, rightCols := p.ExtractUsedCols(parentUsedCols)
 
 	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(leftCols, opt)
+	p.Children()[0], err = p.Children()[0].PruneColumns(leftCols)
 	if err != nil {
 		return nil, err
 	}
 
-	p.Children()[1], err = p.Children()[1].PruneColumns(rightCols, opt)
+	p.Children()[1], err = p.Children()[1].PruneColumns(rightCols)
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +394,7 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 		joinCol := p.Schema().Columns[len(p.Schema().Columns)-1]
 		parentUsedCols = append(parentUsedCols, joinCol)
 	}
-	p.InlineProjection(parentUsedCols, opt)
+	p.InlineProjection(parentUsedCols)
 	return p, nil
 }
 
@@ -469,7 +463,7 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 }
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
-func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
@@ -477,13 +471,13 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 	topnEliminated := false
 	switch p.JoinType {
 	case base.LeftOuterJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
-		p.Children()[0], topnEliminated = p.pushDownTopNToChild(topN, 0, opt)
-		p.Children()[1] = p.Children()[1].PushDownTopN(nil, opt)
+		p.Children()[0], topnEliminated = p.pushDownTopNToChild(topN, 0)
+		p.Children()[1] = p.Children()[1].PushDownTopN(nil)
 	case base.RightOuterJoin:
-		p.Children()[1], topnEliminated = p.pushDownTopNToChild(topN, 1, opt)
-		p.Children()[0] = p.Children()[0].PushDownTopN(nil, opt)
+		p.Children()[1], topnEliminated = p.pushDownTopNToChild(topN, 1)
+		p.Children()[0] = p.Children()[0].PushDownTopN(nil)
 	default:
-		return p.BaseLogicalPlan.PushDownTopN(topN, opt)
+		return p.BaseLogicalPlan.PushDownTopN(topN)
 	}
 
 	// The LogicalJoin may be also a LogicalApply. So we must use self to set parents.
@@ -498,7 +492,7 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 			// If the topN has no order by items, simply return the join itself.
 			return p.Self()
 		}
-		return topN.AttachChild(p.Self(), opt)
+		return topN.AttachChild(p.Self())
 	}
 	return p.Self()
 }
@@ -560,7 +554,7 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 */
 // Return nil if the root of plan has not been changed
 // Return new root if the root of plan is changed to selection
-func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentChildIdx int) (newRoot base.LogicalPlan) {
 	// step1: get constant predicate from left or right according to the JoinType
 	var getConstantPredicateFromLeft bool
 	var getConstantPredicateFromRight bool
@@ -587,7 +581,7 @@ func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentCh
 	}
 
 	// step2: add selection above of LogicalJoin
-	return addCandidateSelection(p, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
+	return addCandidateSelection(p, currentChildIdx, parentPlan, candidateConstantPredicates)
 }
 
 // PullUpConstantPredicates inherits the BaseLogicalPlan.LogicalPlan.<9th> implementation.
@@ -1261,16 +1255,16 @@ func (p *LogicalJoin) MergeSchema() {
 // pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.
 // When it's outer join and there's unique key information. The TopN can be totally pushed down to the join.
 // We just need reserve the ORDER informaion
-func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool) {
+func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) (base.LogicalPlan, bool) {
 	if topN == nil {
-		return p.Children()[idx].PushDownTopN(nil, opt), false
+		return p.Children()[idx].PushDownTopN(nil), false
 	}
 
 	for _, by := range topN.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
 		for _, col := range cols {
 			if !p.Children()[idx].Schema().Contains(col) {
-				return p.Children()[idx].PushDownTopN(nil, opt), false
+				return p.Children()[idx].PushDownTopN(nil), false
 			}
 		}
 	}
@@ -1320,8 +1314,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 	for i := range topN.ByItems {
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()
 	}
-	appendTopNPushDownJoinTraceStep(p, newTopN, idx, opt)
-	return p.Children()[idx].PushDownTopN(newTopN, opt), selfEliminated
+	return p.Children()[idx].PushDownTopN(newTopN), selfEliminated
 }
 
 // Add a new selection between parent plan and current plan with candidate predicates
@@ -1343,7 +1336,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 // If the currentPlan at the top of query plan, return new root plan (selection)
 // Else return nil
 func addCandidateSelection(currentPlan base.LogicalPlan, currentChildIdx int, parentPlan base.LogicalPlan,
-	candidatePredicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+	candidatePredicates []expression.Expression) (newRoot base.LogicalPlan) {
 	// generate a new selection for candidatePredicates
 	selection := LogicalSelection{Conditions: candidatePredicates}.Init(currentPlan.SCtx(), currentPlan.QueryBlockOffset())
 	// add selection above of p
@@ -1353,7 +1346,6 @@ func addCandidateSelection(currentPlan base.LogicalPlan, currentChildIdx int, pa
 		parentPlan.SetChild(currentChildIdx, selection)
 	}
 	selection.SetChildren(currentPlan)
-	AppendAddSelectionTraceStep(parentPlan, currentPlan, selection, opt)
 	if parentPlan == nil {
 		return newRoot
 	}
@@ -1983,50 +1975,6 @@ func (p *LogicalJoin) SemiJoinRewrite() (base.LogicalPlan, error) {
 	proj.SetChildren(innerJoin)
 	proj.SetSchema(p.Children()[0].Schema().Clone())
 	return proj, nil
-}
-
-func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) {
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	action := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v is added and pushed into %v_%v's ",
-			topN.TP(), topN.ID(), p.TP(), p.ID()))
-		if idx == 0 {
-			buffer.WriteString("left ")
-		} else {
-			buffer.WriteString("right ")
-		}
-		buffer.WriteString("table")
-		return buffer.String()
-	}
-	reason := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's joinType is %v, and all ByItems[", p.TP(), p.ID(), p.JoinType.String()))
-		for i, item := range topN.ByItems {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(item.StringWithCtx(ectx, errors.RedactLogDisable))
-		}
-		buffer.WriteString("] contained in ")
-		if idx == 0 {
-			buffer.WriteString("left ")
-		} else {
-			buffer.WriteString("right ")
-		}
-		buffer.WriteString("table")
-		return buffer.String()
-	}
-	opt.AppendStepToCurrent(p.ID(), p.TP(), reason, action)
-}
-
-// AppendAddSelectionTraceStep appends a trace step for adding a selection operator.
-func AppendAddSelectionTraceStep(p base.LogicalPlan, child base.LogicalPlan, sel *LogicalSelection, opt *optimizetrace.LogicalOptimizeOp) {
-	reason := func() string {
-		return ""
-	}
-	action := func() string {
-		return fmt.Sprintf("add %v_%v to connect %v_%v and %v_%v", sel.TP(), sel.ID(), p.TP(), p.ID(), child.TP(), child.ID())
-	}
-	opt.AppendStepToCurrent(sel.ID(), sel.TP(), reason, action)
 }
 
 // containDifferentJoinTypes checks whether `PreferJoinType` contains different

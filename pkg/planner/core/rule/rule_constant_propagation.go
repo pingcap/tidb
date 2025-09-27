@@ -54,7 +54,7 @@ type ConstantPropagationSolver struct {
 func (cp *ConstantPropagationSolver) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	// constant propagation root plan
-	newRoot := p.ConstantPropagation(nil, 0, opt)
+	newRoot := p.ConstantPropagation(nil, 0)
 
 	// recursive optimize
 	for i, children := range p.Children() {
@@ -74,7 +74,7 @@ func (cp *ConstantPropagationSolver) execOptimize(currentPlan base.LogicalPlan, 
 		return
 	}
 	// constant propagation
-	currentPlan.ConstantPropagation(parentPlan, currentChildIdx, opt)
+	currentPlan.ConstantPropagation(parentPlan, currentChildIdx)
 	// recursive optimize
 	for i, children := range currentPlan.Children() {
 		cp.execOptimize(children, currentPlan, i, opt)

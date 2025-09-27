@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -51,7 +50,7 @@ type aggregationEliminateChecker struct {
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
-func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) *logicalop.LogicalProjection {
+func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.LogicalAggregation) *logicalop.LogicalProjection {
 	for _, af := range agg.AggFuncs {
 		// TODO(issue #9968): Actually, we can rewrite GROUP_CONCAT when all the
 		// arguments it accepts are promised to be NOT-NULL.
@@ -68,11 +67,9 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 	}
 	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
 	coveredByUniqueKey := false
-	var uniqueKey expression.KeyInfo
 	for _, key := range agg.Children()[0].Schema().PKOrUK {
 		if schemaByGroupby.ColumnsIndices(key) != nil {
 			coveredByUniqueKey = true
-			uniqueKey = key
 			break
 		}
 	}
@@ -83,7 +80,6 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 		// GroupByCols has unique key, so this aggregation can be removed.
 		if ok, proj := ConvertAggToProj(agg, agg.Schema()); ok {
 			proj.SetChildren(agg.Children()[0])
-			appendAggregationEliminateTraceStep(agg, proj, uniqueKey, opt)
 			return proj
 		}
 	}
@@ -92,7 +88,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 
 // tryToEliminateDistinct will eliminate distinct in the aggregation function if the aggregation args
 // have unique key column. see detail example in https://github.com/pingcap/tidb/issues/23436
-func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
+func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *logicalop.LogicalAggregation) {
 	for _, af := range agg.AggFuncs {
 		if af.HasDistinct {
 			cols := make([]*expression.Column, 0, len(af.Args))
@@ -108,50 +104,24 @@ func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *logicalop.Logica
 			if canEliminate {
 				distinctByUniqueKey := false
 				schemaByDistinct := expression.NewSchema(cols...)
-				var uniqueKey expression.KeyInfo
 				for _, key := range agg.Children()[0].Schema().PKOrUK {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
-						uniqueKey = key
 						break
 					}
 				}
 				for _, key := range agg.Children()[0].Schema().NullableUK {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
-						uniqueKey = key
 						break
 					}
 				}
 				if distinctByUniqueKey {
 					af.HasDistinct = false
-					appendDistinctEliminateTraceStep(agg, uniqueKey, af, opt)
 				}
 			}
 		}
 	}
-}
-
-func appendAggregationEliminateTraceStep(agg *logicalop.LogicalAggregation, proj *logicalop.LogicalProjection, uniqueKey expression.KeyInfo, opt *optimizetrace.LogicalOptimizeOp) {
-	reason := func() string {
-		return fmt.Sprintf("%s is a unique key", uniqueKey.String())
-	}
-	action := func() string {
-		return fmt.Sprintf("%v_%v is simplified to a %v_%v", agg.TP(), agg.ID(), proj.TP(), proj.ID())
-	}
-
-	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
-}
-
-func appendDistinctEliminateTraceStep(agg *logicalop.LogicalAggregation, uniqueKey expression.KeyInfo, af *aggregation.AggFuncDesc,
-	opt *optimizetrace.LogicalOptimizeOp) {
-	reason := func() string {
-		return fmt.Sprintf("%s is a unique key", uniqueKey.String())
-	}
-	action := func() string {
-		return fmt.Sprintf("%s(distinct ...) is simplified to %s(...)", af.Name, af.Name)
-	}
-	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
 // CheckCanConvertAggToProj check whether a special old aggregation (which has already been pushed down) to projection.
@@ -273,8 +243,8 @@ func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan
 	if !ok {
 		return p, planChanged, nil
 	}
-	a.tryToEliminateDistinct(agg, opt)
-	if proj := a.tryToEliminateAggregation(agg, opt); proj != nil {
+	a.tryToEliminateDistinct(agg)
+	if proj := a.tryToEliminateAggregation(agg); proj != nil {
 		return proj, planChanged, nil
 	}
 	return p, planChanged, nil

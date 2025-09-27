@@ -29,9 +29,9 @@ type ColumnPruner struct {
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (*ColumnPruner) Optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*ColumnPruner) Optimize(_ context.Context, lp base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	lp, err := lp.PruneColumns(slices.Clone(lp.Schema().Columns), opt)
+	lp, err := lp.PruneColumns(slices.Clone(lp.Schema().Columns))
 	if err != nil {
 		return nil, planChanged, err
 	}

@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -50,7 +49,7 @@ type SkewDistinctAggRewriter struct {
 // - The aggregate has 1 and only 1 distinct aggregate function (limited to count, avg, sum)
 //
 // This rule is disabled by default. Use tidb_opt_skew_distinct_agg to enable the rule.
-func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalAggregation, _ *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// only group aggregate is applicable
 	if len(agg.GroupByItems) == 0 {
 		return nil
@@ -211,7 +210,6 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalA
 	topAgg.SetSchema(topAggSchema)
 
 	if len(cntIndexes) == 0 {
-		appendSkewDistinctAggRewriteTraceStep(agg, topAgg, opt)
 		return topAgg
 	}
 
@@ -234,7 +232,6 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalA
 	}
 	proj.SetSchema(agg.Schema().Clone())
 	proj.SetChildren(topAgg)
-	appendSkewDistinctAggRewriteTraceStep(agg, proj, opt)
 	return proj
 }
 
@@ -264,17 +261,6 @@ func (*SkewDistinctAggRewriter) isQualifiedAgg(aggFunc *aggregation.AggFuncDesc)
 	default:
 		return false
 	}
-}
-
-func appendSkewDistinctAggRewriteTraceStep(agg *logicalop.LogicalAggregation, result base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
-	reason := func() string {
-		return fmt.Sprintf("%v_%v has a distinct agg function", agg.TP(), agg.ID())
-	}
-	action := func() string {
-		return fmt.Sprintf("%v_%v is rewritten to a %v_%v", agg.TP(), agg.ID(), result.TP(), result.ID())
-	}
-
-	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
