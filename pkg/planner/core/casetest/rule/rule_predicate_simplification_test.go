@@ -54,6 +54,7 @@ func TestPredicateSimplification(tt *testing.T) {
     c2 VARCHAR(64) NOT NULL,
     PRIMARY KEY (c1, c2)
 );`)
+		tk.MustExec(`create table t6(a int, b int, c int, d int, index(a,b));`)
 		tk.MustExec(`CREATE TABLE t7c899916 (
   col_37 text COLLATE gbk_bin DEFAULT NULL,
   col_38 datetime DEFAULT CURRENT_TIMESTAMP,
