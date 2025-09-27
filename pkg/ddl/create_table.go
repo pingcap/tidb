@@ -806,7 +806,7 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCh
 		tbInfo.PreSplitRegions = ctx.GetPreSplitRegions()
 	}
 
-	if err = handleTableOptions(s.Options, tbInfo); err != nil {
+	if err = handleTableOptions(ctx, s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -906,12 +906,100 @@ func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (shardBits, rangeBit
 }
 
 // handleTableOptions updates tableInfo according to table options.
-func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
+func handleTableOptions(ctx *metabuild.Context, options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	var ttlOptionsHandled bool
 
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:
+			var autoIncrCol *model.ColumnInfo
+			for _, col := range tbInfo.Columns {
+				if mysql.HasAutoIncrementFlag(col.GetFlag()) {
+					autoIncrCol = col
+					break
+				}
+			}
+
+			if autoIncrCol != nil {
+				isUnsigned := mysql.HasUnsignedFlag(autoIncrCol.GetFlag())
+				var maxValue uint64
+				var minValue int64
+
+				switch autoIncrCol.GetType() {
+				// TINYINT
+				case mysql.TypeTiny:
+					if isUnsigned {
+						maxValue = math.MaxUint8
+						minValue = 0
+					} else {
+						maxValue = math.MaxInt8
+						minValue = math.MinInt8
+					}
+				// SMALLINT
+				case mysql.TypeShort:
+					if isUnsigned {
+						maxValue = math.MaxUint16
+						minValue = 0
+					} else {
+						maxValue = math.MaxInt16
+						minValue = math.MinInt16
+					}
+				// MEDIUMINT
+				case mysql.TypeInt24:
+					if isUnsigned {
+						maxValue = mysql.MaxUint24
+						minValue = 0
+					} else {
+						maxValue = mysql.MaxInt24
+						minValue = mysql.MinInt24
+					}
+				// INT
+				case mysql.TypeLong:
+					if isUnsigned {
+						maxValue = math.MaxUint32
+						minValue = 0
+					} else {
+						maxValue = math.MaxInt32
+						minValue = math.MinInt32
+					}
+				// BIGINT
+				case mysql.TypeLonglong:
+					if isUnsigned {
+						maxValue = math.MaxUint64
+						minValue = 0
+					} else {
+						maxValue = math.MaxInt64
+						minValue = math.MinInt64
+					}
+				}
+
+				// Check for overflow (value too large)
+				if maxValue > 0 && op.UintValue > maxValue {
+					err := types.ErrWarnDataOutOfRange.GenWithStackByArgs(autoIncrCol.Name.O, 1)
+					if ctx.GetSQLMode().HasStrictMode() {
+						return err
+					}
+					ctx.AppendWarning(err)
+				}
+
+				// Check for underflow (value too small for signed types)
+				// Note: Since op.UintValue is uint64, negative values are represented as large positive numbers
+				// For signed types, check if the value when cast to int64 is below the minimum
+				//
+				// IMPORTANT: This validation code is kept for defensive programming, but cannot be
+				// fully tested via SQL because TiDB parser currently does not support negative
+				// AUTO_INCREMENT literals (unlike MySQL). This is a known difference from MySQL.
+				if !isUnsigned {
+					signedValue := int64(op.UintValue)
+					if signedValue < minValue {
+						err := types.ErrWarnDataOutOfRange.GenWithStackByArgs(autoIncrCol.Name.O, 1)
+						if ctx.GetSQLMode().HasStrictMode() {
+							return err
+						}
+						ctx.AppendWarning(err)
+					}
+				}
+			}
 			tbInfo.AutoIncID = int64(op.UintValue)
 		case ast.TableOptionAutoIdCache:
 			if op.UintValue > uint64(math.MaxInt64) {
