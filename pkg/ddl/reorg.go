@@ -1127,8 +1127,8 @@ func (r *reorgHandler) RemoveReorgElementFailPoint(job *model.Job) error {
 }
 
 // RemoveDDLReorgHandle removes the job reorganization related handles.
-func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Element) error {
-	return removeDDLReorgHandle(r.s, job, elements)
+func (r *reorgHandler) RemoveDDLReorgHandle(jobID int64, elements []*meta.Element) error {
+	return removeDDLReorgHandle(r.s, jobID, elements)
 }
 
 // cleanupDDLReorgHandles removes the job reorganization related handles.
