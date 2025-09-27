@@ -157,6 +157,9 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	p.allJoinLeaf = getAllJoinLeaf(p)
 	switch p.JoinType {
