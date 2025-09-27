@@ -48,6 +48,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/breakpoint",
         "//pkg/util/chunk",
+        "//pkg/util/execdetails",
         "//pkg/util/gctuner",
         "//pkg/util/intest",
         "//pkg/util/logutil",
