@@ -1408,6 +1408,30 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 	}
 }
 
+// IsTableOrIndexReaderByAutoCommit returns returns true when meets following conditions:
+//  1. ctx is auto commit tagged
+//  2. session is not InTxn
+//  3. plan is table reader or index reader.
+func IsTableOrIndexReaderByAutoCommit(vars *variable.SessionVars, p base.Plan) bool {
+	if !IsAutoCommitTxn(vars) {
+		return false
+	}
+	for {
+		switch x := p.(type) {
+		case *PhysicalIndexReader:
+			return x.StatsCount() < 1000
+		case *PhysicalTableReader:
+			return x.StatsCount() < 1000
+		case *PhysicalProjection:
+			p = x.Children()[0]
+		case *PhysicalStreamAgg:
+			p = x.Children()[0]
+		default:
+			return false
+		}
+	}
+}
+
 // IsAutoCommitTxn checks if session is in autocommit mode and not InTxn
 // used for fast plan like point get
 func IsAutoCommitTxn(vars *variable.SessionVars) bool {

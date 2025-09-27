@@ -210,6 +210,7 @@ type IndexReaderExecutor struct {
 	kvRanges         []kv.KeyRange
 	dagPB            *tipb.DAGRequest
 	startTS          uint64
+	getStartTS       func(bool) (uint64, error)
 	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
@@ -333,6 +334,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 	builder.SetKeyRanges(r).
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
+		SetLazyStartTs(e.getStartTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
@@ -387,6 +389,12 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			return err
 		}
 	} else {
+		if e.startTS == 0 && e.getStartTS != nil {
+			e.startTS, err = e.getStartTS(false)
+			if err != nil {
+				return err
+			}
+		}
 		kvReqs := make([]*kv.Request, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {
 			kvReq, err := e.buildKVReq([]kv.KeyRange{kvRange})

@@ -96,13 +96,13 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, op
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars, option)
 	}
-	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
 	ctx = interceptor.WithRPCInterceptor(ctx, interceptor.GetRPCInterceptorFromCtx(ctx))
 	it, errRes := c.BuildCopIterator(ctx, req, vars, option)
 	if errRes != nil {
 		return errRes
 	}
+	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	if ctx.Value(util.RUDetailsCtxKey) == nil {
 		ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
@@ -182,6 +182,13 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	tidbmetrics.DistSQLCoprClosestReadCounter.WithLabelValues(reqType).Inc()
 	if err != nil {
 		return nil, copErrorResponse{err}
+	}
+	if req.StartTs == 0 && req.LazyStartTs != nil {
+		startTS, err := req.LazyStartTs(len(tasks) <= 1)
+		if err != nil {
+			return nil, copErrorResponse{err}
+		}
+		req.StartTs = startTS
 	}
 	it := &copIterator{
 		store:            c.store,
@@ -341,6 +348,14 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	cmdType := tikvrpc.CmdCop
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
+	}
+	if req.StartTs == uint64(math.MaxUint64) && req.LazyStartTs != nil {
+		// When build retry cop task which use max uint64 as startTs, we need to use a normal tso.
+		var err error
+		req.StartTs, err = req.LazyStartTs(false)
+		if err != nil {
+			return nil, err
+		}
 	}
 	rangesLen := ranges.Len()
 	// something went wrong, disable hints to avoid out of range index.

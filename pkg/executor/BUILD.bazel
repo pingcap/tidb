@@ -195,6 +195,7 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
+        "//pkg/sessiontxn/isolation",
         "//pkg/sessiontxn/staleread",
         "//pkg/statistics",
         "//pkg/statistics/handle",
