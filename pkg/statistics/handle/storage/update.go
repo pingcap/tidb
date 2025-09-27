@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -57,13 +57,13 @@ func UpdateStatsVersion(ctx context.Context, sctx sessionctx.Context) error {
 
 // DeltaUpdate is the delta update for stats meta.
 type DeltaUpdate struct {
-	Delta    variable.TableDelta
+	Delta    stmtctx.TableDelta
 	TableID  int64
 	IsLocked bool
 }
 
 // NewDeltaUpdate creates a new DeltaUpdate.
-func NewDeltaUpdate(tableID int64, delta variable.TableDelta, isLocked bool) *DeltaUpdate {
+func NewDeltaUpdate(tableID int64, delta stmtctx.TableDelta, isLocked bool) *DeltaUpdate {
 	return &DeltaUpdate{
 		Delta:    delta,
 		TableID:  tableID,
