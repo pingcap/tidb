@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/types"
@@ -796,7 +796,7 @@ func newSelRespChannelIter(result *selectResult, channel int) (*selRespChannelIt
 		fieldTypes:     fieldTypes,
 		encodeType:     encodeType,
 		chkData:        chkData,
-		reserveChkSize: vardef.DefInitChunkSize,
+		reserveChkSize: variable.DefInitChunkSize,
 	}, nil
 }
 
