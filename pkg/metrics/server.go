@@ -45,6 +45,17 @@ var (
 	// Eventkill occurs when the server.Kill() function is called.
 	EventKill = "kill"
 
+	PlanTableFullScanCounter        *prometheus.CounterVec
+	PlanIndexFullScanCounter        *prometheus.CounterVec
+	PlanTableScanRowsCounter        *prometheus.CounterVec
+	PlanIndexScanRowsCounter        *prometheus.CounterVec
+	PlanTableScanSelectivityCounter *prometheus.CounterVec
+	PlanIndexScanSelectivityCounter *prometheus.CounterVec
+	PlanKVReqCounter                *prometheus.CounterVec
+	PlanExecutionTimeCounter        *prometheus.CounterVec
+	PlanRiskCounter                 *prometheus.CounterVec
+	PlanUnstableCounter             *prometheus.GaugeVec
+
 	ServerEventCounter              *prometheus.CounterVec
 	TimeJumpBackCounter             prometheus.Counter
 	PlanCacheCounter                *prometheus.CounterVec
@@ -422,6 +433,86 @@ func InitServerMetrics() {
 			Name:      "active_users",
 			Help:      "The total count of active user.",
 		})
+
+	PlanTableFullScanCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_table_full_scan_total",
+			Help:      "Counter of table full scan.",
+		}, []string{LblType})
+
+	PlanIndexFullScanCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_index_full_scan_total",
+			Help:      "Counter of index full scan.",
+		}, []string{LblType})
+
+	PlanTableScanRowsCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_table_scan_rows_total",
+			Help:      "Counter of table scans with different scan rows.",
+		}, []string{LblType})
+
+	PlanIndexScanRowsCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_index_scan_rows_total",
+			Help:      "Counter of index scans with different scan rows.",
+		}, []string{LblType})
+
+	PlanTableScanSelectivityCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_table_scan_selectivity_total",
+			Help:      "Counter of table scans with different scan selectivity.",
+		}, []string{LblType})
+
+	PlanIndexScanSelectivityCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_index_scan_selectivity_total",
+			Help:      "Counter of index scans with different scan selectivity.",
+		}, []string{LblType})
+
+	PlanKVReqCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_kv_request_total",
+			Help:      "Counter of index scans with different kv request count.",
+		}, []string{LblType})
+
+	PlanExecutionTimeCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_execution_time_total",
+			Help:      "Counter of queries with different levels of execution time.",
+		}, []string{LblType})
+
+	PlanRiskCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_risk_total",
+			Help:      "Counter of risky queries with different risks.",
+		}, []string{LblType})
+
+	PlanUnstableCounter = metricscommon.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_unstable_total",
+			Help:      "Counter of unstable queries with different numbers of plans",
+		}, []string{LblType})
 }
 
 // ExecuteErrorToLabel converts an execute error to label.

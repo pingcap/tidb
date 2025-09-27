@@ -73,7 +73,7 @@ func TestIndexUsageReporter(t *testing.T) {
 		ExecutorId:      &executorID,
 		Concurrency:     &zero,
 	})
-	reporter.ReportCopIndexUsage(tableID, tableID, indexID, planID)
+	reporter.ReportCopIndexUsage(tableID, tableID, indexID, planID, false)
 
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()
