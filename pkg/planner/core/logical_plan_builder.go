@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -4262,6 +4263,44 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 	return version
 }
 
+// buildTableForAdminCheckSQL make a copy of table info if necessary.
+// Since we want to utilize MVIndex/prefix index/virtual column to read the data in FAST ADMIN CHECK,
+// to prevent from adding many hacky code in planner, we create a mock table info without these meta.
+// So we can guarantee to use index only scan for index SQL in FAST ADMIN CHECK.
+func buildTableForAdminCheckSQL(tbl table.Table) (table.Table, error) {
+	tblInfo := tbl.Meta()
+
+	// If table contains any index column with prefix length/hidden column/MVIndex, ,
+	needRebuildInfo := false
+	for _, idx := range tblInfo.Indices {
+		if idx.MVIndex {
+			needRebuildInfo = true
+		}
+		for _, col := range idx.Columns {
+			if col.Length != types.UnspecifiedLength || tblInfo.Columns[col.Offset].Hidden {
+				needRebuildInfo = true
+			}
+		}
+	}
+
+	if !needRebuildInfo {
+		return tbl, nil
+	}
+
+	mockInfo := tbl.Meta().Clone()
+	for _, idx := range mockInfo.Indices {
+		idx.MVIndex = false
+		for _, col := range idx.Columns {
+			col.Length = types.UnspecifiedLength
+			tblCol := mockInfo.Columns[col.Offset]
+			tblCol.FieldType.SetArray(false)
+			tblCol.Hidden = false
+		}
+	}
+
+	return tables.TableFromMeta(autoid.NewAllocators(false, nil), mockInfo)
+}
+
 // tryBuildCTE considers the input tn as a reference to a CTE and tries to build the logical plan for it like building
 // DataSource for normal tables.
 // tryBuildCTE will push an entry into handleHelper when successful.
@@ -4461,6 +4500,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	tbl, err := is.TableByName(ctx, dbName, tn.Name)
 	if err != nil {
 		return nil, err
+	}
+
+	if kv.GetInternalSourceType(ctx) == kv.InternalTxnAdmin {
+		if tbl, err = buildTableForAdminCheckSQL(tbl); err != nil {
+			return nil, err
+		}
 	}
 
 	tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(ctx, b.ctx, dbName, tbl, b.is)
