@@ -31,7 +31,6 @@ import (
 func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
-	version := 1
 	killer := sqlkiller.SQLKiller{}
 
 	// Prepare TopNs.
@@ -53,8 +52,16 @@ func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 		topNs = append(topNs, topN)
 	}
 
+	// Prepare Hists.
+	hists := make([]*statistics.Histogram, 0, 10)
+	for i := 0; i < 10; i++ {
+		// Construct Hist
+		h := statistics.NewHistogram(1, 0, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
+		hists = append(hists, h)
+	}
+
 	// Test merge 2 topN with nil hists.
-	globalTopN, leftTopN, _, err := MergePartTopN2GlobalTopN(loc, version, topNs, 2, nil, false, &killer)
+	globalTopN, leftTopN, _, err := MergePartTopN2GlobalTopN(loc, topNs, 2, hists, false, &killer)
 	require.NoError(t, err)
 	require.Len(t, globalTopN.TopN, 2, "should only have 2 topN")
 	require.Equal(t, uint64(50), globalTopN.TotalCount(), "should have 50 rows")
@@ -64,7 +71,6 @@ func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
-	version := 1
 	killer := sqlkiller.SQLKiller{}
 
 	// Prepare TopNs.
@@ -105,7 +111,7 @@ func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 	}
 
 	// Test merge 2 topN.
-	globalTopN, leftTopN, _, err := MergePartTopN2GlobalTopN(loc, version, topNs, 2, hists, false, &killer)
+	globalTopN, leftTopN, _, err := MergePartTopN2GlobalTopN(loc, topNs, 2, hists, false, &killer)
 	require.NoError(t, err)
 	require.Len(t, globalTopN.TopN, 2, "should only have 2 topN")
 	require.Equal(t, uint64(55), globalTopN.TotalCount(), "should have 55")
