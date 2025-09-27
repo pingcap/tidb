@@ -127,6 +127,7 @@ type lookUpJoinTask struct {
 	encodedLookUpKeys []*chunk.Chunk
 	lookupMap         *mvmap.MVMap
 	matchedInners     []chunk.Row
+	innerExec         exec.Executor
 
 	doneCh   chan error
 	cursor   chunk.RowPtr
@@ -554,7 +555,7 @@ func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) err
 	if err != nil {
 		return err
 	}
-	err = iw.fetchInnerResults(ctx, task, lookUpContents)
+	err = iw.fetchInnerResults(ctx, task, lookUpContents, -1)
 	if err != nil {
 		return err
 	}
@@ -710,22 +711,27 @@ func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum, ctors [
 	return 0
 }
 
-func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTask, lookUpContent []*IndexJoinLookUpContent) error {
+func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTask, lookUpContent []*IndexJoinLookUpContent, maxFetchedRows int) error {
 	if iw.stats != nil {
 		start := time.Now()
 		defer func() {
 			atomic.AddInt64(&iw.stats.fetch, int64(time.Since(start)))
 		}()
 	}
-	innerExec, err := iw.ReaderBuilder.BuildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true, iw.memTracker, iw.lookup.Finished)
-	if innerExec != nil {
-		defer func() { terror.Log(exec.Close(innerExec)) }()
-	}
-	if err != nil {
-		return err
+
+	if task.innerExec == nil {
+		innerExec, err := iw.ReaderBuilder.BuildExecutorForIndexJoin(ctx, lookUpContent,
+			iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters,
+			true, iw.memTracker, iw.lookup.Finished)
+		if err != nil {
+			return err
+		}
+		task.innerExec = innerExec
+	} else if task.innerResult != nil {
+		task.innerResult.GetMemTracker().Reset()
 	}
 
-	innerResult := chunk.NewList(exec.RetTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
+	innerResult := chunk.NewList(exec.RetTypes(task.innerExec), iw.ctx.GetSessionVars().InitChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
@@ -734,16 +740,21 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			return ctx.Err()
 		default:
 		}
-		err := exec.Next(ctx, innerExec, iw.executorChk)
+		err := exec.Next(ctx, task.innerExec, iw.executorChk)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
 			return err
 		}
 		if iw.executorChk.NumRows() == 0 {
+			terror.Log(exec.Close(task.innerExec))
+			task.innerExec = nil
 			break
 		}
 		innerResult.Add(iw.executorChk)
-		iw.executorChk = exec.TryNewCacheChunk(innerExec)
+		if maxFetchedRows > 0 && innerResult.Len() >= maxFetchedRows {
+			break
+		}
+		iw.executorChk = exec.TryNewCacheChunk(task.innerExec)
 	}
 	task.innerResult = innerResult
 	return nil

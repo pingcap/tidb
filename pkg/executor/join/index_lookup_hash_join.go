@@ -48,6 +48,8 @@ import (
 //     the execution of IndexNestedLoopHashJoin.
 const numResChkHold = 4
 
+const maxRowsPerFetch = 4096
+
 // IndexNestedLoopHashJoin employs one outer worker and N inner workers to
 // execute concurrently. The output order is not promised.
 //
@@ -650,14 +652,6 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(task *indexHash
 	}
 }
 
-func (iw *indexHashJoinInnerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTask) error {
-	lookUpContents, err := iw.constructLookupContent(task)
-	if err != nil {
-		return err
-	}
-	return iw.innerWorker.fetchInnerResults(ctx, task, lookUpContents)
-}
-
 func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(resultCh chan *indexHashJoinResult, err error) {
 	defer func() {
 		iw.wg.Done()
@@ -717,7 +711,18 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 			iw.handleHashJoinInnerWorkerPanic(resultCh, err)
 		},
 	)
-	err = iw.fetchInnerResults(ctx, task.lookUpJoinTask)
+	lookUpContents, err := iw.constructLookupContent(task.lookUpJoinTask)
+	if err != nil {
+		return err
+	}
+	if JoinerType(iw.joiner).SupportIncrementalLookUp() && !task.keepOuterOrder {
+		err = iw.innerWorker.fetchInnerResults(ctx, task.lookUpJoinTask, lookUpContents, maxRowsPerFetch)
+	} else {
+		err = iw.innerWorker.fetchInnerResults(ctx, task.lookUpJoinTask, lookUpContents, -1)
+	}
+	if err != nil {
+		return err
+	}
 	iw.wg.Wait()
 	// check error after wg.Wait to make sure error message can be sent to
 	// resultCh even if panic happen in buildHashTableForOuterResult.
@@ -731,7 +736,19 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 
 	joinStartTime = time.Now()
 	if !task.keepOuterOrder {
-		return iw.doJoinUnordered(ctx, task, joinResult, h, resultCh)
+	JoinNext:
+		err = iw.doJoinUnordered(ctx, task, joinResult, h, resultCh)
+		if err != nil {
+			return err
+		}
+		if task.innerExec != nil {
+			err = iw.innerWorker.fetchInnerResults(ctx, task.lookUpJoinTask, lookUpContents, maxRowsPerFetch)
+			if err != nil {
+				return err
+			}
+			goto JoinNext
+		}
+		return nil
 	}
 	return iw.doJoinInOrder(ctx, task, joinResult, h, resultCh)
 }
@@ -744,6 +761,9 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 		if !ok {
 			return joinResult.err
 		}
+	}
+	if task.innerExec != nil {
+		return nil
 	}
 	for chkIdx, outerRowStatus := range task.outerRowStatus {
 		chk := task.outerResult.GetChunk(chkIdx)

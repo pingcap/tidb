@@ -950,3 +950,50 @@ func TestIssue11896(t *testing.T) {
 
 	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;").Check(nil)
 }
+
+func TestSingleTaskIncrementalIndexHashJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int primary key)")
+	tk.MustExec("create table t2(b int, c varchar(100), index idx_b(b))")
+
+	for i := 1; i <= 10; i++ {
+		tk.MustExec("insert into t1 values(?)", i)
+	}
+
+	for i := 1; i <= 100000; i++ {
+		tk.MustExec("insert into t2 values(?, ?) ", i/10000, "abcdefghijklmnopqrstuvwxyz")
+	}
+
+	tk.MustExec("set @@tidb_mem_quota_query=10000000")
+	tk.MustQuery("select /*+ inl_hash_join(t2) */ * from t1 inner join t2 on t1.a = t2.b")
+	tk.MustQuery("select /*+ inl_hash_join(t2) */ * from t1 left join t2 on t1.a = t2.b")
+}
+
+func TestMultiTaskIncrementalIndexHashJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+
+	tk.MustExec("create table t1(a int primary key)")
+	tk.MustExec("create table t2(b int, c varchar(100), index idx_b(b))")
+
+	for i := 1; i <= 10000; i++ {
+		tk.MustExec("insert into t1 values(?)", i)
+	}
+
+	for i := 1; i <= 100000; i++ {
+		tk.MustExec("insert into t2 values(?, ?) ", i/10, "abcdefghijklmnopqrstuvwxyz")
+	}
+
+	tk.MustExec("set @@tidb_mem_quota_query=10000000")
+	tk.MustQuery("select /*+ inl_hash_join(t2) */ * from t1 inner join t2 on t1.a = t2.b")
+	tk.MustQuery("select /*+ inl_hash_join(t2) */ * from t1 left join t2 on t1.a = t2.b")
+}
