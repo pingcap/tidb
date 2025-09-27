@@ -348,7 +348,8 @@ func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, 
 		return histBetweenCnt
 	}
 	topNCnt := float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded))
-	histBetweenCnt.AddAll(topNCnt)
+	// Only add TopN count to the main estimate, keep min/max estimates from histogram
+	histBetweenCnt.Est += topNCnt
 	return histBetweenCnt
 }
 
