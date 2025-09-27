@@ -366,6 +366,11 @@ func (tp JoinType) IsInnerJoin() bool {
 	return tp == InnerJoin
 }
 
+// SupportIncrementalLookUp returns if this joiner supports incremental look up.
+func (tp JoinType) SupportIncrementalLookUp() bool {
+	return tp == InnerJoin || tp == LeftOuterJoin
+}
+
 func (tp JoinType) String() string {
 	switch tp {
 	case InnerJoin:
