@@ -54,6 +54,7 @@ const (
 	falsePredicate
 	// TruePredicate TODO: make it lower case after rule_decorrelate is migrated.
 	TruePredicate
+	equalColumnPredicate // col1 = col2 or col1 <=> col2
 	otherPredicate
 )
 
@@ -86,7 +87,7 @@ func logicalConstant(bc base.PlanContext, cond expression.Expression) predicateT
 // - Comparison operators (`EQ`, `NE`, `LT`, `GT`, `LE`, `GE`).
 // - IN predicates with a list of constants.
 // If the expression doesn't match any of these recognized patterns, it returns an `otherPredicate` type.
-func FindPredicateType(bc base.PlanContext, expr expression.Expression) (*expression.Column, predicateType) {
+func FindPredicateType(bc base.PlanContext, expr expression.Expression) ([]*expression.Column, predicateType) {
 	switch v := expr.(type) {
 	case *expression.Constant:
 		return nil, logicalConstant(bc, expr)
@@ -94,6 +95,7 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) (*expres
 		if v.FuncName.L == ast.LogicOr {
 			return nil, orPredicate
 		}
+		cols := make([]*expression.Column, 0, 2)
 		if v.FuncName.L == ast.LogicAnd {
 			return nil, andPredicate
 		}
@@ -105,30 +107,38 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) (*expres
 		if !colOk {
 			return nil, otherPredicate
 		}
+		cols = append(cols, col)
 		if len(args) > 1 {
-			if _, ok := args[1].(*expression.Constant); !ok {
-				return nil, otherPredicate
-			}
-		}
-		if v.FuncName.L == ast.NE {
-			return col, notEqualPredicate
-		} else if v.FuncName.L == ast.EQ {
-			return col, equalPredicate
-		} else if v.FuncName.L == ast.LT {
-			return col, lessThanPredicate
-		} else if v.FuncName.L == ast.GT {
-			return col, greaterThanPredicate
-		} else if v.FuncName.L == ast.LE {
-			return col, lessThanOrEqualPredicate
-		} else if v.FuncName.L == ast.GE {
-			return col, greaterThanOrEqualPredicate
-		} else if v.FuncName.L == ast.In {
-			for _, value := range args[1:] {
-				if _, ok := value.(*expression.Constant); !ok {
-					return nil, otherPredicate
+			switch arg := args[1].(type) {
+			case *expression.Constant:
+				switch v.FuncName.L {
+				case ast.NE:
+					return cols, notEqualPredicate
+				case ast.EQ:
+					return cols, equalPredicate
+				case ast.LT:
+					return cols, lessThanPredicate
+				case ast.GT:
+					return cols, greaterThanPredicate
+				case ast.LE:
+					return cols, lessThanOrEqualPredicate
+				case ast.GE:
+					return cols, greaterThanOrEqualPredicate
+				case ast.In:
+					for _, value := range args[1:] {
+						if _, ok := value.(*expression.Constant); !ok {
+							return nil, otherPredicate
+						}
+					}
+					return cols, inListPredicate
+				}
+			case *expression.Column:
+				switch v.FuncName.L {
+				case ast.EQ, ast.NullEQ:
+					cols = append(cols, arg)
+					return cols, equalColumnPredicate
 				}
 			}
-			return col, inListPredicate
 		}
 		return nil, otherPredicate
 	default:
@@ -242,7 +252,9 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 				sctx.GetExprCtx(),
 				ithPredicate,
 				jthPredicate)
-			if iCol.Equals(jCol) {
+			if slices.EqualFunc(iCol, jCol, func(i, j *expression.Column) bool {
+				return i.Equals(j)
+			}) {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
 					if maybeOverOptimized4PlanCache {
@@ -283,9 +295,10 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	var otherPred expression.Expression
 	col1, p1Type := FindPredicateType(ctx, p1)
 	col2, p2Type := FindPredicateType(ctx, p2)
-	if col1 == nil || !col1.Equals(col2) {
+	if col1 == nil || (len(col1) != 1 || len(col2) != 1 || !col1[0].Equals(col2[0])) {
 		return false
 	}
+	c1 := col1[0]
 	if p1Type == equalPredicate {
 		equalPred = p1
 		otherPred = p2
@@ -304,7 +317,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	if ok1 && ok2 {
 		evalCtx := ctx.GetExprCtx().GetEvalCtx()
 		// We have checked the equivalence between col1 and col2, so we can safely use col1's collation.
-		colCollate := col1.GetType(evalCtx).GetCollate()
+		colCollate := c1.GetType(evalCtx).GetCollate()
 		// Different connection collations can affect the results here, leading to different simplified results and ultimately impacting the execution outcomes.
 		// Observing MySQL v8.0.31, this area does not perform string simplification, so we can directly skip it.
 		// If the collation is not compatible, we cannot simplify the expression.
@@ -538,7 +551,110 @@ func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expressio
 			// 2-3. Otherwise, we remove it.
 		}
 	}
+	newORList = equalOrNullSimplification(sctx, newORList)
 	return expression.ComposeDNFCondition(sctx.GetExprCtx(), newORList...)
+}
+
+func equalOrNullSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+	if len(predicates) <= 1 {
+		return predicates
+	}
+	oldlist := make([]expression.Expression, 0, len(predicates))
+	andPredicateList := make([]expression.Expression, 0, len(predicates))
+	equalConditionList := make([]expression.Expression, 0, 8)
+	equalConditionColsList := make([][]*expression.Column, 0, 8)
+	for _, predicate := range predicates {
+		cols, tp := FindPredicateType(sctx, predicate)
+		switch tp {
+		case andPredicate:
+			andPredicateList = append(andPredicateList, predicate)
+		case equalColumnPredicate:
+			equalConditionList = append(equalConditionList, predicate)
+			equalConditionColsList = append(equalConditionColsList, cols)
+		default:
+			oldlist = append(oldlist, predicate)
+		}
+	}
+	if len(equalConditionList) < 1 || len(andPredicateList) < 1 {
+		return predicates
+	}
+	var isSimplified bool
+	equalConditionList, andPredicateList, isSimplified = doEqualOrNullSimplification(sctx, equalConditionColsList, equalConditionList, andPredicateList)
+	if isSimplified {
+		equalConditionList = append(equalConditionList, andPredicateList...)
+		equalConditionList = append(equalConditionList, oldlist...)
+		return equalConditionList
+	}
+	return predicates
+}
+
+// doEqualOrNullSimplification tries to simplify equal conditions with IsNull predicates.
+func doEqualOrNullSimplification(sctx base.PlanContext, equalConditionColsList [][]*expression.Column,
+	equalConditionList, andPredicateList []expression.Expression) (equalConditions, andPredicates []expression.Expression, isSimplified bool) {
+	columnsSets := make(map[int64]struct{}, len(equalConditionColsList)*2)
+	for andPredicateIdx, predicate := range andPredicateList {
+		andFunc := predicate.(*expression.ScalarFunction)
+		andList := expression.SplitCNFItems(andFunc)
+		isNullCols := expression.ExtractIsNullColumns(andList)
+		for i := range equalConditionList {
+			if len(andList) == len(columnsSets) {
+				// all predicates in this AND list have been simplified.
+				break
+			}
+			cols := equalConditionColsList[i]
+			if slices.ContainsFunc(cols, func(i *expression.Column) bool {
+				_, ok := isNullCols[i.UniqueID]
+				return ok
+			}) {
+				// we can rewrite a=b => a <=> b
+				equalConditionList[i] = expression.NewFunctionInternal(sctx.GetExprCtx(),
+					ast.NullEQ,
+					types.NewFieldType(mysql.TypeTiny),
+					cols[0], cols[1])
+				columnsSets[cols[0].UniqueID] = struct{}{}
+				columnsSets[cols[1].UniqueID] = struct{}{}
+				isSimplified = true
+				// Pleas don't skip this equalConditionList, maybe it can remove more IsNull predicates.
+			}
+		}
+		if len(andList) == len(columnsSets) {
+			// all predicates in this AND list have been simplified.
+			andPredicateList[andPredicateIdx] = nil
+		} else {
+			andList = removeIsNullPredicates(andList, columnsSets)
+			intest.Assert(len(andList) > 0, "all predicates in this AND list have been simplified, should be removed.")
+			if len(andList) > 1 {
+				andPredicateList[andPredicateIdx] = expression.ComposeCNFCondition(sctx.GetExprCtx(), andList...)
+			} else {
+				andPredicateList[andPredicateIdx] = andList[0]
+			}
+		}
+		// reuse the columnsSets
+		clear(columnsSets)
+	}
+	andPredicateList = slices.DeleteFunc(andPredicateList, func(expr expression.Expression) bool {
+		return expr == nil
+	})
+	return equalConditionList, andPredicateList, isSimplified
+}
+
+func removeIsNullPredicates(andList []expression.Expression, columnsSets map[int64]struct{}) []expression.Expression {
+	if len(andList) == 0 || len(columnsSets) == 0 {
+		return andList
+	}
+	andList = slices.DeleteFunc(andList, func(expr expression.Expression) bool {
+		fn, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		col, ok := expression.IsIsNullColumn(fn)
+		if !ok {
+			return false
+		}
+		_, ok = columnsSets[col.UniqueID]
+		return ok
+	})
+	return andList
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.
