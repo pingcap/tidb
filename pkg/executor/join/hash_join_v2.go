@@ -155,7 +155,7 @@ func (htc *hashTableContext) lookup(partitionIndex int, hashValue uint64) tagged
 	return htc.hashTable.tables[partitionIndex].lookup(hashValue, htc.tagHelper)
 }
 
-func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, allowCreate bool, firstSegSizeHint uint) *rowTableSegment {
+func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, allowCreate bool) *rowTableSegment {
 	if htc.rowTables[workerID][partitionID] == nil {
 		htc.rowTables[workerID][partitionID] = newRowTable()
 	}
@@ -164,21 +164,31 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, all
 		if !allowCreate {
 			panic("logical error, should not reach here")
 		}
-		// do not pre-allocate too many memory for the first seg because for query that only has a few rows, it may waste memory and may hurt the performance in high concurrency scenarios
-		rowSizeHint := maxRowTableSegmentSize
-		if segNum == 0 {
-			rowSizeHint = int64(firstSegSizeHint)
-		}
-		seg := newRowTableSegment(uint(rowSizeHint))
+		seg := newRowTableSegment()
 		htc.rowTables[workerID][partitionID].segments = append(htc.rowTables[workerID][partitionID].segments, seg)
 		segNum++
 	}
 	return htc.rowTables[workerID][partitionID].segments[segNum-1]
 }
 
+func (htc *hashTableContext) removeCurrentRowSegment(workerID, partitionID int) {
+	segNum := len(htc.rowTables[workerID][partitionID].segments)
+	if segNum == 0 {
+		return
+	}
+
+	htc.rowTables[workerID][partitionID].segments = htc.rowTables[workerID][partitionID].segments[:segNum-1]
+}
+
 func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder, needConsume bool) {
-	seg := htc.getCurrentRowSegment(workerID, partitionID, false, 0)
+	seg := htc.getCurrentRowSegment(workerID, partitionID, false)
 	builder.rowNumberInCurrentRowTableSeg[partitionID] = 0
+	if len(seg.hashValues) == 0 {
+		// Remove empty segment
+		htc.removeCurrentRowSegment(workerID, partitionID)
+		return
+	}
+
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
 	seg.initTaggedBits()
 	seg.finalized = true
@@ -1323,7 +1333,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 	// init builder, todo maybe the builder can be reused during the whole life cycle of the executor
 	hashJoinCtx := e.HashJoinCtxV2
 	for _, worker := range e.BuildWorkers {
-		worker.builder = createRowTableBuilder(worker.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, hashJoinCtx.partitionNumber, worker.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
+		worker.builder = createRowTableBuilder(worker.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, hashJoinCtx.partitionNumber, worker.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone, hashJoinCtx.hashTableMeta.nullMapLength)
 	}
 	srcChkCh, waitForController := e.fetchBuildSideRows(ctx, fetcherAndWorkerSyncer, wg, errCh, doneCh)
 	e.splitAndAppendToRowTable(srcChkCh, waitForController, fetcherAndWorkerSyncer, wg, errCh, doneCh)
