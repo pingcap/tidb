@@ -91,9 +91,10 @@ func New(
 	schemaLease time.Duration,
 	sysSessionPool util.DestroyableSessionPool,
 	isValidator validatorapi.Validator,
+	loadForBR bool,
 ) *Syncer {
 	s := newSyncer(store, logutil.BgLogger(), schemaLease, sysSessionPool, isValidator)
-	s.loader = newLoader(store, infoCache, &s.deferFn)
+	s.loader = newLoader(store, infoCache, &s.deferFn, loadForBR)
 	return s
 }
 
