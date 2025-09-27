@@ -50,6 +50,9 @@ type Plan interface {
 	// Get the ID.
 	ID() int
 
+	// SetID sets the ID
+	SetID(id int)
+
 	// TP get the plan type.
 	TP(...bool) string
 
@@ -92,10 +95,10 @@ type PhysicalPlan interface {
 	Plan
 
 	// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver1.
-	GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error)
+	GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error)
 
 	// GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver2.
-	GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+	GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
 
 	// Attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.

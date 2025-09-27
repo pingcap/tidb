@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	util2 "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tipb/go-tipb"
@@ -226,12 +225,12 @@ func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool, costFlag uin
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalStreamAgg) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalStreamAgg) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalStreamAgg(p, taskType, option)
 }
 
 // GetPlanCostVer2 implements the physical plan interface.
-func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalStreamAgg(p, taskType, option, isChildOfINL...)
 }
 

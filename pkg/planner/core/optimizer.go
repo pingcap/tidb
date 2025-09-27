@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -465,7 +466,7 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 	tableReader, isTableReader := p.(*physicalop.PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
 		mergeContinuousSelections(tableReader.TablePlan)
-		tableReader.TablePlans = physicalop.FlattenPushDownPlan(tableReader.TablePlan)
+		tableReader.TablePlans = physicalop.FlattenListPushDownPlan(tableReader.TablePlan)
 	}
 }
 
@@ -1180,7 +1181,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = getPlanCost(t.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+	cost, err = getPlanCost(t.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
 	return t.Plan(), cost, err
 }
 

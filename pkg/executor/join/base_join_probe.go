@@ -192,12 +192,12 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	physicalRows := chk.Column(0).Rows()
 	j.usedRows = chk.Sel()
 	if j.usedRows == nil {
-		if cap(j.selRows) >= logicalRows {
-			j.selRows = j.selRows[:logicalRows]
+		if logicalRows <= fakeSelLength {
+			j.selRows = fakeSel[:logicalRows]
 		} else {
-			j.selRows = make([]int, 0, logicalRows)
+			j.selRows = make([]int, logicalRows)
 			for i := range logicalRows {
-				j.selRows = append(j.selRows, i)
+				j.selRows[i] = i
 			}
 		}
 		j.usedRows = j.selRows
