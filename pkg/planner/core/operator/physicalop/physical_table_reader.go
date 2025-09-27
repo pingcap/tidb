@@ -91,7 +91,7 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 	if p.TablePlan == nil {
 		return &p
 	}
-	p.TablePlans = FlattenPushDownPlan(p.TablePlan)
+	p.TablePlans = FlattenListPushDownPlan(p.TablePlan)
 	p.SetSchema(p.TablePlan.Schema())
 	p.adjustReadReqType(ctx)
 	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
@@ -236,14 +236,14 @@ func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 		return nil, err
 	}
 	// TablePlans are actually the flattened plans in TablePlan, so can't copy them, just need to extract from TablePlan
-	cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)
+	cloned.TablePlans = FlattenListPushDownPlan(cloned.TablePlan)
 	return cloned, nil
 }
 
 // SetChildren overrides op.PhysicalPlan SetChildren interface.
 func (p *PhysicalTableReader) SetChildren(children ...base.PhysicalPlan) {
 	p.TablePlan = children[0]
-	p.TablePlans = FlattenPushDownPlan(p.TablePlan)
+	p.TablePlans = FlattenListPushDownPlan(p.TablePlan)
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -301,13 +301,13 @@ func (p *PhysicalTableReader) ResolveIndices() error {
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalTableReader) GetPlanCostVer1(_ property.TaskType,
-	option *optimizetrace.PlanCostOption) (float64, error) {
+	option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalTableReader(p, option)
 }
 
 // GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalTableReader(p, taskType, option)
 }
 

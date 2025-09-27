@@ -42,3 +42,20 @@ func TestNextGenTiKVRegionStatus(t *testing.T) {
 	t.Log(tikvRegions)
 	require.Equal(t, showRegions[0][0], tikvRegions[0][0])
 }
+
+func TestTableReaderWithSnapshot(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MockGCSavePoint()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int);")
+	tk.MustExec("begin")
+	tk.MustExec("set @ts := @@tidb_current_ts;")
+	tk.MustExec("rollback")
+	tk.MustQuery("select sleep(2);")
+	tk.MustExec("drop table t;")
+	tk.MustExec("begin")
+	tk.MustExec("set @@tidb_snapshot=@ts;")
+	tk.MustQuery("SELECT TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='test' AND (TABLE_TYPE='BASE TABLE')").Check(testkit.Rows("t BASE TABLE 0"))
+}

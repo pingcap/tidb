@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -279,15 +278,19 @@ func (p *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	clonedScan.Ranges = util.CloneRanges(p.Ranges)
 	clonedScan.TableAsName = p.TableAsName
 	clonedScan.RangeInfo = p.RangeInfo
-	clonedScan.runtimeFilterList = make([]*RuntimeFilter, 0, len(p.runtimeFilterList))
-	for _, rf := range p.runtimeFilterList {
-		clonedRF := rf.Clone()
-		clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
+	if p.runtimeFilterList != nil {
+		clonedScan.runtimeFilterList = make([]*RuntimeFilter, 0, len(p.runtimeFilterList))
+		for _, rf := range p.runtimeFilterList {
+			clonedRF := rf.Clone()
+			clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
+		}
 	}
-	clonedScan.UsedColumnarIndexes = make([]*ColumnarIndexExtra, 0, len(p.UsedColumnarIndexes))
-	for _, colIdx := range p.UsedColumnarIndexes {
-		colIdxClone := *colIdx
-		clonedScan.UsedColumnarIndexes = append(clonedScan.UsedColumnarIndexes, &colIdxClone)
+	if p.UsedColumnarIndexes != nil {
+		clonedScan.UsedColumnarIndexes = make([]*ColumnarIndexExtra, 0, len(p.UsedColumnarIndexes))
+		for _, colIdx := range p.UsedColumnarIndexes {
+			colIdxClone := *colIdx
+			clonedScan.UsedColumnarIndexes = append(clonedScan.UsedColumnarIndexes, &colIdxClone)
+		}
 	}
 	return clonedScan, nil
 }
@@ -610,7 +613,7 @@ func (p *PhysicalTableScan) BuildPushedDownSelection(stats *property.StatsInfo, 
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalTableScan) GetPlanCostVer1(_ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalTableScan) GetPlanCostVer1(_ property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalTableScan(p, option)
 }
 
@@ -618,7 +621,7 @@ func (p *PhysicalTableScan) GetPlanCostVer1(_ property.TaskType, option *optimiz
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experimenp.
 func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+	option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalTableScan(p, taskType, option, isChildOfINL...)
 }
 

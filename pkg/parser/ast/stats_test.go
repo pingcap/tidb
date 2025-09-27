@@ -18,14 +18,17 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRefreshStatsStmt(t *testing.T) {
 	tests := []struct {
-		sql  string
-		want string
+		sql     string
+		want    string
+		modeSet bool
+		mode    ast.RefreshStatsMode
 	}{
 		{
 			sql:  "REFRESH STATS *.*",
@@ -55,12 +58,35 @@ func TestRefreshStatsStmt(t *testing.T) {
 			sql:  "REFRESH STATS *.*, db1.*, db2.t1, table1, table2",
 			want: "REFRESH STATS *.*, `db1`.*, `db2`.`t1`, `table1`, `table2`",
 		},
+		{
+			sql:     "REFRESH STATS table1 full",
+			want:    "REFRESH STATS `table1` FULL",
+			modeSet: true,
+			mode:    ast.RefreshStatsModeFull,
+		},
+		{
+			sql:  "REFRESH STATS table1 cluster",
+			want: "REFRESH STATS `table1` CLUSTER",
+		},
+		{
+			sql:     "REFRESH STATS db1.* lite cluster",
+			want:    "REFRESH STATS `db1`.* LITE CLUSTER",
+			modeSet: true,
+			mode:    ast.RefreshStatsModeLite,
+		},
 	}
 
 	p := parser.New()
 	for _, test := range tests {
 		stmt, err := p.ParseOneStmt(test.sql, "", "")
 		require.NoError(t, err)
+		rs := stmt.(*ast.RefreshStatsStmt)
+		if test.modeSet {
+			require.NotNil(t, rs.RefreshMode)
+			require.Equal(t, test.mode, *rs.RefreshMode)
+		} else {
+			require.Nil(t, rs.RefreshMode)
+		}
 		var sb strings.Builder
 		err = stmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 		require.NoError(t, err)

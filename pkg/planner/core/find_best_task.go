@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -302,7 +303,7 @@ func enumeratePhysicalPlans4Task(
 		appendCandidate4PhysicalOptimizeOp(opt, baseLP, curTask.Plan(), prop)
 
 		// Get the most efficient one only by low-cost priority among all valid plans.
-		if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
+		if curIsBetter, err := compareTaskCost(curTask, bestTask); err != nil {
 			return nil, 0, false, err
 		} else if curIsBetter {
 			bestTask = curTask
@@ -310,7 +311,7 @@ func enumeratePhysicalPlans4Task(
 
 		if hintApplicable {
 			// curTask is a preferred physic plan, compare cost with previous preferred one and cache the low-cost one.
-			if curIsBetter, err := compareTaskCost(curTask, preferTask, opt); err != nil {
+			if curIsBetter, err := compareTaskCost(curTask, preferTask); err != nil {
 				return nil, 0, false, err
 			} else if curIsBetter {
 				preferTask = curTask
@@ -574,12 +575,12 @@ func iterateChildPlan4LogicalSequence(
 }
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
-func compareTaskCost(curTask, bestTask base.Task, op *optimizetrace.PhysicalOptimizeOp) (curIsBetter bool, err error) {
-	curCost, curInvalid, err := getTaskPlanCost(curTask, op)
+func compareTaskCost(curTask, bestTask base.Task) (curIsBetter bool, err error) {
+	curCost, curInvalid, err := getTaskPlanCost(curTask)
 	if err != nil {
 		return false, err
 	}
-	bestCost, bestInvalid, err := getTaskPlanCost(bestTask, op)
+	bestCost, bestInvalid, err := getTaskPlanCost(bestTask)
 	if err != nil {
 		return false, err
 	}
@@ -594,7 +595,7 @@ func compareTaskCost(curTask, bestTask base.Task, op *optimizetrace.PhysicalOpti
 
 // getTaskPlanCost returns the cost of this task.
 // The second returned value indicates whether this task is valid.
-func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float64, bool, error) {
+func getTaskPlanCost(t base.Task) (float64, bool, error) {
 	if t.Invalid() {
 		return math.MaxFloat64, true, nil
 	}
@@ -613,15 +614,15 @@ func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float6
 			taskType = property.CopMultiReadTaskType
 			// keep compatible with the old cost interface, for CopMultiReadTask, the cost is idxCost + tblCost.
 			if !cop.indexPlanFinished { // only consider index cost in this case
-				idxCost, err := getPlanCost(cop.indexPlan, taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
+				idxCost, err := getPlanCost(cop.indexPlan, taskType, costusage.NewDefaultPlanCostOption())
 				return idxCost, false, err
 			}
 			// consider both sides
-			idxCost, err := getPlanCost(cop.indexPlan, taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
+			idxCost, err := getPlanCost(cop.indexPlan, taskType, costusage.NewDefaultPlanCostOption())
 			if err != nil {
 				return 0, false, err
 			}
-			tblCost, err := getPlanCost(cop.tablePlan, taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
+			tblCost, err := getPlanCost(cop.tablePlan, taskType, costusage.NewDefaultPlanCostOption())
 			if err != nil {
 				return 0, false, err
 			}
@@ -647,7 +648,7 @@ func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float6
 		// cost about table plan.
 		if cop.indexPlanFinished && len(cop.idxMergePartPlans) != 0 {
 			for _, partialScan := range cop.idxMergePartPlans {
-				partialCost, err := getPlanCost(partialScan, taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
+				partialCost, err := getPlanCost(partialScan, taskType, costusage.NewDefaultPlanCostOption())
 				if err != nil {
 					return 0, false, err
 				}
@@ -665,7 +666,7 @@ func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float6
 		cost := 0.0
 		copTsk := t.(*CopTask)
 		for _, partialScan := range copTsk.idxMergePartPlans {
-			partialCost, err := getPlanCost(partialScan, taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
+			partialCost, err := getPlanCost(partialScan, taskType, costusage.NewDefaultPlanCostOption())
 			if err != nil {
 				return 0, false, err
 			}
@@ -673,7 +674,7 @@ func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float6
 		}
 		return cost, false, nil
 	}
-	cost, err := getPlanCost(t.Plan(), taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
+	cost, err := getPlanCost(t.Plan(), taskType, costusage.NewDefaultPlanCostOption())
 	return cost + indexPartialCost, false, err
 }
 
@@ -887,7 +888,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty, planC
 		goto END
 	}
 	appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
-	if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
+	if curIsBetter, err := compareTaskCost(curTask, bestTask); err != nil {
 		return nil, 0, err
 	} else if curIsBetter {
 		bestTask = curTask
@@ -1837,7 +1838,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 
 		if unenforcedTask != nil && !unenforcedTask.Invalid() {
-			curIsBest, cerr := compareTaskCost(unenforcedTask, t, opt)
+			curIsBest, cerr := compareTaskCost(unenforcedTask, t)
 			if cerr != nil {
 				err = cerr
 				return
@@ -1898,7 +1899,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			}
 			appendCandidate(ds, idxMergeTask, prop, opt)
 
-			curIsBetter, err := compareTaskCost(idxMergeTask, t, opt)
+			curIsBetter, err := compareTaskCost(idxMergeTask, t)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -2007,7 +2008,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 					cntPlan++
 					planCounter.Dec(1)
 				}
-				curIsBetter, cerr := compareTaskCost(pointGetTask, t, opt)
+				curIsBetter, cerr := compareTaskCost(pointGetTask, t)
 				if cerr != nil {
 					return nil, 0, cerr
 				}
@@ -2043,7 +2044,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 				planCounter.Dec(1)
 			}
 			appendCandidate(ds, tblTask, prop, opt)
-			curIsBetter, err := compareTaskCost(tblTask, t, opt)
+			curIsBetter, err := compareTaskCost(tblTask, t)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -2072,7 +2073,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			planCounter.Dec(1)
 		}
 		appendCandidate(ds, idxTask, prop, opt)
-		curIsBetter, err := compareTaskCost(idxTask, t, opt)
+		curIsBetter, err := compareTaskCost(idxTask, t)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -2599,6 +2600,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.UsedStatsInfo = usedStats.GetUsedInfo(ts.PhysicalTableID)
 		}
 		cop.tablePlan = ts
+		cop.indexLookUpPushDown = candidate.path.IsIndexLookUpPushDown
 	}
 	task = cop
 	if cop.tablePlan != nil && ds.TableInfo.IsCommonHandle {
