@@ -187,18 +187,13 @@ func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings
 		}
 	}()
 	for _, binding := range bindings {
-		lastSaved := binding.UsageInfo.LastSavedAt.Load()
-		if lastSaved == nil {
+		lastUsedAt := binding.UsageInfo.LastUsedAt.Load()
+		if lastUsedAt == nil {
 			continue
 		}
-		intest.AssertFunc(func() bool {
-			lastUsed := binding.UsageInfo.LastUsedAt.Load()
-			if lastUsed == nil {
-				return false
-			}
-			return lastUsed.Compare(*lastSaved) >= 0
-		}, " lastUsed should be later than or equal to lastSaved and lastSaved is not nil")
-		if time.Since(*lastSaved) > MaxWriteInterval {
+		lastSaved := binding.UsageInfo.LastSavedAt.Load()
+		if (lastSaved != nil && time.Since(*lastSaved) > MaxWriteInterval) ||
+			time.Since(*lastUsedAt) > MaxWriteInterval {
 			toWrite = append(toWrite, binding)
 			cnt++
 		}
