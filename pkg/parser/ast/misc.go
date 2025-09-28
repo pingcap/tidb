@@ -4091,11 +4091,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 				if i != 0 {
 					ctx.WritePlain(", ")
 				}
-				if i == 0 && n.QBName.L != "" {
-					table.Restore(ctx)
-				} else {
-					table.Restore(ctx)
-				}
+				table.Restore(ctx)
 			}
 		}
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
