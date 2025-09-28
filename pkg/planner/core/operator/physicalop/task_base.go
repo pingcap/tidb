@@ -357,8 +357,9 @@ func (t *MppTask) SetPlan(p base.PhysicalPlan) {
 // CopTask is a task that runs in a distributed kv store.
 // TODO: In future, we should split copTask to indexTask and tableTask.
 type CopTask struct {
-	IndexPlan base.PhysicalPlan
-	TablePlan base.PhysicalPlan
+	IndexPlan           base.PhysicalPlan
+	TablePlan           base.PhysicalPlan
+	IndexLookUpPushDown bool
 	// IndexPlanFinished means we have finished index plan.
 	IndexPlanFinished bool
 	// KeepOrder indicates if the plan scans data by order.

@@ -305,7 +305,7 @@ func BuildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 		ExtraHandleCol:   t.ExtraHandleCol,
 		CommonHandleCols: t.CommonHandleCols,
 		ExpectedCnt:      t.ExpectCnt,
-		KeepOrder:        t.keepOrder,
+		KeepOrder:        t.KeepOrder,
 		PlanPartInfo:     t.PhysPlanPartInfo,
 	}.Init(ctx, t.TablePlan.QueryBlockOffset(), t.IndexLookUpPushDown)
 	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
