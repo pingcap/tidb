@@ -26,17 +26,20 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -330,4 +333,57 @@ func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
 		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
 		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
 	))
+}
+
+func (s *mockGCSSuite) TestSplitRangeForTable() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("In next-gen scenario we don't need 'force_partition_range' to import data")
+	}
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.1.csv"},
+		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.2.csv"},
+		Content:     []byte("4,foo4,bar4,123\n5,foo5,bar5,223\n6,foo6,bar6,323\n"),
+	})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.prepareAndUseDB("gsort_basic")
+	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
+		key(a), key(c,d), key(d));`)
+
+	var addCnt, removeCnt int
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+		addCnt += 1
+	})
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+		removeCnt += 1
+	})
+	dom, err := session.GetDomain(s.store)
+	require.NoError(s.T(), err)
+	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
+	require.NoError(s.T(), err)
+
+	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s' with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
+	result := s.tk.MustQuery(importSQL).Rows()
+	s.Len(result, 1)
+	require.Greater(s.T(), addCnt, 0)
+	require.Equal(s.T(), removeCnt, addCnt)
+
+	addCnt = 0
+	removeCnt = 0
+	s.tk.MustExec("truncate t")
+	importSQL = fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'`, gcsEndpoint)
+	result = s.tk.MustQuery(importSQL).Rows()
+	s.Len(result, 1)
+	require.Equal(s.T(), addCnt, 2*len(stores))
+	require.Equal(s.T(), removeCnt, addCnt)
+
+	addCnt = 0
+	removeCnt = 0
+	s.tk.MustExec("create table dst like t")
+	s.tk.MustExec(`import into dst FROM select * from t`)
+	require.Equal(s.T(), addCnt, 2*len(stores))
+	require.Equal(s.T(), removeCnt, addCnt)
 }

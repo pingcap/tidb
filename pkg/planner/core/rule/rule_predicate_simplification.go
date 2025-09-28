@@ -137,9 +137,9 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) (*expres
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (*PredicateSimplification) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*PredicateSimplification) Optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	return p.PredicateSimplification(opt), planChanged, nil
+	return p.PredicateSimplification(), planChanged, nil
 }
 
 // updateInPredicate applies intersection of an in list with <> value. It returns updated In list and a flag for

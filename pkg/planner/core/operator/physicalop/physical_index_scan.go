@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -594,7 +593,7 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalIndexScan) GetPlanCostVer1(taskType property.TaskType,
-	option *optimizetrace.PlanCostOption) (float64, error) {
+	option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalIndexScan(p, taskType, option)
 }
 
@@ -602,7 +601,7 @@ func (p *PhysicalIndexScan) GetPlanCostVer1(taskType property.TaskType,
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
 func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
+	option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalIndexScan(p, taskType, option, args...)
 }
 
@@ -685,4 +684,45 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		is.KeepOrder = true
 	}
 	return is
+}
+
+// ConvertToPartialIndexScan converts a DataSource to a PhysicalIndexScan for IndexMerge.
+func ConvertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
+	is := GetOriginalPhysicalIndexScan(ds, prop, path, matchProp, false)
+	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
+	indexConds := path.IndexFilters
+	if matchProp {
+		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
+			is.Columns = tmpColumns
+			is.SetSchema(tmpSchema)
+		}
+		// Add sort items for index scan for merge-sort operation between partitions.
+		is.ByItems = byItems
+	}
+
+	// Add a `Selection` for `IndexScan` with global index.
+	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
+	indexConds, err := is.AddSelectionConditionForGlobalIndex(ds, physPlanPartInfo, indexConds)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(indexConds) > 0 {
+		pushedFilters, remainingFilter := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), indexConds)
+		var selectivity float64
+		if path.CountAfterAccess > 0 {
+			selectivity = path.CountAfterIndex / path.CountAfterAccess
+		}
+		rowCount := is.StatsInfo().RowCount * selectivity
+		stats := &property.StatsInfo{RowCount: rowCount}
+		stats.StatsVersion = ds.StatisticTable.Version
+		if ds.StatisticTable.Pseudo {
+			stats.StatsVersion = statistics.PseudoVersion
+		}
+		indexPlan := PhysicalSelection{Conditions: pushedFilters}.Init(is.SCtx(), stats, ds.QueryBlockOffset())
+		indexPlan.SetChildren(is)
+		return indexPlan, remainingFilter, nil
+	}
+	return is, nil, nil
 }

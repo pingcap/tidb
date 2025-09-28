@@ -50,6 +50,9 @@ type Plan interface {
 	// Get the ID.
 	ID() int
 
+	// SetID sets the ID
+	SetID(id int)
+
 	// TP get the plan type.
 	TP(...bool) string
 
@@ -92,10 +95,10 @@ type PhysicalPlan interface {
 	Plan
 
 	// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver1.
-	GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error)
+	GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error)
 
 	// GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver2.
-	GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+	GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
 
 	// Attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
@@ -199,10 +202,10 @@ type LogicalPlan interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression, *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan, error)
+	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan, error)
 
 	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
-	PruneColumns([]*expression.Column, *optimizetrace.LogicalOptimizeOp) (LogicalPlan, error)
+	PruneColumns([]*expression.Column) (LogicalPlan, error)
 
 	// FindBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -222,16 +225,16 @@ type LogicalPlan interface {
 
 	// PushDownTopN will push down the topN or limit operator during logical optimization.
 	// interface definition should depend on concrete implementation type.
-	PushDownTopN(topN LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
+	PushDownTopN(topN LogicalPlan) LogicalPlan
 
 	// DeriveTopN derives an implicit TopN from a filter on row_number window function...
-	DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
+	DeriveTopN() LogicalPlan
 
 	// PredicateSimplification consolidates different predcicates on a column and its equivalence classes.
-	PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
+	PredicateSimplification() LogicalPlan
 
 	// ConstantPropagation generate new constant predicate according to column equivalence relation
-	ConstantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) (newRoot LogicalPlan)
+	ConstantPropagation(parentPlan LogicalPlan, currentChildIdx int) (newRoot LogicalPlan)
 
 	// PullUpConstantPredicates recursive find constant predicate, used for the constant propagation rule
 	PullUpConstantPredicates() []expression.Expression
@@ -254,12 +257,6 @@ type LogicalPlan interface {
 	// PreparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
 	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column
-
-	// ExhaustPhysicalPlans generates all possible plans that can match the required property.
-	// It will return:
-	// 1. All possible plans that can match the required property.
-	// 2. Whether the SQL hint can work. Return true if there is no hint.
-	ExhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool, err error)
 
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
@@ -301,6 +298,38 @@ type LogicalPlan interface {
 	// GetWrappedLogicalPlan return the wrapped logical plan inside a group expression.
 	// For logicalPlan implementation, it just returns itself as well.
 	GetWrappedLogicalPlan() LogicalPlan
+
+	// GetChildStatsAndSchema gets the stats and schema of the first child.
+	GetChildStatsAndSchema() (*property.StatsInfo, *expression.Schema)
+
+	// GetJoinChildStatsAndSchema gets the stats and schema of both children.
+	GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema)
+}
+
+// GroupExpression is the interface for group expression.
+type GroupExpression interface {
+	LogicalPlan
+	// IsExplored return whether this gE has explored rule i.
+	IsExplored(i uint) bool
+	// InputsLen returns the length of inputs.
+	InputsLen() int
+}
+
+// GetGEAndLogicalOp is get the possible group expression and logical operator from common super pointer.
+func GetGEAndLogicalOp[T LogicalPlan](super LogicalPlan) (ge GroupExpression, logicalOp T) {
+	switch x := super.(type) {
+	case T:
+		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
+		// to downcast as the every specific logical operator.
+		logicalOp = x
+	case GroupExpression:
+		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
+		// naturally can be referred as a LogicalPlan, and we need to use GetWrappedLogicalPlan to
+		// get the specific logical operator inside.
+		ge = x
+		logicalOp = ge.GetWrappedLogicalPlan().(T)
+	}
+	return ge, logicalOp
 }
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
