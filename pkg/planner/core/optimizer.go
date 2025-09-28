@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -465,7 +466,7 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 	tableReader, isTableReader := p.(*physicalop.PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
 		mergeContinuousSelections(tableReader.TablePlan)
-		tableReader.TablePlans = physicalop.FlattenPushDownPlan(tableReader.TablePlan)
+		tableReader.TablePlans = physicalop.FlattenListPushDownPlan(tableReader.TablePlan)
 	}
 }
 
@@ -1034,14 +1035,12 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	opt := optimizetrace.DefaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {
 		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
 		tracer := &tracing.LogicalOptimizeTracer{
 			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
 		}
-		opt = opt.WithEnableOptimizeTracer(tracer)
 		defer func() {
 			vars.StmtCtx.OptimizeTracer.Logical = tracer
 		}()
@@ -1055,13 +1054,11 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
-		logic, _, err = rule.Optimize(ctx, logic, opt)
+		logic, _, err = rule.Optimize(ctx, logic)
 		if err != nil {
 			return nil, err
 		}
 	}
-	opt.RecordFinalLogicalPlan(logic.BuildPlanTrace)
 	return logic, err
 }
 
@@ -1070,14 +1067,12 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	opt := optimizetrace.DefaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {
 		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
 		tracer := &tracing.LogicalOptimizeTracer{
 			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
 		}
-		opt = opt.WithEnableOptimizeTracer(tracer)
 		defer func() {
 			vars.StmtCtx.OptimizeTracer.Logical = tracer
 		}()
@@ -1091,9 +1086,8 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		var planChanged bool
-		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
+		logic, planChanged, err = rule.Optimize(ctx, logic)
 		if err != nil {
 			return nil, err
 		}
@@ -1105,15 +1099,13 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	}
 
 	// Trigger the interaction rule
-	for i, rule := range againRuleList {
-		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
-		logic, _, err = rule.Optimize(ctx, logic, opt)
+	for _, rule := range againRuleList {
+		logic, _, err = rule.Optimize(ctx, logic)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	opt.RecordFinalLogicalPlan(logic.BuildPlanTrace)
 	return logic, err
 }
 
@@ -1175,12 +1167,12 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 	}
 
 	// collect the warnings from task.
-	logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.(*RootTask).warnings.GetWarnings())
+	logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.(*physicalop.RootTask).Warnings.GetWarnings())
 
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = getPlanCost(t.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+	cost, err = getPlanCost(t.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
 	return t.Plan(), cost, err
 }
 

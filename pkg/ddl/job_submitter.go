@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -311,11 +312,11 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		if job.CDCWriteSource == 0 && bdrRole != string(ast.BDRRoleNone) {
 			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 				for _, subJob := range job.MultiSchemaInfo.SubJobs {
-					if DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type, subJob.JobArgs) {
+					if DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type, subJob.JobArgs) && !filter.IsSystemSchema(job.SchemaName) {
 						return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 					}
 				}
-			} else if DeniedByBDR(ast.BDRRole(bdrRole), job.Type, jobW.JobArgs) {
+			} else if DeniedByBDR(ast.BDRRole(bdrRole), job.Type, jobW.JobArgs) && !filter.IsSystemSchema(job.SchemaName) {
 				return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 			}
 		}

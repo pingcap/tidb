@@ -18,73 +18,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
-// optimizetrace and costusage is isolated from util because core/base depended on them for
-// interface definition. Ideally, the dependency chain should be:
-//
-// `base` <- `util`/`util.coreusage` <- `core`
-//    ^ +---------------^                  |
-//    +------------------------------------+
-//
-// since `base` depended on optimizetrace and costusage for definition, we should separate
-// them out of `util`/`util.coreusage` to avoid import cycle.
-//
-// util.optimizetrace/util.costusage  <- `base` <- `util`/`util.coreusage` <- `core`
-//   				^   		            ^                                    ||
-//   				|   		            +------------------------------------+|
-//                  +-------------------------------------------------------------+
-//
-// optTracer define those basic element for logical optimizing trace and physical optimizing trace.
-//
-//********************** below logical optimize trace related *************************
-
-// LogicalOptimizeOp  is logical optimizing option for tracing.
-type LogicalOptimizeOp struct {
-	// tracer is goring to track optimize steps during rule optimizing
-	tracer *tracing.LogicalOptimizeTracer
-}
-
-// TracerIsNil returns whether inside tracer is nil
-func (op *LogicalOptimizeOp) TracerIsNil() bool {
-	return op.tracer == nil
-}
-
-// DefaultLogicalOptimizeOption returns the default LogicalOptimizeOp.
-func DefaultLogicalOptimizeOption() *LogicalOptimizeOp {
-	return &LogicalOptimizeOp{}
-}
-
-// WithEnableOptimizeTracer attach the customized tracer to current LogicalOptimizeOp.
-func (op *LogicalOptimizeOp) WithEnableOptimizeTracer(tracer *tracing.LogicalOptimizeTracer) *LogicalOptimizeOp {
-	op.tracer = tracer
-	return op
-}
-
-// AppendBeforeRuleOptimize just appends a before-rule plan tracer.
-func (op *LogicalOptimizeOp) AppendBeforeRuleOptimize(index int, name string, build func() *tracing.PlanTrace) {
-	if op == nil || op.tracer == nil {
-		return
-	}
-	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, build())
-}
-
-// AppendStepToCurrent appends a step of current action.
-func (op *LogicalOptimizeOp) AppendStepToCurrent(id int, tp string, reason, action func() string) {
-	if op == nil || op.tracer == nil {
-		return
-	}
-	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason(), action())
-}
-
-// RecordFinalLogicalPlan records the final logical plan.
-func (op *LogicalOptimizeOp) RecordFinalLogicalPlan(build func() *tracing.PlanTrace) {
-	if op == nil || op.tracer == nil {
-		return
-	}
-	op.tracer.RecordFinalLogicalPlan(build())
-}
-
-//********************** below physical optimize trace related *************************
-
 // PhysicalOptimizeOp  is logical optimizing option for tracing.
 type PhysicalOptimizeOp struct {
 	// tracer is goring to track optimize steps during physical optimizing
@@ -110,45 +43,4 @@ func (op *PhysicalOptimizeOp) AppendCandidate(c *tracing.CandidatePlanTrace) {
 // GetTracer returns the current op's PhysicalOptimizeTracer.
 func (op *PhysicalOptimizeOp) GetTracer() *tracing.PhysicalOptimizeTracer {
 	return op.tracer
-}
-
-// NewDefaultPlanCostOption returns PlanCostOption
-func NewDefaultPlanCostOption() *PlanCostOption {
-	return &PlanCostOption{}
-}
-
-// PlanCostOption indicates option during GetPlanCost
-type PlanCostOption struct {
-	CostFlag uint64
-	tracer   *PhysicalOptimizeOp
-}
-
-// GetTracer returns the current op's PhysicalOptimizeOp.
-func (op *PlanCostOption) GetTracer() *PhysicalOptimizeOp {
-	return op.tracer
-}
-
-// WithCostFlag set cost flag
-func (op *PlanCostOption) WithCostFlag(flag uint64) *PlanCostOption {
-	if op == nil {
-		return nil
-	}
-	op.CostFlag = flag
-	return op
-}
-
-// CostFlagTrace is a mirror of costusage.CostFlagTrace, leveraging
-// initialization assignment to avoid import cycle.
-var CostFlagTrace uint64
-
-// WithOptimizeTracer set tracer
-func (op *PlanCostOption) WithOptimizeTracer(v *PhysicalOptimizeOp) *PlanCostOption {
-	if op == nil {
-		return nil
-	}
-	op.tracer = v
-	if v != nil && v.tracer != nil {
-		op.CostFlag |= CostFlagTrace
-	}
-	return op
 }
