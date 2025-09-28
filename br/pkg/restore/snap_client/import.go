@@ -119,11 +119,15 @@ func (s *storeTokenChannelMap) ShouldBlock() bool {
 	return true
 }
 
-func newMutexList() []*sync.Mutex {
-	list := make([]*sync.Mutex, 0, INGEST_MUTEX_COUNT)
+type LockGuard struct {
+	sync.Mutex
+	handlingCount int64
+}
+
+func newMutexList() []*LockGuard {
+	list := make([]*LockGuard, 0, INGEST_MUTEX_COUNT)
 	for range INGEST_MUTEX_COUNT {
-		lock := new(sync.Mutex)
-		list = append(list, lock)
+		list = append(list, &LockGuard{handlingCount: 0})
 	}
 	return list
 }
@@ -240,7 +244,9 @@ func (s *tokenStats) printDownloadStr() string {
 	s.downloadLock.Lock()
 	var b strings.Builder
 	for storeId, d := range s.downloadCount {
-		b.WriteString(fmt.Sprintf("[%d:%d/%d]", storeId, d.taken, d.wait))
+		if d.taken > 0 || d.wait > 0 {
+			b.WriteString(fmt.Sprintf("[%d:%d/%d]", storeId, d.taken, d.wait))
+		}
 	}
 	s.downloadLock.Unlock()
 	return b.String()
@@ -250,10 +256,23 @@ func (s *tokenStats) printIngestStr() string {
 	s.ingestLock.Lock()
 	var b strings.Builder
 	for storeId, d := range s.ingestCount {
-		b.WriteString(fmt.Sprintf("[%d:%d/%d]", storeId, d.taken, d.wait))
+		if d.taken > 0 || d.wait > 0 {
+			b.WriteString(fmt.Sprintf("[%d:%d/%d]", storeId, d.taken, d.wait))
+		}
 	}
 	s.ingestLock.Unlock()
 	return b.String()
+}
+
+func (i *SnapFileImporter) printLockList() {
+	var b strings.Builder
+	for _, lock := range i.ingestMutexList {
+		a := atomic.LoadInt64(&lock.handlingCount)
+		if a > 0 {
+			b.WriteString(fmt.Sprintf("%d|", a))
+		}
+	}
+	log.Info("print lock info", zap.String("ingest", b.String()))
 }
 
 const INGEST_MUTEX_COUNT = 100000
@@ -268,7 +287,7 @@ type SnapFileImporter struct {
 
 	downloadTokensMap *storeTokenChannelMap
 	ingestTokensMap   *storeTokenChannelMap
-	ingestMutexList   []*sync.Mutex
+	ingestMutexList   []*LockGuard
 
 	closeCallbacks        []func(*SnapFileImporter) error
 	beforeIngestCallbacks []func(context.Context, restore.BatchBackupFileSet) (afterIngest func() error, err error)
@@ -391,6 +410,7 @@ func (importer *SnapFileImporter) print(ctx context.Context) {
 
 		case <-ticker.C:
 			importer.stats.print()
+			importer.printLockList()
 		}
 	}
 }
@@ -985,7 +1005,9 @@ func (importer *SnapFileImporter) ingest(
 	}
 	leaderStoreId := info.Leader.GetStoreId()
 	lock := importer.ingestMutexList[info.Region.Id%INGEST_MUTEX_COUNT]
+	atomic.AddInt64(&lock.handlingCount, 1)
 	lock.Lock()
+	atomic.AddInt64(&lock.handlingCount, -1)
 	tokenCh := importer.ingestTokensMap.acquireTokenCh(leaderStoreId, importer.concurrencyPerStore)
 	importer.stats.waitForTokenStatsI(leaderStoreId)
 	select {
