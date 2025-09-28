@@ -43,6 +43,7 @@ type PhysicalTopN struct {
 	Count       uint64
 }
 
+// ExhaustPhysicalPlans4LogicalTopN exhausts PhysicalTopN plans from LogicalTopN.
 func ExhaustPhysicalPlans4LogicalTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if MatchItems(prop, lt.ByItems) {
 		return append(getPhysTopN(lt, prop), getPhysLimits(lt, prop)...), true, nil
