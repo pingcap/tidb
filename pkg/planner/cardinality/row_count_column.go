@@ -291,7 +291,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 				return statistics.DefaultRowEst(0), errors.Trace(err)
 			}
 			cnt.Subtract(lowCnt)
-			cnt.Clamp(cnt, 0, c.NotNullCount())
+			cnt.Clamp(0, c.NotNullCount())
 		}
 		if !rg.LowExclude && lowVal.IsNull() {
 			cnt.AddAll(float64(c.NullCount))
@@ -304,7 +304,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			cnt.Add(highCnt)
 		}
 		// Clamp all 3 fields of RowEstimate to [0, realtimeRowCount]
-		cnt.Clamp(cnt, 0, float64(realtimeRowCount))
+		cnt.Clamp(0, float64(realtimeRowCount))
 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
@@ -336,7 +336,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 	if allowZeroEst {
 		minCount = 0
 	}
-	totalCount.Clamp(totalCount, minCount, float64(realtimeRowCount))
+	totalCount.Clamp(minCount, float64(realtimeRowCount))
 	return totalCount, nil
 }
 
