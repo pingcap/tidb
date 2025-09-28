@@ -15,7 +15,6 @@
 package physicalop
 
 import (
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -133,40 +132,6 @@ func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {
 		sel.SetChildren(newTask.GetPlan())
 		newTask.SetPlan(sel)
 	}
-}
-
-func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
-	newTask := &RootTask{}
-	p := PhysicalIndexLookUpReader{
-		TablePlan:        t.TablePlan,
-		IndexPlan:        t.IndexPlan,
-		ExtraHandleCol:   t.ExtraHandleCol,
-		CommonHandleCols: t.CommonHandleCols,
-		ExpectedCnt:      t.ExpectCnt,
-		KeepOrder:        t.KeepOrder,
-	}.Init(ctx, t.TablePlan.QueryBlockOffset())
-	p.PlanPartInfo = t.PhysPlanPartInfo
-	p.SetStats(t.TablePlan.StatsInfo())
-	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
-	// the final agg would be broken. Please reference comments for the similar logic in
-	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
-	// We need to refactor these logics.
-	aggPushedDown := false
-	switch p.TablePlan.(type) {
-	case *PhysicalHashAgg, *PhysicalStreamAgg:
-		aggPushedDown = true
-	}
-
-	if t.NeedExtraProj && !aggPushedDown {
-		schema := t.OriginSchema
-		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.TablePlan.QueryBlockOffset(), nil)
-		proj.SetSchema(schema)
-		proj.SetChildren(p)
-		newTask.SetPlan(proj)
-	} else {
-		newTask.SetPlan(p)
-	}
-	return newTask
 }
 
 // FinishIndexPlan means we no longer add plan to index plan, and compute the network cost for it.

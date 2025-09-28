@@ -588,42 +588,6 @@ func attach2Task4PhysicalMergeJoin(pp base.PhysicalPlan, tasks ...base.Task) bas
 	return t
 }
 
-<<<<<<< HEAD
-func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
-	newTask := &RootTask{}
-	p := physicalop.PhysicalIndexLookUpReader{
-		TablePlan:        t.tablePlan,
-		IndexPlan:        t.indexPlan,
-		ExtraHandleCol:   t.extraHandleCol,
-		CommonHandleCols: t.commonHandleCols,
-		ExpectedCnt:      t.expectCnt,
-		KeepOrder:        t.keepOrder,
-		PlanPartInfo:     t.physPlanPartInfo,
-	}.Init(ctx, t.tablePlan.QueryBlockOffset(), t.indexLookUpPushDown)
-	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
-	// the final agg would be broken. Please reference comments for the similar logic in
-	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
-	// We need to refactor these logics.
-	aggPushedDown := false
-	switch p.TablePlan.(type) {
-	case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
-		aggPushedDown = true
-	}
-
-	if t.needExtraProj && !aggPushedDown {
-		schema := t.originSchema
-		proj := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.tablePlan.QueryBlockOffset(), nil)
-		proj.SetSchema(schema)
-		proj.SetChildren(p)
-		newTask.SetPlan(proj)
-	} else {
-		newTask.SetPlan(p)
-	}
-	return newTask
-}
-
-=======
->>>>>>> 6beb9e184f (planner: move build tabel/index scan into physical op dir)
 func extractRows(p base.PhysicalPlan) float64 {
 	f := float64(0)
 	for _, c := range p.Children() {
