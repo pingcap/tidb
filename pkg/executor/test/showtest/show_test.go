@@ -818,16 +818,23 @@ func TestAutoRandomWithLargeSignedShowTableRegions(t *testing.T) {
 func TestShowEscape(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
 	tk.MustExec("use test")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	tk.MustExec("drop table if exists `t``abl\"e`")
 	tk.MustExec("create table `t``abl\"e`(`c``olum\"n` int(11) primary key)")
+	tk.MustExec("create user `u`")
+	tk.MustExec("grant select, update( `c``olum\"n`) on `t``abl\"e` to u")
 	tk.MustQuery("show create table `t``abl\"e`").Check(testkit.RowsWithSep("|",
 		""+
 			"t`abl\"e CREATE TABLE `t``abl\"e` (\n"+
 			"  `c``olum\"n` int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (`c``olum\"n`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustQuery("show grants for u").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'u'@'%'",
+		"GRANT SELECT ON `test`.`t``abl\"e` TO 'u'@'%'",
+		"GRANT UPDATE(`c``olum\"n`) ON `test`.`t``abl\"e` TO 'u'@'%'",
 	))
 
 	// ANSI_QUOTES will change the SHOW output
@@ -839,6 +846,11 @@ func TestShowEscape(t *testing.T) {
 			"  \"c`olum\"\"n\" int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (\"c`olum\"\"n\") /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustQuery("show grants for u").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'u'@'%'",
+		"GRANT SELECT ON \"test\".\"t`abl\"\"e\" TO 'u'@'%'",
+		"GRANT UPDATE(\"c`olum\"\"n\") ON \"test\".\"t`abl\"\"e\" TO 'u'@'%'",
 	))
 
 	tk.MustExec("rename table \"t`abl\"\"e\" to t")

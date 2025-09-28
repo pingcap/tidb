@@ -2097,7 +2097,7 @@ func privOnColumnsToString(p privOnColumns, sqlMode mysql.SQLMode) string {
 }
 
 func collectColumnGrant(record *columnsPrivRecord, user, host string, columnPrivTable map[string]privOnColumns, sqlMode mysql.SQLMode) bool {
-	if record.baseRecord.match(user, host) {
+	if record.baseRecord.fullyMatch(user, host) {
 		recordKey := stringutil.Escape(record.DB, sqlMode) + "." + stringutil.Escape(record.TableName, sqlMode)
 
 		privColumns, ok := columnPrivTable[recordKey]
