@@ -29,7 +29,6 @@ import (
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -203,11 +202,11 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
-	return s.optimize(ctx, p, opt, nil)
+func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
+	return s.optimize(ctx, p, nil)
 }
 
-func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp, groupByColumn map[*expression.Column]struct{}) (base.LogicalPlan, bool, error) {
+func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, groupByColumn map[*expression.Column]struct{}) (base.LogicalPlan, bool, error) {
 	if groupByColumn == nil {
 		groupByColumn = make(map[*expression.Column]struct{})
 	}
@@ -245,12 +244,12 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			apply.AttachOnConds(newConds)
 			innerPlan = sel.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
-			return s.optimize(ctx, p, opt, groupByColumn)
+			return s.optimize(ctx, p, groupByColumn)
 		} else if m, ok := innerPlan.(*logicalop.LogicalMaxOneRow); ok {
 			if m.Children()[0].MaxOneRow() {
 				innerPlan = m.Children()[0]
 				apply.SetChildren(outerPlan, innerPlan)
-				return s.optimize(ctx, p, opt, groupByColumn)
+				return s.optimize(ctx, p, groupByColumn)
 			}
 		} else if proj, ok := innerPlan.(*logicalop.LogicalProjection); ok {
 			// After the column pruning, some expressions in the projection operator may be pruned.
@@ -288,14 +287,14 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				proj.SetSchema(apply.Schema())
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
-				np, planChanged, err := s.optimize(ctx, p, opt, groupByColumn)
+				np, planChanged, err := s.optimize(ctx, p, groupByColumn)
 				if err != nil {
 					return nil, planChanged, err
 				}
 				proj.SetChildren(np)
 				return proj, planChanged, nil
 			}
-			return s.optimize(ctx, p, opt, groupByColumn)
+			return s.optimize(ctx, p, groupByColumn)
 		} else if li, ok := innerPlan.(*logicalop.LogicalLimit); ok {
 			// The presence of 'limit' in 'exists' will make the plan not optimal, so we need to decorrelate the 'limit' of subquery in optimization.
 			// e.g. select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1); When using 'limit' in subquery, the plan will not optimal.
@@ -311,7 +310,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			if li.Offset == 0 {
 				innerPlan = li.Children()[0]
 				apply.SetChildren(outerPlan, innerPlan)
-				return s.optimize(ctx, p, opt, groupByColumn)
+				return s.optimize(ctx, p, groupByColumn)
 			}
 		} else if agg, ok := innerPlan.(*logicalop.LogicalAggregation); ok {
 			if apply.CanPullUpAgg() && agg.CanPullUp() {
@@ -361,7 +360,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 					newAggFuncs = append(newAggFuncs, desc)
 				}
 				agg.AggFuncs = newAggFuncs
-				np, planChanged, err := s.optimize(ctx, p, opt, groupByColumn)
+				np, planChanged, err := s.optimize(ctx, p, groupByColumn)
 				if err != nil {
 					return nil, planChanged, err
 				}
@@ -435,7 +434,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 							proj.SetChildren(apply)
 							p = proj
 						}
-						return s.optimize(ctx, p, opt, groupByColumn)
+						return s.optimize(ctx, p, groupByColumn)
 					}
 					sel.Conditions = originalExpr
 					apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
@@ -446,7 +445,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			// the top level Sort has no effect on the subquery's result.
 			innerPlan = sort.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
-			return s.optimize(ctx, p, opt, groupByColumn)
+			return s.optimize(ctx, p, groupByColumn)
 		}
 	}
 NoOptimize:
@@ -456,7 +455,7 @@ NoOptimize:
 	}
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		np, planChanged, err := s.optimize(ctx, child, opt, groupByColumn)
+		np, planChanged, err := s.optimize(ctx, child, groupByColumn)
 		if err != nil {
 			return nil, planChanged, err
 		}

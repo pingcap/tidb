@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -49,7 +48,7 @@ type SkewDistinctAggRewriter struct {
 // - The aggregate has 1 and only 1 distinct aggregate function (limited to count, avg, sum)
 //
 // This rule is disabled by default. Use tidb_opt_skew_distinct_agg to enable the rule.
-func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalAggregation, _ *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalAggregation) base.LogicalPlan {
 	// only group aggregate is applicable
 	if len(agg.GroupByItems) == 0 {
 		return nil
@@ -264,11 +263,11 @@ func (*SkewDistinctAggRewriter) isQualifiedAgg(aggFunc *aggregation.AggFuncDesc)
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (a *SkewDistinctAggRewriter) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (a *SkewDistinctAggRewriter) Optimize(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, planChanged, err := a.Optimize(ctx, child, opt)
+		newChild, planChanged, err := a.Optimize(ctx, child)
 		if err != nil {
 			return nil, planChanged, err
 		}
@@ -279,7 +278,7 @@ func (a *SkewDistinctAggRewriter) Optimize(ctx context.Context, p base.LogicalPl
 	if !ok {
 		return p, planChanged, nil
 	}
-	if newAgg := a.rewriteSkewDistinctAgg(agg, opt); newAgg != nil {
+	if newAgg := a.rewriteSkewDistinctAgg(agg); newAgg != nil {
 		return newAgg, planChanged, nil
 	}
 	return p, planChanged, nil
