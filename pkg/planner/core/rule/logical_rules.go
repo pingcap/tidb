@@ -28,7 +28,6 @@ const (
 	FlagEliminateProjection
 	FlagMaxMinEliminate
 	FlagConstantPropagation
-	FlagConvertOuterToInnerJoin
 	FlagPredicatePushDown
 	FlagEliminateOuterJoin
 	FlagPartitionProcessor
