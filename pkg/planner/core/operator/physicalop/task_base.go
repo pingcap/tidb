@@ -402,7 +402,6 @@ type CopTask struct {
 	Warnings SimpleWarnings
 
 	keepOrder bool
-	bool
 }
 
 // AppendWarning appends a warning
