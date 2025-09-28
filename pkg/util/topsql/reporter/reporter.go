@@ -25,6 +25,7 @@ import (
 	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
+	"github.com/wangjohn/quickselect"
 	"go.uber.org/zap"
 )
 
@@ -242,18 +243,57 @@ func (tsr *RemoteTopSQLReporter) processCPUTimeData(timestamp uint64, data cpuRe
 func (tsr *RemoteTopSQLReporter) processStmtStatsData() {
 	defer util.Recover("top-sql", "processStmtStatsData", nil, false)
 
+	max_len := 0
+	for _, data := range tsr.stmtStatsBuffer {
+		max_len = max(max_len, len(data))
+	}
+	u64_slice := make([]uint64, 0, max_len)
+	k := int(topsqlstate.GlobalState.MaxStatementCount.Load())
 	for timestamp, data := range tsr.stmtStatsBuffer {
+		kth_exec_count := find_kth_uint64(data, k, u64_slice)
 		for digest, item := range data {
 			sqlDigest, planDigest := []byte(digest.SQLDigest), []byte(digest.PlanDigest)
-			if tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {
-				// This timestamp+sql+plan has been evicted due to low CPUTime.
+			if item.ExecCount > kth_exec_count {
+				tsr.collecting.getOrCreateRecord(sqlDigest, planDigest).appendStmtStatsItem(timestamp, *item)
+			} else {
 				tsr.collecting.appendOthersStmtStatsItem(timestamp, *item)
-				continue
 			}
-			tsr.collecting.getOrCreateRecord(sqlDigest, planDigest).appendStmtStatsItem(timestamp, *item)
 		}
 	}
 	tsr.stmtStatsBuffer = map[uint64]stmtstats.StatementStatsMap{}
+}
+
+// The uint64Slice type attaches the QuickSelect interface to an array of uint64s. It
+// implements Interface so that you can call QuickSelect(k) on any IntSlice.
+type uint64Slice []uint64
+
+func (t uint64Slice) Len() int {
+	return len(t)
+}
+
+func (t uint64Slice) Less(i, j int) bool {
+	return t[i] > t[j]
+}
+
+func (t uint64Slice) Swap(i, j int) {
+	t[i], t[j] = t[j], t[i]
+}
+
+// find_kth_uint64 finds the k-th largest ExecCount in data using quickselect algorithm.
+func find_kth_uint64(data stmtstats.StatementStatsMap, k int, u64_slice []uint64) uint64 {
+	var kth_exec_count uint64 = 0
+	if len(data) > k {
+		u64_slice = u64_slice[:0]
+		for _, item := range data {
+			u64_slice = append(u64_slice, item.ExecCount)
+		}
+		quickselect.QuickSelect(uint64Slice(u64_slice), k)
+		kth_exec_count = u64_slice[0]
+		for i := 0; i < k; i++ {
+			kth_exec_count = min(kth_exec_count, u64_slice[i])
+		}
+	}
+	return kth_exec_count
 }
 
 // takeDataAndSendToReportChan takes records data and then send to the report channel for reporting.

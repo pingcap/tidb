@@ -15,6 +15,7 @@
 package reporter
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -537,6 +538,160 @@ func TestReporterWorker(t *testing.T) {
 	assert.Len(t, data.DataRecords, 1)
 	assert.Equal(t, []byte("S1"), data.DataRecords[0].SqlDigest)
 	assert.Equal(t, []byte("P1"), data.DataRecords[0].PlanDigest)
+}
+
+func TestProcessStmtStatsData(t *testing.T) {
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(3)
+	topsqlstate.GlobalState.MaxStatementCount.Store(3)
+
+	r := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	r.Start()
+	defer r.Close()
+
+	ch := make(chan *ReportData, 1)
+	ds := newMockDataSink(ch)
+	err := r.Register(ds)
+	assert.NoError(t, err)
+
+	r.Collect(nil)
+	r.Collect([]collector.SQLCPUTimeRecord{
+		{
+			SQLDigest:  []byte("S1"),
+			PlanDigest: []byte("P1"),
+			CPUTimeMs:  1,
+		},
+		{
+			SQLDigest:  []byte("S2"),
+			PlanDigest: []byte("P2"),
+			CPUTimeMs:  2,
+		},
+	})
+	r.CollectStmtStatsMap(nil)
+	r.CollectStmtStatsMap(stmtstats.StatementStatsMap{
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S1",
+			PlanDigest: "P1",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:     1,
+			SumDurationNs: 1,
+			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 1}},
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S2",
+			PlanDigest: "P2",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:     2,
+			SumDurationNs: 2,
+			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 2}},
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S3",
+			PlanDigest: "P3",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:     3,
+			SumDurationNs: 3,
+			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 3}},
+		},
+	})
+
+	var data *ReportData
+	select {
+	case data = <-ch:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "no data in ch")
+	}
+
+	assert.Len(t, data.DataRecords, 3)
+	sort.Slice(data.DataRecords, func(i, j int) bool {
+		return data.DataRecords[i].Items[0].StmtExecCount < data.DataRecords[j].Items[0].StmtExecCount
+	})
+	// Check Si, Pi and corresponding item value i.
+	for i, record := range data.DataRecords {
+		j := i + 1
+		assert.Equal(t, []byte(fmt.Sprintf("S%d", j)), record.SqlDigest)
+		assert.Equal(t, []byte(fmt.Sprintf("P%d", j)), record.PlanDigest)
+		assert.Equal(t, uint64(j), record.Items[0].StmtExecCount)
+		assert.Equal(t, uint64(j), record.Items[0].StmtDurationSumNs)
+	}
+	// S3, P3 has no recorded CPU time data, so the CpuTimeMs is 0.
+	assert.Equal(t, uint32(0), data.DataRecords[2].Items[0].CpuTimeMs)
+
+	// Check cases with others
+	r.Collect(nil)
+	r.Collect([]collector.SQLCPUTimeRecord{
+		{
+			SQLDigest:  []byte("S4"),
+			PlanDigest: []byte("P4"),
+			CPUTimeMs:  4,
+		},
+		{
+			SQLDigest:  []byte("S7"),
+			PlanDigest: []byte("P7"),
+			CPUTimeMs:  7,
+		},
+	})
+	r.CollectStmtStatsMap(nil)
+	r.CollectStmtStatsMap(stmtstats.StatementStatsMap{
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S1",
+			PlanDigest: "P1",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:     1,
+			SumDurationNs: 1,
+			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 1}},
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S2",
+			PlanDigest: "P2",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:     2,
+			SumDurationNs: 2,
+			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 2}},
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S4",
+			PlanDigest: "P4",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:     4,
+			SumDurationNs: 4,
+			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 4}},
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S6",
+			PlanDigest: "P6",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:     6,
+			SumDurationNs: 6,
+			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 6}},
+		},
+	})
+
+	select {
+	case data = <-ch:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "no data in ch")
+	}
+	assert.Len(t, data.DataRecords, 4)
+	sort.Slice(data.DataRecords, func(i, j int) bool {
+		return data.DataRecords[i].Items[0].StmtExecCount < data.DataRecords[j].Items[0].StmtExecCount
+	})
+	// DataRecords should be:
+	// S7, P7, CpuTime=7, ExecCount=0
+	// Other,  CpuTime=0, ExecCount=3
+	// S4, P4, CpuTime=4, ExecCount=4
+	// S6, P6, CpuTime=0, ExecCount=6
+	assert.Equal(t, []byte("S7"), data.DataRecords[0].SqlDigest)
+	assert.Equal(t, uint32(7), data.DataRecords[0].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(0), data.DataRecords[0].Items[0].StmtExecCount)
+	assert.Equal(t, []byte(nil), data.DataRecords[1].SqlDigest)
+	assert.Equal(t, uint32(0), data.DataRecords[1].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(3), data.DataRecords[1].Items[0].StmtExecCount)
+	assert.Equal(t, []byte("S4"), data.DataRecords[2].SqlDigest)
+	assert.Equal(t, uint32(4), data.DataRecords[2].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(4), data.DataRecords[2].Items[0].StmtExecCount)
+	assert.Equal(t, []byte("S6"), data.DataRecords[3].SqlDigest)
+	assert.Equal(t, uint32(0), data.DataRecords[3].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(6), data.DataRecords[3].Items[0].StmtExecCount)
 }
 
 func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {
