@@ -560,7 +560,9 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 			job.AnalyzeState = model.AnalyzeStateRunning
 		case model.AnalyzeStateRunning:
-			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tbl.GetPartitionedTable() == nil {
+			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tbl.GetPartitionedTable() == nil &&
+				// make sure that this reorg has affected the existed indexes, otherwise, re-analyze is not necessary.
+				len(changingIdxs) > 0 {
 				// after all old index data are reorged. re-analyze it.
 				done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
 				if done {
@@ -616,7 +618,8 @@ func (w *worker) doModifyColumnTypeWithData(
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
 			analyzed := false
-			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tblInfo.GetPartitionInfo() == nil {
+			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tblInfo.GetPartitionInfo() == nil &&
+				len(changingIdxs) > 0 {
 				analyzed = true
 			}
 			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
