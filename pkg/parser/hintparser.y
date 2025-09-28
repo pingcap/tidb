@@ -194,6 +194,7 @@ import (
 %type	<leadingElement>
 	LeadingTableElement "leading element (table or list)"
 
+
 %start	Start
 
 %%
@@ -250,26 +251,27 @@ TableOptimizerHintOpt:
 		h.HintName = ast.NewCIStr($1)
 		$$ = h
 	}
-|   "LEADING" '(' QueryBlockOpt LeadingTableList ')'
-{
-    h := &ast.TableOptimizerHint{
-        HintName: ast.NewCIStr($1),
-        QBName:   ast.NewCIStr($3),
-        HintData: $4,
-    }
-	// For LEADING hints we need to maintain two views of the tables:
-    // h.HintData:
-    //    - Stores the structured AST node (LeadingList).
-    //    - Preserves the nesting and order information of LEADING(...),
-    // h.Tables:
-    //    - Stores a flat slice of all HintTable elements inside the LeadingList.
-    //    - Only used for initialization.
-	if leadingList, ok := h.HintData.(*ast.LeadingList); ok{
-		// be compatible with the prior flatten writing style
-		h.Tables = ast.FlattenLeadingList(leadingList)
+|	"LEADING" '(' QueryBlockOpt LeadingTableList ')'
+	{
+		h := &ast.TableOptimizerHint{
+			HintName: ast.NewCIStr($1),
+			QBName:   ast.NewCIStr($3),
+			HintData: $4,
+		}
+		// For LEADING hints we need to maintain two views of the tables:
+		// h.HintData:
+		//   - Stores the structured AST node (LeadingList).
+		//   - Preserves the nesting and order information of LEADING(...),
+		//
+		// h.Tables:
+		//   - Stores a flat slice of all HintTable elements inside the LeadingList.
+		//   - Only used for initialization.
+		if leadingList, ok := h.HintData.(*ast.LeadingList); ok {
+			// be compatible with the prior flatten writing style
+			h.Tables = ast.FlattenLeadingList(leadingList)
+		}
+		$$ = h
 	}
-	$$ = h
-}
 |	UnsupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
 	{
 		parser.warnUnsupportedHint($1)
@@ -436,14 +438,14 @@ HintStorageTypeAndTable:
 
 LeadingTableList:
 	LeadingTableElement
-    {
-        $$ = &ast.LeadingList{Items: []interface{}{$1}}
-    }
-|   LeadingTableList ',' LeadingTableElement
+	{
+		$$ = &ast.LeadingList{Items: []interface{}{$1}}
+	}
+|	LeadingTableList ',' LeadingTableElement
 	{
 		$$ = $1
-        $$ .Items = append($$.Items, $3)
-    }
+		$$.Items = append($$.Items, $3)
+	}
 
 LeadingTableElement:
 	HintTable

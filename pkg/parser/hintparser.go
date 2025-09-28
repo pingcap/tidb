@@ -1321,11 +1321,12 @@ yynewstate:
 			}
 			// For LEADING hints we need to maintain two views of the tables:
 			// h.HintData:
-			//    - Stores the structured AST node (LeadingList).
-			//    - Preserves the nesting and order information of LEADING(...),
+			//   - Stores the structured AST node (LeadingList).
+			//   - Preserves the nesting and order information of LEADING(...),
+			//
 			// h.Tables:
-			//    - Stores a flat slice of all HintTable elements inside the LeadingList.
-			//    - Only used for initialization.
+			//   - Stores a flat slice of all HintTable elements inside the LeadingList.
+			//   - Only used for initialization.
 			if leadingList, ok := h.HintData.(*ast.LeadingList); ok {
 				// be compatible with the prior flatten writing style
 				h.Tables = ast.FlattenLeadingList(leadingList)
