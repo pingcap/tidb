@@ -708,9 +708,12 @@ func (r *RowEstimate) DivideAll(f float64) {
 }
 
 // Clamp clamps all three fields of the RowEstimate to the given min and max values.
+// Don't allow MinEst to be greater than Est, or MaxEst to be less than Est.
 func (r *RowEstimate) Clamp(f1, f2 float64) {
 	r.Est = mathutil.Clamp(r.Est, f1, f2)
+	r.MinEst = min(r.MinEst, r.Est)
 	r.MinEst = mathutil.Clamp(r.MinEst, f1, f2)
+	r.MaxEst = max(r.MaxEst, r.Est)
 	r.MaxEst = mathutil.Clamp(r.MaxEst, f1, f2)
 }
 
