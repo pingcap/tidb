@@ -50,6 +50,7 @@ const (
 	greaterThanOrEqualPredicate
 	orPredicate
 	andPredicate
+	isNullAndIsNullPredicate // col IS NULL AND col IS NULL
 	scalarPredicate
 	falsePredicate
 	// TruePredicate TODO: make it lower case after rule_decorrelate is migrated.
@@ -97,7 +98,14 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) ([]*expr
 		}
 		cols := make([]*expression.Column, 0, 2)
 		if v.FuncName.L == ast.LogicAnd {
-			return nil, andPredicate
+			for _, arg := range v.GetArgs() {
+				col, ok := expression.IsIsNullColumn(arg)
+				if !ok {
+					return nil, andPredicate
+				}
+				cols = append(cols, col)
+			}
+			return cols, isNullAndIsNullPredicate
 		}
 		args := v.GetArgs()
 		if len(args) == 0 {
@@ -566,7 +574,7 @@ func equalOrNullSimplification(sctx base.PlanContext, predicates []expression.Ex
 	for _, predicate := range predicates {
 		cols, tp := FindPredicateType(sctx, predicate)
 		switch tp {
-		case andPredicate:
+		case isNullAndIsNullPredicate:
 			andPredicateList = append(andPredicateList, predicate)
 		case equalColumnPredicate:
 			equalConditionList = append(equalConditionList, predicate)
@@ -591,16 +599,11 @@ func equalOrNullSimplification(sctx base.PlanContext, predicates []expression.Ex
 // doEqualOrNullSimplification tries to simplify equal conditions with IsNull predicates.
 func doEqualOrNullSimplification(sctx base.PlanContext, equalConditionColsList [][]*expression.Column,
 	equalConditionList, andPredicateList []expression.Expression) (equalConditions, andPredicates []expression.Expression, isSimplified bool) {
-	columnsSets := make(map[int64]struct{}, len(equalConditionColsList)*2)
 	for andPredicateIdx, predicate := range andPredicateList {
 		andFunc := predicate.(*expression.ScalarFunction)
 		andList := expression.SplitCNFItems(andFunc)
 		isNullCols := expression.ExtractIsNullColumns(andList)
 		for i := range equalConditionList {
-			if len(andList) == len(columnsSets) {
-				// all predicates in this AND list have been simplified.
-				break
-			}
 			cols := equalConditionColsList[i]
 			if slices.ContainsFunc(cols, func(i *expression.Column) bool {
 				_, ok := isNullCols[i.UniqueID]
@@ -611,26 +614,11 @@ func doEqualOrNullSimplification(sctx base.PlanContext, equalConditionColsList [
 					ast.NullEQ,
 					types.NewFieldType(mysql.TypeTiny),
 					cols[0], cols[1])
-				columnsSets[cols[0].UniqueID] = struct{}{}
-				columnsSets[cols[1].UniqueID] = struct{}{}
+				andPredicateList[andPredicateIdx] = nil
 				isSimplified = true
-				// Pleas don't skip this equalConditionList, maybe it can remove more IsNull predicates.
+				break
 			}
 		}
-		if len(andList) == len(columnsSets) {
-			// all predicates in this AND list have been simplified.
-			andPredicateList[andPredicateIdx] = nil
-		} else {
-			andList = removeIsNullPredicates(andList, columnsSets)
-			intest.Assert(len(andList) > 0, "all predicates in this AND list have been simplified, should be removed.")
-			if len(andList) > 1 {
-				andPredicateList[andPredicateIdx] = expression.ComposeCNFCondition(sctx.GetExprCtx(), andList...)
-			} else {
-				andPredicateList[andPredicateIdx] = andList[0]
-			}
-		}
-		// reuse the columnsSets
-		clear(columnsSets)
 	}
 	andPredicateList = slices.DeleteFunc(andPredicateList, func(expr expression.Expression) bool {
 		return expr == nil

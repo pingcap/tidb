@@ -69,6 +69,15 @@
         ]
       },
       {
+        "SQL": "SELECT i FROM t1 WHERE (i<=>j) OR (i IS NULL AND j IS NULL);",
+        "Plan": [
+          "TableReader 8000.00 root  data:Projection",
+          "└─Projection 8000.00 cop[tikv]  test.t1.i",
+          "  └─Selection 8000.00 cop[tikv]  nulleq(test.t1.i, test.t1.j)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "SELECT * FROM t1, t2 WHERE (t1.i=t2.j) OR (t1.i IS NULL AND t2.j IS NULL);",
         "Plan": [
           "HashJoin 12500.00 root  inner join, equal:[nulleq(test.t1.i, test.t2.j)]",
