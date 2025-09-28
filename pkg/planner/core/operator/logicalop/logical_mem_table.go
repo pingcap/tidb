@@ -84,6 +84,8 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 		infoschema.ClusterTableStatementsSummary,
 		infoschema.ClusterTableStatementsSummaryHistory,
 		infoschema.ClusterTableSlowLog,
+		infoschema.TableAuditLog,
+		infoschema.ClusterTableAuditLog,
 		infoschema.TableTiDBTrx,
 		infoschema.ClusterTableTiDBTrx,
 		infoschema.TableDataLockWaits,

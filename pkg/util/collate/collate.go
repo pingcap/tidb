@@ -299,7 +299,7 @@ func IsDefaultCollationForUTF8MB4(collate string) bool {
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" || collate == "gbk_chinese_ci" ||
-		collate == "utf8mb4_0900_ai_ci"
+		collate == "utf8mb4_0900_ai_ci" || collate == "gb18030_chinese_ci"
 }
 
 // ConvertAndGetBinCollation converts collation to binary collation
@@ -317,6 +317,8 @@ func ConvertAndGetBinCollation(collate string) string {
 		return "utf8mb4_bin"
 	case "gbk_chinese_ci":
 		return "gbk_bin"
+	case "gb18030_chinese_ci":
+		return "gb18030_bin"
 	}
 
 	return collate
@@ -335,6 +337,7 @@ func IsBinCollation(collate string) bool {
 		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
 		collate == charset.CollationBin || collate == "utf8mb4_0900_bin"
 	// TODO: define a constant to reference collations
+	// TODO: consider add gbk_bin and gb18030_bin here
 }
 
 // IsPadSpaceCollation returns whether the collation is a PAD SPACE collation.
@@ -419,4 +422,8 @@ func init() {
 	newCollatorIDMap[CollationName2ID(charset.CollationGBKBin)] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
 	newCollatorMap[charset.CollationGBKChineseCI] = &gbkChineseCICollator{}
 	newCollatorIDMap[CollationName2ID(charset.CollationGBKChineseCI)] = &gbkChineseCICollator{}
+	newCollatorMap[charset.CollationGB18030Bin] = &gb18030BinCollator{charset.NewCustomGB18030Encoder()}
+	newCollatorIDMap[CollationName2ID(charset.CollationGB18030Bin)] = &gb18030BinCollator{charset.NewCustomGB18030Encoder()}
+	newCollatorMap[charset.CollationGB18030ChineseCI] = &gb18030ChineseCICollator{}
+	newCollatorIDMap[CollationName2ID(charset.CollationGB18030ChineseCI)] = &gb18030ChineseCICollator{}
 }
