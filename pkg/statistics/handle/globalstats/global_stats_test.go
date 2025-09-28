@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
@@ -869,10 +868,6 @@ func TestGlobalIndexStatistics(t *testing.T) {
 
 	// analyze table t
 	tk.MustExec("drop table if exists t")
-	if kerneltype.IsClassic() {
-		err := statstestutil.HandleNextDDLEventWithTxn(h)
-		require.NoError(t, err)
-	}
 	tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, key(a) )" +
 		"PARTITION BY RANGE (a) (" +
 		"PARTITION p0 VALUES LESS THAN (10)," +
@@ -911,7 +906,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustExec("analyze table t index idx")
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	rows := tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
-	require.Equal(t, 4.0, rows[0][1])
+	require.Equal(t, "4.00", rows[0][1])
 
 	// analyze table t index
 	tk.MustExec("drop table if exists t")
