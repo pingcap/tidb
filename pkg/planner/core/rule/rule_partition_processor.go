@@ -15,7 +15,6 @@
 package rule
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"fmt"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -68,7 +66,7 @@ const FullRange = -1
 type PartitionProcessor struct{}
 
 // Optimize implements the LogicalOptRule.<0th> interface.
-func (s *PartitionProcessor) Optimize(_ context.Context, lp base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (s *PartitionProcessor) Optimize(_ context.Context, lp base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	p, err := s.rewriteDataSource(lp)
 	return p, planChanged, err
@@ -2121,61 +2119,6 @@ func (p *RangeColumnsPruner) pruneUseBinarySearch(sctx base.PlanContext, op stri
 		end = length
 	}
 	return start, end
-}
-
-func appendMakeUnionAllChildrenTranceStep(origin *logicalop.DataSource, usedMap map[int64]model.PartitionDefinition, plan base.LogicalPlan, children []base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
-	if opt.TracerIsNil() {
-		return
-	}
-	if len(children) == 0 {
-		return
-	}
-	var action, reason func() string
-	used := make([]model.PartitionDefinition, 0, len(usedMap))
-	for _, def := range usedMap {
-		used = append(used, def)
-	}
-	slices.SortFunc(used, func(i, j model.PartitionDefinition) int {
-		return cmp.Compare(i.ID, j.ID)
-	})
-	if len(children) == 1 {
-		newDS := plan.(*logicalop.DataSource)
-		newDS.SetID(origin.SCtx().GetSessionVars().AllocNewPlanID())
-		action = func() string {
-			return fmt.Sprintf("%v_%v becomes %s_%v", origin.TP(), origin.ID(), newDS.TP(), newDS.ID())
-		}
-		reason = func() string {
-			return fmt.Sprintf("%v_%v has one needed partition[%s] after pruning", origin.TP(), origin.ID(), used[0].Name)
-		}
-	} else {
-		action = func() string {
-			buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v becomes %s_%v with children[",
-				origin.TP(), origin.ID(), plan.TP(), plan.ID()))
-			for i, child := range children {
-				if i > 0 {
-					buffer.WriteString(",")
-				}
-				newDS := child.(*logicalop.DataSource)
-				newDS.SetID(origin.SCtx().GetSessionVars().AllocNewPlanID())
-				fmt.Fprintf(buffer, "%s_%v", child.TP(), newDS.ID())
-			}
-			buffer.WriteString("]")
-			return buffer.String()
-		}
-		reason = func() string {
-			buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v has multiple needed partitions[",
-				origin.TP(), origin.ID()))
-			for i, u := range used {
-				if i > 0 {
-					buffer.WriteString(",")
-				}
-				buffer.WriteString(u.Name.String())
-			}
-			buffer.WriteString("] after pruning")
-			return buffer.String()
-		}
-	}
-	opt.AppendStepToCurrent(origin.ID(), origin.TP(), reason, action)
 }
 
 // PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like
