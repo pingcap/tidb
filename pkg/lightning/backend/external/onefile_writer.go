@@ -86,6 +86,9 @@ type OneFileWriter struct {
 
 	logger   *zap.Logger
 	partSize int64
+
+	lastLogWriteSize int64
+	totalWriteSize   int64
 }
 
 // initWriter inits the underlying dataFile/statFile path, dataWriter/statWriter for OneFileWriter.
@@ -150,6 +153,18 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
+	defer func() {
+		w.totalWriteSize += int64(len(idxVal))
+		if (w.totalWriteSize-w.lastLogWriteSize)/w.partSize >= 999 {
+			w.logger.Info("one file writer progress",
+				zap.String("writerID", w.writerID),
+				zap.Int64("partSize", w.partSize),
+				zap.Int64("estimatePartNum", w.totalWriteSize/w.partSize),
+				zap.Int64("totalWriteSize", w.totalWriteSize),
+			)
+			w.lastLogWriteSize = w.totalWriteSize
+		}
+	}()
 	if w.onDup != common.OnDuplicateKeyIgnore {
 		// must be Record or Remove right now
 		return w.handleDupAndWrite(ctx, idxKey, idxVal)
