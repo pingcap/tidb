@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -108,14 +107,6 @@ func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
 		rp.Children = append(rp.Children, p.IndexPlan.BuildPlanTrace())
 	}
 	return rp
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.BasePhysicalPlan.AppendChildCandidate(op)
-	if p.IndexPlan != nil {
-		AppendChildCandidate(p, p.IndexPlan, op)
-	}
 }
 
 // MemoryUsage return the memory usage of PhysicalIndexReader

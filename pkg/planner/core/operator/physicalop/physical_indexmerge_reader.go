@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -154,17 +153,6 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer1(taskType property.TaskType, o
 // GetPlanCostVer2 implements PhysicalPlan cost v2 for IndexMergeReader.
 func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalIndexMergeReader(p, taskType, option, args...)
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexMergeReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.BasePhysicalPlan.AppendChildCandidate(op)
-	if p.TablePlan != nil {
-		AppendChildCandidate(p, p.TablePlan, op)
-	}
-	for _, partialPlan := range p.PartialPlansRaw {
-		AppendChildCandidate(p, partialPlan, op)
-	}
 }
 
 // MemoryUsage return the memory usage of PhysicalIndexMergeReader

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -279,24 +278,6 @@ func (*BasePhysicalPlan) ExplainNormalizedInfo() string {
 // Clone implements the base.PhysicalPlan.<14th> interface.
 func (p *BasePhysicalPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p.Self)
-}
-
-// AppendChildCandidate implements the base.PhysicalPlan.<15th> interface.
-func (p *BasePhysicalPlan) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	if len(p.Children()) < 1 {
-		return
-	}
-	childrenID := make([]int, 0)
-	for _, child := range p.Children() {
-		childCandidate := &tracing.CandidatePlanTrace{
-			PlanTrace: &tracing.PlanTrace{TP: child.TP(), ID: child.ID(),
-				ExplainInfo: child.ExplainInfo()},
-		}
-		op.AppendCandidate(childCandidate)
-		child.AppendChildCandidate(op)
-		childrenID = append(childrenID, child.ID())
-	}
-	op.GetTracer().Candidates[p.ID()].PlanTrace.AppendChildrenID(childrenID...)
 }
 
 // MemoryUsage implements the base.PhysicalPlan.<16th> interface.

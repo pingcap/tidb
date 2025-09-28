@@ -140,10 +140,6 @@ type PhysicalPlan interface {
 	// Clone clones this physical plan.
 	Clone(newCtx PlanContext) (PhysicalPlan, error)
 
-	// AppendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
-	// be tracked during findBestTask or enumeratePhysicalPlans4Task
-	AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp)
-
 	// MemoryUsage return the memory usage of PhysicalPlan
 	MemoryUsage() int64
 

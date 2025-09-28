@@ -713,14 +713,6 @@ func appendCandidate4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimizeOp, l
 			MappingLogicalPlan: tracing.CodecPlanName(child.TP(), child.ID())}
 		pop.GetTracer().AppendCandidate(candidate)
 	}
-	pp.AppendChildCandidate(pop)
-}
-
-func appendPlanCostDetail4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimizeOp, detail *tracing.PhysicalPlanCostDetail) {
-	if pop == nil || pop.GetTracer() == nil {
-		return
-	}
-	pop.GetTracer().PhysicalPlanCostDetails[fmt.Sprintf("%v_%v", detail.GetPlanType(), detail.GetPlanID())] = detail
 }
 
 // get the possible group expression and logical operator from common super pointer.
