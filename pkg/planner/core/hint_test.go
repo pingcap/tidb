@@ -15,6 +15,8 @@
 package core_test
 
 import (
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -112,6 +114,7 @@ func TestWriteSlowLogHint(t *testing.T) {
 		logutil.SlowQueryLogger = logger
 		defer func() { logutil.SlowQueryLogger = prev }()
 
+		sql := "select /*+ write_slow_log */ * from t where a = 1;"
 		checkWriteSlowLog := func(expectWrite bool) {
 			if !expectWrite {
 				require.Equal(t, 0, recorded.Len())
@@ -119,20 +122,19 @@ func TestWriteSlowLogHint(t *testing.T) {
 				require.NotEqual(t, 0, recorded.Len())
 			}
 
-			found := false
-			for _, entry := range recorded.All() {
-				if entry.Level == zap.WarnLevel && entry.Message != "" {
-					found = true
-					break
+			writeMsg := slices.ContainsFunc(recorded.All(), func(entry observer.LoggedEntry) bool {
+				if entry.Level == zap.WarnLevel && strings.Contains(entry.Message, sql) {
+					return true
 				}
-			}
-			require.Equal(t, expectWrite, found)
+				return false
+			})
+			require.Equal(t, expectWrite, writeMsg)
 		}
 
 		testKit.MustExec(`select * from t where a = 1;`)
 		checkWriteSlowLog(false)
 
-		testKit.MustExec(`select /*+ write_slow_log */ * from t where a = 1;`)
+		testKit.MustExec(sql)
 		checkWriteSlowLog(true)
 	})
 }
