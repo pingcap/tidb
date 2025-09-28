@@ -292,7 +292,7 @@ type ImplSort struct {
 // Match implements ImplementationRule match interface.
 func (*ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	ls := expr.ExprNode.(*logicalop.LogicalSort)
-	return plannercore.MatchItems(prop, ls.ByItems)
+	return physicalop.MatchItems(prop, ls.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -378,7 +378,7 @@ func (*ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (m
 	if expr.Group.EngineType != pattern.EngineTiDB {
 		return prop.IsSortItemEmpty()
 	}
-	return plannercore.MatchItems(prop, topN.ByItems)
+	return physicalop.MatchItems(prop, topN.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -409,7 +409,7 @@ type ImplTopNAsLimit struct {
 func (*ImplTopNAsLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	topN := expr.ExprNode.(*logicalop.LogicalTopN)
 	_, canUseLimit := plannercore.GetPropByOrderByItems(topN.ByItems)
-	return canUseLimit && plannercore.MatchItems(prop, topN.ByItems)
+	return canUseLimit && physicalop.MatchItems(prop, topN.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.

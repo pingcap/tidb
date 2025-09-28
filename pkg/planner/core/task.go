@@ -1230,7 +1230,7 @@ func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *physicalop.CopTa
 		return nil, false
 	}
 
-	colsProp, ok := GetPropByOrderByItems(p.ByItems)
+	colsProp, ok := physicalop.GetPropByOrderByItems(p.ByItems)
 	if !ok {
 		return nil, false
 	}

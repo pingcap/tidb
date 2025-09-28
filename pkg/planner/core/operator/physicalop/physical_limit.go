@@ -155,3 +155,25 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalLimit(p, tasks...)
 }
+
+func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	p, canPass := GetPropByOrderByItems(lt.ByItems)
+	if !canPass {
+		return nil
+	}
+	// note: don't change the task enumeration order here.
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
+	for _, tp := range allTaskTypes {
+		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), SortItems: p.SortItems,
+			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
+		limit := PhysicalLimit{
+			Count:       lt.Count,
+			Offset:      lt.Offset,
+			PartitionBy: lt.GetPartitionBy(),
+		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		limit.SetSchema(lt.Schema())
+		ret = append(ret, limit)
+	}
+	return ret
+}

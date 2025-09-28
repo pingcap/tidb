@@ -58,43 +58,6 @@ import (
 // PlanCounterDisabled is the default value of PlanCounterTp, indicating that optimizer needn't force a plan.
 var PlanCounterDisabled base.PlanCounterTp = -1
 
-// GetPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
-// consider the case that all expression are columns.
-func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, bool) {
-	propItems := make([]property.SortItem, 0, len(items))
-	for _, item := range items {
-		col, ok := item.Expr.(*expression.Column)
-		if !ok {
-			return nil, false
-		}
-		propItems = append(propItems, property.SortItem{Col: col, Desc: item.Desc})
-	}
-	return &property.PhysicalProperty{SortItems: propItems}, true
-}
-
-// GetPropByOrderByItemsContainScalarFunc will check if this sort property can be pushed or not. In order to simplify the
-// problem, we only consider the case that all expression are columns or some special scalar functions.
-func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.PhysicalProperty, _, _ bool) {
-	propItems := make([]property.SortItem, 0, len(items))
-	onlyColumn := true
-	for _, item := range items {
-		switch expr := item.Expr.(type) {
-		case *expression.Column:
-			propItems = append(propItems, property.SortItem{Col: expr, Desc: item.Desc})
-		case *expression.ScalarFunction:
-			col, desc := expr.GetSingleColumn(item.Desc)
-			if col == nil {
-				return nil, false, false
-			}
-			propItems = append(propItems, property.SortItem{Col: col, Desc: desc})
-			onlyColumn = false
-		default:
-			return nil, false, false
-		}
-	}
-	return &property.PhysicalProperty{SortItems: propItems}, true, onlyColumn
-}
-
 func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (base.Task, int64, error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
