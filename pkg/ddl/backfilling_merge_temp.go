@@ -168,13 +168,13 @@ func (e *mergeTempIndexExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-// TaskMetaModified changes the max write speed for ingest
+// TaskMetaModified changes the concurrency for merging temp index.
 func (*mergeTempIndexExecutor) TaskMetaModified(_ context.Context, _ []byte) error {
 	// Will be added in the future PR
 	return nil
 }
 
-// ResourceModified change the concurrency for ingest
+// ResourceModified change the concurrency for merging temp index.
 func (*mergeTempIndexExecutor) ResourceModified(_ context.Context, _ *proto.StepResource) error {
 	// Will be added in the future PR
 	return nil
