@@ -490,6 +490,7 @@ func (c *collecting) appendOthersCPUTime(timestamp uint64, totalCPUTimeMs uint32
 func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.StatementStatsItem) {
 	others, ok := c.records[keyOthers]
 	if !ok {
+		println("appendOthersStmtStatsItem create others record")
 		others = newRecord(nil, nil)
 		c.records[keyOthers] = others
 	}
@@ -541,7 +542,7 @@ func (c *collecting) getReportRecords() records {
 	for _, v := range c.records {
 		rs = append(rs, *v)
 	}
-	if others != nil && others.totalCPUTimeMs > 0 {
+	if others != nil {
 		rs = append(rs, *others)
 	}
 	return rs
@@ -575,7 +576,7 @@ func (rs cpuRecords) Swap(i, j int) {
 	rs[i], rs[j] = rs[j], rs[i]
 }
 
-// topN returns the largest n cpuRecords (by CPUTimeMs), other cpuRecords are returned as evicted.
+// topN returns the largest n-1 cpuRecords (by CPUTimeMs), other cpuRecords are returned as evicted.
 func (rs cpuRecords) topN(n int) (top, evicted cpuRecords) {
 	if len(rs) <= n {
 		return rs, nil
