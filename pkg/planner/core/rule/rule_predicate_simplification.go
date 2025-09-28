@@ -181,7 +181,21 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool, filter func(expr expression.Expression) bool) []expression.Expression {
+func applyPredicateSimplificationForJoin(sctx base.PlanContext, predicates []expression.Expression,
+	schema1, schema2 *expression.Schema,
+	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
+	return applyPredicateSimplificationHelper(sctx, predicates, schema1, schema2, true, propagateConstant, filter)
+}
+
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool,
+	vaildConstantPropagationExpressionFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
+	return applyPredicateSimplificationHelper(sctx, predicates, nil, nil,
+		false, propagateConstant, vaildConstantPropagationExpressionFunc)
+}
+
+func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expression.Expression,
+	schema1, schema2 *expression.Schema, forJoin, propagateConstant bool,
+	vaildConstantPropagationExpressionFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
 	if len(predicates) == 0 {
 		return predicates
 	}
@@ -192,9 +206,14 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	// while in others, we merely aim to achieve simplification.
 	// Thus, we utilize a switch to govern this particular logic.
 	if propagateConstant {
-		simplifiedPredicate = expression.PropagateConstant(exprCtx, filter, simplifiedPredicate...)
+		if forJoin {
+			simplifiedPredicate = expression.PropagateConstantForJoin(exprCtx, sctx.GetSessionVars().AlwaysKeepJoinKey,
+				schema1, schema2, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
+		} else {
+			simplifiedPredicate = expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
+		}
 	} else {
-		exprs := expression.PropagateConstant(exprCtx, filter, simplifiedPredicate...)
+		exprs := expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
 		if len(exprs) == 1 {
 			simplifiedPredicate = exprs
 		}

@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,16 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package asciicheck
+package statistics
 
-import (
-	"github.com/pingcap/tidb/build/linter/util"
-	"github.com/tdakkota/asciicheck"
+// exported defaults used across statistics building and planner defaults
+const (
+	// DefaultTopNValue is the default value for number of TopN entries
+	DefaultTopNValue = 100
+	// DefaultHistogramBuckets is the default number of histogram buckets
+	DefaultHistogramBuckets = 256
 )
-
-// Analyzer is the analyzer struct of asciicheck.
-var Analyzer = asciicheck.NewAnalyzer()
-
-func init() {
-	util.SkipAnalyzerByConfig(Analyzer)
-}

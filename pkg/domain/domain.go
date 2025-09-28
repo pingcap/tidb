@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
+	meter_config "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -693,8 +695,9 @@ func (do *Domain) Init(
 			do.ddlExecutor = eBak
 		}
 	})
+	var checker *schematracker.Checker
 	if ddlInjector != nil {
-		checker := ddlInjector(do.ddl, do.ddlExecutor, do.infoCache)
+		checker = ddlInjector(do.ddl, do.ddlExecutor, do.infoCache)
 		checker.CreateTestDB(nil)
 		do.ddl = checker
 		do.ddlExecutor = checker
@@ -760,7 +763,13 @@ func (do *Domain) Init(
 		},
 	)
 	// step 3: domain reload the infoSchema.
-	return do.isSyncer.Reload()
+	if err = do.isSyncer.Reload(); err != nil {
+		return err
+	}
+	if checker != nil {
+		checker.InitFromIS(do.InfoSchema())
+	}
+	return nil
 }
 
 // Start starts the domain. After start, DDLs can be executed using session, see
@@ -1077,6 +1086,25 @@ func (do *Domain) InitDistTaskLoop() error {
 		// user keyspace
 		logutil.BgLogger().Info("skip running DXF in user keyspace")
 		return nil
+	}
+	if kv.IsSystemKS(do.store) {
+		tidbCfg := config.GetGlobalConfig()
+		if tidbCfg.MeteringStorageURI == "" {
+			logutil.BgLogger().Warn("metering storage uri is empty, metering will be disabled")
+		} else {
+			mCfg, err := meter_config.NewFromURI(tidbCfg.MeteringStorageURI)
+			if err != nil {
+				return errors.Wrap(err, "failed to parse metering storage uri")
+			}
+			m, err := metering.NewMeter(mCfg)
+			if err != nil {
+				return errors.Wrap(err, "failed to create metering")
+			}
+			metering.SetMetering(m)
+			do.wg.Run(func() {
+				m.StartFlushLoop(do.ctx)
+			}, "dxfMeteringFlushLoop")
+		}
 	}
 
 	var serverID string
@@ -1999,6 +2027,14 @@ func (do *Domain) NewOwnerManager(prompt, ownerKey string) owner.Manager {
 
 func (do *Domain) initStats(ctx context.Context) {
 	statsHandle := do.StatsHandle()
+	// If skip-init-stats is configured, skip the heavy initial stats loading as well.
+	// Still close InitStatsDone to unblock waiters that may depend on it.
+	if config.GetGlobalConfig().Performance.SkipInitStats {
+		close(statsHandle.InitStatsDone)
+		statslogutil.StatsLogger().Info("Skipping initial stats due to skip-grant-table being set")
+		return
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("panic when initiating stats", zap.Any("r", r),

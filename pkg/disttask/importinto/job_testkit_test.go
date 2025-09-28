@@ -187,20 +187,17 @@ func TestGetTaskImportedRows(t *testing.T) {
 	// local sort
 	taskMeta := importinto.TaskMeta{
 		Plan: importer.Plan{},
-	}
-	taskSummary := &importer.Summary{
-		EncodeSummary: importer.StepSummary{
-			Bytes:  10000,
-			RowCnt: 1000,
+		Summary: importer.Summary{
+			EncodeSummary: importer.StepSummary{
+				Bytes:  10000,
+				RowCnt: 1000,
+			},
+			IngestSummary: importer.StepSummary{
+				Bytes:  10000,
+				RowCnt: 1000,
+			},
 		},
-		IngestSummary: importer.StepSummary{
-			Bytes:  10000,
-			RowCnt: 1000,
-		},
 	}
-	var err error
-	taskMeta.TaskResult, err = json.Marshal(taskSummary)
-	require.NoError(t, err)
 
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
@@ -235,16 +232,13 @@ func TestGetTaskImportedRows(t *testing.T) {
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
-	}
-
-	taskSummary = &importer.Summary{
-		IngestSummary: importer.StepSummary{
-			Bytes:  10000,
-			RowCnt: 1000,
+		Summary: importer.Summary{
+			IngestSummary: importer.StepSummary{
+				Bytes:  10000,
+				RowCnt: 1000,
+			},
 		},
 	}
-	taskMeta.TaskResult, err = json.Marshal(taskSummary)
-	require.NoError(t, err)
 
 	bytes, err = json.Marshal(taskMeta)
 	require.NoError(t, err)
@@ -295,18 +289,14 @@ func TestShowImportProgress(t *testing.T) {
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
+		Summary: importer.Summary{
+			EncodeSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
+			MergeSummary:  importer.StepSummary{Bytes: 0, RowCnt: 0},
+			IngestSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
+			ImportedRows:  100,
+		},
 	}
 
-	taskSummary := &importer.Summary{
-		EncodeSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
-		MergeSummary:  importer.StepSummary{Bytes: 0, RowCnt: 0},
-		IngestSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
-		ImportedRows:  100,
-	}
-
-	var err error
-	taskMeta.TaskResult, err = json.Marshal(taskSummary)
-	require.NoError(t, err)
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
 

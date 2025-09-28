@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -107,14 +106,14 @@ func (t *CopTask) getStoreType() kv.StoreType {
 	if t.tablePlan == nil {
 		return kv.TiKV
 	}
-	tp := t.tablePlan
-	for len(tp.Children()) > 0 {
-		if len(tp.Children()) > 1 {
+	p := t.tablePlan
+	for len(p.Children()) > 0 {
+		if len(p.Children()) > 1 {
 			return kv.TiFlash
 		}
-		tp = tp.Children()[0]
+		p = p.Children()[0]
 	}
-	if ts, ok := tp.(*physicalop.PhysicalTableScan); ok {
+	if ts, ok := p.(*physicalop.PhysicalTableScan); ok {
 		return ts.StoreType
 	}
 	return kv.TiKV
@@ -533,8 +532,8 @@ func attach2TaskForMpp4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task
 	// for outer join, it should always be the outer side of the join
 	// for semi join, it should be the left side(the same as left out join)
 	outerTaskIndex := 1 - p.InnerChildIdx
-	if p.JoinType != logicalop.InnerJoin {
-		if p.JoinType == logicalop.RightOuterJoin {
+	if p.JoinType != base.InnerJoin {
+		if p.JoinType == base.RightOuterJoin {
 			outerTaskIndex = 1
 		} else {
 			outerTaskIndex = 0
@@ -642,9 +641,8 @@ func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 		CommonHandleCols: t.commonHandleCols,
 		ExpectedCnt:      t.expectCnt,
 		KeepOrder:        t.keepOrder,
-	}.Init(ctx, t.tablePlan.QueryBlockOffset())
-	p.PlanPartInfo = t.physPlanPartInfo
-	p.SetStats(t.tablePlan.StatsInfo())
+		PlanPartInfo:     t.physPlanPartInfo,
+	}.Init(ctx, t.tablePlan.QueryBlockOffset(), t.indexLookUpPushDown)
 	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
 	// the final agg would be broken. Please reference comments for the similar logic in
 	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
@@ -708,7 +706,7 @@ func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
 		}
-		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.GetPlan().StatsInfo().Scale(selectivity), newTask.GetPlan().QueryBlockOffset())
+		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.GetPlan().StatsInfo().Scale(ctx.GetSessionVars(), selectivity), newTask.GetPlan().QueryBlockOffset())
 		sel.FromDataSource = true
 		sel.SetChildren(newTask.GetPlan())
 		newTask.SetPlan(sel)
@@ -884,11 +882,15 @@ func sinkIntoIndexLookUp(p *physicalop.PhysicalLimit, t base.Task) bool {
 		Offset: p.Offset,
 		Count:  p.Count,
 	}
-	originStats := ts.StatsInfo()
-	ts.SetStats(p.StatsInfo())
-	if originStats != nil {
-		// keep the original stats version
-		ts.StatsInfo().StatsVersion = originStats.StatsVersion
+	if originStats := ts.StatsInfo(); originStats.RowCount >= p.StatsInfo().RowCount {
+		// Only reset the table scan stats when its row estimation is larger than the limit count.
+		// When indexLookUp push down is enabled, some rows have been looked up in TiKV side,
+		// and the rows processed by the TiDB table scan may be less than the limit count.
+		ts.SetStats(p.StatsInfo())
+		if originStats != nil {
+			// keep the original stats version
+			ts.StatsInfo().StatsVersion = originStats.StatsVersion
+		}
 	}
 	reader.SetStats(p.StatsInfo())
 	if isProj {
@@ -1341,10 +1343,10 @@ func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *CopTask) (base.T
 	pushedLimit.SetSchema(copTsk.tablePlan.Schema())
 	copTsk = attachPlan2Task(pushedLimit, copTsk).(*CopTask)
 	child := pushedLimit.Children()[0]
-	child.SetStats(child.StatsInfo().ScaleByExpectCnt(float64(newCount)))
+	child.SetStats(child.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), float64(newCount)))
 	if selSelectivity > 0 && selSelectivity < 1 {
 		scaledRowCount := child.StatsInfo().RowCount / selSelectivity
-		tblScan.SetStats(tblScan.StatsInfo().ScaleByExpectCnt(scaledRowCount))
+		tblScan.SetStats(tblScan.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), scaledRowCount))
 	}
 	rootTask := copTsk.ConvertToRootTask(p.SCtx())
 	return attachPlan2Task(p, rootTask), true
@@ -1526,18 +1528,18 @@ func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinI
 		case *physicalop.PhysicalSelection:
 			// todo: for simplicity, we can just inherit it from child.
 			// scale(1) means a cloned stats information same as the input stats.
-			p.SetStats(stats.Scale(1))
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
 		case *physicalop.PhysicalProjection:
 			// mainly about the rowEst, proj doesn't change that.
-			p.SetStats(stats.Scale(1))
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
 		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 			// todo: for simplicity, we can just inherit it from child.
-			p.SetStats(stats.Scale(1))
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
 		case *physicalop.PhysicalUnionScan:
 			// todo: for simplicity, we can just inherit it from child.
-			p.SetStats(stats.Scale(1))
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
 		default:
-			p.SetStats(stats.Scale(1))
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
 		}
 	}
 }
@@ -1682,7 +1684,7 @@ func scaleStats4GroupingSets(p *physicalop.PhysicalHashAgg, groupingSets express
 	// change the sub-agg's stats
 	if p.StatsInfo() != nil {
 		// equivalence to a new cloned one. (cause finalAgg and partialAgg may share a same copy of stats)
-		cpStats := p.StatsInfo().Scale(1)
+		cpStats := p.StatsInfo().Scale(p.SCtx().GetSessionVars(), 1)
 		cpStats.RowCount = sumNDV
 		// We cannot estimate the ColNDVs for every output, so we use a conservative strategy.
 		for k := range cpStats.ColNDVs {
@@ -1812,7 +1814,7 @@ func adjust3StagePhaseAgg(p *physicalop.PhysicalHashAgg, partialAgg, finalAgg ba
 	// enforce Expand operator above the children.
 	// physical plan is enumerated without children from itself, use mpp subtree instead p.children.
 	// scale(len(groupingSets)) will change the NDV, while Expand doesn't change the NDV and groupNDV.
-	stats := mpp.p.StatsInfo().Scale(float64(1))
+	stats := mpp.p.StatsInfo().Scale(p.SCtx().GetSessionVars(), float64(1))
 	stats.RowCount = stats.RowCount * float64(len(groupingSets))
 	physicalExpand := physicalop.PhysicalExpand{
 		GroupingSets: groupingSets,

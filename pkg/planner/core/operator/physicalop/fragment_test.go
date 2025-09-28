@@ -12,21 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package physicalop
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
 func TestFragmentInitSingleton(t *testing.T) {
-	r1, r2 := &physicalop.PhysicalExchangeReceiver{}, &physicalop.PhysicalExchangeReceiver{}
-	r1.SetChildren(&physicalop.PhysicalExchangeSender{ExchangeType: tipb.ExchangeType_PassThrough})
-	r2.SetChildren(&physicalop.PhysicalExchangeSender{ExchangeType: tipb.ExchangeType_Broadcast})
-	p := &physicalop.PhysicalHashJoin{}
+	r1, r2 := &PhysicalExchangeReceiver{}, &PhysicalExchangeReceiver{}
+	r1.SetChildren(&PhysicalExchangeSender{ExchangeType: tipb.ExchangeType_PassThrough})
+	r2.SetChildren(&PhysicalExchangeSender{ExchangeType: tipb.ExchangeType_Broadcast})
+	p := &PhysicalHashJoin{}
 
 	f := &Fragment{}
 	p.SetChildren(r1, r1)

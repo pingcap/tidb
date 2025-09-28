@@ -133,7 +133,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *op
 	newPred := make([]expression.Expression, 0, len(predicates))
 	for i := range pushedPredicates {
 		newPred = append(newPred, pushedPredicates[i].Clone())
-		ruleutil.ResolveExprAndReplace(newPred[i], p.Cte.ColumnMap)
+		newPred[i] = ruleutil.ResolveExprAndReplace(newPred[i], p.Cte.ColumnMap)
 	}
 	p.Cte.PushDownPredicates = append(p.Cte.PushDownPredicates, expression.ComposeCNFCondition(p.SCtx().GetExprCtx(), newPred...))
 	return predicates, p.Self(), nil
@@ -236,11 +236,6 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-
-// ExhaustPhysicalPlans implements the base.LogicalPlan.<14th> interface.
-func (p *LogicalCTE) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalCTE(p, prop)
-}
 
 // ExtractCorrelatedCols implements the base.LogicalPlan.<15th> interface.
 func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {

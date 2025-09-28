@@ -142,6 +142,10 @@ const (
 	PluginDir = "plugin_dir"
 	// PluginLoad is the name of 'plugin_load' system variable.
 	PluginLoad = "plugin_load"
+	// PluginAuditLogBufferSize is the name of 'plugin_audit_log_buffer_size' system variable.
+	PluginAuditLogBufferSize = "plugin_audit_log_buffer_size"
+	// PluginAuditLogFlushInterval is the name of 'plugin_audit_log_flush_interval' system variable.
+	PluginAuditLogFlushInterval = "plugin_audit_log_flush_interval"
 	// TiDBEnableDDL indicates whether the tidb-server campaigns the DDL owner,
 	TiDBEnableDDL = "tidb_enable_ddl"
 	// TiDBEnableStatsOwner indicates whether the tidb-server campaigns the Stats owner,

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -131,17 +130,17 @@ func (p *PointGetPlan) Schema() *expression.Schema {
 }
 
 // GetCost returns cost of the PointGetPlan.
-func (p *PointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float64 {
-	return utilfuncp.GetCost4PointGetPlan(p, opt)
+func (p *PointGetPlan) GetCost() float64 {
+	return utilfuncp.GetCost4PointGetPlan(p)
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PointGetPlan) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PointGetPlan) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PointGetPlan(p, taskType, option)
 }
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-func (p *PointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func (p *PointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PointGetPlan(p, taskType, option)
 }
 
@@ -488,35 +487,6 @@ func (p *PointGetPlan) AccessObject() base.AccessObject {
 	return res
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PointGetPlan)
-	*cloned = *p
-	cloned.Plan = *p.Plan.CloneWithNewCtx(newCtx)
-	if p.PartitionIdx != nil {
-		cloned.PartitionIdx = new(int)
-		*cloned.PartitionIdx = *p.PartitionIdx
-	}
-	if p.Handle != nil {
-		cloned.Handle = p.Handle.Copy()
-	}
-	if p.HandleConstant != nil {
-		if p.HandleConstant.SafeToShareAcrossSession() {
-			cloned.HandleConstant = p.HandleConstant
-		} else {
-			cloned.HandleConstant = p.HandleConstant.Clone().(*expression.Constant)
-		}
-	}
-	cloned.IndexValues = util.CloneDatums(p.IndexValues)
-	cloned.IndexConstants = utilfuncp.CloneConstantsForPlanCache(p.IndexConstants, nil)
-	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(p.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.AccessConditions = utilfuncp.CloneExpressionsForPlanCache(p.AccessConditions, nil)
-	cloned.accessCols = utilfuncp.CloneColumnsForPlanCache(p.accessCols, nil)
-	return cloned, true
-}
-
 // BatchPointGetPlan represents a physical plan which contains a bunch of
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
@@ -615,17 +585,17 @@ func (p *BatchPointGetPlan) SetAccessCols(cols []*expression.Column) {
 }
 
 // GetCost implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float64 {
-	return utilfuncp.GetCost4BatchPointGetPlan(p, opt)
+func (p *BatchPointGetPlan) GetCost() float64 {
+	return utilfuncp.GetCost4BatchPointGetPlan(p)
 }
 
 // GetPlanCostVer1 implements PhysicalPlan cost v1 for BatchPointGetPlan.
-func (p *BatchPointGetPlan) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *BatchPointGetPlan) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14BatchPointGetPlan(p, taskType, option)
 }
 
 // GetPlanCostVer2 implements PhysicalPlan cost v2 for BatchPointGetPlan.
-func (p *BatchPointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func (p *BatchPointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24BatchPointGetPlan(p, taskType, option)
 }
 
@@ -1073,29 +1043,4 @@ func (p *BatchPointGetPlan) AccessObject() base.AccessObject {
 		res.Indexes = []access.IndexAccess{index}
 	}
 	return res
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(BatchPointGetPlan)
-	*cloned = *p
-	cloned.SimpleSchemaProducer = *p.SimpleSchemaProducer.CloneSelfForPlanCache(newCtx)
-	probeParents, ok := ClonePhysicalPlansForPlanCache(newCtx, p.ProbeParents)
-	if !ok {
-		return nil, false
-	}
-	cloned.ProbeParents = probeParents
-	cloned.ctx = newCtx
-	cloned.Handles = util.CloneHandles(p.Handles)
-	cloned.HandleParams = utilfuncp.CloneConstantsForPlanCache(p.HandleParams, nil)
-	cloned.IndexValues = util.CloneDatum2D(p.IndexValues)
-	cloned.IndexValueParams = CloneConstant2DForPlanCache(p.IndexValueParams)
-	cloned.AccessConditions = utilfuncp.CloneExpressionsForPlanCache(p.AccessConditions, nil)
-	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(p.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.PartitionIdxs = make([]int, len(p.PartitionIdxs))
-	copy(cloned.PartitionIdxs, p.PartitionIdxs)
-	cloned.accessCols = utilfuncp.CloneColumnsForPlanCache(p.accessCols, nil)
-	return cloned, true
 }

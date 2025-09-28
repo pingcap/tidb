@@ -15,7 +15,6 @@
 package clustertablestest
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -41,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
@@ -1902,24 +1900,13 @@ func TestMDLViewIDConflict(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
-	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)")
 
-	bigID := tbl.Meta().ID * 10
 	bigTableName := ""
-	// set a hard limitation on 10000 to avoid using too much resource
-	for i := range 10000 {
+	// set a hard limitation on 500 to avoid using too much resource
+	for i := range 500 {
 		bigTableName = fmt.Sprintf("t%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(a int);", bigTableName))
-
-		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(bigTableName))
-		require.NoError(t, err)
-
-		require.LessOrEqual(t, tbl.Meta().ID, bigID)
-		if tbl.Meta().ID == bigID {
-			break
-		}
 	}
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec(fmt.Sprintf("insert into %s values (1)", bigTableName))

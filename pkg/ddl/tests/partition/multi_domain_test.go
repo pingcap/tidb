@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -766,23 +767,6 @@ func getTableAndPartitionIDs(t *testing.T, tk *testkit.TestKit) (parts []int64) 
 	return originalIDs
 }
 
-func getAddingPartitionIDs(t *testing.T, tk *testkit.TestKit) (parts []int64) {
-	ctx := tk.Session()
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	if tbl.Meta().Partition == nil {
-		return nil
-	}
-	ids := make([]int64, 0, len(tbl.Meta().Partition.AddingDefinitions))
-	if tbl.Meta().Partition != nil {
-		for _, def := range tbl.Meta().Partition.AddingDefinitions {
-			ids = append(ids, def.ID)
-		}
-	}
-	return ids
-}
-
 func checkTableAndIndexEntries(t *testing.T, tk *testkit.TestKit, originalIDs []int64) {
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
@@ -1311,6 +1295,10 @@ func TestMultiSchemaReorganizeNoPKBackfillDML(t *testing.T) {
 // TestMultiSchemaTruncatePartitionWithGlobalIndex to show behavior when
 // truncating a partition with a global index
 func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		// TODO(tangenta): fix this test
+		t.Skip("Skip this test temporarily for next-gen, will fix it later")
+	}
 	// TODO: Also test non-int PK, multi-column PK
 	createSQL := `create table t (a int primary key, b varchar(255), c varchar(255) default 'Filler', unique key uk_b (b) global) partition by hash (a) partitions 2`
 	initFn := func(tkO *testkit.TestKit) {

@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
@@ -162,7 +163,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return
 		}
 		err = util2.GetRecoverError(r)
-		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
+		logutil.Logger(ctx).Warn("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 	if a.stmt != nil {
 		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
@@ -544,7 +545,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			panic(r)
 		}
 		err = recoverdErr
-		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog(false)), zap.Stack("stack"))
+		logutil.Logger(ctx).Warn("execute sql panic", zap.String("sql", a.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
@@ -637,8 +638,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
-		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
-		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
+		// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
+		if !a.Ctx.GetSessionVars().StmtCtx.InSelectStmt {
 			maxExecutionTime = 0
 		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
@@ -825,8 +826,13 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 // prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
 // cascade behaviour and this ExecStmt is in transaction.
 func (a *ExecStmt) prepareFKCascadeContext(e exec.Executor) {
-	exec, ok := e.(WithForeignKeyTrigger)
-	if !ok || !exec.HasFKCascades() {
+	var execWithFKTrigger WithForeignKeyTrigger
+	if explain, ok := e.(*ExplainExec); ok {
+		execWithFKTrigger = explain.getAnalyzeExecWithForeignKeyTrigger()
+	} else {
+		execWithFKTrigger, _ = e.(WithForeignKeyTrigger)
+	}
+	if execWithFKTrigger == nil || !execWithFKTrigger.HasFKCascades() {
 		return
 	}
 	sessVar := a.Ctx.GetSessionVars()
@@ -1347,8 +1353,16 @@ func (a *ExecStmt) logAudit() {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
-			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
+			cmdBin := byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))
+			cmd := mysql.Command2Str[cmdBin]
 			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
+			if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
+				ctx = context.WithValue(ctx, plugin.PrepareStmtIDCtxKey, execStmt.PrepStmtId)
+			}
+			if intest.InTest && (cmdBin == mysql.ComStmtPrepare ||
+				cmdBin == mysql.ComStmtExecute || cmdBin == mysql.ComStmtClose) {
+				intest.Assert(ctx.Value(plugin.PrepareStmtIDCtxKey) != nil, "prepare statement id should not be nil")
+			}
 			audit.OnGeneralEvent(ctx, sessVars, plugin.Completed, cmd)
 		}
 		return nil
@@ -1718,7 +1732,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		TimeTotal:         costTime,
 		IndexNames:        indexNames,
 		CopTasks:          stmtCtx.CopTasksDetails(),
-		ExecDetail:        execDetail,
+		ExecDetail:        &execDetail,
 		MemMax:            sessVars.MemTracker.MaxConsumed(),
 		DiskMax:           sessVars.DiskTracker.MaxConsumed(),
 		Succ:              succ,
@@ -1733,7 +1747,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		KVExecDetail:      &tikvExecDetail,
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
 		ResultRows:        stmtCtx.GetResultRowsCount(),
-		ExecRetryCount:    a.retryCount,
+		ExecRetryCount:    uint64(a.retryCount),
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),

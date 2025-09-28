@@ -22,10 +22,15 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
+
+func init() {
+	property.ScaleNDVFunc = ScaleNDV
+}
 
 const distinctFactor = 0.8
 
@@ -204,4 +209,54 @@ func EstimateColsDNVWithMatchedLenFromUniqueIDs(sctx planctx.PlanContext, ids []
 		})
 	}
 	return EstimateColsNDVWithMatchedLen(sctx, cols, schema, profile)
+}
+
+// ScaleNDV scales the original NDV based on the selectivity of the rows.
+func ScaleNDV(vars *variable.SessionVars, originalNDV, originalRows, selectedRows float64) (newNDV float64) {
+	skewRatio := vardef.DefOptRiskScaleNDVSkewRatio
+	if vars != nil { // for safety
+		skewRatio = vars.RiskScaleNDVSkewRatio
+	}
+	uniformNDV := estimateUniformNDV(originalNDV, originalRows, selectedRows)
+	skewedNDV := estimateSkewedNDV(originalNDV, originalRows, selectedRows)
+	return skewedNDV*skewRatio + uniformNDV*(1-skewRatio)
+}
+
+// estimateUniformNDV scales the original NDV based on the selectivity of the rows.
+// This function is based on the uniform assumption:
+// 1. each value appears the same number of times in total rows.
+// 2. each row has the same possibility to be selected.
+// For example, if originalNDV is 5, selectedRows is 6 and originalRows is 10.
+// Then we assume that each value appears 10/5 = 2 times (assumption 1).
+// For each row, the possibility of being selected is 6/10 = 0.6 (assumption 2).
+// Then for each value, the possibility of not being selected is (1-0.6)^2 = 0.16.
+// Finally, the new NDV should be 5 * (1-0.16) = 4.2.
+func estimateUniformNDV(originalNDV, originalRows, selectedRows float64) (newNDV float64) {
+	if originalRows <= 0 || selectedRows <= 0 || originalNDV <= 0 {
+		return 0
+	}
+	newNDV = originalNDV
+	if selectedRows >= originalRows {
+		return
+	}
+	selectivity := selectedRows / originalRows
+	// uniform assumption that each value appears the same number of times
+	rowsPerValue := originalRows / originalNDV
+	// the possibility that a value is not selected
+	notSelectedPossPerRow := 1 - selectivity
+	notSelectedPossPerValue := math.Pow(notSelectedPossPerRow, rowsPerValue)
+	newNDV = originalNDV * (1 - notSelectedPossPerValue)
+
+	// revise newNDV
+	newNDV = max(newNDV, 1.0)          // at least 1 value
+	newNDV = min(newNDV, selectedRows) // at most selectedRows values
+	return
+}
+
+// estimateSkewedNDV estimates the new NDV based on skewed possibility.
+func estimateSkewedNDV(originalNDV, originalRows, selectedRows float64) (newNDV float64) {
+	if originalRows <= 0 {
+		return 0 // for safety
+	}
+	return originalNDV * selectedRows / originalRows
 }

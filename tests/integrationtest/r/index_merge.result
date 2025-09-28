@@ -53,8 +53,16 @@ Sort	root		index_merge.t1.c1
 └─IndexMerge	root		type: union
   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5)))
+  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, ScalarQueryCol#10(5))))
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#10
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:max(index_merge.t1.c3)->Column#9
+    └─TopN	root		index_merge.t1.c3:desc, offset:0, count:1
+      └─TableReader	root		data:TopN
+        └─TopN	cop[tikv]		index_merge.t1.c3:desc, offset:0, count:1
+          └─Selection	cop[tikv]		not(isnull(index_merge.t1.c3))
+            └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select max(c3) from t1) order by 1;
 c1	c2	c3
 1	1	1
@@ -109,8 +117,14 @@ Sort	root		index_merge.t1.c1
 └─IndexMerge	root		type: union
   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5)))
+  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, ScalarQueryCol#20(5))))
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#20
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:count(Column#17)->Column#9
+    └─IndexReader	root		index:StreamAgg
+      └─StreamAgg	cop[tikv]		funcs:count(1)->Column#17
+        └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select count(1) from t2) order by 1;
 c1	c2	c3
 1	1	1
@@ -187,17 +201,23 @@ c1	c2	c3
 explain format = 'plan_tree' select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 id	task	access object	operator info
 Sort	root		index_merge.t1.c1
-└─Projection	root		index_merge.t1.c1, 15->Column#25
+└─Projection	root		index_merge.t1.c1, ScalarQueryCol#25(15)->Column#26
   └─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column#14), if(ne(Column#15, 0), NULL, 1)), or(eq(Column#16, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
     ├─StreamAgg(Build)	root		funcs:max(Column#13)->Column#14, funcs:sum(0)->Column#15, funcs:count(1)->Column#16
-    │ └─StreamAgg	root		funcs:count(Column#38)->Column#13
+    │ └─StreamAgg	root		funcs:count(Column#39)->Column#13
     │   └─IndexReader	root		index:StreamAgg
-    │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column#38
+    │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column#39
     │       └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
     └─IndexMerge(Probe)	root		type: union
       ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
       ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
       └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#25
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:sum(Column#24)->Column#22
+    └─IndexReader	root		index:StreamAgg
+      └─StreamAgg	cop[tikv]		funcs:sum(index_merge.t2.c2)->Column#24
+        └─IndexFullScan	cop[tikv]	table:t2, index:c2(c2)	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 c1	(select sum(c2) from t2)
 1	15

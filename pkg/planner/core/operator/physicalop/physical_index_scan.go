@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -533,35 +532,6 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 		p.Ranges[0].IsPointNonNullable(tc)
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexScan)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(p.AccessCondition, nil)
-	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(p.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	if p.GenExprs != nil {
-		return nil, false
-	}
-	cloned.ByItems = util.CloneByItemss(p.ByItems)
-	if p.PkIsHandleCol != nil {
-		if p.PkIsHandleCol.SafeToShareAcrossSession() {
-			cloned.PkIsHandleCol = p.PkIsHandleCol
-		} else {
-			cloned.PkIsHandleCol = p.PkIsHandleCol.Clone().(*expression.Column)
-		}
-	}
-	cloned.ConstColsByCond = make([]bool, len(p.ConstColsByCond))
-	copy(cloned.ConstColsByCond, p.ConstColsByCond)
-	return cloned, true
-}
-
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.Schema().Len())
@@ -623,7 +593,7 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalIndexScan) GetPlanCostVer1(taskType property.TaskType,
-	option *optimizetrace.PlanCostOption) (float64, error) {
+	option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalIndexScan(p, taskType, option)
 }
 
@@ -631,7 +601,7 @@ func (p *PhysicalIndexScan) GetPlanCostVer1(taskType property.TaskType,
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
 func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
+	option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalIndexScan(p, taskType, option, args...)
 }
 
@@ -701,9 +671,9 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	// But for MV index, it's possible that the IndexRangeScan row count is larger than the table total row count.
 	// Please see the Case 2 in CalcTotalSelectivityForMVIdxPath for an example.
 	if idx.MVIndex && rowCount > ds.TableStats.RowCount {
-		is.SetStats(ds.TableStats.Scale(rowCount / ds.TableStats.RowCount))
+		is.SetStats(ds.TableStats.Scale(ds.SCtx().GetSessionVars(), rowCount/ds.TableStats.RowCount))
 	} else {
-		is.SetStats(ds.TableStats.ScaleByExpectCnt(rowCount))
+		is.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount))
 	}
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats.GetUsedInfo(is.PhysicalTableID) != nil {

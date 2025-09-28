@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -465,7 +466,7 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 	tableReader, isTableReader := p.(*physicalop.PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
 		mergeContinuousSelections(tableReader.TablePlan)
-		tableReader.TablePlans = physicalop.FlattenPushDownPlan(tableReader.TablePlan)
+		tableReader.TablePlans = physicalop.FlattenListPushDownPlan(tableReader.TablePlan)
 	}
 }
 
@@ -1002,7 +1003,7 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 	if apply, ok := plan.(*physicalop.PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
 		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
-		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
+		_, err := physicalop.SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
 		supportClone := err == nil // limitation 2
 		if noOrder && supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
@@ -1180,7 +1181,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = getPlanCost(t.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+	cost, err = getPlanCost(t.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
 	return t.Plan(), cost, err
 }
 
@@ -1269,7 +1270,7 @@ func transformPhysicalPlan(p base.PhysicalPlan, f func(p base.PhysicalPlan) base
 
 func existsCartesianProduct(p base.LogicalPlan) bool {
 	if join, ok := p.(*logicalop.LogicalJoin); ok && len(join.EqualConditions) == 0 {
-		return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
+		return join.JoinType == base.InnerJoin || join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin
 	}
 	return slices.ContainsFunc(p.Children(), existsCartesianProduct)
 }

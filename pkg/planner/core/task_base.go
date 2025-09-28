@@ -305,7 +305,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
 		}
-		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.GetPlan().StatsInfo().Scale(selectivity), rt.GetPlan().QueryBlockOffset())
+		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.GetPlan().StatsInfo().Scale(ctx.GetSessionVars(), selectivity), rt.GetPlan().QueryBlockOffset())
 		sel.FromDataSource = true
 		sel.SetChildren(rt.GetPlan())
 		rt.SetPlan(sel)
@@ -320,8 +320,9 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 // CopTask is a task that runs in a distributed kv store.
 // TODO: In future, we should split copTask to indexTask and tableTask.
 type CopTask struct {
-	indexPlan base.PhysicalPlan
-	tablePlan base.PhysicalPlan
+	indexPlan           base.PhysicalPlan
+	tablePlan           base.PhysicalPlan
+	indexLookUpPushDown bool
 	// indexPlanFinished means we have finished index plan.
 	indexPlanFinished bool
 	// keepOrder indicates if the plan scans data by order.

@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package physicalop
 
 import (
 	"cmp"
@@ -32,11 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -49,27 +47,44 @@ import (
 // Communication by pfs are always through shuffling / broadcasting / passing through.
 type Fragment struct {
 	// following field are filled during getPlanFragment.
-	TableScan         *physicalop.PhysicalTableScan          // result physical table scan
-	ExchangeReceivers []*physicalop.PhysicalExchangeReceiver // data receivers
-	CTEReaders        []*physicalop.PhysicalCTE              // The receivers for CTE storage/producer.
+	TableScan         *PhysicalTableScan          // result physical table scan
+	ExchangeReceivers []*PhysicalExchangeReceiver // data receivers
+	CTEReaders        []*PhysicalCTE              // The receivers for CTE storage/producer.
 
 	// following fields are filled after scheduling.
-	Sink MPPSink // data exporter
+	Sink base.MPPSink // data exporter
 
 	IsRoot bool
 
 	singleton bool // indicates if this is a task running on a single node.
 }
 
-type cteGroupInFragment struct {
-	CTEStorage *physicalop.PhysicalCTEStorage
-	CTEReader  []*physicalop.PhysicalCTE
-
-	StorageTasks     []*kv.MPPTask
-	StorageFragments []*Fragment
-}
-
 const emptyFragmentSize = int64(unsafe.Sizeof(Fragment{}))
+
+func (f *Fragment) init(p base.PhysicalPlan) error {
+	switch x := p.(type) {
+	case *PhysicalTableScan:
+		if f.TableScan != nil {
+			return errors.New("one task contains at most one table scan")
+		}
+		f.TableScan = x
+	case *PhysicalExchangeReceiver:
+		// TODO: after we support partial merge, we should check whether all the target exchangeReceiver is same.
+		f.singleton = f.singleton || x.Children()[0].(*PhysicalExchangeSender).ExchangeType == tipb.ExchangeType_PassThrough
+		f.ExchangeReceivers = append(f.ExchangeReceivers, x)
+	case *PhysicalUnionAll:
+		return errors.New("unexpected union all detected")
+	case *PhysicalCTE:
+		f.CTEReaders = append(f.CTEReaders, x)
+	default:
+		for _, ch := range p.Children() {
+			if err := f.init(ch); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
+}
 
 // MemoryUsage return the memory usage of Fragment
 func (f *Fragment) MemoryUsage() (sum int64) {
@@ -91,20 +106,36 @@ func (f *Fragment) MemoryUsage() (sum int64) {
 	return
 }
 
-// MPPSink is the operator to send data to its parent fragment.
-// e.g. ExchangeSender, etc.
-type MPPSink interface {
-	base.PhysicalPlan
-	GetCompressionMode() vardef.ExchangeCompressionMode
-	GetSelfTasks() []*kv.MPPTask
-	SetSelfTasks(tasks []*kv.MPPTask)
-	SetTargetTasks(tasks []*kv.MPPTask)
-	AppendTargetTasks(tasks []*kv.MPPTask)
+// flipCTEReader fix the plan tree. In the func generateTasksForCTEReader, we create the plan tree like ParentPlan->CTEConsumer->ExchangeReceiver.
+// The CTEConsumer has no real meaning in MPP's execution. We prune it to make the plan become ParentPlan->ExchangeReceiver.
+// But the Receiver needs a schema since itself doesn't hold the schema. So the final plan become ParentPlan->ExchangeReceiver->CTEConsumer.
+func (f *Fragment) flipCTEReader(currentPlan base.PhysicalPlan) {
+	newChildren := make([]base.PhysicalPlan, len(currentPlan.Children()))
+	for i := range currentPlan.Children() {
+		child := currentPlan.Children()[i]
+		newChildren[i] = child
+		if cteR, ok := child.(*PhysicalCTE); ok {
+			receiver := cteR.Children()[0]
+			newChildren[i] = receiver
+		} else if _, ok := child.(*PhysicalExchangeReceiver); !ok {
+			// The receiver is the leaf of the fragment though it has child, we need break it.
+			f.flipCTEReader(child)
+		}
+	}
+	currentPlan.SetChildren(newChildren...)
 }
 
 type tasksAndFrags struct {
 	tasks []*kv.MPPTask
 	frags []*Fragment
+}
+
+type cteGroupInFragment struct {
+	CTEStorage *PhysicalCTEStorage
+	CTEReader  []*PhysicalCTE
+
+	StorageTasks     []*kv.MPPTask
+	StorageFragments []*Fragment
 }
 
 type mppTaskGenerator struct {
@@ -117,7 +148,7 @@ type mppTaskGenerator struct {
 	cache      map[int]tasksAndFrags
 
 	// fragMap maps ExchangeReceiver to its fragments
-	fragMap map[*physicalop.PhysicalExchangeReceiver][]*Fragment
+	fragMap map[*PhysicalExchangeReceiver][]*Fragment
 
 	CTEGroups map[int]*cteGroupInFragment
 
@@ -130,7 +161,7 @@ type mppTaskGenerator struct {
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
 func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppGatherID uint64,
-	mppQueryID kv.MPPQueryID, sender *physicalop.PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, []kv.KeyRange, map[string]bool, error) {
+	mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, []kv.KeyRange, map[string]bool, error) {
 	g := &mppTaskGenerator{
 		ctx:              ctx,
 		gatherID:         mppGatherID,
@@ -138,7 +169,7 @@ func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppGatherID ui
 		mppQueryID:       mppQueryID,
 		is:               is,
 		cache:            make(map[int]tasksAndFrags),
-		fragMap:          make(map[*physicalop.PhysicalExchangeReceiver][]*Fragment),
+		fragMap:          make(map[*PhysicalExchangeReceiver][]*Fragment),
 		KVRanges:         make([]kv.KeyRange, 0),
 		nodeInfo:         make(map[string]bool),
 		tableReaderCache: make(map[string][]kv.MPPTaskMeta),
@@ -166,7 +197,7 @@ func AllocMPPQueryID() uint64 {
 	return atomic.AddUint64(&mppQueryID, 1)
 }
 
-func (e *mppTaskGenerator) generateMPPTasks(s *physicalop.PhysicalExchangeSender) ([]*Fragment, error) {
+func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
 	tidbTask := &kv.MPPTask{
 		StartTs:      e.startTS,
 		GatherID:     e.gatherID,
@@ -185,16 +216,6 @@ func (e *mppTaskGenerator) generateMPPTasks(s *physicalop.PhysicalExchangeSender
 		frag.IsRoot = true
 	}
 	return e.frags, nil
-}
-
-type mppAddr struct {
-	addr string
-}
-
-var _ kv.MPPTaskMeta = &mppAddr{}
-
-func (m *mppAddr) GetAddress() string {
-	return m.addr
 }
 
 // for the task without table scan, we construct tasks according to the children's tasks.
@@ -240,31 +261,6 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask,
 	return newTasks
 }
 
-func (f *Fragment) init(p base.PhysicalPlan) error {
-	switch x := p.(type) {
-	case *physicalop.PhysicalTableScan:
-		if f.TableScan != nil {
-			return errors.New("one task contains at most one table scan")
-		}
-		f.TableScan = x
-	case *physicalop.PhysicalExchangeReceiver:
-		// TODO: after we support partial merge, we should check whether all the target exchangeReceiver is same.
-		f.singleton = f.singleton || x.Children()[0].(*physicalop.PhysicalExchangeSender).ExchangeType == tipb.ExchangeType_PassThrough
-		f.ExchangeReceivers = append(f.ExchangeReceivers, x)
-	case *physicalop.PhysicalUnionAll:
-		return errors.New("unexpected union all detected")
-	case *physicalop.PhysicalCTE:
-		f.CTEReaders = append(f.CTEReaders, x)
-	default:
-		for _, ch := range p.Children() {
-			if err := f.init(ch); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	return nil
-}
-
 // We would remove all the union-all operators by 'untwist'ing and copying the plans above union-all.
 // This will make every route from root (ExchangeSender) to leaf nodes (ExchangeReceiver and TableScan)
 // a new isolated tree (and also a fragment) without union all. These trees (fragments then tasks) will
@@ -273,42 +269,42 @@ func (f *Fragment) init(p base.PhysicalPlan) error {
 // after untwist, there will be two plans in `forest` slice:
 // - ExchangeSender -> Projection (c1) -> TableScan(t)
 // - ExchangeSender -> Projection (c2) -> TableScan(s)
-func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPlan, forest *[]*physicalop.PhysicalExchangeSender) error {
+func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPlan, forest *[]*PhysicalExchangeSender) error {
 	cur := stack[len(stack)-1]
 	switch x := cur.(type) {
-	case *physicalop.PhysicalTableScan, *physicalop.PhysicalExchangeReceiver, *physicalop.PhysicalCTE: // This should be the leave node.
+	case *PhysicalTableScan, *PhysicalExchangeReceiver, *PhysicalCTE: // This should be the leave node.
 		p, err := stack[0].Clone(e.ctx.GetPlanCtx())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		*forest = append(*forest, p.(*physicalop.PhysicalExchangeSender))
+		*forest = append(*forest, p.(*PhysicalExchangeSender))
 		for i := 1; i < len(stack); i++ {
-			if _, ok := stack[i].(*physicalop.PhysicalUnionAll); ok {
+			if _, ok := stack[i].(*PhysicalUnionAll); ok {
 				continue
 			}
-			if _, ok := stack[i].(*physicalop.PhysicalSequence); ok {
+			if _, ok := stack[i].(*PhysicalSequence); ok {
 				continue
 			}
 			ch, err := stack[i].Clone(e.ctx.GetPlanCtx())
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if join, ok := p.(*physicalop.PhysicalHashJoin); ok {
+			if join, ok := p.(*PhysicalHashJoin); ok {
 				join.SetChild(1-join.InnerChildIdx, ch)
 			} else {
 				p.SetChildren(ch)
 			}
 			p = ch
 		}
-		if cte, ok := p.(*physicalop.PhysicalCTE); ok {
+		if cte, ok := p.(*PhysicalCTE); ok {
 			e.CTEGroups[cte.CTE.IDForStorage].CTEReader = append(e.CTEGroups[cte.CTE.IDForStorage].CTEReader, cte)
 		}
-	case *physicalop.PhysicalHashJoin:
+	case *PhysicalHashJoin:
 		stack = append(stack, x.Children()[1-x.InnerChildIdx])
 		err := e.untwistPlanAndRemoveUnionAll(stack, forest)
 		stack = stack[:len(stack)-1]
 		return errors.Trace(err)
-	case *physicalop.PhysicalUnionAll:
+	case *PhysicalUnionAll:
 		for _, ch := range x.Children() {
 			stack = append(stack, ch)
 			err := e.untwistPlanAndRemoveUnionAll(stack, forest)
@@ -317,17 +313,17 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 				return errors.Trace(err)
 			}
 		}
-	case *physicalop.PhysicalSequence:
+	case *PhysicalSequence:
 		lastChildIdx := len(x.Children()) - 1
 		// except the last child, those previous ones are all cte producer.
 		for i := range lastChildIdx {
 			if e.CTEGroups == nil {
 				e.CTEGroups = make(map[int]*cteGroupInFragment)
 			}
-			cteStorage := x.Children()[i].(*physicalop.PhysicalCTEStorage)
+			cteStorage := x.Children()[i].(*PhysicalCTEStorage)
 			e.CTEGroups[cteStorage.CTE.IDForStorage] = &cteGroupInFragment{
 				CTEStorage: cteStorage,
-				CTEReader:  make([]*physicalop.PhysicalCTE, 0, 3),
+				CTEReader:  make([]*PhysicalCTE, 0, 3),
 			}
 		}
 		stack = append(stack, x.Children()[lastChildIdx])
@@ -349,8 +345,8 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 	return nil
 }
 
-func (e *mppTaskGenerator) buildFragments(s *physicalop.PhysicalExchangeSender) ([]*Fragment, error) {
-	forest := make([]*physicalop.PhysicalExchangeSender, 0, 1)
+func (e *mppTaskGenerator) buildFragments(s *PhysicalExchangeSender) ([]*Fragment, error) {
+	forest := make([]*PhysicalExchangeSender, 0, 1)
 	err := e.untwistPlanAndRemoveUnionAll([]base.PhysicalPlan{s}, &forest)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -367,7 +363,7 @@ func (e *mppTaskGenerator) buildFragments(s *physicalop.PhysicalExchangeSender) 
 	return fragments, nil
 }
 
-func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *physicalop.PhysicalExchangeSender) ([]*kv.MPPTask, []*Fragment, error) {
+func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchangeSender) ([]*kv.MPPTask, []*Fragment, error) {
 	if cached, ok := e.cache[s.ID()]; ok {
 		return cached.tasks, cached.frags, nil
 	}
@@ -420,11 +416,11 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		cteProducerTasks := make([]*kv.MPPTask, 0)
 		for _, cteR := range f.CTEReaders {
 			child := cteR.Children()[0]
-			if _, ok := child.(*physicalop.PhysicalProjection); ok {
+			if _, ok := child.(*PhysicalProjection); ok {
 				child = child.Children()[0]
 			}
-			cteProducerTasks = append(cteProducerTasks, child.(*physicalop.PhysicalExchangeReceiver).Tasks...)
-			childrenTasks = append(childrenTasks, child.(*physicalop.PhysicalExchangeReceiver).Tasks...)
+			cteProducerTasks = append(cteProducerTasks, child.(*PhysicalExchangeReceiver).Tasks...)
+			childrenTasks = append(childrenTasks, child.(*PhysicalExchangeReceiver).Tasks...)
 		}
 		if f.singleton && len(childrenTasks) > 0 {
 			childrenTasks = childrenTasks[0:1]
@@ -447,29 +443,10 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	return tasks, nil
 }
 
-// flipCTEReader fix the plan tree. In the func generateTasksForCTEReader, we create the plan tree like ParentPlan->CTEConsumer->ExchangeReceiver.
-// The CTEConsumer has no real meaning in MPP's execution. We prune it to make the plan become ParentPlan->ExchangeReceiver.
-// But the Receiver needs a schema since itself doesn't hold the schema. So the final plan become ParentPlan->ExchangeReceiver->CTEConsumer.
-func (f *Fragment) flipCTEReader(currentPlan base.PhysicalPlan) {
-	newChildren := make([]base.PhysicalPlan, len(currentPlan.Children()))
-	for i := range currentPlan.Children() {
-		child := currentPlan.Children()[i]
-		newChildren[i] = child
-		if cteR, ok := child.(*physicalop.PhysicalCTE); ok {
-			receiver := cteR.Children()[0]
-			newChildren[i] = receiver
-		} else if _, ok := child.(*physicalop.PhysicalExchangeReceiver); !ok {
-			// The receiver is the leaf of the fragment though it has child, we need break it.
-			f.flipCTEReader(child)
-		}
-	}
-	currentPlan.SetChildren(newChildren...)
-}
-
 // genereateTasksForCTEReader generates the task leaf for cte reader.
 // A fragment's leaf must be Exchange and we could not lost the information of the CTE.
 // So we create the plan like ParentPlan->CTEReader->ExchangeReceiver.
-func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *physicalop.PhysicalCTE) (err error) {
+func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (err error) {
 	group := e.CTEGroups[cteReader.CTE.IDForStorage]
 	if group.StorageFragments == nil {
 		group.CTEStorage.StorageSender.SetChildren(group.CTEStorage.Children()...)
@@ -495,7 +472,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *physicalop.Physi
 		for i, col := range cols {
 			col.Index = i
 		}
-		proj := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.SCtx(), cteReader.StatsInfo(), 0, nil)
+		proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.SCtx(), cteReader.StatsInfo(), 0, nil)
 		proj.SetSchema(cteReader.Schema().Clone())
 		proj.SetChildren(receiver)
 		cteReader.SetChildren(proj)
@@ -510,47 +487,8 @@ func (e *mppTaskGenerator) addReaderTasksForCTEStorage(storageID int, tasks ...*
 	}
 }
 
-func partitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []ast.CIStr,
-	columns []*expression.Column, columnNames types.NameSlice) ([]table.PhysicalTable, error) {
-	idxArr, err := partitionpruning.PartitionPruning(ctx, tbl, conds, partitionNames, columns, columnNames)
-	if err != nil {
-		return nil, err
-	}
-
-	pi := tbl.Meta().GetPartitionInfo()
-	var ret []table.PhysicalTable
-	if len(idxArr) == 1 && idxArr[0] == rule.FullRange {
-		ret = make([]table.PhysicalTable, 0, len(pi.Definitions))
-		for _, def := range pi.Definitions {
-			p := tbl.GetPartition(def.ID)
-			ret = append(ret, p)
-		}
-	} else {
-		ret = make([]table.PhysicalTable, 0, len(idxArr))
-		for _, idx := range idxArr {
-			pid := pi.Definitions[idx].ID
-			p := tbl.GetPartition(pid)
-			ret = append(ret, p)
-		}
-	}
-	if len(ret) == 0 {
-		// TiFlash cannot process an empty task correctly, so choose to leave it with some data to read.
-		if len(partitionNames) == 0 {
-			ret = []table.PhysicalTable{tbl.GetPartition(pi.Definitions[0].ID)}
-		} else {
-			for _, def := range pi.Definitions {
-				if def.Name.L == partitionNames[0].L {
-					ret = []table.PhysicalTable{tbl.GetPartition(def.ID)}
-					break
-				}
-			}
-		}
-	}
-	return ret, nil
-}
-
 // single physical table means a table without partitions or a single partition in a partition table.
-func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *physicalop.PhysicalTableScan) ([]*kv.MPPTask, error) {
+func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *PhysicalTableScan) ([]*kv.MPPTask, error) {
 	// update ranges according to correlated columns in access conditions like in the Open() of TableReaderExecutor
 	for _, cond := range ts.AccessCondition {
 		if len(expression.ExtractCorColumns(cond)) > 0 {
@@ -644,7 +582,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *physic
 	return tasks, nil
 }
 
-func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *physicalop.PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {
+func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {
 	slices.SortFunc(partitions, func(i, j table.PhysicalTable) int {
 		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
@@ -671,4 +609,53 @@ func (e *mppTaskGenerator) constructMPPBuildTaskForNonPartitionTable(tid int64, 
 		return nil, errors.Trace(err)
 	}
 	return &kv.MPPBuildTasksRequest{KeyRanges: kvRanges.FirstPartitionRange()}, nil
+}
+
+type mppAddr struct {
+	addr string
+}
+
+var _ kv.MPPTaskMeta = &mppAddr{}
+
+func (m *mppAddr) GetAddress() string {
+	return m.addr
+}
+
+func partitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []ast.CIStr,
+	columns []*expression.Column, columnNames types.NameSlice) ([]table.PhysicalTable, error) {
+	idxArr, err := partitionpruning.PartitionPruning(ctx, tbl, conds, partitionNames, columns, columnNames)
+	if err != nil {
+		return nil, err
+	}
+
+	pi := tbl.Meta().GetPartitionInfo()
+	var ret []table.PhysicalTable
+	if len(idxArr) == 1 && idxArr[0] == rule.FullRange {
+		ret = make([]table.PhysicalTable, 0, len(pi.Definitions))
+		for _, def := range pi.Definitions {
+			p := tbl.GetPartition(def.ID)
+			ret = append(ret, p)
+		}
+	} else {
+		ret = make([]table.PhysicalTable, 0, len(idxArr))
+		for _, idx := range idxArr {
+			pid := pi.Definitions[idx].ID
+			p := tbl.GetPartition(pid)
+			ret = append(ret, p)
+		}
+	}
+	if len(ret) == 0 {
+		// TiFlash cannot process an empty task correctly, so choose to leave it with some data to read.
+		if len(partitionNames) == 0 {
+			ret = []table.PhysicalTable{tbl.GetPartition(pi.Definitions[0].ID)}
+		} else {
+			for _, def := range pi.Definitions {
+				if def.Name.L == partitionNames[0].L {
+					ret = []table.PhysicalTable{tbl.GetPartition(def.ID)}
+					break
+				}
+			}
+		}
+	}
+	return ret, nil
 }

@@ -145,7 +145,7 @@ type stmtCtxMu struct {
 	foundRows uint64
 
 	/*
-		following variables are ported from 'COPY_INFO' struct of MySQL server source,
+		These variables serve a similar purpose to those in MySQL's `COPY_INFO`,
 		they are used to count rows for INSERT/REPLACE/UPDATE queries:
 		  If a row is inserted then the copied variable is incremented.
 		  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
@@ -333,7 +333,9 @@ type StatementContext struct {
 	}
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
-	BindSQL string
+	BindSQL        string
+	ExecRetryCount uint64
+	ExecSuccess    bool
 
 	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.
