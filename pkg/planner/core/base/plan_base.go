@@ -315,21 +315,21 @@ type GroupExpression interface {
 	InputsLen() int
 }
 
-// GetGEAndLogical is get the possible group expression and logical operator from common super pointer.
-func GetGEAndLogical[T LogicalPlan](super LogicalPlan) (ge GroupExpression, proj T) {
+// GetGEAndLogicalOp is get the possible group expression and logical operator from common super pointer.
+func GetGEAndLogicalOp[T LogicalPlan](super LogicalPlan) (ge GroupExpression, logicalOp T) {
 	switch x := super.(type) {
 	case T:
 		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
 		// to downcast as the every specific logical operator.
-		proj = x
+		logicalOp = x
 	case GroupExpression:
 		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
 		// naturally can be referred as a LogicalPlan, and we need to use GetWrappedLogicalPlan to
 		// get the specific logical operator inside.
 		ge = x
-		proj = ge.GetWrappedLogicalPlan().(T)
+		logicalOp = ge.GetWrappedLogicalPlan().(T)
 	}
-	return ge, proj
+	return ge, logicalOp
 }
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.

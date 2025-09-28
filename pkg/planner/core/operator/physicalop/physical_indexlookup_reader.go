@@ -295,3 +295,37 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType,
 	option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalIndexLookUpReader(p, taskType, option, args...)
 }
+
+// BuildIndexLookUpTask builds a index look up task from a cop task.
+func BuildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
+	newTask := &RootTask{}
+	p := PhysicalIndexLookUpReader{
+		TablePlan:        t.TablePlan,
+		IndexPlan:        t.IndexPlan,
+		ExtraHandleCol:   t.ExtraHandleCol,
+		CommonHandleCols: t.CommonHandleCols,
+		ExpectedCnt:      t.ExpectCnt,
+		KeepOrder:        t.KeepOrder,
+		PlanPartInfo:     t.PhysPlanPartInfo,
+	}.Init(ctx, t.TablePlan.QueryBlockOffset(), t.IndexLookUpPushDown)
+	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
+	// the final agg would be broken. Please reference comments for the similar logic in
+	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
+	// We need to refactor these logics.
+	aggPushedDown := false
+	switch p.TablePlan.(type) {
+	case *PhysicalHashAgg, *PhysicalStreamAgg:
+		aggPushedDown = true
+	}
+
+	if t.NeedExtraProj && !aggPushedDown {
+		schema := t.OriginSchema
+		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.TablePlan.QueryBlockOffset(), nil)
+		proj.SetSchema(schema)
+		proj.SetChildren(p)
+		newTask.SetPlan(proj)
+	} else {
+		newTask.SetPlan(p)
+	}
+	return newTask
+}

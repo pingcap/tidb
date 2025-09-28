@@ -71,7 +71,6 @@ go_library(
         "stats.go",
         "stringer.go",
         "task.go",
-        "task_base.go",
         "telemetry.go",
         "trace.go",
         "util.go",
