@@ -31,7 +31,7 @@ func TestBindUsageInfo(t *testing.T) {
 		"aa3c510b94b9d680f729252ca88415794c8a4f52172c5f9e06c27bee57d08329",
 	}
 	bindinfo.UpdateBindingUsageInfoBatchSize = 2
-	bindinfo.MaxWriteInterval = 1 * time.Microsecond
+	bindinfo.MaxWriteInterval = 100 * time.Microsecond
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	bindingHandle := dom.BindingHandle()
 	tk := testkit.NewTestKit(t, store)
@@ -89,13 +89,30 @@ func TestBindUsageInfo(t *testing.T) {
 			require.True(t, last.Equal(result.Rows()))
 		}
 	}
-	tk.MustQuery(`select last_used_date from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock' and last_used_date is null`).Check(testkit.Rows())
+	// Set all last_used_date to null to simulate that the bindinfo in storage is not updated.
+	tk.MustExec(`update mysql.bind_info set last_used_date = null where original_sql != 'builtin_pseudo_sql_for_bind_lock'`)
+	for idx := range 5 {
+		bindinfo.UpdateBindingUsageInfoBatchSize = max(1, idx)
+		time.Sleep(1 * time.Second)
+		// No used, so last_used_date should not be updated.
+		require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
+		tk.MustQuery(`select last_used_date from mysql.bind_info where last_used_date is not null`).Check(testkit.Rows())
+	}
 	tk.MustExec("execute stmt1;")
 	tk.MustExec("execute stmt2;")
 	tk.MustExec("execute stmt3;")
 	tk.MustExec(`delete from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock'`)
+	// Alought we execute the stmts, but we set a very long interval, so last_used_date should not be updated.
 	require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
 	tk.MustQuery(`select * from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock'`).Check(testkit.Rows())
+	tk.MustExec("execute stmt1;")
+	tk.MustExec("execute stmt2;")
+	tk.MustExec("execute stmt3;")
+	tk.MustExec("select * from t1, t2, t3, t4, t5")
+	time.Sleep(1 * time.Second)
+	require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
+	// it has been updated again.
+	tk.MustQuery(`select * from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock' and last_used_date is null`).Check(testkit.Rows())
 }
 
 func checkBindinfoInMemory(t *testing.T, bindingHandle bindinfo.BindingHandle, checklist []string, writeBefore bool) {

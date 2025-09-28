@@ -192,8 +192,11 @@ func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings
 			continue
 		}
 		lastSaved := binding.UsageInfo.LastSavedAt.Load()
-		if (lastSaved != nil && time.Since(*lastSaved) > MaxWriteInterval) ||
-			time.Since(*lastUsedAt) > MaxWriteInterval {
+		// If a certain amount of time specified by MaxWriteInterval has passed since the last record was written,
+		// and it has been used in between, it will be written.
+		// If it has never been written before, it will be written if lastUsedAt exceeds MaxWriteInterval.
+		if (lastSaved != nil && time.Since(*lastSaved) >= MaxWriteInterval && lastUsedAt.After(*lastSaved)) ||
+			(lastSaved == nil && time.Since(*lastUsedAt) > MaxWriteInterval) {
 			toWrite = append(toWrite, binding)
 			cnt++
 		}
