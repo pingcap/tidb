@@ -578,7 +578,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
 			// use the schema version generated once.
 			if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible && job.AnalyzeState == model.AnalyzeStateDone {
-				// We need another round to wait for all the others sub-jobs to finish.
+				// This is the final revertible state before public.
 				job.MarkNonRevertible()
 			}
 		case model.AnalyzeStateDone:
