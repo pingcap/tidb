@@ -45,10 +45,10 @@ ifeq ("${NEXT_GEN}", "1")
 endif
 
 GO              := GO111MODULE=on go
-GOBUILD_NO_TAGS := $(GOEXPERIMENT) $(GO) build
+GOBUILD_NO_TAGS := CGO_CFLAGS="-Wno-gnu-folding-constant" $(GOEXPERIMENT) $(GO) build
 GOBUILD         := $(GOBUILD_NO_TAGS) -tags $(BUILD_TAGS)
-GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
-GOTEST          := $(GO) test -p $(P)
+GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; CGO_CFLAGS="-Wno-gnu-folding-constant" $(GO) test -coverpkg="../..." -c .
+GOTEST          := CGO_CFLAGS="-Wno-gnu-folding-constant" $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
 STATICCHECK     := GO111MODULE=on staticcheck
 TIDB_EDITION    ?= Community
@@ -133,8 +133,8 @@ DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitHash=$(shell git
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GoVersion=$(shell go version)"
 
-DUMPLING_GOBUILD := CGO_ENABLED=1 GO111MODULE=on go build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'
-DUMPLING_GOTEST  := CGO_ENABLED=1 GO111MODULE=on go test -ldflags '$(DUMPLING_LDFLAGS)'
+DUMPLING_GOBUILD := CGO_ENABLED=1 CGO_CFLAGS="-Wno-gnu-folding-constant" GO111MODULE=on go build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'
+DUMPLING_GOTEST  := CGO_ENABLED=1 CGO_CFLAGS="-Wno-gnu-folding-constant" GO111MODULE=on go test -ldflags '$(DUMPLING_LDFLAGS)'
 
 TEST_COVERAGE_DIR := "test_coverage"
 
