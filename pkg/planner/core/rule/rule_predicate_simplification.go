@@ -563,6 +563,8 @@ func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expressio
 	return expression.ComposeDNFCondition(sctx.GetExprCtx(), newORList...)
 }
 
+// equalOrNullSimplification simplifies equal conditions with IsNull predicates.
+// It tries to find patterns like a=b or (a IS NULL and b IS NULL) and simplifies it to a <=> b.
 func equalOrNullSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
 	if len(predicates) <= 1 {
 		return predicates
