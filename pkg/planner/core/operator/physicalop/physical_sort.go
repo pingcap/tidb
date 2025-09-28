@@ -143,7 +143,7 @@ func (p *PhysicalSort) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bo
 	return cloned, true
 }
 
-// ExhaustPhysicalPlans4LogicalSort implements base.LogicalPlan.<14th> interface.
+// ExhaustPhysicalPlans4LogicalSort exhausts all possible physical plans for a LogicalSort operator
 func ExhaustPhysicalPlans4LogicalSort(ls *logicalop.LogicalSort, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	switch prop.TaskTp {
 	case property.RootTaskType:
