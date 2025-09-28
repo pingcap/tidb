@@ -1175,31 +1175,15 @@ SwitchIndexState:
 			if !done {
 				return ver, err
 			}
-			job.AnalyzeState = model.AnalyzeStateRunning
+			checkAndMarkAnalyzeState(w.sess.GetSessionVars().AnalyzeVersion, job, allIndexInfos, tblInfo)
 		case model.AnalyzeStateRunning:
-			// currently we only analyze table for non-partitioned table.
-			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tbl.GetPartitionedTable() == nil {
-				// after all old index data are reorged. re-analyze it.
-				done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-				if done {
-					job.AnalyzeState = model.AnalyzeStateDone
-				}
-				// if not done yet, it will return ver=0 and nil directly back the main loop for a next ddl round.
-			} else {
-				// when TiDBEnableDDLAnalyze is default off, we just move to next DONE state for public this index.
+			// after all old index data are reorged. re-analyze it.
+			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done {
 				job.AnalyzeState = model.AnalyzeStateDone
 			}
-			// previously, when reorg is done, and before we set the state to public, we need all other sub-task to
-			// be ready as well which is via setting this job as NornRevertible, then we can continue skip current
-			// sub and process the others.
-			// And when all sub-task are ready, which means each of them could be public in one more ddl round. And
-			// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
-			// use the schema version generated once.
-			if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible && job.AnalyzeState == model.AnalyzeStateDone {
-				// We need another round to wait for all the others sub-jobs to finish.
-				job.MarkNonRevertible()
-			}
-		case model.AnalyzeStateDone:
+			checkAndMarkNonRevertible(job, model.AnalyzeStateDone)
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
 			// Set column index flag.
 			for _, indexInfo := range allIndexInfos {
 				AddIndexColumnFlag(tblInfo, indexInfo)
@@ -1246,7 +1230,7 @@ SwitchIndexState:
 			job.FillFinishedArgs(a)
 
 			analyzed := false
-			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tblInfo.GetPartitionInfo() == nil {
+			if checkAnalyzeNecessary(w.sess.GetSessionVars().AnalyzeVersion, job, allIndexInfos, tblInfo) {
 				analyzed = true
 			}
 			addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos, analyzed)

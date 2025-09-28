@@ -577,7 +577,8 @@ func (w *worker) doModifyColumnTypeWithData(
 			if !done {
 				return ver, err
 			}
-			checkAndMarkAnalyzeState(job, changingIdxs, tblInfo)
+			// nolint:forbidigo
+			checkAndMarkAnalyzeState(w.sess.GetSessionVars().AnalyzeVersion, job, changingIdxs, tblInfo)
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
 			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
@@ -621,7 +622,8 @@ func (w *worker) doModifyColumnTypeWithData(
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
 			analyzed := false
-			if checkAnalyzeNecessary(job, changingIdxs, tblInfo) {
+			// nolint:forbidigo
+			if checkAnalyzeNecessary(w.sess.GetSessionVars().AnalyzeVersion, job, changingIdxs, tblInfo) {
 				analyzed = true
 			}
 			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
@@ -652,17 +654,21 @@ func (w *worker) doModifyColumnTypeWithData(
 	return ver, errors.Trace(err)
 }
 
-func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
+func checkAnalyzeNecessary(analyzeVer int, job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
 	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tbl.GetPartitionInfo() == nil &&
 		// make sure that this reorg has affected the existed indexes, otherwise, re-analyze is not necessary.
 		len(changingIdxes) > 0 {
-		return true
+		// double-check the inner ddl session analyze version is 2.
+		if analyzeVer == 2 {
+			return true
+		}
+		logutil.DDLLogger().Warn("tidb_enable_ddl_analyze can only be enabled with tidb_analyze_version 2", zap.Int("tidb_analyze_version", analyzeVer))
 	}
 	return false
 }
 
-func checkAndMarkAnalyzeState(job *model.Job, changingIdxes []*model.IndexInfo, tblInfo *model.TableInfo) {
-	if checkAnalyzeNecessary(job, changingIdxes, tblInfo) {
+func checkAndMarkAnalyzeState(analyzeVer int, job *model.Job, changingIdxes []*model.IndexInfo, tblInfo *model.TableInfo) {
+	if checkAnalyzeNecessary(analyzeVer, job, changingIdxes, tblInfo) {
 		job.AnalyzeState = model.AnalyzeStateRunning
 	} else {
 		job.AnalyzeState = model.AnalyzeStateSkipped
@@ -707,11 +713,6 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 			err = statsutil.UpdateSCtxVarsForStats(sessCtx)
 			if err != nil {
 				return err
-			}
-			// double-check the inner session analyze version is 2.
-			// nolint:forbidigo
-			if sessCtx.GetSessionVars().AnalyzeVersion == 1 {
-				return errors.New("tidb_enable_ddl_analyze can only be enabled with tidb_analyze_version 2")
 			}
 			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
 			if err != nil {
