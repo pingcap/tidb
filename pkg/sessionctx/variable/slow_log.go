@@ -548,7 +548,7 @@ func makeExecDetailAccessor(parse func(string) (any, error),
 		},
 		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
 			if items.ExecDetail == nil {
-				return false
+				return matchZero(threshold)
 			}
 			return match(items.ExecDetail, threshold)
 		},
@@ -571,7 +571,7 @@ func makeKVExecDetailAccessor(parse func(string) (any, error),
 		},
 		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
 			if items.KVExecDetail == nil {
-				return false
+				return matchZero(threshold)
 			}
 			return match(items.KVExecDetail, threshold)
 		},
@@ -592,6 +592,21 @@ func MatchEqual[T comparable](threshold any, v T) bool {
 func matchGE[T numericComparable](threshold any, v T) bool {
 	tv, ok := threshold.(T)
 	return ok && v >= tv
+}
+
+func matchZero(threshold any) bool {
+	switch v := threshold.(type) {
+	case int:
+		return v == 0
+	case uint64:
+		return v == 0
+	case int64:
+		return v == 0
+	case float64:
+		return v == 0
+	default:
+		return false
+	}
 }
 
 // ParseString converts the input string to lowercase and returns it.
@@ -688,6 +703,9 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			items.CopTasks = copTasksDetail
 		},
 		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			if items.CopTasks == nil {
+				return matchZero(threshold)
+			}
 			return matchGE(threshold, int64(items.CopTasks.NumCopTasks))
 		},
 	},
@@ -815,36 +833,57 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 	strings.ToLower(execdetails.TotalKeysStr): makeExecDetailAccessor(
 		parseUint64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
+			if d.ScanDetail == nil {
+				return matchZero(threshold)
+			}
 			return matchGE(threshold, d.ScanDetail.TotalKeys)
 		}),
 	strings.ToLower(execdetails.ProcessKeysStr): makeExecDetailAccessor(
 		parseUint64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
+			if d.ScanDetail == nil {
+				return matchZero(threshold)
+			}
 			return matchGE(threshold, d.ScanDetail.ProcessedKeys)
 		}),
 	strings.ToLower(execdetails.PreWriteTimeStr): makeExecDetailAccessor(
 		parseFloat64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
+			if d.CommitDetail == nil {
+				return matchZero(threshold)
+			}
 			return matchGE(threshold, d.CommitDetail.PrewriteTime.Seconds())
 		}),
 	strings.ToLower(execdetails.CommitTimeStr): makeExecDetailAccessor(
 		parseFloat64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
+			if d.CommitDetail == nil {
+				return matchZero(threshold)
+			}
 			return matchGE(threshold, d.CommitDetail.CommitTime.Seconds())
 		}),
 	strings.ToLower(execdetails.WriteKeysStr): makeExecDetailAccessor(
 		parseUint64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
+			if d.CommitDetail == nil {
+				return matchZero(threshold)
+			}
 			return matchGE(threshold, int64(d.CommitDetail.WriteKeys))
 		}),
 	strings.ToLower(execdetails.WriteSizeStr): makeExecDetailAccessor(
 		parseUint64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
+			if d.CommitDetail == nil {
+				return matchZero(threshold)
+			}
 			return matchGE(threshold, int64(d.CommitDetail.WriteSize))
 		}),
 	strings.ToLower(execdetails.PrewriteRegionStr): makeExecDetailAccessor(
 		parseUint64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
+			if d.CommitDetail == nil {
+				return matchZero(threshold)
+			}
 			return matchGE(threshold, int64(atomic.LoadInt32(&d.CommitDetail.PrewriteRegionNum)))
 		}),
 }

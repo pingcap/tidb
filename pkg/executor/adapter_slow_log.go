@@ -211,6 +211,10 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
 		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
 	}
+	if txnTS == 0 {
+		// TODO: txnTS maybe ambiguous, consider logging stale-read-ts with a new field in the slow log.
+		txnTS = sessVars.TxnCtx.StaleReadTs
+	}
 
 	items.TxnTS = txnTS
 	items.KeyspaceName = keyspaceName

@@ -28,9 +28,11 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func newMockCtx() sessionctx.Context {
@@ -81,7 +83,7 @@ func TestMatchSingleRuleSingleCondition(t *testing.T) {
 	require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules)) // 50 < 100
 }
 
-func TestMatchStringConditions(t *testing.T) {
+func TestMatchSpecialTypeConditions(t *testing.T) {
 	ctx := newMockCtx()
 	items := &variable.SlowQueryLogItems{
 		Succ:              true,
@@ -89,28 +91,86 @@ func TestMatchStringConditions(t *testing.T) {
 		ResourceGroupName: "rg_Test",
 	}
 
-	ctx.GetSessionVars().CurrentDB = "db_Test"
-	ctx.GetSessionVars().SessionAlias = "seA"
-	rule := &slowlogrule.SlowLogRule{
-		Conditions: []slowlogrule.SlowLogCondition{
-			{Field: variable.SlowLogSucc, Threshold: true},
-			{Field: variable.SlowLogDigestStr, Threshold: "abc"},
-			{Field: variable.SlowLogResourceGroup, Threshold: "rg_test"},
-			{Field: variable.SlowLogDBStr, Threshold: "db_test"},
-			{Field: variable.SlowLogSessAliasStr, Threshold: "seA"},
-		},
+	t.Run("string type", func(t *testing.T) {
+		ctx.GetSessionVars().CurrentDB = "db_Test"
+		ctx.GetSessionVars().SessionAlias = "seA"
+		rule := &slowlogrule.SlowLogRule{
+			Conditions: []slowlogrule.SlowLogCondition{
+				{Field: variable.SlowLogSucc, Threshold: true},
+				{Field: variable.SlowLogDigestStr, Threshold: "abc"},
+				{Field: variable.SlowLogResourceGroup, Threshold: "rg_test"},
+				{Field: variable.SlowLogDBStr, Threshold: "db_test"},
+				{Field: variable.SlowLogSessAliasStr, Threshold: "seA"},
+			},
+		}
+		ctx.GetSessionVars().SlowLogRules.Rules = []*slowlogrule.SlowLogRule{rule}
+
+		require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+
+		// test SessionAlias
+		ctx.GetSessionVars().SessionAlias = "sea"
+		require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		// test Digest
+		ctx.GetSessionVars().SessionAlias = "seA"
+		items.Digest = "abC"
+		require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+	})
+
+	checkRet := func(expectMatch bool, condition slowlogrule.SlowLogCondition) {
+		rule := &slowlogrule.SlowLogRule{
+			Conditions: []slowlogrule.SlowLogCondition{
+				condition,
+			},
+		}
+		ctx.GetSessionVars().SlowLogRules.Rules = []*slowlogrule.SlowLogRule{rule}
+
+		if expectMatch {
+			require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		} else {
+			require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		}
 	}
-	ctx.GetSessionVars().SlowLogRules.Rules = []*slowlogrule.SlowLogRule{rule}
 
-	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+	t.Run("util.ExecDetails type", func(t *testing.T) {
+		checkRet(false, slowlogrule.SlowLogCondition{Field: variable.SlowLogKVTotal, Threshold: 0.00000001})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogKVTotal, Threshold: 0.0})
+		tikvExecDetail := util.ExecDetails{
+			WaitKVRespDuration: (10 * time.Second).Nanoseconds(),
+		}
+		childCtx := context.WithValue(context.Background(), util.ExecDetailsKey, &tikvExecDetail)
+		accessor := variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogKVTotal)]
+		accessor.Setter(childCtx, nil, items)
+		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogKVTotal, Threshold: 0.00000001})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogKVTotal, Threshold: 0.0})
+	})
 
-	// test SessionAlias
-	ctx.GetSessionVars().SessionAlias = "sea"
-	require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
-	// test Digest
-	ctx.GetSessionVars().SessionAlias = "seA"
-	items.Digest = "abC"
-	require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+	t.Run("execdetails.ExecDetails type", func(t *testing.T) {
+		seVar := ctx.GetSessionVars()
+		seVar.StmtCtx.SyncExecDetails.Reset()
+
+		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.ProcessTimeStr, Threshold: float64(1)})
+		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.TotalKeysStr, Threshold: uint64(2)})
+		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.123})
+		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: int64(4)})
+		// ExecDetail == nil
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.ProcessTimeStr, Threshold: float64(0)})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.TotalKeysStr, Threshold: uint64(0)})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.0})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: int64(0)})
+		// ExecDetail != nil && d.CommitDetail == nil && d.ScanDetail == nil
+		execDetail := &execdetails.ExecDetails{
+			CopExecDetails: execdetails.CopExecDetails{
+				BackoffTime: time.Millisecond,
+			},
+		}
+		seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(&execDetail.CopExecDetails, 0)
+		accessor := variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)]
+		accessor.Setter(context.Background(), seVar, items)
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.ProcessTimeStr, Threshold: float64(0)})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.TotalKeysStr, Threshold: uint64(0)})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.0})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: int64(0)})
+	})
 }
 
 func TestMatchSingleRuleMultipleConditions(t *testing.T) {
