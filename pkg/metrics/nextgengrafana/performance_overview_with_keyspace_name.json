@@ -2881,7 +2881,7 @@
           "bars": false,
           "cacheTimeout": null,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "The $optional_quantile of execution time of gRPC message",
+          "description": "The P99 of execution time of gRPC message",
           "editable": true,
           "error": false,
           "fieldConfig": {
@@ -2951,15 +2951,15 @@
           "targets": [
             {
               "datasource": "${DS_TEST-CLUSTER}",
-              "expr": "histogram_quantile($optional_quantile,(\n    sum(rate(\n    tikv_grpc_msg_duration_seconds_bucket\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",instance=~\"${instance:regex}\",instance=~\"${worker_instance:regex}\",type!=\"kv_gc\"}\n    [$__rate_interval]\n)) by (type, le, $additional_groupby) \n    \n    \n))  ",
+              "expr": "histogram_quantile(0.99,(\n    sum(rate(\n    tikv_grpc_msg_duration_seconds_bucket\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",instance=~\"${instance:regex}\",instance=~\"${worker_instance:regex}\",type!=\"kv_gc\"}\n    [$__rate_interval]\n)) by (type, le, $additional_groupby) \n    \n    \n))  ",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{type}}-$optional_quantile {{$additional_groupby}}",
+              "legendFormat": "{{type}}-P99 {{$additional_groupby}}",
               "metric": "",
-              "query": "histogram_quantile($optional_quantile,(\n    sum(rate(\n    tikv_grpc_msg_duration_seconds_bucket\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",instance=~\"${instance:regex}\",instance=~\"${worker_instance:regex}\",type!=\"kv_gc\"}\n    [$__rate_interval]\n)) by (type, le, $additional_groupby) \n    \n    \n))  ",
+              "query": "histogram_quantile(0.99,(\n    sum(rate(\n    tikv_grpc_msg_duration_seconds_bucket\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",instance=~\"${instance:regex}\",instance=~\"${worker_instance:regex}\",type!=\"kv_gc\"}\n    [$__rate_interval]\n)) by (type, le, $additional_groupby) \n    \n    \n))  ",
               "refId": "",
               "step": 10,
               "target": ""
@@ -2968,7 +2968,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "gRPC message duration$optional_quantile",
+          "title": "gRPC message duration P99",
           "tooltip": {
             "msResolution": true,
             "shared": true,
