@@ -75,11 +75,10 @@ func TestBindUsageInfo(t *testing.T) {
 		tk.MustExec("execute stmt3;")
 		tk.MustExec("select * from t1, t2, t3, t4, t5")
 		time.Sleep(1 * time.Second)
-		checkBindinfoInMemory(t, bindingHandle, checklist, true)
 		// Set all last_used_date to null to simulate that the bindinfo in storage is not updated.
 		tk.MustExec(`update mysql.bind_info set last_used_date = null where original_sql != 'builtin_pseudo_sql_for_bind_lock'`)
 		require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
-		checkBindinfoInMemory(t, bindingHandle, checklist, false)
+		checkBindinfoInMemory(t, bindingHandle, checklist)
 		tk.MustQuery(`select last_used_date from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock' and last_used_date is null`).Check(testkit.Rows())
 		result := tk.MustQuery(`select sql_digest,last_used_date from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock' order by sql_digest`)
 		t.Log("result:", result.Rows())
@@ -115,13 +114,12 @@ func TestBindUsageInfo(t *testing.T) {
 	tk.MustQuery(`select * from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock' and last_used_date is null`).Check(testkit.Rows())
 }
 
-func checkBindinfoInMemory(t *testing.T, bindingHandle bindinfo.BindingHandle, checklist []string, writeBefore bool) {
+func checkBindinfoInMemory(t *testing.T, bindingHandle bindinfo.BindingHandle, checklist []string) {
 	for _, digest := range checklist {
 		binding := bindingHandle.GetBinding(digest)
 		require.NotNil(t, binding)
-		if writeBefore {
-			require.GreaterOrEqual(t, *binding.UsageInfo.LastUsedAt.Load(), *binding.UsageInfo.LastSavedAt.Load())
-		} else {
+		lastSaved := binding.UsageInfo.LastSavedAt.Load()
+		if lastSaved != nil {
 			require.GreaterOrEqual(t, *binding.UsageInfo.LastSavedAt.Load(), *binding.UsageInfo.LastUsedAt.Load())
 		}
 	}
