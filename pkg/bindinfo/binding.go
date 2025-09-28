@@ -96,9 +96,9 @@ func (b *Binding) size() float64 {
 	return float64(res)
 }
 
-// UpdateUsageInfo is to update binding usage info
-func (b *Binding) UpdateUsageInfo() {
-	b.UsageInfo.Update()
+// UpdateLastUsedAt is to update binding usage info when this binding is used.
+func (b *Binding) UpdateLastUsedAt() {
+	b.UsageInfo.UpdateLastUsedAt()
 }
 
 // UpdateSavedAt is to update the last saved time
@@ -116,13 +116,8 @@ type bindingInfoUsageInfo struct {
 	LastSavedAt atomic.Pointer[time.Time]
 }
 
-func (b *bindingInfoUsageInfo) Update() {
+func (b *bindingInfoUsageInfo) UpdateLastUsedAt() {
 	now := time.Now()
-	if b.LastSavedAt.Load() == nil {
-		// If `LastSavedAt`  is equal to `nil`, we can consider it as a record that has not been written.
-		// Thus, from the first read, we take this as its saved time. After that, it will be written after a while.
-		b.LastSavedAt.Store(&now)
-	}
 	b.LastUsedAt.Store(&now)
 }
 
@@ -189,7 +184,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	binding, matched = globalHandle.MatchingBinding(sctx, noDBDigest, tableNames)
 	if matched {
 		// After hitting the cache, update the usage time of the bind.
-		binding.UpdateUsageInfo()
+		binding.UpdateLastUsedAt()
 		return binding, matched, metrics.ScopeGlobal
 	}
 
