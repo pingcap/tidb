@@ -434,6 +434,25 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
+func (w *worker) doAnalyzeRunning(job *model.Job, tblInfo *model.TableInfo) {
+	// after all old index data are reorged. re-analyze it.
+	done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+	if done {
+		job.AnalyzeState = model.AnalyzeStateDone
+	}
+	// previously, when reorg is done, and before we set the state to public, we need all other sub-task to
+	// be ready as well which is via setting this job as NornRevertible, then we can continue skip current
+	// sub and process the others.
+	// And when all sub-task are ready, which means each of them could be public in one more ddl round. And
+	// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
+	// use the schema version generated once.
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible && job.AnalyzeState == model.AnalyzeStateDone {
+		// This is the final revertible state before public.
+		job.MarkNonRevertible()
+	}
+	// not done yet
+}
+
 func (w *worker) doModifyColumnTypeWithData(
 	jobCtx *jobContext,
 	job *model.Job,
@@ -558,32 +577,16 @@ func (w *worker) doModifyColumnTypeWithData(
 			if !done {
 				return ver, err
 			}
-			job.AnalyzeState = model.AnalyzeStateRunning
+			checkAndMarkAnalyzeState(job, changingIdxs, tblInfo)
 		case model.AnalyzeStateRunning:
-			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tbl.GetPartitionedTable() == nil &&
-				// make sure that this reorg has affected the existed indexes, otherwise, re-analyze is not necessary.
-				len(changingIdxs) > 0 {
-				// after all old index data are reorged. re-analyze it.
-				done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-				if done {
-					job.AnalyzeState = model.AnalyzeStateDone
-				}
-				// if not done yet, it will return ver=0 and nil directly back the main loop for a next ddl round.
-			} else {
-				// when TiDBEnableDDLAnalyze is default off, we just move to next DONE state for public this index.
+			// after all old index data are reorged. re-analyze it.
+			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done {
 				job.AnalyzeState = model.AnalyzeStateDone
 			}
-			// previously, when reorg is done, and before we set the state to public, we need all other sub-task to
-			// be ready as well which is via setting this job as NornRevertible, then we can continue skip current
-			// sub and process the others.
-			// And when all sub-task are ready, which means each of them could be public in one more ddl round. And
-			// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
-			// use the schema version generated once.
-			if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible && job.AnalyzeState == model.AnalyzeStateDone {
-				// This is the final revertible state before public.
-				job.MarkNonRevertible()
-			}
-		case model.AnalyzeStateDone:
+			// since the job may still hang on Running, that's why we set the target state.
+			checkAndMarkNonRevertible(job, model.AnalyzeStateDone)
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 			if tblInfo.TTLInfo != nil {
@@ -618,8 +621,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
 			analyzed := false
-			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tblInfo.GetPartitionInfo() == nil &&
-				len(changingIdxs) > 0 {
+			if checkAnalyzeNecessary(job, changingIdxs, tblInfo) {
 				analyzed = true
 			}
 			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
@@ -648,6 +650,37 @@ func (w *worker) doModifyColumnTypeWithData(
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
 	return ver, errors.Trace(err)
+}
+
+func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
+	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tbl.GetPartitionInfo() == nil &&
+		// make sure that this reorg has affected the existed indexes, otherwise, re-analyze is not necessary.
+		len(changingIdxes) > 0 {
+		return true
+	}
+	return false
+}
+
+func checkAndMarkAnalyzeState(job *model.Job, changingIdxes []*model.IndexInfo, tblInfo *model.TableInfo) {
+	if checkAnalyzeNecessary(job, changingIdxes, tblInfo) {
+		job.AnalyzeState = model.AnalyzeStateRunning
+	} else {
+		job.AnalyzeState = model.AnalyzeStateSkipped
+		// This is the final revertible state before public.
+		checkAndMarkNonRevertible(job, model.AnalyzeStateSkipped)
+	}
+}
+func checkAndMarkNonRevertible(job *model.Job, targetState int8) {
+	// previously, when reorg is done, and before we set the state to public, we need all other sub-task to
+	// be ready as well which is via setting this job as NornRevertible, then we can continue skip current
+	// sub and process the others.
+	// And when all sub-task are ready, which means each of them could be public in one more ddl round. And
+	// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
+	// use the schema version generated once.
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible && job.AnalyzeState == targetState {
+		// This is the final revertible state before public.
+		job.MarkNonRevertible()
+	}
 }
 
 func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) bool {

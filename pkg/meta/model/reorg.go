@@ -137,8 +137,10 @@ const (
 	AnalyzeStateNone = 0
 	// AnalyzeStateRunning means the analyze process is running.
 	AnalyzeStateRunning = 1
+	// AnalyzeStateSkipped means the analyze process is skipped.
+	AnalyzeStateSkipped = 2
 	// AnalyzeStateDone means the analyze process is done.
-	AnalyzeStateDone = 2
+	AnalyzeStateDone = 3
 )
 
 // ReorgType indicates which process is used for the data reorganization.
