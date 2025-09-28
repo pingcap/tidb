@@ -1175,6 +1175,7 @@ SwitchIndexState:
 			if !done {
 				return ver, err
 			}
+			// nolint:forbidigo
 			checkAndMarkAnalyzeState(w.sess.GetSessionVars().AnalyzeVersion, job, allIndexInfos, tblInfo)
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
@@ -1230,6 +1231,7 @@ SwitchIndexState:
 			job.FillFinishedArgs(a)
 
 			analyzed := false
+			// nolint:forbidigo
 			if checkAnalyzeNecessary(w.sess.GetSessionVars().AnalyzeVersion, job, allIndexInfos, tblInfo) {
 				analyzed = true
 			}

@@ -1081,12 +1081,12 @@ func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
 	require.Equal(t, analyzed, true)
 	require.Equal(t, idxInfo[0].Name.L, "idx")
 
-	// Handle the truncate table event.
+	// Handle the add index event.
 	err = statstestutil.HandleDDLEventWithTxn(h, addIndexEvent)
 	require.NoError(t, err)
 
 	sctx := testKit.Session().(sessionctx.Context)
-	// Handle the truncate table event in priority queue.
+	// Handle the add index event in priority queue.
 	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, addIndexEvent))
 
 	// The table is truncated, the job should be removed from the priority queue.
@@ -1094,10 +1094,10 @@ func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 
-	// create index.
+	// modify column.
 	testKit.MustExec("alter table t modify c1 varchar(10)")
 
-	// Find the create index event.
+	// Find the modify column event.
 	modifyColumnEvent := findEvent(h.DDLEventCh(), model.ActionModifyColumn)
 	tblInfo, columnInfo, analyzed := modifyColumnEvent.GetModifyColumnInfo()
 	require.Equal(t, tableInfo.ID, tblInfo.ID)
