@@ -15,16 +15,12 @@
 package core
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -39,7 +35,7 @@ type OuterJoinEliminator struct {
 //  2. outer join elimination with duplicate agnostic aggregate functions: For example left outer join.
 //     If the parent only use the columns from left table with 'distinct' label. The left outer join can
 //     be eliminated.
-func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, aggCols []*expression.Column, parentCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, aggCols []*expression.Column, parentCols []*expression.Column) (base.LogicalPlan, bool, error) {
 	var innerChildIdx int
 	switch p.JoinType {
 	case base.LeftOuterJoin:
@@ -77,7 +73,6 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 		// If any column is from the inner table, we cannot eliminate the outer join.
 		innerFound := ruleutil.IsColFromInnerTable(aggCols, &innerUniqueIDs)
 		if !innerFound {
-			appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
 			return outerPlan, true, nil
 		}
 	}
@@ -88,7 +83,6 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 		return p, false, err
 	}
 	if contain {
-		appendOuterJoinEliminateTraceStep(p, outerPlan, parentCols, innerJoinKeys, opt)
 		return outerPlan, true, nil
 	}
 	contain, err = o.isInnerJoinKeysContainIndex(innerPlan, innerJoinKeys)
@@ -96,7 +90,6 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 		return p, false, err
 	}
 	if contain {
-		appendOuterJoinEliminateTraceStep(p, outerPlan, parentCols, innerJoinKeys, opt)
 		return outerPlan, true, nil
 	}
 
@@ -153,7 +146,7 @@ func (*OuterJoinEliminator) isInnerJoinKeysContainIndex(innerPlan base.LogicalPl
 	return false, nil
 }
 
-func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expression.Column, parentCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expression.Column, parentCols []*expression.Column) (base.LogicalPlan, error) {
 	// CTE's logical optimization is independent.
 	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p, nil
@@ -161,7 +154,7 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 	var err error
 	var isEliminated bool
 	for join, isJoin := p.(*logicalop.LogicalJoin); isJoin; join, isJoin = p.(*logicalop.LogicalJoin) {
-		p, isEliminated, err = o.tryToEliminateOuterJoin(join, aggCols, parentCols, opt)
+		p, isEliminated, err = o.tryToEliminateOuterJoin(join, aggCols, parentCols)
 		if err != nil {
 			return p, err
 		}
@@ -198,7 +191,7 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 	}
 
 	for i, child := range p.Children() {
-		newChild, err := o.doOptimize(child, aggCols, parentCols, opt)
+		newChild, err := o.doOptimize(child, aggCols, parentCols)
 		if err != nil {
 			return nil, err
 		}
@@ -208,59 +201,13 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (o *OuterJoinEliminator) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (o *OuterJoinEliminator) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	p, err := o.doOptimize(p, nil, nil, opt)
+	p, err := o.doOptimize(p, nil, nil)
 	return p, planChanged, err
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*OuterJoinEliminator) Name() string {
 	return "outer_join_eliminate"
-}
-
-func appendOuterJoinEliminateTraceStep(join *logicalop.LogicalJoin, outerPlan base.LogicalPlan, parentCols []*expression.Column,
-	innerJoinKeys *expression.Schema, opt *optimizetrace.LogicalOptimizeOp) {
-	ectx := join.SCtx().GetExprCtx().GetEvalCtx()
-	reason := func() string {
-		buffer := bytes.NewBufferString("The columns[")
-		for i, col := range parentCols {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(col.StringWithCtx(ectx, errors.RedactLogDisable))
-		}
-		buffer.WriteString("] are from outer table, and the inner join keys[")
-		for i, key := range innerJoinKeys.Columns {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(key.StringWithCtx(ectx, errors.RedactLogDisable))
-		}
-		buffer.WriteString("] are unique")
-		return buffer.String()
-	}
-	action := func() string {
-		return fmt.Sprintf("Outer %v_%v is eliminated and become %v_%v", join.TP(), join.ID(), outerPlan.TP(), outerPlan.ID())
-	}
-	opt.AppendStepToCurrent(join.ID(), join.TP(), reason, action)
-}
-
-func appendOuterJoinEliminateAggregationTraceStep(join *logicalop.LogicalJoin, outerPlan base.LogicalPlan, aggCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
-	ectx := join.SCtx().GetExprCtx().GetEvalCtx()
-	reason := func() string {
-		buffer := bytes.NewBufferString("The columns[")
-		for i, col := range aggCols {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(col.StringWithCtx(ectx, errors.RedactLogDisable))
-		}
-		buffer.WriteString("] in agg are from outer table, and the agg functions are duplicate agnostic")
-		return buffer.String()
-	}
-	action := func() string {
-		return fmt.Sprintf("Outer %v_%v is eliminated and become %v_%v", join.TP(), join.ID(), outerPlan.TP(), outerPlan.ID())
-	}
-	opt.AppendStepToCurrent(join.ID(), join.TP(), reason, action)
 }

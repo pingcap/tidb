@@ -3936,6 +3936,16 @@ type HintTimeRange struct {
 	To   string
 }
 
+// LeadingList represents a nested structure in LEADING hints.
+// It could be *HintTable or LeadingList
+//
+//	eg: LEADING(a, (b, c), d)
+//	will be parsed into a LeadingList like:
+//	Items = [HintTable("a"), LeadingList{[HintTable("b"), HintTable("c")]}, HintTable("d")]
+type LeadingList struct {
+	Items []interface{}
+}
+
 // HintSetVar is the payload of `SET_VAR` hint
 type HintSetVar struct {
 	VarName string
@@ -3948,6 +3958,25 @@ type HintTable struct {
 	TableName     CIStr
 	QBName        CIStr
 	PartitionList []CIStr
+}
+
+// FlattenLeadingList collects all HintTable nodes from a possibly nested LeadingList into a flat slice.
+// Note:
+//   - Only table names are preserved.
+func FlattenLeadingList(list *LeadingList) []HintTable {
+	if list == nil {
+		return nil
+	}
+	var result []HintTable
+	for _, item := range list.Items {
+		switch t := item.(type) {
+		case *HintTable:
+			result = append(result, *t)
+		case *LeadingList:
+			result = append(result, FlattenLeadingList(t)...)
+		}
+	}
+	return result
 }
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
@@ -3975,11 +4004,52 @@ func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	}
 }
 
+func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName CIStr, needParen bool, isTop bool, qbOnTable bool) error {
+	if lt == nil || len(lt.Items) == 0 {
+		return nil
+	}
+	if needParen {
+		ctx.WritePlain("(")
+	}
+
+	currentQBName := qbName // hint level QBName
+
+	for i, item := range lt.Items {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+
+		switch t := item.(type) {
+		case *HintTable:
+			if i == 0 && currentQBName.L != "" && !qbOnTable {
+				ctx.WriteKeyWord("@")
+				ctx.WriteName(currentQBName.String())
+				ctx.WritePlain(" ")
+				t.Restore(ctx)
+				currentQBName = CIStr{}
+			} else {
+				t.Restore(ctx)
+			}
+		case *LeadingList:
+			if err := t.RestoreWithQB(ctx, currentQBName, true, false, qbOnTable); err != nil {
+				return err
+			}
+			currentQBName = CIStr{}
+		default:
+			return fmt.Errorf("unexpected type in LeadingList: %T", t)
+		}
+	}
+	if needParen {
+		ctx.WritePlain(")")
+	}
+	return nil
+}
+
 // Restore implements Node interface.
 func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(n.HintName.String())
 	ctx.WritePlain("(")
-	if n.QBName.L != "" {
+	if n.HintName.L != "leading" && n.QBName.L != "" {
 		if n.HintName.L != "qb_name" {
 			ctx.WriteKeyWord("@")
 		}
@@ -3995,7 +4065,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 		return nil
 	}
-	if n.QBName.L != "" {
+	if n.HintName.L != "leading" && n.QBName.L != "" {
 		ctx.WritePlain(" ")
 	}
 	// Hints with args except query block.
@@ -4006,8 +4076,26 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
+	case "leading":
+		if list, ok := n.HintData.(*LeadingList); ok && list != nil {
+			// if table level QBName or not
+			qbOnTable := false
+			if len(n.Tables) > 0 && n.Tables[0].QBName.L != "" {
+				qbOnTable = true
+			}
+			if err := list.RestoreWithQB(ctx, n.QBName, false, true, qbOnTable); err != nil {
+				return err
+			}
+		} else {
+			for i, table := range n.Tables {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				table.Restore(ctx)
+			}
+		}
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
-		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading", "no_hash_join", "no_merge_join",
+		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "no_hash_join", "no_merge_join",
 		"no_index_join", "no_index_hash_join", "no_index_merge_join":
 		for i, table := range n.Tables {
 			if i != 0 {
