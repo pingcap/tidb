@@ -69,3 +69,19 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 	distsql.SetEncodeType(ctx.GetDistSQLCtx(), dagReq)
 	return dagReq, err
 }
+
+// ConstructDAGReqForUnNatureOrderPlans constructs DAGRequest for physical plans.
+// The unNatureOrders map is used to set the ParentIdx of executors in DAGRequest.
+func ConstructDAGReqForUnNatureOrderPlans(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, unNatureOrders map[int]int, storeType kv.StoreType) (*tipb.DAGRequest, error) {
+	dagReq, err := ConstructDAGReq(ctx, plans, storeType)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, j := range unNatureOrders {
+		parentIdx := uint32(j)
+		dagReq.Executors[i].ParentIdx = &parentIdx
+	}
+
+	return dagReq, nil
+}

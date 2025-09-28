@@ -193,17 +193,20 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
 		builder.dag = dag
-		if execCnt := len(dag.Executors); execCnt != 0 && dag.Executors[execCnt-1].GetLimit() != nil {
+		execCnt := len(dag.Executors)
+		if execCnt != 0 && dag.Executors[execCnt-1].GetLimit() != nil {
 			limit := dag.Executors[execCnt-1].GetLimit()
 			builder.Request.LimitSize = limit.GetLimit()
-			// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
-			if execCnt == 2 {
-				if limit.Limit < estimatedRegionRowCount {
-					if kr := builder.Request.KeyRanges; kr != nil {
-						builder.Request.Concurrency = kr.PartitionNum()
-					} else {
-						builder.Request.Concurrency = 1
-					}
+		}
+		if execCnt >= 2 {
+			// When the DAG is just a simple scan and small limit, set concurrency to 1 would be sufficient.
+			// Sometimes, Limit also has a parent operator, e.g. IndexLookUp,
+			// so we check the second operator here instead of the last one.
+			if limit := dag.Executors[1].GetLimit(); limit != nil && limit.Limit < estimatedRegionRowCount {
+				if kr := builder.Request.KeyRanges; kr != nil {
+					builder.Request.Concurrency = kr.PartitionNum()
+				} else {
+					builder.Request.Concurrency = 1
 				}
 			}
 		}
