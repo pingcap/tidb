@@ -577,16 +577,19 @@ func (w *worker) doModifyColumnTypeWithData(
 			if !done {
 				return ver, err
 			}
-			// nolint:forbidigo
-			checkAndMarkAnalyzeState(w.sess.GetSessionVars().AnalyzeVersion, job, changingIdxs, tblInfo)
+			if checkAnalyzeNecessary(job, changingIdxs, tblInfo) {
+				job.AnalyzeState = model.AnalyzeStateRunning
+			} else {
+				job.AnalyzeState = model.AnalyzeStateSkipped
+				checkAndMarkNonRevertible(job)
+			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
 			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
 			if done {
 				job.AnalyzeState = model.AnalyzeStateDone
+				checkAndMarkNonRevertible(job)
 			}
-			// since the job may still hang on Running, that's why we set the target state.
-			checkAndMarkNonRevertible(job, model.AnalyzeStateDone)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
@@ -649,42 +652,38 @@ func (w *worker) doModifyColumnTypeWithData(
 	return ver, errors.Trace(err)
 }
 
-func checkAnalyzeNecessary(analyzeVer int, job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
-	val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze)
-	if ok && variable.TiDBOptOn(val) && tbl.GetPartitionInfo() == nil &&
-		// make sure that this reorg has affected the existed indexes, otherwise, re-analyze is not necessary.
-		len(changingIdxes) > 0 {
-		// double-check the inner ddl session analyze version is 2.
-		if analyzeVer == 2 {
-			return true
-		}
+func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
+	analyzeVer := vardef.DefTiDBAnalyzeVersion
+	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
+		analyzeVer = variable.TidbOptInt(val, analyzeVer)
 	}
-	logutil.DDLLogger().Info("tidb_enable_ddl_analyze can only be enabled with tidb_analyze_version 2",
-		zap.String("tidb_enable_ddl_analyze", val),
-		zap.Bool("is partitioned table", tbl.GetPartitionInfo() != nil),
-		zap.Int("target index info slice len", len(changingIdxes)),
+	enableDDLAnalyze := vardef.DefTiDBEnableDDLAnalyze
+	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok {
+		enableDDLAnalyze = variable.TiDBOptOn(val)
+	}
+	isPartitionedTable := tbl.GetPartitionInfo() == nil
+	hasChangingIdx := len(changingIdxes) > 0
+
+	if enableDDLAnalyze && hasChangingIdx && isPartitionedTable && analyzeVer == 2 {
+		return true
+	}
+	logutil.DDLLogger().Info("skip analyze",
+		zap.Bool("tidb_enable_ddl_analyze", enableDDLAnalyze),
+		zap.Bool("is partitioned table", isPartitionedTable),
+		zap.Int("affected indexes count", len(changingIdxes)),
 		zap.Int("tidb_analyze_version", analyzeVer))
 	return false
 }
 
-func checkAndMarkAnalyzeState(analyzeVer int, job *model.Job, changingIdxes []*model.IndexInfo, tblInfo *model.TableInfo) {
-	if checkAnalyzeNecessary(analyzeVer, job, changingIdxes, tblInfo) {
-		job.AnalyzeState = model.AnalyzeStateRunning
-	} else {
-		job.AnalyzeState = model.AnalyzeStateSkipped
-		// This is the final revertible state before public.
-		checkAndMarkNonRevertible(job, model.AnalyzeStateSkipped)
-	}
-}
-func checkAndMarkNonRevertible(job *model.Job, targetState int8) {
+// checkAndMarkNonRevertible should be called when the job is in the final revertible state before public.
+func checkAndMarkNonRevertible(job *model.Job) {
 	// previously, when reorg is done, and before we set the state to public, we need all other sub-task to
 	// be ready as well which is via setting this job as NornRevertible, then we can continue skip current
 	// sub and process the others.
 	// And when all sub-task are ready, which means each of them could be public in one more ddl round. And
 	// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
 	// use the schema version generated once.
-	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible && job.AnalyzeState == targetState {
-		// This is the final revertible state before public.
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
 	}
 }
@@ -717,7 +716,7 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
 			if err != nil {
 				logutil.DDLLogger().Warn("analyze table failed",
-					zap.String("category", "ddl"),
+					zap.Int64("jobID", job.ID),
 					zap.String("db", dbName),
 					zap.String("table", tblName),
 					zap.Error(err),
@@ -733,7 +732,8 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 		logutil.DDLLogger().Info("analyze table after create index done", zap.Int64("jobID", job.ID))
 		return true
 	case <-w.ctx.Done():
-		logutil.DDLLogger().Info("analyze table after create index context done", zap.Int64("jobID", job.ID))
+		logutil.DDLLogger().Info("analyze table after create index context done",
+			zap.Int64("jobID", job.ID), zap.Error(w.ctx.Err()))
 		return true
 	case <-time.After(10 * time.Second):
 		logutil.DDLLogger().Info("analyze table after create index timeout check", zap.Int64("jobID", job.ID))

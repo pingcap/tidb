@@ -707,7 +707,9 @@ func (job *Job) InFinalState() bool {
 	return job.State == JobStateSynced || job.State == JobStateCancelled || job.State == JobStatePaused
 }
 
-// AddSystemVars add a system variable in DDL job.
+// AddSystemVars adds a system variable to the DDL job.
+// These variables are passed from the front-end DDL session to the back-end worker that executes the job.
+// Retrieve them using job.GetSystemVars(xxx).
 func (job *Job) AddSystemVars(name string, value string) {
 	job.SessionVars[name] = value
 }
@@ -885,6 +887,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
 		TraceInfo:       parentJob.TraceInfo,
+		SessionVars:     parentJob.SessionVars,
 	}
 }
 

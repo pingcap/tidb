@@ -1269,6 +1269,13 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 
 	// modify column for partitioned table.
 	tk.MustGetErrMsg("ALTER TABLE pt modify column id varchar(10)", "[ddl:8200]Unsupported modify column: table is partition table")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1( id int, a int, b int, index idx(id, a));")
+	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	tk.MustExec("analyze table t1 all columns with 1 topn, 10 buckets;")
+	tk.MustExec(" ALTER TABLE t1 ADD INDEX idx_a(a), ADD INDEX idx_b(b);")
+	tk.MustQuery("explain select * from t1 where a = 1;").CheckContain("TableFullScan")
 }
 
 func TestCreateTableWithVectorIndex(t *testing.T) {

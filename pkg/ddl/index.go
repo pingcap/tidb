@@ -1169,15 +1169,19 @@ SwitchIndexState:
 			if !done {
 				return ver, err
 			}
-			// nolint:forbidigo
-			checkAndMarkAnalyzeState(w.sess.GetSessionVars().AnalyzeVersion, job, allIndexInfos, tblInfo)
+			if checkAnalyzeNecessary(job, allIndexInfos, tblInfo) {
+				job.AnalyzeState = model.AnalyzeStateRunning
+			} else {
+				job.AnalyzeState = model.AnalyzeStateSkipped
+				checkAndMarkNonRevertible(job)
+			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
 			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
 			if done {
 				job.AnalyzeState = model.AnalyzeStateDone
+				checkAndMarkNonRevertible(job)
 			}
-			checkAndMarkNonRevertible(job, model.AnalyzeStateDone)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
 			// Set column index flag.
 			for _, indexInfo := range allIndexInfos {
