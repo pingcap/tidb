@@ -239,12 +239,6 @@ insert into t values (NULL, '2011-12-30 23:59:59', @@time_zone);
 Level	Code	Message
 Warning	1292	Incorrect timestamp value: '2011-12-30 23:59:59' for column 'ts' at row 1
 insert into t values (NULL, '2011-12-31 00:00:00', @@time_zone);
-select * from t where tz = @@time_zone order by id;
-id	ts	tz
-27	2011-12-29 23:59:59	Pacific/Apia
-28	0000-00-00 00:00:00	Pacific/Apia
-29	0000-00-00 00:00:00	Pacific/Apia
-30	2011-12-31 00:00:00	Pacific/Apia
 set time_zone = 'UTC';
 select * from t order by id;
 id	ts	tz

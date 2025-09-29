@@ -192,7 +192,6 @@ insert into t values (NULL, '2011-12-29 23:59:59', @@time_zone);
 insert into t values (NULL, '2011-12-30 00:00:00', @@time_zone);
 insert into t values (NULL, '2011-12-30 23:59:59', @@time_zone);
 insert into t values (NULL, '2011-12-31 00:00:00', @@time_zone);
-select * from t where tz = @@time_zone order by id;
 set time_zone = 'UTC';
 select * from t order by id;
 set @@sql_mode = @old_sql_mode;

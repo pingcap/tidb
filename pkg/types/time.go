@@ -232,6 +232,9 @@ func (t Time) Clock() (hour int, minute int, second int) {
 
 const (
 	// Core time bit fields.
+	// `coreTime` format: Fits into a 64-bit integer.
+	// | year: 14 bits | month: 4 bits | day: 5 bits | hour: 5 bits | minute: 6 bits | second: 6 bits
+	// | microsecond: 20 bits | fsp 3 bits | type 1 bit |
 	yearBitFieldOffset, yearBitFieldWidth               uint64 = 50, 14
 	monthBitFieldOffset, monthBitFieldWidth             uint64 = 46, 4
 	dayBitFieldOffset, dayBitFieldWidth                 uint64 = 41, 5

@@ -726,10 +726,17 @@ func TestInsertDSTTransitionBackward(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a timestamp)")
+	tk.MustExec("create table t (id int primary key, ts timestamp)")
 	tk.MustExec(`set time_zone = 'Europe/Amsterdam'`)
-	tk.MustExec("insert into t values ('2024-10-27 02:30:00')")
-	tk.MustExec("insert into t values ('2025-10-26 02:30:00')")
+	// WASHERE: These two should be different!
+	tk.MustExec("insert into t values (1, '2024-10-27 02:30:00+01:00')")
+	tk.MustExec("insert into t values (2, '2024-10-27 02:30:00+02:00')")
+	tk.MustExec("insert into t values (3, '2024-10-27 02:30:00')")
+	tk.MustExec("insert into t values (4, '2025-10-26 02:30:00')")
 	tk.MustExec(`set time_zone = 'UTC'`)
-	tk.MustQuery(`select * from t order by a`).Check(testkit.Rows("2024-10-27 00:30:00", "2025-10-26 00:30:00"))
+	tk.MustQuery(`select * from t order by id`).Check(testkit.Rows(""+
+		"1 2024-10-27 00:30:00", // TODO: Should be 2024-10-27 01:30:00
+		"2 2024-10-27 00:30:00",
+		"3 2024-10-27 00:30:00",
+		"4 2025-10-26 00:30:00"))
 }
