@@ -44,8 +44,11 @@ var (
 )
 
 const (
-	UploadPartSizeDivisor = 5000 // Used to calculate the size of each uploaded part
-	logPartNumInterval    = 999  // log the part num every 999 parts.
+	// MaxUploadPartCount defines the divisor used when calculating the size of each uploaded part.
+	// Setting it from 10000 to 5000 increases the part size so that the total number of parts stays well below
+	// the S3 multipart upload limit of 10,000 parts, to avoiding the error "TotalPartsExceeded: exceeded total allowed configured MaxUploadParts (10000)".
+	MaxUploadPartCount = 5000
+	logPartNumInterval = 999 // log the part num every 999 parts.
 )
 
 // OneFileWriter is used to write data into external storage
