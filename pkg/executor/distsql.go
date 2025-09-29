@@ -1388,7 +1388,7 @@ func (w *indexWorker) getHandleOffsets(indexTpsLen int) ([]int, error) {
 	}
 	handleOffset := make([]int, 0, len(w.idxLookup.handleCols))
 	for i := range w.idxLookup.handleCols {
-		if handleOffset == nil {
+		if handleVersionMap == nil {
 			handleOffset = append(handleOffset, numColsWithoutPid-len(w.idxLookup.handleCols)+i)
 		} else {
 			handleOffset = append(handleOffset, numColsWithoutPid-1-len(w.idxLookup.handleCols)+i)
