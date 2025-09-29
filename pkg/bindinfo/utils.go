@@ -231,7 +231,7 @@ func updateBindingUsageInfoToStorageInternal(sPool util.DestroyableSessionPool, 
 		for _, binding := range bindings {
 			lastUsed := binding.UsageInfo.LastUsedAt.Load()
 			intest.Assert(lastUsed != nil)
-			err = saveBindUsage(sctx, binding.SQLDigest, binding.PlanDigest, *lastUsed)
+			err = saveBindingUsage(sctx, binding.SQLDigest, binding.PlanDigest, *lastUsed)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -269,7 +269,7 @@ func addLockForBinds(sctx sessionctx.Context, bindings []*Binding) error {
 	return nil
 }
 
-func saveBindUsage(sctx sessionctx.Context, sqldigest, planDigest string, ts time.Time) error {
+func saveBindingUsage(sctx sessionctx.Context, sqldigest, planDigest string, ts time.Time) error {
 	lastUsedTime := ts.UTC().Format(types.TimeFormat)
 	var sql = "UPDATE mysql.bind_info USE INDEX(digest_index) SET last_used_date = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE) WHERE sql_digest = %?"
 	if planDigest == "" {
