@@ -23,8 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/set"
 )
 
@@ -83,55 +81,6 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 		a.windowFuncs = append(a.windowFuncs, v)
 	}
 	return n, true
-}
-
-// BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
-func BuildPhysicalJoinSchema(joinType base.JoinType, join base.PhysicalPlan) *expression.Schema {
-	leftSchema := join.Children()[0].Schema()
-	switch joinType {
-	case base.SemiJoin, base.AntiSemiJoin:
-		return leftSchema.Clone()
-	case base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
-		newSchema := leftSchema.Clone()
-		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
-		return newSchema
-	}
-	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
-	if joinType == base.LeftOuterJoin {
-		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
-	} else if joinType == base.RightOuterJoin {
-		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
-	}
-	return newSchema
-}
-
-// GetStatsInfo gets the statistics info from a physical plan tree.
-func GetStatsInfo(i any) map[string]uint64 {
-	if i == nil {
-		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
-		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
-		return nil
-	}
-	p := i.(base.Plan)
-	var physicalPlan base.PhysicalPlan
-	switch x := p.(type) {
-	case *physicalop.Insert:
-		physicalPlan = x.SelectPlan
-	case *physicalop.Update:
-		physicalPlan = x.SelectPlan
-	case *physicalop.Delete:
-		physicalPlan = x.SelectPlan
-	case base.PhysicalPlan:
-		physicalPlan = x
-	}
-
-	if physicalPlan == nil {
-		return nil
-	}
-
-	statsInfos := make(map[string]uint64)
-	statsInfos = physicalop.CollectPlanStatsVersion(physicalPlan, statsInfos)
-	return statsInfos
 }
 
 // extractStringFromStringSet helps extract string info from set.StringSet.

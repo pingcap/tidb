@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -112,7 +111,7 @@ func (p *PhysicalLimit) ExplainInfo() string {
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
+		buffer = property.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
 		fmt.Fprintf(buffer, ", ")
 	}
 	if redact == perrors.RedactLogDisable {

@@ -50,7 +50,7 @@ func (lt LogicalTopN) Init(ctx base.PlanContext, offset int) *LogicalTopN {
 func (lt *LogicalTopN) ExplainInfo() string {
 	ectx := lt.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
-	buffer = util.ExplainPartitionBy(ectx, buffer, lt.GetPartitionBy(), false)
+	buffer = property.ExplainPartitionBy(ectx, buffer, lt.GetPartitionBy(), false)
 	if len(lt.GetPartitionBy()) > 0 && len(lt.ByItems) > 0 {
 		buffer.WriteString("order by ")
 	}
@@ -134,7 +134,7 @@ func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expressi
 	if !reload && lt.StatsInfo() != nil {
 		return lt.StatsInfo(), false, nil
 	}
-	lt.SetStats(util.DeriveLimitStats(childStats[0], float64(lt.Count)))
+	lt.SetStats(property.DeriveLimitStats(childStats[0], float64(lt.Count)))
 	return lt.StatsInfo(), true, nil
 }
 

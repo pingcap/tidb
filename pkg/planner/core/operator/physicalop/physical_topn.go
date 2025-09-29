@@ -115,7 +115,7 @@ func (p *PhysicalTopN) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
+		buffer = property.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
 		buffer.WriteString(" ")
 	}
 	if len(p.ByItems) > 0 {
@@ -142,7 +142,7 @@ func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), true)
+		buffer = property.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), true)
 		buffer.WriteString(" ")
 	}
 	if len(p.ByItems) > 0 {

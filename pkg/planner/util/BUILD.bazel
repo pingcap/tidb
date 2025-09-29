@@ -39,6 +39,7 @@ go_library(
         "//pkg/util/intset",
         "//pkg/util/ranger",
         "//pkg/util/size",
+        "//pkg/util/slice",
         "@com_github_pingcap_errors//:errors",
     ],
 )

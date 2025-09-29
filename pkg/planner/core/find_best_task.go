@@ -51,6 +51,7 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -1303,7 +1304,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			})
 		}
 		lowestCountAfterAccessIdx := matchIdxes[0]
-		determinedIndexPartialPaths = append(determinedIndexPartialPaths, util.SliceDeepClone(oneORBranch[lowestCountAfterAccessIdx])...)
+		determinedIndexPartialPaths = append(determinedIndexPartialPaths, sliceutil.SliceDeepClone(oneORBranch[lowestCountAfterAccessIdx])...)
 		// record the index usage info to avoid choosing a single index for all partial paths
 		var indexID int64
 		if oneORBranch[lowestCountAfterAccessIdx][0].IsTablePath() {
@@ -2296,7 +2297,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if !candidate.path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := physicalop.PhysicalTableScan{
-			Columns:         util.CloneColInfos(ds.Columns),
+			Columns:         sliceutil.SliceDeepClone(ds.Columns),
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
 			DBName:          ds.DBName,
@@ -2552,7 +2553,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 				prop.VectorProp.Vec.SerializeTo(nil),
 				tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
 			))
-			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
+			ts.SetStats(property.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
 		// ********************************** future deprecated start **************************/
 		var hasVirtualColumn bool

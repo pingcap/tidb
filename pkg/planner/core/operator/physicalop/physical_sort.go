@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -139,7 +140,7 @@ func (p *PhysicalSort) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bo
 		return nil, false
 	}
 	cloned.BasePhysicalPlan = *basePlan
-	cloned.ByItems = util.CloneByItemss(p.ByItems)
+	cloned.ByItems = sliceutil.SliceDeepClone(p.ByItems)
 	return cloned, true
 }
 

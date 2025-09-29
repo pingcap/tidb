@@ -114,6 +114,7 @@ go_library(
         "//pkg/util/redact",
         "//pkg/util/set",
         "//pkg/util/size",
+        "//pkg/util/slice",
         "//pkg/util/stringutil",
         "//pkg/util/tiflashcompute",
         "@com_github_pingcap_errors//:errors",
