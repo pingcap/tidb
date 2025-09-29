@@ -56,7 +56,8 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 		name = c.Info.Name.O
 	}
 	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colUniqueID) {
-		pseudoResult, err := getPseudoRowCountByColumnRanges(sc.TypeCtx(), float64(coll.RealtimeCount), colRanges, 0)
+		var pseudoResult float64
+		pseudoResult, err = getPseudoRowCountByColumnRanges(sc.TypeCtx(), float64(coll.RealtimeCount), colRanges, 0)
 		if err != nil {
 			return statistics.DefaultRowEst(0), err
 		}
@@ -425,7 +426,8 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 	}
 	// If it is a single column index, directly use column estimation instead.
 	if len(idxCols) == 1 {
-		countEst, err := GetRowCountByColumnRanges(sctx, coll, idxCols[0].UniqueID, indexRanges)
+		var countEst statistics.RowEstimate
+		countEst, err = GetRowCountByColumnRanges(sctx, coll, idxCols[0].UniqueID, indexRanges)
 		if err != nil {
 			return 0, 0, err
 		}

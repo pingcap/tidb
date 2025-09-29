@@ -565,7 +565,8 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		)
 		if !statistics.ColumnStatsIsInvalid(coll.GetCol(colID), sctx, coll, colID) {
 			foundStats = true
-			countEst, err := GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
+			var countEst statistics.RowEstimate
+			countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
 			if err != nil {
 				return 0, 0, 0, false, err
 			}
