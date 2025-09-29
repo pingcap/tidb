@@ -253,7 +253,7 @@ func (tsr *RemoteTopSQLReporter) processStmtStatsData() {
 		kth_exec_count := find_kth_uint64(data, k, u64_slice)
 		for digest, item := range data {
 			sqlDigest, planDigest := []byte(digest.SQLDigest), []byte(digest.PlanDigest)
-			if item.ExecCount > kth_exec_count {
+			if item.ExecCount > kth_exec_count || !tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {
 				tsr.collecting.getOrCreateRecord(sqlDigest, planDigest).appendStmtStatsItem(timestamp, *item)
 			} else {
 				tsr.collecting.appendOthersStmtStatsItem(timestamp, *item)
