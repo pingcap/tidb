@@ -305,6 +305,21 @@ func TestParseHint(t *testing.T) {
 			},
 		},
 		{
+			input: "WRITE_SLOW_LOG, WRITE_SLOW_LOG",
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: ast.NewCIStr("WRITE_SLOW_LOG"),
+				},
+				{
+					HintName: ast.NewCIStr("WRITE_SLOW_LOG"),
+				},
+			},
+		},
+		{
+			input: "WRITE_SLOW_LOG()",
+			errs:  []string{`Optimizer hint syntax error at line 1 `},
+		},
+		{
 			input: "unknown_hint()",
 			errs:  []string{`Optimizer hint syntax error at line 1 `},
 		},

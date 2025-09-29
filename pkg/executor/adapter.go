@@ -1661,27 +1661,31 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
-	cfg := config.GetGlobalConfig()
-	// If the level is Debug, or trace is enabled, print slow logs anyway.
-	force := log.GetLevel() <= zapcore.DebugLevel || trace.IsEnabled()
-	if !cfg.Instance.EnableSlowLog.Load() && !force {
-		return
-	}
-
 	sessVars := a.Ctx.GetSessionVars()
-	sessVars.StmtCtx.ExecSuccess = succ
-	sessVars.StmtCtx.ExecRetryCount = uint64(a.retryCount)
-	globalRules := vardef.GlobalSlowLogRules.Load()
-	slowItems := PrepareSlowLogItemsForRules(a.GoCtx, globalRules, sessVars)
-	var matchRules bool
-	if slowItems == nil {
-		threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
-		matchRules = sessVars.GetTotalCostDuration() >= threshold
-	} else {
-		matchRules = ShouldWriteSlowLog(globalRules, sessVars, slowItems)
-	}
-	if !matchRules && !force {
-		return
+	stmtCtx := sessVars.StmtCtx
+	cfg := config.GetGlobalConfig()
+	var slowItems *variable.SlowQueryLogItems
+	if !stmtCtx.WriteSlowLog {
+		// If the level is Debug, or trace is enabled, print slow logs anyway.
+		force := log.GetLevel() <= zapcore.DebugLevel || trace.IsEnabled()
+		if !cfg.Instance.EnableSlowLog.Load() && !force {
+			return
+		}
+
+		sessVars.StmtCtx.ExecSuccess = succ
+		sessVars.StmtCtx.ExecRetryCount = uint64(a.retryCount)
+		globalRules := vardef.GlobalSlowLogRules.Load()
+		slowItems = PrepareSlowLogItemsForRules(a.GoCtx, globalRules, sessVars)
+		var matchRules bool
+		if slowItems == nil {
+			threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
+			matchRules = sessVars.GetTotalCostDuration() >= threshold
+		} else {
+			matchRules = ShouldWriteSlowLog(globalRules, sessVars, slowItems)
+		}
+		if !matchRules && !force {
+			return
+		}
 	}
 
 	if slowItems == nil {
