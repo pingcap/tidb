@@ -1166,12 +1166,6 @@ SwitchIndexState:
 			// reorg the index data.
 			var done bool
 			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
-			if done {
-				// when done is true, the index's BackfillStateInapplicable need to be stored back.
-				if err == nil {
-					ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
-				}
-			}
 			if !done {
 				return ver, err
 			}
@@ -1230,12 +1224,7 @@ SwitchIndexState:
 			}
 			job.FillFinishedArgs(a)
 
-			analyzed := false
-			// nolint:forbidigo
-			if checkAnalyzeNecessary(w.sess.GetSessionVars().AnalyzeVersion, job, allIndexInfos, tblInfo) {
-				analyzed = true
-			}
-			addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos, analyzed)
+			addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos, job.AnalyzeState == model.AnalyzeStateDone)
 			err2 := asyncNotifyEvent(jobCtx, addIndexEvent, job, noSubJob, w.sess)
 			if err2 != nil {
 				return ver, errors.Trace(err2)
@@ -1551,7 +1540,8 @@ func doReorgWorkForCreateIndex(
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
 		}
-		return true, ver, err
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+		return true, ver, errors.Trace(err)
 	default:
 		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", allIndexInfos[0].BackfillState)
 	}

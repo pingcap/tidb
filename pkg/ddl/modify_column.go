@@ -621,12 +621,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
-			analyzed := false
-			// nolint:forbidigo
-			if checkAnalyzeNecessary(w.sess.GetSessionVars().AnalyzeVersion, job, changingIdxs, tblInfo) {
-				analyzed = true
-			}
-			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
+			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, job.AnalyzeState == model.AnalyzeStateDone)
 			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -655,15 +650,20 @@ func (w *worker) doModifyColumnTypeWithData(
 }
 
 func checkAnalyzeNecessary(analyzeVer int, job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
-	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tbl.GetPartitionInfo() == nil &&
+	val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze)
+	if ok && variable.TiDBOptOn(val) && tbl.GetPartitionInfo() == nil &&
 		// make sure that this reorg has affected the existed indexes, otherwise, re-analyze is not necessary.
 		len(changingIdxes) > 0 {
 		// double-check the inner ddl session analyze version is 2.
 		if analyzeVer == 2 {
 			return true
 		}
-		logutil.DDLLogger().Warn("tidb_enable_ddl_analyze can only be enabled with tidb_analyze_version 2", zap.Int("tidb_analyze_version", analyzeVer))
 	}
+	logutil.DDLLogger().Info("tidb_enable_ddl_analyze can only be enabled with tidb_analyze_version 2",
+		zap.String("tidb_enable_ddl_analyze", val),
+		zap.Bool("is partitioned table", tbl.GetPartitionInfo() != nil),
+		zap.Int("target index info slice len", len(changingIdxes)),
+		zap.Int("tidb_analyze_version", analyzeVer))
 	return false
 }
 
