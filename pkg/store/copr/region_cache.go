@@ -16,6 +16,7 @@ package copr
 
 import (
 	"bytes"
+	"sort"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -82,6 +83,17 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 	for ranges.Len() > 0 {
 		// ranges must be in loc.region, so the bucket returned by loc.LocateBucket is guaranteed to be not nil
 		bucket := loc.LocateBucket(ranges.At(0).StartKey)
+		if bucket == nil {
+			bucketKeys := make([]kv.Key, 0, len(loc.Buckets.Keys))
+			for _, k := range loc.Buckets.Keys {
+				bucketKeys = append(bucketKeys, kv.Key(k))
+			}
+			logutil.BgLogger().Warn("[RegionBoundaryDebug] Unexpected bucket is nil",
+				zap.String("region", loc.Region.String()),
+				zap.Stringer("startKey", ranges.At(0).StartKey),
+				zap.Stringer("endKey", ranges.At(0).EndKey),
+				zap.Stringers("buckets", bucketKeys))
+		}
 
 		// Iterate to the first range that is not complete in the bucket.
 		var r kv.KeyRange
@@ -219,6 +231,29 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 		res, ranges, isBreak = c.splitKeyRangesByLocation(loc, ranges, res)
 		if isBreak {
 			break
+		}
+	}
+	for i, loc := range res {
+		locRanges := loc.Ranges
+		isSorted := sort.SliceIsSorted(locRanges, func(i, j int) bool {
+			return bytes.Compare(locRanges.At(i).StartKey, locRanges.At(j).StartKey) < 0
+		})
+		if !isSorted {
+			logutil.Logger(bo.GetCtx()).Warn("[RegionBoundaryDebug] ranges are not sorted in LocationKeyRanges",
+				zap.Int("index", i),
+				zap.Int("len", locRanges.Len()),
+				zap.Stringer("ranges", locRanges))
+		}
+		for j := 0; j < locRanges.Len(); j++ {
+			if !loc.Location.Contains(locRanges.At(j).StartKey) || !loc.Location.Contains(locRanges.At(j).EndKey) {
+				logutil.BgLogger().Warn("[RegionBoundaryDebug] Unexpected range is not contained in location",
+					zap.Int("index", i),
+					zap.Int("len", locRanges.Len()),
+					zap.Int("notContainedRangeIndex", j),
+					zap.Stringer("startKey", kv.Key(loc.Location.StartKey)),
+					zap.Stringer("endKey", kv.Key(loc.Location.StartKey)),
+					zap.Stringer("ranges", locRanges))
+			}
 		}
 	}
 	return res, nil
