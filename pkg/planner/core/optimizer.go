@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -1130,28 +1129,8 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	opt := optimizetrace.DefaultPhysicalOptimizeOption()
-	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
-	if stmtCtx.EnableOptimizeTrace {
-		tracer := &tracing.PhysicalOptimizeTracer{
-			PhysicalPlanCostDetails: make(map[string]*tracing.PhysicalPlanCostDetail),
-			Candidates:              make(map[int]*tracing.CandidatePlanTrace),
-		}
-		opt = opt.WithEnableOptimizeTracer(tracer)
-		defer func() {
-			r := recover()
-			if r != nil {
-				panic(r) /* pass panic to upper function to handle */
-			}
-			if err == nil {
-				tracer.RecordFinalPlanTrace(plan.BuildPlanTrace())
-				stmtCtx.OptimizeTracer.Physical = tracer
-			}
-		}()
-	}
-
 	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
-	t, _, err := logic.FindBestTask(prop, planCounter, opt)
+	t, _, err := logic.FindBestTask(prop, planCounter)
 	if err != nil {
 		return nil, 0, err
 	}

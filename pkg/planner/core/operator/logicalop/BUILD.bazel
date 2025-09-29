@@ -63,7 +63,6 @@ go_library(
         "//pkg/planner/util/coreusage",
         "//pkg/planner/util/domainmisc",
         "//pkg/planner/util/fixcontrol",
-        "//pkg/planner/util/optimizetrace",
         "//pkg/planner/util/tablesampler",
         "//pkg/planner/util/utilfuncp",
         "//pkg/sessionctx",

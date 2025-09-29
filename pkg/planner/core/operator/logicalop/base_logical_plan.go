@@ -26,7 +26,6 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -164,9 +163,8 @@ func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) (bas
 }
 
 // FindBestTask implements LogicalPlan.<3rd> interface.
-func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
-	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask4BaseLogicalPlan(p, prop, planCounter, opt)
+func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (bestTask base.Task, cntPlan int64, err error) {
+	return utilfuncp.FindBestTask4BaseLogicalPlan(p, prop, planCounter)
 }
 
 // BuildKeyInfo implements LogicalPlan.<4th> interface.

@@ -19,7 +19,6 @@ go_library(
         "//pkg/planner/planctx",
         "//pkg/planner/property",
         "//pkg/planner/util/costusage",
-        "//pkg/planner/util/optimizetrace",
         "//pkg/sessionctx/vardef",
         "//pkg/table/tables",
         "//pkg/types",

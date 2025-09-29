@@ -12,10 +12,8 @@ go_library(
         "//pkg/planner/property",
         "//pkg/planner/util/costusage",
         "//pkg/planner/util/debugtrace",
-        "//pkg/planner/util/optimizetrace",
         "//pkg/planner/util/utilfuncp",
         "//pkg/util/dbterror/plannererrors",
-        "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
     ],
 )
