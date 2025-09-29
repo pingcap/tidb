@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -238,9 +237,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
-	opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask4LogicalDataSource(ds, prop, planCounter, opt)
+func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (t base.Task, cntPlan int64, err error) {
+	return utilfuncp.FindBestTask4LogicalDataSource(ds, prop, planCounter)
 }
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
