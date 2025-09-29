@@ -298,10 +298,10 @@ func (ti *TableImporter) GetKVStore() tidbkv.Storage {
 	return ti.kvStore
 }
 
-func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
+func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, ti.dataStore, storage.DecompressConfig{
+			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, e.dataStore, storage.DecompressConfig{
 				ZStdDecodeConcurrency: 1,
 			})
 			if err != nil {
@@ -311,14 +311,14 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 		},
 		Remote: &chunk.FileMeta,
 	}
-	parser, err := ti.LoadDataController.GetParser(ctx, info)
+	parser, err := e.GetParser(ctx, info)
 	if err != nil {
 		return nil, err
 	}
 	if chunk.Chunk.Offset == 0 {
 		// if data file is split, only the first chunk need to do skip.
 		// see check in initOptions.
-		if err = ti.LoadDataController.HandleSkipNRows(parser); err != nil {
+		if err = e.HandleSkipNRows(parser); err != nil {
 			return nil, err
 		}
 		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
@@ -332,18 +332,22 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 }
 
 func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (*TableKVEncoder, error) {
+	return ti.LoadDataController.getKVEncoder(ti.logger, chunk, ti.encTable)
+}
+
+func (e *LoadDataController) getKVEncoder(logger *zap.Logger, chunk *checkpoints.ChunkCheckpoint, encTable table.Table) (*TableKVEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
-			SQLMode:        ti.SQLMode,
+			SQLMode:        e.SQLMode,
 			Timestamp:      chunk.Timestamp,
-			SysVars:        ti.ImportantSysVars,
+			SysVars:        e.ImportantSysVars,
 			AutoRandomSeed: chunk.Chunk.PrevRowIDMax,
 		},
 		Path:   chunk.FileMeta.Path,
-		Table:  ti.encTable,
-		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
+		Table:  encTable,
+		Logger: log.Logger{Logger: logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
-	return NewTableKVEncoder(cfg, ti)
+	return NewTableKVEncoder(cfg, e)
 }
 
 // GetKVEncoderForDupResolve get the KV encoder for duplicate resolution.
@@ -357,7 +361,7 @@ func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
 		Logger:               log.Logger{Logger: ti.logger},
 		UseIdentityAutoRowID: true,
 	}
-	return NewTableKVEncoderForDupResolve(cfg, ti)
+	return NewTableKVEncoderForDupResolve(cfg, ti.LoadDataController)
 }
 
 func (e *LoadDataController) calculateSubtaskCnt() int {

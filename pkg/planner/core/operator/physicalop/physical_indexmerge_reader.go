@@ -80,11 +80,11 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 	}
 	p.PartialPlans = make([][]base.PhysicalPlan, 0, len(p.PartialPlansRaw))
 	for _, partialPlan := range p.PartialPlansRaw {
-		tempPlans := FlattenPushDownPlan(partialPlan)
+		tempPlans := FlattenListPushDownPlan(partialPlan)
 		p.PartialPlans = append(p.PartialPlans, tempPlans)
 	}
 	if p.TablePlan != nil {
-		p.TablePlans = FlattenPushDownPlan(p.TablePlan)
+		p.TablePlans = FlattenListPushDownPlan(p.TablePlan)
 		p.SetSchema(p.TablePlan.Schema())
 		p.HandleCols = p.TablePlans[0].(*PhysicalTableScan).HandleCols
 	} else {
@@ -147,12 +147,12 @@ func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
 }
 
 // GetPlanCostVer1 implements PhysicalPlan cost v1 for IndexMergeReader.
-func (p *PhysicalIndexMergeReader) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalIndexMergeReader) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalIndexMergeReader(p, taskType, option)
 }
 
 // GetPlanCostVer2 implements PhysicalPlan cost v2 for IndexMergeReader.
-func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
+func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalIndexMergeReader(p, taskType, option, args...)
 }
 

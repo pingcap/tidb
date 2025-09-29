@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -141,7 +140,7 @@ func (p PhysicalSelection) Init(ctx base.PlanContext, stats *property.StatsInfo,
 }
 
 // GetPlanCostVer2 implements the base.PhysicalPlan interface.
-func (p *PhysicalSelection) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+func (p *PhysicalSelection) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalSelection(p, taskType, option, isChildOfINL...)
 }
 
@@ -156,7 +155,7 @@ func (p *PhysicalSelection) Attach2Task(tasks ...base.Task) base.Task {
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalSelection) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalSelection) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalSelection(p, taskType, option)
 }
 

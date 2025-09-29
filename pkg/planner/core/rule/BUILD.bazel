@@ -28,7 +28,6 @@ go_library(
         "//pkg/planner/core/rule/util",
         "//pkg/planner/planctx",
         "//pkg/planner/util",
-        "//pkg/planner/util/optimizetrace",
         "//pkg/planner/util/utilfuncp",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",
