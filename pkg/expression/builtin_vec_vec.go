@@ -29,11 +29,11 @@ func (b *builtinVecDimsSig) vectorized() bool {
 
 func (b *builtinVecDimsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalVectorFloat32(ctx, input, buf); err != nil {
 		return err
 	}
@@ -56,20 +56,20 @@ func (b *builtinVecL1DistanceSig) vectorized() bool {
 
 func (b *builtinVecL1DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	col1, err := b.bufAllocator.get()
+	col1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(col1)
+	defer globalColumnAllocator.put(col1)
 	if err := b.args[0].VecEvalVectorFloat32(ctx, input, col1); err != nil {
 		return err
 	}
 
-	col2, err := b.bufAllocator.get()
+	col2, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(col2)
+	defer globalColumnAllocator.put(col2)
 	if err := b.args[1].VecEvalVectorFloat32(ctx, input, col2); err != nil {
 		return err
 	}
@@ -101,20 +101,20 @@ func (b *builtinVecL2DistanceSig) vectorized() bool {
 
 func (b *builtinVecL2DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	col1, err := b.bufAllocator.get()
+	col1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(col1)
+	defer globalColumnAllocator.put(col1)
 	if err := b.args[0].VecEvalVectorFloat32(ctx, input, col1); err != nil {
 		return err
 	}
 
-	col2, err := b.bufAllocator.get()
+	col2, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(col2)
+	defer globalColumnAllocator.put(col2)
 	if err := b.args[1].VecEvalVectorFloat32(ctx, input, col2); err != nil {
 		return err
 	}
@@ -146,20 +146,20 @@ func (b *builtinVecNegativeInnerProductSig) vectorized() bool {
 
 func (b *builtinVecNegativeInnerProductSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	col1, err := b.bufAllocator.get()
+	col1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(col1)
+	defer globalColumnAllocator.put(col1)
 	if err := b.args[0].VecEvalVectorFloat32(ctx, input, col1); err != nil {
 		return err
 	}
 
-	col2, err := b.bufAllocator.get()
+	col2, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(col2)
+	defer globalColumnAllocator.put(col2)
 	if err := b.args[1].VecEvalVectorFloat32(ctx, input, col2); err != nil {
 		return err
 	}
@@ -191,20 +191,20 @@ func (b *builtinVecCosineDistanceSig) vectorized() bool {
 
 func (b *builtinVecCosineDistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	col1, err := b.bufAllocator.get()
+	col1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(col1)
+	defer globalColumnAllocator.put(col1)
 	if err := b.args[0].VecEvalVectorFloat32(ctx, input, col1); err != nil {
 		return err
 	}
 
-	col2, err := b.bufAllocator.get()
+	col2, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(col2)
+	defer globalColumnAllocator.put(col2)
 	if err := b.args[1].VecEvalVectorFloat32(ctx, input, col2); err != nil {
 		return err
 	}
@@ -236,11 +236,11 @@ func (b *builtinVecL2NormSig) vectorized() bool {
 
 func (b *builtinVecL2NormSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	col1, err := b.bufAllocator.get()
+	col1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(col1)
+	defer globalColumnAllocator.put(col1)
 	if err := b.args[0].VecEvalVectorFloat32(ctx, input, col1); err != nil {
 		return err
 	}
@@ -268,11 +268,11 @@ func (b *builtinVecFromTextSig) vectorized() bool {
 
 func (b *builtinVecFromTextSig) vecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -301,11 +301,11 @@ func (b *builtinVecAsTextSig) vectorized() bool {
 
 func (b *builtinVecAsTextSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalVectorFloat32(ctx, input, buf); err != nil {
 		return err
 	}

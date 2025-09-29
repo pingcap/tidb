@@ -266,11 +266,11 @@ func (b *BuiltinGroupingImplSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	}
 	rowNum := input.NumRows()
 
-	bufVal, err := b.bufAllocator.get()
+	bufVal, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(bufVal)
+	defer globalColumnAllocator.put(bufVal)
 	if err = b.args[0].VecEvalInt(ctx, input, bufVal); err != nil {
 		return err
 	}

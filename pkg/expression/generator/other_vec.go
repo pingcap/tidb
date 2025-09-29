@@ -61,19 +61,19 @@ const builtinOtherImports = `import (
 
 var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 {{ define "BufAllocator" }}
-	buf0, err := b.bufAllocator.get()
+	buf0, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf0)
+	defer globalColumnAllocator.put(buf0)
 	if err := b.args[0].VecEval{{ .Input.TypeName }}(ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
+	defer globalColumnAllocator.put(buf1)
 {{ end }}
 {{ define "SetHasNull" }}
 	for i := 0; i < n; i++ {

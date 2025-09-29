@@ -114,11 +114,11 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalConte
 	beforeWarns := warningCount(ctx)
 
 	for j := 0; j < l-1; j+=2 {
-		bufWhen, err := b.bufAllocator.get()
+		bufWhen, err := globalColumnAllocator.get()
 		if err != nil {
 			return err
 		}
-		defer b.bufAllocator.put(bufWhen)
+		defer globalColumnAllocator.put(bufWhen)
 		err = args[j].VecEvalInt(ctx, input, bufWhen)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -130,11 +130,11 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalConte
 		whens[j/2] = bufWhen
 		whensSlice[j/2] = bufWhen.Int64s()
 
-		bufThen, err := b.bufAllocator.get()
+		bufThen, err := globalColumnAllocator.get()
 		if err != nil {
 			return err
 		}
-		defer b.bufAllocator.put(bufThen)
+		defer globalColumnAllocator.put(bufThen)
 		err = args[j+1].VecEval{{ .TypeName }}(ctx, input, bufThen)
 		afterWarns = warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -152,11 +152,11 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalConte
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2==1 {
-		bufElse, err := b.bufAllocator.get()
+		bufElse, err := globalColumnAllocator.get()
 		if err != nil {
 			return err
 		}
-		defer b.bufAllocator.put(bufElse)
+		defer globalColumnAllocator.put(bufElse)
 		err = args[l-1].VecEval{{ .TypeName }}(ctx, input, bufElse)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -271,11 +271,11 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext
 	if err := b.args[0].VecEval{{ .TypeName }}(ctx, input, result); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
+	defer globalColumnAllocator.put(buf1)
 	beforeWarns := warningCount(ctx)
 	err = b.args[1].VecEval{{ .TypeName }}(ctx, input, buf1)
 	afterWarns := warningCount(ctx)
@@ -294,19 +294,19 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext
 		}
 	}
 	{{ else }}
-	buf0, err := b.bufAllocator.get()
+	buf0, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf0)
+	defer globalColumnAllocator.put(buf0)
 	if err := b.args[0].VecEval{{ .TypeName }}(ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
+	defer globalColumnAllocator.put(buf1)
 	beforeWarns := warningCount(ctx)
 	err = b.args[1].VecEval{{ .TypeName }}(ctx, input, buf1)
 	afterWarns := warningCount(ctx)
@@ -381,11 +381,11 @@ func (b *builtinIf{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx EvalContex
 
 func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get()
+	buf0, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf0)
+	defer globalColumnAllocator.put(buf0)
 	if err := b.args[0].VecEvalInt(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -393,11 +393,11 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext, in
 {{- if .Fixed }}
 	err = b.args[1].VecEval{{ .TypeName }}(ctx, input, result)
 {{- else }}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
+	defer globalColumnAllocator.put(buf1)
 	err = b.args[1].VecEval{{ .TypeName }}(ctx, input, buf1)
 {{- end }}
 	afterWarns := warningCount(ctx)
@@ -408,11 +408,11 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext, in
       	return b.fallbackEval{{ .TypeName }}(ctx, input, result)
    	}
 
-	buf2, err := b.bufAllocator.get()
+	buf2, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf2)
+	defer globalColumnAllocator.put(buf2)
 	err = b.args[2].VecEval{{ .TypeName }}(ctx, input, buf2)
 	afterWarns = warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {

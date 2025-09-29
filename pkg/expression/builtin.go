@@ -49,11 +49,10 @@ import (
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	bufAllocator columnBufferAllocator
-	args         []Expression
-	tp           *types.FieldType `plan-cache-clone:"shallow"`
-	pbCode       tipb.ScalarFuncSig
-	ctor         collate.Collator
+	args   []Expression
+	tp     *types.FieldType `plan-cache-clone:"shallow"`
+	pbCode tipb.ScalarFuncSig
+	ctor   collate.Collator
 
 	childrenVectorized     bool
 	childrenVectorizedOnce *sync.Once
@@ -133,7 +132,6 @@ func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp
 	}
 
 	bf := baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
@@ -225,11 +223,9 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 
 	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
 	bf = baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-
-		args: args,
-		tp:   fieldType,
+		args:                   args,
+		tp:                     fieldType,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
 	bf.setCollator(collate.GetCollator(ec.Collation))
@@ -286,11 +282,9 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 
 	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
 	bf = baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-
-		args: args,
-		tp:   fieldType,
+		args:                   args,
+		tp:                     fieldType,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
 	bf.setCollator(collate.GetCollator(ec.Collation))
@@ -305,11 +299,9 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 // do not check and compute collation.
 func newBaseBuiltinFuncWithFieldType(tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
 	bf := baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-
-		args: args,
-		tp:   tp,
+		args:                   args,
+		tp:                     tp,
 	}
 	bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
 	bf.setCollator(collate.GetCollator(tp.GetCollate()))
@@ -437,7 +429,6 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	}
 	b.tp = from.tp
 	b.pbCode = from.pbCode
-	b.bufAllocator = newLocalColumnPool()
 	b.childrenVectorizedOnce = new(sync.Once)
 	if from.ctor != nil {
 		b.ctor = from.ctor.Clone()
@@ -481,11 +472,9 @@ func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Exp
 	var err error
 	if isExplicitCharset {
 		bf = baseBuiltinFunc{
-			bufAllocator:           newLocalColumnPool(),
 			childrenVectorizedOnce: new(sync.Once),
-
-			args: args,
-			tp:   tp,
+			args:                   args,
+			tp:                     tp,
 		}
 		bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
 		bf.setCollator(collate.GetCollator(tp.GetCollate()))
@@ -1084,9 +1073,6 @@ func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyBaseBuiltinFunc + int64(len(b.charset)+len(b.collation))
-	if b.bufAllocator != nil {
-		sum += b.bufAllocator.MemoryUsage()
-	}
 	if b.tp != nil {
 		sum += b.tp.MemoryUsage()
 	}

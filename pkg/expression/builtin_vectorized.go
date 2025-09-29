@@ -16,7 +16,6 @@ package expression
 
 import (
 	"sync"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -30,8 +29,6 @@ type columnBufferAllocator interface {
 	get() (*chunk.Column, error)
 	// put releases a column buffer.
 	put(buf *chunk.Column)
-	// MemoryUsage return the memory usage of columnBufferAllocator
-	MemoryUsage() int64
 }
 
 // localColumnPool implements columnBufferAllocator interface.
@@ -74,12 +71,6 @@ func (r *localColumnPool) get() (*chunk.Column, error) {
 
 func (r *localColumnPool) put(col *chunk.Column) {
 	r.Pool.Put(col)
-}
-
-const emptyLocalColumnPoolSize = int64(unsafe.Sizeof(localColumnPool{}))
-
-func (r *localColumnPool) MemoryUsage() (sum int64) {
-	return emptyLocalColumnPoolSize
 }
 
 // vecEvalIntByRows uses the non-vectorized(row-based) interface `evalInt` to eval the expression.
