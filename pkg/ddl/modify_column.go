@@ -472,8 +472,16 @@ func (w *worker) doModifyColumnTypeWithData(
 				return ver, errors.Trace(err)
 			}
 		}
+
 		// none -> delete only
 		updateObjectState(changingCol, changingIdxs, model.StateDeleteOnly)
+
+		if len(changingIdxs) > 0 {
+			if err := setIndexBackfillStateIfNeed(w.workCtx, changingIdxs, jobCtx, job, dbInfo, tblInfo, w); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var sctx sessionctx.Context
@@ -526,6 +534,10 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		// delete only -> write only
 		updateObjectState(changingCol, changingIdxs, model.StateWriteOnly)
+		// new col's origin default value be the same as the new default value.
+		if err = changingCol.SetOriginDefaultValue(changingCol.GetDefaultValue()); err != nil {
+			return ver, errors.Trace(err)
+		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -549,14 +561,45 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 
 		var done bool
-		if job.MultiSchemaInfo != nil {
-			done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
-		} else {
-			done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
+		skip := skipReorgColumn(w.sess, job)
+		if !skip {
+			if job.MultiSchemaInfo != nil {
+				done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
+			} else {
+				done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
+			}
+			if !done {
+				return ver, err
+			}
 		}
-		if !done {
-			return ver, err
+
+		if job.Version == model.JobVersion2 && len(changingIdxs) > 0 && job.MultiSchemaInfo == nil {
+			if !skip {
+				job.SnapshotVer = 0
+			}
+
+			sctx, err1 := w.sessPool.Get()
+			if err1 != nil {
+				return ver, errors.Trace(err1)
+			}
+			rh := newReorgHandler(sess.NewSession(sctx))
+			restoreReorgMeta, err := resetReorgMeta(w.workCtx, job, tbl, rh)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+
+			// FIXME: support multi-schema-change
+			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, changingIdxs)
+			if restoreReorgMeta != nil {
+				restoreReorgMeta()
+			}
+			w.sessPool.Put(sctx)
+
+			if !done {
+				return ver, err
+			}
 		}
+
 		failpoint.InjectCall("afterReorgWorkForModifyColumn")
 
 		oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
@@ -617,6 +660,66 @@ func (w *worker) doModifyColumnTypeWithData(
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
 	return ver, errors.Trace(err)
+}
+
+func resetReorgMeta(ctx context.Context, job *model.Job, t table.Table, rh *reorgHandler) (_ func(), err error) {
+	originReorgMeta := job.ReorgMeta
+	restoreReorgMeta := func() {
+		job.ReorgMeta = originReorgMeta
+	}
+	err = initJobReorgMetaFromVariables(ctx, job, t, rh.s.Context)
+	if err != nil {
+		restoreReorgMeta()
+		return nil, err
+	}
+	return restoreReorgMeta, nil
+}
+
+func setIndexBackfillStateIfNeed(ctx context.Context, changingIdxs []*model.IndexInfo, jobCtx *jobContext,
+	job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo, w *worker) error {
+	tbl, err := getTable(jobCtx.getAutoIDRequirement(), dbInfo.ID, tblInfo)
+	if err != nil {
+		return err
+	}
+	sctx, err := w.sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		w.sessPool.Put(sctx)
+	}()
+
+	rh := newReorgHandler(sess.NewSession(sctx))
+	restoreReorgMeta, err := resetReorgMeta(ctx, job, tbl, rh)
+	defer func() {
+		if restoreReorgMeta != nil {
+			restoreReorgMeta()
+		}
+	}()
+	if err != nil {
+		return err
+	}
+	reorgTp, err := pickBackfillType(job.ReorgMeta)
+	if err != nil {
+		return err
+	}
+	if reorgTp.NeedMergeProcess() && changingIdxs[0].BackfillState == model.BackfillStateInapplicable {
+		for _, indexInfo := range changingIdxs {
+			indexInfo.BackfillState = model.BackfillStateRunning
+		}
+	}
+	return nil
+}
+
+func skipReorgColumn(se *sess.Session, job *model.Job) bool {
+	if job.Version == model.JobVersion1 || job.MultiSchemaInfo != nil {
+		return false
+	}
+	ele, _, _, _, err := getDDLReorgHandle(se, job)
+	if err == nil && bytes.Equal(ele.TypeKey, meta.IndexElementKey) {
+		return true
+	}
+	return false
 }
 
 func doReorgWorkForModifyColumnMultiSchema(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
@@ -680,7 +783,7 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, t
 		if kv.IsTxnRetryableError(err) || dbterror.ErrNotOwner.Equal(err) {
 			return false, ver, errors.Trace(err)
 		}
-		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+		if err1 := rh.RemoveDDLReorgHandle(job.ID, reorgInfo.elements); err1 != nil {
 			logutil.DDLLogger().Warn("run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err1))
 		}
@@ -844,10 +947,6 @@ func GetModifiableColumnJob(
 		}
 		if hasColumnarIndexColumn(t.Meta(), col.ColumnInfo) {
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("columnar indexes on the column")
-		}
-		// new col's origin default value be the same as the new default value.
-		if err = newCol.ColumnInfo.SetOriginDefaultValue(newCol.ColumnInfo.GetDefaultValue()); err != nil {
-			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("new column set origin default value failed")
 		}
 	}
 
