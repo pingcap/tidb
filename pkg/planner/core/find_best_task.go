@@ -1461,7 +1461,7 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 				}
 			}
 			return true
-		case ast.EQ, ast.In:
+		case ast.EQ, ast.In, ast.NullEQ:
 			// Check if it's an equal predicate (eq) or IN predicate (in)
 			// Also reject any other comparison operators that are not equal/IN
 			return true
