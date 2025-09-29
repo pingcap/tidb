@@ -1043,6 +1043,8 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
+	// unistore does not support later materialization
+	tk.MustExec("set tidb_opt_enable_late_materialization=0")
 
 	lr := func() (int, int) {
 		l, r := rand.Intn(400), rand.Intn(400)
