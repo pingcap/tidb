@@ -20,7 +20,7 @@ go_library(
         "//pkg/statistics/handle/cache/internal",
         "//pkg/statistics/handle/cache/internal/lfu",
         "//pkg/statistics/handle/cache/internal/mapcache",
-        "//pkg/statistics/handle/cache/internal/metrics",
+        "//pkg/statistics/handle/cache/metrics",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/metrics",
         "//pkg/statistics/handle/types",
@@ -45,6 +45,7 @@ go_test(
     ],
     embed = [":cache"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/config",
         "//pkg/statistics",

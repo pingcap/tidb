@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 )
 
@@ -137,6 +138,12 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				val, err := constVal.Eval(evalCtx, chunk.Row{})
+				intest.AssertFunc(func() bool {
+					if sctx.ExprCtx.ConnectionID() == 0 {
+						return sctx.RegardNULLAsPoint
+					}
+					return true
+				})
 				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
@@ -752,7 +759,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		}
 		points[offset] = rb.intersection(points[offset], rb.build(cond, newTp, types.UnspecifiedLength, false), collator)
 		if len(points[offset]) == 0 { // Early termination if false expression found
-			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions) {
+			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
 				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}
@@ -780,7 +787,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			// There exists an interval whose length is larger than 0
 			accesses[i] = nil
 		} else if len(points[i]) == 0 { // Early termination if false expression found
-			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions) {
+			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
 				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}
@@ -795,7 +802,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 				// Maybe we can improve it later.
 				columnValues[i] = &valueInfo{mutable: true}
 			}
-			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions) {
+			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
 				// `a=@x and a=@y` --> `a=@x if @x==@y`
 				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}

@@ -647,13 +647,13 @@ func TestDropStats(t *testing.T) {
 	h := dom.StatsHandle()
 	h.Clear()
 	testKit.MustExec("analyze table t")
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.Equal(t, statsTbl.StatsVer, statistics.Version2)
 
 	testKit.MustExec("drop stats t")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.Equal(t, statsTbl.StatsVer, statistics.Version0)
 	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -668,13 +668,13 @@ func TestDropStats(t *testing.T) {
 	})
 
 	testKit.MustExec("analyze table t")
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.Equal(t, statsTbl.StatsVer, statistics.Version0)
 	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -709,16 +709,16 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	h := dom.StatsHandle()
 	h.Clear()
 	testKit.MustExec("analyze table t1, t2")
-	statsTbl1 := h.GetTableStats(tableInfo1)
+	statsTbl1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version2)
-	statsTbl2 := h.GetTableStats(tableInfo2)
+	statsTbl2 := h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version2)
 
 	testKit.MustExec("drop stats t1, t2")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl1 = h.GetTableStats(tableInfo1)
+	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version0)
 	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -726,7 +726,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
 		return false
 	})
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version0)
 	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -736,17 +736,17 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	})
 
 	testKit.MustExec("analyze table t1, t2")
-	statsTbl1 = h.GetTableStats(tableInfo1)
+	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version2)
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version2)
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t1, t2")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl1 = h.GetTableStats(tableInfo1)
+	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version0)
 	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -754,7 +754,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
 		return false
 	})
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version0)
 	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -817,4 +817,45 @@ func TestKillStmt(t *testing.T) {
 
 	tk.MustExecToErr("kill rand()", "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 	// remote kill is tested in `tests/globalkilltest`
+}
+
+func TestSelectWhereInvalidDSTTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, ts timestamp)")
+	tk.MustExec(`set time_zone = "UTC"`)
+	tk.MustExec("insert into t values (1, '1970-01-01 00:00:01')")
+	tk.MustExec("insert into t values (2, '2025-03-30 00:59:59')")
+	tk.MustExec("insert into t values (3, '2025-03-30 01:00:00')")
+	tk.MustExec(`set time_zone = "Europe/Amsterdam"`)
+	tk.MustExec(`set sql_mode = ''`)
+	// This will be adjusted to '2025-03-30 03:00:00+02:00'
+	tk.MustExec("insert into t values (4, '2025-03-30 02:30:00')")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2025-03-30 02:30:00' for column 'ts' at row 1"))
+	tk.MustExec(`set sql_mode = DEFAULT`)
+	tk.MustQuery(`select *, unix_timestamp(ts) from t`).Sort().Check(testkit.Rows(""+
+		"1 1970-01-01 01:00:01 1",
+		"2 2025-03-30 01:59:59 1743296399",
+		"3 2025-03-30 03:00:00 1743296400",
+		"4 2025-03-30 03:00:00 1743296400"))
+
+	// Compares as DATETIME; every row is read and converted to DATETIME by current TIME_ZONE,
+	// and compared with the range which is in DATETIME
+	tk.MustQuery(`select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).Check(testkit.Rows("3 2025-03-30 03:00:00 1743296400", "4 2025-03-30 03:00:00 1743296400"))
+	tk.MustQuery(`show warnings`).Sort().Check(testkit.Rows("Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'"))
+	explain := tk.MustQuery(`explain select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`)
+	explain.MultiCheckContain([]string{"TableFullScan", "ge(test.t.ts, 2025-03-30 02:30:00.000000)", "le(test.t.ts, 2025-03-30 03:00:00.000000)"})
+
+	// Compares as TIMESTAMP; the range is converted to TIMESTAMP by current TIME_ZONE,
+	// and then compared with the row which is TIMESTAMP.
+	tk.MustExec("alter table t add index idx_ts(ts)")
+	tk.MustQuery(`select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).Check(testkit.Rows("3 2025-03-30 03:00:00 1743296400", "4 2025-03-30 03:00:00 1743296400"))
+	explain = tk.MustQuery(`explain select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`)
+	explain.MultiCheckContain([]string{"IndexLookUp", "range:[2025-03-30 03:00:00,2025-03-30 03:00:00]"})
+	explain.CheckNotContain("02:30:00")
+	// Why 3 warnings?!?
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'",
+		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'",
+		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'"))
 }

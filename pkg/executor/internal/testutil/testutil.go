@@ -226,7 +226,7 @@ func (mp *MockDataPhysicalPlan) Schema() *expression.Schema {
 }
 
 // ExplainID returns explain id
-func (*MockDataPhysicalPlan) ExplainID() fmt.Stringer {
+func (*MockDataPhysicalPlan) ExplainID(_ ...bool) fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "mockData_0"
 	})
@@ -235,6 +235,11 @@ func (*MockDataPhysicalPlan) ExplainID() fmt.Stringer {
 // ID returns 0
 func (*MockDataPhysicalPlan) ID() int {
 	return 0
+}
+
+// SetID implements Plan interface
+func (*MockDataPhysicalPlan) SetID(_ int) {
+	panic("not implement")
 }
 
 // Stats returns nil

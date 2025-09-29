@@ -412,9 +412,13 @@ func (w *worker) runReorgJob(
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
 			if err != nil {
-				logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+				logutil.DDLLogger().Warn("run reorg job done",
+					zap.Int64("jobID", reorgInfo.ID),
+					zap.Int64("handled rows", rowCount), zap.Error(err))
 			} else {
-				logutil.DDLLogger().Info("run reorg job done", zap.Int64("handled rows", rowCount))
+				logutil.DDLLogger().Info("run reorg job done",
+					zap.Int64("jobID", reorgInfo.ID),
+					zap.Int64("handled rows", rowCount))
 			}
 
 			// Update a job's warnings.
@@ -632,6 +636,21 @@ func (r *reorgInfo) String() string {
 		"First:" + strconv.FormatBool(r.first) + "," +
 		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10) + "," +
 		"Ingest mode:" + strconv.FormatBool(isEnabled)
+}
+
+// UpdateConfigFromSysTbl updates the reorg config from system table.
+func (r *reorgInfo) UpdateConfigFromSysTbl(ctx context.Context) {
+	latestJob, err := r.jobCtx.sysTblMgr.GetJobByID(ctx, r.ID)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to get latest job from system table",
+			zap.Int64("jobID", r.ID), zap.Error(err))
+		return
+	}
+	if latestJob.State == model.JobStateRunning && latestJob.IsAlterable() {
+		r.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrency())
+		r.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSize())
+		r.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeed())
+	}
 }
 
 func constructOneRowTableScanPB(

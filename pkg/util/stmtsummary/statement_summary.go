@@ -115,6 +115,8 @@ type stmtSummaryByDigest struct {
 	normalizedSQL string
 	tableNames    string
 	isInternal    bool
+	bindingSQL    string
+	bindingDigest string
 }
 
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.
@@ -238,6 +240,8 @@ type stmtSummaryStats struct {
 	planCacheUnqualifiedCount int64
 	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
 
+	storageKV  bool // query read from TiKV
+	storageMPP bool // query read from TiFlash
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -287,6 +291,7 @@ type StmtExecLazyInfo interface {
 	GetEncodedPlan() (string, string, any)
 	GetBinaryPlan() string
 	GetPlanDigest() string
+	GetBindingSQLAndDigest() (string, string)
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -558,6 +563,7 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	ssbd.tableNames = tableNames
 	ssbd.history = list.New()
 	ssbd.initialized = true
+	ssbd.bindingSQL, ssbd.bindingDigest = sei.LazyInfo.GetBindingSQLAndDigest()
 }
 
 func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
@@ -908,6 +914,9 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 
 	// request-units
 	ssStats.StmtRUSummary.Add(sei.RUDetail)
+
+	ssStats.storageKV = sei.StmtCtx.IsTiKV.Load()
+	ssStats.storageMPP = sei.StmtCtx.IsTiFlash.Load()
 }
 
 func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64, warningCount int, affectedRows uint64) {

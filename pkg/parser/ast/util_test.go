@@ -73,6 +73,16 @@ func TestCacheable(t *testing.T) {
 
 	stmt = &ShowStmt{}
 	require.True(t, IsReadOnly(stmt, true))
+
+	stmt = &TraceStmt{
+		Stmt: &SelectStmt{},
+	}
+	require.True(t, IsReadOnly(stmt, true))
+
+	stmt = &TraceStmt{
+		Stmt: &DeleteStmt{},
+	}
+	require.False(t, IsReadOnly(stmt, true))
 }
 
 func TestUnionReadOnly(t *testing.T) {

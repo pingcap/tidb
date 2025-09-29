@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -41,11 +42,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
@@ -139,8 +142,8 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Fix issue 9836
-	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm := &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
@@ -194,8 +197,8 @@ func TestSomeTables(t *testing.T) {
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
-	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm := &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                1,
 		User:              "user-1",
 		Host:              "localhost",
@@ -209,7 +212,7 @@ func TestSomeTables(t *testing.T) {
 		ResourceGroupName: "rg1",
 		SessionAlias:      "alias1",
 	})
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                2,
 		User:              "user-2",
 		Host:              "localhost",
@@ -222,7 +225,7 @@ func TestSomeTables(t *testing.T) {
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg2",
 	})
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                3,
 		User:              "user-3",
 		Host:              "127.0.0.1",
@@ -259,8 +262,8 @@ func TestSomeTables(t *testing.T) {
 			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
 		))
 
-	sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm = &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                1,
 		User:              "user-1",
 		Host:              "localhost",
@@ -270,7 +273,7 @@ func TestSomeTables(t *testing.T) {
 		State:             1,
 		ResourceGroupName: "rg1",
 	})
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                2,
 		User:              "user-2",
 		Host:              "localhost",
@@ -463,6 +466,8 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0",
 			"0",
+			"0",
+			"0",
 			"abcd",
 			"60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4",
 			"",
@@ -553,6 +558,8 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0.01",
 			"0.021",
+			"1",
+			"1",
 			"",
 			"",
 			"",
@@ -647,7 +654,8 @@ func TestSystemSchemaID(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 
 	uniqueIDMap := make(map[int64]string)
-	checkSystemSchemaTableID(t, dom, "information_schema", autoid.InformationSchemaDBID, 1, 10000, uniqueIDMap)
+	// [5000, 10000) of information_schema is reserved for downstream forks
+	checkSystemSchemaTableID(t, dom, "information_schema", autoid.InformationSchemaDBID, 1, 5000, uniqueIDMap)
 	checkSystemSchemaTableID(t, dom, "performance_schema", autoid.PerformanceSchemaDBID, 10000, 20000, uniqueIDMap)
 	checkSystemSchemaTableID(t, dom, "metrics_schema", autoid.MetricSchemaDBID, 20000, 30000, uniqueIDMap)
 }
@@ -817,7 +825,12 @@ func TestStmtSummaryTable(t *testing.T) {
 	rows := tk.MustQuery("select tidb_decode_plan('" + p1 + "');").Rows()
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, 1, len(rows[0]))
-	require.Regexp(t, "\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME", rows[0][0])
+	if kerneltype.IsNextGen() {
+		// next-gen system tables use clustered index.
+		require.Regexp(t, "\n.*Point_Get.*table.tidb, clustered index.PRIMARY.VARIABLE_NAME", rows[0][0])
+	} else {
+		require.Regexp(t, "\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME", rows[0][0])
+	}
 
 	sql = "select table_names from information_schema.statements_summary " +
 		"where digest_text like 'select `variable_value`%' and `schema_name`='test'"
@@ -846,9 +859,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_7            \troot     \t100    \t\n" +
-		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_8            \troot     \t100    \t\n" +
+		"\t├─IndexRangeScan_6(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_7(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -868,9 +881,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows(
 		"Select test test.t t:k 2 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-			"\tIndexLookUp_7            \troot     \t100    \t\n" +
-			"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-			"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+			"\tIndexLookUp_8            \troot     \t100    \t\n" +
+			"\t├─IndexRangeScan_6(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+			"\t└─TableRowIDScan_7(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -916,9 +929,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_7            \troot     \t1000   \t\n" +
-		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_8            \troot     \t1000   \t\n" +
+		"\t├─IndexRangeScan_6(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_7(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -1127,6 +1140,81 @@ func TestStmtSummaryEvictedPointGet(t *testing.T) {
 	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").
 		Check(testkit.Rows("0"))
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1;")
+}
+
+func TestStorageEnginesInStmtSummary(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec("use test")
+
+	// Query that doesn't read from any storage engines
+	tk.MustExec("select 1")
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary where query_sample_text = 'select 1'").
+		Check(testkit.Rows("0 0"))
+
+	// Query that only reads from TiKV
+	tk.MustExec("create table t_tikv (a int)")
+	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ a from t_tikv")
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary where query_sample_text like 'select%t_tikv'").
+		Check(testkit.Rows("1 0"))
+
+	// Query that only reads from TiFlash
+	tk.MustExec("create table t_tiflash (a int)")
+	tk.MustExec("alter table t_tiflash set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t_tiflash")
+	require.NoError(t, dom.DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true))
+	tk.MustExec("select /*+ read_from_storage(tiflash[t_tiflash]) */ a from t_tiflash")
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%t_tiflash'").
+		Check(testkit.Rows("0 1"))
+
+	// Query that reads from both TiKV and TiFlash
+	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ t_tikv.a, /*+ read_from_storage(tiflash[t_tiflash]) */ t_tiflash.a from t_tikv, t_tiflash")
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%t_tikv, t_tiflash'").
+		Check(testkit.Rows("1 1"))
+
+	// Point get queries should register as reading from TiKV
+	tk.MustExec("create table t_pointget (a int primary key)")
+	query := "select a from t_pointget where a = 1"
+	tk.MustHavePlan(query, "Point_Get")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%t_pointget%'").
+		Check(testkit.Rows("1 0"))
+
+	// Index readers should register as reading from TiKV
+	tk.MustExec("create table t_index_reader (a int, key (a))")
+	query = "select a from t_index_reader where a = 1"
+	tk.MustHavePlan(query, "IndexReader")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%t_index_reader%'").
+		Check(testkit.Rows("1 0"))
+
+	// Index lookups should register as reading from TiKV
+	tk.MustExec("create table t_index_lookup (a int, b int, index (a))")
+	tk.MustIndexLookup("select a, b from t_index_lookup where a = 1")
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%t_index_lookup%'").
+		Check(testkit.Rows("1 0"))
+
+	// Index merge readers should register as reading from TiKV
+	tk.MustExec("create table t_index_merge(a int, b int, primary key (a), unique key (b))")
+	query = "select /*+ use_index_merge(t_index_merge, a, b) */ * from t_index_merge where a = 1 or b = 1"
+	tk.MustHavePlan(query, "IndexMerge")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%t_index_merge%'").
+		Check(testkit.Rows("1 0"))
+
+	// TABLESAMPLE queries should register as reading from TiKV
+	query = "select * from t_tikv tablesample regions();"
+	tk.MustHavePlan(query, "TableSample")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%tablesample%'").
+		Check(testkit.Rows("1 0"))
 }
 
 func TestServerInfoResolveLoopBackAddr(t *testing.T) {

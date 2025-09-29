@@ -460,9 +460,7 @@ func buildIntoAccessPath(
 	}
 
 	// Keep this filter as a part of table filters for safety if it has any parameter.
-	needKeepORSourceFilter := expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(),
-		[]expression.Expression{allConds[orListIdxInAllConds]},
-	)
+	needKeepORSourceFilter := expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), allConds[orListIdxInAllConds])
 
 	// 3. Build the final access path.
 	possiblePath := &util.AccessPath{

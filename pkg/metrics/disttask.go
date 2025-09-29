@@ -15,6 +15,7 @@
 package metrics
 
 import (
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -25,7 +26,7 @@ var (
 
 // InitDistTaskMetrics initializes disttask metrics.
 func InitDistTaskMetrics() {
-	DistTaskUsedSlotsGauge = NewGaugeVec(
+	DistTaskUsedSlotsGauge = metricscommon.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "disttask",

@@ -128,7 +128,7 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJob(
 		return errors.Trace(err)
 	}
 	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	job := pq.tryCreateJob(is, stats, pruneMode, jobFactory, lockedTables)
 	return pq.pushWithoutLock(job)
 }
@@ -147,7 +147,10 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 	// For static partitioned tables, we need to recreate the job for each partition.
 	if partitionInfo != nil && pruneMode == variable.Static {
 		for _, def := range partitionInfo.Definitions {
-			partitionStats := pq.statsHandle.GetPartitionStatsForAutoAnalyze(tableInfo, def.ID)
+			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
+			if !found {
+				return nil
+			}
 			err := pq.recreateAndPushJob(sctx, lockedTables, pruneMode, partitionStats)
 			if err != nil {
 				return err
@@ -155,7 +158,10 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 		}
 		return nil
 	}
-	stats := pq.statsHandle.GetTableStatsForAutoAnalyze(tableInfo)
+	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	if !found {
+		return nil
+	}
 	return pq.recreateAndPushJob(sctx, lockedTables, pruneMode, stats)
 }
 
@@ -183,7 +189,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 		return errors.Trace(err)
 	}
 	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	partitionInfo := tableInfo.GetPartitionInfo()
 	lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
@@ -194,15 +200,23 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 		// For static partitioned tables, we need to recreate the job for each partition.
 		for _, def := range partitionInfo.Definitions {
 			partitionID := def.ID
-			partitionStats := pq.statsHandle.GetPartitionStatsForAutoAnalyze(tableInfo, partitionID)
+			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(partitionID)
+			if !found {
+				return nil
+			}
 			job := pq.tryCreateJob(is, partitionStats, pruneMode, jobFactory, lockedTables)
-			return pq.pushWithoutLock(job)
+			if err := pq.pushWithoutLock(job); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
 
 	// For normal tables and dynamic partitioned tables, we only need to recreate the job for the table.
-	stats := pq.statsHandle.GetTableStatsForAutoAnalyze(tableInfo)
+	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	if !found {
+		return nil
+	}
 	// Directly create a new job for the newly added index.
 	job := pq.tryCreateJob(is, stats, pruneMode, jobFactory, lockedTables)
 	return pq.pushWithoutLock(job)
@@ -336,7 +350,7 @@ func (pq *AnalysisPriorityQueue) handleExchangeTablePartitionEvent(
 	}
 
 	// For non-partitioned tables.
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	// Get the new table info after the exchange.
 	// Note: We should use the ID of the partitioned table to get the new table info after the exchange.
 	tblInfo, ok := pq.statsHandle.TableInfoByID(is, partInfo.Definitions[0].ID)

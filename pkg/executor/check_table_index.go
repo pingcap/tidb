@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
@@ -57,7 +56,6 @@ type CheckTableExec struct {
 	indexInfos []*model.IndexInfo
 	srcs       []*IndexLookUpExecutor
 	done       bool
-	is         infoschema.InfoSchema
 	exitCh     chan struct{}
 	retCh      chan error
 	checkIndex bool
@@ -252,7 +250,6 @@ type FastCheckTableExec struct {
 	table      table.Table
 	indexInfos []*model.IndexInfo
 	done       bool
-	is         infoschema.InfoSchema
 	err        *atomic.Pointer[error]
 	wg         sync.WaitGroup
 	contextCtx context.Context
@@ -284,7 +281,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
-	workerPool := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
+	workerPool := workerpool.NewWorkerPool("checkIndex",
 		poolutil.CheckTable, 3, e.createWorker)
 	workerPool.Start(ctx)
 
@@ -322,9 +319,23 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 
 	sessVars.OptimizerUseInvisibleIndexes = true
 	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
+	snapshot := w.e.Ctx().GetSessionVars().SnapshotTS
+	if snapshot != 0 {
+		_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, fmt.Sprintf("set session tidb_snapshot = %d", snapshot))
+		if err != nil {
+			logutil.BgLogger().Error("fail to set tidb_snapshot", zap.Error(err), zap.Uint64("snapshot ts", snapshot))
+		}
+	}
+
 	return func() {
 		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
 		sessVars.MemQuotaQuery = originMemQuotaQuery
+		if snapshot != 0 {
+			_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, "set session tidb_snapshot = 0")
+			if err != nil {
+				logutil.BgLogger().Error("fail to set tidb_snapshot to 0", zap.Error(err))
+			}
+		}
 	}
 }
 
@@ -396,12 +407,6 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	lookupCheckThreshold := int64(100)
 	checkOnce := false
 
-	if w.e.Ctx().GetSessionVars().SnapshotTS != 0 {
-		se.GetSessionVars().SnapshotTS = w.e.Ctx().GetSessionVars().SnapshotTS
-		defer func() {
-			se.GetSessionVars().SnapshotTS = 0
-		}()
-	}
 	_, err = se.GetSQLExecutor().ExecuteInternal(ctx, "begin")
 	if err != nil {
 		trySaveErr(err)
@@ -541,11 +546,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 
 		errCtx := w.sctx.GetSessionVars().StmtCtx.ErrCtx()
 		getHandleFromRow := func(row chunk.Row) (kv.Handle, error) {
-			handleDatum := make([]types.Datum, 0)
-			for i, t := range pkTypes {
-				handleDatum = append(handleDatum, row.GetDatum(i, t))
-			}
-			if w.table.Meta().IsCommonHandle {
+			if tblMeta.IsCommonHandle {
+				handleDatum := make([]types.Datum, 0)
+				for i, t := range pkTypes {
+					handleDatum = append(handleDatum, row.GetDatum(i, t))
+				}
 				handleBytes, err := codec.EncodeKey(w.sctx.GetSessionVars().StmtCtx.TimeZone(), nil, handleDatum...)
 				err = errCtx.HandleError(err)
 				if err != nil {

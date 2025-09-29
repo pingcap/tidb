@@ -173,10 +173,16 @@ func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 }
 
 // DeleteFiles delete the files in storage.
+// If the file does not exist, we will ignore it.
 func (s *GCSStorage) DeleteFiles(ctx context.Context, names []string) error {
 	for _, name := range names {
 		err := s.DeleteFile(ctx, name)
 		if err != nil {
+			// some real-TiKV test also delete objects, so we ignore the error if
+			// the object does not exist
+			if goerrors.Is(err, storage.ErrObjectNotExist) {
+				continue
+			}
 			return err
 		}
 	}
@@ -337,7 +343,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		wc := s.GetBucketHandle().Object(object).NewWriter(ctx)
 		wc.StorageClass = s.gcs.StorageClass
 		wc.PredefinedACL = s.gcs.PredefinedAcl
-		return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
+		return newFlushStorageWriter(wc, &callbackFlusher{wo.OnUpload}, wc), nil
 	}
 	uri := s.objectName(name)
 	// 5MB is the minimum part size for GCS.
@@ -347,7 +353,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		return nil, errors.Trace(err)
 	}
 	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
-	bw := newBufferedWriter(fw, int(partSize), NoCompression)
+	bw := newBufferedWriter(fw, int(partSize), NoCompression, wo.OnUpload)
 	return bw, nil
 }
 

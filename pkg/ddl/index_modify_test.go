@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -36,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -1092,9 +1093,19 @@ func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a bigint primary key clustered, b int);")
+
 	// The subtask execution order is not guaranteed in distributed reorg. We need to disable it first.
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+
+	if kerneltype.IsClassic() {
+		tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	}
+	if kerneltype.IsNextGen() {
+		// For next-gen, we set tidb_ddl_reorg_worker_cnt automatically by calculating the table size,
+		// which needs PD client. So for this UT, we mock the table size to set worker cnt to 1.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockTableSize", `return(1024)`)
+	}
+
 	for i := 1; i <= 12; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
@@ -1106,7 +1117,7 @@ func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
 	ddl.ResultCounterForTest = nil
 }
 
-func getJobsBySQL(se sessiontypes.Session, tbl, condition string) ([]*model.Job, error) {
+func getJobsBySQL(se sessionapi.Session, tbl, condition string) ([]*model.Job, error) {
 	rs, err := se.Execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s %s", tbl, condition))
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1713,7 +1724,7 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 	tk2.MustExec("use test")
 
 	// Test issue 57414.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBackfillMerge", func() {
 		tk2.MustExec("insert ignore into t values (1, 2), (1, 2) on duplicate key update col1 = 0, col2 = 0")
 	})
 

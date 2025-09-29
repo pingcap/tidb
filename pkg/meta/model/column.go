@@ -74,11 +74,6 @@ type ColumnInfo struct {
 	Version uint64 `json:"version"`
 }
 
-// IsVirtualGenerated checks the column if it is virtual.
-func (c *ColumnInfo) IsVirtualGenerated() bool {
-	return c.IsGenerated() && !c.GeneratedStored
-}
-
 // Clone clones ColumnInfo.
 func (c *ColumnInfo) Clone() *ColumnInfo {
 	if c == nil {
@@ -178,9 +173,14 @@ func (c *ColumnInfo) SetElems(elems []string) {
 	c.FieldType.SetElems(elems)
 }
 
-// IsGenerated returns true if the column is generated column.
+// IsGenerated checks if the column is a generated column.
 func (c *ColumnInfo) IsGenerated() bool {
 	return len(c.GeneratedExprString) != 0
+}
+
+// IsVirtualGenerated checks if the column is a virtual generated column.
+func (c *ColumnInfo) IsVirtualGenerated() bool {
+	return c.IsGenerated() && !c.GeneratedStored
 }
 
 // SetOriginDefaultValue sets the origin default value.

@@ -177,7 +177,7 @@ func TestPlacementPolicy(t *testing.T) {
 
 	// Test again with failpoint.
 	// For https://github.com/pingcap/tidb/issues/54796
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("exchangepartition")`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/MockTryLoadDiffError", `return("exchangepartition")`)
 	testPlacementPolicy(t)
 }
 

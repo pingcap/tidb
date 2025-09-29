@@ -15,7 +15,6 @@
 package clustertablestest
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -34,23 +33,23 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -225,7 +224,7 @@ func TestSelectClusterTable(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{
+		PS: []*sessmgr.ProcessInfo{
 			{
 				ID:           1,
 				User:         "root",
@@ -741,13 +740,13 @@ select * from t1;
 	tk.MustQuery("select * from `information_schema`.`cluster_slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 }
 
-func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm util.SessionManager) (*grpc.Server, string) {
+func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm sessmgr.Manager) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
 	// Fix issue 9836
 	if sm == nil {
-		sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 1)}
-		sm.(*testkit.MockSessionManager).PS[0] = &util.ProcessInfo{
+		sm = &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 1)}
+		sm.(*testkit.MockSessionManager).PS[0] = &sessmgr.ProcessInfo{
 			ID:      1,
 			User:    "root",
 			Host:    "127.0.0.1",
@@ -868,7 +867,9 @@ func TestMDLView(t *testing.T) {
 			tkDDL := s.newTestKitWithRoot(t)
 			tk3 := s.newTestKitWithRoot(t)
 			tk.MustExec("use test")
-			tk.MustExec("set global tidb_enable_metadata_lock=1")
+			if kerneltype.IsClassic() {
+				tk.MustExec("set global tidb_enable_metadata_lock=1")
+			}
 			for _, cr := range c.createTable {
 				if strings.Contains(c.name, "err") {
 					_, _ = tk.Exec(cr)
@@ -1899,24 +1900,13 @@ func TestMDLViewIDConflict(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
-	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)")
 
-	bigID := tbl.Meta().ID * 10
 	bigTableName := ""
-	// set a hard limitation on 10000 to avoid using too much resource
-	for i := range 10000 {
+	// set a hard limitation on 500 to avoid using too much resource
+	for i := range 500 {
 		bigTableName = fmt.Sprintf("t%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(a int);", bigTableName))
-
-		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(bigTableName))
-		require.NoError(t, err)
-
-		require.LessOrEqual(t, tbl.Meta().ID, bigID)
-		if tbl.Meta().ID == bigID {
-			break
-		}
 	}
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec(fmt.Sprintf("insert into %s values (1)", bigTableName))

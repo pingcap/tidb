@@ -4,12 +4,14 @@ go_library(
     name = "ingestcli",
     srcs = [
         "client.go",
+        "ingest_err.go",
         "interface.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/ingestor/ingestcli",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/restore/split",
+        "//pkg/ingestor/errdef",
         "//pkg/util",
         "//pkg/util/logutil",
         "//pkg/util/redact",
@@ -17,6 +19,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/errorpb",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
@@ -25,12 +28,17 @@ go_library(
 go_test(
     name = "ingestcli_test",
     timeout = "short",
-    srcs = ["client_test.go"],
+    srcs = [
+        "client_test.go",
+        "ingest_err_test.go",
+    ],
     embed = [":ingestcli"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 9,
     deps = [
         "//br/pkg/restore/split",
+        "//pkg/ingestor/errdef",
+        "//pkg/lightning/common",
         "//pkg/util",
         "@com_github_pingcap_kvproto//pkg/errorpb",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",

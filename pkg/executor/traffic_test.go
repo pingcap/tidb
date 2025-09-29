@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -485,9 +486,9 @@ func newTrafficTestSuite(t *testing.T, chunkSize int) *trafficTestSuite {
 	parser := parser.New()
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().MaxChunkSize = chunkSize
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	planBuilder, _ := plannercore.NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
-	execBuilder := NewMockExecutorBuilderForTest(sctx, is)
+	execBuilder := NewMockExecutorBuilderForTest(sctx, is, nil)
 	return &trafficTestSuite{
 		t:           t,
 		parser:      parser,

@@ -407,7 +407,7 @@ func TestBalanceMultipleTasks(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	manager := NewManager(ctx, mockTaskMgr, "1", proto.NodeResourceForTest)
+	manager := NewManager(ctx, nil, mockTaskMgr, "1", proto.NodeResourceForTest)
 	manager.slotMgr.updateCapacity(16)
 	manager.nodeMgr.nodes.Store(&[]proto.ManagedNode{{ID: "tidb1", Role: ""}, {ID: "tidb2", Role: ""}, {ID: "tidb3", Role: ""}})
 	b := newBalancer(Param{

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
@@ -63,7 +64,7 @@ func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalSt
 	if m.SchemaFile.FileMeta.Path != "" {
 		schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 		if err != nil {
-			log.FromContext(ctx).Warn("failed to extract table schema",
+			logutil.Logger(ctx).Warn("failed to extract table schema",
 				zap.String("Path", m.SchemaFile.FileMeta.Path),
 				log.ShortError(err),
 			)
@@ -129,7 +130,7 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 	}
 	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
-		log.FromContext(ctx).Error("failed to extract table schema",
+		logutil.Logger(ctx).Error("failed to extract table schema",
 			zap.String("Path", m.SchemaFile.FileMeta.Path),
 			log.ShortError(err),
 		)
@@ -256,6 +257,11 @@ type RawFile struct {
 	Size int64
 }
 
+type parquetInfo struct {
+	rowSize          float64 // the average row size of the parquet file
+	compressionRatio float64 // the estimated compression ratio of the parquet file
+}
+
 type mdLoaderSetup struct {
 	sourceID      string
 	loader        *MDLoader
@@ -267,8 +273,8 @@ type mdLoaderSetup struct {
 	tableIndexMap map[filter.Table]int
 	setupCfg      *MDLoaderSetupConfig
 
-	// store all file infos from parallel reading
-	sampledParquetRowSizes sync.Map
+	// store file info of parquet from parallel reading
+	sampledParquetInfos sync.Map
 }
 
 // NewLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
@@ -326,7 +332,7 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 		fileRouteRules = append(fileRouteRules, defaultFileRouteRules...)
 	}
 
-	fileRouter, err := NewFileRouter(fileRouteRules, log.FromContext(ctx))
+	fileRouter, err := NewFileRouter(fileRouteRules, log.Wrap(logutil.Logger(ctx)))
 	if err != nil {
 		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse file routing rule failed")
 	}
@@ -355,28 +361,6 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 	}
 
 	return mdl, nil
-}
-
-type fileType int
-
-const (
-	fileTypeDatabaseSchema fileType = iota
-	fileTypeTableSchema
-	fileTypeTableData
-)
-
-// String implements the Stringer interface.
-func (ftype fileType) String() string {
-	switch ftype {
-	case fileTypeDatabaseSchema:
-		return "database schema"
-	case fileTypeTableSchema:
-		return "table schema"
-	case fileTypeTableData:
-		return "table data"
-	default:
-		return "(unknown)"
-	}
 }
 
 // FileInfo contains the information for a data file in a table.
@@ -485,11 +469,17 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 			continue
 		}
 
-		// process row size for parquet files
+		// process file size for parquet files
 		if info.FileMeta.Type == SourceTypeParquet {
-			v, _ := s.sampledParquetRowSizes.Load(info.TableName.String())
-			avgRowSize, _ := v.(float64)
-			info.FileMeta.RealSize = int64(float64(info.FileMeta.Rows) * avgRowSize)
+			v, _ := s.sampledParquetInfos.Load(info.TableName.String())
+			pinfo, _ := v.(parquetInfo)
+			info.FileMeta.RealSize = int64(float64(info.FileMeta.FileSize) * pinfo.compressionRatio)
+			// Postpone reading the row count to `MakeTableRegion` if necessary.
+			info.FileMeta.Rows = int64(float64(info.FileMeta.RealSize) / pinfo.rowSize)
+
+			if m, ok := metric.FromContext(ctx); ok {
+				m.RowsCounter.WithLabelValues(metric.StateTotalRestore, info.TableName.String()).Add(float64(info.FileMeta.Rows))
+			}
 		}
 
 		switch info.FileMeta.Type {
@@ -599,7 +589,7 @@ func (iter *allFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) 
 
 func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*FileInfo, error) {
 	path, size := f.Path, f.Size
-	logger := log.FromContext(ctx).With(zap.String("path", path))
+	logger := log.Wrap(logutil.Logger(ctx)).With(zap.String("path", path))
 	res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
 	if err != nil {
 		return nil, errors.Annotatef(err, "apply file routing on file '%s' failed", path)
@@ -623,36 +613,20 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 	case SourceTypeSQL, SourceTypeCSV:
 		info.FileMeta.RealSize = EstimateRealSizeForFile(ctx, info.FileMeta, s.loader.GetStore())
 	case SourceTypeParquet:
-		var (
-			totalRowCount int64
-			rowSize       float64
-			tableName     = info.TableName.String()
-		)
+		tableName := info.TableName.String()
 
 		// Only sample once for each table
-		_, loaded := s.sampledParquetRowSizes.LoadOrStore(tableName, 0)
+		_, loaded := s.sampledParquetInfos.LoadOrStore(tableName, parquetInfo{})
 		if !loaded {
-			rowSize, err = SampleParquetRowSize(ctx, info.FileMeta, s.loader.GetStore())
+			rows, rowSize, err := SampleParquetRowSize(ctx, info.FileMeta, s.loader.GetStore())
 			if err != nil {
 				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),
 					zap.Stringer("type", res.Type), zap.Error(err))
 				return nil, errors.Trace(err)
 			}
-			s.sampledParquetRowSizes.Store(tableName, rowSize)
-		}
-
-		totalRowCount, err = ReadParquetFileRowCountByFile(ctx, s.loader.GetStore(), info.FileMeta)
-		if err != nil {
-			logger.Error("fail to get file total row count", zap.String("category", "loader"),
-				zap.String("schema", res.Schema), zap.String("table", res.Name),
-				zap.Stringer("type", res.Type), zap.Error(err))
-			return nil, errors.Trace(err)
-		}
-
-		info.FileMeta.Rows = totalRowCount
-		if m, ok := metric.FromContext(ctx); ok {
-			m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
+			compressionRatio := float64(info.FileMeta.FileSize) / (rowSize * float64(rows))
+			s.sampledParquetInfos.Store(tableName, parquetInfo{rowSize, compressionRatio})
 		}
 	}
 
@@ -850,6 +824,22 @@ func (l *MDLoader) GetStore() storage.ExternalStorage {
 	return l.store
 }
 
+// GetAllFiles gets all the files for the loader.
+func (l *MDLoader) GetAllFiles() map[string]FileInfo {
+	allFiles := make(map[string]FileInfo)
+	for _, dbMeta := range l.dbs {
+		for _, tblMeta := range dbMeta.Tables {
+			for _, file := range tblMeta.DataFiles {
+				allFiles[file.FileMeta.Path] = file
+			}
+			if tblMeta.SchemaFile.FileMeta.Path != "" {
+				allFiles[tblMeta.SchemaFile.FileMeta.Path] = tblMeta.SchemaFile
+			}
+		}
+	}
+	return allFiles
+}
+
 func calculateFileBytes(ctx context.Context,
 	dataFile string,
 	compressType storage.CompressType,
@@ -910,7 +900,7 @@ func EstimateRealSizeForFile(ctx context.Context, fileMeta SourceFileMeta, store
 	}
 	compressRatio, err := SampleFileCompressRatio(ctx, fileMeta, store)
 	if err != nil {
-		log.FromContext(ctx).Error("fail to calculate data file compress ratio",
+		logutil.Logger(ctx).Error("fail to calculate data file compress ratio",
 			zap.String("category", "loader"),
 			zap.String("path", fileMeta.Path),
 			zap.Stringer("type", fileMeta.Type), zap.Error(err),
@@ -957,21 +947,21 @@ func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store
 }
 
 // SampleParquetRowSize samples row size of the parquet file.
-func SampleParquetRowSize(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
+func SampleParquetRowSize(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (int64, float64, error) {
 	totalRowCount, err := ReadParquetFileRowCountByFile(ctx, store, fileMeta)
 	if totalRowCount == 0 || err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	reader, err := store.Open(ctx, fileMeta.Path, nil)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	parser, err := NewParquetParser(ctx, store, reader, fileMeta.Path)
 	if err != nil {
 		//nolint: errcheck
 		reader.Close()
-		return 0, err
+		return 0, 0, err
 	}
 	//nolint: errcheck
 	defer parser.Close()
@@ -986,7 +976,7 @@ func SampleParquetRowSize(ctx context.Context, fileMeta SourceFileMeta, store st
 			if errors.Cause(err) == io.EOF {
 				break
 			}
-			return 0, err
+			return 0, 0, err
 		}
 		lastRow := parser.LastRow()
 		rowCount++
@@ -996,5 +986,5 @@ func SampleParquetRowSize(ctx context.Context, fileMeta SourceFileMeta, store st
 			break
 		}
 	}
-	return float64(rowSize) / float64(rowCount), nil
+	return parser.Reader.Footer.NumRows, float64(rowSize) / float64(rowCount), nil
 }

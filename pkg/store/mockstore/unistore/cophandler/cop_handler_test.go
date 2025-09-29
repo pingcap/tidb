@@ -20,6 +20,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/badger"
@@ -135,8 +136,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 
 func getTestPointRange(tableID int64, handle int64) kv.KeyRange {
 	startKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(handle))
-	endKey := make([]byte, len(startKey))
-	copy(endKey, startKey)
+	endKey := slices.Clone(startKey)
 	convertToPrefixNext(endKey)
 	return kv.KeyRange{
 		StartKey: startKey,
@@ -166,15 +166,7 @@ func convertToPrefixNext(key []byte) []byte {
 // return whether these two keys are equal.
 func isPrefixNext(key []byte, expected []byte) bool {
 	key = convertToPrefixNext(key)
-	if len(key) != len(expected) {
-		return false
-	}
-	for i := range key {
-		if key[i] != expected[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(key, expected)
 }
 
 // return a dag context according to dagReq and key ranges.

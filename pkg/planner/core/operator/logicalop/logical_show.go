@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -59,7 +58,7 @@ type ShowContents struct {
 	Limit       *ast.Limit // Used for limit Result Set row number.
 
 	ImportJobID       *int64 // Used for SHOW LOAD DATA JOB <jobID>
-	SQLOrDigest       string // Used for SHOW PLAN FOR <SQL or Digest>
+	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY>
 	DistributionJobID *int64 // Used for SHOW DISTRIBUTION JOB <JobID>
 }
 
@@ -91,8 +90,8 @@ func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
 // PruneColumns inherits BaseLogicalPlan.LogicalPlan.<2nd> implementation.
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalShow) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
-	return utilfuncp.FindBestTask4LogicalShow(p, prop, planCounter, nil)
+func (p *LogicalShow) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (base.Task, int64, error) {
+	return utilfuncp.FindBestTask4LogicalShow(p, prop, planCounter)
 }
 
 // BuildKeyInfo inherits BaseLogicalPlan.LogicalPlan.<4th> implementation.

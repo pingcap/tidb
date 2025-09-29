@@ -40,8 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -154,7 +154,7 @@ func closeAll(objs ...Closeable) error {
 
 // rebuildIndexRanges will be called if there's correlated column in access conditions. We will rebuild the range
 // by substituting correlated column with the constant.
-func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerContext, is *plannercore.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
+func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerContext, is *physicalop.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
 	access := make([]expression.Expression, 0, len(is.AccessCondition))
 	for _, cond := range is.AccessCondition {
 		newCond, err1 := expression.SubstituteCorCol2Constant(ectx, cond)
@@ -299,7 +299,7 @@ func (e *IndexReaderExecutor) buildKeyRanges(dctx *distsqlctx.DistSQLContext, ra
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, e.plans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
+		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, e.plans[0].(*physicalop.PhysicalIndexScan), e.idxCols, e.colLens)
 		if err != nil {
 			return err
 		}
@@ -377,8 +377,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
 		return bytes.Compare(i.StartKey, j.StartKey)
 	})
-	// use sortedSelectResults only when byItems pushed down and partition numbers > 1
-	if e.byItems == nil || len(e.partitions) <= 1 {
+	if !needMergeSort(e.byItems, len(e.partitions)) {
 		kvReq, err := e.buildKVReq(kvRanges)
 		if err != nil {
 			return err
@@ -499,7 +498,7 @@ type IndexLookUpExecutor struct {
 	idxCols         []*expression.Column
 	colLens         []int
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
-	PushedLimit *plannercore.PushedDownLimit
+	PushedLimit *physicalop.PushedDownLimit
 
 	stats *IndexLookUpRunTimeStats
 
@@ -539,7 +538,7 @@ func (e *IndexLookUpExecutor) setDummy() {
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, e.idxPlans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
+		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, e.idxPlans[0].(*physicalop.PhysicalIndexScan), e.idxCols, e.colLens)
 		if err != nil {
 			return err
 		}
@@ -798,7 +797,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			}
 			results = append(results, result)
 		}
-		if len(results) > 1 && len(e.byItems) != 0 {
+		if needMergeSort(e.byItems, len(results)) {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 			ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
@@ -1023,7 +1022,7 @@ type indexWorker struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
-	PushedLimit *plannercore.PushedDownLimit
+	PushedLimit *physicalop.PushedDownLimit
 	// scannedKeys indicates how many keys be scanned
 	scannedKeys uint64
 }
@@ -1042,7 +1041,7 @@ func (w *indexWorker) syncErr(err error) {
 func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.SelectResult) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err4Panic := util.GetRecoverError(r)
 			w.syncErr(err4Panic)
 			if err != nil {
@@ -1231,7 +1230,7 @@ func execTableTask(e *IndexLookUpExecutor, task *lookupTableTask) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("TableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("TableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err := util.GetRecoverError(r)
 			task.doneCh <- err
 		}
@@ -1568,7 +1567,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		err = exec.Next(ctx, tableReader, chk)
 		if err != nil {
 			if ctx.Err() != context.Canceled {
-				logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+				logutil.Logger(ctx).Warn("table reader fetch next chunk failed", zap.Error(err))
 			}
 			return err
 		}
@@ -1673,4 +1672,8 @@ func getPhysicalPlanIDs(plans []base.PhysicalPlan) []int {
 		planIDs = append(planIDs, p.ID())
 	}
 	return planIDs
+}
+
+func needMergeSort(byItems []*plannerutil.ByItems, kvRangesCount int) bool {
+	return len(byItems) > 0 && kvRangesCount > 1
 }

@@ -15,6 +15,7 @@
 package exprstatic
 
 import (
+	"context"
 	"math"
 	"strings"
 	"sync"
@@ -465,6 +466,11 @@ func newSessionVarsWithSystemVariables(vars map[string]string) (*variable.Sessio
 			cs = []string{name, val}
 		case vardef.CollationConnection:
 			col = []string{name, val}
+		case vardef.TiDBRedactLog:
+			sv := variable.GetSysVar(name)
+			if err := sv.SetGlobalFromHook(context.TODO(), sessionVars, val, false); err != nil {
+				return nil, err
+			}
 		default:
 			if err := sessionVars.SetSystemVar(name, val); err != nil {
 				return nil, err

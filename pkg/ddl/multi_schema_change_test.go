@@ -17,13 +17,16 @@ package ddl_test
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -780,6 +783,54 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 	require.NoError(t, checkErr)
 }
 
+func TestMultiSchemaChangeModifyColumnOrderByStates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("alter table t modify column b smallint, add column d int;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("alter table t modify column a smallint, add column c int, modify column b smallint;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int, c char(10));")
+	tk.MustExec("insert into t values (1, 1, '1');")
+	tk.MustExec("alter table t modify column c int after a, add column d int, add column e int, modify column b smallint;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (id bigint, c1 bigint, c2 bigint);")
+	tk.MustExec("alter table t modify column c2 int after id, modify column id int after c2;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t1(id bigint, c1 bigint, c2 bigint);")
+	tk.MustExec("alter table t1 modify column c2 int, drop column id;")
+}
+
+func TestMultiSchemaChangeDMLUpdate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, d int)")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("insert into t(a, c) values (1, 2), (2, 3), (3, 4), (4, 5)")
+		tk.MustExec("update t set c = 5 where a = 1")
+		tk.MustExec("delete from t")
+	})
+	tk.MustExec("alter table t change column b e int unsigned, change column d f int unsigned")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+
+	tk.MustExec("drop table t")
+}
+
 func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -821,6 +872,59 @@ func TestMultiSchemaChangePollJobCount(t *testing.T) {
 	tk.MustExec("alter table t add column b int,  modify column a bigint, add column c char(10);")
 	require.Equal(t, 29, runOneJobCounter)
 	require.Equal(t, 9, pollJobCounter)
+}
+
+func TestMultiSchemaChangeMDLView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	unistoreMDLView := session.CreateTiDBMDLView
+	unistoreMDLView = strings.ReplaceAll(unistoreMDLView, "cluster_processlist", "processlist")
+	unistoreMDLView = strings.ReplaceAll(unistoreMDLView, "cluster_tidb_trx", "tidb_trx")
+	tk.MustExec(unistoreMDLView)
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("alter table t add column b int, add column c int;")
+
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1, 1, 1);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustQuery("select count(*) from mysql.tidb_mdl_view;").Check(testkit.Rows("0"))
+
+	tk.MustExec("commit;")
+}
+
+func TestMultiSchemaChangeWithoutMDL(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	defer func() {
+		tk.MustExec("set global tidb_enable_metadata_lock = default;")
+	}()
+
+	testcases := []struct {
+		name string
+		sql  string
+	}{
+		{"drop column", "alter table t drop column col2, drop column col3"},
+		{"drop index", "alter table t drop index idx2, drop index idx3"},
+		{"modify column", "alter table t modify column col2 bigint, modify column col3 bigint"},
+		{"modify column with reorg", "alter table t modify column col2 varchar(4), modify column col3 varchar(4)"},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			tk.MustExec("set global tidb_enable_metadata_lock = on;")
+			tk.MustExec("drop table if exists t;")
+			tk.MustExec("create table t(col1 int, col2 int, col3 int, index idx2(col2), index idx3(col2));")
+			tk.MustExec("set global tidb_enable_metadata_lock = off;")
+			tk.MustExec(tc.sql)
+		})
+	}
 }
 
 type cancelOnceHook struct {

@@ -201,6 +201,8 @@ const (
 	InternalTxnWorkloadLearning = "WorkloadLearning"
 	// InternalTxnSysVar is the type of sys var txn.
 	InternalTxnSysVar = InternalTxnOthers
+	// InternalTxnTelemetry is the type of telemetry.
+	InternalTxnTelemetry = InternalTxnOthers
 	// InternalTxnAdmin is the type of admin operations.
 	InternalTxnAdmin = "admin"
 	// InternalTxnPrivilege is the type of privilege txn.

@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "client.go",
         "limit.go",
-        "metrics.go",
         "schema.go",
         "store.go",
     ],
@@ -30,6 +29,7 @@ go_library(
         "//pkg/distsql",
         "//pkg/kv",
         "//pkg/meta",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/statistics/handle",
         "//pkg/statistics/util",
@@ -45,7 +45,6 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
-        "@com_github_prometheus_client_golang//prometheus",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
         "@com_github_tikv_client_go_v2//util",

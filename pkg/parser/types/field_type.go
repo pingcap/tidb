@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/util"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -38,21 +39,6 @@ const (
 var (
 	TiDBStrictIntegerDisplayWidth bool
 )
-
-// IHasher is internal usage represent cascades/base.Hasher
-type IHasher interface {
-	HashBool(val bool)
-	HashInt(val int)
-	HashInt64(val int64)
-	HashUint64(val uint64)
-	HashFloat64(val float64)
-	HashRune(val rune)
-	HashString(val string)
-	HashByte(val byte)
-	HashBytes(val []byte)
-	Reset()
-	Sum64() uint64
-}
 
 // FieldType records field type information.
 type FieldType struct {
@@ -75,8 +61,33 @@ type FieldType struct {
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
+// DeepCopy returns a deep copy of the FieldType.
+func (ft *FieldType) DeepCopy() *FieldType {
+	if ft == nil {
+		return nil
+	}
+	ret := &FieldType{
+		tp:      ft.tp,
+		flag:    ft.flag,
+		flen:    ft.flen,
+		decimal: ft.decimal,
+		charset: ft.charset,
+		collate: ft.collate,
+		array:   ft.array,
+	}
+	if len(ft.elems) > 0 {
+		ret.elems = make([]string, len(ft.elems))
+		copy(ret.elems, ft.elems)
+	}
+	if len(ft.elemsIsBinaryLit) > 0 {
+		ret.elemsIsBinaryLit = make([]bool, len(ft.elemsIsBinaryLit))
+		copy(ret.elemsIsBinaryLit, ft.elemsIsBinaryLit)
+	}
+	return ret
+}
+
 // Hash64 implements the cascades/base.Hasher.<0th> interface.
-func (ft *FieldType) Hash64(h IHasher) {
+func (ft *FieldType) Hash64(h util.IHasher) {
 	h.HashByte(ft.tp)
 	h.HashUint64(uint64(ft.flag))
 	h.HashInt(ft.flen)
@@ -378,10 +389,14 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	return slices.Equal(ft.elems, other.elems)
 }
 
-// PartialEqual checks whether two FieldType objects are equal.
+// PartialEqual checks whether two FieldType objects are equal. Please use this function with caution.
 // If unsafe is true and the objects is string type, PartialEqual will ignore flen.
 // See https://github.com/pingcap/tidb/issues/35490#issuecomment-1211658886 for more detail.
 func (ft *FieldType) PartialEqual(other *FieldType, unsafe bool) bool {
+	// Special case for NotNUll flag. See https://github.com/pingcap/tidb/issues/61290.
+	if mysql.HasNotNullFlag(ft.flag) != mysql.HasNotNullFlag(other.flag) {
+		return false
+	}
 	if !unsafe || ft.EvalType() != ETString || other.EvalType() != ETString {
 		return ft.Equal(other)
 	}

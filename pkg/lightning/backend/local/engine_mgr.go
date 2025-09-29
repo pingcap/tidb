@@ -263,7 +263,7 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 		dupDetectOpt:       em.DuplicateDetectOpt,
 		duplicateDB:        em.duplicateDB,
 		keyAdapter:         em.keyAdapter,
-		logger:             log.FromContext(ctx),
+		logger:             log.Wrap(logutil.Logger(ctx)),
 	})
 	engine := e.(*Engine)
 	engine.lock(importMutexStateOpen)
@@ -314,7 +314,12 @@ func (em *engineManager) closeEngine(
 			}
 			ts = oracle.ComposeTS(physical, logical)
 		}
+		onClose := func(*external.ReaderSummary) {}
+		if externalCfg.OnReaderClose != nil {
+			onClose = externalCfg.OnReaderClose
+		}
 		externalEngine := external.NewExternalEngine(
+			ctx,
 			store,
 			externalCfg.DataFiles,
 			externalCfg.StatFiles,
@@ -330,6 +335,7 @@ func (em *engineManager) closeEngine(
 			externalCfg.MemCapacity,
 			externalCfg.OnDup,
 			"",
+			onClose,
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -352,7 +358,7 @@ func (em *engineManager) closeEngine(
 			duplicateDetection: em.DupeDetectEnabled,
 			dupDetectOpt:       em.DuplicateDetectOpt,
 			duplicateDB:        em.duplicateDB,
-			logger:             log.FromContext(ctx),
+			logger:             log.Wrap(logutil.Logger(ctx)),
 		}
 		engine.db.Store(db)
 		engine.sstIngester = dbSSTIngester{e: engine}
@@ -422,7 +428,7 @@ func (em *engineManager) resetEngine(
 			return extEngine.Reset()
 		}
 
-		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		logutil.Logger(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
 	defer localEngine.unlock()
@@ -475,7 +481,7 @@ func (em *engineManager) cleanupEngine(ctx context.Context, engineUUID uuid.UUID
 			delete(em.externalEngine, engineUUID)
 			return retErr
 		}
-		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		logutil.Logger(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
 	defer localEngine.unlock()
@@ -523,12 +529,16 @@ func (em *engineManager) engineFileSizes() (res []backend.EngineFileSize) {
 
 func (em *engineManager) close() {
 	for _, e := range em.externalEngine {
-		_ = e.Close()
+		if err := e.Close(); err != nil {
+			em.logger.Warn("close external engine failed", zap.String("id", e.ID()), zap.Error(err))
+		}
 	}
 	em.externalEngine = map[uuid.UUID]engineapi.Engine{}
 	allLocalEngines := em.lockAllEnginesUnless(importMutexStateClose, 0)
 	for _, e := range allLocalEngines {
-		_ = e.Close()
+		if err := e.Close(); err != nil {
+			em.logger.Warn("close local engine failed", zap.String("id", e.ID()), zap.Error(err))
+		}
 		e.unlock()
 	}
 	em.engines = sync.Map{}

@@ -51,10 +51,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -193,7 +195,7 @@ func NewTableImporter(
 		return nil, err
 	}
 
-	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
+	backendConfig := e.getLocalBackendCfg(kvStore.GetKeyspace(), tidbCfg.Path, dir)
 	d := kvStore.(tidbkv.StorageWithPD).GetPDClient().GetServiceDiscovery()
 	localBackend, err := local.NewBackend(ctx, tls, backendConfig, d)
 	if err != nil {
@@ -204,6 +206,7 @@ func NewTableImporter(
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
+		kvStore:            kvStore,
 		tableInfo: &checkpoints.TidbTableInfo{
 			ID:   e.Table.Meta().ID,
 			Name: e.Table.Meta().Name.O,
@@ -231,6 +234,7 @@ type TableImporter struct {
 	// uuid. we use this id to create a unique directory for this importer.
 	id        string
 	backend   *local.Backend
+	kvStore   tidbkv.Storage
 	tableInfo *checkpoints.TidbTableInfo
 	// this table has a separate id allocator used to record the max row id allocated.
 	encTable table.Table
@@ -260,11 +264,12 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 		return nil, err
 	}
 
-	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
+	backendConfig := e.getLocalBackendCfg("", tidbCfg.Path, dir)
 	localBackend, err := local.NewBackendForTest(ctx, backendConfig, helper)
 	if err != nil {
 		return nil, err
 	}
+	keyspace := helper.GetTiKVCodec().GetKeyspace()
 
 	return &TableImporter{
 		LoadDataController: e,
@@ -275,6 +280,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),
 		},
+		keyspace:      keyspace,
 		encTable:      tbl,
 		dbID:          e.DBID,
 		logger:        e.logger.With(zap.String("import-id", id)),
@@ -287,10 +293,15 @@ func (ti *TableImporter) GetKeySpace() []byte {
 	return ti.keyspace
 }
 
-func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
+// GetKVStore gets the kv store.
+func (ti *TableImporter) GetKVStore() tidbkv.Storage {
+	return ti.kvStore
+}
+
+func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, ti.dataStore, storage.DecompressConfig{
+			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, e.dataStore, storage.DecompressConfig{
 				ZStdDecodeConcurrency: 1,
 			})
 			if err != nil {
@@ -300,14 +311,14 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 		},
 		Remote: &chunk.FileMeta,
 	}
-	parser, err := ti.LoadDataController.GetParser(ctx, info)
+	parser, err := e.GetParser(ctx, info)
 	if err != nil {
 		return nil, err
 	}
 	if chunk.Chunk.Offset == 0 {
 		// if data file is split, only the first chunk need to do skip.
 		// see check in initOptions.
-		if err = ti.LoadDataController.HandleSkipNRows(parser); err != nil {
+		if err = e.HandleSkipNRows(parser); err != nil {
 			return nil, err
 		}
 		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
@@ -320,19 +331,37 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 	return parser, nil
 }
 
-func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEncoder, error) {
+func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (*TableKVEncoder, error) {
+	return ti.LoadDataController.getKVEncoder(ti.logger, chunk, ti.encTable)
+}
+
+func (e *LoadDataController) getKVEncoder(logger *zap.Logger, chunk *checkpoints.ChunkCheckpoint, encTable table.Table) (*TableKVEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
-			SQLMode:        ti.SQLMode,
+			SQLMode:        e.SQLMode,
 			Timestamp:      chunk.Timestamp,
-			SysVars:        ti.ImportantSysVars,
+			SysVars:        e.ImportantSysVars,
 			AutoRandomSeed: chunk.Chunk.PrevRowIDMax,
 		},
 		Path:   chunk.FileMeta.Path,
-		Table:  ti.encTable,
-		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
+		Table:  encTable,
+		Logger: log.Logger{Logger: logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
-	return NewTableKVEncoder(cfg, ti)
+	return NewTableKVEncoder(cfg, e)
+}
+
+// GetKVEncoderForDupResolve get the KV encoder for duplicate resolution.
+func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
+	cfg := &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{
+			SQLMode: ti.SQLMode,
+			SysVars: ti.ImportantSysVars,
+		},
+		Table:                ti.encTable,
+		Logger:               log.Logger{Logger: ti.logger},
+		UseIdentityAutoRowID: true,
+	}
+	return NewTableKVEncoderForDupResolve(cfg, ti.LoadDataController)
 }
 
 func (e *LoadDataController) calculateSubtaskCnt() int {
@@ -410,8 +439,9 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 		DataInvalidCharReplace: string(utf8.RuneError),
 		ReadBlockSize:          LoadDataReadBlockSize,
 		CSV:                    *e.GenerateCSVConfig(),
+		SkipParquetRowCount:    common.SkipReadRowCount(e.Table.Meta()),
 	}
-	makeEngineCtx := log.NewContext(ctx, log.Logger{Logger: e.logger})
+	makeEngineCtx := logutil.WithLogger(ctx, e.logger)
 	tableRegions, err2 := mydump.MakeTableRegions(makeEngineCtx, dataDivideCfg)
 	if err2 != nil {
 		e.logger.Error("populate chunks failed", zap.Error(err2))
@@ -634,7 +664,7 @@ func (ti *TableImporter) closeAndCleanupEngine(engine *backend.OpenedEngine) {
 }
 
 // ImportSelectedRows imports selected rows.
-func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.Context) (*JobImportResult, error) {
+func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.Context) (int64, error) {
 	var (
 		err                     error
 		dataEngine, indexEngine *backend.OpenedEngine
@@ -656,11 +686,11 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 
 	dataEngine, err = ti.OpenDataEngine(ctx, 1)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	indexEngine, err = ti.OpenIndexEngine(ctx, common.IndexEngineID)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	var (
@@ -677,37 +707,37 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 				defer mu.Unlock()
 				checksum.Add(chunkChecksum)
 			}()
-			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, ti.logger, chunkChecksum)
+			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, ti.logger, chunkChecksum, nil)
 		})
 	}
 	if err = eg.Wait(); err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	closedDataEngine, err := dataEngine.Close(ctx)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	failpoint.Inject("mockImportFromSelectErr", func() {
-		failpoint.Return(nil, errors.New("mock import from select error"))
+		failpoint.Return(0, errors.New("mock import from select error"))
 	})
 	if err = closedDataEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
 		}
-		return nil, err
+		return 0, err
 	}
 	dataKVCount := ti.backend.GetImportedKVCount(closedDataEngine.GetUUID())
 
 	closedIndexEngine, err := indexEngine.Close(ctx)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	if err = closedIndexEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
 		}
-		return nil, err
+		return 0, err
 	}
 
 	allocators := ti.Allocators()
@@ -717,12 +747,10 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
 	}
 	if err = PostProcess(ctx, se, maxIDs, ti.Plan, checksum, ti.logger); err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	return &JobImportResult{
-		Affected: uint64(dataKVCount),
-	}, nil
+	return dataKVCount, nil
 }
 
 func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 {
@@ -770,7 +798,11 @@ func PostProcess(
 		return err
 	}
 
-	return VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), se, logger)
+	return VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+		func() (*local.RemoteChecksum, error) {
+			return RemoteChecksumTableBySQL(ctx, se, plan, logger)
+		},
+	)
 }
 
 type autoIDRequirement struct {
@@ -788,7 +820,7 @@ func (r *autoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
 
 // RebaseAllocatorBases rebase the allocator bases.
 func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs map[autoid.AllocatorType]int64, plan *Plan, logger *zap.Logger) (err error) {
-	callLog := log.BeginTask(logger, "rebase allocators")
+	callLog := log.BeginTask(logger.With(zap.Any("maxIDs", maxIDs)), "rebase allocators")
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
 	}()
@@ -830,9 +862,12 @@ func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs ma
 	return errors.Trace(err)
 }
 
+type remoteChecksumFunction func() (*local.RemoteChecksum, error)
+
 // VerifyChecksum verify the checksum of the table.
-func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChecksum, se sessionctx.Context, logger *zap.Logger) error {
+func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChecksum, logger *zap.Logger, getRemoteChecksumFn remoteChecksumFunction) error {
 	if plan.Checksum == config.OpLevelOff {
+		logger.Info("checksum turned off, skip", zap.Object("checksum", &localChecksum))
 		return nil
 	}
 	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
@@ -840,13 +875,16 @@ func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChec
 	failpoint.Inject("waitCtxDone", func() {
 		<-ctx.Done()
 	})
+	failpoint.Inject("retryableError", func() {
+		failpoint.Return(common.ErrWriteTooSlow)
+	})
 
-	remoteChecksum, err := checksumTable(ctx, se, plan, logger)
+	remoteChecksum, err := getRemoteChecksumFn()
 	if err != nil {
 		if plan.Checksum != config.OpLevelOptional {
 			return err
 		}
-		logger.Warn("checksumTable failed, will skip this error and go on", zap.Error(err))
+		logger.Warn("get remote checksum failed, will skip this error and go on", zap.Error(err))
 	}
 	if remoteChecksum != nil {
 		if !remoteChecksum.IsEqual(&localChecksum) {
@@ -866,7 +904,8 @@ func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChec
 	return nil
 }
 
-func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logger *zap.Logger) (*local.RemoteChecksum, error) {
+// RemoteChecksumTableBySQL executes the SQL to get the remote checksum of the table.
+func RemoteChecksumTableBySQL(ctx context.Context, se sessionctx.Context, plan *Plan, logger *zap.Logger) (*local.RemoteChecksum, error) {
 	var (
 		tableName                    = common.UniqueTable(plan.DBName, plan.TableInfo.Name.L)
 		sql                          = "ADMIN CHECKSUM TABLE " + tableName
@@ -896,7 +935,10 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 	for i := range maxErrorRetryCount {
 		txnErr = func() error {
 			// increase backoff weight
-			if err := setBackoffWeight(se, plan, logger); err != nil {
+			backoffWeight := GetBackoffWeight(plan)
+			logger.Info("set backoff weight", zap.Int("weight", backoffWeight))
+			err := se.GetSessionVars().SetSystemVar(vardef.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
+			if err != nil {
 				logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
 			}
 
@@ -943,15 +985,16 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 	return remoteChecksum, txnErr
 }
 
-func setBackoffWeight(se sessionctx.Context, plan *Plan, logger *zap.Logger) error {
+// GetBackoffWeight returns the backoff weight for the plan.
+// returns max(local.DefaultBackoffWeight, plan.ImportantSysVars[vardef.TiDBBackOffWeight])
+func GetBackoffWeight(plan *Plan) int {
 	backoffWeight := local.DefaultBackoffWeight
 	if val, ok := plan.ImportantSysVars[vardef.TiDBBackOffWeight]; ok {
 		if weight, err := strconv.Atoi(val); err == nil && weight > backoffWeight {
 			backoffWeight = weight
 		}
 	}
-	logger.Info("set backoff weight", zap.Int("weight", backoffWeight))
-	return se.GetSessionVars().SetSystemVar(vardef.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
+	return backoffWeight
 }
 
 // GetImportRootDir returns the root directory for import.
@@ -969,18 +1012,21 @@ func GetImportRootDir(tidbCfg *tidb.Config) string {
 }
 
 // FlushTableStats flushes the stats of the table.
-// stats will be flushed in domain.updateStatsWorker, default interval is [1, 2) minutes,
-// see DumpStatsDeltaToKV for more details. then the background analyzer will analyze
-// the table.
-// the stats stay in memory until the next flush, so it might be lost if the tidb-server restarts.
-func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, result *JobImportResult) error {
+// stats will be stored in the stat collector, and be applied to to mysql.stats_meta
+// in the domain.UpdateTableStatsLoop with a random interval between [1, 2) minutes.
+// These stats will stay in memory until the next flush, so it might be lost if the tidb-server restarts.
+func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, importedRows int64) error {
 	if err := sessiontxn.NewTxn(ctx, se); err != nil {
 		return err
 	}
+
+	exec := statshandle.AttachStatsCollector(se.GetSQLExecutor())
+	defer statshandle.DetachStatsCollector(exec)
+
 	sessionVars := se.GetSessionVars()
 	sessionVars.TxnCtxMu.Lock()
 	defer sessionVars.TxnCtxMu.Unlock()
-	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected))
+	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, importedRows, importedRows)
 	se.StmtCommit(ctx)
 	return se.CommitTxn(ctx)
 }

@@ -879,6 +879,7 @@ import (
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
 	jobs                       "JOBS"
+	lite                       "LITE"
 	nodeID                     "NODE_ID"
 	nodeState                  "NODE_STATE"
 	optimistic                 "OPTIMISTIC"
@@ -1300,6 +1301,9 @@ import (
 	PrivElem                               "Privilege element"
 	RefreshObject                          "Refresh object"
 	RefreshObjectList                      "Refresh object list"
+	RefreshStatsModeOpt                    "Refresh stats mode optional"
+	RefreshStatsMode                       "Refresh stats mode"
+	RefreshStatsClusterOpt                 "Refresh stats cluster option"
 	PrivLevel                              "Privilege scope"
 	PrivType                               "Privilege type"
 	ReferDef                               "Reference definition"
@@ -3196,23 +3200,23 @@ FlashbackDatabaseStmt:
  *
  *******************************************************************/
 DistributeTableStmt:
-	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOrAssignmentEq Identifier "ENGINE" EqOrAssignmentEq Identifier
+	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOpt stringLit "ENGINE" EqOpt stringLit
 	{
 		$$ = &ast.DistributeTableStmt{
 			Table:          $3.(*ast.TableName),
 			PartitionNames: $4.([]ast.CIStr),
-			Rule:           ast.NewCIStr($7),
-			Engine:         ast.NewCIStr($10),
+			Rule:           $7,
+			Engine:         $10,
 		}
 	}
-|	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOrAssignmentEq Identifier "ENGINE" EqOrAssignmentEq Identifier "TIMEOUT" EqOrAssignmentEq Identifier
+|	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOpt stringLit "ENGINE" EqOpt stringLit "TIMEOUT" EqOpt stringLit
 	{
 		$$ = &ast.DistributeTableStmt{
 			Table:          $3.(*ast.TableName),
 			PartitionNames: $4.([]ast.CIStr),
-			Rule:           ast.NewCIStr($7),
-			Engine:         ast.NewCIStr($10),
-			Timeout:        ast.NewCIStr($13),
+			Rule:           $7,
+			Engine:         $10,
+			Timeout:        $13,
 		}
 	}
 
@@ -3964,7 +3968,6 @@ ConstraintElem:
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
 		}
-
 		if indexType := $3.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
@@ -4105,6 +4108,12 @@ DefaultValueExpr:
 |	SignedLiteral
 |	NextValueForSequenceParentheses
 |	BuiltinFunction
+|	'(' Identifier ')'
+	{
+		$$ = &ast.ColumnNameExpr{Name: &ast.ColumnName{
+			Name: ast.NewCIStr($2),
+		}}
+	}
 |	'(' SignedLiteral ')'
 	{
 		$$ = $2
@@ -5573,6 +5582,25 @@ ExplainStmt:
 			Explore:   true,
 		}
 	}
+|	ExplainSym "EXPLORE" "ANALYZE" SelectStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		stmt := $4
+		stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		$$ = &ast.ExplainStmt{
+			Stmt:    stmt,
+			Explore: true,
+			Analyze: true,
+		}
+	}
+|	ExplainSym "EXPLORE" "ANALYZE" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			SQLDigest: $4,
+			Explore:   true,
+			Analyze:   true,
+		}
+	}
 |	ExplainSym TableName
 	{
 		$$ = &ast.ExplainStmt{
@@ -5597,6 +5625,13 @@ ExplainStmt:
 		$$ = &ast.ExplainStmt{
 			Stmt:   $2,
 			Format: "row",
+		}
+	}
+|	ExplainSym stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $2,
+			Format:     "row",
 		}
 	}
 |	ExplainSym "FOR" "CONNECTION" NUM
@@ -5634,6 +5669,20 @@ ExplainStmt:
 			Format: $4,
 		}
 	}
+|	ExplainSym "FORMAT" "=" ExplainFormatType stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $5,
+			Format:     $4,
+		}
+	}
+|	ExplainSym "FORMAT" "=" stringLit stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $5,
+			Format:     $4,
+		}
+	}
 |	ExplainSym "ANALYZE" ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
@@ -5642,12 +5691,36 @@ ExplainStmt:
 			Analyze: true,
 		}
 	}
+|	ExplainSym "ANALYZE" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $3,
+			Format:     "row",
+			Analyze:    true,
+		}
+	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
 			Stmt:    $6,
 			Format:  $5,
 			Analyze: true,
+		}
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $6,
+			Format:     $5,
+			Analyze:    true,
+		}
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" stringLit stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $6,
+			Format:     $5,
+			Analyze:    true,
 		}
 	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" stringLit ExplainableStmt
@@ -6707,6 +6780,8 @@ IndexOptionList:
 				opt1.SplitOpt = opt2.SplitOpt
 			} else if len(opt2.SecondaryEngineAttr) > 0 {
 				opt1.SecondaryEngineAttr = opt2.SecondaryEngineAttr
+			} else if opt2.Condition != nil {
+				opt1.Condition = opt2.Condition
 			}
 			$$ = opt1
 		}
@@ -6784,6 +6859,12 @@ IndexOption:
 |	"SECONDARY_ENGINE_ATTRIBUTE" EqOpt stringLit
 	{
 		$$ = &ast.IndexOption{SecondaryEngineAttr: $3}
+	}
+|	"WHERE" Expression
+	{
+		$$ = &ast.IndexOption{
+			Condition: $2.(ast.ExprNode),
+		}
 	}
 
 /*
@@ -7302,6 +7383,7 @@ TiDBKeyword:
 |	"STATS_META"
 |	"STATS_TOPN"
 |	"HISTOGRAMS_IN_FLIGHT"
+|	"LITE"
 |	"TIDB"
 |	"TIFLASH"
 |	"TOPN"
@@ -11090,6 +11172,10 @@ VariableAssignment:
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsGlobal: true, IsSystem: true}
 	}
+|	"INSTANCE" VariableName EqOrAssignmentEq SetExpr
+	{
+		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsInstance: true, IsSystem: true}
+	}
 |	"SESSION" VariableName EqOrAssignmentEq SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsSystem: true}
@@ -11102,9 +11188,13 @@ VariableAssignment:
 	{
 		v := strings.ToLower($1)
 		var isGlobal bool
+		var isInstance bool
 		if strings.HasPrefix(v, "@@global.") {
 			isGlobal = true
 			v = strings.TrimPrefix(v, "@@global.")
+		} else if strings.HasPrefix(v, "@@instance.") {
+			isInstance = true
+			v = strings.TrimPrefix(v, "@@instance.")
 		} else if strings.HasPrefix(v, "@@session.") {
 			v = strings.TrimPrefix(v, "@@session.")
 		} else if strings.HasPrefix(v, "@@local.") {
@@ -11112,7 +11202,7 @@ VariableAssignment:
 		} else if strings.HasPrefix(v, "@@") {
 			v = strings.TrimPrefix(v, "@@")
 		}
-		$$ = &ast.VariableAssignment{Name: v, Value: $3, IsGlobal: isGlobal, IsSystem: true}
+		$$ = &ast.VariableAssignment{Name: v, Value: $3, IsGlobal: isGlobal, IsInstance: isInstance, IsSystem: true}
 	}
 |	singleAtIdentifier EqOrAssignmentEq Expression
 	{
@@ -11214,10 +11304,14 @@ SystemVariable:
 	{
 		v := strings.ToLower($1)
 		var isGlobal bool
+		var isInstance bool
 		explicitScope := true
 		if strings.HasPrefix(v, "@@global.") {
 			isGlobal = true
 			v = strings.TrimPrefix(v, "@@global.")
+		} else if strings.HasPrefix(v, "@@instance.") {
+			isInstance = true
+			v = strings.TrimPrefix(v, "@@instance.")
 		} else if strings.HasPrefix(v, "@@session.") {
 			v = strings.TrimPrefix(v, "@@session.")
 		} else if strings.HasPrefix(v, "@@local.") {
@@ -11225,7 +11319,7 @@ SystemVariable:
 		} else if strings.HasPrefix(v, "@@") {
 			v, explicitScope = strings.TrimPrefix(v, "@@"), false
 		}
-		$$ = &ast.VariableExpr{Name: v, IsGlobal: isGlobal, IsSystem: true, ExplicitScope: explicitScope}
+		$$ = &ast.VariableExpr{Name: v, IsGlobal: isGlobal, IsInstance: isInstance, IsSystem: true, ExplicitScope: explicitScope}
 	}
 
 UserVariable:
@@ -12202,13 +12296,17 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
 	}
+|	"IMPORT" "GROUPS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups}
+	}
+|	"IMPORT" "GROUP" stringLit
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups, ShowGroupKey: $3}
+	}
 |	"IMPORT" "JOBS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
-	}
-|	"PLAN" "FOR" stringLit
-	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowPlanForSQL, SQLOrDigest: $3}
 	}
 |	"DISTRIBUTION" "JOBS"
 	{
@@ -15539,11 +15637,16 @@ UnlockStatsStmt:
 	}
 
 RefreshStatsStmt:
-	"REFRESH" "STATS" RefreshObjectList
+	"REFRESH" "STATS" RefreshObjectList RefreshStatsModeOpt RefreshStatsClusterOpt
 	{
-		$$ = &ast.RefreshStatsStmt{
+		stmt := &ast.RefreshStatsStmt{
 			RefreshObjects: $3.([]*ast.RefreshObject),
 		}
+		if mode, ok := $4.(*ast.RefreshStatsMode); ok {
+			stmt.RefreshMode = mode
+		}
+		stmt.IsClusterWide = $5.(bool)
+		$$ = stmt
 	}
 
 RefreshObjectList:
@@ -15554,6 +15657,37 @@ RefreshObjectList:
 |	RefreshObjectList ',' RefreshObject
 	{
 		$$ = append($1.([]*ast.RefreshObject), $3.(*ast.RefreshObject))
+	}
+
+RefreshStatsModeOpt:
+	/* empty */
+	{
+		$$ = nil
+	}
+|	RefreshStatsMode
+	{
+		mode := $1.(ast.RefreshStatsMode)
+		$$ = &mode
+	}
+
+RefreshStatsMode:
+	"FULL"
+	{
+		$$ = ast.RefreshStatsModeFull
+	}
+|	"LITE"
+	{
+		$$ = ast.RefreshStatsModeLite
+	}
+
+RefreshStatsClusterOpt:
+	/* empty */
+	{
+		$$ = false
+	}
+|	"CLUSTER"
+	{
+		$$ = true
 	}
 
 RefreshObject:

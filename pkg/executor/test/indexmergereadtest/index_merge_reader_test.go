@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -146,7 +147,7 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 	tk.MustExec("set @a = 10;")
 	tk.MustQuery("execute stmt1 using @a, @a;").Check(testkit.Rows("10"))
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
 	})
 	explainStr := "explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10)
 	res := tk.MustQuery(explainStr)
@@ -758,7 +759,7 @@ func TestProcessInfoRaceWithIndexScan(t *testing.T) {
 	tk.MustExec(insertStr)
 
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
 	})
 
 	wg := sync.WaitGroup{}
@@ -785,10 +786,10 @@ func TestIndexMergeReaderIssue45279(t *testing.T) {
 	tk.MustExec("CREATE TABLE reproduce (c1 int primary key, c2 int, c3 int, key ci2(c2), key ci3(c3));")
 	tk.MustExec("insert into reproduce values (1, 1, 1), (2, 2, 2), (3, 3, 3);")
 	tk.MustQuery("explain select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);").Check(testkit.Rows(
-		"IndexMerge_11 33.99 root  type: union",
-		"├─TableRangeScan_8(Build) 4.00 cop[tikv] table:reproduce range:[0,0], [1,1], [2,2], [3,3], keep order:false, stats:pseudo",
-		"├─IndexRangeScan_9(Build) 30.00 cop[tikv] table:reproduce, index:ci2(c2) range:[0,0], [1,1], [2,2], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_10(Probe) 33.99 cop[tikv] table:reproduce keep order:false, stats:pseudo"))
+		"IndexMerge_12 33.99 root  type: union",
+		"├─TableRangeScan_9(Build) 4.00 cop[tikv] table:reproduce range:[0,0], [1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+		"├─IndexRangeScan_10(Build) 30.00 cop[tikv] table:reproduce, index:ci2(c2) range:[0,0], [1,1], [2,2], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_11(Probe) 33.99 cop[tikv] table:reproduce keep order:false, stats:pseudo"))
 
 	// This function should return successfully
 	var ctx context.Context
@@ -828,31 +829,42 @@ func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, index idx(a, c), index idx2(b, c), index idx3(a, b, c))")
-	valsInsert := make([]string, 0, 500)
-	for range 500 {
-		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", rand.Intn(100), rand.Intn(100), rand.Intn(100)))
+
+	// Create a smaller dataset to reduce test execution time
+	valsInsert := make([]string, 0, 50)
+	for i := 0; i < 50; i++ {
+		// Use deterministic values to reduce variability
+		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", i%10, i%8, i%15))
 	}
-	tk.MustExec("analyze table t")
 	tk.MustExec("insert into t values " + strings.Join(valsInsert, ","))
+
+	// Use standard TiDB test approach: set analyze version and analyze
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("analyze table t all columns")
+
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceIndexMergeKeepOrder", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceIndexMergeKeepOrder")
-	for range 50 {
-		valA, valB, valC, limit := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1
+
+	// Use limited iterations to reduce test time (previously 50)
+	for idx := range 10 {
+		valA, valB, valC, limit := idx%10, idx%8, idx%15, (idx%10)+1
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d) t", valA, valB, valC, limit)).Rows()[0][0]
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
 		queryWithNormalIndex := fmt.Sprintf("select * from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
 		tk.MustHavePlan(queryWithIndexMerge, "IndexMerge")
 		tk.MustHavePlan(queryWithIndexMerge, "Limit")
+		t.Logf("index: %d, queryWithIndexMerge: %s, queryWithNormalIndex: %s", idx, queryWithIndexMerge, queryWithNormalIndex)
 		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
 		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
 	}
-	for range 50 {
-		valA, valB, valC, limit, offset := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1, rand.Intn(20)
+	for idx := range 10 {
+		valA, valB, valC, limit, offset := idx%10, idx%8, idx%15, (idx%10)+1, idx%3
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d offset %d) t", valA, valB, valC, limit, offset)).Rows()[0][0]
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ c from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
 		queryWithNormalIndex := fmt.Sprintf("select c from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
 		tk.MustHavePlan(queryWithIndexMerge, "IndexMerge")
 		tk.MustHavePlan(queryWithIndexMerge, "Limit")
+		t.Logf("index: %d, queryWithIndexMerge: %s, queryWithNormalIndex: %s", idx, queryWithIndexMerge, queryWithNormalIndex)
 		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
 		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
 	}

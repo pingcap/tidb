@@ -754,7 +754,6 @@ ltrim
 make_set
 makedate
 maketime
-master_pos_wait
 md5
 microsecond
 mid

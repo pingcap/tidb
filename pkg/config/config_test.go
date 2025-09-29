@@ -30,6 +30,8 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	meter_config "github.com/pingcap/metering_sdk/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -729,7 +731,8 @@ txn-total-size-limit=2000
 tcp-no-delay = false
 enable-load-fmsketch = true
 plan-replayer-dump-worker-concurrency = 1
-lite-init-stats = false
+skip-init-stats = false
+lite-init-stats = true
 force-init-stats = false
 [tikv-client]
 commit-timeout="41s"
@@ -822,7 +825,8 @@ max_connections = 200
 	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
 	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
 	require.True(t, conf.Performance.EnableLoadFMSketch)
-	require.False(t, conf.Performance.LiteInitStats)
+	require.False(t, conf.Performance.SkipInitStats)
+	require.True(t, conf.Performance.LiteInitStats)
 	require.False(t, conf.Performance.ForceInitStats)
 
 	err = f.Truncate(0)
@@ -915,10 +919,16 @@ grpc-keepalive-timeout = 0.01
 	require.Equal(t, "grpc-keepalive-timeout should be at least 0.05, but got 0.010000", conf.Valid().Error())
 
 	configFile = "config.toml.example"
+	if kerneltype.IsNextGen() {
+		configFile = "config.toml.nextgen.example"
+	}
 	require.NoError(t, conf.Load(configFile))
 
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false
+	if kerneltype.IsNextGen() {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	}
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
@@ -1182,6 +1192,25 @@ func TestTableColumnCountLimit(t *testing.T) {
 	checkValid(DefMaxOfTableColumnCountLimit, true)
 	checkValid(DefMaxOfTableColumnCountLimit+1, false)
 }
+func TestPluginAuditLog(t *testing.T) {
+	conf := NewConfig()
+	checkValid := func(bufferSize int, shouldBeValid bool) {
+		conf.Instance.PluginAuditLogBufferSize = bufferSize
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkValid(-1, false)
+	checkValid(MaxPluginAuditLogBufferSize, true)
+	checkValid(MaxPluginAuditLogBufferSize+1, false)
+
+	conf = NewConfig()
+	checkValid = func(flushInterval int, shouldBeValid bool) {
+		conf.Instance.PluginAuditLogFlushInterval = flushInterval
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkValid(-1, false)
+	checkValid(MaxPluginAuditLogFlushInterval, true)
+	checkValid(MaxPluginAuditLogFlushInterval+1, false)
+}
 
 func TestTokenLimit(t *testing.T) {
 	storeDir := t.TempDir()
@@ -1431,4 +1460,23 @@ func TestKeyspaceName(t *testing.T) {
 	require.ErrorContains(t, conf.Valid(), "is invalid")
 	conf.KeyspaceName = "abc"
 	require.NoError(t, conf.Valid())
+	conf.KeyspaceName = "18446744073709551615" // max uint64
+	require.NoError(t, conf.Valid())
+	conf.KeyspaceName = "a18446744073709551615"
+	require.ErrorContains(t, conf.Valid(), "invalid keyspace name")
+}
+
+func TestMetering(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("skip metering test in classic kernel")
+	}
+	conf := NewConfig()
+	conf.MeteringStorageURI = "s3://test-bucket/test-prefix?region-id=test-region"
+	require.NoError(t, conf.Valid())
+	mcfg, err := meter_config.NewFromURI(conf.MeteringStorageURI)
+	require.NoError(t, err)
+	require.Equal(t, "s3", string(mcfg.Type))
+	require.Equal(t, "test-bucket", mcfg.Bucket)
+	require.Equal(t, "test-prefix", mcfg.Prefix)
+	require.Equal(t, "test-region", mcfg.Region)
 }

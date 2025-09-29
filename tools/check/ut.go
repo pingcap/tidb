@@ -946,7 +946,7 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 
 func skipDIR(pkg string) bool {
 	skipDir := []string{"br", "lightning", filepath.Join("pkg", "lightning"),
-		"cmd", "dumpling", "tests", filepath.Join("tools", "check"), "build"}
+		"cmd", "dumpling", "tests", "tools", "build"}
 	for _, ignore := range skipDir {
 		if strings.HasPrefix(pkg, ignore) {
 			return true
@@ -955,9 +955,21 @@ func skipDIR(pkg string) bool {
 	return false
 }
 
+// goTestCmd run "go test --tags=intest[|,nextgen] args.."
+func goTestCmd(args ...string) *exec.Cmd {
+	cmd := exec.Command("go", "test")
+	tags := "--tags=intest"
+	if os.Getenv("NEXT_GEN") == "1" {
+		tags += ",nextgen"
+	}
+	cmd.Args = append(cmd.Args, tags)
+	cmd.Args = append(cmd.Args, args...)
+	return cmd
+}
+
 func buildTestBinary(pkg string) error {
 	// go test -c
-	cmd := exec.Command("go", "test", "-c", "-vet", "off", "--tags=intest", "-o", testFileName(pkg))
+	cmd := goTestCmd("-c", "-vet", "off", "-o", testFileName(pkg))
 	if coverprofile != "" {
 		cmd.Args = append(cmd.Args, "-cover")
 	}
@@ -978,7 +990,7 @@ func buildTestBinary(pkg string) error {
 
 func generateBuildCache() error {
 	// cd cmd/tidb-server && go test -tags intest -exec true -vet off -toolexec=go-compile-without-link
-	cmd := exec.Command("go", "test", "-tags=intest", "-exec=true", "-vet=off")
+	cmd := goTestCmd("-exec=true", "-vet=off")
 	goCompileWithoutLink := fmt.Sprintf("-toolexec=%s", filepath.Join(workDir, "tools", "check", "go-compile-without-link.sh"))
 	cmd.Args = append(cmd.Args, goCompileWithoutLink)
 	cmd.Dir = filepath.Join(workDir, "cmd", "tidb-server")
@@ -1004,7 +1016,7 @@ func buildTestBinaryMulti(pkgs []string) error {
 	}
 
 	var cmd *exec.Cmd
-	cmd = exec.Command("go", "test", "--tags=intest", "-p", strconv.Itoa(buildParallel), "--exec", xprogPath, "-vet", "off", "-count", "0")
+	cmd = goTestCmd("-p", strconv.Itoa(buildParallel), "--exec", xprogPath, "-vet", "off", "-count", "0")
 	if coverprofile != "" {
 		cmd.Args = append(cmd.Args, "-cover")
 	}

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -411,8 +412,7 @@ type evalContext struct {
 }
 
 func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
-	e.columnInfos = make([]*tipb.ColumnInfo, len(cols))
-	copy(e.columnInfos, cols)
+	e.columnInfos = slices.Clone(cols)
 
 	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))
 	for _, col := range e.columnInfos {
@@ -515,7 +515,7 @@ func genRespWithMPPExec(chunks []tipb.Chunk, lastRange *coprocessor.KeyRange, co
 		EncodeType:   dagReq.EncodeType,
 	}
 	executors := dagReq.Executors
-	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
+	if dagReq.GetCollectExecutionSummaries() {
 		// for simplicity, we assume all executors to be spending the same amount of time as the request
 		timeProcessed := uint64(dur / time.Nanosecond)
 		execSummary := make([]*tipb.ExecutorExecutionSummary, len(executors))

@@ -25,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -67,18 +65,18 @@ func (p LogicalMemTable) Init(ctx base.PlanContext, offset int) *LogicalMemTable
 // HashCode inherits BaseLogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	if p.Extractor != nil {
 		failpoint.Inject("skipExtractor", func(_ failpoint.Value) {
-			failpoint.Return(predicates, p.Self())
+			failpoint.Return(predicates, p.Self(), nil)
 		})
 		predicates = p.Extractor.Extract(p.SCtx(), p.Schema(), p.OutputNames(), predicates)
 	}
-	return predicates, p.Self()
+	return predicates, p.Self(), nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	switch p.TableInfo.Name.O {
 	case infoschema.TableStatementsSummary,
 		infoschema.TableStatementsSummaryHistory,
@@ -107,13 +105,12 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 			p.Columns = slices.Delete(p.Columns, i, i+1)
 		}
 	}
-	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
 	return p, nil
 }
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask4LogicalMemTable(p, prop, planCounter, opt)
+func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (t base.Task, cntPlan int64, err error) {
+	return utilfuncp.FindBestTask4LogicalMemTable(p, prop, planCounter)
 }
 
 // BuildKeyInfo inherits BaseLogicalPlan.<4th> implementation.

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // Plan Should be used as embedded struct in Plan implementations.
@@ -98,7 +97,7 @@ func (*Plan) ExplainInfo() string {
 }
 
 // ExplainID is to get the explain ID.
-func (p *Plan) ExplainID() fmt.Stringer {
+func (p *Plan) ExplainID(_ ...bool) fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.tp
@@ -108,7 +107,7 @@ func (p *Plan) ExplainID() fmt.Stringer {
 }
 
 // TP is to get the tp.
-func (p *Plan) TP() string {
+func (p *Plan) TP(_ ...bool) string {
 	return p.tp
 }
 
@@ -138,12 +137,6 @@ func (p *Plan) MemoryUsage() (sum int64) {
 
 	sum = PlanSize + int64(len(p.tp))
 	return sum
-}
-
-// BuildPlanTrace is to build the plan trace.
-func (p *Plan) BuildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
-	return planTrace
 }
 
 // CloneWithNewCtx clones the plan with new context.

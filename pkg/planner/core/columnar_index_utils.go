@@ -16,6 +16,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -25,11 +26,10 @@ func buildVectorIndexExtra(
 	distanceMetric tipb.VectorDistanceMetric,
 	topk uint32,
 	columnName string,
-	indexID int64,
 	refVec []byte,
 	column *tipb.ColumnInfo,
-) *ColumnarIndexExtra {
-	return &ColumnarIndexExtra{
+) *physicalop.ColumnarIndexExtra {
+	return &physicalop.ColumnarIndexExtra{
 		IndexInfo: indexInfo,
 		QueryInfo: &tipb.ColumnarIndexInfo{
 			IndexType: tipb.ColumnarIndexType_TypeVector,
@@ -39,28 +39,9 @@ func buildVectorIndexExtra(
 					DistanceMetric: distanceMetric,
 					TopK:           topk,
 					ColumnName:     columnName,
-					IndexId:        indexID,
+					IndexId:        indexInfo.ID,
 					RefVecF32:      refVec,
 					Column:         *column,
-				},
-			},
-		},
-	}
-}
-
-func buildInvertedIndexExtra(
-	indexInfo *model.IndexInfo,
-	columnID int64,
-	indexID int64,
-) *ColumnarIndexExtra {
-	return &ColumnarIndexExtra{
-		IndexInfo: indexInfo,
-		QueryInfo: &tipb.ColumnarIndexInfo{
-			IndexType: tipb.ColumnarIndexType_TypeInverted,
-			Index: &tipb.ColumnarIndexInfo_InvertedQueryInfo{
-				InvertedQueryInfo: &tipb.InvertedQueryInfo{
-					IndexId:  indexID,
-					ColumnId: columnID,
 				},
 			},
 		},

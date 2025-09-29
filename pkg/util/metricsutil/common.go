@@ -28,11 +28,13 @@ import (
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/metrics"
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	txninfo "github.com/pingcap/tidb/pkg/session/txninfo"
 	isolation_metrics "github.com/pingcap/tidb/pkg/sessiontxn/isolation/metrics"
+	statscache_metrics "github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	statshandler_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	copr_metrics "github.com/pingcap/tidb/pkg/store/copr/metrics"
@@ -57,8 +59,7 @@ func RegisterMetrics() error {
 	}
 
 	if kerneltype.IsNextGen() {
-		registerMetricsForNextGen(cfg.KeyspaceName)
-		return nil
+		metricscommon.SetConstLabels("keyspace_name", cfg.KeyspaceName)
 	}
 
 	pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
@@ -67,22 +68,26 @@ func RegisterMetrics() error {
 	}
 
 	timeoutSec := time.Duration(cfg.PDClient.PDServerTimeout) * time.Second
+	// Note: for NextGen, we need to use the side effect of `NewClient` to init the metrics' builtin const labels
 	pdCli, err := pd.NewClient(componentName, pdAddrs, pd.SecurityOption{
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
 		KeyPath:  cfg.Security.ClusterSSLKey,
-	}, opt.WithCustomTimeoutOption(timeoutSec))
+	}, opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metricscommon.GetConstLabels()))
 	if err != nil {
 		return err
 	}
 	defer pdCli.Close()
 
-	keyspaceMeta, err := getKeyspaceMeta(pdCli, cfg.KeyspaceName)
-	if err != nil {
-		return err
+	if kerneltype.IsNextGen() {
+		registerMetrics(nil) // metrics' const label already set
+	} else {
+		keyspaceMeta, err := getKeyspaceMeta(pdCli, cfg.KeyspaceName)
+		if err != nil {
+			return err
+		}
+		registerMetrics(keyspaceMeta)
 	}
-
-	registerMetrics(keyspaceMeta)
 	return nil
 }
 
@@ -94,8 +99,7 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 	}
 
 	if kerneltype.IsNextGen() {
-		registerMetricsForNextGen(keyspaceName)
-		return nil
+		metricscommon.SetConstLabels("keyspace_name", keyspaceName)
 	}
 
 	timeoutSec := 10 * time.Second
@@ -103,19 +107,23 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 	if tls.IsEnabled() {
 		securityOpt = tls.ToPDSecurityOption()
 	}
+	// Note: for NextGen, pdCli is created to init the metrics' const labels
 	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt,
-		opt.WithCustomTimeoutOption(timeoutSec))
+		opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metricscommon.GetConstLabels()))
 	if err != nil {
 		return err
 	}
 	defer pdCli.Close()
 
-	keyspaceMeta, err := getKeyspaceMeta(pdCli, keyspaceName)
-	if err != nil {
-		return err
+	if kerneltype.IsNextGen() {
+		registerMetrics(nil) // metrics' const label already set
+	} else {
+		keyspaceMeta, err := getKeyspaceMeta(pdCli, keyspaceName)
+		if err != nil {
+			return err
+		}
+		registerMetrics(keyspaceMeta)
 	}
-
-	registerMetrics(keyspaceMeta)
 	return nil
 }
 
@@ -132,6 +140,7 @@ func initMetrics() {
 	server_metrics.InitMetricsVars()
 	session_metrics.InitMetricsVars()
 	statshandler_metrics.InitMetricsVars()
+	statscache_metrics.InitMetricsVars()
 	topsqlreporter_metrics.InitMetricsVars()
 	ttlmetrics.InitMetricsVars()
 	txninfo.InitMetricsVars()
@@ -141,17 +150,9 @@ func initMetrics() {
 	}
 }
 
-// registerMetricsForNextGen registers metrics for next gen.
-func registerMetricsForNextGen(keyspaceName string) {
-	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-		metrics.SetConstLabels("keyspace_name", keyspaceName)
-	}
-	initMetrics()
-}
-
 func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) {
 	if keyspaceMeta != nil {
-		metrics.SetConstLabels("keyspace_id", fmt.Sprint(keyspaceMeta.GetId()))
+		metricscommon.SetConstLabels("keyspace_id", fmt.Sprint(keyspaceMeta.GetId()))
 	}
 	initMetrics()
 }

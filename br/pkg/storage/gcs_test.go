@@ -426,7 +426,8 @@ func TestNewGCSStorage(t *testing.T) {
 	}
 }
 
-func TestReadRange(t *testing.T) {
+func createGCSStore(t *testing.T) *GCSStorage {
+	t.Helper()
 	require.True(t, intest.InTest)
 	ctx := context.Background()
 
@@ -451,9 +452,18 @@ func TestReadRange(t *testing.T) {
 		HTTPClient:       server.HTTPClient(),
 	})
 	require.NoError(t, err)
+	return stg
+}
+
+func TestReadRange(t *testing.T) {
+	require.True(t, intest.InTest)
+	ctx := context.Background()
+
+	stg := createGCSStore(t)
+	defer stg.Close()
 
 	filename := "key"
-	err = stg.WriteFile(ctx, filename, []byte("0123456789"))
+	err := stg.WriteFile(ctx, filename, []byte("0123456789"))
 	require.NoError(t, err)
 
 	start := int64(2)
@@ -606,4 +616,16 @@ func TestCtxUsage(t *testing.T) {
 	_, err = stg.FileExists(ctx, "key")
 	// before the fix, it's context canceled error
 	require.ErrorContains(t, err, "invalid_request")
+}
+
+func TestDeleteFiles(t *testing.T) {
+	ctx := context.Background()
+
+	stg := createGCSStore(t)
+	defer stg.Close()
+
+	filename := "key"
+	err := stg.WriteFile(ctx, filename, []byte("0123456789"))
+	require.NoError(t, err)
+	require.NoError(t, stg.DeleteFiles(ctx, []string{filename, "not-exist-file"}))
 }

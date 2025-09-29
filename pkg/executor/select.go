@@ -284,10 +284,15 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	lockWaitTime := e.Ctx().GetSessionVars().LockWaitTimeout
-	if e.Lock.LockType == ast.SelectLockForUpdateNoWait || e.Lock.LockType == ast.SelectLockForShareNoWait {
+	switch e.Lock.LockType {
+	case ast.SelectLockForUpdateNoWait, ast.SelectLockForShareNoWait:
 		lockWaitTime = tikvstore.LockNoWait
-	} else if e.Lock.LockType == ast.SelectLockForUpdateWaitN {
+	case ast.SelectLockForUpdateWaitN:
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
+	}
+
+	if err := checkMaxExecutionTimeExceeded(e.Ctx()); err != nil {
+		return err
 	}
 
 	for id := range e.tblID2Handle {
@@ -300,6 +305,40 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return doLockKeys(ctx, e.Ctx(), lockCtx, e.keys...)
 }
 
+// checkMaxExecutionTimeExceeded validates whether the current statement already hit the
+// max_execution_time limit. Centralized here so different executors share the same behaviour.
+func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
+	if sctx == nil {
+		return nil
+	}
+
+	sessVars := sctx.GetSessionVars()
+	if sessVars == nil {
+		return nil
+	}
+
+	if !sessVars.StmtCtx.InSelectStmt {
+		return nil
+	}
+
+	maxExecTimeMS := sessVars.GetMaxExecutionTime()
+	if maxExecTimeMS == 0 {
+		return nil
+	}
+
+	processInfo := sctx.ShowProcess()
+	if processInfo == nil || processInfo.Time.IsZero() {
+		return nil
+	}
+
+	elapsed := time.Since(processInfo.Time)
+	if elapsed >= time.Duration(maxExecTimeMS)*time.Millisecond {
+		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
+	}
+
+	return nil
+}
+
 func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
 	seVars := sctx.GetSessionVars()
 	forUpdateTS, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
@@ -309,6 +348,15 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.SQLKiller.Signal
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
+
+	// Set max_execution_time deadline for SELECT statements
+	if seVars.StmtCtx.InSelectStmt && seVars.GetMaxExecutionTime() > 0 {
+		if processInfo := sctx.ShowProcess(); processInfo != nil {
+			maxExecTimeMs := time.Duration(seVars.GetMaxExecutionTime()) * time.Millisecond
+			lockCtx.MaxExecutionDeadline = processInfo.Time.Add(maxExecTimeMs)
+		}
+	}
+
 	lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {
 		if req == nil {
 			return nil
@@ -323,7 +371,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 			}
 			_, planDigest := seVars.StmtCtx.GetPlanDigest()
 
-			return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceIDBySettings()).
+			return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).
 				SetPlanDigest(planDigest).
 				SetSQLDigest(digest).
 				EncodeTagWithKey(mutation.Key)
@@ -566,7 +614,7 @@ func init() {
 			return nil, err
 		}
 
-		e := newExecutorBuilder(sctx, is)
+		e := newExecutorBuilder(sctx, is, nil)
 		executor := e.build(p)
 		if e.err != nil {
 			return nil, e.err
@@ -975,7 +1023,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, -1)
 	}
-	logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
+	sessDom := domain.GetDomain(ctx)
+	var logOnQueryExceedMemQuota func(uint64)
+	if sessDom != nil {
+		logOnQueryExceedMemQuota = sessDom.ExpensiveQueryHandle().LogOnQueryExceedMemQuota
+	}
 	switch vardef.OOMAction.Load() {
 	case vardef.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: vars.ConnectionID, Killer: vars.MemTracker.Killer}
@@ -1027,7 +1079,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InExplainStmt = true
 		sc.ExplainFormat = explainStmt.Format
 		sc.InExplainAnalyzeStmt = explainStmt.Analyze
-		sc.IgnoreExplainIDSuffix = strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief
+		sc.IgnoreExplainIDSuffix = strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief || strings.ToLower(explainStmt.Format) == types.ExplainFormatPlanTree
 		sc.InVerboseExplain = strings.ToLower(explainStmt.Format) == types.ExplainFormatVerbose
 		s = explainStmt.Stmt
 	} else {

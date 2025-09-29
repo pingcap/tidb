@@ -24,7 +24,7 @@ import (
 
 // allConstants checks if only the expression has only constants.
 func allConstants(ctx expression.BuildContext, expr expression.Expression) bool {
-	if expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{expr}) {
+	if expression.MaybeOverOptimized4PlanCache(ctx, expr) {
 		return false // expression contains non-deterministic parameter
 	}
 	switch v := expr.(type) {

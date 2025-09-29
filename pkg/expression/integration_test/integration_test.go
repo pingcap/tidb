@@ -685,8 +685,8 @@ func TestVectorConstantExplain(t *testing.T) {
 	fmt.Println("++++")
 	// Don't check planTree directly, because it contains execution time info which is not fixed after open/close time is included
 	require.True(t, strings.Contains(planTree, `	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3`))
-	require.True(t, strings.Contains(planTree, `	└─TableReader_5    	root     	10000  	data:TableFullScan_4`))
-	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
+	require.True(t, strings.Contains(planTree, `	└─TableReader_6    	root     	10000  	data:TableFullScan_5`))
+	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_5	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
 	// No need to check result at all.
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
 }
@@ -1950,26 +1950,31 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 }
 
 func TestTiDBEncodeKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
 	tk.MustExec("insert into t values (1, 1);")
-	err := tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	err = tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
 	require.ErrorContains(t, err, "doesn't exist")
 	tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").
-		Check(testkit.Rows("7480000000000000705f728000000000000001"))
+		Check(testkit.Rows(fmt.Sprintf("74800000000000%04x5f728000000000000001", tbl.Meta().ID)))
 
 	tk.MustExec("alter table t add index i(b);")
 	err = tk.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "index not found")
 	tk.MustQuery("select tidb_encode_index_key('test', 't', 'i', 1, 1);").
-		Check(testkit.Rows("7480000000000000705f698000000000000001038000000000000001038000000000000001"))
+		Check(testkit.Rows(fmt.Sprintf("74800000000000%04x5f698000000000000001038000000000000001038000000000000001", tbl.Meta().ID)))
 
 	tk.MustExec("create table t1 (a int primary key, b int) partition by hash(a) partitions 4;")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
 	tk.MustExec("insert into t1 values (1, 1);")
-	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000755f728000000000000001"))
-	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000007f5f728000000000000001');")
+	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows(
+		fmt.Sprintf("74800000000000%04x5f728000000000000001", tbl.Meta().ID+2)))
+	rs := tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('74800000000000%04x5f728000000000000001');", tbl.Meta().ID+2))
 	mvccInfo := rs.Rows()[0][0].(string)
 	require.NotEqual(t, mvccInfo, `{"info":{}}`)
 
@@ -1978,14 +1983,15 @@ func TestTiDBEncodeKey(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	err = tk2.Session().Auth(&auth.UserIdentity{Username: "alice", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
-	err = tk2.QueryToErr("select tidb_mvcc_info('74800000000000007f5f728000000000000001');")
+	err = tk2.QueryToErr(fmt.Sprintf("select tidb_mvcc_info('74800000000000%04x5f728000000000000001');", tbl.Meta().ID+2))
 	require.ErrorContains(t, err, "Access denied")
 	err = tk2.QueryToErr("select tidb_encode_record_key('test', 't1(p1)', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	err = tk2.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	tk.MustExec("grant select on test.t1 to 'alice'@'%';")
-	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000755f728000000000000001"))
+	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows(
+		fmt.Sprintf("74800000000000%04x5f728000000000000001", tbl.Meta().ID+2)))
 }
 
 func TestIssue9710(t *testing.T) {
@@ -2097,7 +2103,7 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	// CastTimeAsString pushed to TiKV but CastTimeAsDuration not pushed
 	rows = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE CAST(b AS CHAR) = '10:00:00';").Rows()
 	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(cast(test.t.b, var_string(5)), \"10:00:00\")", fmt.Sprintf("%v", rows[1][4]))
+	require.Equal(t, "eq(cast(test.t.b, var_string(10)), \"10:00:00\")", fmt.Sprintf("%v", rows[1][4]))
 
 	rows = tk.MustQuery("explain format = 'brief' select * from test.t where hour(b) > 10").Rows()
 	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
@@ -2737,8 +2743,8 @@ func TestCompareBuiltin(t *testing.T) {
 	result = tk.MustQuery("desc select a = a from t")
 	result.Check(testkit.Rows(
 		"Projection_3 10000.00 root  eq(test.t.a, test.t.a)->Column#3",
-		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
-		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─TableReader_6 10000.00 root  data:TableFullScan_5",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// for interval
@@ -4424,4 +4430,18 @@ func TestIssue57608(t *testing.T) {
 			"<nil> <nil> <nil>",
 		))
 	}
+}
+
+// This is a testcase for issue #57608, which is to ensure that the return type
+// of expression is deep copied correctly when it needs to be modified.
+func TestDeepCopyRetType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t0(c0 int);")
+	tk.MustExec("create table t1(c0 decimal);")
+	tk.MustExec("insert into t1(c0) values (1687);")
+	tk.MustExec("insert  into t0(c0) values (0);")
+	tk.MustExec("create view v0(c0) as select cast((t1.c0 div t1.c0) as decimal) from t1;")
+	tk.MustQuery("select * from v0 inner join t0 on (v0.c0 like cast(v0.c0 as char) <= t0.c0) and (not atan2(t0.c0, v0.c0));").Check(testkit.Rows())
 }

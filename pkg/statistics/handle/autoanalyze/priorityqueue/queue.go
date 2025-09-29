@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -214,7 +215,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			return err
 		}
 
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 		// Get current timestamp from the session context.
 		currentTs, err := statsutil.GetStartTS(sctx)
 		if err != nil {
@@ -236,7 +237,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			func(info *model.TableInfo) error {
 				// Ignore the memory and system database.
 				db, ok := is.SchemaByID(info.DBID)
-				if !ok || util.IsMemOrSysDB(db.Name.L) {
+				if !ok || metadef.IsMemOrSysDB(db.Name.L) {
 					return nil
 				}
 				tbls = append(tbls, info)
@@ -252,7 +253,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			verifyTbls := make([]*model.TableInfo, 0, 512)
 			for _, db := range dbs {
 				// Ignore the memory and system database.
-				if util.IsMemOrSysDB(db.L) {
+				if metadef.IsMemOrSysDB(db.L) {
 					continue
 				}
 
@@ -278,9 +279,14 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 
 			pi := tblInfo.GetPartitionInfo()
 			if pi == nil {
+				stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
+				if !found {
+					continue
+				}
+
 				job := jobFactory.CreateNonPartitionedTableAnalysisJob(
 					tblInfo,
-					pq.statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
+					stats,
 				)
 				err := pq.pushWithoutLock(job)
 				if err != nil {
@@ -296,7 +302,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 					partitionDefs = append(partitionDefs, def)
 				}
 			}
-			partitionStats := GetPartitionStats(pq.statsHandle, tblInfo, partitionDefs)
+			partitionStats := GetPartitionStats(pq.statsHandle, partitionDefs)
 			// If the prune mode is static, we need to analyze every partition as a separate table.
 			if pruneMode == variable.Static {
 				for pIDAndName, stats := range partitionStats {
@@ -311,9 +317,13 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 					}
 				}
 			} else {
+				globalStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
+				if !found {
+					continue
+				}
 				job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 					tblInfo,
-					pq.statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
+					globalStats,
 					partitionStats,
 				)
 				err := pq.pushWithoutLock(job)
@@ -433,7 +443,7 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 		return errors.Trace(err)
 	}
 	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 
 	var job AnalysisJob
@@ -466,6 +476,7 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 	}
 	return pq.pushWithoutLock(job)
 }
+
 func (pq *AnalysisPriorityQueue) tryCreateJob(
 	is infoschema.InfoSchema,
 	stats *statistics.Table,
@@ -550,17 +561,23 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 					filteredPartitionDefs = append(filteredPartitionDefs, def)
 				}
 			}
-			partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, filteredPartitionDefs)
+
+			// Get global stats for dynamic partitioned table.
+			globalStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableMeta.ID)
+			if !found {
+				return nil
+			}
+			partitionStats := GetPartitionStats(pq.statsHandle, filteredPartitionDefs)
 			job = jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 				tableMeta,
-				// Get global stats for dynamic partitioned table.
-				pq.statsHandle.GetTableStatsForAutoAnalyze(tableMeta),
+				globalStats,
 				partitionStats,
 			)
 		}
 	}
 	return job
 }
+
 func (pq *AnalysisPriorityQueue) tryUpdateJob(
 	is infoschema.InfoSchema,
 	stats *statistics.Table,
@@ -588,7 +605,7 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 		tableMeta := tableInfo.Meta()
 		partitionedTable := tableMeta.GetPartitionInfo()
 		partitionDefs := partitionedTable.Definitions
-		partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, partitionDefs)
+		partitionStats := GetPartitionStats(pq.statsHandle, partitionDefs)
 		return jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 			tableMeta,
 			stats,
@@ -626,7 +643,7 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 			}
 		}()
 
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 		for tableID := range pq.syncFields.mustRetryJobs {
 			// Note: Delete the job first to ensure it can be added back to the queue
 			delete(pq.syncFields.mustRetryJobs, tableID)
@@ -728,6 +745,7 @@ func (pq *AnalysisPriorityQueue) Push(job AnalysisJob) error {
 
 	return pq.pushWithoutLock(job)
 }
+
 func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {
 	if job == nil {
 		return nil

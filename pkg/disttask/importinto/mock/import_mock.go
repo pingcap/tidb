@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	backend "github.com/pingcap/tidb/pkg/lightning/backend"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -46,15 +47,15 @@ func (m *MockMiniTaskExecutor) ISGOMOCK() struct{} {
 }
 
 // Run mocks base method.
-func (m *MockMiniTaskExecutor) Run(arg0 context.Context, arg1, arg2 backend.EngineWriter) error {
+func (m *MockMiniTaskExecutor) Run(arg0 context.Context, arg1, arg2 backend.EngineWriter, arg3 execute.Collector) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Run", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "Run", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Run indicates an expected call of Run.
-func (mr *MockMiniTaskExecutorMockRecorder) Run(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockMiniTaskExecutorMockRecorder) Run(arg0, arg1, arg2, arg3 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockMiniTaskExecutor)(nil).Run), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockMiniTaskExecutor)(nil).Run), arg0, arg1, arg2, arg3)
 }

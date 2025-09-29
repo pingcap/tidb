@@ -51,7 +51,7 @@ type balancer struct {
 
 func newBalancer(param Param) *balancer {
 	logger := logutil.ErrVerboseLogger()
-	if intest.InTest {
+	if intest.EnableInternalCheck {
 		logger = logger.With(zap.String("server-id", param.serverID))
 	}
 	return &balancer{
@@ -84,10 +84,11 @@ func (b *balancer) balance(ctx context.Context, sm *Manager) {
 
 	schedulers := sm.getSchedulers()
 	for _, sch := range schedulers {
-		nodeIDs := filterByScope(managedNodes, sch.GetTask().TargetScope)
+		task := sch.GetTask()
+		nodeIDs := filterByScope(managedNodes, task.TargetScope)
 		if err := b.balanceSubtasks(ctx, sch, nodeIDs); err != nil {
 			b.logger.Warn("failed to balance subtasks",
-				zap.Int64("task-id", sch.GetTask().ID), llog.ShortError(err))
+				zap.Int64("task-id", task.ID), zap.String("task-key", task.Key), llog.ShortError(err))
 			return
 		}
 	}
@@ -179,6 +180,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, elig
 		if _, ok := adjustedNodeMap[node]; !ok {
 			b.logger.Info("dead node or not have enough slots, schedule subtasks away",
 				zap.Int64("task-id", task.ID),
+				zap.String("task-key", task.Key),
 				zap.String("node", node),
 				zap.Int("slot-capacity", b.slotMgr.getCapacity()),
 				zap.Int("used-slots", b.currUsedSlots[node]))
