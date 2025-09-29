@@ -277,8 +277,8 @@ func (p *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	if p.Table != nil {
 		clonedScan.Table = p.Table.Clone()
 	}
-	clonedScan.Columns = sliceutil.SliceDeepClone(p.Columns)
-	clonedScan.Ranges = sliceutil.SliceDeepClone(p.Ranges)
+	clonedScan.Columns = sliceutil.DeepClone(p.Columns)
+	clonedScan.Ranges = sliceutil.DeepClone(p.Ranges)
 	clonedScan.TableAsName = p.TableAsName
 	clonedScan.RangeInfo = p.RangeInfo
 	if p.runtimeFilterList != nil {

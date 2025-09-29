@@ -140,7 +140,7 @@ func (p *PhysicalSort) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bo
 		return nil, false
 	}
 	cloned.BasePhysicalPlan = *basePlan
-	cloned.ByItems = sliceutil.SliceDeepClone(p.ByItems)
+	cloned.ByItems = sliceutil.DeepClone(p.ByItems)
 	return cloned, true
 }
 

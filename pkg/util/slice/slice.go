@@ -37,9 +37,9 @@ func Int64sToStrings(ints []int64) []string {
 	return strs
 }
 
-// SliceDeepClone uses Clone() to clone a slice.
+// DeepClone uses Clone() to clone a slice.
 // The elements in the slice must implement func (T) Clone() T.
-func SliceDeepClone[T interface{ Clone() T }](s []T) []T {
+func DeepClone[T interface{ Clone() T }](s []T) []T {
 	if s == nil {
 		return nil
 	}

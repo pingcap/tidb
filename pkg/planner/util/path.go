@@ -144,7 +144,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		IdxCols:                      CloneCols(path.IdxCols),
 		IdxColLens:                   slices.Clone(path.IdxColLens),
 		ConstCols:                    slices.Clone(path.ConstCols),
-		Ranges:                       sliceutil.SliceDeepClone(path.Ranges),
+		Ranges:                       sliceutil.DeepClone(path.Ranges),
 		CountAfterAccess:             path.CountAfterAccess,
 		MinCountAfterAccess:          path.MinCountAfterAccess,
 		MaxCountAfterAccess:          path.MaxCountAfterAccess,
@@ -171,12 +171,12 @@ func (path *AccessPath) Clone() *AccessPath {
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
 	}
-	ret.PartialIndexPaths = sliceutil.SliceDeepClone(path.PartialIndexPaths)
+	ret.PartialIndexPaths = sliceutil.DeepClone(path.PartialIndexPaths)
 	ret.PartialAlternativeIndexPaths = make([][][]*AccessPath, 0, len(path.PartialAlternativeIndexPaths))
 	for _, oneORBranch := range path.PartialAlternativeIndexPaths {
 		clonedORBranch := make([][]*AccessPath, 0, len(oneORBranch))
 		for _, oneAlternative := range oneORBranch {
-			clonedOneAlternative := sliceutil.SliceDeepClone(oneAlternative)
+			clonedOneAlternative := sliceutil.DeepClone(oneAlternative)
 			clonedORBranch = append(clonedORBranch, clonedOneAlternative)
 		}
 		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, clonedORBranch)

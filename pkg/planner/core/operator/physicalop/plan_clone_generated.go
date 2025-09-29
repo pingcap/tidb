@@ -108,7 +108,7 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	if op.HandleCols != nil {
 		cloned.HandleCols = op.HandleCols.Clone()
 	}
-	cloned.ByItems = sliceutil.SliceDeepClone(op.ByItems)
+	cloned.ByItems = sliceutil.DeepClone(op.ByItems)
 	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	if op.SampleInfo != nil {
 		return nil, false
@@ -140,7 +140,7 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	if op.GenExprs != nil {
 		return nil, false
 	}
-	cloned.ByItems = sliceutil.SliceDeepClone(op.ByItems)
+	cloned.ByItems = sliceutil.DeepClone(op.ByItems)
 	if op.PkIsHandleCol != nil {
 		if op.PkIsHandleCol.SafeToShareAcrossSession() {
 			cloned.PkIsHandleCol = op.PkIsHandleCol
@@ -188,8 +188,8 @@ func (op *PhysicalTopN) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 		return nil, false
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.ByItems = sliceutil.SliceDeepClone(op.ByItems)
-	cloned.PartitionBy = sliceutil.SliceDeepClone(op.PartitionBy)
+	cloned.ByItems = sliceutil.DeepClone(op.ByItems)
+	cloned.PartitionBy = sliceutil.DeepClone(op.PartitionBy)
 	return cloned, true
 }
 
@@ -202,7 +202,7 @@ func (op *PhysicalLimit) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, 
 		return nil, false
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.PartitionBy = sliceutil.SliceDeepClone(op.PartitionBy)
+	cloned.PartitionBy = sliceutil.DeepClone(op.PartitionBy)
 	return cloned, true
 }
 
@@ -355,7 +355,7 @@ func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
 	cloned.PushedLimit = op.PushedLimit.Clone()
-	cloned.ByItems = sliceutil.SliceDeepClone(op.ByItems)
+	cloned.ByItems = sliceutil.DeepClone(op.ByItems)
 	PartialPlansRaw, ok := ClonePhysicalPlansForPlanCache(newCtx, op.PartialPlansRaw)
 	if !ok {
 		return nil, false
