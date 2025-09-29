@@ -43,6 +43,11 @@ var (
 	DefaultOneWriterBlockSize = int(defaultOneWriterMemSizeLimit)
 )
 
+const (
+	UploadPartSizeDivisor = 5000 // Used to calculate the size of each uploaded part
+	logPartNumInterval    = 999  // log the part num every 999 parts.
+)
+
 // OneFileWriter is used to write data into external storage
 // with only one file for data and stat.
 type OneFileWriter struct {
@@ -87,8 +92,7 @@ type OneFileWriter struct {
 	logger   *zap.Logger
 	partSize int64
 
-	lastLogWriteSize int64
-	totalWriteSize   int64
+	lastLogWriteSize uint64
 }
 
 // initWriter inits the underlying dataFile/statFile path, dataWriter/statWriter for OneFileWriter.
@@ -154,15 +158,14 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
 	defer func() {
-		w.totalWriteSize += int64(len(idxVal))
-		if (w.totalWriteSize-w.lastLogWriteSize)/w.partSize >= 999 {
+		if (w.totalSize-w.lastLogWriteSize)/uint64(w.partSize) >= logPartNumInterval {
 			w.logger.Info("one file writer progress",
 				zap.String("writerID", w.writerID),
 				zap.Int64("partSize", w.partSize),
-				zap.Int64("estimatePartNum", w.totalWriteSize/w.partSize),
-				zap.Int64("totalWriteSize", w.totalWriteSize),
+				zap.Uint64("totalSize", w.totalSize),
+				zap.Uint64("estimatePartNum", w.totalSize/uint64(w.partSize)),
 			)
-			w.lastLogWriteSize = w.totalWriteSize
+			w.lastLogWriteSize = w.totalSize
 		}
 	}()
 	if w.onDup != common.OnDuplicateKeyIgnore {
