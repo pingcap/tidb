@@ -1561,16 +1561,16 @@ func approxNormalizedSQLTokenCnt(sql string, hasSelect bool) (tokenCnt int64) { 
 	n := 0
 	hasSelectFrom := false
 	for i, c := range sql {
-		if 'a' <= c && c <= 'z' || '0' <= c && c <= '9' || c == '_' {
+		if 'a' <= c && c <= 'z' || '0' <= c && c <= '9' || c == '_' || c == '`' || c == '.' {
 			n++
 			continue
 		}
 		if n > 0 {
-			n = 0
 			tokenCnt++
 			if hasSelect && !hasSelectFrom && n == lenTokenFrom && sql[i-lenTokenFrom:i] == tokenFrom {
 				hasSelectFrom = true
 			}
+			n = 0
 		}
 		if c == '?' {
 			tokenCnt++
