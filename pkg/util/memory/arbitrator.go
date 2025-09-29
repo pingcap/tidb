@@ -66,8 +66,8 @@ const (
 	defHeapReclaimCheckMaxDuration            = time.Second * 5
 	defOOMRiskRatio                           = 0.95
 	defMemRiskRatio                           = 0.9
-	defTickDurMilli                           = kilo * 1
-	defStorePoolMediumCapDurilli              = defTickDurMilli * 10
+	defTickDurMilli                           = kilo * 1             // 1s
+	defStorePoolMediumCapDurMilli             = defTickDurMilli * 10 // 10s
 	defTrackMemStatsDurMilli                  = kilo * 1
 	defMax                             int64  = 9e15
 	defServerlimitSmallLimitNum               = 1000
@@ -2358,7 +2358,7 @@ func (m *MemArbitrator) tryStorePoolMediumCapacity(utimeMilli int64, capacity in
 		return false
 	}
 	if lastState := m.lastMemState(); lastState == nil ||
-		(m.poolAllocStats.lastUpdateUtimeMilli.Load()+defStorePoolMediumCapDurilli <= utimeMilli &&
+		(m.poolAllocStats.lastUpdateUtimeMilli.Load()+defStorePoolMediumCapDurMilli <= utimeMilli &&
 			lastState.PoolMediumCap != capacity) {
 		var memState *RuntimeMemStateV1
 

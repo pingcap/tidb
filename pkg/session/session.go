@@ -1428,9 +1428,24 @@ func (s *session) GetTiDBTableValue(name string) (string, error) {
 var _ sqlexec.SQLParser = &session{}
 
 const (
-	coreSQLToken     = 1 << 0
-	bypassSQLToken   = 1 << 1
-	isSelectSQLToken = 1 << 2
+	coreSQLToken = 1 << iota
+	bypassSQLToken
+	isSelectSQLToken
+
+	defOOMRiskCheckDur   = time.Millisecond * 100 // 100ms: sleep duration when mem-arbitrator is at memory risk
+	defSuffixSplitDot    = ", "
+	defSuffixParseSQL    = defSuffixSplitDot + "path=ParseSQL"
+	defSuffixCompilePlan = defSuffixSplitDot + "path=CompilePlan"
+
+	// mem quota for compiling plan per token.
+	// 1. prepare tpc-c
+	// 2. run tpc-c workload with multiple threads for a few minutes
+	// 3. observe the memory consumption of TiDB instance without copr-cache
+	// 4. calculate the average memory consumption of compiling plan per token
+	defCompilePlanQuotaPerToken = 75761
+
+	// mem quota for parsing SQL per token (similar method as above)
+	defParseSQLQuotaPerToken = 25161
 )
 
 var keySQLToken = map[string]int{
@@ -1476,6 +1491,7 @@ func approxSQLTokenCnt(sql string) (tokenCnt int64) {
 					if !hasSelect {
 						return 0
 					}
+					// expect `from` after `select`
 				}
 				buffer.n = 0
 			}
@@ -1533,36 +1549,42 @@ func approxSQLTokenCnt(sql string) (tokenCnt int64) {
 	if f {
 		tokenCnt++
 	}
-	if hasSelect && !hitCoreToken { // expect `select ... from ...`
-		return -1
+	if !hitCoreToken {
+		return 0
 	}
 	return
 }
 
-func approxNormalizedSQLTokenCnt(sql string) (tokenCnt int64) { // only for normalized SQL
-	f := false
-	for _, c := range sql {
+func approxNormalizedSQLTokenCnt(sql string, hasSelect bool) (tokenCnt int64) { // only for normalized SQL
+	const tokenFrom = "from"
+	const lenTokenFrom = len(tokenFrom)
+	n := 0
+	hasSelectFrom := false
+	for i, c := range sql {
 		if 'a' <= c && c <= 'z' || '0' <= c && c <= '9' || c == '_' {
-			f = true
+			n++
 			continue
 		}
-		if f {
-			f = false
+		if n > 0 {
+			n = 0
 			tokenCnt++
+			if hasSelect && !hasSelectFrom && n == lenTokenFrom && sql[i-lenTokenFrom:i] == tokenFrom {
+				hasSelectFrom = true
+			}
 		}
 		if c == '?' {
 			tokenCnt++
 			continue
 		}
 	}
-	if f {
+	if n > 0 {
 		tokenCnt++
+	}
+	if hasSelect && !hasSelectFrom {
+		return 0
 	}
 	return
 }
-
-// ignore: select @?; select expr;
-const validMinTokenCntForArbitrator = 3
 
 func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	globalMemArbitrator := memory.GlobalMemArbitrator()
@@ -1570,13 +1592,10 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 	execUseArbitrator := false
 	commonMemQuota := int64(0)
 	if globalMemArbitrator != nil && s.sessionVars.ConnectionID != 0 {
-		s.sessionVars.MemArbitrator.TokenCnt = 0
 		if s.sessionVars.MemArbitrator.WaitAverse != variable.MemArbitratorNolimit {
-			tokenCnt := approxSQLTokenCnt(sql)
-			s.sessionVars.MemArbitrator.TokenCnt = tokenCnt
-			if tokenCnt >= validMinTokenCntForArbitrator {
+			if tokenCnt := approxSQLTokenCnt(sql); tokenCnt > 0 {
 				execUseArbitrator = true
-				commonMemQuota = tokenCnt * 25161
+				commonMemQuota = tokenCnt * defParseSQLQuotaPerToken
 			}
 		}
 	}
@@ -1586,11 +1605,11 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 		intoErrBeforeExec := func() error {
 			if s.sessionVars.MemArbitrator.WaitAverse == variable.MemArbitratorWaitAverseEnable {
 				metrics.GlobalMemArbitratorSubTasks.CancelWaitAverseParse.Inc()
-				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorWaitAverseCancel.String()+", path=ParseSQL", uid)
+				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorWaitAverseCancel.String()+defSuffixParseSQL, uid)
 			}
 			if arbitratorMode == memory.ArbitratorModeStandard {
 				metrics.GlobalMemArbitratorSubTasks.CancelStandardModeParse.Inc()
-				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorStandardCancel.String()+", path=ParseSQL", uid)
+				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorStandardCancel.String()+defSuffixParseSQL, uid)
 			}
 			return nil
 		}
@@ -1602,9 +1621,9 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 			for globalMemArbitrator.AtMemRisk() {
 				if globalMemArbitrator.AtOOMRisk() {
 					metrics.GlobalMemArbitratorSubTasks.ForceKillParse.Inc()
-					return nil, nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+", path=ParseSQL", uid)
+					return nil, nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+defSuffixParseSQL, uid)
 				}
-				time.Sleep(time.Millisecond)
+				time.Sleep(defOOMRiskCheckDur)
 			}
 		}
 
@@ -2352,15 +2371,13 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	execUseArbitrator := globalMemArbitrator != nil && sessVars.ConnectionID != 0 &&
 		sessVars.MemArbitrator.WaitAverse != variable.MemArbitratorNolimit &&
 		sessVars.StmtCtx.MemSensitive
+	commonMemQuota := int64(0) // mem quota for compiler & optimizer
 	if execUseArbitrator {
-		if sessVars.MemArbitrator.TokenCnt == 0 {
-			sessVars.MemArbitrator.TokenCnt = approxNormalizedSQLTokenCnt(normalizedSQL)
-		}
-		if sessVars.MemArbitrator.TokenCnt < validMinTokenCntForArbitrator {
-			execUseArbitrator = false
-		}
+		tokenCnt := approxNormalizedSQLTokenCnt(normalizedSQL, sessVars.StmtCtx.InSelectStmt)
+		commonMemQuota = defCompilePlanQuotaPerToken * tokenCnt
+		execUseArbitrator = tokenCnt > 0
 	}
-	commonMemQuota := int64(0)     // mem quota for parser & compiler & optimizer
+
 	releaseCommonQuota := func() { // release common quota
 		if commonMemQuota > 0 {
 			_ = globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, -commonMemQuota)
@@ -2369,15 +2386,14 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	if execUseArbitrator {
-		commonMemQuota = 75761 * sessVars.MemArbitrator.TokenCnt
 		intoErrBeforeExec := func() error {
 			if enableWaitAverse {
 				metrics.GlobalMemArbitratorSubTasks.CancelWaitAversePlan.Inc()
-				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorWaitAverseCancel.String()+", path=CompilePlan", sessVars.ConnectionID)
+				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorWaitAverseCancel.String()+defSuffixCompilePlan, sessVars.ConnectionID)
 			}
 			if arbitratorMode == memory.ArbitratorModeStandard {
 				metrics.GlobalMemArbitratorSubTasks.CancelStandardModePlan.Inc()
-				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorStandardCancel.String()+", path=CompilePlan", sessVars.ConnectionID)
+				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorStandardCancel.String()+defSuffixCompilePlan, sessVars.ConnectionID)
 			}
 			return nil
 		}
@@ -2389,9 +2405,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			for globalMemArbitrator.AtMemRisk() {
 				if globalMemArbitrator.AtOOMRisk() {
 					metrics.GlobalMemArbitratorSubTasks.ForceKillPlan.Inc()
-					return nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+", path=CompilePlan", sessVars.ConnectionID)
+					return nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+defSuffixCompilePlan, sessVars.ConnectionID)
 				}
-				time.Sleep(time.Millisecond)
+				time.Sleep(defOOMRiskCheckDur)
 			}
 		}
 

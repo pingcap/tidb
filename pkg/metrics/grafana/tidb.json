@@ -25943,9 +25943,7 @@
           }
         },
         {
-          "aliasColors": {
-            "tracked-heap-10.2.12.124:10077": "semi-dark-blue"
-          },
+          "aliasColors": {},
           "bars": false,
           "dashLength": 10,
           "dashes": false,

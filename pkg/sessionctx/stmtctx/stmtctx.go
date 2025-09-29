@@ -269,9 +269,6 @@ type StatementContext struct {
 	InSetSessionStatesStmt bool
 	InShowWarning          bool
 
-	// MemSensitive indicates whether the mem usage of statement should be controlled by the global memory arbitrator.
-	MemSensitive bool
-
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler
 
@@ -316,6 +313,7 @@ type StatementContext struct {
 	Priority     mysql.PriorityEnum
 	NotFillCache bool
 	MemTracker   *memory.Tracker
+	MemSensitive bool // whether this statement is memory sensitive
 	DiskTracker  *disk.Tracker
 	// per statement resource group name
 	// hint /* +ResourceGroup(name) */ can change the statement group name

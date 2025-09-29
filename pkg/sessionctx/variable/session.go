@@ -1776,7 +1776,6 @@ type SessionVars struct {
 	MemArbitrator struct {
 		WaitAverse    MemArbitratorWaitAverseMode
 		QueryReserved int64
-		TokenCnt      int64 // -1: invalid, 0: unknown, >0: valid
 	}
 }
 
