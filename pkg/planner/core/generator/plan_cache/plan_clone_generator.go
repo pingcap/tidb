@@ -133,7 +133,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			structureName := strings.Split(f.Type.String(), ".")[1]
 			c.write("cloned.%v = Clone%v2DForPlanCache(op.%v)", f.Name, structureName, f.Name)
 		case "[]*ranger.Range", "[]*util.ByItems", "[]property.SortItem":
-			c.write("cloned.%v = sliceutil.SliceDeepClone(op.%v)", f.Name, f.Name)
+			c.write("cloned.%v = sliceutil.DeepClone(op.%v)", f.Name, f.Name)
 		case "[]model.CIStr",
 			"[]types.Datum", "[]kv.Handle", "[]*expression.Assignment":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
