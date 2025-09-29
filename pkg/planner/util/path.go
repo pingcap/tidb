@@ -105,8 +105,26 @@ type AccessPath struct {
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
+<<<<<<< HEAD
 	// IndexLookUpPushDownBy indicates whether to use index lookup push down optimization and where it is from.
 	IndexLookUpPushDownBy IndexLookUpPushDownByType
+=======
+	// Whether to use the index lookup push down optimization for this access path.
+	IsIndexLookUpPushDown bool
+
+	// GroupedRanges and GroupByColIdxs are used for the SortPropSatisfiedNeedMergeSort case from matchProperty().
+	// It's for queries like `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c` with index(a, b, c), where we need a
+	// merge sort on the 3 ranges to satisfy the ORDER BY b, c.
+
+	// GroupedRanges stores the result of grouping ranges by columns. Finally, we need a merge sort on the results of
+	// each range group.
+	GroupedRanges [][]*ranger.Range
+	// GroupByColIdxs stores the column indices used for grouping ranges when using merge sort to satisfy the physical
+	// property.
+	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
+	// It's used in plan cache or Apply.
+	GroupByColIdxs []int
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -141,7 +159,12 @@ func (path *AccessPath) Clone() *AccessPath {
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
+<<<<<<< HEAD
 		IndexLookUpPushDownBy:        path.IndexLookUpPushDownBy,
+=======
+		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
+		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
+>>>>>>> 8840daf4824 (planner, executor: support access path `keep order` with `IN` conditions using merge sort (#62694))
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
@@ -155,6 +178,9 @@ func (path *AccessPath) Clone() *AccessPath {
 			tmp = append(tmp, oneAlternative.Clone())
 		}
 		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, tmp)
+	}
+	for _, ranges := range path.GroupedRanges {
+		ret.GroupedRanges = append(ret.GroupedRanges, sliceutil.DeepClone(ranges))
 	}
 	return ret
 }
