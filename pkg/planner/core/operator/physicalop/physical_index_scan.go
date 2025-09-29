@@ -685,3 +685,44 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	}
 	return is
 }
+
+// ConvertToPartialIndexScan converts a DataSource to a PhysicalIndexScan for IndexMerge.
+func ConvertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
+	is := GetOriginalPhysicalIndexScan(ds, prop, path, matchProp, false)
+	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
+	indexConds := path.IndexFilters
+	if matchProp {
+		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
+			is.Columns = tmpColumns
+			is.SetSchema(tmpSchema)
+		}
+		// Add sort items for index scan for merge-sort operation between partitions.
+		is.ByItems = byItems
+	}
+
+	// Add a `Selection` for `IndexScan` with global index.
+	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
+	indexConds, err := is.AddSelectionConditionForGlobalIndex(ds, physPlanPartInfo, indexConds)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(indexConds) > 0 {
+		pushedFilters, remainingFilter := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), indexConds)
+		var selectivity float64
+		if path.CountAfterAccess > 0 {
+			selectivity = path.CountAfterIndex / path.CountAfterAccess
+		}
+		rowCount := is.StatsInfo().RowCount * selectivity
+		stats := &property.StatsInfo{RowCount: rowCount}
+		stats.StatsVersion = ds.StatisticTable.Version
+		if ds.StatisticTable.Pseudo {
+			stats.StatsVersion = statistics.PseudoVersion
+		}
+		indexPlan := PhysicalSelection{Conditions: pushedFilters}.Init(is.SCtx(), stats, ds.QueryBlockOffset())
+		indexPlan.SetChildren(is)
+		return indexPlan, remainingFilter, nil
+	}
+	return is, nil, nil
+}
