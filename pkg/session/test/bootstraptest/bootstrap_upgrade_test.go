@@ -984,9 +984,11 @@ func TestUpgradeBindInfo(t *testing.T) {
 	dom.Close()
 	newVer, err := session.BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = session.GetBootstrapVersion(seV251)
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seLatestV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
-	session.MustExec(t, seV251, "ADMIN RELOAD BINDINGS;")
+	session.MustExec(t, seLatestV, "ADMIN RELOAD BINDINGS;")
 	newVer.Close()
+	seLatestV.Close()
 }
