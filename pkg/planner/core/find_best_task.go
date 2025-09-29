@@ -1028,14 +1028,14 @@ func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
 	if rhs.path.MaxCountAfterAccess > rhs.path.CountAfterAccess {
 		rhsRiskRatio = rhs.path.MaxCountAfterAccess / rhs.path.CountAfterAccess
 	}
-	sumLhs := lhs.path.CountAfterAccess + lhs.path.MaxCountAfterAccess
-	sumRhs := rhs.path.CountAfterAccess + rhs.path.MaxCountAfterAccess
+	sumLHS := lhs.path.CountAfterAccess + lhs.path.MaxCountAfterAccess
+	sumRHS := rhs.path.CountAfterAccess + rhs.path.MaxCountAfterAccess
 	// lhs has lower risk
 	if lhsRiskRatio < rhsRiskRatio {
 		if lhs.path.CountAfterAccess <= rhs.path.CountAfterAccess {
 			return 1, lhsRiskRatio
 		}
-		if sumLhs < sumRhs && lhs.path.MinCountAfterAccess > 0 &&
+		if sumLHS < sumRHS && lhs.path.MinCountAfterAccess > 0 &&
 			(lhs.path.MinCountAfterAccess <= rhs.path.MinCountAfterAccess || lhs.path.CountAfterIndex <= rhs.path.CountAfterIndex) {
 			return 1, lhsRiskRatio
 		}
@@ -1045,7 +1045,7 @@ func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
 		if rhs.path.CountAfterAccess <= lhs.path.CountAfterAccess {
 			return -1, rhsRiskRatio
 		}
-		if sumRhs < sumLhs && rhs.path.MinCountAfterAccess > 0 &&
+		if sumRHS < sumLHS && rhs.path.MinCountAfterAccess > 0 &&
 			(rhs.path.MinCountAfterAccess <= lhs.path.MinCountAfterAccess || rhs.path.CountAfterIndex <= lhs.path.CountAfterIndex) {
 			return -1, rhsRiskRatio
 		}
