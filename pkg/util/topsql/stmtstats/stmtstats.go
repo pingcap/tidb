@@ -182,6 +182,10 @@ type StatementStatsItem struct {
 	// DurationCount represents the number of SQL executions specially
 	// used to calculate SQLDuration.
 	DurationCount uint64
+	// NetworkInBytes represents the total number of network input bytes from client.
+	NetworkInBytes uint64
+	// NetworkOutBytes represents the total number of network input bytes to client.
+	NetworkOutBytes uint64
 }
 
 // NewStatementStatsItem creates an empty StatementStatsItem.
@@ -205,6 +209,8 @@ func (i *StatementStatsItem) Merge(other *StatementStatsItem) {
 	i.ExecCount += other.ExecCount
 	i.SumDurationNs += other.SumDurationNs
 	i.DurationCount += other.DurationCount
+	i.NetworkInBytes += other.NetworkInBytes
+	i.NetworkOutBytes += other.NetworkOutBytes
 	i.KvStatsItem.Merge(other.KvStatsItem)
 }
 
