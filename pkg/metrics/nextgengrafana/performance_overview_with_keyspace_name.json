@@ -2687,7 +2687,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "gRPC message count",
+          "title": "GRPC Message Count",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -2835,7 +2835,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Average gRPC message duration",
+          "title": "Average GRPC Message Duration",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -2968,7 +2968,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "gRPC message duration P99",
+          "title": "GRPC Message Duration P99",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -3081,7 +3081,7 @@
           ],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Storage async write duration",
+          "title": "Storage Async Write Duration",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -3274,7 +3274,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Store duration",
+          "title": "Store Duration",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -3475,7 +3475,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Apply duration",
+          "title": "Apply Duration",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -3676,7 +3676,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "99% Commit log duration per server",
+          "title": "Commit Log Duration Per Server P99",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -3749,7 +3749,7 @@
           },
           "height": null,
           "hideTimeOverride": false,
-          "id": 207,
+          "id": 208,
           "interval": null,
           "isNew": true,
           "legend": {
@@ -3877,7 +3877,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "99% Apply log duration per server",
+          "title": "Apply Log Duration Per Server P99",
           "tooltip": {
             "msResolution": true,
             "shared": true,
