@@ -587,12 +587,12 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				rangeVersions = make([]uint64, 0, ranges.Len())
 				// If the rangeVersionMap is not nil, we need to get the version of each range.
 				ranges.Do(func(ran *kv.KeyRange) {
-					if ver, ok := opt.rangeVersionMap[ran.StartKey.AsString()]; ok {
-						rangeVersions = append(rangeVersions, ver)
-					} else {
+					ver, ok := opt.rangeVersionMap[ran.StartKey.AsString()]
+					if !ok {
 						// todo return error instead of panic
 						panic(fmt.Sprintf("rangeVersionMap is not nil, but no version found for range %s", ran))
 					}
+					rangeVersions = append(rangeVersions, ver)
 				})
 			}
 			task := &copTask{
