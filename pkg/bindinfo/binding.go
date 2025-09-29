@@ -109,7 +109,7 @@ func (b *Binding) UpdateLastSavedAt(ts *time.Time) {
 
 type bindingInfoUsageInfo struct {
 	// LastUsedAt records the last time when this binding is used.
-	// It is nil if this binding has never been used or has been reset after writing into storage.
+	// It is nil if this binding has never been used.
 	// It is updated when this binding is used.
 	// It is used to update the `last_used_time` field in mysql.bind_info table.
 	LastUsedAt atomic.Pointer[time.Time]
