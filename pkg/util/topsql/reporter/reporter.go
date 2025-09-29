@@ -281,13 +281,13 @@ func (t uint64Slice) Swap(i, j int) {
 
 // find_kth_uint64 finds the k-th largest ExecCount in data using quickselect algorithm.
 func find_kth_uint64(data stmtstats.StatementStatsMap, k int, u64_slice []uint64) uint64 {
-	var kth_exec_count uint64 = 0
+	var kth_exec_count uint64
 	if len(data) > k {
 		u64_slice = u64_slice[:0]
 		for _, item := range data {
 			u64_slice = append(u64_slice, item.ExecCount)
 		}
-		quickselect.QuickSelect(uint64Slice(u64_slice), k)
+		_ = quickselect.QuickSelect(uint64Slice(u64_slice), k)
 		kth_exec_count = u64_slice[0]
 		for i := range k {
 			kth_exec_count = min(kth_exec_count, u64_slice[i])
