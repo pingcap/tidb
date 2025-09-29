@@ -3307,6 +3307,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_googleapis_google_cloud_go_testing",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/googleapis/google-cloud-go-testing",
+        sha256 = "18f1d158d57805a172440020f3d2ea4c16b460cafe7ab3fe5c3ec7a66b44119e",
+        strip_prefix = "github.com/googleapis/google-cloud-go-testing@v0.0.0-20210719221736-1c9a4c676720",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/googleapis/google-cloud-go-testing/com_github_googleapis_google_cloud_go_testing-v0.0.0-20210719221736-1c9a4c676720.zip",
+            "http://ats.apps.svc/gomod/github.com/googleapis/google-cloud-go-testing/com_github_googleapis_google_cloud_go_testing-v0.0.0-20210719221736-1c9a4c676720.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/googleapis/google-cloud-go-testing/com_github_googleapis_google_cloud_go_testing-v0.0.0-20210719221736-1c9a4c676720.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/googleapis/google-cloud-go-testing/com_github_googleapis_google_cloud_go_testing-v0.0.0-20210719221736-1c9a4c676720.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_gophercloud_gophercloud",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/gophercloud/gophercloud",
@@ -4457,6 +4470,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/konsorten/go-windows-terminal-sequences/com_github_konsorten_go_windows_terminal_sequences-v1.0.1.zip",
             "https://cache.hawkingrei.com/gomod/github.com/konsorten/go-windows-terminal-sequences/com_github_konsorten_go_windows_terminal_sequences-v1.0.1.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/konsorten/go-windows-terminal-sequences/com_github_konsorten_go_windows_terminal_sequences-v1.0.1.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_kr_fs",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/kr/fs",
+        sha256 = "d376bd98e81aea34585fc3b04bab76363e9e87cde69383964e57e9779f2af81e",
+        strip_prefix = "github.com/kr/fs@v0.1.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/kr/fs/com_github_kr_fs-v0.1.0.zip",
+            "http://ats.apps.svc/gomod/github.com/kr/fs/com_github_kr_fs-v0.1.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/kr/fs/com_github_kr_fs-v0.1.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/kr/fs/com_github_kr_fs-v0.1.0.zip",
         ],
     )
     go_repository(
@@ -5887,6 +5913,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/pkg/profile/com_github_pkg_profile-v1.2.1.zip",
             "https://cache.hawkingrei.com/gomod/github.com/pkg/profile/com_github_pkg_profile-v1.2.1.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pkg/profile/com_github_pkg_profile-v1.2.1.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_pkg_sftp",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/pkg/sftp",
+        sha256 = "0cdf6bd0edef9db8137ce398c9bbe514713e42cf2d4d415b5025f4a3c33f249d",
+        strip_prefix = "github.com/pkg/sftp@v1.13.6",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pkg/sftp/com_github_pkg_sftp-v1.13.6.zip",
+            "http://ats.apps.svc/gomod/github.com/pkg/sftp/com_github_pkg_sftp-v1.13.6.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pkg/sftp/com_github_pkg_sftp-v1.13.6.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pkg/sftp/com_github_pkg_sftp-v1.13.6.zip",
         ],
     )
     go_repository(
