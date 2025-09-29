@@ -346,8 +346,8 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			hintOffs[hint.HintName.L] = i
 			maxExecutionTimeCnt++
 		case "nth_plan":
-			forceNthPlanCnt++
-			forceNthPlan = hint
+			warn := errors.NewNoStackErrorf("NTH_PLAN hint is deprecated")
+			warns = append(warns, warn)
 		case HintStraightJoin:
 			hintOffs[hint.HintName.L] = i
 			straightJoinHintCnt++
