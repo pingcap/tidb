@@ -796,6 +796,7 @@ childLoop:
 	return wrapper
 }
 
+
 // buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
 // IndexJoin if possible.
 // If the inner side of a index join is a TableScan, only one tuple will be
