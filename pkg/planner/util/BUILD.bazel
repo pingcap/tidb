@@ -25,7 +25,6 @@ go_library(
         "//pkg/planner/core/base",
         "//pkg/planner/funcdep",
         "//pkg/planner/planctx",
-        "//pkg/planner/property",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/tablecodec",
