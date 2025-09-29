@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -157,7 +156,7 @@ func (p *PhysicalCTE) MemoryUsage() (sum int64) {
 }
 
 // GetPlanCostVer2 implements PhysicalPlan interface.
-func (p *PhysicalCTE) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func (p *PhysicalCTE) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalCTE(p, taskType, option)
 }
 

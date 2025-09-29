@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -996,7 +997,7 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 	if bdrRole == string(ast.BDRRolePrimary) &&
-		deniedByBDRWhenModifyColumn(newCol.FieldType, col.FieldType, specNewColumn.Options) {
+		deniedByBDRWhenModifyColumn(newCol.FieldType, col.FieldType, specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
 		return nil, dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 	}
 

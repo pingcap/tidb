@@ -2218,6 +2218,10 @@ func TestTopSQLStatementStats4(t *testing.T) {
 }
 
 func TestTopSQLResourceTag(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(false)
+	})
 	ts, _, tagChecker, _ := setupForTestTopSQLStatementStats(t)
 	defer func() {
 		topsqlstate.DisableTopSQL()
@@ -2238,7 +2242,6 @@ func TestTopSQLResourceTag(t *testing.T) {
 			"33	33\n")
 	require.NoError(t, err)
 
-	// Test case for other statements
 	cases := []struct {
 		sql     string
 		isQuery bool

@@ -638,8 +638,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
-		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
-		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
+		// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
+		if !a.Ctx.GetSessionVars().StmtCtx.InSelectStmt {
 			maxExecutionTime = 0
 		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
@@ -1664,15 +1664,18 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
-	level := log.GetLevel()
-	cfg := config.GetGlobalConfig()
-	costTime := sessVars.GetTotalCostDuration()
-	threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
-	enable := cfg.Instance.EnableSlowLog.Load()
-	// if the level is Debug, or trace is enabled, print slow logs anyway
-	force := level <= zapcore.DebugLevel || trace.IsEnabled()
-	if (!enable || costTime < threshold) && !force {
-		return
+	var costTime, threshold time.Duration
+	if !stmtCtx.WriteSlowLog {
+		cfg := config.GetGlobalConfig()
+		level := log.GetLevel()
+		costTime = sessVars.GetTotalCostDuration()
+		threshold = time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
+		enable := cfg.Instance.EnableSlowLog.Load()
+		// if the level is Debug, or trace is enabled, print slow logs anyway
+		force := level <= zapcore.DebugLevel || trace.IsEnabled()
+		if (!enable || costTime < threshold) && !force {
+			return
+		}
 	}
 
 	var indexNames string
@@ -1729,7 +1732,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		TimeTotal:         costTime,
 		IndexNames:        indexNames,
 		CopTasks:          stmtCtx.CopTasksDetails(),
-		ExecDetail:        execDetail,
+		ExecDetail:        &execDetail,
 		MemMax:            sessVars.MemTracker.MaxConsumed(),
 		DiskMax:           sessVars.DiskTracker.MaxConsumed(),
 		Succ:              succ,
@@ -1744,7 +1747,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		KVExecDetail:      &tikvExecDetail,
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
 		ResultRows:        stmtCtx.GetResultRowsCount(),
-		ExecRetryCount:    a.retryCount,
+		ExecRetryCount:    uint64(a.retryCount),
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),

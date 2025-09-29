@@ -48,23 +48,23 @@ type TableKVEncoder struct {
 // exported for test.
 func NewTableKVEncoder(
 	config *encode.EncodingConfig,
-	ti *TableImporter,
+	ctrl *LoadDataController,
 ) (*TableKVEncoder, error) {
-	return newTableKVEncoderInner(config, ti, ti.FieldMappings, ti.InsertColumns)
+	return newTableKVEncoderInner(config, ctrl, ctrl.FieldMappings, ctrl.InsertColumns)
 }
 
 // NewTableKVEncoderForDupResolve creates a new TableKVEncoder for duplicate resolution.
 func NewTableKVEncoderForDupResolve(
 	config *encode.EncodingConfig,
-	ti *TableImporter,
+	ctrl *LoadDataController,
 ) (*TableKVEncoder, error) {
-	mappings, _ := ti.tableVisCols2FieldMappings()
-	return newTableKVEncoderInner(config, ti, mappings, ti.Table.VisibleCols())
+	mappings, _ := ctrl.tableVisCols2FieldMappings()
+	return newTableKVEncoderInner(config, ctrl, mappings, ctrl.Table.VisibleCols())
 }
 
 func newTableKVEncoderInner(
 	config *encode.EncodingConfig,
-	ti *TableImporter,
+	ctrl *LoadDataController,
 	fieldMappings []*FieldMapping,
 	insertColumns []*table.Column,
 ) (*TableKVEncoder, error) {
@@ -72,7 +72,7 @@ func newTableKVEncoderInner(
 	if err != nil {
 		return nil, err
 	}
-	colAssignExprs, _, err := ti.CreateColAssignSimpleExprs(baseKVEncoder.SessionCtx.GetExprCtx())
+	colAssignExprs, _, err := ctrl.CreateColAssignSimpleExprs(baseKVEncoder.SessionCtx.GetExprCtx())
 	if err != nil {
 		return nil, err
 	}

@@ -1469,7 +1469,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	}
 
 	var result *copTaskResult
-	if worker.req.Paging.Enable {
+	if worker.req.Paging.Enable ||
+		copResp.GetRange() != nil { // For next-gen, the storage may return paging range even if paging is not enabled.
 		result, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
 	} else {
 		// Handles the response for non-paging copTask.

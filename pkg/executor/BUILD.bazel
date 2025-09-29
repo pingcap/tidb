@@ -4,6 +4,7 @@ go_library(
     name = "executor",
     srcs = [
         "adapter.go",
+        "adapter_slow_log.go",
         "admin.go",
         "admin_plugins.go",
         "analyze.go",
@@ -219,6 +220,7 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/collate",
+        "//pkg/util/config",
         "//pkg/util/context",
         "//pkg/util/cteutil",
         "//pkg/util/dbterror",
@@ -269,7 +271,6 @@ go_library(
         "//pkg/util/topsql",
         "//pkg/util/topsql/state",
         "//pkg/util/tracing",
-        "@com_github_burntsushi_toml//:toml",
         "@com_github_docker_go_units//:go-units",
         "@com_github_gogo_protobuf//proto",
         "@com_github_google_uuid//:uuid",

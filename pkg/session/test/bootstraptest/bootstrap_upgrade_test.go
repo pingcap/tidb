@@ -714,6 +714,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	wg := sync.WaitGroup{}
 	execDDL := func(query string) {
 		tk := testkit.NewTestKit(t, store)
+		tk.Session().SetValue(sessionctx.Initing, true)
 		tk.MustExec("use test")
 		_, err := tk.ExecWithContext(context.Background(), query)
 		require.NoError(t, err)
@@ -725,6 +726,12 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			defer wg.Done()
 			ch <- struct{}{}
 			tk := testkit.NewTestKit(t, store)
+			// we are running DDL on user table, it's not possible in normal
+			// upgrade process, we only use it to mock that another instance
+			// submits a DDL job on user table.
+			// we have to set sessionctx.Initing to avoid nextgen calculate resource
+			// params for this DDL.
+			tk.Session().SetValue(sessionctx.Initing, true)
 			tk.MustExec("use test")
 			_, err := tk.ExecWithContext(context.Background(), query)
 			if err != nil {
@@ -894,4 +901,64 @@ func TestUpgradeWithCrossJoinDisabled(t *testing.T) {
 		dom.Close()
 		require.NoError(t, store.Close())
 	}()
+}
+
+func TestUpgradeBDRPrimary(t *testing.T) {
+	fromVersion := 244
+	if kerneltype.IsNextGen() {
+		fromVersion = 250
+	}
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	seVLow := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(fromVersion))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	revertVersionAndVariables(t, seVLow, fromVersion)
+	require.NoError(t, err)
+	session.MustExec(t, seVLow, "ADMIN SET BDR ROLE PRIMARY")
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	ver, err := session.GetBootstrapVersion(seVLow)
+	require.NoError(t, err)
+	require.Equal(t, int64(fromVersion), ver)
+	dom.Close()
+	newVer, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = session.GetBootstrapVersion(seVLow)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+	newVer.Close()
+}
+
+func TestUpgradeBDRSecondary(t *testing.T) {
+	fromVersion := 244
+	if kerneltype.IsNextGen() {
+		fromVersion = 250
+	}
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	seV244 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(fromVersion))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	revertVersionAndVariables(t, seV244, fromVersion)
+	require.NoError(t, err)
+	session.MustExec(t, seV244, "ADMIN SET BDR ROLE SECONDARY")
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	ver, err := session.GetBootstrapVersion(seV244)
+	require.NoError(t, err)
+	require.Equal(t, int64(fromVersion), ver)
+	dom.Close()
+	newVer, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = session.GetBootstrapVersion(seV244)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+	newVer.Close()
 }

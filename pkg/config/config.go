@@ -51,6 +51,10 @@ const (
 	MaxLogFileSize = 4096 // MB
 	// MaxTxnEntrySize is the max value of TxnEntrySizeLimit.
 	MaxTxnEntrySizeLimit = 120 * 1024 * 1024 // 120MB
+	// MaxPluginAuditLogBufferSize is the max buffer size for plugin audit log.
+	MaxPluginAuditLogBufferSize = 100 * 1024 * 1024
+	// MaxPluginAuditLogFlushInterval is the max time interval to flush plugin audit log.
+	MaxPluginAuditLogFlushInterval = 3600
 	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
 	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
@@ -94,6 +98,10 @@ const (
 	DefMemoryUsageAlarmRatio = 0.8
 	// DefTempDir is the default temporary directory path for TiDB.
 	DefTempDir = "/tmp/tidb"
+	// DefPluginAuditLogBufferSize is the default buffer size for plugin audit log.
+	DefPluginAuditLogBufferSize = 0
+	// DefPluginAuditLogFlushInterval is the default time interval to flush plugin audit log.
+	DefPluginAuditLogFlushInterval = 30
 	// DefAuthTokenRefreshInterval is the default time interval to refresh tidb auth token.
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
@@ -562,6 +570,10 @@ type Instance struct {
 	EnableCollectExecutionInfo AtomicBool `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
 	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
+	// PluginAuditLogBufferSize is the buffer size (in bytes) of plugin audit log, default is 0(buffer disabled)
+	PluginAuditLogBufferSize int `toml:"plugin_audit_log_buffer_size" json:"plugin_audit_log_buffer_size"`
+	// PluginAuditLogFlushInterval is the flush interval (in seconds) of plugin audit log, it works only when PluginAuditLogBufferSize is greater than 0.
+	PluginAuditLogFlushInterval int `toml:"plugin_audit_log_flush_interval" json:"plugin_audit_log_flush_interval"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
 	MaxConnections       uint32     `toml:"max_connections" json:"max_connections"`
 	TiDBEnableDDL        AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
@@ -1005,6 +1017,8 @@ var defaultConf = Config{
 		EnableCollectExecutionInfo:  *NewAtomicBool(true),
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
+		PluginAuditLogBufferSize:    0,
+		PluginAuditLogFlushInterval: 30,
 		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBEnableStatsOwner:        *NewAtomicBool(true),
@@ -1388,7 +1402,12 @@ func (c *Config) Valid() error {
 	if c.TableColumnCountLimit < DefTableColumnCountLimit || c.TableColumnCountLimit > DefMaxOfTableColumnCountLimit {
 		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
 	}
-
+	if c.Instance.PluginAuditLogBufferSize < 0 || c.Instance.PluginAuditLogBufferSize > MaxPluginAuditLogBufferSize {
+		return fmt.Errorf("plugin-audit-log-buffer-size should be [%d, %d]", 0, MaxPluginAuditLogBufferSize)
+	}
+	if c.Instance.PluginAuditLogFlushInterval <= 0 || c.Instance.PluginAuditLogFlushInterval > MaxPluginAuditLogFlushInterval {
+		return fmt.Errorf("plugin-audit-log-flush-interval should be [%d, %d]", 1, MaxPluginAuditLogFlushInterval)
+	}
 	// txn-local-latches
 	if err := c.TxnLocalLatches.Valid(); err != nil {
 		return err
