@@ -124,21 +124,21 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(s.BaseTaskExecutor.Ctx(), ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
-		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
+		return newMergeSortExecutor(jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, indexInfos, tbl, s.getBackendCtx, cloudStorageURI)
+		return newCloudImportExecutor(s.BaseTaskExecutor.Ctx(), jobMeta, indexInfos, tbl, s.getBackendCtx, cloudStorageURI)
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
 }
 
-func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
+func (s *backfillDistExecutor) getBackendCtx(ctx context.Context) (ingest.BackendCtx, error) {
 	job := &s.taskMeta.Job
 	hasUnique, err := hasUniqueIndex(job)
 	if err != nil {
@@ -148,8 +148,8 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 
 	return ingest.LitBackCtxMgr.Register(
-		s.BaseTaskExecutor.Ctx(),
-		job.ID, hasUnique,
+		ctx,
+		job, hasUnique,
 		ddlObj.etcdCli,
 		discovery,
 		job.ReorgMeta.ResourceGroupName,

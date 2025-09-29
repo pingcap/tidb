@@ -585,6 +585,12 @@ func (hg *Histogram) TotalRowCount() float64 {
 	return hg.NotNullCount() + float64(hg.NullCount)
 }
 
+// AbsRowCountDifference returns the absolute difference between the realtime row count
+// and the histogram's total row count, representing data changes since the last ANALYZE.
+func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64) float64 {
+	return math.Abs(float64(realtimeRowCount) - hg.TotalRowCount())
+}
+
 // NotNullCount indicates the count of non-null values in column histogram and single-column index histogram,
 // for multi-column index histogram, since we cannot define null for the row, we treat all rows as non-null, that means,
 // notNullCount would return same value as TotalRowCount for multi-column index histograms.
@@ -921,7 +927,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
-	modifyCount, histNDV int64, increaseFactor float64,
+	realtimeRowCount, modifyCount, histNDV int64,
 ) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -930,6 +936,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 			"lDatum", lDatum.String(),
 			"rDatum", rDatum.String(),
 			"modifyCount", modifyCount,
+			"realtimeRowCount", realtimeRowCount,
 		)
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
@@ -937,6 +944,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}()
 	}
 	if hg.Len() == 0 {
+		return 0
+	}
+
+	// If there are no modifications to the table, return 0 - since all of this logic is
+	// redundant if we get to the end and return the min - which includes zero,
+	// TODO: The execution here is if we are out of range due to sampling of the histograms - which
+	// may miss the lowest/highest values - and we are out of range without any modifications.
+	if modifyCount == 0 {
 		return 0
 	}
 
@@ -980,16 +995,28 @@ func (hg *Histogram) OutOfRangeRowCount(
 	if l >= r {
 		return 0
 	}
+
+	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
+
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
+	// If we find that the histogram width is too small or too large - we still may need to consider
+	// the impact of modifications to the table
+	histInvalid := false
 	if histWidth <= 0 {
-		return 0
+		if !allowUseModifyCount {
+			return 0
+		}
+		histInvalid = true
 	}
 	if math.IsInf(histWidth, 1) {
-		// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
-		return 0
+		if !allowUseModifyCount {
+			// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
+			return 0
+		}
+		histInvalid = true
 	}
 	boundL := histL - histWidth
 	boundR := histR + histWidth
@@ -1012,59 +1039,63 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// keep l and r unchanged, use actualL and actualR to calculate.
 	actualL := l
 	actualR := r
-	// If the range overlaps with (boundL,histL), we need to handle the out-of-range part on the left of the histogram range
-	if actualL < histL && actualR > boundL {
-		// make sure boundL <= actualL < actualR <= histL
-		if actualL < boundL {
-			actualL = boundL
+	// Only attempt to calculate the ranges if the histogram is valid
+	if !histInvalid {
+		// If the range overlaps with (boundL,histL), we need to handle the out-of-range part on the left of the histogram range
+		if actualL < histL && actualR > boundL {
+			// make sure boundL <= actualL < actualR <= histL
+			if actualL < boundL {
+				actualL = boundL
+			}
+			if actualR > histL {
+				actualR = histL
+			}
+			// Calculate the percentage of "the shaded area" on the left side.
+			leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
 		}
-		if actualR > histL {
-			actualR = histL
-		}
-		// Calculate the percentage of "the shaded area" on the left side.
-		leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
-	}
 
-	actualL = l
-	actualR = r
-	// If the range overlaps with (histR,boundR), we need to handle the out-of-range part on the right of the histogram range
-	if actualL < boundR && actualR > histR {
-		// make sure histR <= actualL < actualR <= boundR
-		if actualL < histR {
-			actualL = histR
+		actualL = l
+		actualR = r
+		// If the range overlaps with (histR,boundR), we need to handle the out-of-range part on the right of the histogram range
+		if actualL < boundR && actualR > histR {
+			// make sure histR <= actualL < actualR <= boundR
+			if actualL < histR {
+				actualL = histR
+			}
+			if actualR > boundR {
+				actualR = boundR
+			}
+			// Calculate the percentage of "the shaded area" on the right side.
+			rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 		}
-		if actualR > boundR {
-			actualR = boundR
-		}
-		// Calculate the percentage of "the shaded area" on the right side.
-		rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 	}
 
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	rowCount = totalPercent * hg.NotNullCount()
 
-	// Upper & lower bound logic.
-	upperBound := rowCount
+	// oneValue assumes "one value qualies", and is used as either an Upper & lower bound.
+	oneValue := rowCount
 	if histNDV > 0 {
-		upperBound = hg.NotNullCount() / float64(histNDV)
+		oneValue = hg.NotNullCount() / float64(histNDV)
 	}
-
-	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
 
 	if !allowUseModifyCount {
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
-		// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
-		return min(rowCount, upperBound)
+		// We use 1/NDV here to assume that at most 1 value qualifies.
+		return min(rowCount, oneValue)
 	}
 
-	// If the modifyCount is large (compared to original table rows), then any out of range estimate is unreliable.
-	// Assume at least 1/NDV is returned
-	if float64(modifyCount) > hg.NotNullCount() && rowCount < upperBound {
-		rowCount = upperBound
-	} else if rowCount < upperBound {
-		// Adjust by increaseFactor if our estimate is low
-		rowCount *= increaseFactor
+	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
+	addedPct := addedRows / float64(realtimeRowCount)
+	// If the newly added rows is larger than the percentage that we've estimated that we're
+	// searching for out of the range, rowCount may need to be adjusted.
+	if addedPct > totalPercent {
+		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
+		// Attempt to account for the added rows - but not more than the totalPercent
+		outOfRangeAdded := addedRows * totalPercent
+		// Return the max of each estimate - with a minimum of one value.
+		rowCount = max(rowCount, outOfRangeAdded, oneValue)
 	}
 
 	// Use modifyCount as a final bound
@@ -1412,6 +1443,12 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 	// minValue is used to calc the bucket lower.
 	var minValue *types.Datum
+	// The empty hists is danger to merge. we cannot get the table information from histograms
+	// The empty hists is very rare. The DDL event was not processed, and in the previous analyze,
+	// this column was not marked as "predict," resulting in it not being analyzed.
+	if len(hists) == 0 {
+		return nil, nil
+	}
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
@@ -1433,6 +1470,10 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		}
 	}
 
+	// If all the hist and the topn is empty, return a empty hist.
+	if bucketNumber+int64(len(popedTopN)) == 0 {
+		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, 0, totColSize), nil
+	}
 	bucketNumber += int64(len(popedTopN))
 	buckets := make([]*bucket4Merging, 0, bucketNumber)
 	globalBuckets := make([]*bucket4Merging, 0, expBucketNumber)

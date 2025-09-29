@@ -72,3 +72,5 @@ Several convenient commands are provided in [utils](../../tests/_utils/):
     (in `-E` format)
 * `check_not_contains <TEXT>` — Checks if the previous `run_sql` result does not contain the given
     text (in `-E` format)
+* `check_lightning_log_contains <TEXT>` — Checks if the current lightning log contains the given text
+    (in `-E` format)

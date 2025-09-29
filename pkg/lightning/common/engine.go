@@ -50,3 +50,27 @@ type Engine interface {
 	GetRegionSplitKeys() ([][]byte, error)
 	Close() error
 }
+
+// OnDuplicateKey is the action when a duplicate key is found during global sort.
+// Note: lightning also have similar concept call OnDup, they have different semantic.
+// we put it here to avoid import cycle.
+type OnDuplicateKey int
+
+const (
+	// OnDuplicateKeyIgnore means ignore the duplicate key.
+	OnDuplicateKeyIgnore OnDuplicateKey = iota
+	// OnDuplicateKeyError return an error when a duplicate key is found.
+	// We use this for add unique index.
+	OnDuplicateKeyError
+)
+
+// String implements fmt.Stringer interface.
+func (o OnDuplicateKey) String() string {
+	switch o {
+	case OnDuplicateKeyIgnore:
+		return "ignore"
+	case OnDuplicateKeyError:
+		return "error"
+	}
+	return "unknown"
+}

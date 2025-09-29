@@ -17,14 +17,10 @@ package external
 import (
 	"context"
 	"fmt"
-	"path"
+	"slices"
 	"testing"
 
-	"github.com/cockroachdb/pebble"
-	"github.com/pingcap/tidb/br/pkg/membuf"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,10 +41,9 @@ func testNewIter(
 	data common.IngestData,
 	lowerBound, upperBound []byte,
 	expectedKeys, expectedValues [][]byte,
-	bufPool *membuf.Pool,
 ) {
 	ctx := context.Background()
-	iter := data.NewIter(ctx, lowerBound, upperBound, bufPool)
+	iter := data.NewIter(ctx, lowerBound, upperBound, nil)
 	var (
 		keys, values [][]byte
 	)
@@ -61,26 +56,6 @@ func testNewIter(
 	require.NoError(t, iter.Close())
 	require.Equal(t, expectedKeys, keys)
 	require.Equal(t, expectedValues, values)
-}
-
-func checkDupDB(t *testing.T, db *pebble.DB, expectedKeys, expectedValues [][]byte) {
-	iter, _ := db.NewIter(nil)
-	var (
-		gotKeys, gotValues [][]byte
-	)
-	for iter.First(); iter.Valid(); iter.Next() {
-		key := make([]byte, len(iter.Key()))
-		copy(key, iter.Key())
-		gotKeys = append(gotKeys, key)
-		value := make([]byte, len(iter.Value()))
-		copy(value, iter.Value())
-		gotValues = append(gotValues, value)
-	}
-	require.NoError(t, iter.Close())
-	require.Equal(t, expectedKeys, gotKeys)
-	require.Equal(t, expectedValues, gotValues)
-	err := db.DeleteRange([]byte{0}, []byte{255}, nil)
-	require.NoError(t, err)
 }
 
 func TestMemoryIngestData(t *testing.T) {
@@ -99,10 +74,9 @@ func TestMemoryIngestData(t *testing.T) {
 		[]byte("value5"),
 	}
 	data := &MemoryIngestData{
-		keyAdapter: common.NoopKeyAdapter{},
-		keys:       keys,
-		values:     values,
-		ts:         123,
+		keys:   keys,
+		values: values,
+		ts:     123,
 	}
 
 	require.EqualValues(t, 123, data.GetTS())
@@ -114,34 +88,24 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key0"), []byte("key1"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 
-	// MemoryIngestData without duplicate detection feature does not need pool
-	testNewIter(t, data, nil, nil, keys, values, nil)
-	testNewIter(t, data, []byte("key1"), []byte("key6"), keys, values, nil)
-	testNewIter(t, data, []byte("key2"), []byte("key5"), keys[1:4], values[1:4], nil)
-	testNewIter(t, data, []byte("key25"), []byte("key35"), keys[2:3], values[2:3], nil)
-	testNewIter(t, data, []byte("key25"), []byte("key26"), nil, nil, nil)
-	testNewIter(t, data, []byte("key0"), []byte("key1"), nil, nil, nil)
-	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil, nil)
+	testNewIter(t, data, nil, nil, keys, values)
+	testNewIter(t, data, []byte("key1"), []byte("key6"), keys, values)
+	testNewIter(t, data, []byte("key2"), []byte("key5"), keys[1:4], values[1:4])
+	testNewIter(t, data, []byte("key25"), []byte("key35"), keys[2:3], values[2:3])
+	testNewIter(t, data, []byte("key25"), []byte("key26"), nil, nil)
+	testNewIter(t, data, []byte("key0"), []byte("key1"), nil, nil)
+	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil)
 
-	dir := t.TempDir()
-	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
-	require.NoError(t, err)
-	keyAdapter := common.DupDetectKeyAdapter{}
 	data = &MemoryIngestData{
-		keyAdapter:         keyAdapter,
-		duplicateDetection: true,
-		duplicateDB:        db,
-		ts:                 234,
+		ts: 234,
 	}
 	encodedKeys := make([][]byte, 0, len(keys)*2)
 	encodedValues := make([][]byte, 0, len(values)*2)
-	encodedZero := codec.EncodeInt(nil, 0)
-	encodedOne := codec.EncodeInt(nil, 1)
 	duplicatedKeys := make([][]byte, 0, len(keys)*2)
 	duplicatedValues := make([][]byte, 0, len(values)*2)
 
 	for i := range keys {
-		encodedKey := keyAdapter.Encode(nil, keys[i], encodedZero)
+		encodedKey := slices.Clone(keys[i])
 		encodedKeys = append(encodedKeys, encodedKey)
 		encodedValues = append(encodedValues, values[i])
 		if i%2 == 0 {
@@ -152,7 +116,7 @@ func TestMemoryIngestData(t *testing.T) {
 		duplicatedKeys = append(duplicatedKeys, encodedKey)
 		duplicatedValues = append(duplicatedValues, values[i])
 
-		encodedKey = keyAdapter.Encode(nil, keys[i], encodedOne)
+		encodedKey = slices.Clone(keys[i])
 		encodedKeys = append(encodedKeys, encodedKey)
 		newValues := make([]byte, len(values[i])+1)
 		copy(newValues, values[i])
@@ -172,25 +136,6 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key25"), []byte("key26"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key0"), []byte("key1"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
-
-	pool := membuf.NewPool()
-	defer pool.Destroy()
-	testNewIter(t, data, nil, nil, keys, values, pool)
-	checkDupDB(t, db, duplicatedKeys, duplicatedValues)
-	testNewIter(t, data, []byte("key1"), []byte("key6"), keys, values, pool)
-	checkDupDB(t, db, duplicatedKeys, duplicatedValues)
-	testNewIter(t, data, []byte("key1"), []byte("key3"), keys[:2], values[:2], pool)
-	checkDupDB(t, db, duplicatedKeys[:2], duplicatedValues[:2])
-	testNewIter(t, data, []byte("key2"), []byte("key5"), keys[1:4], values[1:4], pool)
-	checkDupDB(t, db, duplicatedKeys, duplicatedValues)
-	testNewIter(t, data, []byte("key25"), []byte("key35"), keys[2:3], values[2:3], pool)
-	checkDupDB(t, db, nil, nil)
-	testNewIter(t, data, []byte("key25"), []byte("key26"), nil, nil, pool)
-	checkDupDB(t, db, nil, nil)
-	testNewIter(t, data, []byte("key0"), []byte("key1"), nil, nil, pool)
-	checkDupDB(t, db, nil, nil)
-	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil, pool)
-	checkDupDB(t, db, nil, nil)
 }
 
 func TestSplit(t *testing.T) {
@@ -261,116 +206,4 @@ func TestGetAdjustedConcurrency(t *testing.T) {
 	require.Equal(t, 10, e.getAdjustedConcurrency())
 	e.dataFiles = genFiles(10000)
 	require.Equal(t, 1, e.getAdjustedConcurrency())
-}
-
-func TestTryDecodeEndKey(t *testing.T) {
-	encodedRowID := common.EncodeIntRowID(1)
-	e := &Engine{}
-
-	e.keyAdapter = common.DupDetectKeyAdapter{}
-	key := []byte("1234")
-	encodedKey0 := e.keyAdapter.Encode(nil, key, encodedRowID)
-	encodedKey1 := kv.Key(encodedKey0).Next()
-	encodedKey2 := make([]byte, len(encodedKey1))
-	copy(encodedKey2, encodedKey1)
-	encodedKey2[len(encodedKey2)-1] = 1
-	testcases := []struct {
-		encodedKey []byte
-		succeed    bool
-		result     []byte
-	}{
-		{encodedKey0, true, key},
-		{encodedKey1, true, kv.Key(key).Next()},
-		{encodedKey2, false, nil},
-	}
-	for _, tc := range testcases {
-		decoded, err := e.tryDecodeEndKey(tc.encodedKey)
-		if tc.succeed {
-			require.NoError(t, err)
-			require.Equal(t, tc.result, decoded)
-		} else {
-			require.Error(t, err)
-		}
-	}
-
-	e.keyAdapter = common.NoopKeyAdapter{}
-	encodedKey0 = e.keyAdapter.Encode(nil, key, encodedRowID)
-	encodedKey1 = kv.Key(encodedKey0).Next()
-	encodedKey2 = make([]byte, len(encodedKey1))
-	copy(encodedKey2, encodedKey1)
-	encodedKey2[len(encodedKey2)-1] = 1
-	testcases = []struct {
-		encodedKey []byte
-		succeed    bool
-		result     []byte
-	}{
-		{encodedKey0, true, encodedKey0},
-		{encodedKey1, true, encodedKey1},
-		{encodedKey2, true, encodedKey2},
-	}
-	for _, tc := range testcases {
-		decoded, err := e.tryDecodeEndKey(tc.encodedKey)
-		if tc.succeed {
-			require.NoError(t, err)
-			require.Equal(t, tc.result, decoded)
-		} else {
-			require.Error(t, err)
-		}
-	}
-}
-
-func TestGetRegionSplitKeys(t *testing.T) {
-	key1 := []byte("1234")
-	key2 := []byte("1235")
-	key3 := []byte("1236")
-	e := &Engine{}
-
-	e.keyAdapter = common.DupDetectKeyAdapter{}
-	encodedKey1 := e.keyAdapter.Encode(nil, key1, common.EncodeIntRowID(1))
-	encodedKey2 := e.keyAdapter.Encode(nil, key2, common.EncodeIntRowID(2))
-	encodedKey3 := e.keyAdapter.Encode(nil, key3, common.EncodeIntRowID(3))
-	encodedKey2Next := kv.Key(encodedKey2).Next()
-	encodedKey3Next := kv.Key(encodedKey3).Next()
-	testcases := []struct {
-		splitKeys    [][]byte
-		succeed      bool
-		expectedKeys [][]byte
-	}{
-		{
-			[][]byte{encodedKey1, encodedKey2, encodedKey3},
-			true,
-			[][]byte{key1, key2, key3},
-		},
-		{
-			[][]byte{encodedKey1, encodedKey2, encodedKey3Next},
-			true,
-			[][]byte{key1, key2, kv.Key(key3).Next()},
-		},
-		{
-			[][]byte{encodedKey1, encodedKey2Next, encodedKey3Next},
-			false,
-			nil,
-		},
-	}
-	for _, tc := range testcases {
-		e.splitKeys = tc.splitKeys
-		res, err := e.GetRegionSplitKeys()
-		if tc.succeed {
-			require.NoError(t, err)
-			require.Equal(t, len(tc.expectedKeys), len(res))
-			for i := range tc.expectedKeys {
-				require.Equal(t, res[i], tc.expectedKeys[i])
-			}
-		} else {
-			require.Error(t, err)
-		}
-	}
-
-	e.keyAdapter = common.NoopKeyAdapter{}
-	for _, tc := range testcases {
-		e.splitKeys = tc.splitKeys
-		res, err := e.GetRegionSplitKeys()
-		require.NoError(t, err)
-		require.Equal(t, len(tc.splitKeys), len(res))
-	}
 }

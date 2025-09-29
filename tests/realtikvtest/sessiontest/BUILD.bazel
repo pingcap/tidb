@@ -4,6 +4,7 @@ go_test(
     name = "sessiontest_test",
     timeout = "moderate",
     srcs = [
+        "infoschema_v2_test.go",
         "main_test.go",
         "paging_test.go",
         "session_fail_test.go",
@@ -12,8 +13,12 @@ go_test(
     race = "on",
     deps = [
         "//pkg/config",
+        "//pkg/infoschema",
+        "//pkg/meta",
+        "//pkg/parser/model",
         "//pkg/session",
         "//pkg/sessionctx/variable",
+        "//pkg/store/helper",
         "//pkg/testkit",
         "//pkg/util/sqlkiller",
         "//tests/realtikvtest",

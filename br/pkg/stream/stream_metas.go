@@ -89,48 +89,51 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 	metadataMap.metas = make(map[string]*MetadataInfo)
 	// `shiftUntilTS` must be less than `until`
 	metadataMap.shiftUntilTS = until
-	err := FastUnmarshalMetaData(ctx, s, ms.MetadataDownloadBatchSize, func(path string, raw []byte) error {
-		m, err := ms.Helper.ParseToMetadataHard(raw)
-		if err != nil {
-			return err
-		}
-		// If the meta file contains only files with ts grater than `until`, when the file is from
-		// `Default`: it should be kept, because its corresponding `write` must has commit ts grater
-		//            than it, which should not be considered.
-		// `Write`: it should trivially not be considered.
-		if m.MinTs <= until {
-			// record these meta-information for statistics and filtering
-			fileGroupInfos := make([]*FileGroupInfo, 0, len(m.FileGroups))
-			for _, group := range m.FileGroups {
-				var kvCount int64 = 0
-				for _, file := range group.DataFilesInfo {
-					kvCount += file.NumberOfEntries
+	err := FastUnmarshalMetaData(ctx, s,
+		0,
+		until,
+		ms.MetadataDownloadBatchSize, func(path string, raw []byte) error {
+			m, err := ms.Helper.ParseToMetadataHard(raw)
+			if err != nil {
+				return err
+			}
+			// If the meta file contains only files with ts grater than `until`, when the file is from
+			// `Default`: it should be kept, because its corresponding `write` must has commit ts grater
+			//            than it, which should not be considered.
+			// `Write`: it should trivially not be considered.
+			if m.MinTs <= until {
+				// record these meta-information for statistics and filtering
+				fileGroupInfos := make([]*FileGroupInfo, 0, len(m.FileGroups))
+				for _, group := range m.FileGroups {
+					var kvCount int64 = 0
+					for _, file := range group.DataFilesInfo {
+						kvCount += file.NumberOfEntries
+					}
+					fileGroupInfos = append(fileGroupInfos, &FileGroupInfo{
+						MaxTS:   group.MaxTs,
+						Length:  group.Length,
+						KVCount: kvCount,
+					})
 				}
-				fileGroupInfos = append(fileGroupInfos, &FileGroupInfo{
-					MaxTS:   group.MaxTs,
-					Length:  group.Length,
-					KVCount: kvCount,
-				})
+				metadataMap.Lock()
+				metadataMap.metas[path] = &MetadataInfo{
+					MinTS:          m.MinTs,
+					FileGroupInfos: fileGroupInfos,
+				}
+				metadataMap.Unlock()
 			}
-			metadataMap.Lock()
-			metadataMap.metas[path] = &MetadataInfo{
-				MinTS:          m.MinTs,
-				FileGroupInfos: fileGroupInfos,
+			// filter out the metadatas whose ts-range is overlap with [until, +inf)
+			// and calculate their minimum begin-default-ts
+			ts, ok := UpdateShiftTS(m, until, mathutil.MaxUint)
+			if ok {
+				metadataMap.Lock()
+				if ts < metadataMap.shiftUntilTS {
+					metadataMap.shiftUntilTS = ts
+				}
+				metadataMap.Unlock()
 			}
-			metadataMap.Unlock()
-		}
-		// filter out the metadatas whose ts-range is overlap with [until, +inf)
-		// and calculate their minimum begin-default-ts
-		ts, ok := UpdateShiftTS(m, until, mathutil.MaxUint)
-		if ok {
-			metadataMap.Lock()
-			if ts < metadataMap.shiftUntilTS {
-				metadataMap.shiftUntilTS = ts
-			}
-			metadataMap.Unlock()
-		}
-		return nil
-	})
+			return nil
+		})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -750,8 +753,8 @@ func (m MigrationExt) MergeAndMigrateTo(
 	err = m.writeBase(ctx, newBase)
 	if err != nil {
 		result.Warnings = append(
-			result.MigratedTo.Warnings,
-			errors.Annotatef(err, "failed to save the merged new base, nothing will happen"),
+			result.Warnings,
+			errors.Annotate(err, "failed to save the merged new base"),
 		)
 		// Put the new BASE here anyway. The caller may want this.
 		result.NewBase = newBase
@@ -773,9 +776,9 @@ func (m MigrationExt) MergeAndMigrateTo(
 	result.MigratedTo = m.MigrateTo(ctx, newBase, MTMaybeSkipTruncateLog(!config.alwaysRunTruncate && canSkipTruncate))
 
 	// Put the final BASE.
-	err = m.writeBase(ctx, result.MigratedTo.NewBase)
+	err = m.writeBase(ctx, result.NewBase)
 	if err != nil {
-		result.Warnings = append(result.MigratedTo.Warnings, errors.Annotatef(err, "failed to save the new base"))
+		result.Warnings = append(result.Warnings, errors.Annotatef(err, "failed to save the new base"))
 	}
 	return
 }
@@ -809,8 +812,6 @@ func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration, opts ...
 	result := MigratedTo{
 		NewBase: new(pb.Migration),
 	}
-	// Fills: EditMeta for new Base.
-	m.doMetaEdits(ctx, mig, &result)
 	// Fills: TruncatedTo, Compactions, DesctructPrefix.
 	if !opt.skipTruncateLog {
 		m.doTruncating(ctx, mig, &result)
@@ -819,6 +820,10 @@ func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration, opts ...
 		result.NewBase.Compactions = mig.Compactions
 		result.NewBase.TruncatedTo = mig.TruncatedTo
 	}
+
+	// We do skip truncate log first, so metas removed by truncating can be removed in this execution.
+	// Fills: EditMeta for new Base.
+	m.doMetaEdits(ctx, mig, &result)
 
 	return result
 }
@@ -836,6 +841,7 @@ func (m MigrationExt) writeBase(ctx context.Context, mig *pb.Migration) error {
 }
 
 // doMetaEdits applies the modification to the meta files in the storage.
+// This will delete data files firstly. Make sure the new BASE was persisted before calling this.
 func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *MigratedTo) {
 	m.Hooks.StartHandlingMetaEdits(mig.EditMeta)
 
@@ -843,14 +849,26 @@ func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *M
 		if isEmptyEdition(medit) {
 			return
 		}
+
+		// Sometimes, the meta file will be deleted by truncating.
+		// We clean up those meta edits.
+		// NOTE: can we unify the deletion of truncating and meta editing?
+		// Say, add a "normalize" phase that load all files to be deleted to the migration.
+		// The problem here is a huge migration may be created in memory then leading to OOM.
+		exists, errChkExist := m.s.FileExists(ctx, medit.Path)
+		if errChkExist == nil && !exists {
+			log.Warn("The meta file doesn't exist, skipping the edit", zap.String("path", medit.Path))
+			return
+		}
+
+		// Firstly delete data so they won't leak when BR crashes.
+		m.cleanUpFor(ctx, medit, out)
 		err := m.applyMetaEdit(ctx, medit)
 		if err != nil {
 			out.NewBase.EditMeta = append(out.NewBase.EditMeta, medit)
 			out.Warnings = append(out.Warnings, errors.Annotatef(err, "failed to apply meta edit %s to meta file", medit.Path))
 			return
 		}
-
-		m.cleanUpFor(ctx, medit, out)
 	}
 
 	defer m.Hooks.HandingMetaEditDone()
@@ -892,6 +910,13 @@ func (m MigrationExt) cleanUpFor(ctx context.Context, medit *pb.MetaEdit, out *M
 		}
 	}
 
+	if len(out.Warnings) > 0 {
+		log.Warn(
+			"Failed to clean up for meta edit.",
+			zap.String("meta-edit", medit.Path),
+			zap.Errors("warnings", out.Warnings),
+		)
+	}
 	if !isEmptyEdition(newMetaEdit) {
 		out.NewBase.EditMeta = append(out.NewBase.EditMeta, newMetaEdit)
 	}
@@ -930,7 +955,6 @@ func (m MigrationExt) applyMetaEditTo(ctx context.Context, medit *pb.MetaEdit, m
 	})
 	metadata.FileGroups = slices.DeleteFunc(metadata.FileGroups, func(dfg *pb.DataFileGroup) bool {
 		del := slices.Contains(medit.DeletePhysicalFiles, dfg.Path)
-		fmt.Println(medit.Path, medit.DeletePhysicalFiles, dfg.Path, del)
 		return del
 	})
 	for _, group := range metadata.FileGroups {
@@ -1099,6 +1123,7 @@ func (m MigrationExt) doTruncateLogs(
 			// We have already written `truncated-to` to the storage hence
 			// we don't need to worry that the user access files already deleted.
 			aOut := new(MigratedTo)
+			aOut.NewBase = new(pb.Migration)
 			m.cleanUpFor(ctx, me, aOut)
 			updateResult(func(r *MigratedTo) {
 				r.Warnings = append(r.Warnings, aOut.Warnings...)

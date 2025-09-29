@@ -55,6 +55,8 @@ var (
 	MergeSortOverlapThreshold int64 = 4000
 	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
 	MergeSortFileCountStep = 4000
+	// MergeSortMaxSubtaskTargetFiles assumes each merge sort subtask generates 16 files.
+	MergeSortMaxSubtaskTargetFiles = 16
 )
 
 const (
@@ -125,13 +127,13 @@ func dummyOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
-	groupOffset     int
-	memSizeLimit    uint64
-	blockSize       int
-	propSizeDist    uint64
-	propKeysDist    uint64
-	onClose         OnCloseFunc
-	keyDupeEncoding bool
+	groupOffset  int
+	memSizeLimit uint64
+	blockSize    int
+	propSizeDist uint64
+	propKeysDist uint64
+	onClose      OnCloseFunc
+	onDup        common.OnDuplicateKey
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -175,12 +177,6 @@ func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
 	return b
 }
 
-// SetKeyDuplicationEncoding sets if the writer can distinguish duplicate key.
-func (b *WriterBuilder) SetKeyDuplicationEncoding(val bool) *WriterBuilder {
-	b.keyDupeEncoding = val
-	return b
-}
-
 // SetBlockSize sets the block size of pre-allocated buf in the writer.
 func (b *WriterBuilder) SetBlockSize(blockSize int) *WriterBuilder {
 	b.blockSize = blockSize
@@ -196,6 +192,12 @@ func (b *WriterBuilder) SetGroupOffset(offset int) *WriterBuilder {
 	return b
 }
 
+// SetOnDup sets the action when checkDup enabled and a duplicate key is found.
+func (b *WriterBuilder) SetOnDup(onDup common.OnDuplicateKey) *WriterBuilder {
+	b.onDup = onDup
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -205,9 +207,6 @@ func (b *WriterBuilder) Build(
 ) *Writer {
 	filenamePrefix := filepath.Join(prefix, writerID)
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
-	if b.keyDupeEncoding {
-		keyAdapter = common.DupDetectKeyAdapter{}
-	}
 	p := membuf.NewPool(
 		membuf.WithBlockNum(0),
 		membuf.WithBlockSize(b.blockSize),
@@ -228,6 +227,7 @@ func (b *WriterBuilder) Build(
 		writerID:       writerID,
 		groupOffset:    b.groupOffset,
 		onClose:        b.onClose,
+		onDup:          b.onDup,
 		closed:         false,
 		multiFileStats: make([]MultipleFilesStat, 1),
 		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
@@ -262,6 +262,7 @@ func (b *WriterBuilder) BuildOneFile(
 		kvStore:        nil,
 		onClose:        b.onClose,
 		closed:         false,
+		onDup:          b.onDup,
 	}
 	return ret
 }
@@ -356,6 +357,7 @@ type Writer struct {
 	kvSize      int64
 
 	onClose OnCloseFunc
+	onDup   common.OnDuplicateKey
 	closed  bool
 
 	// Statistic information per batch.
@@ -469,16 +471,31 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		zap.Int("sequence-number", w.currentSeq),
 	)
 	sortStart := time.Now()
+	var (
+		dupFound bool
+		dupLoc   *membuf.SliceLocation
+	)
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
-		return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
+		res := bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
+		if res == 0 && !dupFound {
+			dupFound = true
+			dupLoc = &i
+		}
+		return res
 	})
 	sortDuration := time.Since(sortStart)
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / sortDuration.Seconds())
 
+	if dupFound && w.onDup == common.OnDuplicateKeyError {
+		dupKey := slices.Clone(w.getKeyByLoc(*dupLoc))
+		dupValue := slices.Clone(w.getValueByLoc(*dupLoc))
+		return common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupValue)
+	}
+
 	writeStartTime := time.Now()
 	var dataFile, statFile string
-	for i := 0; i < flushKVsRetryTimes; i++ {
+	for i := range flushKVsRetryTimes {
 		dataFile, statFile, err = w.flushSortedKVs(ctx)
 		if err == nil {
 			break
@@ -600,6 +617,12 @@ func (w *Writer) getKeyByLoc(loc membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
 	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
 	return block[2*lengthBytes : 2*lengthBytes+keyLen]
+}
+
+func (w *Writer) getValueByLoc(loc membuf.SliceLocation) []byte {
+	block := w.kvBuffer.GetSlice(loc)
+	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+	return block[2*lengthBytes+keyLen:]
 }
 
 func (w *Writer) createStorageWriter(ctx context.Context) (

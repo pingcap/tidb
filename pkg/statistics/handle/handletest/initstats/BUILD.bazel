@@ -5,10 +5,11 @@ go_test(
     timeout = "short",
     srcs = ["load_stats_test.go"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//pkg/config",
         "//pkg/parser/model",
+        "//pkg/session",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/types",
         "//pkg/testkit",

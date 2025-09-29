@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -39,26 +41,30 @@ type cloudImportExecutor struct {
 	ptbl          table.PhysicalTable
 	bc            ingest.BackendCtx
 	cloudStoreURI string
+	metric        *lightningmetric.Common
 }
 
 func newCloudImportExecutor(
+	ctx context.Context,
 	job *model.Job,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
-	bcGetter func() (ingest.BackendCtx, error),
+	bcGetter func(context.Context) (ingest.BackendCtx, error),
 	cloudStoreURI string,
-) (*cloudImportExecutor, error) {
-	bc, err := bcGetter()
-	if err != nil {
-		return nil, err
-	}
-	return &cloudImportExecutor{
+) (c *cloudImportExecutor, err error) {
+	c = &cloudImportExecutor{
 		job:           job,
 		indexes:       indexes,
 		ptbl:          ptbl,
-		bc:            bc,
 		cloudStoreURI: cloudStoreURI,
-	}, nil
+		metric:        metrics.RegisterLightningCommonMetricsForDDL(job.ID),
+	}
+	ctx = lightningmetric.WithCommonMetric(ctx, c.metric)
+	c.bc, err = bcGetter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 func (*cloudImportExecutor) Init(ctx context.Context) error {
@@ -79,27 +85,9 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		return errors.Errorf("local backend not found")
 	}
 
-	var (
-		currentIdx *model.IndexInfo
-		idxID      int64
-	)
-	switch len(sm.EleIDs) {
-	case 1:
-		for _, idx := range m.indexes {
-			if idx.ID == sm.EleIDs[0] {
-				currentIdx = idx
-				idxID = idx.ID
-				break
-			}
-		}
-	case 0:
-		// maybe this subtask is generated from an old version TiDB
-		if len(m.indexes) == 1 {
-			currentIdx = m.indexes[0]
-		}
-		idxID = m.indexes[0].ID
-	default:
-		return errors.Errorf("unexpected EleIDs count %v", sm.EleIDs)
+	currentIdx, idxID, err := getIndexInfoAndID(sm.EleIDs, m.indexes)
+	if err != nil {
+		return err
 	}
 
 	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, idxID)
@@ -127,6 +115,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalKVCount:  0,
 			CheckHotspot:  true,
 			MemCapacity:   m.GetResource().Mem.Capacity(),
+			OnDup:         common.OnDuplicateKeyError,
 		},
 		TS: sm.TS,
 	}, engineUUID)
@@ -157,10 +146,33 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(m.job.ID)
+	metrics.UnregisterLightningCommonMetricsForDDL(m.job.ID, m.metric)
 	return nil
 }
 
 func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor finish subtask")
 	return nil
+}
+
+func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *model.IndexInfo, idxID int64, err error) {
+	switch len(eleIDs) {
+	case 1:
+		for _, idx := range indexes {
+			if idx.ID == eleIDs[0] {
+				currentIdx = idx
+				idxID = idx.ID
+				break
+			}
+		}
+	case 0:
+		// maybe this subtask is generated from an old version TiDB
+		if len(indexes) == 1 {
+			currentIdx = indexes[0]
+		}
+		idxID = indexes[0].ID
+	default:
+		return nil, 0, errors.Errorf("unexpected EleIDs count %v", eleIDs)
+	}
+	return
 }
