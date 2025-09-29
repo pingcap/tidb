@@ -31,7 +31,7 @@ type regexpMemorizedSig struct {
 func releaseBuffers(bf *baseBuiltinFunc, params []*funcParam) {
 	for _, pa := range params {
 		if pa.getCol() != nil {
-			bf.bufAllocator.put(pa.getCol())
+			globalColumnAllocator.put(pa.getCol())
 		}
 	}
 }

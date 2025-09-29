@@ -189,11 +189,11 @@ func (b *builtinAtan2ArgsSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, r
 		return err
 	}
 
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[1].VecEvalReal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -408,11 +408,11 @@ func (b *builtinRoundDecSig) vectorized() bool {
 
 func (b *builtinPowSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf1, err := b.bufAllocator.get()
+	buf1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
+	defer globalColumnAllocator.put(buf1)
 	if err := b.args[0].VecEvalReal(ctx, input, buf1); err != nil {
 		return err
 	}
@@ -465,11 +465,11 @@ func (b *builtinLog2ArgsSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, re
 		return err
 	}
 	n := input.NumRows()
-	buf1, err := b.bufAllocator.get()
+	buf1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
+	defer globalColumnAllocator.put(buf1)
 	if err := b.args[1].VecEvalReal(ctx, input, buf1); err != nil {
 		return err
 	}
@@ -536,11 +536,11 @@ func (b *builtinRoundWithFracRealSig) vecEvalReal(ctx EvalContext, input *chunk.
 		return err
 	}
 	n := input.NumRows()
-	buf1, err := b.bufAllocator.get()
+	buf1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
+	defer globalColumnAllocator.put(buf1)
 	if err := b.args[1].VecEvalInt(ctx, input, buf1); err != nil {
 		return err
 	}
@@ -566,11 +566,11 @@ func (b *builtinTruncateRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk
 		return err
 	}
 	n := input.NumRows()
-	buf1, err := b.bufAllocator.get()
+	buf1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
+	defer globalColumnAllocator.put(buf1)
 	if err := b.args[1].VecEvalInt(ctx, input, buf1); err != nil {
 		return err
 	}
@@ -643,11 +643,11 @@ func (b *builtinRoundWithFracIntSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 	}
 
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -673,11 +673,11 @@ func (b *builtinCRC32Sig) vectorized() bool {
 
 func (b *builtinCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -726,11 +726,11 @@ func (b *builtinRandWithSeedFirstGenSig) vectorized() bool {
 
 func (b *builtinRandWithSeedFirstGenSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err = b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -756,11 +756,11 @@ func (b *builtinCeilIntToDecSig) vectorized() bool {
 
 func (b *builtinCeilIntToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -793,11 +793,11 @@ func (b *builtinTruncateIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 		return err
 	}
 
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 
 	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
 		return err
@@ -837,11 +837,11 @@ func (b *builtinTruncateUintSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	}
 
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 
 	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
 		return err
@@ -945,11 +945,11 @@ func (b *builtinTruncateDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk
 	if err := b.args[0].VecEvalDecimal(ctx, input, result); err != nil {
 		return err
 	}
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -979,11 +979,11 @@ func (b *builtinRoundWithFracDecSig) vecEvalDecimal(ctx EvalContext, input *chun
 	if err := b.args[0].VecEvalDecimal(ctx, input, result); err != nil {
 		return err
 	}
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1011,11 +1011,11 @@ func (b *builtinFloorIntToDecSig) vectorized() bool {
 
 func (b *builtinFloorIntToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1045,11 +1045,11 @@ func (b *builtinSignSig) vectorized() bool {
 
 func (b *builtinSignSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalReal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1079,21 +1079,21 @@ func (b *builtinConvSig) vectorized() bool {
 
 func (b *builtinConvSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf1, err := b.bufAllocator.get()
+	buf1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
-	buf2, err := b.bufAllocator.get()
+	defer globalColumnAllocator.put(buf1)
+	buf2, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf2)
-	buf3, err := b.bufAllocator.get()
+	defer globalColumnAllocator.put(buf2)
+	buf3, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf3)
+	defer globalColumnAllocator.put(buf3)
 	if err := b.args[0].VecEvalString(ctx, input, buf1); err != nil {
 		return err
 	}
@@ -1138,11 +1138,11 @@ func (b *builtinCeilDecToIntSig) vectorized() bool {
 
 func (b *builtinCeilDecToIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalDecimal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1192,11 +1192,11 @@ func (b *builtinFloorDecToIntSig) vectorized() bool {
 
 func (b *builtinFloorDecToIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalDecimal(ctx, input, buf); err != nil {
 		return err
 	}

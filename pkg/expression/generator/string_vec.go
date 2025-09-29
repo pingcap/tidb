@@ -60,19 +60,19 @@ var builtinStringVecTpl = template.Must(template.New("").Parse(`
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
 func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get()
+	buf0, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf0)
+	defer globalColumnAllocator.put(buf0)
 	if err := b.args[0].VecEval{{ .TypeName }}(ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
+	defer globalColumnAllocator.put(buf1)
 {{ if .Fixed }}
 	arg0 := buf0.{{ .TypeNameInColumn }}s()
 {{ end }}

@@ -31,11 +31,11 @@ import (
 
 func (b *builtinInetNtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -67,11 +67,11 @@ func (b *builtinInetNtoaSig) vectorized() bool {
 
 func (b *builtinIsIPv4Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -124,11 +124,11 @@ func (b *builtinIsIPv6Sig) vectorized() bool {
 
 func (b *builtinIsIPv6Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -155,11 +155,11 @@ func (b *builtinIsUUIDSig) vectorized() bool {
 
 func (b *builtinIsUUIDSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -249,11 +249,11 @@ func (b *builtinIsIPv4CompatSig) vectorized() bool {
 
 func (b *builtinIsIPv4CompatSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -309,11 +309,11 @@ func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	}
 
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 
 	err = b.args[0].VecEvalReal(ctx, input, buf)
 	if err != nil {
@@ -387,11 +387,11 @@ func (b *builtinIsIPv4MappedSig) vectorized() bool {
 
 func (b *builtinIsIPv4MappedSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -442,11 +442,11 @@ func (b *builtinInet6AtonSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-aton
 func (b *builtinInet6AtonSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -519,11 +519,11 @@ func (b *builtinInetAtonSig) vectorized() bool {
 
 func (b *builtinInetAtonSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer globalColumnAllocator.put(buf)
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -592,11 +592,11 @@ func (b *builtinInet6NtoaSig) vectorized() bool {
 
 func (b *builtinInet6NtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	val, err := b.bufAllocator.get()
+	val, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(val)
+	defer globalColumnAllocator.put(val)
 	if err := b.args[0].VecEvalString(ctx, input, val); err != nil {
 		return err
 	}
@@ -634,11 +634,11 @@ func (b *builtinVitessHashSig) vectorized() bool {
 
 func (b *builtinVitessHashSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	column, err := b.bufAllocator.get()
+	column, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(column)
+	defer globalColumnAllocator.put(column)
 
 	if err := b.args[0].VecEvalInt(ctx, input, column); err != nil {
 		return err
@@ -671,11 +671,11 @@ func (b *builtinUUIDToBinSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_uuid-to-bin
 func (b *builtinUUIDToBinSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	valBuf, err := b.bufAllocator.get()
+	valBuf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(valBuf)
+	defer globalColumnAllocator.put(valBuf)
 	if err := b.args[0].VecEvalString(ctx, input, valBuf); err != nil {
 		return err
 	}
@@ -683,11 +683,11 @@ func (b *builtinUUIDToBinSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	var flagBuf *chunk.Column
 	i64s := make([]int64, n)
 	if len(b.args) == 2 {
-		flagBuf, err = b.bufAllocator.get()
+		flagBuf, err = globalColumnAllocator.get()
 		if err != nil {
 			return err
 		}
-		defer b.bufAllocator.put(flagBuf)
+		defer globalColumnAllocator.put(flagBuf)
 		if err := b.args[1].VecEvalInt(ctx, input, flagBuf); err != nil {
 			return err
 		}
@@ -734,11 +734,11 @@ func (b *builtinBinToUUIDSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_bin-to-uuid
 func (b *builtinBinToUUIDSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	valBuf, err := b.bufAllocator.get()
+	valBuf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(valBuf)
+	defer globalColumnAllocator.put(valBuf)
 	if err := b.args[0].VecEvalString(ctx, input, valBuf); err != nil {
 		return err
 	}
@@ -746,11 +746,11 @@ func (b *builtinBinToUUIDSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	var flagBuf *chunk.Column
 	i64s := make([]int64, n)
 	if len(b.args) == 2 {
-		flagBuf, err = b.bufAllocator.get()
+		flagBuf, err = globalColumnAllocator.get()
 		if err != nil {
 			return err
 		}
-		defer b.bufAllocator.put(flagBuf)
+		defer globalColumnAllocator.put(flagBuf)
 		if err := b.args[1].VecEvalInt(ctx, input, flagBuf); err != nil {
 			return err
 		}
