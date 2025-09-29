@@ -884,6 +884,7 @@ type VarAssignment struct {
 	Expr        Expression
 	IsDefault   bool
 	IsGlobal    bool
+	IsInstance  bool
 	IsSystem    bool
 	ExtendValue *Constant
 }

@@ -75,7 +75,7 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 		}
 
 		for i, binding := range bindings {
-			now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+			now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6)
 
 			updateTs := now.String()
 			_, err = exec(
@@ -159,7 +159,7 @@ func (op *bindingOperator) DropBinding(sqlDigests []string) (deletedRows uint64,
 		}
 
 		for _, sqlDigest := range sqlDigests {
-			updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
+			updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6).String()
 			_, err = exec(
 				sctx,
 				`UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status != %?`,
@@ -211,7 +211,7 @@ func (op *bindingOperator) SetBindingStatus(newStatus, sqlDigest string) (ok boo
 			return err
 		}
 
-		updateTs = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+		updateTs = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6)
 		updateTsStr := updateTs.String()
 
 		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status IN (%?, %?)`,
@@ -232,7 +232,7 @@ func (op *bindingOperator) GCBinding() (err error) {
 		// To make sure that all the deleted bind records have been acknowledged to all tidb,
 		// we only garbage collect those records with update_time before 10 leases.
 		updateTime := time.Now().Add(-(10 * Lease))
-		updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
+		updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 6).String()
 		_, err = exec(sctx, `DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < %?`, updateTimeStr)
 		return err
 	})

@@ -87,6 +87,21 @@ func (s SortItem) MemoryUsage() (sum int64) {
 	return
 }
 
+// ExplainPartitionBy produce text for p.PartitionBy. Common for window functions and TopN.
+func ExplainPartitionBy(ctx expression.EvalContext, buffer *bytes.Buffer,
+	partitionBy []SortItem, normalized bool) *bytes.Buffer {
+	if len(partitionBy) > 0 {
+		buffer.WriteString("partition by ")
+		for i, item := range partitionBy {
+			fmt.Fprintf(buffer, "%s", item.Col.ColumnExplainInfo(ctx, normalized))
+			if i+1 < len(partitionBy) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	return buffer
+}
+
 // MPPPartitionType is the way to partition during mpp data exchanging.
 type MPPPartitionType int
 
@@ -178,6 +193,15 @@ func (partitionCol *MPPPartitionColumn) MemoryUsage() (sum int64) {
 	return
 }
 
+// ChoosePartitionKeys chooses partition keys according to the matches.
+func ChoosePartitionKeys(keys []*MPPPartitionColumn, matches []int) []*MPPPartitionColumn {
+	newKeys := make([]*MPPPartitionColumn, 0, len(matches))
+	for _, id := range matches {
+		newKeys = append(newKeys, keys[id])
+	}
+	return newKeys
+}
+
 // ExplainColumnList generates explain information for a list of columns.
 func ExplainColumnList(ctx expression.EvalContext, cols []*MPPPartitionColumn) []byte {
 	buffer := bytes.NewBufferString("")
@@ -219,6 +243,21 @@ const (
 	SomeCTEFailedMpp
 	AllCTECanMpp
 )
+
+// PhysicalPropMatchResult describes the result of matching PhysicalProperty against an access path.
+type PhysicalPropMatchResult int
+
+const (
+	// PropNotMatched means the access path cannot satisfy the required order.
+	PropNotMatched PhysicalPropMatchResult = iota
+	// PropMatched means the access path can satisfy the required property directly.
+	PropMatched
+)
+
+// Matched returns true if the required order can be satisfied.
+func (r PhysicalPropMatchResult) Matched() bool {
+	return r == PropMatched
+}
 
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.

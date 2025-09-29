@@ -338,7 +338,7 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 			}
 
 			if w.collector != nil {
-				w.collector.Add(size, int64(len(pairs)))
+				w.collector.Processed(size, int64(len(pairs)))
 			}
 
 			totalCount += int64(len(pairs))

@@ -76,7 +76,12 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	}
 	var tableSizeInBytes int64
 	var cpuNum int
-	if (setReorgParam || setDistTaskParam) && kerneltype.IsNextGen() {
+	// we don't use DXF service for bootstrap/upgrade related DDL, so no need to
+	// calculate resources.
+	initing := sctx.Value(sessionctx.Initing) != nil
+	// some mock context may not have store, such as the schema tracker test.
+	shouldCalResource := kerneltype.IsNextGen() && !initing && sctx.GetStore() != nil
+	if (setReorgParam || setDistTaskParam) && shouldCalResource {
 		tableSizeInBytes = getTableSizeByID(ctx, sctx.GetStore(), tbl)
 		var err error
 		cpuNum, err = scheduler.GetExecCPUNode(ctx)
@@ -91,9 +96,22 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		}
 	})
 
+	var (
+		autoConc, autoMaxNode int
+		factorField           = zap.Skip()
+	)
+	if shouldCalResource {
+		factors, err := dxfhandle.GetScheduleTuneFactors(ctx, sctx.GetStore().GetKeyspace())
+		if err != nil {
+			return err
+		}
+		calc := scheduler.NewRCCalcForAddIndex(tableSizeInBytes, cpuNum, factors)
+		autoConc = calc.CalcConcurrency()
+		autoMaxNode = calc.CalcMaxNodeCountForAddIndex()
+		factorField = zap.Float64("amplifyFactor", factors.AmplifyFactor)
+	}
 	if setReorgParam {
-		if kerneltype.IsNextGen() && setDistTaskParam {
-			autoConc := scheduler.CalcConcurrencyByDataSize(tableSizeInBytes, cpuNum)
+		if shouldCalResource && setDistTaskParam {
 			m.SetConcurrency(autoConc)
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
@@ -110,8 +128,8 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		m.IsDistReorg = vardef.EnableDistTask.Load()
 		m.IsFastReorg = vardef.EnableFastReorg.Load()
 		m.TargetScope = dxfhandle.GetTargetScope()
-		if kerneltype.IsNextGen() {
-			m.MaxNodeCount = scheduler.CalcMaxNodeCountByTableSize(tableSizeInBytes, cpuNum)
+		if shouldCalResource {
+			m.MaxNodeCount = autoMaxNode
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 				m.MaxNodeCount = variable.TidbOptInt(sv, 0)
@@ -138,6 +156,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	}
 	job.ReorgMeta = m
 	logutil.DDLLogger().Info("initialize reorg meta",
+		zap.Int64("jobID", job.ID),
 		zap.String("jobSchema", job.SchemaName),
 		zap.String("jobTable", job.TableName),
 		zap.Stringer("jobType", job.Type),
@@ -148,6 +167,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		zap.String("tableSizeInBytes", units.BytesSize(float64(tableSizeInBytes))),
 		zap.Int("concurrency", m.GetConcurrency()),
 		zap.Int("batchSize", m.GetBatchSize()),
+		factorField,
 	)
 	return nil
 }

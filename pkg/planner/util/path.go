@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 )
 
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
@@ -128,6 +129,8 @@ type AccessPath struct {
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
+	// Whether to use the index lookup push down optimization for this access path.
+	IsIndexLookUpPushDown bool
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -141,7 +144,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		IdxCols:                      CloneCols(path.IdxCols),
 		IdxColLens:                   slices.Clone(path.IdxColLens),
 		ConstCols:                    slices.Clone(path.ConstCols),
-		Ranges:                       CloneRanges(path.Ranges),
+		Ranges:                       sliceutil.DeepClone(path.Ranges),
 		CountAfterAccess:             path.CountAfterAccess,
 		MinCountAfterAccess:          path.MinCountAfterAccess,
 		MaxCountAfterAccess:          path.MaxCountAfterAccess,
@@ -168,12 +171,12 @@ func (path *AccessPath) Clone() *AccessPath {
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
 	}
-	ret.PartialIndexPaths = SliceDeepClone(path.PartialIndexPaths)
+	ret.PartialIndexPaths = sliceutil.DeepClone(path.PartialIndexPaths)
 	ret.PartialAlternativeIndexPaths = make([][][]*AccessPath, 0, len(path.PartialAlternativeIndexPaths))
 	for _, oneORBranch := range path.PartialAlternativeIndexPaths {
 		clonedORBranch := make([][]*AccessPath, 0, len(oneORBranch))
 		for _, oneAlternative := range oneORBranch {
-			clonedOneAlternative := SliceDeepClone(oneAlternative)
+			clonedOneAlternative := sliceutil.DeepClone(oneAlternative)
 			clonedORBranch = append(clonedORBranch, clonedOneAlternative)
 		}
 		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, clonedORBranch)
