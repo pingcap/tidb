@@ -184,14 +184,22 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	require.Truef(t, count < 5.5, "expected: around 5.0, got: %v", count)
 	require.Truef(t, count > 4.5, "expected: around 5.0, got: %v", count)
 
+	// Check MinEst and MaxEst bounds for out-of-range case
+	require.Truef(t, countEst.MinEst <= countEst.Est, "MinEst should be <= Est for out-of-range case, MinEst: %v, Est: %v", countEst.MinEst, countEst.Est)
+	require.Truef(t, countEst.MaxEst >= countEst.Est, "MaxEst should be >= Est for out-of-range case, MaxEst: %v, Est: %v", countEst.MaxEst, countEst.Est)
+	require.Truef(t, countEst.MinEst >= 0, "MinEst should be >= 0 for out-of-range case, got: %v", countEst.MinEst)
+	require.Truef(t, countEst.MaxEst >= countEst.MinEst, "MaxEst should be >= MinEst for out-of-range case, MaxEst: %v, MinEst: %v", countEst.MaxEst, countEst.MinEst)
+
 	var input []struct {
 		Start int64
 		End   int64
 	}
 	var output []struct {
-		Start int64
-		End   int64
-		Count float64
+		Start  int64
+		End    int64
+		Count  float64
+		MinEst float64
+		MaxEst float64
 	}
 	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
@@ -207,11 +215,86 @@ func TestOutOfRangeEstimation(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
 			output[i].End = ran.End
-			output[i].Count = math.Round(count) // Round to nearest whole number
+			output[i].Count = math.Round(count)            // Round to nearest whole number
+			output[i].MinEst = math.Round(countEst.MinEst) // Round to nearest whole number
+			output[i].MaxEst = math.Round(countEst.MaxEst) // Round to nearest whole number
 		})
 		require.Truef(t, count < output[i].Count*1.2, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
 		require.Truef(t, count > output[i].Count*0.8, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+
+		// Check MinEst and MaxEst bounds
+		require.Truef(t, countEst.MinEst <= countEst.Est, "MinEst should be <= Est for [%v, %v], MinEst: %v, Est: %v", ran.Start, ran.End, countEst.MinEst, countEst.Est)
+		require.Truef(t, countEst.MaxEst >= countEst.Est, "MaxEst should be >= Est for [%v, %v], MaxEst: %v, Est: %v", ran.Start, ran.End, countEst.MaxEst, countEst.Est)
+		require.Truef(t, countEst.MinEst >= 0, "MinEst should be >= 0 for [%v, %v], got: %v", ran.Start, ran.End, countEst.MinEst)
+		require.Truef(t, countEst.MaxEst >= countEst.MinEst, "MaxEst should be >= MinEst for [%v, %v], MaxEst: %v, MinEst: %v", ran.Start, ran.End, countEst.MaxEst, countEst.MinEst)
 	}
+}
+
+// TestRiskRangeSkewRatio tests that tidb_opt_risk_range_skew_ratio affects cardinality estimation
+// for out-of-range queries. When the ratio is increased, the estimated count should be higher.
+// This test specifically uses out-of-range queries where MaxEst > Est is expected.
+func TestRiskRangeSkewRatio(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, key idx(a))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+
+	// Insert data with values 1-10, each appearing multiple times
+	for i := 1; i <= 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t select a from t where a = %d", i))
+	}
+
+	// Analyze the table to collect statistics
+	testKit.MustExec("analyze table t with 0 topn")
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
+
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
+	sctx := testKit.Session()
+	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
+
+	// Increase RealTimeCount and ModifyCount to simulate changes to dataset
+	RealTimeCount := statsTbl.RealtimeCount * 10
+	ModifyCount := RealTimeCount * 2
+
+	// Search for range outside of histogram buckets (data is 1-10, so 12-15 is out of range)
+	testRange := getRange(12, 15)
+
+	// Test with default risk range skew ratio (should be 0)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0")
+	countEst1, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, testRange, RealTimeCount, ModifyCount, false)
+	require.NoError(t, err)
+	count1 := countEst1.Est
+
+	// Set risk range skew ratio to 0.5
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
+	countEst2, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, testRange, RealTimeCount, ModifyCount, false)
+	require.NoError(t, err)
+	count2 := countEst2.Est
+
+	// Verify that count2 is greater than count1 when risk range skew ratio is increased
+	require.Truef(t, count2 > count1, "Expected count2 (%v) to be greater than count1 (%v) when risk range skew ratio is increased", count2, count1)
+
+	// For out-of-range estimation, verify that MinEst and MaxEst are properly set
+	// Note: This test specifically uses out-of-range queries, so MaxEst should be >= Est
+	require.Truef(t, countEst1.MinEst <= countEst1.Est, "MinEst should be <= Est for default ratio, MinEst: %v, Est: %v", countEst1.MinEst, countEst1.Est)
+	require.Truef(t, countEst1.MaxEst >= countEst1.Est, "MaxEst should be >= Est for default ratio (out-of-range), MaxEst: %v, Est: %v", countEst1.MaxEst, countEst1.Est)
+	require.Truef(t, countEst2.MinEst <= countEst2.Est, "MinEst should be <= Est for increased ratio, MinEst: %v, Est: %v", countEst2.MinEst, countEst2.Est)
+	require.Truef(t, countEst2.MaxEst >= countEst2.Est, "MaxEst should be >= Est for increased ratio (out-of-range), MaxEst: %v, Est: %v", countEst2.MaxEst, countEst2.Est)
+
+	// Verify that the increased ratio also affects MinEst and MaxEst appropriately for out-of-range estimation
+	require.Truef(t, countEst2.MinEst >= countEst1.MinEst, "MinEst should be >= when ratio is increased (out-of-range), MinEst1: %v, MinEst2: %v", countEst1.MinEst, countEst2.MinEst)
+	require.Truef(t, countEst2.MaxEst >= countEst1.MaxEst, "MaxEst should be >= when ratio is increased (out-of-range), MaxEst1: %v, MaxEst2: %v", countEst1.MaxEst, countEst2.MaxEst)
 }
 
 // TestOutOfRangeEstimationAfterDelete tests the out-of-range estimation after deletion happen.
