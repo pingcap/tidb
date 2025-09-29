@@ -38,7 +38,7 @@ type mockVecPlusIntBuiltinFunc struct {
 
 func (p *mockVecPlusIntBuiltinFunc) allocBuf(n int) (*chunk.Column, error) {
 	if p.enableAlloc {
-		return p.bufAllocator.get()
+		return globalColumnAllocator.get()
 	}
 	if p.buf == nil {
 		p.buf = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), n)
@@ -48,7 +48,7 @@ func (p *mockVecPlusIntBuiltinFunc) allocBuf(n int) (*chunk.Column, error) {
 
 func (p *mockVecPlusIntBuiltinFunc) releaseBuf(buf *chunk.Column) {
 	if p.enableAlloc {
-		p.bufAllocator.put(buf)
+		globalColumnAllocator.put(buf)
 	}
 }
 
@@ -242,7 +242,7 @@ func (p *mockBuiltinDouble) vecEvalReal(ctx EvalContext, input *chunk.Chunk, res
 func (p *mockBuiltinDouble) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	var buf *chunk.Column
 	var err error
-	if buf, err = p.baseBuiltinFunc.bufAllocator.get(); err != nil {
+	if buf, err = globalColumnAllocator.get(); err != nil {
 		return err
 	}
 	if err := p.args[0].VecEvalString(ctx, input, buf); err != nil {
@@ -253,7 +253,7 @@ func (p *mockBuiltinDouble) vecEvalString(ctx EvalContext, input *chunk.Chunk, r
 		str := buf.GetString(i)
 		result.AppendString(str + str)
 	}
-	p.baseBuiltinFunc.bufAllocator.put(buf)
+	globalColumnAllocator.put(buf)
 	return nil
 }
 
@@ -303,7 +303,7 @@ func (p *mockBuiltinDouble) vecEvalDuration(ctx EvalContext, input *chunk.Chunk,
 func (p *mockBuiltinDouble) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	var buf *chunk.Column
 	var err error
-	if buf, err = p.baseBuiltinFunc.bufAllocator.get(); err != nil {
+	if buf, err = globalColumnAllocator.get(); err != nil {
 		return err
 	}
 	if err := p.args[0].VecEvalJSON(ctx, input, buf); err != nil {
@@ -325,7 +325,7 @@ func (p *mockBuiltinDouble) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, res
 		}
 		result.AppendJSON(j)
 	}
-	p.baseBuiltinFunc.bufAllocator.put(buf)
+	globalColumnAllocator.put(buf)
 	return nil
 }
 
