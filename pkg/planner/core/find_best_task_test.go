@@ -36,13 +36,13 @@ func (ds mockDataSource) Init(ctx base.PlanContext) *mockDataSource {
 	return &ds
 }
 
-func (ds *mockDataSource) FindBestTask(prop *property.PhysicalProperty) (base.Task, int64, error) {
+func (ds *mockDataSource) FindBestTask(prop *property.PhysicalProperty) (base.Task, error) {
 	// It can satisfy any of the property!
 	// Just use a TableDual for convenience.
 	p := physicalop.PhysicalTableDual{}.Init(ds.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
 	task := &physicalop.RootTask{}
 	task.SetPlan(p)
-	return task, 1, nil
+	return task, nil
 }
 
 func TestCostOverflow(t *testing.T) {
