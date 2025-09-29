@@ -624,7 +624,7 @@ func tableHandlesToKVRangesWithVersionMap(tid int64, handles []kv.Handle, handle
 	krs := make([]kv.KeyRange, 0, len(handles))
 	hints := make([]int, 0, len(handles))
 	keyVersionMap := make(map[string]uint64, len(handles))
-	for i := 0; i < len(handles); i++ {
+	for i := range handles {
 		var isCommonHandle bool
 		var commonHandle *kv.CommonHandle
 		if partitionHandle, ok := handles[i].(kv.PartitionHandle); ok {
@@ -720,7 +720,7 @@ func partitionHandlesToKVRangesWithVersion(handles []kv.Handle, handleVersionMap
 	krs := make([]kv.KeyRange, 0, len(handles))
 	hints := make([]int, 0, len(handles))
 	rangeVersionMap := make(map[string]uint64, len(handles))
-	for i := 0; i < len(handles); i++ {
+	for i := range handles {
 		ph := handles[i].(kv.PartitionHandle)
 		h := ph.Handle
 		pid := ph.PartitionID
