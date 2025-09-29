@@ -1264,6 +1264,9 @@ func TempIndexKey2IndexKey(tempIdxKey []byte) {
 
 // IsTempIndexKey checks whether the input key is for a temp index.
 func IsTempIndexKey(indexKey []byte) (isTemp bool) {
+	if len(indexKey) < prefixLen+8 {
+		return false
+	}
 	indexIDKey := indexKey[prefixLen : prefixLen+8]
 	indexID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(indexIDKey))
 	tempIndexID := int64(TempIndexPrefix) | indexID
