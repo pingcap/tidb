@@ -17,7 +17,6 @@ package impl
 import (
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -64,7 +63,7 @@ import (
 //                                       +------------------------------------------------------------------------------------------------------------------------------+
 
 // ImplementMemoAndCost is the cascades physicalization and cost PORTAL, it's quite same as physicalOptimize().
-func ImplementMemoAndCost(rootGroup *memo.Group, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
+func ImplementMemoAndCost(rootGroup *memo.Group) (plan base.PhysicalPlan, cost float64, err error) {
 	sctx := rootGroup.GetLogicalExpressions().Front().Value.(base.LogicalPlan).SCtx()
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -79,15 +78,12 @@ func ImplementMemoAndCost(rootGroup *memo.Group, planCounter *base.PlanCounterTp
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	task, _, implErr := ImplementGroupAndCost(rootGroup, rootProp, math.MaxFloat64, planCounter)
+	task, _, implErr := ImplementGroupAndCost(rootGroup, rootProp, math.MaxFloat64)
 	if implErr != nil {
 		return nil, 0, implErr
 	}
 
 	sctx.GetSessionVars().StmtCtx.TaskMapBakTS = 0
-	if *planCounter > 0 {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The parameter of nth_plan() is out of range"))
-	}
 	if task.Invalid() {
 		errMsg := "Can't find a proper physical plan for this query"
 		if config.GetGlobalConfig().DisaggregatedTiFlash && !sctx.GetSessionVars().IsMPPAllowed() {
@@ -103,8 +99,7 @@ func ImplementMemoAndCost(rootGroup *memo.Group, planCounter *base.PlanCounterTp
 }
 
 // ImplementGroupAndCost is the implementation and cost logic based on ONE group unit.
-func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, costLimit float64,
-	planCounter *base.PlanCounterTp) (base.Task, int64, error) {
+func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, costLimit float64) (base.Task, int64, error) {
 	// Check whether the child group is already optimized for the physical property.
 	task := group.GetBestTask(prop)
 	if task != nil {
@@ -133,7 +128,7 @@ func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, c
 		// than the group expression as we expected. ge.FindBestTask will directly call the logicalOp's findBestTask4xxx
 		// for the same effect while pass the ge as the first the parameter because ge also implement the LogicalPlan
 		// interface as well.
-		task, cnt, err := ge.FindBestTask(prop, planCounter)
+		task, cnt, err := ge.FindBestTask(prop)
 		if err != nil {
 			implErr = err
 			return false

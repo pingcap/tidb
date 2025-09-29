@@ -160,27 +160,6 @@ type PhysicalPlan interface {
 	GetActualProbeCnt(*execdetails.RuntimeStatsColl) int64
 }
 
-// PlanCounterTp is used in hint nth_plan() to indicate which plan to use.
-type PlanCounterTp int64
-
-// Dec minus PlanCounterTp value by x.
-func (c *PlanCounterTp) Dec(x int64) {
-	if *c <= 0 {
-		return
-	}
-	*c = max(PlanCounterTp(int64(*c)-x), 0)
-}
-
-// Empty indicates whether the PlanCounterTp is clear now.
-func (c *PlanCounterTp) Empty() bool {
-	return *c == 0
-}
-
-// IsForce indicates whether to force a plan.
-func (c *PlanCounterTp) IsForce() bool {
-	return *c != -1
-}
-
 // LogicalPlan is a tree of logical operators.
 // We can do a lot of logical optimizations to it, like predicate push-down and column pruning.
 type LogicalPlan interface {
@@ -207,7 +186,7 @@ type LogicalPlan interface {
 	// If planCounter > 0, the clock_th plan generated in this function will be returned.
 	// If planCounter = 0, the plan generated in this function will not be considered.
 	// If planCounter = -1, then we will not force plan.
-	FindBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (Task, int64, error)
+	FindBestTask(prop *property.PhysicalProperty) (Task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use
