@@ -2408,3 +2408,120 @@ func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 		tk.MustQuery("explain select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
+func TestIssuenullreject(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test;")
+
+		// Case 1: NATURAL RIGHT JOIN inside NOT IN should keep right outer join
+		tk.MustExec("drop table if exists chqin, chqin2;")
+		tk.MustExec("create table chqin(id int, f1 date);")
+		tk.MustExec("insert into chqin values (1,null),(2,null),(3,null);")
+		tk.MustExec("create table chqin2(id int, f1 date);")
+		tk.MustExec("insert into chqin2 values (1,'1990-11-27'),(2,'1990-11-27'),(3,'1990-11-27');")
+		q1 := "select 1 from chqin where  '2008-05-28' NOT IN(" +
+			"select a1.f1 from chqin a1 NATURAL RIGHT JOIN chqin2 a2 WHERE a2.f1  >= '1990-11-27' union select f1 from chqin where id=5)"
+		tk.MustQuery("explain format='plan_tree' " + q1).Check(testkit.Rows(
+			"Projection root  1->Column#14",
+			"└─HashJoin root  Null-aware anti semi join, left side:Projection, equal:[eq(Column#16, Column#13)]",
+			"  ├─HashAgg(Build) root  group by:Column#13, funcs:firstrow(Column#13)->Column#13",
+			"  │ └─Union root  ",
+			"  │   ├─HashJoin root  right outer join, left side:TableReader, equal:[eq(test.chqin.id, test.chqin2.id) eq(test.chqin.f1, test.chqin2.f1)]",
+			"  │   │ ├─TableReader(Build) root  data:Selection",
+			"  │   │ │ └─Selection cop[tikv]  ge(test.chqin.f1, 1990-11-27 00:00:00.000000), not(isnull(test.chqin.f1)), not(isnull(test.chqin.id))",
+			"  │   │ │   └─TableFullScan cop[tikv] table:a1 keep order:false, stats:pseudo",
+			"  │   │ └─TableReader(Probe) root  data:Selection",
+			"  │   │   └─Selection cop[tikv]  ge(test.chqin2.f1, 1990-11-27 00:00:00.000000)",
+			"  │   │     └─TableFullScan cop[tikv] table:a2 keep order:false, stats:pseudo",
+			"  │   └─TableReader root  data:Projection",
+			"  │     └─Projection cop[tikv]  test.chqin.f1->Column#13",
+			"  │       └─Selection cop[tikv]  eq(test.chqin.id, 5)",
+			"  │         └─TableFullScan cop[tikv] table:chqin keep order:false, stats:pseudo",
+			"  └─Projection(Probe) root  2008-05-28 00:00:00.000000->Column#16",
+			"    └─TableReader root  data:TableFullScan",
+			"      └─TableFullScan cop[tikv] table:chqin keep order:false, stats:pseudo",
+		))
+		// result check (should be empty)
+		tk.MustQuery(q1).Check(testkit.Rows())
+
+		// Case 2: RIGHT JOIN with subquery and APPLY should keep right outer join
+		tk.MustExec("drop table if exists t0, t1, t2;")
+		tk.MustExec("create table t0(c0 int);")
+		tk.MustExec("insert into t0 values (61);")
+		tk.MustExec("create table t1(c1 int, c2 double);")
+		tk.MustExec("insert into t1 values (NULL,0);")
+		tk.MustExec("create table t2(c3 varchar(100), c4 varchar(100));")
+		tk.MustExec("insert into t2 values (NULL,NULL);")
+		q2 := "select  subq_0.c_0 as c_0, subq_0.c_1 as c_1, subq_0.c_2 as c_2 " +
+			"from (select  ref_1.c0 as c_0,  ref_0.c2 as c_1,  ref_0.c2 as c_2 " +
+			"from (t1 as ref_0 right join (t0 as ref_1) on (ref_0.c1 = ref_1.c0 )) ) as subq_0 " +
+			"where ((('' = ( select  (' n1`')  as c_0 from  (t2 as ref_3 left join t2 as ref_4 on (ref_3.c4 = ref_4.c3 )) " +
+			"where ((subq_0.c_1) <> (subq_0.c_2)) or (true) order by c_0 desc limit 1)) is null))"
+		tk.MustQuery("explain format='plan_tree' " + q2).Check(testkit.Rows(
+			"Projection root  test.t0.c0, test.t1.c2, test.t1.c2",
+			"└─Selection root  isnull(eq(\"\", Column#12))",
+			"  └─Apply root  CARTESIAN left outer join, left side:HashJoin",
+			"    ├─HashJoin(Build) root  right outer join, left side:TableReader, equal:[eq(test.t1.c1, test.t0.c0)]",
+			"    │ ├─TableReader(Build) root  data:TableFullScan",
+			"    │ │ └─TableFullScan cop[tikv] table:ref_1 keep order:false, stats:pseudo",
+			"    │ └─TableReader(Probe) root  data:Selection",
+			"    │   └─Selection cop[tikv]  not(isnull(test.t1.c1))",
+			"    │     └─TableFullScan cop[tikv] table:ref_0 keep order:false, stats:pseudo",
+			"    └─Projection(Probe) root   n1`->Column#12",
+			"      └─Limit root  offset:0, count:1",
+			"        └─HashJoin root  left outer join, left side:Limit, equal:[eq(test.t2.c4, test.t2.c3)]",
+			"          ├─Limit(Build) root  offset:0, count:1",
+			"          │ └─TableReader root  data:Limit",
+			"          │   └─Limit cop[tikv]  offset:0, count:1",
+			"          │     └─TableFullScan cop[tikv] table:ref_3 keep order:false, stats:pseudo",
+			"          └─TableReader(Probe) root  data:Selection",
+			"            └─Selection cop[tikv]  not(isnull(test.t2.c3))",
+			"              └─TableFullScan cop[tikv] table:ref_4 keep order:false, stats:pseudo",
+		))
+		// result should be empty
+		tk.MustQuery(q2).Check(testkit.Rows())
+
+		// Case 3: LEFT JOIN with projection constant column should keep left outer join
+		tk.MustExec("drop table if exists t0, t2, t3;")
+		tk.MustExec("create table t0(c0 int);")
+		tk.MustExec("create table t2(c0 int);")
+		tk.MustExec("create table t3(c0 int);")
+		tk.MustExec("insert into t0 values(0);")
+		tk.MustExec("insert into t3 values(3);")
+		q3 := "SELECT * FROM t0 LEFT JOIN (SELECT NULL AS col_2 FROM t2) as subQuery1 ON true " +
+			"INNER JOIN t3 ON (((((CASE 1 WHEN subQuery1.col_2 THEN t3.c0 ELSE NULL END)) AND (((t0.c0))))) < 1)"
+		tk.MustQuery("explain format='plan_tree' " + q3).Check(testkit.Rows(
+			"Projection root  test.t0.c0, Column#5, test.t3.c0",
+			"└─HashJoin root  CARTESIAN inner join, other cond:lt(and(case(eq(1, cast(Column#5, double BINARY)), test.t3.c0, NULL), test.t0.c0), 1)",
+			"  ├─TableReader(Build) root  data:TableFullScan",
+			"  │ └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+			"  └─HashJoin(Probe) root  CARTESIAN left outer join, left side:TableReader",
+			"    ├─TableReader(Build) root  data:TableFullScan",
+			"    │ └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo",
+			"    └─Projection(Probe) root  <nil>->Column#5",
+			"      └─TableReader root  data:TableFullScan",
+			"        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+		))
+		// expected row: 0, NULL, 3
+		tk.MustQuery(q3).Check(testkit.Rows("0 <nil> 3"))
+
+		// Case 4: RIGHT OUTER JOIN with boolean WHERE should keep right outer join
+		tk.MustExec("drop table if exists t0, t1;")
+		tk.MustExec("create table t0(c0 int);")
+		tk.MustExec("insert into t0 values (1);")
+		tk.MustExec("create table t1(c0 int);")
+		tk.MustExec("insert into t1 values (0);")
+		q4 := "SELECT t0.c0 AS ref0, t1.c0 AS ref1 FROM t0 RIGHT OUTER JOIN t1 ON t0.c0 = t1.c0 " +
+			"WHERE (t1.c0 AND (t0.c0 != NULL)) IS FALSE"
+		tk.MustQuery("explain format='plan_tree' " + q4).Check(testkit.Rows(
+			"Selection root  isfalse(and(test.t1.c0, ne(test.t0.c0, NULL)))",
+			"└─HashJoin root  right outer join, left side:TableReader, equal:[eq(test.t0.c0, test.t1.c0)]",
+			"  ├─TableReader(Build) root  data:Selection",
+			"  │ └─Selection cop[tikv]  isfalse(and(test.t0.c0, ne(test.t0.c0, NULL))), not(isnull(test.t0.c0))",
+			"  │   └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo",
+			"  └─TableReader(Probe) root  data:TableFullScan",
+			"    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+		))
+		// expected row: NULL, 0
+		tk.MustQuery(q4).Check(testkit.Rows("<nil> 0"))
+	})
+}

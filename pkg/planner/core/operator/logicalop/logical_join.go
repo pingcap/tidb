@@ -759,8 +759,73 @@ func (p *LogicalJoin) ExtractFD() *funcdep.FDSet {
 }
 
 // GetBaseLogicalPlan inherits the BaseLogicalPlan.LogicalPlan.<23th> implementation.
+// Keep only predicates that can be fully resolved by the given schema.
+// We drop constants and any predicate that references columns outside `sch`.
+// Motivation: when pushing predicates across Apply/Aggregation subtrees,
+// cross-scope captures can change semantics (e.g., wrongly eliminating an outer join).
+func filterPredsBySchema(preds []expression.Expression, sch *expression.Schema) []expression.Expression {
+	out := make([]expression.Expression, 0, len(preds))
+predLoop:
+	for _, e := range preds {
+		cols := expression.ExtractColumns(e)
+		if len(cols) == 0 { // constants don't help outer-join elimination
+			continue
+		}
+		for _, c := range cols {
+			if !sch.Contains(c) {
+				continue predLoop
+			}
+		}
+		out = append(out, e)
+	}
+	return out
+}
 
-// ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
+// Guarded predicate passing:
+//   - If the child contains Apply/Aggregation, pass only predicates that are fully
+//     resolvable by the child's schema (schema filter).
+//   - Otherwise, pass the combined ON+WHERE unchanged so that historical derivations
+//     (like NOT-IS-NULL on join keys) continue to happen.
+func passPredsSafely(child base.LogicalPlan, combined []expression.Expression) []expression.Expression {
+	// 1) Always filter predicates by the child's schema to avoid cross-scope captures.
+	filtered := filterPredsBySchema(combined, child.Schema())
+	// 2) If the child is an outer-join, block pushing NOT IS NULL(col) onto the nullable side.
+	if j, ok := child.(*LogicalJoin); ok && j.JoinType.IsOuterJoin() {
+		var nullSide *expression.Schema
+		switch j.JoinType {
+		case base.LeftOuterJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
+			nullSide = j.Children()[1].Schema()
+		case base.RightOuterJoin:
+			nullSide = j.Children()[0].Schema()
+		}
+		keep := make([]expression.Expression, 0, len(filtered))
+		for _, p := range filtered {
+			if isNotNullOnSchemaCol(p, nullSide) {
+				continue
+			}
+			keep = append(keep, p)
+		}
+		return keep
+	}
+	return filtered
+}
+
+// isNotNullOnSchemaCol reports whether e is NOT(ISNULL(col)) for a column
+// that belongs to the given schema.
+func isNotNullOnSchemaCol(e expression.Expression, sch *expression.Schema) bool {
+	sf, ok := e.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.UnaryNot {
+		return false
+	}
+	inner, ok := sf.GetArgs()[0].(*expression.ScalarFunction)
+	if !ok || inner.FuncName.L != ast.IsNull {
+		return false
+	}
+	if c, ok := inner.GetArgs()[0].(*expression.Column); ok {
+		return sch.Contains(c)
+	}
+	return false
+}
 func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
 	innerTable := p.Children()[0]
 	outerTable := p.Children()[1]
@@ -771,10 +836,13 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 		switchChild = true
 	}
 
-	// First, simplify this join
+	// ---- step 1. Convert OUTER→INNER only if there's an explicit NOT IS NULL
+	// on the nullable side (inner side of the outer join). ----
 	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
+		innerSch := innerTable.Schema() // schema of the nullable side
+		innerWhere := filterPredsBySchema(predicates, innerSch)
 		canBeSimplified := false
-		for _, expr := range predicates {
+		for _, expr := range innerWhere {
 			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
 			if isOk {
 				canBeSimplified = true
@@ -786,21 +854,26 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 		}
 	}
 
-	// Next simplify join children
-
+	// ---- step 2. Recurse into children (using passPredsSafely as guard). ----
 	combinedCond := mergeOnClausePredicates(p, predicates)
-	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
-		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
-	} else if p.JoinType == base.InnerJoin || p.JoinType == base.SemiJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
-		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else if p.JoinType == base.AntiSemiJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
-		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else {
-		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
-		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
+
+	switch p.JoinType {
+	case base.LeftOuterJoin, base.RightOuterJoin:
+		innerTable = innerTable.ConvertOuterToInnerJoin(
+			passPredsSafely(innerTable, combinedCond),
+		)
+		outerTable = outerTable.ConvertOuterToInnerJoin(
+			passPredsSafely(outerTable, predicates),
+		)
+	case base.InnerJoin, base.SemiJoin:
+		innerTable = innerTable.ConvertOuterToInnerJoin(passPredsSafely(innerTable, combinedCond))
+		outerTable = outerTable.ConvertOuterToInnerJoin(passPredsSafely(outerTable, combinedCond))
+	case base.AntiSemiJoin:
+		innerTable = innerTable.ConvertOuterToInnerJoin(passPredsSafely(innerTable, predicates))
+		outerTable = outerTable.ConvertOuterToInnerJoin(passPredsSafely(outerTable, predicates))
+	default:
+		innerTable = innerTable.ConvertOuterToInnerJoin(passPredsSafely(innerTable, predicates))
+		outerTable = outerTable.ConvertOuterToInnerJoin(passPredsSafely(outerTable, predicates))
 	}
 
 	if switchChild {
@@ -810,7 +883,6 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 		p.SetChild(0, innerTable)
 		p.SetChild(1, outerTable)
 	}
-
 	return p
 }
 
@@ -1426,6 +1498,38 @@ func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expre
 		return false
 	}
 	return true
+}
+
+// Whether the column is an aggregation output that is always non-NULL for non-empty groups
+func aggOutputAlwaysNotNull(agg *LogicalAggregation, col *expression.Column) bool {
+	// 1) Must be a grouped aggregation (scalar aggregation over an empty group is not always non-NULL)
+	if len(agg.GroupByItems) == 0 {
+		return false
+	}
+	// 2) Find the index of col in the aggregation output
+	idx := agg.Schema().ColumnIndex(col)
+	if idx < 0 {
+		return false
+	}
+	// 3) GROUP BY columns must never be removed (this is the root cause of over-elimination)
+	if idx < len(agg.GroupByItems) {
+		return false
+	}
+	// 4) The corresponding aggregate function
+	af := agg.AggFuncs[idx-len(agg.GroupByItems)]
+	switch af.Name {
+	case ast.AggFuncCount: // COUNT(*) / COUNT(x) is always non-NULL
+		return true
+	case ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncMin, ast.AggFuncMax:
+		// Only when the argument is a single NOT NULL column do we treat it as always non-NULL
+		// (conservative; covers typical scenarios such as TPCH/Q17)
+		if len(af.Args) == 1 {
+			if c, ok := af.Args[0].(*expression.Column); ok {
+				return mysql.HasNotNullFlag(c.RetType.GetFlag())
+			}
+		}
+	}
+	return false
 }
 
 // ExtractOnCondition divide conditions in CNF of join node into 4 groups.
@@ -2081,7 +2185,7 @@ func DeriveOtherConditions(
 			if leftRelaxedCond != nil {
 				leftCond = append(leftCond, leftRelaxedCond)
 			}
-			notNullExpr := deriveNotNullExpr(ctx, expr, leftSchema)
+			notNullExpr := deriveNotNullExpr(ctx, expr, leftSchema, p.Children()[0])
 			if notNullExpr != nil {
 				leftCond = append(leftCond, notNullExpr)
 			}
@@ -2101,7 +2205,7 @@ func DeriveOtherConditions(
 			if isOuterSemi {
 				continue
 			}
-			notNullExpr := deriveNotNullExpr(ctx, expr, rightSchema)
+			notNullExpr := deriveNotNullExpr(ctx, expr, rightSchema, p.Children()[1])
 			if notNullExpr != nil {
 				rightCond = append(rightCond, notNullExpr)
 			}
@@ -2113,7 +2217,7 @@ func DeriveOtherConditions(
 // deriveNotNullExpr generates a new expression `not(isnull(col))` given `col1 op col2`,
 // in which `col` is in specified schema. Caller guarantees that only one of `col1` or
 // `col2` is in schema.
-func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema *expression.Schema) expression.Expression {
+func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema *expression.Schema, child base.LogicalPlan) expression.Expression {
 	binop, ok := expr.(*expression.ScalarFunction)
 	if !ok || len(binop.GetArgs()) != 2 {
 		return nil
@@ -2127,7 +2231,8 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 	if childCol == nil {
 		childCol = schema.RetrieveColumn(arg1)
 	}
-	if util.IsNullRejected(ctx, schema, expr, true) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
+	if util.IsNullRejected(ctx, schema, expr, true) &&
+		!mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 		return expression.BuildNotNullExpr(ctx.GetExprCtx(), childCol)
 	}
 	return nil
