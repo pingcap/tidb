@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -50,7 +49,7 @@ func (p *LogicalLimit) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
+		buffer = property.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
 		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	} else {
 		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
@@ -135,7 +134,7 @@ func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expressi
 	if !reload && p.StatsInfo() != nil {
 		return p.StatsInfo(), false, nil
 	}
-	p.SetStats(util.DeriveLimitStats(childStats[0], float64(p.Count)))
+	p.SetStats(property.DeriveLimitStats(childStats[0], float64(p.Count)))
 	return p.StatsInfo(), true, nil
 }
 

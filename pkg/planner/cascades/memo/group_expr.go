@@ -288,11 +288,11 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		// wrapped logical plan from GE, so we can use same function pointer to handle logic inside.
 		return physicalop.ExhaustPhysicalPlans4LogicalCTE(x, prop)
 	case *logicalop.LogicalSort:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalSort(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalSort(x, prop)
 	case *logicalop.LogicalTopN:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalTopN(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalTopN(x, prop)
 	case *logicalop.LogicalLock:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalLock(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalLock(x, prop)
 	case *logicalop.LogicalJoin:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalJoin(e, prop)
 	case *logicalop.LogicalApply:

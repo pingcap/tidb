@@ -128,7 +128,7 @@ func attach2Task4PhysicalApply(pp base.PhysicalPlan, tasks ...base.Task) base.Ta
 	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	rTask := tasks[1].ConvertToRootTask(p.SCtx())
 	p.SetChildren(lTask.Plan(), rTask.Plan())
-	p.SetSchema(BuildPhysicalJoinSchema(p.JoinType, p))
+	p.SetSchema(physicalop.BuildPhysicalJoinSchema(p.JoinType, p))
 	t := &physicalop.RootTask{}
 	t.SetPlan(p)
 	// inherit left and right child's warnings.
@@ -260,7 +260,7 @@ func attach2TaskForTiFlash4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.
 	rRoot := rTask.ConvertToRootTask(p.SCtx())
 	lRoot := lTask.ConvertToRootTask(p.SCtx())
 	p.SetChildren(lRoot.Plan(), rRoot.Plan())
-	p.SetSchema(BuildPhysicalJoinSchema(p.JoinType, p))
+	p.SetSchema(physicalop.BuildPhysicalJoinSchema(p.JoinType, p))
 	task := &physicalop.RootTask{}
 	task.SetPlan(p)
 	task.Warnings.CopyFrom(&rTask.Warnings, &lTask.Warnings)
@@ -512,7 +512,7 @@ func attach2TaskForMpp4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task
 	// Thus, the column prune optimization achievements will be abandoned here.
 	// To avoid the performance issue, add a projection here above the Join operator to prune useless columns explicitly.
 	// TODO(hyb): transfer Join executors' schema to TiFlash through DagRequest, and use it directly in TiFlash.
-	defaultSchema := BuildPhysicalJoinSchema(p.JoinType, p)
+	defaultSchema := physicalop.BuildPhysicalJoinSchema(p.JoinType, p)
 	hashColArray := make([]*expression.Column, 0, len(task.HashCols))
 	// For task.hashCols, these columns may not be contained in pruned columns:
 	// select A.id from A join B on A.id = B.id; Suppose B is probe side, and it's hash inner join.
@@ -652,7 +652,7 @@ func attach2Task4PhysicalLimit(pp base.PhysicalPlan, tasks ...base.Task) base.Ta
 			newCount := p.Offset + p.Count
 			childProfile := cop.TablePlan.StatsInfo()
 			// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
-			stats := util.DeriveLimitStats(childProfile, float64(newCount))
+			stats := property.DeriveLimitStats(childProfile, float64(newCount))
 			pushedDownLimit := physicalop.PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 			pushedDownLimit.SetChildren(cop.TablePlan)
 			cop.TablePlan = pushedDownLimit
@@ -669,7 +669,7 @@ func attach2Task4PhysicalLimit(pp base.PhysicalPlan, tasks ...base.Task) base.Ta
 				childProfile := cop.Plan().StatsInfo()
 				// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
 				// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
-				stats := util.DeriveLimitStats(childProfile, float64(newCount))
+				stats := property.DeriveLimitStats(childProfile, float64(newCount))
 				pushedDownLimit := physicalop.PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 				cop = attachPlan2Task(pushedDownLimit, cop).(*physicalop.CopTask)
 				// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
@@ -691,7 +691,7 @@ func attach2Task4PhysicalLimit(pp base.PhysicalPlan, tasks ...base.Task) base.Ta
 					limitChildren := make([]base.PhysicalPlan, 0, len(cop.IdxMergePartPlans))
 					for _, partialScan := range cop.IdxMergePartPlans {
 						childProfile := partialScan.StatsInfo()
-						stats := util.DeriveLimitStats(childProfile, float64(newCount))
+						stats := property.DeriveLimitStats(childProfile, float64(newCount))
 						pushedDownLimit := physicalop.PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 						pushedDownLimit.SetChildren(partialScan)
 						pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
@@ -735,7 +735,7 @@ func attach2Task4PhysicalLimit(pp base.PhysicalPlan, tasks ...base.Task) base.Ta
 	} else if mpp, ok := t.(*physicalop.MppTask); ok {
 		newCount := p.Offset + p.Count
 		childProfile := mpp.Plan().StatsInfo()
-		stats := util.DeriveLimitStats(childProfile, float64(newCount))
+		stats := property.DeriveLimitStats(childProfile, float64(newCount))
 		pushedDownLimit := physicalop.PhysicalLimit{Count: newCount, PartitionBy: newPartitionBy}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 		mpp = attachPlan2Task(pushedDownLimit, mpp).(*physicalop.MppTask)
 		pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
@@ -913,7 +913,7 @@ func getPushedDownTopN(p *physicalop.PhysicalTopN, childPlan base.PhysicalPlan, 
 	childProfile := childPlan.StatsInfo()
 	// Strictly speaking, for the row count of pushed down TopN, we should multiply newCount with "regionNum",
 	// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
-	stats := util.DeriveLimitStats(childProfile, float64(newCount))
+	stats := property.DeriveLimitStats(childProfile, float64(newCount))
 
 	// Add a extra physicalProjection to save the distance column, a example like :
 	// select id from t order by vec_distance(vec, '[1,2,3]') limit x
@@ -1230,7 +1230,7 @@ func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *physicalop.CopTa
 		return nil, false
 	}
 
-	colsProp, ok := GetPropByOrderByItems(p.ByItems)
+	colsProp, ok := physicalop.GetPropByOrderByItems(p.ByItems)
 	if !ok {
 		return nil, false
 	}
@@ -1245,7 +1245,7 @@ func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *physicalop.CopTa
 
 	childProfile := copTsk.Plan().StatsInfo()
 	newCount := p.Offset + p.Count
-	stats := util.DeriveLimitStats(childProfile, float64(newCount))
+	stats := property.DeriveLimitStats(childProfile, float64(newCount))
 	pushedLimit := physicalop.PhysicalLimit{
 		Count: newCount,
 	}.Init(p.SCtx(), stats, p.QueryBlockOffset())
