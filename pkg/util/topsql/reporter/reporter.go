@@ -289,7 +289,7 @@ func find_kth_uint64(data stmtstats.StatementStatsMap, k int, u64_slice []uint64
 		}
 		quickselect.QuickSelect(uint64Slice(u64_slice), k)
 		kth_exec_count = u64_slice[0]
-		for i := 0; i < k; i++ {
+		for i := range k {
 			kth_exec_count = min(kth_exec_count, u64_slice[i])
 		}
 	}
