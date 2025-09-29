@@ -1294,8 +1294,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		var err error
-		startTS := time.Now()
-		e.logger.Info("hjq init data files", zap.Int("allFiles", len(allFiles)), zap.String("escapedPath", escapedPath))
 		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				// we have checked in LoadDataExec.Next
@@ -1323,7 +1321,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			}); err != nil {
 			return err
 		}
-		e.logger.Info("hjq init data files finish", zap.Int("dataFiles", len(dataFiles)), zap.Int("thread", e.ThreadCnt*2), zap.Duration("cost", time.Since(startTS)))
 		e.updateFormat(format.Load())
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
