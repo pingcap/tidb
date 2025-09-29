@@ -65,7 +65,7 @@ func updateAllRuleFields(globalRules *slowlogrule.GlobalSlowLogRules, seVars *va
 	}
 }
 
-// PrepareSlowLogItemsForRules builds a SlowQueryLogItems containing only the fields referenced by current session's SlowLogRules.
+// PrepareSlowLogItemsForRules builds a SlowQueryLogItems containing only the fields referenced by the effective slow log rules.
 // These pre-collected fields are later used for matching SQL execution details against the rules.
 func PrepareSlowLogItemsForRules(ctx context.Context, globalRules *slowlogrule.GlobalSlowLogRules, seVars *variable.SessionVars) *variable.SlowQueryLogItems {
 	updateAllRuleFields(globalRules, seVars)
@@ -146,8 +146,8 @@ func ShouldWriteSlowLog(globalRules *slowlogrule.GlobalSlowLogRules, seVars *var
 	return false
 }
 
-// CompleteSlowLogItemsForRules fills in the remaining SlowQueryLogItems fields
-// that are relevant to triggering the current session's SlowLogRules.
+// CompleteSlowLogItemsForRules fills in the remaining fields of SlowQueryLogItems
+// that were not required by the session's effective rule set.
 // It's exporting for testing.
 func CompleteSlowLogItemsForRules(ctx context.Context, seVars *variable.SessionVars, items *variable.SlowQueryLogItems) {
 	for field, sg := range variable.SlowLogRuleFieldAccessors {

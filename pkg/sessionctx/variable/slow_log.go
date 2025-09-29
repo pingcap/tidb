@@ -19,7 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
+	"hash/crc64"
 	"regexp"
 	"slices"
 	"strconv"
@@ -1044,13 +1044,7 @@ func encodeRules(rules *slowlogrule.SlowLogRules) string {
 	return strB.String()
 }
 
-func calcHash(s string) (uint64, error) {
-	h := fnv.New64a()
-	if _, err := h.Write([]byte(s)); err != nil {
-		return 0, err
-	}
-	return h.Sum64(), nil
-}
+var crc64Table = crc64.MakeTable(crc64.ECMA)
 
 // ParseGlobalSlowLogRules parses raw rules and constructs a GlobalSlowLogRules object.
 // The result contains both the raw string and the rules map keyed by ConnID.
@@ -1071,13 +1065,9 @@ func ParseGlobalSlowLogRules(rawRules string) (*slowlogrule.GlobalSlowLogRules, 
 	}
 
 	rawRules = strings.Join(rawSlice, ";")
-	rawHash, err := calcHash(rawRules)
-	if err != nil {
-		return nil, err
-	}
 	return &slowlogrule.GlobalSlowLogRules{
 		RawRules:     rawRules,
-		RawRulesHash: rawHash,
+		RawRulesHash: crc64.Checksum([]byte(rawRules), crc64Table),
 		RulesMap:     rulesMap,
 	}, nil
 }
