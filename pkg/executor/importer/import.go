@@ -1240,7 +1240,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		sourceType mydump.SourceType
 		format     atomic.String = *atomic.NewString(e.Format)
 	)
-
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
 	// check glob pattern is present in filename.
@@ -1284,6 +1283,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
 		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
+
 		allFiles := make([]mydump.RawFile, 0, 16)
 		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
