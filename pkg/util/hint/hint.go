@@ -318,8 +318,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	}
 
 	hintOffs := make(map[string]int, len(hints))
-	var forceNthPlan *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, straightJoinHintCnt, resourceGroupHintCnt int
 	setVars := make(map[string]string)
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
@@ -507,20 +506,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 		stmtHints.ResourceGroup = resourceGroup.HintData.(string)
 	}
 	// Handle NTH_PLAN
-	if forceNthPlanCnt != 0 {
-		if forceNthPlanCnt > 1 {
-			warn := errors.NewNoStackErrorf("NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(%v)", forceNthPlan.HintData.(int64))
-			warns = append(warns, warn)
-		}
-		stmtHints.ForceNthPlan = forceNthPlan.HintData.(int64)
-		if stmtHints.ForceNthPlan < 1 {
-			stmtHints.ForceNthPlan = -1
-			warn := errors.NewNoStackError("the hintdata for NTH_PLAN() is too small, hint ignored")
-			warns = append(warns, warn)
-		}
-	} else {
-		stmtHints.ForceNthPlan = -1
-	}
+	stmtHints.ForceNthPlan = -1
 	for _, off := range hintOffs {
 		offs = append(offs, off)
 	}
