@@ -24,10 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -81,8 +79,6 @@ type Plan interface {
 	//		`select /*+ use_index(@sel_2 t2, a) */ * from t1, (select a*2 as b from t2) tx where a>b`
 	// the hint should be applied on the sub-query, whose query block is 2.
 	QueryBlockOffset() int
-
-	BuildPlanTrace() *tracing.PlanTrace
 
 	// CloneForPlanCache clones this Plan for Plan Cache.
 	// Compared with Clone, CloneForPlanCache doesn't deep clone every fields, fields with tag
@@ -139,10 +135,6 @@ type PhysicalPlan interface {
 
 	// Clone clones this physical plan.
 	Clone(newCtx PlanContext) (PhysicalPlan, error)
-
-	// AppendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
-	// be tracked during findBestTask or enumeratePhysicalPlans4Task
-	AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp)
 
 	// MemoryUsage return the memory usage of PhysicalPlan
 	MemoryUsage() int64
@@ -215,7 +207,7 @@ type LogicalPlan interface {
 	// If planCounter > 0, the clock_th plan generated in this function will be returned.
 	// If planCounter = 0, the plan generated in this function will not be considered.
 	// If planCounter = -1, then we will not force plan.
-	FindBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *optimizetrace.PhysicalOptimizeOp) (Task, int64, error)
+	FindBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (Task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use

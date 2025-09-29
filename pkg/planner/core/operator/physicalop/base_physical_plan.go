@@ -24,12 +24,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -152,22 +150,6 @@ func (p *BasePhysicalPlan) Schema() *expression.Schema {
 	return p.children[0].Schema()
 }
 
-// BuildPlanTrace implements Plan BuildPlanTrace interface.
-func (p *BasePhysicalPlan) BuildPlanTrace() *tracing.PlanTrace {
-	tp := ""
-	info := ""
-	if p.Self != nil {
-		tp = p.Self.TP()
-		info = p.Self.ExplainInfo()
-	}
-
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: tp, ExplainInfo: info}
-	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.BuildPlanTrace())
-	}
-	return planTrace
-}
-
 // ******************************* end implementation of Plan interface *********************************
 
 // *************************** start implementation of PhysicalPlan interface ***************************
@@ -279,24 +261,6 @@ func (*BasePhysicalPlan) ExplainNormalizedInfo() string {
 // Clone implements the base.PhysicalPlan.<14th> interface.
 func (p *BasePhysicalPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p.Self)
-}
-
-// AppendChildCandidate implements the base.PhysicalPlan.<15th> interface.
-func (p *BasePhysicalPlan) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	if len(p.Children()) < 1 {
-		return
-	}
-	childrenID := make([]int, 0)
-	for _, child := range p.Children() {
-		childCandidate := &tracing.CandidatePlanTrace{
-			PlanTrace: &tracing.PlanTrace{TP: child.TP(), ID: child.ID(),
-				ExplainInfo: child.ExplainInfo()},
-		}
-		op.AppendCandidate(childCandidate)
-		child.AppendChildCandidate(op)
-		childrenID = append(childrenID, child.ID())
-	}
-	op.GetTracer().Candidates[p.ID()].PlanTrace.AppendChildrenID(childrenID...)
 }
 
 // MemoryUsage implements the base.PhysicalPlan.<16th> interface.

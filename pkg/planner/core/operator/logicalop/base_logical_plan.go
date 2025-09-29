@@ -26,12 +26,10 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 var _ base.LogicalPlan = &BaseLogicalPlan{}
@@ -116,15 +114,6 @@ func (p *BaseLogicalPlan) SetOutputNames(names types.NameSlice) {
 	p.children[0].SetOutputNames(names)
 }
 
-// BuildPlanTrace implements Plan
-func (p *BaseLogicalPlan) BuildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
-	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.BuildPlanTrace())
-	}
-	return planTrace
-}
-
 // *************************** implementation of logicalPlan interface ***************************
 
 // HashCode implements LogicalPlan.<0th> interface.
@@ -164,9 +153,8 @@ func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) (bas
 }
 
 // FindBestTask implements LogicalPlan.<3rd> interface.
-func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
-	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask4BaseLogicalPlan(p, prop, planCounter, opt)
+func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (bestTask base.Task, cntPlan int64, err error) {
+	return utilfuncp.FindBestTask4BaseLogicalPlan(p, prop, planCounter)
 }
 
 // BuildKeyInfo implements LogicalPlan.<4th> interface.

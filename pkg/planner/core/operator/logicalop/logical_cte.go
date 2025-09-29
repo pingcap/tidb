@@ -25,7 +25,6 @@ import (
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -146,8 +145,8 @@ func (p *LogicalCTE) PruneColumns(_ []*expression.Column) (base.LogicalPlan, err
 }
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalCTE) FindBestTask(prop *property.PhysicalProperty, counter *base.PlanCounterTp, pop *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask4LogicalCTE(p, prop, counter, pop)
+func (p *LogicalCTE) FindBestTask(prop *property.PhysicalProperty, counter *base.PlanCounterTp) (t base.Task, cntPlan int64, err error) {
+	return utilfuncp.FindBestTask4LogicalCTE(p, prop, counter)
 }
 
 // BuildKeyInfo inherits the BaseLogicalPlan.<4th> implementation.
