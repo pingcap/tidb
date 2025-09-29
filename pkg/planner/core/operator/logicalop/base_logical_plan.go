@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 var _ base.LogicalPlan = &BaseLogicalPlan{}
@@ -113,15 +112,6 @@ func (p *BaseLogicalPlan) OutputNames() types.NameSlice {
 // SetOutputNames implements Plan Schema interface.
 func (p *BaseLogicalPlan) SetOutputNames(names types.NameSlice) {
 	p.children[0].SetOutputNames(names)
-}
-
-// BuildPlanTrace implements Plan
-func (p *BaseLogicalPlan) BuildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
-	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.BuildPlanTrace())
-	}
-	return planTrace
 }
 
 // *************************** implementation of logicalPlan interface ***************************

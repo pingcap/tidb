@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
@@ -131,18 +130,6 @@ func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expressio
 		}
 	}
 	return corCols
-}
-
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.TablePlan != nil {
-		rp.Children = append(rp.Children, p.TablePlan.BuildPlanTrace())
-	}
-	for _, partialPlan := range p.PartialPlansRaw {
-		rp.Children = append(rp.Children, partialPlan.BuildPlanTrace())
-	}
-	return rp
 }
 
 // GetPlanCostVer1 implements PhysicalPlan cost v1 for IndexMergeReader.

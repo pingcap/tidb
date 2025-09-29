@@ -333,9 +333,6 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
 	}
-	if sessVars.StmtCtx.EnableOptimizeTrace {
-		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.BuildPlanTrace())
-	}
 	return logic, finalPlan, cost, nil
 }
 
@@ -362,9 +359,6 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
-	}
-	if sessVars.StmtCtx.EnableOptimizeTrace {
-		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.BuildPlanTrace())
 	}
 	return logic, finalPlan, cost, nil
 }
@@ -1034,16 +1028,6 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	vars := logic.SCtx().GetSessionVars()
-	if vars.StmtCtx.EnableOptimizeTrace {
-		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
-		tracer := &tracing.LogicalOptimizeTracer{
-			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
-		}
-		defer func() {
-			vars.StmtCtx.OptimizeTracer.Logical = tracer
-		}()
-	}
 	var err error
 	// todo: the normalization rule driven way will be changed as stack-driven.
 	for i, rule := range normalizeRuleList {
@@ -1065,16 +1049,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
-	}
-	vars := logic.SCtx().GetSessionVars()
-	if vars.StmtCtx.EnableOptimizeTrace {
-		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
-		tracer := &tracing.LogicalOptimizeTracer{
-			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
-		}
-		defer func() {
-			vars.StmtCtx.OptimizeTracer.Logical = tracer
-		}()
 	}
 	var err error
 	var againRuleList []base.LogicalOptRule

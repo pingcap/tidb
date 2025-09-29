@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // ReadReqType is the read request type of the operator. Currently, only PhysicalTableReader uses this.
@@ -251,15 +250,6 @@ func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
-}
-
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.TablePlan != nil {
-		rp.Children = append(rp.Children, p.TablePlan.BuildPlanTrace())
-	}
-	return rp
 }
 
 // ExplainInfo implements Plan interface.

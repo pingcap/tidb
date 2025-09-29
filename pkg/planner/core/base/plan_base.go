@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -80,8 +79,6 @@ type Plan interface {
 	//		`select /*+ use_index(@sel_2 t2, a) */ * from t1, (select a*2 as b from t2) tx where a>b`
 	// the hint should be applied on the sub-query, whose query block is 2.
 	QueryBlockOffset() int
-
-	BuildPlanTrace() *tracing.PlanTrace
 
 	// CloneForPlanCache clones this Plan for Plan Cache.
 	// Compared with Clone, CloneForPlanCache doesn't deep clone every fields, fields with tag

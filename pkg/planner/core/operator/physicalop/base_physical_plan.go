@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -149,22 +148,6 @@ func (*BasePhysicalPlan) ExplainInfo() string {
 // Schema implements Plan Schema interface.
 func (p *BasePhysicalPlan) Schema() *expression.Schema {
 	return p.children[0].Schema()
-}
-
-// BuildPlanTrace implements Plan BuildPlanTrace interface.
-func (p *BasePhysicalPlan) BuildPlanTrace() *tracing.PlanTrace {
-	tp := ""
-	info := ""
-	if p.Self != nil {
-		tp = p.Self.TP()
-		info = p.Self.ExplainInfo()
-	}
-
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: tp, ExplainInfo: info}
-	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.BuildPlanTrace())
-	}
-	return planTrace
 }
 
 // ******************************* end implementation of Plan interface *********************************

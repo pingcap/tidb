@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -126,18 +125,6 @@ func (p *PhysicalIndexLookUpReader) GetIndexNetDataSize() float64 {
 // GetAvgTableRowSize return the average row size of each final row.
 func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
 	return cardinality.GetAvgRowSize(p.SCtx(), GetTblStats(p.TablePlan), p.TablePlan.Schema().Columns, false, false)
-}
-
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.IndexPlan != nil {
-		rp.Children = append(rp.Children, p.IndexPlan.BuildPlanTrace())
-	}
-	if p.TablePlan != nil {
-		rp.Children = append(rp.Children, p.TablePlan.BuildPlanTrace())
-	}
-	return rp
 }
 
 // MemoryUsage return the memory usage of PhysicalIndexLookUpReader
