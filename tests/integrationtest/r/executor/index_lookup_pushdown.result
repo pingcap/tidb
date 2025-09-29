@@ -95,6 +95,52 @@ id	a	b	c
 4	6d	40	400
 6	4f	60	600
 7	3g	70	700
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 2, 4;
+id	estRows	task	access object	operator info
+IndexLookUp_16	4.00	root		limit embedded(offset:2, count:4)
+├─LocalIndexLookUp_18(Build)	6.00	cop[tikv]		index handle offsets:[2]
+│ ├─Limit_15(Build)	6.00	cop[tikv]		offset:0, count:6
+│ │ └─IndexRangeScan_13	6.00	cop[tikv]	table:t1, index:i(a, b)	range:("2h",+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_17(Probe)	6.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 2, 4;
+id	a	b	c
+4	6d	40	400
+5	5e	50	500
+6	4f	60	600
+7	3g	70	700
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 5, 4;
+id	estRows	task	access object	operator info
+IndexLookUp_16	4.00	root		limit embedded(offset:5, count:4)
+├─LocalIndexLookUp_18(Build)	9.00	cop[tikv]		index handle offsets:[2]
+│ ├─Limit_15(Build)	9.00	cop[tikv]		offset:0, count:9
+│ │ └─IndexRangeScan_13	9.00	cop[tikv]	table:t1, index:i(a, b)	range:("2h",+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_17(Probe)	9.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 5, 4;
+id	a	b	c
+6	4f	60	600
+7	3g	70	700
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 3, 0;
+id	estRows	task	access object	operator info
+IndexLookUp_16	0.00	root		limit embedded(offset:3, count:0)
+├─LocalIndexLookUp_18(Build)	3.00	cop[tikv]		index handle offsets:[2]
+│ ├─Limit_15(Build)	3.00	cop[tikv]		offset:0, count:3
+│ │ └─IndexRangeScan_13	3.00	cop[tikv]	table:t1, index:i(a, b)	range:("2h",+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_17(Probe)	3.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 3, 0;
+id	a	b	c
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 10, 1;
+id	estRows	task	access object	operator info
+IndexLookUp_16	1.00	root		limit embedded(offset:10, count:1)
+├─LocalIndexLookUp_18(Build)	11.00	cop[tikv]		index handle offsets:[2]
+│ ├─Limit_15(Build)	11.00	cop[tikv]		offset:0, count:11
+│ │ └─IndexRangeScan_13	11.00	cop[tikv]	table:t1, index:i(a, b)	range:("2h",+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_17(Probe)	11.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 10, 1;
+id	a	b	c
 prepare stmt from 'select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > ? and c > ?';
 set @x1 = '1j';
 set @x2 = '5e';

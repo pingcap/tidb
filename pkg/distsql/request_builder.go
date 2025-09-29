@@ -198,15 +198,31 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 			limit := dag.Executors[execCnt-1].GetLimit()
 			builder.Request.LimitSize = limit.GetLimit()
 		}
+
 		if execCnt >= 2 {
 			// When the DAG is just a simple scan and small limit, set concurrency to 1 would be sufficient.
-			// Sometimes, Limit also has a parent operator, e.g. IndexLookUp,
-			// so we check the second operator here instead of the last one.
-			if limit := dag.Executors[1].GetLimit(); limit != nil && limit.Limit < estimatedRegionRowCount {
-				if kr := builder.Request.KeyRanges; kr != nil {
-					builder.Request.Concurrency = kr.PartitionNum()
+			secondExec := dag.Executors[1]
+			if limit := secondExec.GetLimit(); limit != nil && limit.Limit < estimatedRegionRowCount {
+				minimalConcurrency := false
+				if execCnt == 2 {
+					// execCnt == 2 indicates TableScan / IndexScan -> Limit
+					minimalConcurrency = true
 				} else {
-					builder.Request.Concurrency = 1
+					// if execCnt > 2 and the limit's parent is IndexLookup,
+					// it means the DAG is a push-down IndexLookUp and its build side is IndexScan -> Limit.
+					// We can also apply minimal concurrency here.
+					limitParent := int(secondExec.GetParentIdx())
+					if limitParent > 0 && dag.Executors[limitParent].IndexLookup != nil {
+						minimalConcurrency = true
+					}
+				}
+
+				if minimalConcurrency {
+					if kr := builder.Request.KeyRanges; kr != nil {
+						builder.Request.Concurrency = kr.PartitionNum()
+					} else {
+						builder.Request.Concurrency = 1
+					}
 				}
 			}
 		}

@@ -38,6 +38,14 @@ explain select /*+ index_lookup_pushdown(t1, i) */ id, a, b + 1, c + 2 from t1 w
 select /*+ index_lookup_pushdown(t1, i) */ id, a, b + 1, c + 2 from t1 where a < '8' and b < 90 and c != 500 limit 4;
 explain select * from (select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '1i' LIMIT 1, 6) tx where tx.c != 500 LIMIT 4;
 select * from (select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '1i' LIMIT 1, 6) tx where tx.c != 500 LIMIT 4;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 2, 4;
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 2, 4;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 5, 4;
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 5, 4;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 3, 0;
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 3, 0;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 10, 1;
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 10, 1;
 
 --disable_warnings
 # test for plan cache, close show warnings to avoid affecting plan cache output

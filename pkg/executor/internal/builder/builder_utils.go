@@ -72,6 +72,8 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 
 // ConstructDAGReqForUnNatureOrderPlans constructs DAGRequest for physical plans.
 // The unNatureOrders map is used to set the ParentIdx of executors in DAGRequest.
+// `unNatureOrders` is a map with layout {childIndex => parentIndex} and
+// contains the children indexes whose parent is not the next one.
 func ConstructDAGReqForUnNatureOrderPlans(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, unNatureOrders map[int]int, storeType kv.StoreType) (*tipb.DAGRequest, error) {
 	dagReq, err := ConstructDAGReq(ctx, plans, storeType)
 	if err != nil {

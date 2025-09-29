@@ -791,7 +791,12 @@ func TestIndexLookUpPushDownExec(t *testing.T) {
 		tk.MustExec("insert into t values " + strings.Join(values, ","))
 	}
 
-	runSelectWithCheck := func(where string, limit int) {
+	runSelectWithCheck := func(where string, skip, limit int) {
+		require.GreaterOrEqual(t, skip, 0)
+		if skip > 0 {
+			require.GreaterOrEqual(t, limit, 0)
+		}
+
 		hitRate := r.Intn(11)
 		message := fmt.Sprintf("seed: %d, hitRate: %d, where: %s, limit: %d", seed, hitRate, where, limit)
 		filterMap := make([]bool, total)
@@ -816,9 +821,10 @@ func TestIndexLookUpPushDownExec(t *testing.T) {
 		var sb strings.Builder
 		sb.WriteString("select /*+ index_lookup_pushdown(t, a)*/ * from t where ")
 		sb.WriteString(where)
-		if limit > 0 {
-			sb.WriteString(" limit ")
-			sb.WriteString(strconv.Itoa(limit))
+		if skip > 0 {
+			sb.WriteString(fmt.Sprintf(" limit %d, %d", skip, limit))
+		} else if limit >= 0 {
+			sb.WriteString(fmt.Sprintf(" limit %d", limit))
 		}
 
 		// make sure the query uses index lookup
@@ -839,30 +845,40 @@ func TestIndexLookUpPushDownExec(t *testing.T) {
 
 		// use table scan
 		injectCalled.Store(false)
-		expected := tk.MustQuery("select /*+ use_index(t) */* from t where " + where + " order by id").Rows()
+		matchCondList := tk.MustQuery("select /*+ use_index(t) */* from t where " + where + " order by id").Rows()
 		require.False(t, injectCalled.Load(), message)
 
-		if limit > 0 && len(expected) > limit {
-			// expected is a subset of actual
-			require.Subset(t, expected, actual, message)
+		if limit == 0 || skip >= len(matchCondList) {
+			require.Len(t, actual, 0, message)
+		} else if limit < 0 {
+			// no limit two results should have same members
+			require.ElementsMatch(t, matchCondList, actual, message)
 		} else {
-			// two results should have same members
-			require.ElementsMatch(t, expected, actual, message)
+			expectRowCnt := limit
+			if skip+limit > len(matchCondList) {
+				expectRowCnt = len(matchCondList) - skip
+			}
+			require.Len(t, actual, expectRowCnt, message)
+			require.Subset(t, matchCondList, actual, message)
 		}
 	}
 
-	runSelectWithCheck("1", -1)
-	runSelectWithCheck("1", r.Intn(256))
-	runSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), -1)
-	runSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), 25)
-	runSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), -1)
-	runSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), r.Intn(100)+1)
-	runSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), -1)
-	runSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), r.Intn(100)+1)
+	runSelectWithCheck("1", 0, -1)
+	runSelectWithCheck("1", 0, r.Intn(total*2))
+	runSelectWithCheck("1", total/2, r.Intn(total))
+	runSelectWithCheck("1", total-10, 20)
+	runSelectWithCheck("1", total, 10)
+	runSelectWithCheck("1", 10, 0)
+	runSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), 0, -1)
+	runSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), 0, 25)
+	runSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), 0, -1)
+	runSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), 0, r.Intn(100)+1)
+	runSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), 0, -1)
+	runSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), 0, r.Intn(100)+1)
 	start := randIndexVal()
-	runSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), -1)
+	runSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), 0, -1)
 	start = randIndexVal()
-	runSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), r.Intn(50)+1)
-	runSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), -1)
-	runSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), r.Intn(50)+1)
+	runSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), 0, r.Intn(50)+1)
+	runSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, -1)
+	runSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, r.Intn(50)+1)
 }
