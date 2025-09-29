@@ -75,7 +75,7 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 // SetSchema overrides op.PhysicalPlan SetSchema interface.
 func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.IndexPlan != nil {
-		p.IndexPlans = FlattenPushDownPlan(p.IndexPlan)
+		p.IndexPlans = FlattenListPushDownPlan(p.IndexPlan)
 		switch p.IndexPlan.(type) {
 		case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalProjection:
 			p.PhysicalSchemaProducer.SetSchema(p.IndexPlan.Schema())
@@ -139,12 +139,12 @@ func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
 }
 
 // GetPlanCostVer1 implements PhysicalPlan cost v1 for IndexMergeReader.
-func (p *PhysicalIndexReader) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalIndexReader) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalIndexReader(p, taskType, option)
 }
 
 // GetPlanCostVer2 implements PhysicalPlan cost v2 for IndexMergeReader.
-func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
+func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalIndexReader(p, taskType, option, args...)
 }
 
