@@ -51,49 +51,13 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
 // PlanCounterDisabled is the default value of PlanCounterTp, indicating that optimizer needn't force a plan.
 var PlanCounterDisabled base.PlanCounterTp = -1
-
-// GetPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
-// consider the case that all expression are columns.
-func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, bool) {
-	propItems := make([]property.SortItem, 0, len(items))
-	for _, item := range items {
-		col, ok := item.Expr.(*expression.Column)
-		if !ok {
-			return nil, false
-		}
-		propItems = append(propItems, property.SortItem{Col: col, Desc: item.Desc})
-	}
-	return &property.PhysicalProperty{SortItems: propItems}, true
-}
-
-// GetPropByOrderByItemsContainScalarFunc will check if this sort property can be pushed or not. In order to simplify the
-// problem, we only consider the case that all expression are columns or some special scalar functions.
-func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.PhysicalProperty, _, _ bool) {
-	propItems := make([]property.SortItem, 0, len(items))
-	onlyColumn := true
-	for _, item := range items {
-		switch expr := item.Expr.(type) {
-		case *expression.Column:
-			propItems = append(propItems, property.SortItem{Col: expr, Desc: item.Desc})
-		case *expression.ScalarFunction:
-			col, desc := expr.GetSingleColumn(item.Desc)
-			if col == nil {
-				return nil, false, false
-			}
-			propItems = append(propItems, property.SortItem{Col: col, Desc: desc})
-			onlyColumn = false
-		default:
-			return nil, false, false
-		}
-	}
-	return &property.PhysicalProperty{SortItems: propItems}, true, onlyColumn
-}
 
 func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (base.Task, int64, error) {
 	if prop.IndexJoinProp != nil {
@@ -1340,7 +1304,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			})
 		}
 		lowestCountAfterAccessIdx := matchIdxes[0]
-		determinedIndexPartialPaths = append(determinedIndexPartialPaths, util.SliceDeepClone(oneORBranch[lowestCountAfterAccessIdx])...)
+		determinedIndexPartialPaths = append(determinedIndexPartialPaths, sliceutil.DeepClone(oneORBranch[lowestCountAfterAccessIdx])...)
 		// record the index usage info to avoid choosing a single index for all partial paths
 		var indexID int64
 		if oneORBranch[lowestCountAfterAccessIdx][0].IsTablePath() {
@@ -2333,7 +2297,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if !candidate.path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := physicalop.PhysicalTableScan{
-			Columns:         util.CloneColInfos(ds.Columns),
+			Columns:         sliceutil.DeepClone(ds.Columns),
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
 			DBName:          ds.DBName,
@@ -2589,7 +2553,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 				prop.VectorProp.Vec.SerializeTo(nil),
 				tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
 			))
-			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
+			ts.SetStats(property.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
 		// ********************************** future deprecated start **************************/
 		var hasVirtualColumn bool

@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -276,8 +277,8 @@ func (p *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	if p.Table != nil {
 		clonedScan.Table = p.Table.Clone()
 	}
-	clonedScan.Columns = util.CloneColInfos(p.Columns)
-	clonedScan.Ranges = util.CloneRanges(p.Ranges)
+	clonedScan.Columns = sliceutil.DeepClone(p.Columns)
+	clonedScan.Ranges = sliceutil.DeepClone(p.Ranges)
 	clonedScan.TableAsName = p.TableAsName
 	clonedScan.RangeInfo = p.RangeInfo
 	if p.runtimeFilterList != nil {

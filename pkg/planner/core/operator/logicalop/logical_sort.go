@@ -20,9 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
-	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -119,11 +117,6 @@ func (ls *LogicalSort) PreparePossibleProperties(_ *expression.Schema, _ ...[][]
 		return nil
 	}
 	return [][]*expression.Column{propCols}
-}
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (ls *LogicalSort) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalSort(ls, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.

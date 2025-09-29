@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -127,8 +128,8 @@ func (p *PhysicalIndexScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.IdxCols = util.CloneCols(p.IdxCols)
 	cloned.IdxColLens = make([]int, len(p.IdxColLens))
 	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.Ranges = util.CloneRanges(p.Ranges)
-	cloned.Columns = util.CloneColInfos(p.Columns)
+	cloned.Ranges = sliceutil.DeepClone(p.Ranges)
+	cloned.Columns = sliceutil.DeepClone(p.Columns)
 	if p.DataSourceSchema != nil {
 		cloned.DataSourceSchema = p.DataSourceSchema.Clone()
 	}
@@ -636,7 +637,7 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		Table:            ds.TableInfo,
 		TableAsName:      ds.TableAsName,
 		DBName:           ds.DBName,
-		Columns:          util.CloneColInfos(ds.Columns),
+		Columns:          sliceutil.DeepClone(ds.Columns),
 		Index:            idx,
 		IdxCols:          path.IdxCols,
 		IdxColLens:       path.IdxColLens,

@@ -180,6 +180,7 @@ go_library(
         "//pkg/util/sem/v2:sem",
         "//pkg/util/set",
         "//pkg/util/size",
+        "//pkg/util/slice",
         "//pkg/util/sqlexec",
         "//pkg/util/stringutil",
         "//pkg/util/syncutil",

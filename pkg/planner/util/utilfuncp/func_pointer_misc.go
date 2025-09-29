@@ -80,20 +80,8 @@ var FindBestTask4LogicalDataSource func(lp base.LogicalPlan, prop *property.Phys
 var ExhaustPhysicalPlans4LogicalSequence func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
-// ExhaustPhysicalPlans4LogicalSort will be called by LogicalSort in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalSort func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
-// ExhaustPhysicalPlans4LogicalTopN will be called by LogicalTopN in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalTopN func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
 // ExhaustPhysicalPlans4LogicalWindow will be called by LogicalWindow in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalWindow func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
-// ExhaustPhysicalPlans4LogicalLock will be called by LogicalLock in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalLock func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
 // ExhaustPhysicalPlans4LogicalJoin will be called by LogicalJoin in logicalOp pkg.

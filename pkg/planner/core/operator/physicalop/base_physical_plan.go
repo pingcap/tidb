@@ -426,3 +426,32 @@ func admitIndexJoinTypes(types []property.TaskType, prop *property.PhysicalPrope
 	}
 	return types
 }
+
+// GetStatsInfo gets the statistics info from a physical plan tree.
+func GetStatsInfo(i any) map[string]uint64 {
+	if i == nil {
+		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
+		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
+		return nil
+	}
+	p := i.(base.Plan)
+	var physicalPlan base.PhysicalPlan
+	switch x := p.(type) {
+	case *Insert:
+		physicalPlan = x.SelectPlan
+	case *Update:
+		physicalPlan = x.SelectPlan
+	case *Delete:
+		physicalPlan = x.SelectPlan
+	case base.PhysicalPlan:
+		physicalPlan = x
+	}
+
+	if physicalPlan == nil {
+		return nil
+	}
+
+	statsInfos := make(map[string]uint64)
+	statsInfos = CollectPlanStatsVersion(physicalPlan, statsInfos)
+	return statsInfos
+}
