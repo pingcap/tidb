@@ -241,7 +241,7 @@ func updateBindingUsageInfoToStorageInternal(sPool util.DestroyableSessionPool, 
 	if err == nil {
 		ts := time.Now()
 		for _, binding := range bindings {
-			binding.UpdateSavedAt(&ts)
+			binding.UpdateLastSavedAt(&ts)
 		}
 	}
 	return err

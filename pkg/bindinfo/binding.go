@@ -98,11 +98,12 @@ func (b *Binding) size() float64 {
 
 // UpdateLastUsedAt is to update binding usage info when this binding is used.
 func (b *Binding) UpdateLastUsedAt() {
-	b.UsageInfo.UpdateLastUsedAt()
+	now := time.Now()
+	b.UsageInfo.LastUsedAt.Store(&now)
 }
 
-// UpdateSavedAt is to update the last saved time
-func (b *Binding) UpdateSavedAt(ts *time.Time) {
+// UpdateLastSavedAt is to update the last saved time
+func (b *Binding) UpdateLastSavedAt(ts *time.Time) {
 	b.UsageInfo.LastSavedAt.Store(ts)
 }
 
@@ -114,11 +115,6 @@ type bindingInfoUsageInfo struct {
 	LastUsedAt atomic.Pointer[time.Time]
 	// LastSavedAt records the last time when this binding is saved into storage.
 	LastSavedAt atomic.Pointer[time.Time]
-}
-
-func (b *bindingInfoUsageInfo) UpdateLastUsedAt() {
-	now := time.Now()
-	b.LastUsedAt.Store(&now)
 }
 
 var (
