@@ -44,7 +44,7 @@ func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
 // PruneColumns inherits the BaseLogicalPlan.<2nd> interface.
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalShowDDLJobs) FindBestTask(prop *property.PhysicalProperty) (base.Task, int64, error) {
+func (p *LogicalShowDDLJobs) FindBestTask(prop *property.PhysicalProperty) (base.Task, error) {
 	return utilfuncp.FindBestTask4LogicalShowDDLJobs(p, prop)
 }
 

@@ -78,7 +78,7 @@ func ImplementMemoAndCost(rootGroup *memo.Group) (plan base.PhysicalPlan, cost f
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	task, _, implErr := ImplementGroupAndCost(rootGroup, rootProp, math.MaxFloat64)
+	task, implErr := ImplementGroupAndCost(rootGroup, rootProp, math.MaxFloat64)
 	if implErr != nil {
 		return nil, 0, implErr
 	}
@@ -99,26 +99,25 @@ func ImplementMemoAndCost(rootGroup *memo.Group) (plan base.PhysicalPlan, cost f
 }
 
 // ImplementGroupAndCost is the implementation and cost logic based on ONE group unit.
-func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, costLimit float64) (base.Task, int64, error) {
+func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, costLimit float64) (base.Task, error) {
 	// Check whether the child group is already optimized for the physical property.
 	task := group.GetBestTask(prop)
 	if task != nil {
 		taskCost, invalid, err := utilfuncp.GetTaskPlanCost(task)
 		if err != nil || invalid {
-			return base.InvalidTask, 0, err
+			return base.InvalidTask, err
 		}
 		if taskCost <= costLimit {
 			// the optimized group has a valid cost plan according to this physical prop.
-			return task, 1, nil
+			return task, nil
 		}
 		// the optimized task from this group is out of aimed cost limit, quite fall over.
-		return nil, 0, nil
+		return nil, nil
 	}
 
 	// the group hasn't been optimized, physic it.
 	var (
 		implErr  error
-		cntPlan  = int64(0)
 		bestTask = base.InvalidTask
 	)
 	group.ForEachGE(func(ge *memo.GroupExpression) bool {
@@ -128,12 +127,11 @@ func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, c
 		// than the group expression as we expected. ge.FindBestTask will directly call the logicalOp's findBestTask4xxx
 		// for the same effect while pass the ge as the first the parameter because ge also implement the LogicalPlan
 		// interface as well.
-		task, cnt, err := ge.FindBestTask(prop)
+		task, err := ge.FindBestTask(prop)
 		if err != nil {
 			implErr = err
 			return false
 		}
-		cntPlan += cnt
 		// update the best task across the logical alternatives.
 		if curIsBetter, err := utilfuncp.CompareTaskCost(task, bestTask); err != nil {
 			implErr = err
@@ -145,9 +143,9 @@ func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, c
 		return true
 	})
 	if implErr != nil {
-		return nil, 0, implErr
+		return nil, implErr
 	}
 	// store the best task into the group prop-accordingly.
 	group.SetBestTask(prop, bestTask)
-	return bestTask, cntPlan, nil
+	return bestTask, nil
 }

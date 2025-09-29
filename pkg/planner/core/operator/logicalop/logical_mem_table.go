@@ -109,7 +109,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) (bas
 }
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty) (t base.Task, cntPlan int64, err error) {
+func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty) (t base.Task, err error) {
 	return utilfuncp.FindBestTask4LogicalMemTable(p, prop)
 }
 

@@ -153,7 +153,7 @@ func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) (bas
 }
 
 // FindBestTask implements LogicalPlan.<3rd> interface.
-func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty) (bestTask base.Task, cntPlan int64, err error) {
+func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty) (bestTask base.Task, err error) {
 	return utilfuncp.FindBestTask4BaseLogicalPlan(p, prop)
 }
 

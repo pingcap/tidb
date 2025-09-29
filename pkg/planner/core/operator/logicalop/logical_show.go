@@ -90,7 +90,7 @@ func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
 // PruneColumns inherits BaseLogicalPlan.LogicalPlan.<2nd> implementation.
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalShow) FindBestTask(prop *property.PhysicalProperty) (base.Task, int64, error) {
+func (p *LogicalShow) FindBestTask(prop *property.PhysicalProperty) (base.Task, error) {
 	return utilfuncp.FindBestTask4LogicalShow(p, prop)
 }
 

@@ -87,7 +87,7 @@ func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) (ba
 }
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalTableDual) FindBestTask(prop *property.PhysicalProperty) (base.Task, int64, error) {
+func (p *LogicalTableDual) FindBestTask(prop *property.PhysicalProperty) (base.Task, error) {
 	return utilfuncp.FindBestTask4LogicalTableDual(p, prop)
 }
 

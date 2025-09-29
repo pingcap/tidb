@@ -92,17 +92,17 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.
 	return &property.PhysicalProperty{SortItems: propItems}, true, onlyColumn
 }
 
-func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, int64, error) {
+func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalTableDual](super)
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
 	if !prop.IsSortItemEmpty() && p.RowCount > 1 {
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 	dual := physicalop.PhysicalTableDual{
 		RowCount: p.RowCount,
@@ -110,39 +110,39 @@ func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.Physic
 	dual.SetSchema(p.Schema())
 	rt := &physicalop.RootTask{}
 	rt.SetPlan(dual)
-	return rt, 1, nil
+	return rt, nil
 }
 
-func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, int64, error) {
+func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalShow](super)
 	if !prop.IsSortItemEmpty() {
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 	pShow := physicalop.PhysicalShow{ShowContents: p.ShowContents, Extractor: p.Extractor}.Init(p.SCtx())
 	pShow.SetSchema(p.Schema())
 	rt := &physicalop.RootTask{}
 	rt.SetPlan(pShow)
-	return rt, 1, nil
+	return rt, nil
 }
 
-func findBestTask4LogicalShowDDLJobs(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, int64, error) {
+func findBestTask4LogicalShowDDLJobs(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalShowDDLJobs](super)
 	if !prop.IsSortItemEmpty() {
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 	pShow := physicalop.PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.SCtx())
 	pShow.SetSchema(p.Schema())
 	rt := &physicalop.RootTask{}
 	rt.SetPlan(pShow)
-	return rt, 1, nil
+	return rt, nil
 }
 
 func prepareIterationDownElems(super base.LogicalPlan) (*memo.GroupExpression, *logicalop.BaseLogicalPlan, int, iterFunc, base.LogicalPlan) {
@@ -179,14 +179,11 @@ func enumeratePhysicalPlans4Task(
 	physicalPlans []base.PhysicalPlan,
 	prop *property.PhysicalProperty,
 	addEnforcer bool,
-) (base.Task, int64, bool, error) {
+) (base.Task, bool, error) {
 	var bestTask, preferTask = base.InvalidTask, base.InvalidTask
-	var curCntPlan, cntPlan int64
 	var err error
 	_, baseLP, childLen, iteration, iterObj := prepareIterationDownElems(super)
 	childTasks := make([]base.Task, 0, childLen)
-	childCnts := make([]int64, childLen)
-	cntPlan = 0
 	var fd *funcdep.FDSet
 	if addEnforcer && len(physicalPlans) != 0 {
 		switch logicalPlan := baseLP.Self().(type) {
@@ -196,13 +193,13 @@ func enumeratePhysicalPlans4Task(
 		}
 	}
 	if len(physicalPlans) == 0 {
-		return base.InvalidTask, 0, false, nil
+		return base.InvalidTask, false, nil
 	}
 	initState := &enumerateState{}
 	for _, pp := range physicalPlans {
-		childTasks, curCntPlan, childCnts, err = iteration(iterObj, pp, childTasks, childCnts, prop)
+		childTasks, err = iteration(iterObj, pp, childTasks, prop)
 		if err != nil {
-			return nil, 0, false, err
+			return nil, false, err
 		}
 
 		// This check makes sure that there is no invalid child task.
@@ -237,11 +234,9 @@ func enumeratePhysicalPlans4Task(
 			curTask = optimizeByShuffle(curTask, baseLP.Plan.SCtx())
 		}
 
-		cntPlan += curCntPlan
-
 		// Get the most efficient one only by low-cost priority among all valid plans.
 		if curIsBetter, err := compareTaskCost(curTask, bestTask); err != nil {
-			return nil, 0, false, err
+			return nil, false, err
 		} else if curIsBetter {
 			bestTask = curTask
 		}
@@ -249,7 +244,7 @@ func enumeratePhysicalPlans4Task(
 		if hintApplicable {
 			// curTask is a preferred physic plan, compare cost with previous preferred one and cache the low-cost one.
 			if curIsBetter, err := compareTaskCost(curTask, preferTask); err != nil {
-				return nil, 0, false, err
+				return nil, false, err
 			} else if curIsBetter {
 				preferTask = curTask
 			}
@@ -257,7 +252,7 @@ func enumeratePhysicalPlans4Task(
 	}
 	// there is a valid preferred low-cost physical one, return it.
 	if !preferTask.Invalid() {
-		return preferTask, cntPlan, true, nil
+		return preferTask, true, nil
 	}
 	// if there is no valid preferred low-cost physical one, return the normal low one.
 	// if the hint is specified without any valid plan, we should also record the warnings.
@@ -267,7 +262,7 @@ func enumeratePhysicalPlans4Task(
 		}
 	}
 	// return the normal lowest-cost physical one.
-	return bestTask, cntPlan, false, nil
+	return bestTask, false, nil
 }
 
 // TODO: remove the taskTypeSatisfied function, it is only used to check the task type in the root, cop, mpp task.
@@ -300,83 +295,72 @@ func iteratePhysicalPlan4GroupExpression(
 	geLP base.LogicalPlan,
 	selfPhysicalPlan base.PhysicalPlan,
 	childTasks []base.Task,
-	childCnts []int64,
 	_ *property.PhysicalProperty,
-) ([]base.Task, int64, []int64, error) {
+) ([]base.Task, error) {
 	ge := geLP.(*memo.GroupExpression)
 	// Find the best child tasks firstly.
 	childTasks = childTasks[:0]
-	// The curCntPlan records the number of possible plans for selfPhysicalPlan
-	curCntPlan := int64(1)
 	for j, childG := range ge.Inputs {
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, cnt, err := impl.ImplementGroupAndCost(childG, childProp, math.MaxFloat64)
-		childCnts[j] = cnt
+		childTask, err := impl.ImplementGroupAndCost(childG, childProp, math.MaxFloat64)
 		if err != nil {
-			return nil, 0, childCnts, err
+			return nil, err
 		}
 		if !taskTypeSatisfied(childProp, childTask) {
 			// If the task type is not satisfied, we should skip this plan.
-			return nil, 0, childCnts, nil
+			return nil, nil
 		}
-		curCntPlan = curCntPlan * cnt
 		if childTask != nil && childTask.Invalid() {
-			return nil, 0, childCnts, nil
+			return nil, nil
 		}
 		childTasks = append(childTasks, childTask)
 	}
 
 	// This check makes sure that there is no invalid child task.
 	if len(childTasks) != len(ge.Inputs) {
-		return nil, 0, childCnts, nil
+		return nil, nil
 	}
-	return childTasks, curCntPlan, childCnts, nil
+	return childTasks, nil
 }
 
 type iterFunc func(
 	baseLP base.LogicalPlan,
 	selfPhysicalPlan base.PhysicalPlan,
 	childTasks []base.Task,
-	childCnts []int64,
 	_ *property.PhysicalProperty,
-) ([]base.Task, int64, []int64, error)
+) ([]base.Task, error)
 
 // iteratePhysicalPlan4BaseLogical is used to iterate the physical plan and get all child tasks.
 func iteratePhysicalPlan4BaseLogical(
 	baseLP base.LogicalPlan,
 	selfPhysicalPlan base.PhysicalPlan,
 	childTasks []base.Task,
-	childCnts []int64,
 	_ *property.PhysicalProperty,
-) ([]base.Task, int64, []int64, error) {
+) ([]base.Task, error) {
 	p := baseLP.(*logicalop.BaseLogicalPlan)
 	// Find best child tasks firstly.
 	childTasks = childTasks[:0]
-	// The curCntPlan records the number of possible plans for selfPhysicalPlan
-	curCntPlan := int64(1)
 	for j, child := range p.Children() {
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, cnt, err := child.FindBestTask(childProp)
-		childCnts[j] = cnt
+		childTask, err := child.FindBestTask(childProp)
 		if err != nil {
-			return nil, 0, childCnts, err
+			return nil, err
 		}
 		if !taskTypeSatisfied(childProp, childTask) {
 			// If the task type is not satisfied, we should skip this plan.
-			return nil, 0, childCnts, nil
+			return nil, nil
 		}
-		curCntPlan = curCntPlan * cnt
 		if childTask != nil && childTask.Invalid() {
-			return nil, 0, childCnts, nil
+			return nil, nil
 		}
 		childTasks = append(childTasks, childTask)
 	}
 
 	// This check makes sure that there is no invalid child task.
 	if len(childTasks) != p.ChildLen() {
-		return nil, 0, childCnts, nil
+		return nil, nil
 	}
-	return childTasks, curCntPlan, childCnts, nil
+	return childTasks, nil
 }
 
 // iterateChildPlan4LogicalSequenceGE does the special part for sequence. We need to iterate its child one by one to check whether the former child is a valid plan and then go to the nex
@@ -384,30 +368,25 @@ func iterateChildPlan4LogicalSequenceGE(
 	geLP base.LogicalPlan,
 	selfPhysicalPlan base.PhysicalPlan,
 	childTasks []base.Task,
-	childCnts []int64,
 	prop *property.PhysicalProperty,
-) ([]base.Task, int64, []int64, error) {
+) ([]base.Task, error) {
 	ge := geLP.(*memo.GroupExpression)
 	// Find best child tasks firstly.
 	childTasks = childTasks[:0]
-	// The curCntPlan records the number of possible plans for selfPhysicalPlan
-	curCntPlan := int64(1)
 	lastIdx := len(ge.Inputs) - 1
 	for j := range lastIdx {
 		childG := ge.Inputs[j]
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, cnt, err := impl.ImplementGroupAndCost(childG, childProp, math.MaxFloat64)
-		childCnts[j] = cnt
+		childTask, err := impl.ImplementGroupAndCost(childG, childProp, math.MaxFloat64)
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, err
 		}
 		if !taskTypeSatisfied(childProp, childTask) {
 			// If the task type is not satisfied, we should skip this plan.
-			return nil, 0, nil, nil
+			return nil, nil
 		}
-		curCntPlan = curCntPlan * cnt
 		if childTask != nil && childTask.Invalid() {
-			return nil, 0, nil, nil
+			return nil, nil
 		}
 		_, isMpp := childTask.(*physicalop.MppTask)
 		if !isMpp && prop.IsFlashProp() {
@@ -417,7 +396,7 @@ func iterateChildPlan4LogicalSequenceGE(
 	}
 	// This check makes sure that there is no invalid child task.
 	if len(childTasks) != len(ge.Inputs)-1 {
-		return nil, 0, nil, nil
+		return nil, nil
 	}
 
 	lastChildProp := selfPhysicalPlan.GetChildReqProps(lastIdx).CloneEssentialFields()
@@ -425,22 +404,20 @@ func iterateChildPlan4LogicalSequenceGE(
 		lastChildProp.CTEProducerStatus = property.AllCTECanMpp
 	}
 	lastChildG := ge.Inputs[lastIdx]
-	lastChildTask, cnt, err := impl.ImplementGroupAndCost(lastChildG, lastChildProp, math.MaxFloat64)
-	childCnts[lastIdx] = cnt
+	lastChildTask, err := impl.ImplementGroupAndCost(lastChildG, lastChildProp, math.MaxFloat64)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, err
 	}
-	curCntPlan = curCntPlan * cnt
 	if lastChildTask != nil && lastChildTask.Invalid() {
-		return nil, 0, nil, nil
+		return nil, nil
 	}
 
 	if _, ok := lastChildTask.(*physicalop.MppTask); !ok && lastChildProp.CTEProducerStatus == property.AllCTECanMpp {
-		return nil, 0, nil, nil
+		return nil, nil
 	}
 
 	childTasks = append(childTasks, lastChildTask)
-	return childTasks, curCntPlan, childCnts, nil
+	return childTasks, nil
 }
 
 // iterateChildPlan4LogicalSequence does the special part for sequence. We need to iterate its child one by one to check whether the former child is a valid plan and then go to the nex
@@ -448,30 +425,25 @@ func iterateChildPlan4LogicalSequence(
 	baseLP base.LogicalPlan,
 	selfPhysicalPlan base.PhysicalPlan,
 	childTasks []base.Task,
-	childCnts []int64,
 	prop *property.PhysicalProperty,
-) ([]base.Task, int64, []int64, error) {
+) ([]base.Task, error) {
 	p := baseLP.(*logicalop.BaseLogicalPlan)
 	// Find best child tasks firstly.
 	childTasks = childTasks[:0]
-	// The curCntPlan records the number of possible plans for selfPhysicalPlan
-	curCntPlan := int64(1)
 	lastIdx := p.ChildLen() - 1
 	for j := range lastIdx {
 		child := p.Children()[j]
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, cnt, err := child.FindBestTask(childProp)
-		childCnts[j] = cnt
+		childTask, err := child.FindBestTask(childProp)
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, err
 		}
 		if !taskTypeSatisfied(childProp, childTask) {
 			// If the task type is not satisfied, we should skip this plan.
-			return nil, 0, nil, nil
+			return nil, nil
 		}
-		curCntPlan = curCntPlan * cnt
 		if childTask != nil && childTask.Invalid() {
-			return nil, 0, nil, nil
+			return nil, nil
 		}
 		_, isMpp := childTask.(*physicalop.MppTask)
 		if !isMpp && prop.IsFlashProp() {
@@ -481,29 +453,27 @@ func iterateChildPlan4LogicalSequence(
 	}
 	// This check makes sure that there is no invalid child task.
 	if len(childTasks) != p.ChildLen()-1 {
-		return nil, 0, nil, nil
+		return nil, nil
 	}
 
 	lastChildProp := selfPhysicalPlan.GetChildReqProps(lastIdx).CloneEssentialFields()
 	if lastChildProp.IsFlashProp() {
 		lastChildProp.CTEProducerStatus = property.AllCTECanMpp
 	}
-	lastChildTask, cnt, err := p.Children()[lastIdx].FindBestTask(lastChildProp)
-	childCnts[lastIdx] = cnt
+	lastChildTask, err := p.Children()[lastIdx].FindBestTask(lastChildProp)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, err
 	}
-	curCntPlan = curCntPlan * cnt
 	if lastChildTask != nil && lastChildTask.Invalid() {
-		return nil, 0, nil, nil
+		return nil, nil
 	}
 
 	if _, ok := lastChildTask.(*physicalop.MppTask); !ok && lastChildProp.CTEProducerStatus == property.AllCTECanMpp {
-		return nil, 0, nil, nil
+		return nil, nil
 	}
 
 	childTasks = append(childTasks, lastChildTask)
-	return childTasks, curCntPlan, childCnts, nil
+	return childTasks, nil
 }
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
@@ -633,14 +603,14 @@ func getGEAndSelf(super base.LogicalPlan) (ge *memo.GroupExpression, self base.L
 // findBestTask is key workflow that drive logic plan tree to generate optimal physical ones.
 // The logic inside it is mainly about physical plan numeration and task encapsulation, it should
 // be defined in core pkg, and be called by logic plan in their logic interface implementation.
-func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (bestTask base.Task, cntPlan int64, err error) {
+func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (bestTask base.Task, err error) {
 	// get the possible group expression and logical operator from common lp pointer.
 	ge, self := getGEAndSelf(super)
 	p := self.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
-		return nil, 1, nil
+		return nil, nil
 	}
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
@@ -648,7 +618,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 	if ge == nil {
 		bestTask = p.GetTask(prop)
 		if bestTask != nil {
-			return bestTask, 1, nil
+			return bestTask, nil
 		}
 	}
 	// if prop is require an index join's probe side, check the inner pattern admission here.
@@ -656,13 +626,13 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 		pass := admitIndexJoinInnerChildPattern(self)
 		if !pass {
 			// even enforce hint can not work with this.
-			return base.InvalidTask, 0, nil
+			return base.InvalidTask, nil
 		}
 	}
 	if !checkOpSelfSatisfyPropTaskTypeRequirement(p.Self(), prop) {
 		// Currently all plan cannot totally push down to TiKV.
 		p.StoreTask(prop, base.InvalidTask)
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 
 	canAddEnforcer := prop.CanAddEnforcer
@@ -673,10 +643,9 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 		if ge == nil {
 			p.StoreTask(prop, base.InvalidTask)
 		}
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 
-	cntPlan = 0
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
 	newProp := prop.CloneEssentialFields()
@@ -695,7 +664,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 	// make sure call ExhaustPhysicalPlans over GE or Self, rather than the BaseLogicalPlan.
 	plansFitsProp, hintWorksWithProp, err = exhaustPhysicalPlans(exhaustObj, newProp)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	if !hintWorksWithProp && !newProp.IsSortItemEmpty() && newProp.IndexJoinProp == nil {
 		// If there is a hint in the plan and the hint cannot satisfy the property,
@@ -717,7 +686,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 		var hintCanWork bool
 		plansNeedEnforce, hintCanWork, err = exhaustPhysicalPlans(self, newProp)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		// since index join hint can only be known as worked or not after physic implementation.
 		// it means hintCanWork and hintWorksWithProp is not determined here. if we try to eliminate
@@ -744,29 +713,26 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 		}
 		newProp = prop
 	}
-	var cnt int64
 	var prefer bool
 	var curTask base.Task
-	if bestTask, cnt, prefer, err = enumeratePhysicalPlans4Task(super, plansFitsProp, newProp, false); err != nil {
-		return nil, 0, err
+	if bestTask, prefer, err = enumeratePhysicalPlans4Task(super, plansFitsProp, newProp, false); err != nil {
+		return nil, err
 	}
-	cntPlan += cnt
 	if bestTask != nil && !bestTask.Invalid() && prefer {
 		goto END
 	}
 
-	curTask, cnt, prefer, err = enumeratePhysicalPlans4Task(super, plansNeedEnforce, newProp, true)
+	curTask, prefer, err = enumeratePhysicalPlans4Task(super, plansNeedEnforce, newProp, true)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
-	cntPlan += cnt
 	// preferred valid one should have it priority.
 	if curTask != nil && !curTask.Invalid() && prefer {
 		bestTask = curTask
 		goto END
 	}
 	if curIsBetter, err := compareTaskCost(curTask, bestTask); err != nil {
-		return nil, 0, err
+		return nil, err
 	} else if curIsBetter {
 		bestTask = curTask
 	}
@@ -776,17 +742,17 @@ END:
 	if ge == nil {
 		p.StoreTask(prop, bestTask)
 	}
-	return bestTask, cntPlan, nil
+	return bestTask, nil
 }
 
-func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, cntPlan int64, err error) {
+func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalMemTable](super)
 	if prop.MPPPartitionTp != property.AnyType {
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 
 	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for p.findBestTask.
@@ -795,15 +761,13 @@ func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.Physica
 	if prop.CanAddEnforcer {
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
-		cnt := int64(0)
 		// still use the super.
-		t, cnt, err = super.FindBestTask(prop)
+		t, err = super.FindBestTask(prop)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		prop.CanAddEnforcer = true
 		if t != base.InvalidTask {
-			cntPlan = cnt
 			return
 		}
 		// Next, get the bestTask with enforced prop
@@ -821,7 +785,7 @@ func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.Physica
 	}()
 
 	if !prop.IsSortItemEmpty() {
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 	memTable := physicalop.PhysicalMemTable{
 		DBName:         p.DBName,
@@ -833,7 +797,7 @@ func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.Physica
 	memTable.SetSchema(p.Schema())
 	rt := &physicalop.RootTask{}
 	rt.SetPlan(memTable)
-	return rt, 1, nil
+	return rt, nil
 }
 
 // tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
@@ -1598,13 +1562,13 @@ func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
 	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, true)
 }
 
-func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, cntPlan int64, err error) {
+func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
 	// get the possible group expression and logical operator from common lp pointer.
 	ge, ds := base.GetGEAndLogicalOp[*logicalop.DataSource](super)
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
-		return nil, 1, nil
+		return nil, nil
 	}
 	if ds.IsForUpdateRead && ds.SCtx().GetSessionVars().TxnCtx.IsExplicit {
 		hasPointGetPath := false
@@ -1617,7 +1581,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		tblName := ds.TableInfo.Name
 		ds.PossibleAccessPaths, err = util.FilterPathByIsolationRead(ds.SCtx(), ds.PossibleAccessPaths, tblName, ds.DBName)
 		if err != nil {
-			return nil, 1, err
+			return nil, err
 		}
 		if hasPointGetPath {
 			newPaths := make([]*util.AccessPath, 0)
@@ -1634,7 +1598,6 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	if ge == nil {
 		t = ds.GetTask(prop)
 		if t != nil {
-			cntPlan = 1
 			return
 		}
 	}
@@ -1643,7 +1606,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		pass := admitIndexJoinInnerChildPattern(ds)
 		if !pass {
 			// even enforce hint can not work with this.
-			return base.InvalidTask, 0, nil
+			return base.InvalidTask, nil
 		}
 		// cache the physical for indexJoinProp
 		defer func() {
@@ -1655,7 +1618,6 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		// has its special runtime constants detecting and filling logic.
 		return getBestIndexJoinInnerTaskByProp(ds, prop)
 	}
-	var cnt int64
 	var unenforcedTask base.Task
 	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
@@ -1663,25 +1625,24 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	if prop.CanAddEnforcer {
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
-		unenforcedTask, cnt, err = ds.FindBestTask(prop)
+		unenforcedTask, err = ds.FindBestTask(prop)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		if !unenforcedTask.Invalid() && !exploreEnforcedPlan(ds) {
 			// only save the physical to logicalOp under volcano mode.
 			if ge == nil {
 				ds.StoreTask(prop, unenforcedTask)
 			}
-			return unenforcedTask, cnt, nil
+			return unenforcedTask, nil
 		}
 
 		// Then, explore the bestTask with enforced prop
 		prop.CanAddEnforcer = true
-		cntPlan += cnt
 		prop.SortItems = []property.SortItem{}
 		prop.MPPPartitionTp = property.AnyType
 	} else if prop.MPPPartitionTp != property.AnyType {
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 	defer func() {
 		if err != nil {
@@ -1712,7 +1673,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 
 	t, err = tryToGetDualTask(ds)
 	if err != nil || t != nil {
-		return t, 1, err
+		return t, err
 	}
 
 	t = base.InvalidTask
@@ -1729,7 +1690,6 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 	}()
 
-	cntPlan = 0
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
@@ -1743,15 +1703,11 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			}
 			idxMergeTask, err := convertToIndexMergeScan(ds, prop, candidate)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
-			if !idxMergeTask.Invalid() {
-				cntPlan++
-			}
-
 			curIsBetter, err := compareTaskCost(idxMergeTask, t)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 			if curIsBetter {
 				t = idxMergeTask
@@ -1766,10 +1722,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			}
 			dual := physicalop.PhysicalTableDual{}.Init(ds.SCtx(), ds.StatsInfo(), ds.QueryBlockOffset())
 			dual.SetSchema(ds.Schema())
-			cntPlan++
 			t := &physicalop.RootTask{}
 			t.SetPlan(dual)
-			return t, cntPlan, nil
+			return t, nil
 		}
 
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && isPointGetConvertableSchema(ds)
@@ -1848,12 +1803,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 					ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Batch/PointGet plans may be over-optimized")
 				}
 
-				if !pointGetTask.Invalid() {
-					cntPlan++
-				}
 				curIsBetter, cerr := compareTaskCost(pointGetTask, t)
 				if cerr != nil {
-					return nil, 0, cerr
+					return nil, cerr
 				}
 				if curIsBetter {
 					t = pointGetTask
@@ -1877,14 +1829,11 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 				tblTask, err = convertToTableScan(ds, prop, candidate)
 			}
 			if err != nil {
-				return nil, 0, err
-			}
-			if !tblTask.Invalid() {
-				cntPlan++
+				return nil, err
 			}
 			curIsBetter, err := compareTaskCost(tblTask, t)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 			if curIsBetter {
 				t = tblTask
@@ -1901,14 +1850,11 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 		idxTask, err := convertToIndexScan(ds, prop, candidate)
 		if err != nil {
-			return nil, 0, err
-		}
-		if !idxTask.Invalid() {
-			cntPlan++
+			return nil, err
 		}
 		curIsBetter, err := compareTaskCost(idxTask, t)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		if curIsBetter {
 			t = idxTask
@@ -2823,10 +2769,10 @@ func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, 
 	}
 }
 
-func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, cntPlan int64, err error) {
+func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 	var childLen int
 	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalCTE](super)
@@ -2841,10 +2787,10 @@ func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProp
 	}
 	if !checkOpSelfSatisfyPropTaskTypeRequirement(p, prop) {
 		// Currently all plan cannot totally push down to TiKV.
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
-		return base.InvalidTask, 1, nil
+		return base.InvalidTask, nil
 	}
 	// The physical plan has been build when derive stats.
 	pcte := physicalop.PhysicalCTE{SeedPlan: p.Cte.SeedPartPhysicalPlan, RecurPlan: p.Cte.RecursivePartPhysicalPlan, CTE: p.Cte, CteAsName: p.CteAsName, CteName: p.CteName}.Init(p.SCtx(), p.StatsInfo())
@@ -2852,7 +2798,7 @@ func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProp
 	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
 		pcte.ReaderReceiver = physicalop.PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.SCtx(), p.StatsInfo())
 		if prop.MPPPartitionTp != property.AnyType {
-			return base.InvalidTask, 1, nil
+			return base.InvalidTask, nil
 		}
 		t = physicalop.NewMppTask(pcte, prop.MPPPartitionTp, prop.MPPPartitionCols, p.StatsInfo().HistColl, nil)
 	} else {
@@ -2863,17 +2809,17 @@ func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProp
 	if prop.CanAddEnforcer {
 		t = enforceProperty(prop, t, p.Plan.SCtx(), nil)
 	}
-	return t, 1, nil
+	return t, nil
 }
 
-func findBestTask4LogicalCTETable(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, cntPlan int64, err error) {
+func findBestTask4LogicalCTETable(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalCTETable](super)
 	if !prop.IsSortItemEmpty() {
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
 
 	pcteTable := physicalop.PhysicalCTETable{IDForStorage: p.IDForStorage}.Init(p.SCtx(), p.StatsInfo())
@@ -2881,7 +2827,7 @@ func findBestTask4LogicalCTETable(super base.LogicalPlan, prop *property.Physica
 	rt := &physicalop.RootTask{}
 	rt.SetPlan(pcteTable)
 	t = rt
-	return t, 1, nil
+	return t, nil
 }
 
 func validateTableSamplePlan(ds *logicalop.DataSource, t base.Task, err error) error {

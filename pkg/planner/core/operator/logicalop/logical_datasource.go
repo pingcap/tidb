@@ -237,7 +237,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty) (t base.Task, cntPlan int64, err error) {
+func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty) (t base.Task, err error) {
 	return utilfuncp.FindBestTask4LogicalDataSource(ds, prop)
 }
 

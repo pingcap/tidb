@@ -145,7 +145,7 @@ func (p *LogicalCTE) PruneColumns(_ []*expression.Column) (base.LogicalPlan, err
 }
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalCTE) FindBestTask(prop *property.PhysicalProperty) (t base.Task, cntPlan int64, err error) {
+func (p *LogicalCTE) FindBestTask(prop *property.PhysicalProperty) (t base.Task, err error) {
 	return utilfuncp.FindBestTask4LogicalCTE(p, prop)
 }
 
