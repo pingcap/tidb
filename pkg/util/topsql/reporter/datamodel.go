@@ -490,7 +490,6 @@ func (c *collecting) appendOthersCPUTime(timestamp uint64, totalCPUTimeMs uint32
 func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.StatementStatsItem) {
 	others, ok := c.records[keyOthers]
 	if !ok {
-		println("appendOthersStmtStatsItem create others record")
 		others = newRecord(nil, nil)
 		c.records[keyOthers] = others
 	}

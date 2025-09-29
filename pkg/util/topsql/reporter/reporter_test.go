@@ -616,13 +616,29 @@ func TestProcessStmtStatsData(t *testing.T) {
 	// S3, P3 has no recorded CPU time data, so the CpuTimeMs is 0.
 	assert.Equal(t, uint32(0), data.DataRecords[2].Items[0].CpuTimeMs)
 
-	// Check cases with others
+	// Check cases with others and evicted
 	r.Collect(nil)
+	// S1/P1 and S4/P4 will be evicted since MaxStatementCount is 3 and its cputime is the lowest.
 	r.Collect([]collector.SQLCPUTimeRecord{
+		{
+			SQLDigest:  []byte("S1"),
+			PlanDigest: []byte("P1"),
+			CPUTimeMs:  1,
+		},
+		{
+			SQLDigest:  []byte("S2"),
+			PlanDigest: []byte("P2"),
+			CPUTimeMs:  2,
+		},
+		{
+			SQLDigest:  []byte("S3"),
+			PlanDigest: []byte("P3"),
+			CPUTimeMs:  3,
+		},
 		{
 			SQLDigest:  []byte("S4"),
 			PlanDigest: []byte("P4"),
-			CPUTimeMs:  4,
+			CPUTimeMs:  0,
 		},
 		{
 			SQLDigest:  []byte("S7"),
@@ -631,14 +647,17 @@ func TestProcessStmtStatsData(t *testing.T) {
 		},
 	})
 	r.CollectStmtStatsMap(nil)
+	// S1/P1 and S7/P7 will be picked, and added
+	// Also S2/P2 is not picked, while it is not evicted in cputime data, so it won't be added to others.
+	// S4/P4 is not picked, and evicted in cputime data, so it will be added to others.
 	r.CollectStmtStatsMap(stmtstats.StatementStatsMap{
 		stmtstats.SQLPlanDigest{
 			SQLDigest:  "S1",
 			PlanDigest: "P1",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:     1,
-			SumDurationNs: 1,
-			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 1}},
+			ExecCount:     10,
+			SumDurationNs: 10,
+			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 10}},
 		},
 		stmtstats.SQLPlanDigest{
 			SQLDigest:  "S2",
@@ -671,27 +690,36 @@ func TestProcessStmtStatsData(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		require.Fail(t, "no data in ch")
 	}
-	assert.Len(t, data.DataRecords, 4)
+	assert.Len(t, data.DataRecords, 6)
 	sort.Slice(data.DataRecords, func(i, j int) bool {
-		return data.DataRecords[i].Items[0].StmtExecCount < data.DataRecords[j].Items[0].StmtExecCount
+		return data.DataRecords[i].Items[0].StmtExecCount*100+uint64(data.DataRecords[i].Items[0].CpuTimeMs) <
+			data.DataRecords[j].Items[0].StmtExecCount*100+uint64(data.DataRecords[j].Items[0].CpuTimeMs)
 	})
 	// DataRecords should be:
+	// S3, P3, CpuTime=3, ExecCount=0
 	// S7, P7, CpuTime=7, ExecCount=0
-	// Other,  CpuTime=0, ExecCount=3
-	// S4, P4, CpuTime=4, ExecCount=4
+	// S2, P2, CpuTime=2, ExecCount=2
+	// Other,  CpuTime=1, ExecCount=4
 	// S6, P6, CpuTime=0, ExecCount=6
-	assert.Equal(t, []byte("S7"), data.DataRecords[0].SqlDigest)
-	assert.Equal(t, uint32(7), data.DataRecords[0].Items[0].CpuTimeMs)
+	// S1, P1, CpuTime=0, ExecCount=10
+	assert.Equal(t, []byte("S3"), data.DataRecords[0].SqlDigest)
+	assert.Equal(t, uint32(3), data.DataRecords[0].Items[0].CpuTimeMs)
 	assert.Equal(t, uint64(0), data.DataRecords[0].Items[0].StmtExecCount)
-	assert.Equal(t, []byte(nil), data.DataRecords[1].SqlDigest)
-	assert.Equal(t, uint32(0), data.DataRecords[1].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(3), data.DataRecords[1].Items[0].StmtExecCount)
-	assert.Equal(t, []byte("S4"), data.DataRecords[2].SqlDigest)
-	assert.Equal(t, uint32(4), data.DataRecords[2].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(4), data.DataRecords[2].Items[0].StmtExecCount)
-	assert.Equal(t, []byte("S6"), data.DataRecords[3].SqlDigest)
-	assert.Equal(t, uint32(0), data.DataRecords[3].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(6), data.DataRecords[3].Items[0].StmtExecCount)
+	assert.Equal(t, []byte("S7"), data.DataRecords[1].SqlDigest)
+	assert.Equal(t, uint32(7), data.DataRecords[1].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(0), data.DataRecords[1].Items[0].StmtExecCount)
+	assert.Equal(t, []byte("S2"), data.DataRecords[2].SqlDigest)
+	assert.Equal(t, uint32(2), data.DataRecords[2].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(2), data.DataRecords[2].Items[0].StmtExecCount)
+	assert.Equal(t, []byte(nil), data.DataRecords[3].SqlDigest)
+	assert.Equal(t, uint32(1), data.DataRecords[3].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(4), data.DataRecords[3].Items[0].StmtExecCount)
+	assert.Equal(t, []byte("S6"), data.DataRecords[4].SqlDigest)
+	assert.Equal(t, uint32(0), data.DataRecords[4].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(6), data.DataRecords[4].Items[0].StmtExecCount)
+	assert.Equal(t, []byte("S1"), data.DataRecords[5].SqlDigest)
+	assert.Equal(t, uint32(0), data.DataRecords[5].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(10), data.DataRecords[5].Items[0].StmtExecCount)
 }
 
 func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {
