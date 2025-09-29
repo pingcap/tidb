@@ -129,6 +129,9 @@ const (
 	// HintMaxExecutionTime specifies the max allowed execution time in milliseconds
 	HintMaxExecutionTime = "max_execution_time"
 
+	// HintWriteSlowLog is a SQL hint used to explicitly trigger writing a statement into the slow log.
+	HintWriteSlowLog = "write_slow_log"
+
 	// HintFlagSemiJoinRewrite corresponds to HintSemiJoinRewrite.
 	HintFlagSemiJoinRewrite uint64 = 1 << iota
 	// HintFlagNoDecorrelate corresponds to HintNoDecorrelate.
@@ -220,6 +223,12 @@ type StmtHints struct {
 	// -1 for disable.
 	ForceNthPlan  int64
 	ResourceGroup string
+<<<<<<< HEAD
+=======
+	// Do not store plan in either plan cache.
+	IgnorePlanCache bool
+	WriteSlowLog    bool
+>>>>>>> 72d3468d10e (*: add SQL hint to force slow log output (#63262))
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
@@ -268,6 +277,11 @@ func (sh *StmtHints) Clone() *StmtHints {
 		EnableCascadesPlanner:          sh.EnableCascadesPlanner,
 		ForceNthPlan:                   sh.ForceNthPlan,
 		ResourceGroup:                  sh.ResourceGroup,
+<<<<<<< HEAD
+=======
+		IgnorePlanCache:                sh.IgnorePlanCache,
+		WriteSlowLog:                   sh.WriteSlowLog,
+>>>>>>> 72d3468d10e (*: add SQL hint to force slow log output (#63262))
 		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
 		HasReplicaReadHint:             sh.HasReplicaReadHint,
@@ -395,6 +409,13 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			}
 			setVars[setVarHint.VarName] = setVarHint.Value
 			setVarsOffs = append(setVarsOffs, i)
+<<<<<<< HEAD
+=======
+		case HintIgnorePlanCache:
+			stmtHints.IgnorePlanCache = true
+		case HintWriteSlowLog:
+			stmtHints.WriteSlowLog = true
+>>>>>>> 72d3468d10e (*: add SQL hint to force slow log output (#63262))
 		}
 	}
 	stmtHints.OriginalTableHints = hints
