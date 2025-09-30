@@ -1044,3 +1044,63 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1AndStaticPartition(t *testin
 	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
 }
+
+func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	statstestutil.HandleNextDDLEventWithTxn(h)
+	// Insert some data.
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	defer pq.Close()
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
+	isEmpty, err := pq.IsEmpty()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+
+	// enable ddl analyze.
+	testKit.MustExec("set @@tidb_enable_ddl_analyze = 1")
+	// create index.
+	testKit.MustExec("alter table t add index idx(c1, c2)")
+
+	// Find the create index event.
+	addIndexEvent := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	tblInfo, idxInfo, analyzed := addIndexEvent.GetAddIndexInfo()
+	require.Equal(t, tableInfo.ID, tblInfo.ID)
+	require.Equal(t, analyzed, true)
+	require.Equal(t, idxInfo[0].Name.L, "idx")
+
+	// Handle the add index event.
+	err = statstestutil.HandleDDLEventWithTxn(h, addIndexEvent)
+	require.NoError(t, err)
+
+	sctx := testKit.Session().(sessionctx.Context)
+	// Handle the add index event in priority queue.
+	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, addIndexEvent))
+
+	// The table is truncated, the job should be removed from the priority queue.
+	isEmpty, err = pq.IsEmpty()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+
+	// modify column.
+	testKit.MustExec("alter table t modify c1 varchar(10)")
+
+	// Find the modify column event.
+	modifyColumnEvent := findEvent(h.DDLEventCh(), model.ActionModifyColumn)
+	tblInfo, columnInfo, analyzed := modifyColumnEvent.GetModifyColumnInfo()
+	require.Equal(t, tableInfo.ID, tblInfo.ID)
+	require.Equal(t, analyzed, true)
+	require.Equal(t, columnInfo[0].Name.L, "c1")
+}

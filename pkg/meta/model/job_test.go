@@ -327,8 +327,12 @@ func TestJobSize(t *testing.T) {
 - SubJob.FromProxyJob()
 - SubJob.ToProxyJob()
 `
+<<<<<<< HEAD
 	job := Job{}
 	require.Equal(t, 408, int(unsafe.Sizeof(job)), msg)
+=======
+	require.Equal(t, 424, int(unsafe.Sizeof(Job{})), msg)
+>>>>>>> 007861065ee (planner: create index with embedded analyze (#63143))
 }
 
 func TestBackfillMetaCodec(t *testing.T) {

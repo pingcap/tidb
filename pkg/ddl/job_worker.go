@@ -195,6 +195,7 @@ type ReorgContext struct {
 
 	resourceGroupName string
 	cloudStorageURI   string
+	analyzeDone       chan struct{}
 }
 
 // NewReorgContext returns a new ddl job context.
