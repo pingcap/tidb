@@ -20,8 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -119,7 +117,7 @@ func (s *LogicalSchemaProducer) SetSchemaAndNames(schema *expression.Schema, nam
 }
 
 // InlineProjection prunes unneeded columns inline an executor.
-func (s *LogicalSchemaProducer) InlineProjection(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
+func (s *LogicalSchemaProducer) InlineProjection(parentUsedCols []*expression.Column) {
 	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(s.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, s.Schema())
 	if len(parentUsedCols) == 0 {
@@ -144,7 +142,6 @@ func (s *LogicalSchemaProducer) InlineProjection(parentUsedCols []*expression.Co
 			s.schema.Columns = slices.Delete(s.Schema().Columns, i, i+1)
 		}
 	}
-	logicaltrace.AppendColumnPruneTraceStep(s.Self(), prunedColumns, opt)
 }
 
 // BuildKeyInfo implements LogicalPlan.BuildKeyInfo interface.

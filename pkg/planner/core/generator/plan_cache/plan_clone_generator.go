@@ -43,7 +43,7 @@ func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 		physicalop.PhysicalHashJoin{}, physicalop.PhysicalMergeJoin{}, physicalop.PhysicalIndexJoin{},
 		physicalop.PhysicalIndexHashJoin{},
 		physicalop.PhysicalIndexReader{}, physicalop.PhysicalTableReader{}, physicalop.PhysicalIndexMergeReader{},
-		physicalop.PhysicalIndexLookUpReader{},
+		physicalop.PhysicalIndexLookUpReader{}, physicalop.PhysicalLocalIndexLookUp{},
 		physicalop.BatchPointGetPlan{}, physicalop.PointGetPlan{},
 		physicalop.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}, physicalop.PhysicalTableDual{},
 	}
@@ -80,20 +80,27 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		switch fullFieldName { // handle some fields specially
 		case "physicalop.PhysicalTableReader.TablePlans", "physicalop.PhysicalIndexLookUpReader.TablePlans",
 			"physicalop.PhysicalIndexMergeReader.TablePlans":
-			c.write("cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)")
+			c.write("cloned.TablePlans = FlattenListPushDownPlan(cloned.TablePlan)")
 			continue
-		case "physicalop.PhysicalIndexReader.IndexPlans", "physicalop.PhysicalIndexLookUpReader.IndexPlans":
-			c.write("cloned.IndexPlans = FlattenPushDownPlan(cloned.IndexPlan)")
+		case "physicalop.PhysicalIndexReader.IndexPlans":
+			c.write("cloned.IndexPlans = FlattenListPushDownPlan(cloned.IndexPlan)")
+			continue
+		case "physicalop.PhysicalIndexLookUpReader.IndexPlans":
+			c.write("if cloned.IndexLookUpPushDown {")
+			c.write("cloned.IndexPlans, cloned.IndexPlansUnNatureOrders = FlattenTreePushDownPlan(cloned.IndexPlan)")
+			c.write("} else {")
+			c.write("cloned.IndexPlans = FlattenListPushDownPlan(cloned.IndexPlan)")
+			c.write("}")
 			continue
 		case "physicalop.PhysicalIndexMergeReader.PartialPlans":
 			c.write("cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))")
 			c.write("for i, plan := range cloned.PartialPlansRaw {")
-			c.write("cloned.PartialPlans[i] = FlattenPushDownPlan(plan)")
+			c.write("cloned.PartialPlans[i] = FlattenListPushDownPlan(plan)")
 			c.write("}")
 			continue
 		}
 		switch f.Type.String() {
-		case "[]int", "[]byte", "[]float", "[]bool": // simple slice
+		case "[]int", "[]byte", "[]float", "[]bool", "[]uint32": // simple slice
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
 			c.write("copy(cloned.%v, op.%v)", f.Name, f.Name)
 		case "physicalop.BasePhysicalAgg":
@@ -125,7 +132,9 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[][]*expression.Constant":
 			structureName := strings.Split(f.Type.String(), ".")[1]
 			c.write("cloned.%v = Clone%v2DForPlanCache(op.%v)", f.Name, structureName, f.Name)
-		case "[]*ranger.Range", "[]*util.ByItems", "[]model.CIStr", "[]property.SortItem",
+		case "[]*ranger.Range", "[]*util.ByItems", "[]property.SortItem":
+			c.write("cloned.%v = sliceutil.DeepClone(op.%v)", f.Name, f.Name)
+		case "[]model.CIStr",
 			"[]types.Datum", "[]kv.Handle", "[]*expression.Assignment":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
 			c.write("cloned.%v = util.Clone%v(op.%v)", f.Name, structureName, f.Name)
@@ -192,6 +201,12 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("for k, v := range op.%v {", f.Name)
 			c.write("cloned.%v[k] = v.Clone().(*expression.Column)", f.Name)
 			c.write("}}")
+		case "map[int]int":
+			c.write("if op.%v != nil {", f.Name)
+			c.write("cloned.%v = make(map[int]int, len(op.%v))", f.Name, f.Name)
+			c.write("for k, v := range op.%v {", f.Name)
+			c.write("cloned.%v[k] = v", f.Name)
+			c.write("}}")
 		default:
 			return nil, fmt.Errorf("can't generate Clone method for type %v in %v", f.Type.String(), vType.String())
 		}
@@ -256,6 +271,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 )
 `
 
