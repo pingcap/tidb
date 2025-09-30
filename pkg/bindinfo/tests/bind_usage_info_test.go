@@ -56,7 +56,7 @@ func TestBindUsageInfo(t *testing.T) {
 	tk.MustExec(`create global binding using select /*+ leading(t1, t2, t3, t4, t5) */ * from *.t1, *.t2, *.t3, *.t4, *.t5`)
 	tk.MustExec("select * from t1, t2, t3, t4, t5")
 	tk.MustExec("execute stmt1;")
-	origin := tk.MustQuery(`select sql_digest,last_used_date from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock' order by sql_digest`)
+	origin := tk.MustQuery(fmt.Sprintf(`select sql_digest,last_used_date from mysql.bind_info where original_sql != '%s' order by sql_digest`, bindinfo.BuiltinPseudoSQL4BindLock))
 	origin.Check(testkit.Rows(
 		"5ce1df6eadf8b24222668b1bd2e995b72d4c88e6fe9340d8b13e834703e28c32 <nil>",
 		"5d3975ef2160c1e0517353798dac90a9914095d82c025e7cd97bd55aeb804798 <nil>",

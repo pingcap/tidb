@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -157,7 +158,7 @@ func TestBootstrap(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, req.NumRows())
 	se.Close()
-	r = MustExecToRecodeSet(t, se, "select * from mysql.bind_info where original_sql = 'builtin_pseudo_sql_for_bind_lock'")
+	r = MustExecToRecodeSet(t, se, fmt.Sprintf("select * from mysql.bind_info where original_sql = ''%s''"), bindinfo.BuiltinPseudoSQL4BindLock)
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
