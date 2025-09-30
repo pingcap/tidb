@@ -165,6 +165,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/autoid_service",
+        "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
