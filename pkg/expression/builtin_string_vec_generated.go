@@ -30,7 +30,7 @@ func (b *builtinFieldIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf0)
+			globalColumnAllocator.put(buf0)
 		}
 	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf0); err != nil {
@@ -42,7 +42,7 @@ func (b *builtinFieldIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf1)
+			globalColumnAllocator.put(buf1)
 		}
 	}()
 
@@ -88,7 +88,7 @@ func (b *builtinFieldRealSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf0)
+			globalColumnAllocator.put(buf0)
 		}
 	}()
 	if err := b.args[0].VecEvalReal(ctx, input, buf0); err != nil {
@@ -100,7 +100,7 @@ func (b *builtinFieldRealSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf1)
+			globalColumnAllocator.put(buf1)
 		}
 	}()
 
@@ -146,7 +146,7 @@ func (b *builtinFieldStringSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf0)
+			globalColumnAllocator.put(buf0)
 		}
 	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
@@ -158,7 +158,7 @@ func (b *builtinFieldStringSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf1)
+			globalColumnAllocator.put(buf1)
 		}
 	}()
 
