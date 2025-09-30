@@ -86,12 +86,14 @@ func zeroTsItem() tsItem {
 // toProto converts the tsItem to the corresponding protobuf representation.
 func (i *tsItem) toProto() *tipb.TopSQLRecordItem {
 	return &tipb.TopSQLRecordItem{
-		TimestampSec:      i.timestamp,
-		CpuTimeMs:         i.cpuTimeMs,
-		StmtExecCount:     i.stmtStats.ExecCount,
-		StmtKvExecCount:   i.stmtStats.KvStatsItem.KvExecCount,
-		StmtDurationSumNs: i.stmtStats.SumDurationNs,
-		StmtDurationCount: i.stmtStats.DurationCount,
+		TimestampSec:        i.timestamp,
+		CpuTimeMs:           i.cpuTimeMs,
+		StmtExecCount:       i.stmtStats.ExecCount,
+		StmtKvExecCount:     i.stmtStats.KvStatsItem.KvExecCount,
+		StmtDurationSumNs:   i.stmtStats.SumDurationNs,
+		StmtDurationCount:   i.stmtStats.DurationCount,
+		StmtNetworkInBytes:  i.stmtStats.NetworkInBytes,
+		StmtNetworkOutBytes: i.stmtStats.NetworkOutBytes,
 		// Convert more indicators here.
 	}
 }
