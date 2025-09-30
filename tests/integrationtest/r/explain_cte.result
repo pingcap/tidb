@@ -382,7 +382,7 @@ CTE_0	50.00	root		Non-Recursive CTE
   │         └─IndexJoin	31.25	root		inner join, inner:IndexLookUp, outer key:explain_cte.store_sales.ss_customer_sk, inner key:explain_cte.customer.c_customer_sk, equal cond:eq(explain_cte.store_sales.ss_customer_sk, explain_cte.customer.c_customer_sk)
   │           ├─HashJoin(Build)	25.00	root		inner join, equal:[eq(explain_cte.date_dim.d_date_sk, explain_cte.store_sales.ss_sold_date_sk)]
   │           │ ├─TableReader(Build)	20.00	root		data:Selection
-  │           │ │ └─Selection	20.00	cop[tikv]		or(and(1, eq(explain_cte.date_dim.d_year, 2001)), or(and(1, eq(explain_cte.date_dim.d_year, 2002)), 0))
+  │           │ │ └─Selection	20.00	cop[tikv]		or(eq(explain_cte.date_dim.d_year, 2001), eq(explain_cte.date_dim.d_year, 2002))
   │           │ │   └─TableFullScan	10000.00	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
   │           │ └─TableReader(Probe)	9980.01	root		data:Selection
   │           │   └─Selection	9980.01	cop[tikv]		not(isnull(explain_cte.store_sales.ss_customer_sk)), not(isnull(explain_cte.store_sales.ss_sold_date_sk))
@@ -398,7 +398,7 @@ CTE_0	50.00	root		Non-Recursive CTE
             └─IndexJoin	31.25	root		inner join, inner:IndexLookUp, outer key:explain_cte.web_sales.ws_bill_customer_sk, inner key:explain_cte.customer.c_customer_sk, equal cond:eq(explain_cte.web_sales.ws_bill_customer_sk, explain_cte.customer.c_customer_sk)
               ├─HashJoin(Build)	25.00	root		inner join, equal:[eq(explain_cte.date_dim.d_date_sk, explain_cte.web_sales.ws_sold_date_sk)]
               │ ├─TableReader(Build)	20.00	root		data:Selection
-              │ │ └─Selection	20.00	cop[tikv]		or(0, or(and(1, eq(explain_cte.date_dim.d_year, 2001)), and(1, eq(explain_cte.date_dim.d_year, 2002))))
+              │ │ └─Selection	20.00	cop[tikv]		or(eq(explain_cte.date_dim.d_year, 2001), eq(explain_cte.date_dim.d_year, 2002))
               │ │   └─TableFullScan	10000.00	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
               │ └─TableReader(Probe)	9980.01	root		data:Selection
               │   └─Selection	9980.01	cop[tikv]		not(isnull(explain_cte.web_sales.ws_bill_customer_sk)), not(isnull(explain_cte.web_sales.ws_sold_date_sk))
