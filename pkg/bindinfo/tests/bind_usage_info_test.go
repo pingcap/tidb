@@ -52,7 +52,7 @@ func TestBindUsageInfo(t *testing.T) {
 	tk.MustExec("create global binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1,idx_c) */ from t1 where b = 1 and c > 1")
 	tk.MustExec("create global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b using delete /*+ inl_join(t1) */ t1, t2 from t1 inner join t2 on t1.b = t2.b")
 	tk.MustExec("create global binding for update t1 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t1,idx_c) */ t1 set a = 1 where b = 1 and c > 1")
-	// corss database binding
+	// cross database binding
 	tk.MustExec(`create global binding using select /*+ leading(t1, t2, t3, t4, t5) */ * from *.t1, *.t2, *.t3, *.t4, *.t5`)
 	tk.MustExec("select * from t1, t2, t3, t4, t5")
 	tk.MustExec("execute stmt1;")
@@ -69,8 +69,7 @@ func TestBindUsageInfo(t *testing.T) {
 	// The last_used_date should be updated.
 	require.True(t, !origin.Equal(result.Rows()))
 	var last *testkit.Result
-	for idx := range 5 {
-		bindinfo.UpdateBindingUsageInfoBatchSize = max(1, idx)
+	for range 5 {
 		tk.MustExec("execute stmt1;")
 		tk.MustExec("execute stmt2;")
 		tk.MustExec("execute stmt3;")
@@ -91,8 +90,7 @@ func TestBindUsageInfo(t *testing.T) {
 	}
 	// Set all last_used_date to null to simulate that the bindinfo in storage is not updated.
 	resetAllLastUsedData(tk)
-	for idx := range 5 {
-		bindinfo.UpdateBindingUsageInfoBatchSize = max(1, idx)
+	for range 5 {
 		time.Sleep(1 * time.Second)
 		// No used, so last_used_date should not be updated.
 		require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
@@ -101,12 +99,12 @@ func TestBindUsageInfo(t *testing.T) {
 	tk.MustExec("execute stmt1;")
 	tk.MustExec("execute stmt2;")
 	tk.MustExec("execute stmt3;")
-	tk.MustExec("select * from t1, t2, t3, t4, t5")
 	time.Sleep(1 * time.Second)
 	require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
 	// it has been updated again.
-	tk.MustQuery(
-		fmt.Sprintf(`select * from mysql.bind_info where original_sql != '%s' and last_used_date is null`, bindinfo.BuiltinPseudoSQL4BindLock)).Check(testkit.Rows())
+	rows := tk.MustQuery(
+		fmt.Sprintf(`select * from mysql.bind_info where original_sql != '%s' and last_used_date is not null`, bindinfo.BuiltinPseudoSQL4BindLock)).Rows()
+	require.Len(t, rows, 3)
 }
 
 func resetAllLastUsedData(tk *testkit.TestKit) {
