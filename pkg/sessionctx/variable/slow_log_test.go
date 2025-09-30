@@ -22,16 +22,13 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -524,28 +521,4 @@ func TestParseGlobalSlowLogRules(t *testing.T) {
 	require.Equal(t, allConditionFields, slowLogRuleSet.RulesMap[variable.UnsetConnID].Fields)
 	// Conn_ID: 789
 	require.Equal(t, uint64(789), slowLogRuleSet.RulesMap[789].Rules[0].Conditions[0].Threshold)
-}
-
-func BenchmarkSlowLog(b *testing.B) {
-	b.StopTimer()
-	b.ReportAllocs()
-
-	store := testkit.CreateMockStore(b)
-	tk := testkit.NewTestKit(b, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int primary key, v int)")
-	tk.MustExec("insert into t values (1,1), (2,2)")
-	se := tk.Session()
-	stmt, err := parser.New().ParseOneStmt("select * from t", "", "")
-	require.NoError(b, err)
-	compiler := executor.Compiler{Ctx: se}
-	execStmt, err := compiler.Compile(context.TODO(), stmt)
-	require.NoError(b, err)
-
-	ts := oracle.GoTimeToTS(time.Now())
-
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		execStmt.LogSlowQuery(ts, true, false)
-	}
 }

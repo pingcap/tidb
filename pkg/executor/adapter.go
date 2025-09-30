@@ -1677,11 +1677,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		globalRules := vardef.GlobalSlowLogRules.Load()
 		slowItems = PrepareSlowLogItemsForRules(a.GoCtx, globalRules, sessVars)
 		var matchRules bool
-		if slowItems == nil {
+		if len(sessVars.SlowLogRules.EffectiveFields) != 0 {
+			matchRules = ShouldWriteSlowLog(globalRules, sessVars, slowItems)
+			defer putSlowLogItems(slowItems)
+		} else {
 			threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
 			matchRules = sessVars.GetTotalCostDuration() >= threshold
-		} else {
-			matchRules = ShouldWriteSlowLog(globalRules, sessVars, slowItems)
 		}
 		if !matchRules && !force {
 			return

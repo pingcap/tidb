@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -65,16 +66,36 @@ func updateAllRuleFields(globalRules *slowlogrule.GlobalSlowLogRules, seVars *va
 	}
 }
 
+var slowQueryLogItemsPool = sync.Pool{
+	New: func() any { return &variable.SlowQueryLogItems{} },
+}
+
+func getSlowLogItems() *variable.SlowQueryLogItems {
+	return slowQueryLogItemsPool.Get().(*variable.SlowQueryLogItems)
+}
+
+func putSlowLogItems(items *variable.SlowQueryLogItems) {
+	if items == nil {
+		return
+	}
+	*items = variable.SlowQueryLogItems{}
+	slowQueryLogItemsPool.Put(items)
+}
+
 // PrepareSlowLogItemsForRules builds a SlowQueryLogItems containing only the fields referenced by the effective slow log rules.
 // These pre-collected fields are later used for matching SQL execution details against the rules.
 func PrepareSlowLogItemsForRules(ctx context.Context, globalRules *slowlogrule.GlobalSlowLogRules, seVars *variable.SessionVars) *variable.SlowQueryLogItems {
 	updateAllRuleFields(globalRules, seVars)
-	var items *variable.SlowQueryLogItems
-	if len(seVars.SlowLogRules.EffectiveFields) > 0 {
-		items = &variable.SlowQueryLogItems{}
+	if len(seVars.SlowLogRules.EffectiveFields) == 0 {
+		return nil
 	}
+
+	var items *variable.SlowQueryLogItems
 	for field := range seVars.SlowLogRules.EffectiveFields {
 		if gs, ok := variable.SlowLogRuleFieldAccessors[field]; ok && gs.Setter != nil {
+			if items == nil {
+				items = getSlowLogItems()
+			}
 			gs.Setter(ctx, seVars, items)
 		}
 	}
