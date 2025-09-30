@@ -572,25 +572,25 @@ func TestProcessStmtStatsData(t *testing.T) {
 			SQLDigest:  "S1",
 			PlanDigest: "P1",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:     1,
-			SumDurationNs: 1,
-			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 1}},
+			ExecCount:       1,
+			NetworkInBytes:  1,
+			NetworkOutBytes: 0,
 		},
 		stmtstats.SQLPlanDigest{
 			SQLDigest:  "S2",
 			PlanDigest: "P2",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:     2,
-			SumDurationNs: 2,
-			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 2}},
+			ExecCount:       2,
+			NetworkInBytes:  0,
+			NetworkOutBytes: 2,
 		},
 		stmtstats.SQLPlanDigest{
 			SQLDigest:  "S3",
 			PlanDigest: "P3",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:     3,
-			SumDurationNs: 3,
-			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 3}},
+			ExecCount:       3,
+			NetworkInBytes:  1,
+			NetworkOutBytes: 2,
 		},
 	})
 
@@ -603,15 +603,15 @@ func TestProcessStmtStatsData(t *testing.T) {
 
 	assert.Len(t, data.DataRecords, 3)
 	sort.Slice(data.DataRecords, func(i, j int) bool {
-		return data.DataRecords[i].Items[0].StmtExecCount < data.DataRecords[j].Items[0].StmtExecCount
+		return data.DataRecords[i].Items[0].StmtNetworkInBytes+data.DataRecords[i].Items[0].StmtNetworkOutBytes <
+			data.DataRecords[j].Items[0].StmtNetworkInBytes+data.DataRecords[j].Items[0].StmtNetworkOutBytes
 	})
 	// Check Si, Pi and corresponding item value i.
 	for i, record := range data.DataRecords {
 		j := i + 1
 		assert.Equal(t, []byte(fmt.Sprintf("S%d", j)), record.SqlDigest)
 		assert.Equal(t, []byte(fmt.Sprintf("P%d", j)), record.PlanDigest)
-		assert.Equal(t, uint64(j), record.Items[0].StmtExecCount)
-		assert.Equal(t, uint64(j), record.Items[0].StmtDurationSumNs)
+		assert.Equal(t, uint64(j), record.Items[0].StmtNetworkInBytes+record.Items[0].StmtNetworkOutBytes)
 	}
 	// S3, P3 has no recorded CPU time data, so the CpuTimeMs is 0.
 	assert.Equal(t, uint32(0), data.DataRecords[2].Items[0].CpuTimeMs)
@@ -655,33 +655,33 @@ func TestProcessStmtStatsData(t *testing.T) {
 			SQLDigest:  "S1",
 			PlanDigest: "P1",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:     10,
-			SumDurationNs: 10,
-			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 10}},
+			ExecCount:       10,
+			NetworkInBytes:  10,
+			NetworkOutBytes: 0,
 		},
 		stmtstats.SQLPlanDigest{
 			SQLDigest:  "S2",
 			PlanDigest: "P2",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:     2,
-			SumDurationNs: 2,
-			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 2}},
+			ExecCount:       2,
+			NetworkInBytes:  0,
+			NetworkOutBytes: 2,
 		},
 		stmtstats.SQLPlanDigest{
 			SQLDigest:  "S4",
 			PlanDigest: "P4",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:     4,
-			SumDurationNs: 4,
-			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 4}},
+			ExecCount:       4,
+			NetworkInBytes:  1,
+			NetworkOutBytes: 3,
 		},
 		stmtstats.SQLPlanDigest{
 			SQLDigest:  "S6",
 			PlanDigest: "P6",
 		}: &stmtstats.StatementStatsItem{
-			ExecCount:     6,
-			SumDurationNs: 6,
-			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 6}},
+			ExecCount:       6,
+			NetworkInBytes:  2,
+			NetworkOutBytes: 4,
 		},
 	})
 
@@ -692,34 +692,34 @@ func TestProcessStmtStatsData(t *testing.T) {
 	}
 	assert.Len(t, data.DataRecords, 6)
 	sort.Slice(data.DataRecords, func(i, j int) bool {
-		return data.DataRecords[i].Items[0].StmtExecCount*100+uint64(data.DataRecords[i].Items[0].CpuTimeMs) <
-			data.DataRecords[j].Items[0].StmtExecCount*100+uint64(data.DataRecords[j].Items[0].CpuTimeMs)
+		return (data.DataRecords[i].Items[0].StmtNetworkInBytes+data.DataRecords[i].Items[0].StmtNetworkOutBytes)*100+uint64(data.DataRecords[i].Items[0].CpuTimeMs) <
+			(data.DataRecords[j].Items[0].StmtNetworkInBytes+data.DataRecords[j].Items[0].StmtNetworkOutBytes)*100+uint64(data.DataRecords[j].Items[0].CpuTimeMs)
 	})
 	// DataRecords should be:
-	// S3, P3, CpuTime=3, ExecCount=0
-	// S7, P7, CpuTime=7, ExecCount=0
-	// S2, P2, CpuTime=2, ExecCount=2
-	// Other,  CpuTime=1, ExecCount=4
-	// S6, P6, CpuTime=0, ExecCount=6
-	// S1, P1, CpuTime=0, ExecCount=10
+	// S3, P3, CpuTime=3, Network=0
+	// S7, P7, CpuTime=7, Network=0
+	// S2, P2, CpuTime=2, Network=2
+	// Other,  CpuTime=1, Network=4
+	// S6, P6, CpuTime=0, Network=6
+	// S1, P1, CpuTime=0, Network=10
 	assert.Equal(t, []byte("S3"), data.DataRecords[0].SqlDigest)
 	assert.Equal(t, uint32(3), data.DataRecords[0].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(0), data.DataRecords[0].Items[0].StmtExecCount)
+	assert.Equal(t, uint64(0), data.DataRecords[0].Items[0].StmtNetworkInBytes+data.DataRecords[0].Items[0].StmtNetworkOutBytes)
 	assert.Equal(t, []byte("S7"), data.DataRecords[1].SqlDigest)
 	assert.Equal(t, uint32(7), data.DataRecords[1].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(0), data.DataRecords[1].Items[0].StmtExecCount)
+	assert.Equal(t, uint64(0), data.DataRecords[1].Items[0].StmtNetworkInBytes+data.DataRecords[0].Items[0].StmtNetworkOutBytes)
 	assert.Equal(t, []byte("S2"), data.DataRecords[2].SqlDigest)
 	assert.Equal(t, uint32(2), data.DataRecords[2].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(2), data.DataRecords[2].Items[0].StmtExecCount)
+	assert.Equal(t, uint64(2), data.DataRecords[2].Items[0].StmtNetworkInBytes+data.DataRecords[2].Items[0].StmtNetworkOutBytes)
 	assert.Equal(t, []byte(nil), data.DataRecords[3].SqlDigest)
 	assert.Equal(t, uint32(1), data.DataRecords[3].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(4), data.DataRecords[3].Items[0].StmtExecCount)
+	assert.Equal(t, uint64(4), data.DataRecords[3].Items[0].StmtNetworkInBytes+data.DataRecords[3].Items[0].StmtNetworkOutBytes)
 	assert.Equal(t, []byte("S6"), data.DataRecords[4].SqlDigest)
 	assert.Equal(t, uint32(0), data.DataRecords[4].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(6), data.DataRecords[4].Items[0].StmtExecCount)
+	assert.Equal(t, uint64(6), data.DataRecords[4].Items[0].StmtNetworkInBytes+data.DataRecords[4].Items[0].StmtNetworkOutBytes)
 	assert.Equal(t, []byte("S1"), data.DataRecords[5].SqlDigest)
 	assert.Equal(t, uint32(0), data.DataRecords[5].Items[0].CpuTimeMs)
-	assert.Equal(t, uint64(10), data.DataRecords[5].Items[0].StmtExecCount)
+	assert.Equal(t, uint64(10), data.DataRecords[5].Items[0].StmtNetworkInBytes+data.DataRecords[5].Items[0].StmtNetworkOutBytes)
 }
 
 func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {

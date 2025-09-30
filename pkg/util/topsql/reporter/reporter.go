@@ -250,13 +250,13 @@ func (tsr *RemoteTopSQLReporter) processStmtStatsData() {
 	u64Slice := make([]uint64, 0, maxLen)
 	k := int(topsqlstate.GlobalState.MaxStatementCount.Load())
 	for timestamp, data := range tsr.stmtStatsBuffer {
-		kthExecCount := findKthUint64(data, k, u64Slice)
+		kthNetworkBytes := findKthNetworkBytes(data, k, u64Slice)
 		for digest, item := range data {
 			sqlDigest, planDigest := []byte(digest.SQLDigest), []byte(digest.PlanDigest)
-			// Note, by filtering with the kth_exec_count, we get fewer than N records. The actual picked records
-			// count is decided by the count of duplicated kth_exec_count，if kth_exec_count is unique,
+			// Note, by filtering with the kthNetworkBytes, we get fewer than N records. The actual picked records
+			// count is decided by the count of duplicated kthNetworkBytes，if kthNetworkBytes is unique,
 			// For performance reason, do not convert the whole map into a slice and pick exactly topN records.
-			if item.ExecCount > kthExecCount || !tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {
+			if item.NetworkInBytes+item.NetworkOutBytes > kthNetworkBytes || !tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {
 				tsr.collecting.getOrCreateRecord(sqlDigest, planDigest).appendStmtStatsItem(timestamp, *item)
 			} else {
 				tsr.collecting.appendOthersStmtStatsItem(timestamp, *item)
@@ -282,21 +282,21 @@ func (t uint64Slice) Swap(i, j int) {
 	t[i], t[j] = t[j], t[i]
 }
 
-// findKthUint64 finds the k-th largest ExecCount in data using quickselect algorithm.
-func findKthUint64(data stmtstats.StatementStatsMap, k int, u64Slice []uint64) uint64 {
-	var kthExecCount uint64
+// findKthNetworkBytes finds the k-th largest network bytes in data using quickselect algorithm.
+func findKthNetworkBytes(data stmtstats.StatementStatsMap, k int, u64Slice []uint64) uint64 {
+	var kthNetworkBytes uint64
 	if len(data) > k {
 		u64Slice = u64Slice[:0]
 		for _, item := range data {
-			u64Slice = append(u64Slice, item.ExecCount)
+			u64Slice = append(u64Slice, item.NetworkInBytes+item.NetworkOutBytes)
 		}
 		_ = quickselect.QuickSelect(uint64Slice(u64Slice), k)
-		kthExecCount = u64Slice[0]
+		kthNetworkBytes = u64Slice[0]
 		for i := range k {
-			kthExecCount = min(kthExecCount, u64Slice[i])
+			kthNetworkBytes = min(kthNetworkBytes, u64Slice[i])
 		}
 	}
-	return kthExecCount
+	return kthNetworkBytes
 }
 
 // takeDataAndSendToReportChan takes records data and then send to the report channel for reporting.
