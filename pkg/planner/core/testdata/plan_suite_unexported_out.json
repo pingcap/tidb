@@ -993,7 +993,10 @@
       "Join{Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->DataScan(t3)->TopN([test.t.b true],0,1)}(test.t.b,test.t.b)->TopN([test.t.b true],0,1)->Aggr(max(test.t.b))->Projection",
       "DataScan(t1)->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Sort->Projection",
-      "DataScan(a)->Projection"
+      "DataScan(a)->Projection",
+      "DataScan(t1)->Projection",
+      "Join{Join{DataScan(t1)->DataScan(t2)}(test.t.b,test.t.b)->DataScan(t3)->Projection}(test.t.a,test.t.a)->Aggr(firstrow(test.t.a),firstrow(ifnull(Column#49, 0)))",
+      "Apply{DataScan(t1)->DataScan(t3)->Aggr(count(1))->MaxOneRow}->Aggr(firstrow(test.t.a),firstrow(Column#49))"
     ]
   },
   {

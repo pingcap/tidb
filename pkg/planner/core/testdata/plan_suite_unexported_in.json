@@ -585,7 +585,15 @@
       // Because the `order by` uses t2.a, the `join` can't be eliminated.
       "select t1.a, t1.b from t t1 left join t t2 on t1.a = t2.a order by t2.a",
       // For issue 11167
-      "select a.a from t a natural left join t b natural left join t c"
+      "select a.a from t a natural left join t b natural left join t c",
+      // Test case where right table should be pruned (no references to t2 columns)
+      "select t1.a, t1.b from t t1 left outer join t t2 on t1.f = t2.f",
+      // Test correlated subquery in select list that only references left table columns
+      // With tidb_opt_enable_no_decorrelate_in_select_list enabled, the right table should be pruned
+      // Test should first be run with tidb_opt_enable_no_decorrelate_in_select_list=OFF
+      "select distinct t1.a, (select count(*) from t t3 where t3.a = t1.a) as cnt from t t1 left outer join t t2 on t1.b = t2.b",
+      // Then with tidb_opt_enable_no_decorrelate_in_select_list=ON
+      "select distinct t1.a, (select count(*) from t t3 where t3.a = t1.a) as cnt from t t1 left outer join t t2 on t1.b = t2.b"
     ]
   },
   {
