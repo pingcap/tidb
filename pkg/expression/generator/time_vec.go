@@ -107,7 +107,11 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEval{{ .TypeA.TypeName }}(ctx, input, buf0); err != nil {
 		return err
 	}

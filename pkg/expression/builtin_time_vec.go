@@ -35,7 +35,11 @@ func (b *builtinMonthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}
@@ -63,7 +67,11 @@ func (b *builtinYearSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}
@@ -192,7 +200,11 @@ func (b *builtinExtractDatetimeFromStringSig) vecEvalInt(ctx EvalContext, input 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -233,7 +245,11 @@ func (b *builtinDayNameSig) vecEvalIndex(ctx EvalContext, input *chunk.Chunk, ap
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}
@@ -307,7 +323,11 @@ func (b *builtinWeekDaySig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err = b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}
@@ -342,7 +362,11 @@ func (b *builtinTimeFormatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalDuration(ctx, input, buf); err != nil {
 		// If err != nil, then dur is ZeroDuration, outputs 00:00:00
 		// in this case which follows the behavior of mysql.
@@ -386,7 +410,11 @@ func (b *builtinUTCTimeWithArgSig) vecEvalDuration(ctx EvalContext, input *chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -458,7 +486,11 @@ func (b *builtinYearWeekWithoutModeSig) vecEvalInt(ctx EvalContext, input *chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}
@@ -504,7 +536,11 @@ func (b *builtinPeriodDiffSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -748,7 +784,11 @@ func (b *builtinSysDateWithFspSig) vecEvalTime(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err = b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -784,7 +824,11 @@ func (b *builtinTidbParseTsoSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -894,7 +938,11 @@ func (b *builtinFromDaysSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err = b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -922,7 +970,11 @@ func (b *builtinMicroSecondSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err = b.args[0].VecEvalDuration(ctx, input, buf); err != nil {
 		return vecEvalIntByRows(ctx, b, input, result)
 	}
@@ -951,7 +1003,11 @@ func (b *builtinQuarterSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1168,7 +1224,11 @@ func (b *builtinToSecondsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1205,7 +1265,11 @@ func (b *builtinMinuteSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err = b.args[0].VecEvalDuration(ctx, input, buf); err != nil {
 		return vecEvalIntByRows(ctx, b, input, result)
 	}
@@ -1232,7 +1296,11 @@ func (b *builtinSecondSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err = b.args[0].VecEvalDuration(ctx, input, buf); err != nil {
 		return vecEvalIntByRows(ctx, b, input, result)
 	}
@@ -1358,7 +1426,11 @@ func (b *builtinWeekOfYearSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err = b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1395,7 +1467,11 @@ func (b *builtinUTCTimestampWithArgSig) vecEvalTime(ctx EvalContext, input *chun
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1439,7 +1515,11 @@ func (b *builtinTimeToSecSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err = b.args[0].VecEvalDuration(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1556,7 +1636,11 @@ func (b *builtinWeekWithoutModeSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
@@ -1650,7 +1734,11 @@ func (b *builtinPeriodAddSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1684,7 +1772,11 @@ func (b *builtinTimestampAddSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1768,7 +1860,11 @@ func (b *builtinToDaysSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1874,7 +1970,11 @@ func (b *builtinHourSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err = b.args[0].VecEvalDuration(ctx, input, buf); err != nil {
 		return vecEvalIntByRows(ctx, b, input, result)
 	}
@@ -1901,7 +2001,11 @@ func (b *builtinSecToTimeSig) vecEvalDuration(ctx EvalContext, input *chunk.Chun
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalReal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -2122,7 +2226,11 @@ func (b *builtinDayOfYearSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}
@@ -2156,7 +2264,11 @@ func (b *builtinFromUnixTime1ArgSig) vecEvalTime(ctx EvalContext, input *chunk.C
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err = b.args[0].VecEvalDecimal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -2307,7 +2419,11 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
@@ -2384,7 +2500,11 @@ func (b *builtinTimeSig) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -2464,7 +2584,11 @@ func (b *builtinMonthNameSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}
@@ -2506,7 +2630,11 @@ func (b *builtinDayOfWeekSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}
@@ -2540,7 +2668,11 @@ func (b *builtinCurrentTime1ArgSig) vecEvalDuration(ctx EvalContext, input *chun
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -2642,7 +2774,11 @@ func (b *builtinTimestamp1ArgSig) vecEvalTime(ctx EvalContext, input *chunk.Chun
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -2762,7 +2898,11 @@ func (b *builtinDayOfMonthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		return err
 	}

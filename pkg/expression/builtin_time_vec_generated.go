@@ -292,7 +292,11 @@ func (b *builtinAddStringAndDurationSig) vecEvalString(ctx EvalContext, input *c
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -374,7 +378,11 @@ func (b *builtinAddStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -471,7 +479,11 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -545,7 +557,11 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -931,7 +947,11 @@ func (b *builtinSubStringAndDurationSig) vecEvalString(ctx EvalContext, input *c
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -1013,7 +1033,11 @@ func (b *builtinSubStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -1110,7 +1134,11 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -1184,7 +1212,11 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
