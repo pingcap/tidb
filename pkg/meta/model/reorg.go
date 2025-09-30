@@ -132,6 +132,17 @@ const (
 	CurrentReorgMetaVersion = int64(1)
 )
 
+const (
+	// AnalyzeStateNone means the analyze process is not started yet.
+	AnalyzeStateNone = 0
+	// AnalyzeStateRunning means the analyze process is running.
+	AnalyzeStateRunning = 1
+	// AnalyzeStateSkipped means the analyze process is skipped.
+	AnalyzeStateSkipped = 2
+	// AnalyzeStateDone means the analyze process is done.
+	AnalyzeStateDone = 3
+)
+
 // ReorgType indicates which process is used for the data reorganization.
 type ReorgType int8
 

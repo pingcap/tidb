@@ -554,6 +554,10 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			tmpRan[0].LowExclude = indexRange.LowExclude
 			tmpRan[0].HighExclude = indexRange.HighExclude
 		}
+		// Safety check to prevent panic when accessing colsIDs[i]
+		if colsIDs == nil || i >= len(colsIDs) {
+			continue
+		}
 		colID := colsIDs[i]
 		var (
 			count       float64
@@ -613,17 +617,18 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		histNDV = idx.NDV
 	}
 	idxLowBound := 1 / float64(min(histNDV, coll.RealtimeCount))
+	minBound := idxLowBound
+	// Adjust idxLowBound upwards if we have not used all index columns.
 	if l < len(idx.Info.Columns) {
 		idxLowBound /= 0.9
 	}
 	// maxSel assumes correlation, so is the selectivity of the most filtering column
 	maxSel = max(idxLowBound, singleColumnEstResults[0])
 	// minSel assumes independence between columns, so is the product of all single column selectivities.
-	minSel = max(idxLowBound, minSel)
+	minSel = max(minBound, minSel)
 
 	// Calculate minimum bound: take minimum of all selectivities (up to limit) and index bound
 	maxCols := min(MaxExponentialBackoffCols, l)
-	minBound := idxLowBound
 	for i := range maxCols {
 		minBound = min(minBound, singleColumnEstResults[i])
 	}
