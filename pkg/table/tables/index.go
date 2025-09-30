@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -44,6 +45,8 @@ type index struct {
 	// the collation global variable is initialized *after* `NewIndex()`.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
+	ectx                *exprstatic.ExprContext
+	castIndexCols       []int
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
@@ -63,6 +66,21 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
+	}
+
+	for i, col := range index.idxInfo.Columns {
+		tblCol := index.tblInfo.Columns[col.Offset]
+		if col.UsingChangingType && tblCol.ChangingFieldType != nil {
+			index.castIndexCols = append(index.castIndexCols, i)
+		}
+	}
+
+	if len(index.castIndexCols) > 0 {
+		index.ectx = exprstatic.NewExprContext(
+			exprstatic.WithEvalCtx(
+				exprstatic.NewEvalContext(
+					exprstatic.WithSQLMode(
+						mysql.ModeStrictAllTables | mysql.ModeStrictTransTables))))
 	}
 	return index
 }
@@ -89,18 +107,39 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 			idxTblID = c.tblInfo.ID
 		}
 	}
+
+	for _, i := range c.castIndexCols {
+		col := c.idxInfo.Columns[i]
+		tblCol := c.tblInfo.Columns[col.Offset]
+		indexedValues[i], err = table.CastColumnValueToType(c.ectx, indexedValues[i], tblCol.ChangingFieldType, true, false)
+		if err != nil {
+			return
+		}
+	}
+
 	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
 	err = ec.HandleError(err)
 	return
 }
 
 // GenIndexValue generates the index value.
-func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct bool, indexedValues []types.Datum,
+func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, untouched bool, indexedValues []types.Datum,
 	h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error) {
 	c.initNeedRestoreData.Do(func() {
 		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 	})
-	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData, buf)
+
+	var err error
+	for _, i := range c.castIndexCols {
+		col := c.idxInfo.Columns[i]
+		tblCol := c.tblInfo.Columns[col.Offset]
+		indexedValues[i], err = table.CastColumnValueToType(c.ectx, indexedValues[i], tblCol.ChangingFieldType, true, false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
 	err = ec.HandleError(err)
 	return idx, err
 }
@@ -244,11 +283,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 
 		// save the key buffer to reuse.
 		writeBufs.IndexKeyBuf = key
-		c.initNeedRestoreData.Do(func() {
-			c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
-		})
-		idxVal, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo,
-			c.needRestoredData, distinct, untouched, value, h, c.phyTblID, handleRestoreData, nil)
+		idxVal, err := c.GenIndexValue(ec, loc, distinct, untouched, value, h, handleRestoreData, nil)
 		err = ec.HandleError(err)
 		if err != nil {
 			return nil, err
