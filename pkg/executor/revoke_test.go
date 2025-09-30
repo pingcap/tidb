@@ -186,36 +186,46 @@ func TestRevokeColumnPriv(t *testing.T) {
 
 	// grant column priv should add records to both mysql.columns_priv and mysql.tables_priv
 	tk.MustExec("GRANT SELECT(c1) ON test.t1 TO u1")
-	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
+	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv ORDER BY table_name, column_name").
 		Check(testkit.Rows("Select"))
-	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
-		Check(testkit.Rows(" Select"))
+	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv ORDER BY table_name`).
+		Check(testkit.RowsWithSep("|", "|Select"))
+	tk.MustExec("GRANT SELECT(c2) ON test.t1 TO u1")
+	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv ORDER BY table_name, column_name").
+		Check(testkit.Rows("Select", "Select"))
+	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv ORDER BY table_name`).
+		Check(testkit.RowsWithSep("|", "|Select"))
 
 	// revoke column privilege should remove records from both mysql.columns_priv and mysql.tables_priv
-	tk.MustExec("REVOKE SELECT(c1) ON test.t1 FROM u1")
-	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
+	tk.MustExec("REVOKE SELECT(c1) ON t1 FROM u1")
+	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv ORDER BY table_name, column_name").
+		Check(testkit.Rows("Select"))
+	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv ORDER BY table_name`).
+		Check(testkit.RowsWithSep("|", "|Select"))
+	tk.MustExec("REVOKE SELECT(c2) ON test.t1 FROM u1")
+	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv ORDER BY table_name, column_name").
 		Check(testkit.Rows())
-	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
+	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv ORDER BY table_name`).
 		Check(testkit.Rows())
 
 	// revoke table privilege should also remove corresponding records from mysql.columns_priv
 	tk.MustExec("GRANT SELECT,SELECT(c1) ON test.t1 TO u1")
-	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
+	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv ORDER BY table_name, column_name").
 		Check(testkit.Rows("Select"))
-	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
+	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv ORDER BY table_name`).
 		Check(testkit.Rows("Select Select"))
 	tk.MustExec("REVOKE SELECT ON test.t1 FROM u1")
-	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
+	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv ORDER BY table_name, column_name").
 		Check(testkit.Rows())
-	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
+	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv ORDER BY table_name`).
 		Check(testkit.Rows())
 
 	// Grant a column privilege WITH GRANT OPTION applies to all privileges on this table and not to the columns mentioned only.
 	tk.MustExec("GRANT UPDATE(c1) ON test.t1 TO u1 WITH GRANT OPTION")
 	tk.MustExec("REVOKE UPDATE ON test.t1 FROM u1")
-	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
+	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv ORDER BY table_name, column_name").
 		Check(testkit.Rows())
-	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
+	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv ORDER BY table_name`).
 		Check(testkit.RowsWithSep("|", "Grant|"))
 
 	// Table-level and column-level privilege can exist together
@@ -225,7 +235,7 @@ func TestRevokeColumnPriv(t *testing.T) {
 	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	tk.MustQuery("show grants for u1").Check(testkit.Rows("GRANT USAGE ON *.* TO 'u1'@'%'",
 		"GRANT SELECT,INSERT,UPDATE ON `test`.`t1` TO 'u1'@'%'",
-		"GRANT SELECT(c1), INSERT(c1), UPDATE(c1), REFERENCES(c1) ON `test`.`t1` TO 'u1'@'%'"))
+		"GRANT SELECT(`c1`), INSERT(`c1`), UPDATE(`c1`), REFERENCES(`c1`) ON `test`.`t1` TO 'u1'@'%'"))
 	tk.MustQuery("select table_priv,column_priv from mysql.tables_priv where user='u1'").
 		Check(testkit.RowsWithSep(" | ", "Select,Insert,Update | Select,Insert,Update,References"))
 
