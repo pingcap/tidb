@@ -118,7 +118,11 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalConte
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufWhen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufWhen)
+			}
+		}()
 		err = args[j].VecEvalInt(ctx, input, bufWhen)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -134,7 +138,11 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalConte
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufThen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufThen)
+			}
+		}()
 		err = args[j+1].VecEval{{ .TypeName }}(ctx, input, bufThen)
 		afterWarns = warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -156,7 +164,11 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalConte
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufElse)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufElse)
+			}
+		}()
 		err = args[l-1].VecEval{{ .TypeName }}(ctx, input, bufElse)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -277,7 +289,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf1)
+			globalColumnAllocator.put(buf1)
 		}
 	}()
 	beforeWarns := warningCount(ctx)
@@ -304,7 +316,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf0)
+			globalColumnAllocator.put(buf0)
 		}
 	}()
 	if err := b.args[0].VecEval{{ .TypeName }}(ctx, input, buf0); err != nil {
@@ -316,7 +328,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf1)
+			globalColumnAllocator.put(buf1)
 		}
 	}()
 	beforeWarns := warningCount(ctx)
@@ -399,7 +411,7 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext, in
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf0)
+			globalColumnAllocator.put(buf0)
 		}
 	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf0); err != nil {
@@ -415,7 +427,7 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext, in
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf1)
+			globalColumnAllocator.put(buf1)
 		}
 	}()
 	err = b.args[1].VecEval{{ .TypeName }}(ctx, input, buf1)
@@ -432,7 +444,11 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext, in
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf2)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf2)
+		}
+	}()
 	err = b.args[2].VecEval{{ .TypeName }}(ctx, input, buf2)
 	afterWarns = warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {

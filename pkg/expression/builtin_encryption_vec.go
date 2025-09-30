@@ -54,7 +54,11 @@ func (b *builtinAesDecryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(strBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(strBuf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, strBuf); err != nil {
 		return err
 	}
@@ -63,7 +67,11 @@ func (b *builtinAesDecryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(keyBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(keyBuf)
+		}
+	}()
 	if err := b.args[1].VecEvalString(ctx, input, keyBuf); err != nil {
 		return err
 	}
@@ -122,7 +130,11 @@ func (b *builtinAesEncryptIVSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(strBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(strBuf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, strBuf); err != nil {
 		return err
 	}
@@ -131,7 +143,11 @@ func (b *builtinAesEncryptIVSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(keyBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(keyBuf)
+		}
+	}()
 	if err := b.args[1].VecEvalString(ctx, input, keyBuf); err != nil {
 		return err
 	}
@@ -140,7 +156,11 @@ func (b *builtinAesEncryptIVSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(ivBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(ivBuf)
+		}
+	}()
 	if err := b.args[2].VecEvalString(ctx, input, ivBuf); err != nil {
 		return err
 	}
@@ -215,7 +235,11 @@ func (b *builtinDecodeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -223,7 +247,11 @@ func (b *builtinDecodeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 	if err1 != nil {
 		return err1
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	if err := b.args[1].VecEvalString(ctx, input, buf1); err != nil {
 		return err
 	}
@@ -254,7 +282,11 @@ func (b *builtinEncodeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -262,7 +294,11 @@ func (b *builtinEncodeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 	if err1 != nil {
 		return err1
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	if err := b.args[1].VecEvalString(ctx, input, buf1); err != nil {
 		return err
 	}
@@ -295,7 +331,11 @@ func (b *builtinAesDecryptIVSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(strBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(strBuf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, strBuf); err != nil {
 		return err
 	}
@@ -304,7 +344,11 @@ func (b *builtinAesDecryptIVSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(keyBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(keyBuf)
+		}
+	}()
 	if err := b.args[1].VecEvalString(ctx, input, keyBuf); err != nil {
 		return err
 	}
@@ -313,7 +357,11 @@ func (b *builtinAesDecryptIVSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(ivBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(ivBuf)
+		}
+	}()
 	if err := b.args[2].VecEvalString(ctx, input, ivBuf); err != nil {
 		return err
 	}
@@ -388,7 +436,11 @@ func (b *builtinRandomBytesSig) vecEvalString(ctx EvalContext, input *chunk.Chun
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -425,7 +477,11 @@ func (b *builtinMD5Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resul
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -460,7 +516,11 @@ func (b *builtinSHA2Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -468,7 +528,11 @@ func (b *builtinSHA2Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	if err := b.args[1].VecEvalInt(ctx, input, buf1); err != nil {
 		return err
 	}
@@ -536,7 +600,11 @@ func (b *builtinSM3Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resul
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return errors.Trace(err)
 	}
@@ -590,7 +658,11 @@ func (b *builtinCompressSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -653,7 +725,11 @@ func (b *builtinAesEncryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(strBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(strBuf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, strBuf); err != nil {
 		return err
 	}
@@ -662,7 +738,11 @@ func (b *builtinAesEncryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(keyBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(keyBuf)
+		}
+	}()
 	if err := b.args[1].VecEvalString(ctx, input, keyBuf); err != nil {
 		return err
 	}
@@ -718,7 +798,11 @@ func (b *builtinPasswordSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -755,7 +839,11 @@ func (b *builtinSHA1Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -789,7 +877,11 @@ func (b *builtinUncompressSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -844,7 +936,11 @@ func (b *builtinUncompressedLengthSig) vecEvalInt(ctx EvalContext, input *chunk.
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(payloadBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(payloadBuf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, payloadBuf); err != nil {
 		return err
 	}
@@ -891,7 +987,11 @@ func (b *builtinValidatePasswordStrengthSig) vecEvalInt(ctx EvalContext, input *
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}

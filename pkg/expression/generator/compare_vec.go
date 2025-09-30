@@ -67,7 +67,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(ct
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf0)
+			globalColumnAllocator.put(buf0)
 		}
 	}()
 	if err := b.args[0].VecEval{{ .type.TypeName }}(ctx, input, buf0); err != nil {
@@ -79,7 +79,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(ct
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf1)
+			globalColumnAllocator.put(buf1)
 		}
 	}()
 	if err := b.args[1].VecEval{{ .type.TypeName }}(ctx, input, buf1); err != nil {
@@ -129,7 +129,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(ct
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf0)
+			globalColumnAllocator.put(buf0)
 		}
 	}()
 	if err := b.args[0].VecEval{{ .type.TypeName }}(ctx, input, buf0); err != nil {
@@ -141,7 +141,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(ct
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf1)
+			globalColumnAllocator.put(buf1)
 		}
 	}()
 	if err := b.args[1].VecEval{{ .type.TypeName }}(ctx, input, buf1); err != nil {
@@ -238,7 +238,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf1)
+			globalColumnAllocator.put(buf1)
 		}
 	}()
 	beforeWarns := warningCount(ctx)
@@ -279,7 +279,11 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(buf)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(buf)
+			}
+		}()
 		err = b.args[i].VecEval{{ .type.TypeName }}(ctx, input, buf)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {

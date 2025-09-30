@@ -63,7 +63,11 @@ func (b *builtinCaseWhenIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufWhen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufWhen)
+			}
+		}()
 		err = args[j].VecEvalInt(ctx, input, bufWhen)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -79,7 +83,11 @@ func (b *builtinCaseWhenIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufThen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufThen)
+			}
+		}()
 		err = args[j+1].VecEvalInt(ctx, input, bufThen)
 		afterWarns = warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -99,7 +107,11 @@ func (b *builtinCaseWhenIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufElse)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufElse)
+			}
+		}()
 		err = args[l-1].VecEvalInt(ctx, input, bufElse)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -173,7 +185,11 @@ func (b *builtinCaseWhenRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufWhen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufWhen)
+			}
+		}()
 		err = args[j].VecEvalInt(ctx, input, bufWhen)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -189,7 +205,11 @@ func (b *builtinCaseWhenRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufThen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufThen)
+			}
+		}()
 		err = args[j+1].VecEvalReal(ctx, input, bufThen)
 		afterWarns = warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -209,7 +229,11 @@ func (b *builtinCaseWhenRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufElse)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufElse)
+			}
+		}()
 		err = args[l-1].VecEvalReal(ctx, input, bufElse)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -283,7 +307,11 @@ func (b *builtinCaseWhenDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufWhen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufWhen)
+			}
+		}()
 		err = args[j].VecEvalInt(ctx, input, bufWhen)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -299,7 +327,11 @@ func (b *builtinCaseWhenDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufThen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufThen)
+			}
+		}()
 		err = args[j+1].VecEvalDecimal(ctx, input, bufThen)
 		afterWarns = warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -319,7 +351,11 @@ func (b *builtinCaseWhenDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufElse)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufElse)
+			}
+		}()
 		err = args[l-1].VecEvalDecimal(ctx, input, bufElse)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -388,7 +424,11 @@ func (b *builtinCaseWhenStringSig) vecEvalString(ctx EvalContext, input *chunk.C
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufWhen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufWhen)
+			}
+		}()
 		err = args[j].VecEvalInt(ctx, input, bufWhen)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -404,7 +444,11 @@ func (b *builtinCaseWhenStringSig) vecEvalString(ctx EvalContext, input *chunk.C
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufThen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufThen)
+			}
+		}()
 		err = args[j+1].VecEvalString(ctx, input, bufThen)
 		afterWarns = warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -423,7 +467,11 @@ func (b *builtinCaseWhenStringSig) vecEvalString(ctx EvalContext, input *chunk.C
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufElse)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufElse)
+			}
+		}()
 		err = args[l-1].VecEvalString(ctx, input, bufElse)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -501,7 +549,11 @@ func (b *builtinCaseWhenTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufWhen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufWhen)
+			}
+		}()
 		err = args[j].VecEvalInt(ctx, input, bufWhen)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -517,7 +569,11 @@ func (b *builtinCaseWhenTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufThen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufThen)
+			}
+		}()
 		err = args[j+1].VecEvalTime(ctx, input, bufThen)
 		afterWarns = warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -537,7 +593,11 @@ func (b *builtinCaseWhenTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufElse)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufElse)
+			}
+		}()
 		err = args[l-1].VecEvalTime(ctx, input, bufElse)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -611,7 +671,11 @@ func (b *builtinCaseWhenDurationSig) vecEvalDuration(ctx EvalContext, input *chu
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufWhen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufWhen)
+			}
+		}()
 		err = args[j].VecEvalInt(ctx, input, bufWhen)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -627,7 +691,11 @@ func (b *builtinCaseWhenDurationSig) vecEvalDuration(ctx EvalContext, input *chu
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufThen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufThen)
+			}
+		}()
 		err = args[j+1].VecEvalDuration(ctx, input, bufThen)
 		afterWarns = warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -647,7 +715,11 @@ func (b *builtinCaseWhenDurationSig) vecEvalDuration(ctx EvalContext, input *chu
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufElse)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufElse)
+			}
+		}()
 		err = args[l-1].VecEvalDuration(ctx, input, bufElse)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -716,7 +788,11 @@ func (b *builtinCaseWhenJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufWhen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufWhen)
+			}
+		}()
 		err = args[j].VecEvalInt(ctx, input, bufWhen)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -732,7 +808,11 @@ func (b *builtinCaseWhenJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufThen)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufThen)
+			}
+		}()
 		err = args[j+1].VecEvalJSON(ctx, input, bufThen)
 		afterWarns = warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -751,7 +831,11 @@ func (b *builtinCaseWhenJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(bufElse)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(bufElse)
+			}
+		}()
 		err = args[l-1].VecEvalJSON(ctx, input, bufElse)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -822,7 +906,11 @@ func (b *builtinIfNullIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	beforeWarns := warningCount(ctx)
 	err = b.args[1].VecEvalInt(ctx, input, buf1)
 	afterWarns := warningCount(ctx)
@@ -876,7 +964,11 @@ func (b *builtinIfNullRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	beforeWarns := warningCount(ctx)
 	err = b.args[1].VecEvalReal(ctx, input, buf1)
 	afterWarns := warningCount(ctx)
@@ -930,7 +1022,11 @@ func (b *builtinIfNullDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	beforeWarns := warningCount(ctx)
 	err = b.args[1].VecEvalDecimal(ctx, input, buf1)
 	afterWarns := warningCount(ctx)
@@ -978,7 +1074,11 @@ func (b *builtinIfNullStringSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -986,7 +1086,11 @@ func (b *builtinIfNullStringSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	beforeWarns := warningCount(ctx)
 	err = b.args[1].VecEvalString(ctx, input, buf1)
 	afterWarns := warningCount(ctx)
@@ -1043,7 +1147,11 @@ func (b *builtinIfNullTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	beforeWarns := warningCount(ctx)
 	err = b.args[1].VecEvalTime(ctx, input, buf1)
 	afterWarns := warningCount(ctx)
@@ -1097,7 +1205,11 @@ func (b *builtinIfNullDurationSig) vecEvalDuration(ctx EvalContext, input *chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	beforeWarns := warningCount(ctx)
 	err = b.args[1].VecEvalDuration(ctx, input, buf1)
 	afterWarns := warningCount(ctx)
@@ -1145,7 +1257,11 @@ func (b *builtinIfNullJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalJSON(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -1153,7 +1269,11 @@ func (b *builtinIfNullJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	beforeWarns := warningCount(ctx)
 	err = b.args[1].VecEvalJSON(ctx, input, buf1)
 	afterWarns := warningCount(ctx)
@@ -1207,7 +1327,11 @@ func (b *builtinIfIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -1225,7 +1349,11 @@ func (b *builtinIfIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf2)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf2)
+		}
+	}()
 	err = b.args[2].VecEvalInt(ctx, input, buf2)
 	afterWarns = warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {
@@ -1285,7 +1413,11 @@ func (b *builtinIfRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -1303,7 +1435,11 @@ func (b *builtinIfRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf2)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf2)
+		}
+	}()
 	err = b.args[2].VecEvalReal(ctx, input, buf2)
 	afterWarns = warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {
@@ -1363,7 +1499,11 @@ func (b *builtinIfDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -1381,7 +1521,11 @@ func (b *builtinIfDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf2)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf2)
+		}
+	}()
 	err = b.args[2].VecEvalDecimal(ctx, input, buf2)
 	afterWarns = warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {
@@ -1438,7 +1582,11 @@ func (b *builtinIfStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -1447,7 +1595,11 @@ func (b *builtinIfStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	err = b.args[1].VecEvalString(ctx, input, buf1)
 	afterWarns := warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {
@@ -1461,7 +1613,11 @@ func (b *builtinIfStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf2)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf2)
+		}
+	}()
 	err = b.args[2].VecEvalString(ctx, input, buf2)
 	afterWarns = warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {
@@ -1524,7 +1680,11 @@ func (b *builtinIfTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -1542,7 +1702,11 @@ func (b *builtinIfTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf2)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf2)
+		}
+	}()
 	err = b.args[2].VecEvalTime(ctx, input, buf2)
 	afterWarns = warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {
@@ -1602,7 +1766,11 @@ func (b *builtinIfDurationSig) vecEvalDuration(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -1620,7 +1788,11 @@ func (b *builtinIfDurationSig) vecEvalDuration(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf2)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf2)
+		}
+	}()
 	err = b.args[2].VecEvalDuration(ctx, input, buf2)
 	afterWarns = warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {
@@ -1677,7 +1849,11 @@ func (b *builtinIfJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -1686,7 +1862,11 @@ func (b *builtinIfJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	err = b.args[1].VecEvalJSON(ctx, input, buf1)
 	afterWarns := warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {
@@ -1700,7 +1880,11 @@ func (b *builtinIfJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf2)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf2)
+		}
+	}()
 	err = b.args[2].VecEvalJSON(ctx, input, buf2)
 	afterWarns = warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {

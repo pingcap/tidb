@@ -270,7 +270,11 @@ func (b *BuiltinGroupingImplSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(bufVal)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(bufVal)
+		}
+	}()
 	if err = b.args[0].VecEvalInt(ctx, input, bufVal); err != nil {
 		return err
 	}

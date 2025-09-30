@@ -143,7 +143,7 @@ const (
 )
 
 func BenchmarkColumnPoolGet(b *testing.B) {
-	allocator := newLocalColumnPool()
+	allocator := globalColumnAllocator
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for range numColumnPoolOp {
@@ -153,7 +153,7 @@ func BenchmarkColumnPoolGet(b *testing.B) {
 }
 
 func BenchmarkColumnPoolGetParallel(b *testing.B) {
-	allocator := newLocalColumnPool()
+	allocator := globalColumnAllocator
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -165,7 +165,7 @@ func BenchmarkColumnPoolGetParallel(b *testing.B) {
 }
 
 func BenchmarkColumnPoolGetPut(b *testing.B) {
-	allocator := newLocalColumnPool()
+	allocator := globalColumnAllocator
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for range numColumnPoolOp {
@@ -176,7 +176,7 @@ func BenchmarkColumnPoolGetPut(b *testing.B) {
 }
 
 func BenchmarkColumnPoolGetPutParallel(b *testing.B) {
-	allocator := newLocalColumnPool()
+	allocator := globalColumnAllocator
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
