@@ -1789,6 +1789,12 @@ type SessionVars struct {
 		WaitAverse    MemArbitratorWaitAverseMode
 		QueryReserved int64
 	}
+
+	// InPacketBytes records the total incoming packet bytes from clients for current session.
+	InPacketBytes uint64
+
+	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
+	OutPacketBytes uint64
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.

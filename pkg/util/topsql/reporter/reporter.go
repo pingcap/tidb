@@ -243,17 +243,20 @@ func (tsr *RemoteTopSQLReporter) processCPUTimeData(timestamp uint64, data cpuRe
 func (tsr *RemoteTopSQLReporter) processStmtStatsData() {
 	defer util.Recover("top-sql", "processStmtStatsData", nil, false)
 
-	max_len := 0
+	maxLen := 0
 	for _, data := range tsr.stmtStatsBuffer {
-		max_len = max(max_len, len(data))
+		maxLen = max(maxLen, len(data))
 	}
-	u64_slice := make([]uint64, 0, max_len)
+	u64Slice := make([]uint64, 0, maxLen)
 	k := int(topsqlstate.GlobalState.MaxStatementCount.Load())
 	for timestamp, data := range tsr.stmtStatsBuffer {
-		kth_exec_count := find_kth_uint64(data, k, u64_slice)
+		kthExecCount := findKthUint64(data, k, u64Slice)
 		for digest, item := range data {
 			sqlDigest, planDigest := []byte(digest.SQLDigest), []byte(digest.PlanDigest)
-			if item.ExecCount > kth_exec_count || !tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {
+			// Note, by filtering with the kth_exec_count, we get fewer than N records. The actual picked records
+			// count is decided by the count of duplicated kth_exec_count，if kth_exec_count is unique,
+			// For performance reason, do not convert the whole map into a slice and pick exactly topN records.
+			if item.ExecCount > kthExecCount || !tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {
 				tsr.collecting.getOrCreateRecord(sqlDigest, planDigest).appendStmtStatsItem(timestamp, *item)
 			} else {
 				tsr.collecting.appendOthersStmtStatsItem(timestamp, *item)
@@ -279,21 +282,21 @@ func (t uint64Slice) Swap(i, j int) {
 	t[i], t[j] = t[j], t[i]
 }
 
-// find_kth_uint64 finds the k-th largest ExecCount in data using quickselect algorithm.
-func find_kth_uint64(data stmtstats.StatementStatsMap, k int, u64_slice []uint64) uint64 {
-	var kth_exec_count uint64
+// findKthUint64 finds the k-th largest ExecCount in data using quickselect algorithm.
+func findKthUint64(data stmtstats.StatementStatsMap, k int, u64Slice []uint64) uint64 {
+	var kthExecCount uint64
 	if len(data) > k {
-		u64_slice = u64_slice[:0]
+		u64Slice = u64Slice[:0]
 		for _, item := range data {
-			u64_slice = append(u64_slice, item.ExecCount)
+			u64Slice = append(u64Slice, item.ExecCount)
 		}
-		_ = quickselect.QuickSelect(uint64Slice(u64_slice), k)
-		kth_exec_count = u64_slice[0]
+		_ = quickselect.QuickSelect(uint64Slice(u64Slice), k)
+		kthExecCount = u64Slice[0]
 		for i := range k {
-			kth_exec_count = min(kth_exec_count, u64_slice[i])
+			kthExecCount = min(kthExecCount, u64Slice[i])
 		}
 	}
-	return kth_exec_count
+	return kthExecCount
 }
 
 // takeDataAndSendToReportChan takes records data and then send to the report channel for reporting.
