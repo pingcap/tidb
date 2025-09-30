@@ -632,7 +632,11 @@ func (b *builtinInet6NtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(val)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(val)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, val); err != nil {
 		return err
 	}
@@ -674,7 +678,11 @@ func (b *builtinVitessHashSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(column)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(column)
+		}
+	}()
 
 	if err := b.args[0].VecEvalInt(ctx, input, column); err != nil {
 		return err
@@ -711,7 +719,11 @@ func (b *builtinUUIDToBinSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(valBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(valBuf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, valBuf); err != nil {
 		return err
 	}
@@ -723,7 +735,11 @@ func (b *builtinUUIDToBinSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(flagBuf)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(flagBuf)
+			}
+		}()
 		if err := b.args[1].VecEvalInt(ctx, input, flagBuf); err != nil {
 			return err
 		}
@@ -774,7 +790,11 @@ func (b *builtinBinToUUIDSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(valBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(valBuf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, valBuf); err != nil {
 		return err
 	}
@@ -786,7 +806,11 @@ func (b *builtinBinToUUIDSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(flagBuf)
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(flagBuf)
+			}
+		}()
 		if err := b.args[1].VecEvalInt(ctx, input, flagBuf); err != nil {
 			return err
 		}

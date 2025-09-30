@@ -133,7 +133,11 @@ func (b *builtinArithmeticModIntUnsignedUnsignedSig) vecEvalInt(ctx EvalContext,
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(lh)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(lh)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, lh); err != nil {
 		return err
 	}
@@ -174,8 +178,11 @@ func (b *builtinArithmeticModIntUnsignedSignedSig) vecEvalInt(ctx EvalContext, i
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(lh)
-
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(lh)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, lh); err != nil {
 		return err
 	}
@@ -219,8 +226,11 @@ func (b *builtinArithmeticModIntSignedUnsignedSig) vecEvalInt(ctx EvalContext, i
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(lh)
-
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(lh)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, lh); err != nil {
 		return err
 	}
@@ -264,8 +274,11 @@ func (b *builtinArithmeticModIntSignedSignedSig) vecEvalInt(ctx EvalContext, inp
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(lh)
-
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(lh)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, lh); err != nil {
 		return err
 	}
@@ -383,8 +396,11 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(ctx EvalContext, input *chunk.
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(lh)
-
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(lh)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, lh); err != nil {
 		return err
 	}
@@ -606,7 +622,11 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(ctx EvalContext, input
 		if buf[i], err = globalColumnAllocator.get(); err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(buf[i])
+		defer func() {
+			if err == nil {
+				globalColumnAllocator.put(buf[i])
+			}
+		}()
 
 		err = arg.VecEvalDecimal(ctx, input, buf[i])
 		if err != nil {
@@ -768,7 +788,11 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(ctx EvalContext, input *ch
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(lhsBuf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(lhsBuf)
+		}
+	}()
 
 	if err := b.args[0].VecEvalInt(ctx, input, lhsBuf); err != nil {
 		return err
@@ -898,8 +922,11 @@ func (b *builtinArithmeticPlusIntSig) vecEvalInt(ctx EvalContext, input *chunk.C
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(lh)
-
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(lh)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, lh); err != nil {
 		return err
 	}

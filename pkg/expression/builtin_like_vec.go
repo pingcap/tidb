@@ -28,7 +28,11 @@ func (b *builtinLikeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(bufVal)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(bufVal)
+		}
+	}()
 	if err = b.args[0].VecEvalString(ctx, input, bufVal); err != nil {
 		return err
 	}
@@ -36,7 +40,11 @@ func (b *builtinLikeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(bufPattern)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(bufPattern)
+		}
+	}()
 	if err = b.args[1].VecEvalString(ctx, input, bufPattern); err != nil {
 		return err
 	}
@@ -45,7 +53,11 @@ func (b *builtinLikeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(bufEscape)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(bufEscape)
+		}
+	}()
 	if err = b.args[2].VecEvalInt(ctx, input, bufEscape); err != nil {
 		return err
 	}

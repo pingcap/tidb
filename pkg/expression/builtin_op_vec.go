@@ -400,7 +400,11 @@ func (b *builtinLogicAndSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 
 	beforeArg1Warns := ctx.WarningCount()
 	err = b.args[1].VecEvalInt(ctx, input, buf1)

@@ -1438,7 +1438,11 @@ func (b *builtinCastTimeAsDurationSig) vecEvalDuration(ctx EvalContext, input *c
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(arg0)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(arg0)
+		}
+	}()
 	if err := b.args[0].VecEvalTime(ctx, input, arg0); err != nil {
 		return err
 	}

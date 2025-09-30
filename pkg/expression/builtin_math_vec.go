@@ -416,7 +416,11 @@ func (b *builtinPowSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	if err := b.args[0].VecEvalReal(ctx, input, buf1); err != nil {
 		return err
 	}
@@ -473,7 +477,11 @@ func (b *builtinLog2ArgsSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	if err := b.args[1].VecEvalReal(ctx, input, buf1); err != nil {
 		return err
 	}
@@ -544,7 +552,11 @@ func (b *builtinRoundWithFracRealSig) vecEvalReal(ctx EvalContext, input *chunk.
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	if err := b.args[1].VecEvalInt(ctx, input, buf1); err != nil {
 		return err
 	}
@@ -574,7 +586,11 @@ func (b *builtinTruncateRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	if err := b.args[1].VecEvalInt(ctx, input, buf1); err != nil {
 		return err
 	}
@@ -1127,17 +1143,29 @@ func (b *builtinConvSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	buf2, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf2)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf2)
+		}
+	}()
 	buf3, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf3)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf3)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf1); err != nil {
 		return err
 	}
