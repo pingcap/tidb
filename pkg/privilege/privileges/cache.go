@@ -1331,6 +1331,16 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(userList map[string]struct{})
 			old.username = value.User
 		}
 		old.data = append(old.data, value)
+		if value.User == "tomoaki_shigeta" {
+			logutil.BgLogger().Info("create column privilege record in cache",
+				zap.String("user", value.User),
+				zap.String("host", value.Host),
+				zap.String("DB", value.DB),
+				zap.String("table", value.TableName),
+				zap.String("column", value.ColumnName),
+				zap.String("privileges", value.ColumnPriv.String()),
+			)
+		}
 		p.columnsPriv.ReplaceOrInsert(old)
 		return nil
 	}
@@ -1825,9 +1835,9 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	sortFromIdx = len(gs)
 	columnPrivTable := make(map[string]privOnColumns)
 	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
-		logutil.BgLogger().Info("column privilege record in cache #1", zap.String("user", itm.username), zap.Int("len", len(itm.data)))
+		logutil.BgLogger().Info("show column privilege record in cache #1", zap.String("user", itm.username), zap.Int("len", len(itm.data)))
 		for _, record := range itm.data {
-			logutil.BgLogger().Info("column privilege record in cache #2",
+			logutil.BgLogger().Info("show column privilege record in cache #2",
 				zap.String("user", record.User),
 				zap.String("host", record.Host),
 				zap.String("DB", record.DB),
