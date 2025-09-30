@@ -652,6 +652,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
 		if loadNeeded && !analyzed {
 			fakeCol := statistics.EmptyColumn(colInfo.ID, tblInfo.PKIsHandle, colInfo)
+			statsTbl = statsTbl.Copy()
 			statsTbl.Columns[col.ID] = fakeCol
 			statsCache.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
 		}
