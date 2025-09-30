@@ -1441,11 +1441,13 @@ const (
 	// 1. prepare tpc-c
 	// 2. run tpc-c workload with multiple threads for a few minutes
 	// 3. observe the memory consumption of TiDB instance without copr-cache
-	// 4. calculate the average memory consumption of compiling plan per token
-	defCompilePlanQuotaPerToken = 75761
+	// 4. calculate the average memory consumption of compiling plan per token:
+	//    executor.(*Compiler).Compile / threads / avg token count per SQL / 2 * 1.2(more 20%)
+	defCompilePlanQuotaPerToken = 63091 * 12 / 10
 
 	// mem quota for parsing SQL per token (similar method as above)
-	defParseSQLQuotaPerToken = 25161
+	//    session.(*session).ParseSQL / threads / avg token count per SQL / 2 * 1.2(more 20%)
+	defParseSQLQuotaPerToken = 12036 * 12 / 10
 )
 
 var keySQLToken = map[string]int{
@@ -1454,7 +1456,12 @@ var keySQLToken = map[string]int{
 	"execute": coreSQLToken, // ignore `prepare` statement because its content will be parsed later
 	"explain": bypassSQLToken, "desc": bypassSQLToken}
 
-func approxSQLTokenCnt(sql string) (tokenCnt int64) {
+// approximate memory quota related token count for parsing a SQL statement which covers most DML statements
+// 1. ignore comments
+// 2. count keywords, identifiers, numbers, "?", string/identifier literals as one token
+// 3. if the SQL has `select` clause, it must have `from` clause: ignore SQL like `select expr()` or `select @@var`
+// 4. return 0 if the SQL has NO core token (e.g. `set`, `use`, `begin`, `commit`, `rollback`, etc)
+func approxParseSQLTokenCnt(sql string) (tokenCnt int64) {
 	f := false
 	buffer := struct {
 		d [10]byte
@@ -1555,7 +1562,9 @@ func approxSQLTokenCnt(sql string) (tokenCnt int64) {
 	return
 }
 
-func approxNormalizedSQLTokenCnt(sql string, hasSelect bool) (tokenCnt int64) { // only for normalized SQL
+// approximate memory quota related token count for compiling plan of a `Normalized` SQL statement
+// if the SQL has `select` clause, it must have `from` clause.
+func approxCompilePlanTokenCnt(sql string, hasSelect bool) (tokenCnt int64) {
 	const tokenFrom = "from"
 	const lenTokenFrom = len(tokenFrom)
 	n := 0
@@ -1586,17 +1595,27 @@ func approxNormalizedSQLTokenCnt(sql string, hasSelect bool) (tokenCnt int64) { 
 	return
 }
 
+// approximate memory quota for parsing SQL
+func approxParseSQLMemQuota(sql string) int64 {
+	tokenCnt := approxParseSQLTokenCnt(sql)
+	return tokenCnt * defParseSQLQuotaPerToken
+}
+
+// approximate memory quota for compiling plan of a `Normalized` SQL statement
+func approxCompilePlanMemQuota(sql string, hasSelect bool) int64 {
+	tokenCnt := approxCompilePlanTokenCnt(sql, hasSelect)
+	return tokenCnt * defCompilePlanQuotaPerToken
+}
+
 func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	globalMemArbitrator := memory.GlobalMemArbitrator()
 	arbitratorMode := globalMemArbitrator.WorkMode()
 	execUseArbitrator := false
-	commonMemQuota := int64(0)
+	parseSQLMemQuota := int64(0)
 	if globalMemArbitrator != nil && s.sessionVars.ConnectionID != 0 {
 		if s.sessionVars.MemArbitrator.WaitAverse != variable.MemArbitratorNolimit {
-			if tokenCnt := approxSQLTokenCnt(sql); tokenCnt > 0 {
-				execUseArbitrator = true
-				commonMemQuota = tokenCnt * defParseSQLQuotaPerToken
-			}
+			parseSQLMemQuota = approxParseSQLMemQuota(sql)
+			execUseArbitrator = parseSQLMemQuota > 0
 		}
 	}
 
@@ -1627,8 +1646,8 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 			}
 		}
 
-		arbitratorOutOfQuota := !globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, commonMemQuota)
-		defer globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -commonMemQuota)
+		arbitratorOutOfQuota := !globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, parseSQLMemQuota)
+		defer globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -parseSQLMemQuota)
 
 		if arbitratorOutOfQuota { // for SQL which needs to be controlled by mem-arbitrator
 			if err := intoErrBeforeExec(); err != nil {
@@ -2371,17 +2390,16 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	execUseArbitrator := globalMemArbitrator != nil && sessVars.ConnectionID != 0 &&
 		sessVars.MemArbitrator.WaitAverse != variable.MemArbitratorNolimit &&
 		sessVars.StmtCtx.MemSensitive
-	commonMemQuota := int64(0) // mem quota for compiler & optimizer
+	compilePlanMemQuota := int64(0) // mem quota for compiler & optimizer
 	if execUseArbitrator {
-		tokenCnt := approxNormalizedSQLTokenCnt(normalizedSQL, sessVars.StmtCtx.InSelectStmt)
-		commonMemQuota = defCompilePlanQuotaPerToken * tokenCnt
-		execUseArbitrator = tokenCnt > 0
+		compilePlanMemQuota = approxCompilePlanMemQuota(normalizedSQL, sessVars.StmtCtx.InSelectStmt)
+		execUseArbitrator = compilePlanMemQuota > 0
 	}
 
 	releaseCommonQuota := func() { // release common quota
-		if commonMemQuota > 0 {
-			_ = globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, -commonMemQuota)
-			commonMemQuota = 0
+		if compilePlanMemQuota > 0 {
+			_ = globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, -compilePlanMemQuota)
+			compilePlanMemQuota = 0
 		}
 	}
 
@@ -2411,7 +2429,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			}
 		}
 
-		arbitratorOutOfQuota := !globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, commonMemQuota)
+		arbitratorOutOfQuota := !globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, compilePlanMemQuota)
 		defer releaseCommonQuota()
 
 		if arbitratorOutOfQuota { // for SQL which needs to be controlled by mem-arbitrator
