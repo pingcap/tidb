@@ -201,6 +201,17 @@ func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter f
 	}
 }
 
+// ExtractAllColumnsFromExpressionsInUsedSlices is the same as ExtractColumnsFromExpressions. But this will not remove duplicates.
+func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, filter func(*Column) bool, exprs ...Expression) {
+	if len(exprs) == 0 {
+		return
+	}
+	for _, expr := range exprs {
+		reuse = extractColumnsSlices(reuse, expr, filter)
+	}
+	return
+}
+
 // ExtractAllColumnsFromExpressions is the same as ExtractColumnsFromExpressions. But this will not remove duplicates.
 func ExtractAllColumnsFromExpressions(exprs []Expression, filter func(*Column) bool) []*Column {
 	if len(exprs) == 0 {
