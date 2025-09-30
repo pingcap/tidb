@@ -372,14 +372,22 @@ var timeDiff = template.Must(template.New("").Parse(`
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf0)
+		}
+	}()
 {{ end }}
 {{ define "BufAllocator1" }}
 	buf1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf1)
+		}
+	}()
 {{ end }}
 {{ define "ArgsVecEval" }}
 	if err := b.args[0].VecEval{{ .TypeA.TypeName }}(ctx, input, buf0); err != nil {
