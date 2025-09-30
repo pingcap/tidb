@@ -1721,14 +1721,14 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 		ts.SetSchema(tmpSchema)
 	}
 
-	cop := &CopTask{
-		indexPlan:        is,
-		tablePlan:        ts,
-		tblColHists:      is.StatsInfo().HistColl,
-		extraHandleCol:   extraCol,
-		commonHandleCols: commonCols,
+	cop := &physicalop.CopTask{
+		IndexPlan:        is,
+		TablePlan:        ts,
+		TblColHists:      is.StatsInfo().HistColl,
+		ExtraHandleCol:   extraCol,
+		CommonHandleCols: commonCols,
 	}
-	rootT := cop.ConvertToRootTask(b.ctx).(*RootTask)
+	rootT := cop.ConvertToRootTask(b.ctx).(*physicalop.RootTask)
 	if err := rootT.GetPlan().ResolveIndices(); err != nil {
 		return nil, err
 	}

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -127,29 +125,6 @@ func (p *PhysicalIndexLookUpReader) GetIndexNetDataSize() float64 {
 // GetAvgTableRowSize return the average row size of each final row.
 func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
 	return cardinality.GetAvgRowSize(p.SCtx(), GetTblStats(p.TablePlan), p.TablePlan.Schema().Columns, false, false)
-}
-
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.IndexPlan != nil {
-		rp.Children = append(rp.Children, p.IndexPlan.BuildPlanTrace())
-	}
-	if p.TablePlan != nil {
-		rp.Children = append(rp.Children, p.TablePlan.BuildPlanTrace())
-	}
-	return rp
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexLookUpReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.BasePhysicalPlan.AppendChildCandidate(op)
-	if p.IndexPlan != nil {
-		AppendChildCandidate(p, p.IndexPlan, op)
-	}
-	if p.TablePlan != nil {
-		AppendChildCandidate(p, p.TablePlan, op)
-	}
 }
 
 // MemoryUsage return the memory usage of PhysicalIndexLookUpReader
@@ -294,4 +269,38 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer1(taskType property.TaskType,
 func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType,
 	option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalIndexLookUpReader(p, taskType, option, args...)
+}
+
+// BuildIndexLookUpTask builds a index look up task from a cop task.
+func BuildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
+	newTask := &RootTask{}
+	p := PhysicalIndexLookUpReader{
+		TablePlan:        t.TablePlan,
+		IndexPlan:        t.IndexPlan,
+		ExtraHandleCol:   t.ExtraHandleCol,
+		CommonHandleCols: t.CommonHandleCols,
+		ExpectedCnt:      t.ExpectCnt,
+		KeepOrder:        t.KeepOrder,
+		PlanPartInfo:     t.PhysPlanPartInfo,
+	}.Init(ctx, t.TablePlan.QueryBlockOffset(), t.IndexLookUpPushDown)
+	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
+	// the final agg would be broken. Please reference comments for the similar logic in
+	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
+	// We need to refactor these logics.
+	aggPushedDown := false
+	switch p.TablePlan.(type) {
+	case *PhysicalHashAgg, *PhysicalStreamAgg:
+		aggPushedDown = true
+	}
+
+	if t.NeedExtraProj && !aggPushedDown {
+		schema := t.OriginSchema
+		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.TablePlan.QueryBlockOffset(), nil)
+		proj.SetSchema(schema)
+		proj.SetChildren(p)
+		newTask.SetPlan(proj)
+	} else {
+		newTask.SetPlan(p)
+	}
+	return newTask
 }

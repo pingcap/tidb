@@ -25,7 +25,6 @@ go_library(
         "//pkg/planner/core/base",
         "//pkg/planner/funcdep",
         "//pkg/planner/planctx",
-        "//pkg/planner/property",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/tablecodec",
@@ -39,6 +38,7 @@ go_library(
         "//pkg/util/intset",
         "//pkg/util/ranger",
         "//pkg/util/size",
+        "//pkg/util/slice",
         "@com_github_pingcap_errors//:errors",
     ],
 )

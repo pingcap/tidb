@@ -24,10 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -81,8 +79,6 @@ type Plan interface {
 	//		`select /*+ use_index(@sel_2 t2, a) */ * from t1, (select a*2 as b from t2) tx where a>b`
 	// the hint should be applied on the sub-query, whose query block is 2.
 	QueryBlockOffset() int
-
-	BuildPlanTrace() *tracing.PlanTrace
 
 	// CloneForPlanCache clones this Plan for Plan Cache.
 	// Compared with Clone, CloneForPlanCache doesn't deep clone every fields, fields with tag
@@ -139,10 +135,6 @@ type PhysicalPlan interface {
 
 	// Clone clones this physical plan.
 	Clone(newCtx PlanContext) (PhysicalPlan, error)
-
-	// AppendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
-	// be tracked during findBestTask or enumeratePhysicalPlans4Task
-	AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp)
 
 	// MemoryUsage return the memory usage of PhysicalPlan
 	MemoryUsage() int64
@@ -202,10 +194,10 @@ type LogicalPlan interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression, *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan, error)
+	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan, error)
 
 	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
-	PruneColumns([]*expression.Column, *optimizetrace.LogicalOptimizeOp) (LogicalPlan, error)
+	PruneColumns([]*expression.Column) (LogicalPlan, error)
 
 	// FindBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -215,7 +207,7 @@ type LogicalPlan interface {
 	// If planCounter > 0, the clock_th plan generated in this function will be returned.
 	// If planCounter = 0, the plan generated in this function will not be considered.
 	// If planCounter = -1, then we will not force plan.
-	FindBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *optimizetrace.PhysicalOptimizeOp) (Task, int64, error)
+	FindBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (Task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use
@@ -225,16 +217,16 @@ type LogicalPlan interface {
 
 	// PushDownTopN will push down the topN or limit operator during logical optimization.
 	// interface definition should depend on concrete implementation type.
-	PushDownTopN(topN LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
+	PushDownTopN(topN LogicalPlan) LogicalPlan
 
 	// DeriveTopN derives an implicit TopN from a filter on row_number window function...
-	DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
+	DeriveTopN() LogicalPlan
 
 	// PredicateSimplification consolidates different predcicates on a column and its equivalence classes.
-	PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
+	PredicateSimplification() LogicalPlan
 
 	// ConstantPropagation generate new constant predicate according to column equivalence relation
-	ConstantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) (newRoot LogicalPlan)
+	ConstantPropagation(parentPlan LogicalPlan, currentChildIdx int) (newRoot LogicalPlan)
 
 	// PullUpConstantPredicates recursive find constant predicate, used for the constant propagation rule
 	PullUpConstantPredicates() []expression.Expression
@@ -315,21 +307,21 @@ type GroupExpression interface {
 	InputsLen() int
 }
 
-// GetGEAndLogical is get the possible group expression and logical operator from common super pointer.
-func GetGEAndLogical[T LogicalPlan](super LogicalPlan) (ge GroupExpression, proj T) {
+// GetGEAndLogicalOp is get the possible group expression and logical operator from common super pointer.
+func GetGEAndLogicalOp[T LogicalPlan](super LogicalPlan) (ge GroupExpression, logicalOp T) {
 	switch x := super.(type) {
 	case T:
 		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
 		// to downcast as the every specific logical operator.
-		proj = x
+		logicalOp = x
 	case GroupExpression:
 		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
 		// naturally can be referred as a LogicalPlan, and we need to use GetWrappedLogicalPlan to
 		// get the specific logical operator inside.
 		ge = x
-		proj = ge.GetWrappedLogicalPlan().(T)
+		logicalOp = ge.GetWrappedLogicalPlan().(T)
 	}
-	return ge, proj
+	return ge, logicalOp
 }
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.

@@ -24,11 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // PhysicalIndexReader is the index reader in tidb.
@@ -99,23 +97,6 @@ func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
-}
-
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.IndexPlan != nil {
-		rp.Children = append(rp.Children, p.IndexPlan.BuildPlanTrace())
-	}
-	return rp
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.BasePhysicalPlan.AppendChildCandidate(op)
-	if p.IndexPlan != nil {
-		AppendChildCandidate(p, p.IndexPlan, op)
-	}
 }
 
 // MemoryUsage return the memory usage of PhysicalIndexReader

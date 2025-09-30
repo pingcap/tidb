@@ -25,7 +25,6 @@ import (
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -105,7 +104,7 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 // HashCode inherits the BaseLogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	if p.Cte.RecursivePartLogicalPlan != nil {
 		// Doesn't support recursive CTE yet.
 		return predicates, p.Self(), nil
@@ -141,25 +140,25 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *op
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
 // LogicalCTE just do an empty function call. It's logical optimize is indivisual phase.
-func (p *LogicalCTE) PruneColumns(_ []*expression.Column, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalCTE) PruneColumns(_ []*expression.Column) (base.LogicalPlan, error) {
 	return p, nil
 }
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalCTE) FindBestTask(prop *property.PhysicalProperty, counter *base.PlanCounterTp, pop *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask4LogicalCTE(p, prop, counter, pop)
+func (p *LogicalCTE) FindBestTask(prop *property.PhysicalProperty, counter *base.PlanCounterTp) (t base.Task, cntPlan int64, err error) {
+	return utilfuncp.FindBestTask4LogicalCTE(p, prop, counter)
 }
 
 // BuildKeyInfo inherits the BaseLogicalPlan.<4th> implementation.
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
-func (p *LogicalCTE) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *LogicalCTE) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
 	}
 	if topN != nil {
-		return topN.AttachChild(p, opt)
+		return topN.AttachChild(p)
 	}
 	return p
 }
