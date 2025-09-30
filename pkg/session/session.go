@@ -1902,10 +1902,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	if execOption.AnalyzeSnapshot != nil {
 		s.sessionVars.EnableAnalyzeSnapshot = *execOption.AnalyzeSnapshot
 	}
-	prevAnalyzeReorgStateIndex := s.sessionVars.EnableDDLAnalyzeExecOpt
-	if execOption.EnableDDLAnalyze {
-		s.sessionVars.EnableDDLAnalyzeExecOpt = true
-	}
+	s.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	prePruneMode := s.sessionVars.PartitionPruneMode.Load()
 	if len(execOption.PartitionPruneMode) > 0 {
 		s.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
@@ -1916,7 +1913,6 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	return s, func() {
 		s.sessionVars.AnalyzeVersion = prevStatsVer
 		s.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
-		s.sessionVars.EnableDDLAnalyzeExecOpt = prevAnalyzeReorgStateIndex
 		if err := s.sessionVars.SetSystemVar(vardef.TiDBSnapshot, ""); err != nil {
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
@@ -1971,14 +1967,10 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	if len(execOption.PartitionPruneMode) > 0 {
 		se.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
 	}
-	prevAnalyzeReorgStateIndex := se.sessionVars.EnableDDLAnalyzeExecOpt
-	if execOption.EnableDDLAnalyze {
-		se.sessionVars.EnableDDLAnalyzeExecOpt = true
-	}
+	se.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	return se, func() {
 		se.sessionVars.AnalyzeVersion = prevStatsVer
 		se.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
-		se.sessionVars.EnableDDLAnalyzeExecOpt = prevAnalyzeReorgStateIndex
 		if err := se.sessionVars.SetSystemVar(vardef.TiDBSnapshot, ""); err != nil {
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
