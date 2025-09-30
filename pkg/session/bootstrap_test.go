@@ -158,7 +158,7 @@ func TestBootstrap(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, req.NumRows())
 	se.Close()
-	r = MustExecToRecodeSet(t, se, fmt.Sprintf("select * from mysql.bind_info where original_sql = ''%s''"), bindinfo.BuiltinPseudoSQL4BindLock)
+	r = MustExecToRecodeSet(t, se, fmt.Sprintf("select * from mysql.bind_info where original_sql = '%s'", bindinfo.BuiltinPseudoSQL4BindLock))
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
