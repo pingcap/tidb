@@ -1834,6 +1834,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 				zap.String("table", record.TableName),
 				zap.String("column", record.ColumnName),
 				zap.String("privileges", record.ColumnPriv.String()),
+				zap.Int("len(allRoles)", len(allRoles)),
 			)
 			if !collectColumnGrant(&record, user, host, columnPrivTable, sqlMode) {
 				for _, r := range allRoles {
