@@ -771,6 +771,62 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
 }
 
+func TestBuildRefreshStatsPrivileges(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	ctx.GetSessionVars().CurrentDB = "test"
+
+	p := parser.New()
+	testCases := []struct {
+		name            string
+		sql             string
+		expectedDB      string
+		expectedTable   string
+		expectedEntries int
+	}{
+		{
+			name:            "table scope",
+			sql:             "REFRESH STATS t1",
+			expectedDB:      "test",
+			expectedTable:   "t1",
+			expectedEntries: 1,
+		},
+		{
+			name:            "database scope",
+			sql:             "REFRESH STATS test.*",
+			expectedDB:      "test",
+			expectedTable:   "",
+			expectedEntries: 1,
+		},
+		{
+			name:            "global scope",
+			sql:             "REFRESH STATS *.*",
+			expectedDB:      "",
+			expectedTable:   "",
+			expectedEntries: 1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+			stmtNode, err := p.ParseOneStmt(tc.sql, "", "")
+			require.NoError(t, err)
+			rs := stmtNode.(*ast.RefreshStatsStmt)
+			builder.visitInfo = nil
+			_, err = builder.buildRefreshStats(rs)
+			require.NoError(t, err)
+			require.Len(t, builder.visitInfo, tc.expectedEntries)
+			vi := builder.visitInfo[0]
+			require.Equal(t, tc.expectedDB, vi.db)
+			require.Equal(t, tc.expectedTable, vi.table)
+			require.Equal(t, mysql.SelectPriv, vi.privilege)
+		})
+	}
+}
+
 func TestImportIntoCollAssignmentChecker(t *testing.T) {
 	cases := []struct {
 		expr       string
