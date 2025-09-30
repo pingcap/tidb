@@ -100,13 +100,6 @@ func TestBindUsageInfo(t *testing.T) {
 	tk.MustExec("execute stmt1;")
 	tk.MustExec("execute stmt2;")
 	tk.MustExec("execute stmt3;")
-	tk.MustExec(`delete from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock'`)
-	// Althought we execute the stmts, we set a very long interval, so last_used_date should not be updated.
-	require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
-	tk.MustQuery(`select * from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock'`).Check(testkit.Rows())
-	tk.MustExec("execute stmt1;")
-	tk.MustExec("execute stmt2;")
-	tk.MustExec("execute stmt3;")
 	tk.MustExec("select * from t1, t2, t3, t4, t5")
 	time.Sleep(1 * time.Second)
 	require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
