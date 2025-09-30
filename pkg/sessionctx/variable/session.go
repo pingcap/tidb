@@ -1771,6 +1771,12 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+
+	// InPacketBytes records the total incoming packet bytes from clients for current session.
+	InPacketBytes uint64
+
+	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
+	OutPacketBytes uint64
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
