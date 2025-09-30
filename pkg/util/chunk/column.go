@@ -893,6 +893,7 @@ func (c *Column) ContainsVeryLargeElement() bool {
 	return false
 }
 
+// TryReset tries to reset this Column.
 func (c *Column) TryReset() bool {
 	if c.avoidReusing {
 		return false
