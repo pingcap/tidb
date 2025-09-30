@@ -15,6 +15,7 @@
 package tests
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -76,7 +77,7 @@ func TestBindUsageInfo(t *testing.T) {
 		tk.MustExec("select * from t1, t2, t3, t4, t5")
 		time.Sleep(1 * time.Second)
 		// Set all last_used_date to null to simulate that the bindinfo in storage is not updated.
-		tk.MustExec(`update mysql.bind_info set last_used_date = null where original_sql != 'builtin_pseudo_sql_for_bind_lock'`)
+		resetAllLastUsedData(tk)
 		require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
 		checkBindinfoInMemory(t, bindingHandle, checklist)
 		tk.MustQuery(`select last_used_date from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock' and last_used_date is null`).Check(testkit.Rows())
@@ -89,7 +90,7 @@ func TestBindUsageInfo(t *testing.T) {
 		}
 	}
 	// Set all last_used_date to null to simulate that the bindinfo in storage is not updated.
-	tk.MustExec(`update mysql.bind_info set last_used_date = null where original_sql != 'builtin_pseudo_sql_for_bind_lock'`)
+	resetAllLastUsedData(tk)
 	for idx := range 5 {
 		bindinfo.UpdateBindingUsageInfoBatchSize = max(1, idx)
 		time.Sleep(1 * time.Second)
@@ -104,7 +105,12 @@ func TestBindUsageInfo(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
 	// it has been updated again.
-	tk.MustQuery(`select * from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock' and last_used_date is null`).Check(testkit.Rows())
+	tk.MustQuery(
+		fmt.Sprintf(`select * from mysql.bind_info where original_sql != '%s' and last_used_date is null`, bindinfo.BuiltinPseudoSQL4BindLock)).Check(testkit.Rows())
+}
+
+func resetAllLastUsedData(tk *testkit.TestKit) {
+	tk.MustExec(fmt.Sprintf(`update mysql.bind_info set last_used_date = null where original_sql != '%s'`, bindinfo.BuiltinPseudoSQL4BindLock))
 }
 
 func checkBindinfoInMemory(t *testing.T, bindingHandle bindinfo.BindingHandle, checklist []string) {

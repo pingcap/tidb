@@ -1534,7 +1534,8 @@ func TestSetBindingStatusBySQLDigest(t *testing.T) {
 	bindinfo.MaxWriteInterval = 1 * time.Microsecond
 	time.Sleep(1 * time.Second)
 	require.NoError(t, s.dom.BindingHandle().UpdateBindingUsageInfoToStorage())
-	tk.MustQuery(`select last_used_date from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock' and last_used_date is null`).Check(testkit.Rows())
+	tk.MustQuery(fmt.Sprintf(`select last_used_date from mysql.bind_info where original_sql != '%s' and last_used_date is null`,
+		bindinfo.BuiltinPseudoSQL4BindLock)).Check(testkit.Rows())
 	sqlDigest := tk.MustQuery("show global bindings").Rows()
 	tk.MustExec(fmt.Sprintf("set binding disabled for sql digest '%s'", sqlDigest[0][9]))
 	tk.MustExec(sql)
