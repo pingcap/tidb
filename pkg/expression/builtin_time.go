@@ -4903,6 +4903,9 @@ func (c *addTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	}
 	switch tp1.GetType() {
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
+		charset, collate := ctx.GetCharsetInfo()
+		bf.tp.SetCharset(charset)
+		bf.tp.SetCollate(collate)
 		switch tp2.GetType() {
 		case mysql.TypeDuration:
 			sig = &builtinAddDatetimeAndDurationSig{bf}
@@ -5967,6 +5970,9 @@ func (c *subTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	}
 	switch tp1.GetType() {
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
+		charset, collate := ctx.GetCharsetInfo()
+		bf.tp.SetCharset(charset)
+		bf.tp.SetCollate(collate)
 		switch tp2.GetType() {
 		case mysql.TypeDuration:
 			sig = &builtinSubDatetimeAndDurationSig{bf}
