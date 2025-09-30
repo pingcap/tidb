@@ -65,7 +65,11 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEval{{ .Input.TypeName }}(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -73,7 +77,11 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf1)
+		}
+	}()
 {{ end }}
 {{ define "SetHasNull" }}
 	for i := 0; i < n; i++ {
