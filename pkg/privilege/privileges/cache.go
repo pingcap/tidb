@@ -2289,6 +2289,7 @@ func (h *Handle) Get() *MySQLPrivilege {
 
 // UpdateAll loads all the users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
+	logutil.BgLogger().Info("UpdateAll to refresh privilege cache")
 	priv := newMySQLPrivilege()
 	res, err := h.sctx.Get()
 	if err != nil {
