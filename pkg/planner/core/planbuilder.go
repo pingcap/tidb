@@ -2079,7 +2079,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 				// for an index in state public, we can always analyze it for internal analyze session.
 				// for an index in state WriteReorg, we can only analyze it under variable EnableDDLAnalyze is on.
 				indexStateAnalyzable := idx.State == model.StatePublic ||
-					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().EnableDDLAnalyze)
+					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().EnableDDLAnalyzeExecOpt)
 				// for mv index and ci index fail it first, then analyze those analyzable indexes.
 				if idx.MVIndex || idx.IsColumnarIndex() || !indexStateAnalyzable {
 					continue
@@ -2363,7 +2363,7 @@ func getModifiedIndexesInfoForAnalyze(
 		// for an index in state public, we can always analyze it for internal analyze session.
 		// for an index in state WriteReorg, we can only analyze it under variable EnableDDLAnalyze is on.
 		indexStateAnalyzable := originIdx.State == model.StatePublic ||
-			(originIdx.State == model.StateWriteReorganization && sCtx.GetSessionVars().EnableDDLAnalyze)
+			(originIdx.State == model.StateWriteReorganization && sCtx.GetSessionVars().EnableDDLAnalyzeExecOpt)
 		if !indexStateAnalyzable {
 			continue
 		}
