@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -380,4 +382,106 @@ func TestWriteSlowLog(t *testing.T) {
 
 	tk.MustExec(`set global tidb_slow_log_rules="Succ:true"`)
 	checkWriteSlowLog(true)
+}
+
+func BenchmarkCheckSlowThreshold(b *testing.B) {
+	b.StopTimer()
+	b.ReportAllocs()
+
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1,1), (2,2)")
+	se := tk.Session()
+	stmt, err := parser.New().ParseOneStmt("select * from t", "", "")
+	require.NoError(b, err)
+	compiler := executor.Compiler{Ctx: se}
+	execStmt, err := compiler.Compile(context.TODO(), stmt)
+	require.NoError(b, err)
+
+	tk.MustExec("set tidb_slow_log_threshold=300000;")
+	se.GetSessionVars().SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{})
+	vardef.GlobalSlowLogRules.Store(&slowlogrule.GlobalSlowLogRules{RulesMap: make(map[int64]*slowlogrule.SlowLogRules)})
+
+	ts := oracle.GoTimeToTS(time.Now())
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		execStmt.LogSlowQuery(ts, true, false)
+	}
+}
+
+func BenchmarkCheckSlowLogRulesLazy(b *testing.B) {
+	b.StopTimer()
+	b.ReportAllocs()
+
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1,1), (2,2)")
+	se := tk.Session()
+	stmt, err := parser.New().ParseOneStmt("select * from t", "", "")
+	require.NoError(b, err)
+	compiler := executor.Compiler{Ctx: se}
+	execStmt, err := compiler.Compile(context.TODO(), stmt)
+	require.NoError(b, err)
+	tk.MustExec("set tidb_slow_log_threshold=300000;")
+
+	// EffectiveFields' length is 9,
+	// rules length is 4 (where 1 is a Session-level, 3 Global-level rules: 1 specifies conn, 2 global rules)
+	rawRule := `Parse_time: 6.82, DB: db11, Is_internal: true, Compile_time: 0.5276, Session_alias: sessX`
+	slowLogRules, err := variable.ParseSessionSlowLogRules(rawRule)
+	require.NoError(b, err)
+	execStmt.Ctx.GetSessionVars().SlowLogRules = slowlogrule.NewSessionSlowLogRules(slowLogRules)
+	gRawRule := `Is_internal: false, Session_alias: sessA, Optimize_time: 5.123, Compile_time: 8.1, Wait_TS: 0.5276;
+				Is_internal: false, Session_alias: sessB, Parse_time: 56.78, Compile_time: 8.1, DB: db1;
+				Is_internal: false, Session_alias: sessC, Parse_time: 9.123, Wait_TS: 54.321, DB: db2`
+	gRawRule = fmt.Sprintf("Conn_ID: %d, %s", se.GetSessionVars().ConnectionID, gRawRule)
+	gSLRules, err := variable.ParseGlobalSlowLogRules(gRawRule)
+	require.NoError(b, err)
+	vardef.GlobalSlowLogRules.Store(gSLRules)
+
+	ts := oracle.GoTimeToTS(time.Now())
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		execStmt.LogSlowQuery(ts, true, false)
+	}
+}
+
+func BenchmarkCheckSlowLogRulesPreAlloc(b *testing.B) {
+	b.StopTimer()
+	b.ReportAllocs()
+
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1,1), (2,2)")
+	se := tk.Session()
+	stmt, err := parser.New().ParseOneStmt("select * from t", "", "")
+	require.NoError(b, err)
+	compiler := executor.Compiler{Ctx: se}
+	execStmt, err := compiler.Compile(context.TODO(), stmt)
+	require.NoError(b, err)
+
+	// EffectiveFields' length is 10,
+	// rules length is 4 (where 1 is a Session-level, 3 Global-level rules: 1 specifies conn, 2 global rules)
+	rawRule := `Exec_retry_count: 10, DB: db11, Succ: false, Query_time: 0.5276, Resource_group: rg1`
+	slowLogRules, err := variable.ParseSessionSlowLogRules(rawRule)
+	require.NoError(b, err)
+	execStmt.Ctx.GetSessionVars().SlowLogRules = slowlogrule.NewSessionSlowLogRules(slowLogRules)
+	gRawRule := `Exec_retry_count: 8, Session_alias: sessA, PD_total: 8.1, Backoff_time: 0.5276, Succ: false;
+				Exec_retry_count: 10, Resource_group: rg1, Succ: false, Session_alias: sessA, PD_total: 8.1;
+				Total_keys: 10, DB: db11, Is_internal: false, Backoff_time: 0.5276, Resource_group: rg2`
+	gRawRule = fmt.Sprintf("Conn_ID: %d, %s", se.GetSessionVars().ConnectionID, gRawRule)
+	gSLRules, err := variable.ParseGlobalSlowLogRules(gRawRule)
+	require.NoError(b, err)
+	vardef.GlobalSlowLogRules.Store(gSLRules)
+
+	ts := oracle.GoTimeToTS(time.Now())
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		execStmt.LogSlowQuery(ts, true, false)
+	}
 }

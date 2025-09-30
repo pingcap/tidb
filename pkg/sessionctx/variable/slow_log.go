@@ -564,8 +564,6 @@ func makeKVExecDetailAccessor(parse func(string) (any, error),
 				tikvExecDetailRaw := ctx.Value(util.ExecDetailsKey)
 				if tikvExecDetailRaw != nil {
 					items.KVExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
-				} else {
-					items.KVExecDetail = &util.ExecDetails{}
 				}
 			}
 		},
