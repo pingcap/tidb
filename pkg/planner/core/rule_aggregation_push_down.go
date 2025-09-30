@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -78,6 +79,7 @@ func (*AggregationPushDownSolver) isDecomposableWithUnion(fun *aggregation.AggFu
 // 0 stands for left, 1 stands for right, -1 stands for both, 2 stands for neither (e.g. count(*), sum(1) ...)
 func (*AggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggFuncDesc, lSchema, rSchema *expression.Schema) int {
 	fromLeft, fromRight := false, false
+	fmt.Println("wwz")
 	cols := expression.ExtractColumnsMapFromExpressions(nil, aggFunc.Args...)
 	for _, col := range cols {
 		if lSchema.Contains(col) {
@@ -145,6 +147,9 @@ func (a *AggregationPushDownSolver) collectAggFuncs(agg *logicalop.LogicalAggreg
 // treated as group by columns in join subquery.
 func (a *AggregationPushDownSolver) collectGbyCols(agg *logicalop.LogicalAggregation, join *logicalop.LogicalJoin) (leftGbyCols, rightGbyCols []*expression.Column) {
 	leftChild := join.Children()[0]
+	if !agg.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	ctx := agg.SCtx()
 	for _, gbyExpr := range agg.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
@@ -438,6 +443,9 @@ func (*AggregationPushDownSolver) pushAggCrossUnion(agg *logicalop.LogicalAggreg
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (a *AggregationPushDownSolver) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	newLogicalPlan, err := a.aggPushDown(p)
 	return newLogicalPlan, planChanged, err
 }
