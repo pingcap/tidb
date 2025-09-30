@@ -214,7 +214,7 @@ func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings
 }
 
 func shouldUpdateBinding(lastSaved, lastUsed *time.Time) bool {
-	if lastUsed == nil {
+	if lastSaved == nil {
 		// If it has never been written before, it will be written.
 		return true
 	}
