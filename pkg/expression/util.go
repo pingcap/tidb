@@ -209,7 +209,6 @@ func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, filter func(*
 	for _, expr := range exprs {
 		reuse = extractColumnsSlices(reuse, expr, filter)
 	}
-	return
 }
 
 // ExtractAllColumnsFromExpressions is the same as ExtractColumnsFromExpressions. But this will not remove duplicates.
