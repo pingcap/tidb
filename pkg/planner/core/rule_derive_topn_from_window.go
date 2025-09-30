@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // DeriveTopNFromWindow pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
@@ -108,9 +107,9 @@ func windowIsTopN(lp base.LogicalPlan) (bool, uint64) {
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (*DeriveTopNFromWindow) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*DeriveTopNFromWindow) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	return p.DeriveTopN(opt), planChanged, nil
+	return p.DeriveTopN(), planChanged, nil
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.

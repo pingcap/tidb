@@ -194,10 +194,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context, initBatchSiz
 
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r any) {
 	if r != nil {
-		e.IndexLookUpJoin.Finished.Store(true)
-		if e.cancelFunc != nil {
-			e.cancelFunc()
-		}
+		// record the panic error first to avoid returning context canceled
 		err := fmt.Errorf("%v", r)
 		if recoverdErr, ok := r.(error); ok {
 			err = recoverdErr
@@ -210,6 +207,12 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r any) {
 				e.panicErr.Store(true)
 			}
 			e.panicErr.Unlock()
+		}
+
+		// then cancel workers
+		e.IndexLookUpJoin.Finished.Store(true)
+		if e.cancelFunc != nil {
+			e.cancelFunc()
 		}
 
 		if !e.KeepOuterOrder {
