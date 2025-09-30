@@ -16,7 +16,6 @@ package copr
 
 import (
 	"bytes"
-	"sort"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -235,9 +234,20 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 	}
 	for i, loc := range res {
 		locRanges := loc.Ranges
-		isSorted := sort.SliceIsSorted(locRanges, func(i, j int) bool {
-			return bytes.Compare(locRanges.At(i).StartKey, locRanges.At(j).StartKey) < 0
+		isSorted := true
+		var lastRg *kv.KeyRange
+		locRanges.Do(func(rg *kv.KeyRange) {
+			defer func() {
+				lastRg = rg
+			}()
+			if lastRg == nil {
+				return
+			}
+			if bytes.Compare(lastRg.EndKey, rg.StartKey) > 0 {
+				isSorted = false
+			}
 		})
+
 		if !isSorted {
 			logutil.Logger(bo.GetCtx()).Warn("[RegionBoundaryDebug] ranges are not sorted in LocationKeyRanges",
 				zap.Int("index", i),
@@ -245,13 +255,14 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 				zap.Stringer("ranges", locRanges))
 		}
 		for j := 0; j < locRanges.Len(); j++ {
-			if !loc.Location.Contains(locRanges.At(j).StartKey) || !loc.Location.Contains(locRanges.At(j).EndKey) {
+			if !loc.Location.Contains(locRanges.At(j).StartKey) ||
+				(!loc.Location.Contains(locRanges.At(j).EndKey) && !bytes.Equal(loc.Location.EndKey, locRanges.At(j).EndKey)) {
 				logutil.BgLogger().Warn("[RegionBoundaryDebug] Unexpected range is not contained in location",
 					zap.Int("index", i),
 					zap.Int("len", locRanges.Len()),
 					zap.Int("notContainedRangeIndex", j),
 					zap.Stringer("startKey", kv.Key(loc.Location.StartKey)),
-					zap.Stringer("endKey", kv.Key(loc.Location.StartKey)),
+					zap.Stringer("endKey", kv.Key(loc.Location.EndKey)),
 					zap.Stringer("ranges", locRanges))
 			}
 		}
