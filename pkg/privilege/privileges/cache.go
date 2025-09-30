@@ -1331,16 +1331,14 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(userList map[string]struct{})
 			old.username = value.User
 		}
 		old.data = append(old.data, value)
-		if value.User == "tomoaki_shigeta" {
-			logutil.BgLogger().Info("create column privilege record in cache",
-				zap.String("user", value.User),
-				zap.String("host", value.Host),
-				zap.String("DB", value.DB),
-				zap.String("table", value.TableName),
-				zap.String("column", value.ColumnName),
-				zap.String("privileges", value.ColumnPriv.String()),
-			)
-		}
+		logutil.BgLogger().Info("create column privilege record in cache",
+			zap.String("user", value.User),
+			zap.String("host", value.Host),
+			zap.String("DB", value.DB),
+			zap.String("table", value.TableName),
+			zap.String("column", value.ColumnName),
+			zap.String("privileges", value.ColumnPriv.String()),
+		)
 		p.columnsPriv.ReplaceOrInsert(old)
 		return nil
 	}
