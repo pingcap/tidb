@@ -58,6 +58,18 @@ type FuzzyBindingCache interface {
 	Copy() (c FuzzyBindingCache, err error)
 
 	BindingCache
+<<<<<<< HEAD
+=======
+
+	// LoadFromStorageToCache loads global bindings from storage to the memory cache.
+	LoadFromStorageToCache(fullLoad bool) (err error)
+
+	// UpdateBindingUsageInfoToStorage is to update the binding usage info into storage
+	UpdateBindingUsageInfoToStorage() error
+
+	// LastUpdateTime returns the last update time.
+	LastUpdateTime() types.Time
+>>>>>>> 70c7d5051c5 (bindinfo: add last_used_date to track bindinfo usage frequency (#63409))
 }
 
 type fuzzyBindingCache struct {
@@ -149,6 +161,7 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 	return matchedBinding, isMatched, missingSQLDigest
 }
 
+<<<<<<< HEAD
 func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLDigest []string) {
 	if intest.InTest && sctx.Value(LoadBindingNothing) != nil {
 		return
@@ -156,6 +169,23 @@ func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLD
 	defer func(start time.Time) {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("loading binding from storage takes " + time.Since(start).String()))
 	}(time.Now())
+=======
+// UpdateBindingUsageInfoToStorage is to update the binding usage info into storage
+func (u *bindingCacheUpdater) UpdateBindingUsageInfoToStorage() error {
+	defer func() {
+		if r := recover(); r != nil {
+			bindingLogger().Warn("panic when update usage info for binding", zap.Any("recover", r))
+		}
+	}()
+	bindings := u.GetAllBindings()
+	return updateBindingUsageInfoToStorage(u.sPool, bindings)
+}
+
+// LastUpdateTime returns the last update time.
+func (u *bindingCacheUpdater) LastUpdateTime() types.Time {
+	return u.lastUpdateTime.Load().(types.Time)
+}
+>>>>>>> 70c7d5051c5 (bindinfo: add last_used_date to track bindinfo usage frequency (#63409))
 
 	for _, sqlDigest := range missingSQLDigest {
 		start := time.Now()
