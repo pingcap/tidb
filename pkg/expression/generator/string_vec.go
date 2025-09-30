@@ -64,7 +64,11 @@ func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(ctx EvalContext, input *chun
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEval{{ .TypeName }}(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -72,7 +76,11 @@ func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(ctx EvalContext, input *chun
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			defer globalColumnAllocator.put(buf1)
+		}
+	}()
 {{ if .Fixed }}
 	arg0 := buf0.{{ .TypeNameInColumn }}s()
 {{ end }}
