@@ -1331,6 +1331,14 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(userList map[string]struct{})
 			old.username = value.User
 		}
 		old.data = append(old.data, value)
+		logutil.BgLogger().Info("create column privilege record in cache",
+			zap.String("user", value.User),
+			zap.String("host", value.Host),
+			zap.String("DB", value.DB),
+			zap.String("table", value.TableName),
+			zap.String("column", value.ColumnName),
+			zap.String("privileges", value.ColumnPriv.String()),
+		)
 		p.columnsPriv.ReplaceOrInsert(old)
 		return nil
 	}
@@ -1825,7 +1833,17 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	sortFromIdx = len(gs)
 	columnPrivTable := make(map[string]privOnColumns)
 	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
+		logutil.BgLogger().Info("show column privilege record in cache #1", zap.String("user", itm.username), zap.Int("len", len(itm.data)))
 		for _, record := range itm.data {
+			logutil.BgLogger().Info("show column privilege record in cache #2",
+				zap.String("user", record.User),
+				zap.String("host", record.Host),
+				zap.String("DB", record.DB),
+				zap.String("table", record.TableName),
+				zap.String("column", record.ColumnName),
+				zap.String("privileges", record.ColumnPriv.String()),
+				zap.Int("len(allRoles)", len(allRoles)),
+			)
 			if !collectColumnGrant(&record, user, host, columnPrivTable, sqlMode) {
 				for _, r := range allRoles {
 					collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable, sqlMode)
@@ -2269,6 +2287,7 @@ func (h *Handle) Get() *MySQLPrivilege {
 
 // UpdateAll loads all the users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
+	logutil.BgLogger().Info("UpdateAll to refresh privilege cache")
 	priv := newMySQLPrivilege()
 	res, err := h.sctx.Get()
 	if err != nil {
