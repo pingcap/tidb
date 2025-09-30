@@ -34,7 +34,7 @@ func appendUniqueCorrelatedCols(target *[]*expression.Column, corCols []*express
 	if len(corCols) == 0 {
 		return
 	}
-	seen := make(map[int64]struct{}, len(corCols))
+	seen := make(map[int64]struct{})
 	for _, cc := range corCols {
 		uid := cc.Column.UniqueID
 		if _, ok := seen[uid]; ok {
@@ -182,6 +182,9 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 
 	switch x := p.(type) {
 	case *logicalop.LogicalApply:
+		// TODO: this is tied to variable tidb_opt_enable_no_decorrelate_in_select
+		// to enable outer join elimination when correlated subqueries exist in the select
+		// list. Future enhancement can remove the variable check.
 		if x.SCtx().GetSessionVars().EnableNoDecorrelateInSelect {
 			// For Apply, only columns from the left child are visible to the parent at this layer.
 			// Filter incoming parentCols to left child's schema and also include correlated columns
@@ -206,6 +209,9 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 			parentCols = append(parentCols, expression.ExtractColumns(expr)...)
 		}
 		// Include columns required by subqueries (appear as correlated columns in child subtree)
+		// TODO: this is tied to variable tidb_opt_enable_no_decorrelate_in_select
+		// to enable outer join elimination when correlated subqueries exist in the select
+		// list. Future enhancement can remove the variable check.
 		if x.SCtx().GetSessionVars().EnableNoDecorrelateInSelect && len(x.Children()) > 0 {
 			corCols := coreusage.ExtractCorrelatedCols4LogicalPlan(x.Children()[0])
 			appendUniqueCorrelatedCols(&parentCols, corCols)
