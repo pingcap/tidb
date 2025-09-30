@@ -14,6 +14,5 @@ go_library(
         "//pkg/planner/util/debugtrace",
         "//pkg/planner/util/utilfuncp",
         "//pkg/util/dbterror/plannererrors",
-        "@com_github_pingcap_errors//:errors",
     ],
 )

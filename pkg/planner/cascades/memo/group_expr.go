@@ -325,7 +325,7 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 }
 
 // FindBestTask implements LogicalPlan.<3rd> interface, it's used to override the wrapped logicalPlans.
-func (e *GroupExpression) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (bestTask base.Task, cntPlan int64, err error) {
+func (e *GroupExpression) FindBestTask(prop *property.PhysicalProperty) (bestTask base.Task, err error) {
 	// since different logical operator may have different findBestTask before like:
 	// 	utilfuncp.FindBestTask4BaseLogicalPlan = findBestTask
 	//	utilfuncp.FindBestTask4LogicalCTE = findBestTask4LogicalCTE
@@ -342,20 +342,20 @@ func (e *GroupExpression) FindBestTask(prop *property.PhysicalProperty, planCoun
 	// And since base.LogicalPlan is a common parent pointer of GE and LogicalPlan, we can use same portal.
 	switch e.GetWrappedLogicalPlan().(type) {
 	case *logicalop.LogicalCTE:
-		return utilfuncp.FindBestTask4LogicalCTE(e, prop, planCounter)
+		return utilfuncp.FindBestTask4LogicalCTE(e, prop)
 	case *logicalop.LogicalShow:
-		return utilfuncp.FindBestTask4LogicalShow(e, prop, planCounter)
+		return utilfuncp.FindBestTask4LogicalShow(e, prop)
 	case *logicalop.LogicalCTETable:
-		return utilfuncp.FindBestTask4LogicalCTETable(e, prop, planCounter)
+		return utilfuncp.FindBestTask4LogicalCTETable(e, prop)
 	case *logicalop.LogicalMemTable:
-		return utilfuncp.FindBestTask4LogicalMemTable(e, prop, planCounter)
+		return utilfuncp.FindBestTask4LogicalMemTable(e, prop)
 	case *logicalop.LogicalTableDual:
-		return utilfuncp.FindBestTask4LogicalTableDual(e, prop, planCounter)
+		return utilfuncp.FindBestTask4LogicalTableDual(e, prop)
 	case *logicalop.DataSource:
-		return utilfuncp.FindBestTask4LogicalDataSource(e, prop, planCounter)
+		return utilfuncp.FindBestTask4LogicalDataSource(e, prop)
 	case *logicalop.LogicalShowDDLJobs:
-		return utilfuncp.FindBestTask4LogicalShowDDLJobs(e, prop, planCounter)
+		return utilfuncp.FindBestTask4LogicalShowDDLJobs(e, prop)
 	default:
-		return utilfuncp.FindBestTask4BaseLogicalPlan(e, prop, planCounter)
+		return utilfuncp.FindBestTask4BaseLogicalPlan(e, prop)
 	}
 }

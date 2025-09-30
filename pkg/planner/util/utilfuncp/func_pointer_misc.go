@@ -39,42 +39,39 @@ import (
 // It should be kept in core pkg.
 // todo: arenatlx, For clear division, we should remove Logical FindBestTask interface. Let core pkg to
 // guide itself by receive logical tree.
-var FindBestTask4BaseLogicalPlan func(p base.LogicalPlan, prop *property.PhysicalProperty,
-	planCounter *base.PlanCounterTp) (
-	bestTask base.Task, cntPlan int64, err error)
+var FindBestTask4BaseLogicalPlan func(p base.LogicalPlan,
+	prop *property.PhysicalProperty) (bestTask base.Task, err error)
 
 // ExhaustPhysicalPlans4LogicalMaxOneRow will be called by LogicalMaxOneRow in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalMaxOneRow func(p base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
 // FindBestTask4LogicalCTETable will be called by LogicalCTETable in logicalOp pkg.
-var FindBestTask4LogicalCTETable func(lp base.LogicalPlan, prop *property.PhysicalProperty,
-	_ *base.PlanCounterTp) (t base.Task, cntPlan int64, err error)
+var FindBestTask4LogicalCTETable func(lp base.LogicalPlan,
+	prop *property.PhysicalProperty) (t base.Task, err error)
 
 // FindBestTask4LogicalMemTable will be called by LogicalMemTable in logicalOp pkg.
-var FindBestTask4LogicalMemTable func(lp base.LogicalPlan, prop *property.PhysicalProperty,
-	planCounter *base.PlanCounterTp) (t base.Task,
-	cntPlan int64, err error)
+var FindBestTask4LogicalMemTable func(lp base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task,
+	err error)
 
 // FindBestTask4LogicalShow will be called by LogicalShow in logicalOp pkg.
-var FindBestTask4LogicalShow func(lp base.LogicalPlan, prop *property.PhysicalProperty,
-	planCounter *base.PlanCounterTp) (base.Task, int64, error)
+var FindBestTask4LogicalShow func(lp base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error)
 
 // FindBestTask4LogicalShowDDLJobs will be called by LogicalShowDDLJobs in logicalOp pkg.
-var FindBestTask4LogicalShowDDLJobs func(lp base.LogicalPlan, prop *property.PhysicalProperty,
-	planCounter *base.PlanCounterTp) (base.Task, int64, error)
+var FindBestTask4LogicalShowDDLJobs func(lp base.LogicalPlan,
+	prop *property.PhysicalProperty) (base.Task, error)
 
 // FindBestTask4LogicalCTE will be called by LogicalCTE in logicalOp pkg.
-var FindBestTask4LogicalCTE func(lp base.LogicalPlan, prop *property.PhysicalProperty,
-	counter *base.PlanCounterTp) (t base.Task, cntPlan int64, err error)
+var FindBestTask4LogicalCTE func(lp base.LogicalPlan,
+	prop *property.PhysicalProperty) (t base.Task, err error)
 
 // FindBestTask4LogicalTableDual will be called by LogicalTableDual in logicalOp pkg.
-var FindBestTask4LogicalTableDual func(lp base.LogicalPlan, prop *property.PhysicalProperty,
-	planCounter *base.PlanCounterTp) (base.Task, int64, error)
+var FindBestTask4LogicalTableDual func(lp base.LogicalPlan,
+	prop *property.PhysicalProperty) (base.Task, error)
 
 // FindBestTask4LogicalDataSource will be called by LogicalDataSource in logicalOp pkg.
-var FindBestTask4LogicalDataSource func(lp base.LogicalPlan, prop *property.PhysicalProperty,
-	planCounter *base.PlanCounterTp) (t base.Task, cntPlan int64, err error)
+var FindBestTask4LogicalDataSource func(lp base.LogicalPlan,
+	prop *property.PhysicalProperty) (t base.Task, err error)
 
 // ExhaustPhysicalPlans4LogicalSequence will be called by LogicalSequence in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalSequence func(lp base.LogicalPlan, prop *property.PhysicalProperty) (

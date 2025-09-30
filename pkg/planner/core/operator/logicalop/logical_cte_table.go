@@ -49,8 +49,8 @@ func (p LogicalCTETable) Init(ctx base.PlanContext, offset int) *LogicalCTETable
 // PruneColumns inherits BaseLogicalPlan.LogicalPlan.<2nd> implementation.
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalCTETable) FindBestTask(prop *property.PhysicalProperty, _ *base.PlanCounterTp) (t base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask4LogicalCTETable(p, prop, nil)
+func (p *LogicalCTETable) FindBestTask(prop *property.PhysicalProperty) (t base.Task, err error) {
+	return utilfuncp.FindBestTask4LogicalCTETable(p, prop)
 }
 
 // BuildKeyInfo inherits BaseLogicalPlan.LogicalPlan.<4th> implementation.
