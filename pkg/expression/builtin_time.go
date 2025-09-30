@@ -3256,7 +3256,11 @@ func (du *baseDateArithmetical) vecGetDateFromInt(b *baseBuiltinFunc, ctx EvalCo
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -3298,7 +3302,11 @@ func (du *baseDateArithmetical) vecGetDateFromReal(b *baseBuiltinFunc, ctx EvalC
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalReal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -3340,7 +3348,11 @@ func (du *baseDateArithmetical) vecGetDateFromDecimal(b *baseBuiltinFunc, ctx Ev
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalDecimal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -3382,7 +3394,11 @@ func (du *baseDateArithmetical) vecGetDateFromString(b *baseBuiltinFunc, ctx Eva
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -3454,7 +3470,11 @@ func (du *baseDateArithmetical) vecGetIntervalFromString(b *baseBuiltinFunc, ctx
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -3482,7 +3502,11 @@ func (du *baseDateArithmetical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, ct
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalDecimal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -3591,7 +3615,11 @@ func (du *baseDateArithmetical) vecGetIntervalFromInt(b *baseBuiltinFunc, ctx Ev
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -3617,7 +3645,11 @@ func (du *baseDateArithmetical) vecGetIntervalFromReal(b *baseBuiltinFunc, ctx E
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalReal(ctx, input, buf); err != nil {
 		return err
 	}
