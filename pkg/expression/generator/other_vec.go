@@ -67,7 +67,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf0)
+			globalColumnAllocator.put(buf0)
 		}
 	}()
 	if err := b.args[0].VecEval{{ .Input.TypeName }}(ctx, input, buf0); err != nil {
@@ -79,7 +79,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	}
 	defer func() {
 		if err == nil {
-			defer globalColumnAllocator.put(buf1)
+			globalColumnAllocator.put(buf1)
 		}
 	}()
 {{ end }}
