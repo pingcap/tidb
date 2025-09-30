@@ -40,8 +40,11 @@ import (
 func TestPrepareCacheWithBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+<<<<<<< HEAD
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("set tidb_cost_model_version=2")
+=======
+>>>>>>> 70c7d5051c5 (bindinfo: add last_used_date to track bindinfo usage frequency (#63409))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b), key idx_c(c))")

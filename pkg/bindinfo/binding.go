@@ -15,6 +15,14 @@
 package bindinfo
 
 import (
+<<<<<<< HEAD
+=======
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
+>>>>>>> 70c7d5051c5 (bindinfo: add last_used_date to track bindinfo usage frequency (#63409))
 	"time"
 	"unsafe"
 
@@ -74,6 +82,10 @@ type Binding struct {
 
 	// TableNames records all schema and table names in this binding statement, which are used for fuzzy matching.
 	TableNames []*ast.TableName `json:"-"`
+
+	// UsageInfo is to track the usage information `last_used_time` of this binding
+	// and it will be updated when this binding is used.
+	UsageInfo bindingInfoUsageInfo
 }
 
 func (b *Binding) isSame(rb *Binding) bool {
@@ -96,9 +108,106 @@ func (b *Binding) IsBindingAvailable() bool {
 	return b.IsBindingEnabled() || b.Status == Disabled
 }
 
+<<<<<<< HEAD
 // SinceUpdateTime returns the duration since last update time. Export for test.
 func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	updateTime, err := b.UpdateTime.GoTime(time.Local)
+=======
+// UpdateLastUsedAt is to update binding usage info when this binding is used.
+func (b *Binding) UpdateLastUsedAt() {
+	now := time.Now()
+	b.UsageInfo.LastUsedAt.Store(&now)
+}
+
+// UpdateLastSavedAt is to update the last saved time
+func (b *Binding) UpdateLastSavedAt(ts *time.Time) {
+	b.UsageInfo.LastSavedAt.Store(ts)
+}
+
+type bindingInfoUsageInfo struct {
+	// LastUsedAt records the last time when this binding is used.
+	// It is nil if this binding has never been used.
+	// It is updated when this binding is used.
+	// It is used to update the `last_used_time` field in mysql.bind_info table.
+	LastUsedAt atomic.Pointer[time.Time]
+	// LastSavedAt records the last time when this binding is saved into storage.
+	LastSavedAt atomic.Pointer[time.Time]
+}
+
+var (
+	// GetBindingHandle is a function to get the global binding handle.
+	// It is mainly used to resolve cycle import issue.
+	GetBindingHandle func(sctx sessionctx.Context) BindingHandle
+)
+
+// BindingMatchInfo records necessary information for cross-db binding matching.
+// This is mainly for plan cache to avoid normalizing the same statement repeatedly.
+type BindingMatchInfo struct {
+	NoDBDigest string
+	TableNames []*ast.TableName
+}
+
+// MatchSQLBindingForPlanCache matches binding for plan cache.
+func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (bindingSQL string) {
+	binding, matched, _ := matchSQLBinding(sctx, stmtNode, info)
+	if matched {
+		bindingSQL = binding.BindSQL
+	}
+	return
+}
+
+// MatchSQLBinding returns the matched binding for this statement.
+func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
+	return matchSQLBinding(sctx, stmtNode, nil)
+}
+
+func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
+	useBinding := sctx.GetSessionVars().UsePlanBaselines
+	if !useBinding || stmtNode == nil {
+		return
+	}
+	// When the domain is initializing, the bind will be nil.
+	if sctx.Value(SessionBindInfoKeyType) == nil {
+		return
+	}
+
+	// record the normalization result into info to avoid repeat normalization next time.
+	var noDBDigest string
+	var tableNames []*ast.TableName
+	if info == nil || info.TableNames == nil || info.NoDBDigest == "" {
+		_, noDBDigest = NormalizeStmtForBinding(stmtNode, "", true)
+		tableNames = CollectTableNames(stmtNode)
+		if info != nil {
+			info.NoDBDigest = noDBDigest
+			info.TableNames = tableNames
+		}
+	} else {
+		noDBDigest = info.NoDBDigest
+		tableNames = info.TableNames
+	}
+
+	sessionHandle := sctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
+	if binding, matched := sessionHandle.MatchSessionBinding(sctx, noDBDigest, tableNames); matched {
+		return binding, matched, metrics.ScopeSession
+	}
+	globalHandle := GetBindingHandle(sctx)
+	if globalHandle == nil {
+		return
+	}
+	binding, matched = globalHandle.MatchingBinding(sctx, noDBDigest, tableNames)
+	if matched {
+		// After hitting the cache, update the usage time of the bind.
+		binding.UpdateLastUsedAt()
+		return binding, matched, metrics.ScopeGlobal
+	}
+
+	return
+}
+
+func noDBDigestFromBinding(binding *Binding) (string, error) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+>>>>>>> 70c7d5051c5 (bindinfo: add last_used_date to track bindinfo usage frequency (#63409))
 	if err != nil {
 		return 0, err
 	}
