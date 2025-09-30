@@ -40,7 +40,11 @@ func (b *builtinArithmeticMultiplyRealSig) vecEvalReal(ctx EvalContext, input *c
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalReal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -73,7 +77,11 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(ctx EvalContext, inpu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalDecimal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -301,7 +309,11 @@ func (b *builtinArithmeticMinusRealSig) vecEvalReal(ctx EvalContext, input *chun
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalReal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -334,7 +346,11 @@ func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(ctx EvalContext, input
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalDecimal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -420,7 +436,11 @@ func (b *builtinArithmeticModRealSig) vecEvalReal(ctx EvalContext, input *chunk.
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -460,7 +480,11 @@ func (b *builtinArithmeticModDecimalSig) vecEvalDecimal(ctx EvalContext, input *
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalDecimal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -502,7 +526,11 @@ func (b *builtinArithmeticPlusRealSig) vecEvalReal(ctx EvalContext, input *chunk
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalReal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -535,7 +563,11 @@ func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(ctx EvalContext, in
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalDecimal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -652,7 +684,11 @@ func (b *builtinArithmeticMultiplyIntSig) vecEvalInt(ctx EvalContext, input *chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 
 	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
 		return err
@@ -691,7 +727,11 @@ func (b *builtinArithmeticDivideRealSig) vecEvalReal(ctx EvalContext, input *chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalReal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -979,7 +1019,11 @@ func (b *builtinArithmeticPlusDecimalSig) vecEvalDecimal(ctx EvalContext, input 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[1].VecEvalDecimal(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1016,7 +1060,11 @@ func (b *builtinArithmeticMultiplyIntUnsignedSig) vecEvalInt(ctx EvalContext, in
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 
 	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
 		return err

@@ -35,7 +35,11 @@ func (b *builtinInetNtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
@@ -71,7 +75,11 @@ func (b *builtinIsIPv4Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -128,7 +136,11 @@ func (b *builtinIsIPv6Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -159,7 +171,11 @@ func (b *builtinIsUUIDSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -253,7 +269,11 @@ func (b *builtinIsIPv4CompatSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -313,7 +333,11 @@ func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 
 	err = b.args[0].VecEvalReal(ctx, input, buf)
 	if err != nil {
@@ -391,7 +415,11 @@ func (b *builtinIsIPv4MappedSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -446,7 +474,11 @@ func (b *builtinInet6AtonSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -523,7 +555,11 @@ func (b *builtinInetAtonSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}

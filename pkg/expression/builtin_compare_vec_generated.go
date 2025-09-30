@@ -2162,7 +2162,11 @@ func (b *builtinCoalesceStringSig) vecEvalString(ctx EvalContext, input *chunk.C
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(buf)
+		defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 		err = b.args[i].VecEvalString(ctx, input, buf)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
@@ -2346,7 +2350,11 @@ func (b *builtinCoalesceJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk
 		if err != nil {
 			return err
 		}
-		defer globalColumnAllocator.put(buf)
+		defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 		err = b.args[i].VecEvalJSON(ctx, input, buf)
 		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {

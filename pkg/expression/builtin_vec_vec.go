@@ -33,7 +33,11 @@ func (b *builtinVecDimsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalVectorFloat32(ctx, input, buf); err != nil {
 		return err
 	}
@@ -272,7 +276,11 @@ func (b *builtinVecFromTextSig) vecEvalVectorFloat32(ctx EvalContext, input *chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -305,7 +313,11 @@ func (b *builtinVecAsTextSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalVectorFloat32(ctx, input, buf); err != nil {
 		return err
 	}

@@ -113,7 +113,11 @@ func (b *builtinJSONStorageFreeSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalJSON(ctx, input, buf); err != nil {
 		return err
 	}
@@ -140,7 +144,11 @@ func (b *builtinJSONStorageSizeSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalJSON(ctx, input, buf); err != nil {
 		return err
 	}
@@ -168,7 +176,11 @@ func (b *builtinJSONDepthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalJSON(ctx, input, buf); err != nil {
 		return err
 	}
@@ -195,7 +207,11 @@ func (b *builtinJSONKeysSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, re
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalJSON(ctx, input, buf); err != nil {
 		return err
 	}
@@ -467,7 +483,11 @@ func (b *builtinJSONQuoteSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -699,7 +719,11 @@ func (b *builtinJSONArrayInsertSig) vecEvalJSON(ctx EvalContext, input *chunk.Ch
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalJSON(ctx, input, buf); err != nil {
 		return err
 	}
@@ -901,7 +925,11 @@ func (b *builtinJSONTypeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalJSON(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1342,7 +1370,11 @@ func (b *builtinJSONUnquoteSig) vecEvalString(ctx EvalContext, input *chunk.Chun
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
@@ -1376,7 +1408,11 @@ func (b *builtinJSONSPrettySig) vecEvalString(ctx EvalContext, input *chunk.Chun
 	if err != nil {
 		return err
 	}
-	defer globalColumnAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalJSON(ctx, input, buf); err != nil {
 		return err
 	}
