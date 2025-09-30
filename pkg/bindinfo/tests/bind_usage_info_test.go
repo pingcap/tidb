@@ -68,7 +68,7 @@ func TestBindUsageInfo(t *testing.T) {
 	t.Log("result:", result.Rows())
 	// The last_used_date should be updated.
 	require.True(t, !origin.Equal(result.Rows()))
-	var last *testkit.Result
+	var first *testkit.Result
 	for range 5 {
 		tk.MustExec("execute stmt1;")
 		tk.MustExec("execute stmt2;")
@@ -82,10 +82,11 @@ func TestBindUsageInfo(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf(`select last_used_date from mysql.bind_info where original_sql != '%s' and last_used_date is null`, bindinfo.BuiltinPseudoSQL4BindLock)).Check(testkit.Rows())
 		result := tk.MustQuery(fmt.Sprintf(`select sql_digest,last_used_date from mysql.bind_info where original_sql != '%s' order by sql_digest`, bindinfo.BuiltinPseudoSQL4BindLock))
 		t.Log("result:", result.Rows())
-		if last == nil {
-			last = result
+		if first == nil {
+			first = result
 		} else {
-			require.True(t, last.Equal(result.Rows()))
+			// in fact, The result of each for-loop should be the same.
+			require.True(t, first.Equal(result.Rows()))
 		}
 	}
 	// Set all last_used_date to null to simulate that the bindinfo in storage is not updated.
