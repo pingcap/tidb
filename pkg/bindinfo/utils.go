@@ -187,16 +187,12 @@ func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings
 		}
 	}()
 	for _, binding := range bindings {
-		lastUsedAt := binding.UsageInfo.LastUsedAt.Load()
-		if lastUsedAt == nil {
+		lastUsed := binding.UsageInfo.LastUsedAt.Load()
+		if lastUsed == nil {
 			continue
 		}
 		lastSaved := binding.UsageInfo.LastSavedAt.Load()
-		// If a certain amount of time specified by MaxWriteInterval has passed since the last record was written,
-		// and it has been used in between, it will be written.
-		// If it has never been written before, it will be written if lastUsedAt exceeds MaxWriteInterval.
-		if (lastSaved != nil && time.Since(*lastSaved) >= MaxWriteInterval && lastUsedAt.After(*lastSaved)) ||
-			(lastSaved == nil) {
+		if shouldUpdateBinding(lastSaved, lastUsed) {
 			toWrite = append(toWrite, binding)
 			cnt++
 		}
@@ -215,6 +211,16 @@ func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings
 		}
 	}
 	return nil
+}
+
+func shouldUpdateBinding(lastSaved, lastUsed *time.Time) bool {
+	if lastUsed == nil {
+		// If it has never been written before, it will be written.
+		return true
+	}
+	// If a certain amount of time specified by MaxWriteInterval has passed since the last record was written,
+	// and it has been used in between, it will be written.
+	return time.Since(*lastSaved) >= MaxWriteInterval && lastUsed.After(*lastSaved)
 }
 
 func updateBindingUsageInfoToStorageInternal(sPool util.DestroyableSessionPool, bindings []*Binding) error {
