@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -219,10 +220,10 @@ var ops = []string{
 }
 
 const (
-	checkMySQLTablePrivsSQL      = "SELECT table_priv,column_priv FROM mysql.tables_priv"
-	checkMySQLColumnPrivsSQL     = "SELECT column_name, column_priv FROM mysql.columns_priv ORDER BY column_name"
-	checkInfoTablePrivilegesSQL  = "SELECT privilege_type FROM information_schema.table_privileges ORDER BY privilege_type"
-	checkInfoColumnPrivilegesSQL = "SELECT privilege_type FROM information_schema.column_privileges ORDER BY column_name,privilege_type"
+	checkMySQLTablePrivsSQL      = "SELECT table_priv,column_priv FROM mysql.tables_priv WHERE user = 'u'"
+	checkMySQLColumnPrivsSQL     = "SELECT column_name, column_priv FROM mysql.columns_priv WHERE user = 'u' ORDER BY column_name"
+	checkInfoTablePrivilegesSQL  = `SELECT privilege_type FROM information_schema.table_privileges WHERE grantee = "'u'@'%'" ORDER BY privilege_type`
+	checkInfoColumnPrivilegesSQL = `SELECT privilege_type FROM information_schema.column_privileges WHERE grantee = "'u'@'%'" ORDER BY column_name,privilege_type`
 	showGrantsSQL                = "SHOW GRANTS FOR u"
 )
 
@@ -235,7 +236,7 @@ func initState(tk *testkit.TestKit, s *state) {
 	tk.MustExec("FLUSH PRIVILEGES")
 }
 
-func checkResult(t *testing.T, tk *testkit.TestKit, s *state) {
+func checkResult(t *testing.T, tk *testkit.TestKit, s *state, skipLastShowGrantsLine bool) {
 	if s.mysqlTablesPrivResult == "" {
 		tk.MustQuery(checkMySQLTablePrivsSQL).Check(testkit.Rows())
 	} else {
@@ -257,6 +258,10 @@ func checkResult(t *testing.T, tk *testkit.TestKit, s *state) {
 		tk.MustQuery(checkInfoColumnPrivilegesSQL).Check(testkit.Rows(s.infoColumnPrivilegesResult...))
 	}
 	showGrantsResult := tk.MustQuery(showGrantsSQL).Rows()[1:]
+	if skipLastShowGrantsLine {
+		require.Greater(t, len(showGrantsResult), 0)
+		showGrantsResult = showGrantsResult[:len(showGrantsResult)-1]
+	}
 	require.Len(t, showGrantsResult, len(s.showGrantsResult))
 	for i := range showGrantsResult {
 		require.Equal(t, s.showGrantsResult[i], showGrantsResult[i][0])
@@ -279,10 +284,10 @@ func testState(t *testing.T, orgState *state, testcases []*testcase) {
 		initState(tk, orgState)
 		if tc.dst == errState { // error occurs, should rollback to the origin state
 			tk.MustExecToErr(tc.op)
-			checkResult(t, tk, orgState)
+			checkResult(t, tk, orgState, false)
 		} else {
 			tk.MustExec(tc.op)
-			checkResult(t, tk, tc.dst)
+			checkResult(t, tk, tc.dst, false)
 		}
 	}
 }
@@ -541,4 +546,77 @@ func TestState16(t *testing.T) {
 		{op: ops[10], dst: states[4]},
 	}
 	testState(t, states[16], testcases)
+}
+
+func TestAnotherUser(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE USER u")
+	tk.MustExec("CREATE USER u2")
+	tk.MustExec("CREATE TABLE t (c1 int, c2 int)")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	u2Ops := []string{
+		// GRANT
+		"GRANT SELECT ON t TO u2",
+		"GRANT UPDATE ON t TO u2",
+		"GRANT SELECT(c1) ON t TO u2",
+		"GRANT SELECT(c2) ON t TO u2",
+		"GRANT SELECT(c1,c2) ON t TO u2",
+
+		// REVOKE
+		"REVOKE SELECT ON t FROM u2",
+		"REVOKE UPDATE ON t FROM u2",
+		"REVOKE SELECT(c1) ON t FROM u2",
+		"REVOKE SELECT(c2) ON t FROM u2",
+		"REVOKE SELECT(c1,c2) ON t FROM u2",
+	}
+	for i := 1; i <= 16; i++ {
+		for _, u2op := range u2Ops {
+			initState(tk, states[i])
+			if strings.Contains(u2op, "GRANT") {
+				tk.MustExec(u2op)
+			} else {
+				tk.MustExecToErr(u2op)
+			}
+			checkResult(t, tk, states[i], false)
+		}
+	}
+}
+
+func TestRole(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE USER u")
+	tk.MustExec("CREATE USER u2")
+	tk.MustExec("GRANT u2 to u")
+	tk.MustExec("CREATE TABLE t (c1 int, c2 int)")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	u2Ops := []string{
+		// GRANT
+		"GRANT SELECT ON t TO u2",
+		"GRANT UPDATE ON t TO u2",
+		"GRANT SELECT(c1) ON t TO u2",
+		"GRANT SELECT(c2) ON t TO u2",
+		"GRANT SELECT(c1,c2) ON t TO u2",
+
+		// REVOKE
+		"REVOKE SELECT ON t FROM u2",
+		"REVOKE UPDATE ON t FROM u2",
+		"REVOKE SELECT(c1) ON t FROM u2",
+		"REVOKE SELECT(c2) ON t FROM u2",
+		"REVOKE SELECT(c1,c2) ON t FROM u2",
+	}
+	for i := 1; i <= 16; i++ {
+		for _, u2op := range u2Ops {
+			initState(tk, states[i])
+			if strings.Contains(u2op, "GRANT") {
+				tk.MustExec(u2op)
+			} else {
+				tk.MustExecToErr(u2op)
+			}
+			checkResult(t, tk, states[i], true)
+		}
+	}
 }
