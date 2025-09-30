@@ -29,6 +29,22 @@ import (
 type OuterJoinEliminator struct {
 }
 
+// appendUniqueCorrelatedCols appends correlated columns to the target slice, avoiding duplicates.
+func appendUniqueCorrelatedCols(target *[]*expression.Column, corCols []*expression.CorrelatedColumn) {
+	if len(corCols) == 0 {
+		return
+	}
+	seen := make(map[int64]struct{}, len(corCols))
+	for _, cc := range corCols {
+		uid := cc.Column.UniqueID
+		if _, ok := seen[uid]; ok {
+			continue
+		}
+		seen[uid] = struct{}{}
+		*target = append(*target, &cc.Column)
+	}
+}
+
 // tryToEliminateOuterJoin will eliminate outer join plan base on the following rules
 //  1. outer join elimination: For example left outer join, if the parent doesn't use the
 //     columns from right table and the join key of right table(the inner table) is a unique
@@ -179,17 +195,7 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 			}
 			// Add correlated columns from the right child that map to the left schema
 			corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(x.Children()[1], leftSchema)
-			if len(corCols) > 0 {
-				seen := make(map[int64]struct{}, len(corCols))
-				for _, cc := range corCols {
-					uid := cc.Column.UniqueID
-					if _, ok := seen[uid]; ok {
-						continue
-					}
-					seen[uid] = struct{}{}
-					filtered = append(filtered, &cc.Column)
-				}
-			}
+			appendUniqueCorrelatedCols(&filtered, corCols)
 			parentCols = filtered
 		} else {
 			parentCols = append(parentCols[:0], p.Schema().Columns...)
@@ -202,17 +208,7 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 		// Include columns required by subqueries (appear as correlated columns in child subtree)
 		if x.SCtx().GetSessionVars().EnableNoDecorrelateInSelect && len(x.Children()) > 0 {
 			corCols := coreusage.ExtractCorrelatedCols4LogicalPlan(x.Children()[0])
-			if len(corCols) > 0 {
-				seen := make(map[int64]struct{}, len(corCols))
-				for _, cc := range corCols {
-					uid := cc.Column.UniqueID
-					if _, ok := seen[uid]; ok {
-						continue
-					}
-					seen[uid] = struct{}{}
-					parentCols = append(parentCols, &cc.Column)
-				}
-			}
+			appendUniqueCorrelatedCols(&parentCols, corCols)
 		}
 	case *logicalop.LogicalAggregation:
 		parentCols = parentCols[:0]

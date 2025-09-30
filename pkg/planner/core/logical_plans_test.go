@@ -1675,10 +1675,6 @@ func TestOuterJoinEliminator(t *testing.T) {
 		err = Preprocess(context.Background(), s.GetSCtx(), nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.GetIS()}))
 		require.NoError(t, err)
 		sctx := coretestsdk.MockContext()
-		// Enable no decorrelate in select list for the test case that needs it
-		if i == len(input)-1 { // last test case is our correlated subquery test
-			sctx.GetSessionVars().EnableNoDecorrelateInSelect = true
-		}
 		builder, _ := NewPlanBuilder().Init(sctx, s.GetIS(), hint.NewQBHintHandler(nil))
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.GetIS())
 		p, err := builder.Build(ctx, nodeW)
