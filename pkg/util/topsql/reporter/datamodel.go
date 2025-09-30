@@ -575,7 +575,7 @@ func (rs cpuRecords) Swap(i, j int) {
 	rs[i], rs[j] = rs[j], rs[i]
 }
 
-// topN returns the largest n-1 cpuRecords (by CPUTimeMs), other cpuRecords are returned as evicted.
+// topN returns the largest n cpuRecords (by CPUTimeMs), other cpuRecords are returned as evicted.
 func (rs cpuRecords) topN(n int) (top, evicted cpuRecords) {
 	if len(rs) <= n {
 		return rs, nil
