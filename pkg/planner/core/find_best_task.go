@@ -1022,10 +1022,10 @@ func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
 	// MaxCountAfterAccess tracks the worst case "CountAfterAccess", accounting for scenarios that could
 	// increase our row estimation, thus lhs/rhsRiskRatio represents the "risk" of the CountAfterAccess value.
 	// Lower value means less risk that the actual row count is higher than the estimated one.
-	if lhs.path.MaxCountAfterAccess > lhs.path.CountAfterAccess {
+	if lhs.path.MaxCountAfterAccess > lhs.path.CountAfterAccess && lhs.path.CountAfterAccess > 0 {
 		lhsRiskRatio = lhs.path.MaxCountAfterAccess / lhs.path.CountAfterAccess
 	}
-	if rhs.path.MaxCountAfterAccess > rhs.path.CountAfterAccess {
+	if rhs.path.MaxCountAfterAccess > rhs.path.CountAfterAccess && rhs.path.CountAfterAccess > 0 {
 		rhsRiskRatio = rhs.path.MaxCountAfterAccess / rhs.path.CountAfterAccess
 	}
 	sumLHS := lhs.path.CountAfterAccess + lhs.path.MaxCountAfterAccess
