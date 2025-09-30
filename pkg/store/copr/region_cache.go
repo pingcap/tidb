@@ -249,7 +249,7 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 		})
 
 		if !isSorted {
-			logutil.Logger(bo.GetCtx()).Warn("[RegionBoundaryDebug] ranges are not sorted in LocationKeyRanges",
+			logutil.BgLogger().Warn("[RegionBoundaryDebug] ranges are not sorted in LocationKeyRanges",
 				zap.Int("index", i),
 				zap.Int("len", locRanges.Len()),
 				zap.Stringer("ranges", locRanges))
