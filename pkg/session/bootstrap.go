@@ -297,8 +297,14 @@ const (
 		charset TEXT NOT NULL,
 		collation TEXT NOT NULL,
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
+<<<<<<< HEAD
 		sql_digest varchar(64),
 		plan_digest varchar(64),
+=======
+		sql_digest varchar(64) DEFAULT NULL,
+		plan_digest varchar(64) DEFAULT NULL,
+		last_used_date date DEFAULT NULL,
+>>>>>>> 70c7d5051c5 (bindinfo: add last_used_date to track bindinfo usage frequency (#63409))
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`

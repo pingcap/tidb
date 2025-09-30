@@ -25,6 +25,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+>>>>>>> 70c7d5051c5 (bindinfo: add last_used_date to track bindinfo usage frequency (#63409))
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
@@ -125,6 +129,12 @@ func TestBootstrap(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, 0, req.NumRows())
+	se.Close()
+	r = MustExecToRecodeSet(t, se, fmt.Sprintf("select * from mysql.bind_info where original_sql = '%s'", bindinfo.BuiltinPseudoSQL4BindLock))
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
 	se.Close()
 }
 
@@ -2585,3 +2595,206 @@ func TestTiDBUpgradeToVer219(t *testing.T) {
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
 }
+<<<<<<< HEAD
+=======
+
+func TestTiDBUpgradeToVer252(t *testing.T) {
+	// NOTE: this case needed to be passed in both classic and next-gen kernel.
+	// in the first release of next-gen kernel, the version is 250.
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver250 := version250
+	seV250 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver250))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV250, ver250)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	getBindInfoSQLFn := func(se sessionapi.Session) string {
+		res := MustExecToRecodeSet(t, se, "show create table mysql.bind_info")
+		chk := res.NewChunk(nil)
+		err = res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		return string(chk.GetRow(0).GetBytes(1))
+	}
+	createTblSQL := getBindInfoSQLFn(seV250)
+	require.Contains(t, createTblSQL, "`create_time` timestamp(6)")
+	require.Contains(t, createTblSQL, "`update_time` timestamp(6)")
+	// revert it back to timestamp(3) for testing. we must set below fields to
+	// simulate the real session in upgrade process.
+	seV250.SetValue(sessionctx.Initing, true)
+	seV250.GetSessionVars().SQLMode = mysql.ModeNone
+	res := MustExecToRecodeSet(t, seV250, "select create_time,update_time from mysql.bind_info")
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	for i := range chk.NumRows() {
+		getTime := chk.GetRow(i).GetTime(0)
+		getTime = chk.GetRow(i).GetTime(1)
+		_ = getTime
+	}
+	mustExecute(seV250, "alter table mysql.bind_info modify create_time timestamp(3)")
+	mustExecute(seV250, "alter table mysql.bind_info modify update_time timestamp(3)")
+	createTblSQL = getBindInfoSQLFn(seV250)
+	require.Contains(t, createTblSQL, "`create_time` timestamp(3)")
+	require.Contains(t, createTblSQL, "`update_time` timestamp(3)")
+
+	// do upgrade to latest version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	// check if the columns have been changed to timestamp(6)
+	createTblSQL = getBindInfoSQLFn(seCurVer)
+	require.Contains(t, createTblSQL, "`create_time` timestamp(6)")
+	require.Contains(t, createTblSQL, "`update_time` timestamp(6)")
+}
+
+func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// `cluster_id` is inserted for a new TiDB cluster.
+	se := CreateSessionAndSetID(t, store)
+	r := MustExecToRecodeSet(t, se, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req := r.NewChunk(nil)
+	err := r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	se.Close()
+
+	// bootstrap as version241
+	ver241 := version241
+	seV241 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver241))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV241, ver241)
+	// remove the cluster_id entry from mysql.tidb table
+	MustExec(t, seV241, "delete from mysql.tidb where variable_name='cluster_id'")
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+	ver, err := getBootstrapVersion(seV241)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver241), ver)
+	seV241.Close()
+
+	// upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// check if the cluster_id has been set in the `mysql.tidb` table during upgrade
+	r = MustExecToRecodeSet(t, seCurVer, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	seCurVer.Close()
+}
+
+func TestBindInfoUniqueIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// bootstrap as version245
+	ver245 := version245
+	seV245 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver245))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV245, ver245)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	// remove the unique index on mysql.bind_info for testing
+	MustExec(t, seV245, "alter table mysql.bind_info drop index digest_index")
+
+	// insert duplicated values into mysql.bind_info
+	for _, sqlDigest := range []string{"null", "'x'", "'y'"} {
+		for _, planDigest := range []string{"null", "'x'", "'y'"} {
+			insertStmt := fmt.Sprintf(`insert into mysql.bind_info values (
+             "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s, null)`,
+				sqlDigest, planDigest)
+			MustExec(t, seV245, insertStmt)
+			MustExec(t, seV245, insertStmt)
+		}
+	}
+
+	// upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+}
+
+func TestVersionedBootstrapSchemas(t *testing.T) {
+	require.True(t, slices.IsSortedFunc(versionedBootstrapSchemas, func(a, b versionedBootstrapSchema) int {
+		return cmp.Compare(a.ver, b.ver)
+	}), "versionedBootstrapSchemas should be sorted by version")
+
+	// make sure that later change won't affect existing version schemas.
+	require.Len(t, versionedBootstrapSchemas[0].databases[0].Tables, 52)
+	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
+
+	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
+	var allTableCount int
+	for _, vbs := range versionedBootstrapSchemas {
+		for _, db := range vbs.databases {
+			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
+			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
+			allIDs = append(allIDs, db.ID)
+
+			testTableBasicInfoSlice(t, db.Tables)
+			allTableCount += len(db.Tables)
+			for _, tbl := range db.Tables {
+				allIDs = append(allIDs, tbl.ID)
+			}
+		}
+	}
+	require.Len(t, tablesInSystemDatabase, allTableCount,
+		"versionedBootstrapSchemas should have the same number of tables as tablesInSystemDatabase")
+	slices.Sort(allIDs)
+	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
+}
+>>>>>>> 70c7d5051c5 (bindinfo: add last_used_date to track bindinfo usage frequency (#63409))
