@@ -950,3 +950,33 @@ func TestIssue11896(t *testing.T) {
 
 	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;").Check(nil)
 }
+
+func TestSingleTaskIncrementalIndexHashJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int primary key)")
+	tk.MustExec("create table t2(b int, c varchar(100), index idx_b(b))")
+
+	sql1 := "insert into t1 values "
+	for i := 1; i <= 10; i++ {
+		if i > 1 {
+			sql1 += ","
+		}
+		sql1 += fmt.Sprintf("(%d)", i)
+	}
+	tk.MustExec(sql1)
+
+	sql2 := "insert into t2 values "
+	for i := 1; i <= 10000; i++ {
+		if i > 1 {
+			sql2 += ","
+		}
+		sql2 += fmt.Sprintf("(%d, 'abc')", i/1000)
+	}
+	tk.MustExec(sql2)
+
+	tk.MustQuery("select /*+ inl_hash_join(t2) */ * from t1 inner join t2 on t1.a = t2.b")
+	tk.MustQuery("select /*+ inl_hash_join(t2) */ * from t1 left join t2 on t1.a = t2.b")
+}
