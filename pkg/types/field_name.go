@@ -16,6 +16,7 @@ package types
 
 import (
 	"bytes"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -74,9 +75,7 @@ type NameSlice []*FieldName
 
 // Shallow is a shallow copy, only making a new slice.
 func (s NameSlice) Shallow() NameSlice {
-	ret := make(NameSlice, len(s))
-	copy(ret, s)
-	return ret
+	return slices.Clone(s)
 }
 
 // EmptyName is to occupy the position in the name slice. If it's set, that column's name is hidden.

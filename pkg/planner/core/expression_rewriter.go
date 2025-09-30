@@ -289,9 +289,9 @@ func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScal
 	if planCtx != nil && planCtx.plan != nil {
 		curColLen := planCtx.plan.Schema().Len()
 		defer func() {
-			names := planCtx.plan.OutputNames().Shallow()[:curColLen]
+			outPutNames := planCtx.plan.OutputNames()
 			for i := curColLen; i < planCtx.plan.Schema().Len(); i++ {
-				names = append(names, types.EmptyName)
+				outPutNames = append(outPutNames, types.EmptyName)
 			}
 			// After rewriting finished, only old columns are visible.
 			// e.g. select * from t where t.a in (select t1.a from t1);
@@ -302,7 +302,7 @@ func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScal
 			// the previous subquery.
 			// So here we just reset the names to empty to avoid this situation.
 			// TODO: implement ScalarSubQuery and resolve it during optimizing. In building phase, we will not change the plan's structure.
-			planCtx.plan.SetOutputNames(names)
+			planCtx.plan.SetOutputNames(outPutNames)
 		}()
 	}
 	exprNode.Accept(rewriter)
