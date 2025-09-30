@@ -64,7 +64,7 @@ func TestBindUsageInfo(t *testing.T) {
 		"aa3c510b94b9d680f729252ca88415794c8a4f52172c5f9e06c27bee57d08329 <nil>"))
 	time.Sleep(50 * time.Microsecond)
 	require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
-	result := tk.MustQuery(`select sql_digest,last_used_date from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock' order by sql_digest`)
+	result := tk.MustQuery(fmt.Sprintf(`select sql_digest,last_used_date from mysql.bind_info where original_sql != '%s' order by sql_digest`, bindinfo.BuiltinPseudoSQL4BindLock))
 	t.Log("result:", result.Rows())
 	// The last_used_date should be updated.
 	require.True(t, !origin.Equal(result.Rows()))
@@ -79,8 +79,8 @@ func TestBindUsageInfo(t *testing.T) {
 		resetAllLastUsedData(tk)
 		require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
 		checkBindinfoInMemory(t, bindingHandle, checklist)
-		tk.MustQuery(`select last_used_date from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock' and last_used_date is null`).Check(testkit.Rows())
-		result := tk.MustQuery(`select sql_digest,last_used_date from mysql.bind_info where original_sql != 'builtin_pseudo_sql_for_bind_lock' order by sql_digest`)
+		tk.MustQuery(fmt.Sprintf(`select last_used_date from mysql.bind_info where original_sql != '%s' and last_used_date is null`, bindinfo.BuiltinPseudoSQL4BindLock)).Check(testkit.Rows())
+		result := tk.MustQuery(fmt.Sprintf(`select sql_digest,last_used_date from mysql.bind_info where original_sql != '%s' order by sql_digest`, bindinfo.BuiltinPseudoSQL4BindLock))
 		t.Log("result:", result.Rows())
 		if last == nil {
 			last = result
