@@ -70,7 +70,9 @@ func (r *localColumnPool) get() (*chunk.Column, error) {
 }
 
 func (r *localColumnPool) put(col *chunk.Column) {
-	r.Pool.Put(col)
+	if col.TryReset() {
+		r.Pool.Put(col)
+	}
 }
 
 // vecEvalIntByRows uses the non-vectorized(row-based) interface `evalInt` to eval the expression.

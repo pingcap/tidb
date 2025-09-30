@@ -892,3 +892,11 @@ func (c *Column) ContainsVeryLargeElement() bool {
 	}
 	return false
 }
+
+func (c *Column) TryReset() bool {
+	if c.avoidReusing {
+		return false
+	}
+	c.reset()
+	return true
+}
