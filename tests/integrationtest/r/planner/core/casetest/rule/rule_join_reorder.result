@@ -4687,9 +4687,15 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_re
 └─TableReader(Probe)	root		data:Selection
   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 explain format='plan_tree' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3);
 id	task	access object	operator info
 TableDual	root		rows:0
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 explain format='plan_tree' select /*+ straight_join() */ * from t1 join (select * from t4) t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -4731,18 +4737,32 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_re
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#11
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#11(<nil>)->Column#12
 └─IndexReader	root		index:IndexFullScan
   └─IndexFullScan	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#11
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#10
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 explain format='plan_tree' select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#14
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#13
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -5614,6 +5634,9 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner_
     └─TableReader(Probe)	root		data:Selection
       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
         └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#13, ScalarQueryCol#14, ScalarQueryCol#15
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 explain format='plan_tree' select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5623,6 +5646,9 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_re
 └─TableReader(Probe)	root		data:Selection
   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3);
@@ -5634,6 +5660,9 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_re
 └─TableReader(Probe)	root		data:Selection
   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
@@ -5646,6 +5675,9 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_re
 └─TableReader(Probe)	root		data:Selection
   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
@@ -5658,6 +5690,9 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_re
 └─TableReader(Probe)	root		data:Selection
   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
@@ -5670,35 +5705,56 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_re
 └─TableReader(Probe)	root		data:Selection
   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where not exists (select t3.a from t3);
 id	task	access object	operator info
 TableDual	root		rows:0
+ScalarSubQuery	root		Output: ScalarQueryCol#13, ScalarQueryCol#14, ScalarQueryCol#15
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 explain format='plan_tree' select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3);
 id	task	access object	operator info
 TableDual	root		rows:0
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3);
 id	task	access object	operator info
 TableDual	root		rows:0
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3);
 id	task	access object	operator info
 TableDual	root		rows:0
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3);
 id	task	access object	operator info
 TableDual	root		rows:0
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3);
 id	task	access object	operator info
 TableDual	root		rows:0
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t4@sel_2, t1) */ * from t1 join (select * from t4) t2 on t1.a=t2.a join t3 on t2.b=t3.b;
@@ -5749,79 +5805,128 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner_
         └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#14
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#13
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 explain format='plan_tree' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#14
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#13
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t1, t2) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#14
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#13
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 explain format='plan_tree' select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#14
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#13
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t2, t1) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t2@sel_2, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#14
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#13
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#14
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#13
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t1, t2) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#14
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#13
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
@@ -7179,14 +7284,23 @@ explain format='plan_tree' select /*+ leading(t4) */ * from t1 left join t2 on t
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
 └─TableDual	root		rows:0
+ScalarSubQuery	root		Output: ScalarQueryCol#13, ScalarQueryCol#14, ScalarQueryCol#15
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3);
 id	task	access object	operator info
 TableDual	root		rows:0
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3);
 id	task	access object	operator info
 TableDual	root		rows:0
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where not exists (select t3.a from t3);
@@ -7201,6 +7315,9 @@ HashJoin	root		right outer join, left side:HashJoin, equal:[eq(planner__core__ca
   └─TableReader(Probe)	root		data:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#13, ScalarQueryCol#14, ScalarQueryCol#15
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -7209,6 +7326,9 @@ HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__
 │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3);
@@ -7220,6 +7340,9 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_re
 └─TableReader(Probe)	root		data:Selection
   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCol#12
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
@@ -7269,50 +7392,85 @@ HashJoin	root		right outer join, left side:Projection, equal:[eq(planner__core__
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
 └─MergeJoin	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
   └─IndexReader(Probe)	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#14
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#13
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 explain format='plan_tree' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
 └─MergeJoin	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
   └─IndexReader(Probe)	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#14
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#13
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t1, t2) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
 └─MergeJoin	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
   └─IndexReader(Probe)	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#14
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#13
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 explain format='plan_tree' select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 left join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
 └─MergeJoin	root		left outer join, left side:IndexReader, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
   └─IndexReader(Probe)	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#14
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#13
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t2, t1) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 right join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
 └─MergeJoin	root		right outer join, left side:IndexReader, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
   └─IndexReader(Probe)	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#14
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t2.a)->Column#13
+    └─Limit	root		offset:0, count:1
+      └─IndexReader	root		index:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid

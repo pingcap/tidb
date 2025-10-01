@@ -6,11 +6,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/store/mockstore/teststore",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config",
         "//pkg/config/kerneltype",
+        "//pkg/disttask/framework/handle",
+        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/store",
         "//pkg/store/mockstore",
-        "//pkg/testkit/testenv",
-        "@com_github_stretchr_testify//require",
     ],
 )

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/util"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -38,21 +39,6 @@ const (
 var (
 	TiDBStrictIntegerDisplayWidth bool
 )
-
-// IHasher is internal usage represent cascades/base.Hasher
-type IHasher interface {
-	HashBool(val bool)
-	HashInt(val int)
-	HashInt64(val int64)
-	HashUint64(val uint64)
-	HashFloat64(val float64)
-	HashRune(val rune)
-	HashString(val string)
-	HashByte(val byte)
-	HashBytes(val []byte)
-	Reset()
-	Sum64() uint64
-}
 
 // FieldType records field type information.
 type FieldType struct {
@@ -101,7 +87,7 @@ func (ft *FieldType) DeepCopy() *FieldType {
 }
 
 // Hash64 implements the cascades/base.Hasher.<0th> interface.
-func (ft *FieldType) Hash64(h IHasher) {
+func (ft *FieldType) Hash64(h util.IHasher) {
 	h.HashByte(ft.tp)
 	h.HashUint64(uint64(ft.flag))
 	h.HashInt(ft.flen)

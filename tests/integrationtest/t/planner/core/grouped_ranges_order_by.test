@@ -1,0 +1,318 @@
+drop table if exists t;
+create table t(a int, b int, c int, d int, primary key (a,b,c) clustered);
+insert into t values
+(1, 1, 1, 10), (1, 1, 2, 20), (1, 1, 3, 30), (1, 1, 4, 31),
+(1, 2, 1, 32), (1, 2, 2, 33), (1, 2, 5, 34),
+(1, 3, 1, 40), (1, 3, 2, 50), (1, 3, 3, 60), (1, 3, 6, 61),
+(1, 4, 1, 62), (1, 4, 3, 63), (1, 4, 7, 64),
+(1, 5, 1, 70), (1, 5, 2, 80), (1, 5, 3, 90), (1, 5, 8, 91),
+(1, 6, 2, 92), (1, 6, 4, 93),
+(2, 1, 1, 100), (2, 1, 2, 110), (2, 1, 3, 120), (2, 1, 5, 121),
+(2, 2, 1, 122), (2, 2, 3, 123), (2, 2, 6, 124),
+(2, 3, 1, 130), (2, 3, 2, 140), (2, 3, 3, 150), (2, 3, 7, 151),
+(2, 4, 2, 152), (2, 4, 4, 153), (2, 4, 8, 154),
+(2, 5, 1, 160), (2, 5, 2, 170), (2, 5, 3, 180), (2, 5, 9, 181),
+(2, 7, 1, 182), (2, 7, 5, 183),
+(3, 1, 1, 190), (3, 1, 2, 200), (3, 1, 3, 210), (3, 1, 6, 211),
+(3, 2, 2, 212), (3, 2, 4, 213), (3, 2, 7, 214),
+(3, 3, 1, 220), (3, 3, 2, 230), (3, 3, 3, 240), (3, 3, 8, 241),
+(3, 4, 1, 242), (3, 4, 5, 243), (3, 4, 9, 244),
+(3, 5, 1, 250), (3, 5, 2, 260), (3, 5, 3, 270), (3, 5, 10, 271),
+(3, 6, 3, 272), (3, 6, 6, 273),
+(4, 1, 2, 280), (4, 1, 4, 281), (4, 1, 7, 282),
+(4, 2, 1, 283), (4, 2, 5, 284), (4, 2, 8, 285),
+(4, 3, 3, 290), (4, 3, 6, 291), (4, 3, 9, 292),
+(4, 4, 2, 293), (4, 4, 4, 294), (4, 4, 10, 295),
+(4, 5, 1, 300), (4, 5, 5, 301), (4, 5, 11, 302),
+(4, 8, 1, 303), (4, 8, 3, 304),
+(5, 1, 1, 310), (5, 1, 3, 311), (5, 1, 8, 312),
+(5, 3, 2, 320), (5, 3, 4, 321), (5, 3, 9, 322),
+(5, 5, 1, 330), (5, 5, 5, 331), (5, 5, 12, 332),
+(5, 7, 2, 340), (5, 7, 6, 341), (5, 7, 10, 342);
+
+explain format = 'brief' select * from t where b in (1, 3, 5) and d > 100 order by a, b, c;
+select * from t where b in (1, 3, 5) and d > 100 order by a, b, c;
+
+explain format = 'brief' select a,c from t where a = 3 and b in (1, 3, 5) and d > 100 order by c;
+select a,c from t where a = 3 and b in (1, 3, 5) and d > 100 order by c;
+
+explain format = 'brief' select c from t where a = 1 and b in (1, 3, 5) and d < 200 order by c;
+select c from t where a = 1 and b in (1, 3, 5) and d < 200 order by c;
+
+drop table if exists t2;
+create table t2(a int, b int, c int, d int, index iabc(a,b,c));
+insert into t2 values
+(1, 1, 1, 10), (1, 1, 2, 15), (1, 1, 3, 30), (1, 1, 4, 35),
+(1, 2, 1, 25), (1, 2, 3, 45), (1, 2, 5, 55),
+(1, 3, 1, 40), (1, 3, 2, 45), (1, 3, 3, 60), (1, 3, 6, 65),
+(1, 4, 2, 70), (1, 4, 4, 75),
+(2, 1, 1, 100), (2, 1, 2, 105), (2, 1, 3, 120), (2, 1, 5, 125),
+(2, 2, 1, 110), (2, 2, 4, 115), (2, 2, 6, 135),
+(2, 3, 1, 130), (2, 3, 3, 150), (2, 3, 7, 155),
+(2, 5, 2, 165), (2, 5, 4, 175),
+(3, 1, 1, 190), (3, 1, 3, 210), (3, 1, 8, 215),
+(3, 2, 2, 200), (3, 2, 5, 205), (3, 2, 9, 225),
+(3, 3, 1, 220), (3, 3, 3, 240), (3, 3, 10, 245),
+(3, 4, 1, 230), (3, 4, 6, 235),
+(4, 1, 2, 250), (4, 1, 4, 255), (4, 1, 7, 265),
+(4, 3, 1, 260), (4, 3, 5, 275), (4, 3, 11, 285);
+
+explain format = 'brief' select c from t2 where a in (1, 3) and b in (1, 3) and d < 150 order by c;
+select c from t2 where a in (1, 3) and b in (1, 3) and d < 150 order by c;
+
+explain format = 'brief' select /*+ order_index(t2,iabc) */ a,c from t2 where a = 3 and b in (1, 3, 5) order by a desc, c desc;
+select /*+ order_index(t2,iabc) */ a,c from t where a = 3 and b in (1, 3, 5) order by a desc, c desc;
+
+explain format = 'brief' select /*+ order_index(t2,iabc) */ a,c from t2 where a = 2 and b in (1, 3, 5) and d > 60 order by a desc, c desc;
+select /*+ order_index(t2,iabc) */ a,c from t where a = 2 and b in (1, 3, 5) and d > 60 order by a desc, c desc;
+
+explain format = 'brief' select b,c from t2 where a = 1 and b in (1, 3, 5) and c > 1 order by b, c;
+select b,c from t where a = 1 and b in (1, 3, 5) and c > 1 order by b, c;
+
+# If there are more than 2048 range groups, the merge sort optimization will not be applied.
+explain format = 'brief' select b,c from t2 where 
+a in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50)
+and b in (1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75, 77, 79, 81, 83, 85, 87, 89, 91, 93, 95, 97, 99)
+and c > 1 order by c;
+
+drop table if exists tp;
+CREATE TABLE tp (
+  a int,
+  b int,
+  c int,
+  d int,
+  primary key (a,b,d) /*T![clustered_index] CLUSTERED */
+) PARTITION BY RANGE(d) (
+  PARTITION p0 VALUES LESS THAN (100),
+  PARTITION p1 VALUES LESS THAN (200),
+  PARTITION p2 VALUES LESS THAN (300)
+);
+
+insert into tp values
+(1, 1, 1, 10), (1, 1, 2, 20), (1, 1, 3, 30), (1, 1, 4, 35),
+(1, 2, 1, 25), (1, 2, 5, 45), (1, 2, 8, 55),
+(1, 3, 1, 40), (1, 3, 2, 50), (1, 3, 3, 60), (1, 3, 6, 65),
+(1, 4, 2, 75), (1, 4, 7, 85),
+(1, 5, 1, 70), (1, 5, 2, 80), (1, 5, 3, 90), (1, 5, 9, 95),
+(1, 6, 4, 77), (1, 7, 1, 82),
+(2, 1, 2, 15), (2, 1, 4, 25), (2, 1, 7, 45),
+(2, 2, 1, 35), (2, 2, 5, 55), (2, 2, 10, 75),
+(2, 3, 3, 65), (2, 3, 6, 85), (2, 3, 11, 95),
+(2, 4, 1, 27), (2, 4, 8, 67),
+(2, 5, 2, 37), (2, 5, 4, 57), (2, 5, 12, 87),
+(3, 1, 1, 17), (3, 1, 5, 47), (3, 1, 9, 77),
+(3, 2, 2, 22), (3, 2, 6, 52), (3, 2, 13, 92),
+(3, 3, 3, 32), (3, 3, 7, 62), (3, 3, 14, 97),
+(3, 5, 1, 42), (3, 5, 8, 72),
+(2, 1, 1, 110), (2, 1, 2, 120), (2, 1, 3, 130), (2, 1, 5, 135),
+(2, 2, 1, 115), (2, 2, 4, 125), (2, 2, 8, 145),
+(2, 3, 1, 140), (2, 3, 2, 150), (2, 3, 3, 160), (2, 3, 6, 165),
+(2, 4, 2, 155), (2, 4, 7, 175), (2, 4, 10, 185),
+(2, 5, 1, 170), (2, 5, 2, 180), (2, 5, 3, 190), (2, 5, 9, 195),
+(2, 6, 4, 177), (2, 7, 1, 182), (2, 8, 5, 187),
+(3, 1, 2, 105), (3, 1, 4, 125), (3, 1, 7, 145),
+(3, 2, 1, 115), (3, 2, 5, 135), (3, 2, 11, 175),
+(3, 3, 3, 155), (3, 3, 6, 175), (3, 3, 12, 195),
+(3, 4, 1, 127), (3, 4, 8, 167),
+(3, 5, 2, 137), (3, 5, 4, 157), (3, 5, 13, 187),
+(4, 1, 1, 107), (4, 1, 3, 147), (4, 1, 9, 167),
+(4, 3, 2, 117), (4, 3, 5, 157), (4, 3, 14, 197),
+(4, 5, 1, 127), (4, 5, 6, 147), (4, 5, 15, 177),
+(3, 1, 1, 210), (3, 1, 2, 220), (3, 1, 3, 230), (3, 1, 5, 235),
+(3, 2, 1, 215), (3, 2, 4, 225), (3, 2, 8, 245),
+(3, 3, 1, 240), (3, 3, 2, 250), (3, 3, 3, 260), (3, 3, 6, 265),
+(3, 4, 2, 255), (3, 4, 7, 275), (3, 4, 10, 285),
+(3, 5, 1, 270), (3, 5, 2, 280), (3, 5, 3, 290), (3, 5, 9, 295),
+(3, 6, 4, 277), (3, 7, 1, 282), (3, 8, 5, 287),
+(4, 1, 2, 205), (4, 1, 4, 225), (4, 1, 7, 245),
+(4, 2, 1, 215), (4, 2, 5, 235), (4, 2, 11, 275),
+(4, 3, 3, 255), (4, 3, 6, 275), (4, 3, 12, 295),
+(4, 4, 1, 227), (4, 4, 8, 267),
+(4, 5, 2, 237), (4, 5, 4, 257), (4, 5, 13, 287),
+(5, 1, 1, 207), (5, 1, 3, 247), (5, 1, 9, 267),
+(5, 3, 2, 217), (5, 3, 5, 257), (5, 3, 14, 297),
+(5, 5, 1, 227), (5, 5, 6, 247), (5, 5, 15, 277);
+
+explain format = 'brief' select a,d from tp where a in (1,4) and b in (1, 3, 5) order by a, d;
+select a,d from tp where a in (1,4) and b in (1, 3, 5) order by a, d;
+
+explain format = 'brief' select d from tp where a = 1 and b in (1, 3, 5) order by d;
+select d from tp where a = 1 and b in (1, 3, 5) order by d;
+
+explain format = 'brief' select a,d from tp where a = 3 and b in (1, 3, 5) and d < 200 order by a, d;
+select a,d from tp where a = 3 and b in (1, 3, 5) and d < 200 order by a, d;
+
+drop table if exists tp;
+CREATE TABLE tp (
+  a int,
+  b int,
+  c int,
+  d int,
+  index iabc(a,b,c)
+) PARTITION BY RANGE(d) (
+  PARTITION p0 VALUES LESS THAN (100),
+  PARTITION p1 VALUES LESS THAN (200),
+  PARTITION p2 VALUES LESS THAN (300)
+);
+
+insert into tp values
+(1, 1, 1, 10), (1, 1, 2, 20), (1, 1, 3, 30), (1, 1, 4, 35),
+(1, 2, 1, 25), (1, 2, 5, 45), (1, 2, 8, 55),
+(1, 3, 1, 40), (1, 3, 2, 50), (1, 3, 3, 60), (1, 3, 6, 65),
+(1, 4, 2, 75), (1, 4, 7, 85),
+(1, 5, 1, 70), (1, 5, 2, 80), (1, 5, 3, 90), (1, 5, 9, 95),
+(1, 6, 4, 77), (1, 7, 1, 82),
+(2, 1, 2, 15), (2, 1, 4, 25), (2, 1, 7, 45),
+(2, 2, 1, 35), (2, 2, 5, 55), (2, 2, 10, 75),
+(2, 3, 3, 65), (2, 3, 6, 85), (2, 3, 11, 95),
+(2, 4, 1, 27), (2, 4, 8, 67),
+(2, 5, 2, 37), (2, 5, 4, 57), (2, 5, 12, 87),
+(3, 1, 1, 17), (3, 1, 5, 47), (3, 1, 9, 77),
+(3, 2, 2, 22), (3, 2, 6, 52), (3, 2, 13, 92),
+(3, 3, 3, 32), (3, 3, 7, 62), (3, 3, 14, 97),
+(3, 5, 1, 42), (3, 5, 8, 72),
+(2, 1, 1, 110), (2, 1, 2, 120), (2, 1, 3, 130), (2, 1, 5, 135),
+(2, 2, 1, 115), (2, 2, 4, 125), (2, 2, 8, 145),
+(2, 3, 1, 140), (2, 3, 2, 150), (2, 3, 3, 160), (2, 3, 6, 165),
+(2, 4, 2, 155), (2, 4, 7, 175), (2, 4, 10, 185),
+(2, 5, 1, 170), (2, 5, 2, 180), (2, 5, 3, 190), (2, 5, 9, 195),
+(2, 6, 4, 177), (2, 7, 1, 182), (2, 8, 5, 187),
+(3, 1, 2, 105), (3, 1, 4, 125), (3, 1, 7, 145),
+(3, 2, 1, 115), (3, 2, 5, 135), (3, 2, 11, 175),
+(3, 3, 3, 155), (3, 3, 6, 175), (3, 3, 12, 195),
+(3, 4, 1, 127), (3, 4, 8, 167),
+(3, 5, 2, 137), (3, 5, 4, 157), (3, 5, 13, 187),
+(4, 1, 1, 107), (4, 1, 3, 147), (4, 1, 9, 167),
+(4, 3, 2, 117), (4, 3, 5, 157), (4, 3, 14, 197),
+(4, 5, 1, 127), (4, 5, 6, 147), (4, 5, 15, 177),
+(3, 1, 1, 210), (3, 1, 2, 220), (3, 1, 3, 230), (3, 1, 5, 235),
+(3, 2, 1, 215), (3, 2, 4, 225), (3, 2, 8, 245),
+(3, 3, 1, 240), (3, 3, 2, 250), (3, 3, 3, 260), (3, 3, 6, 265),
+(3, 4, 2, 255), (3, 4, 7, 275), (3, 4, 10, 285),
+(3, 5, 1, 270), (3, 5, 2, 280), (3, 5, 3, 290), (3, 5, 9, 295),
+(3, 6, 4, 277), (3, 7, 1, 282), (3, 8, 5, 287),
+(4, 1, 2, 205), (4, 1, 4, 225), (4, 1, 7, 245),
+(4, 2, 1, 215), (4, 2, 5, 235), (4, 2, 11, 275),
+(4, 3, 3, 255), (4, 3, 6, 275), (4, 3, 12, 295),
+(4, 4, 1, 227), (4, 4, 8, 267),
+(4, 5, 2, 237), (4, 5, 4, 257), (4, 5, 13, 287),
+(5, 1, 1, 207), (5, 1, 3, 247), (5, 1, 9, 267),
+(5, 3, 2, 217), (5, 3, 5, 257), (5, 3, 14, 297),
+(5, 5, 1, 227), (5, 5, 6, 247), (5, 5, 15, 277);
+
+explain format = 'brief' select a,c from tp where a in (3,5) and b in (1, 3, 5) order by a, c;
+select a,c from tp where a in (3,5) and b in (1, 3, 5) order by a, c;
+
+explain format = 'brief' select /*+ order_index(tp, iabc) */ c from tp where a = 1 and b in (1, 3, 5) and d < 200 order by c;
+select /*+ order_index(tp, iabc) */ c from tp where a = 1 and b in (1, 3, 5) and d < 200 order by c;
+
+explain format = 'brief' select a,c from tp where a = 2 and b in (1, 3, 5) and d < 200 order by a, c;
+select a,c from tp where a = 2 and b in (1, 3, 5) and d < 200 order by a, c;
+
+prepare stmt1 from 'select a,c from t where b in (?, ?, ?) order by a, c';
+set @v1 = 1, @v2 = 3, @v3 = 5;
+execute stmt1 using @v1, @v2, @v3;
+# Execute again to use plan cache
+execute stmt1 using @v1, @v2, @v3;
+
+set @v1 = 1, @v2 = 2, @v3 = 4;
+execute stmt1 using @v1, @v2, @v3;
+
+prepare stmt2 from 'select a,c from tp where b in (?, ?, ?) order by a, c';
+set @v1 = 1, @v2 = 3, @v3 = 5;
+execute stmt2 using @v1, @v2, @v3;
+execute stmt2 using @v1, @v2, @v3;
+set @v1 = 1, @v2 = 2, @v3 = 4;
+execute stmt2 using @v1, @v2, @v3;
+
+drop table if exists t_outer, t_inner;
+create table t_outer(a int, b int, index idx_a(a));
+create table t_inner(x int, y int, z int, index ixy(x,y,z));
+
+insert into t_outer values (1, 10), (2, 20), (3, 30), (4, 40);
+insert into t_inner values
+(1, 1, 100), (1, 2, 200), (1, 3, 300), (1, 4, 350), (1, 5, 400),
+(1, 6, 450), (1, 7, 500), (1, 8, 550),
+(2, 1, 400), (2, 2, 500), (2, 3, 600), (2, 4, 650), (2, 5, 700),
+(2, 6, 750), (2, 7, 800), (2, 9, 850),
+(3, 1, 700), (3, 2, 800), (3, 3, 900), (3, 4, 950), (3, 5, 1000),
+(3, 8, 1050), (3, 9, 1100), (3, 10, 1150),
+(4, 1, 1200), (4, 2, 1250), (4, 3, 1300), (4, 6, 1350), (4, 7, 1400);
+
+explain format = 'brief'
+select * from t_outer o
+where exists (
+  select /*+ no_decorrelate() */ 1 from t_inner i
+  where i.x = o.a and i.y in (1, 2, 3)
+  order by i.x, i.z limit 1
+);
+
+select * from t_outer o
+where exists (
+  select /*+ no_decorrelate() */ 1 from t_inner i
+  where i.x = o.a and i.y in (1, 2, 3)
+  order by i.x, i.z limit 1
+);
+
+explain format = 'brief'
+select *, (
+  select z from t_inner i
+  where i.x = o.a and i.y in (1, 2)
+  order by i.z
+  limit 1
+) as max_z
+from t_outer o;
+
+select *, (
+  select z from t_inner i
+  where i.x = o.a and i.y in (1, 2)
+  order by i.z
+  limit 1
+) as max_z
+from t_outer o;
+
+explain format = 'brief' select a,b,c from t where a in (2) and b in (1) order by a, b, c;
+select a,b,c from t where a in (2) and b in (1) order by a, b, c;
+
+explain format = 'brief' select a,b,c from t where c in (1, 2, 3) order by a, b, c;
+select a,b,c from t where c in (1, 2, 3) order by a, b, c;
+
+insert into t2 values (4, null, 1, 400), (4, null, 2, 410), (4, 2, null, 420), (4, 4, 1, 430), (4, 6, 3, 440);
+explain format = 'brief' select a,c from t2 where a in (3, null, 4) and b in (1, 3, null) order by a, c;
+select a,c from t2 where a in (3, null, 4) and b in (1, 3, null) order by a, c;
+
+deallocate prepare stmt1;
+deallocate prepare stmt2;
+
+drop table if exists t, t3;
+create table t(a int, b int, c int, d int, index iabc(a,b,c));
+explain format = 'brief' select * from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and d > 100 order by a, c;
+explain format = 'brief' select b,c from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and c > 1 order by b, c;
+insert into t values
+(10, 35, 9, 230), (10, 31, 10, 240), (10, 23, 11, 250), (10, 35, 12, 260),
+(20, 13, 5, 190), (20, 15, 6, 200), (20, 21, 7, 210), (20, 23, 8, 220),
+(30, 1, 1, 150), (30, 3, 2, 160), (30, 5, 3, 170), (30, 11, 4, 180),
+(40, 21, 13, 270), (40, 3, 14, 280), (40, 5, 15, 290), (50, 11, 16, 300);
+begin pessimistic;
+insert into t values
+(10, 1, 25, 390), (10, 3, 26, 400), (10, 5, 27, 410), (10, 11, 28, 420),
+(20, 1, 21, 350), (20, 31, 22, 360), (20, 33, 23, 370), (20, 35, 24, 380),
+(30, 13, 17, 310), (30, 35, 18, 320), (30, 2, 19, 330), (40, 23, 20, 340),
+(40, 13, 29, 430), (50, 15, 30, 440), (50, 3, 31, 450), (50, 23, 32, 460);
+explain format = 'brief' select * from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and d > 100 order by a, c;
+select * from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and d > 100 order by a, c;
+explain format = 'brief' select b,c from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and c > 1 order by b, c;
+select b,c from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and c > 1 order by b, c;
+commit;
+select * from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and d > 100 order by a, c;
+select b,c from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and c > 1 order by b, c;
+
+create table t3(a int, b int, primary key(a,b) clustered);
+insert into t3 value(1,1),(7,3),(5,5),(2,4),(4,6),(5,8);
+select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 order by b;
+begin pessimistic;
+insert into t3 value(6,7),(3,2),(4,0),(6,9),(3,10);
+explain format = 'brief' select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 order by b;
+select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 order by b;
+commit;
+select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 order by b;

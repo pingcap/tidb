@@ -1060,6 +1060,9 @@ func TestInitMeta(t *testing.T) {
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows(""))
 	require.NoError(t, sm.InitMeta(ctx, "tidb1", "background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows("background"))
+	t.Cleanup(func() {
+		tk.MustExec(`set global tidb_service_scope=""`)
+	})
 	tk.MustExec(`set global tidb_service_scope=""`)
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows(""))
 

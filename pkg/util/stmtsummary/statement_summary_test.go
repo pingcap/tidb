@@ -38,10 +38,6 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
-func emptyPlanGenerator() (string, string, any) {
-	return "", "", nil
-}
-
 func fakePlanDigestGenerator() string {
 	return "point_get"
 }

@@ -102,7 +102,7 @@ set @@session.tidb_opt_agg_push_down = 0;
 
     Planner enhancement: none.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	l_returnflag,
 	l_linestatus,
@@ -137,7 +137,7 @@ order by
 
     Planner enhancement: join reorder.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	s_acctbal,
 	s_name,
@@ -194,7 +194,7 @@ limit 100;
 
     planner enhancement: if group-by item have primary key, non-priamry key is useless.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	l_orderkey,
 	sum(l_extendedprice * (1 - l_discount)) as revenue,
@@ -227,7 +227,7 @@ limit 10;
     at least one lineitem was received by the customer later than its committed date. The query lists the count of such
     orders for each order priority sorted in ascending priority order.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	o_orderpriority,
 	count(*) as order_count
@@ -285,7 +285,7 @@ order by
 
     Planner enhancement: join reorder.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	n_name,
 	sum(l_extendedprice * (1 - l_discount)) as revenue
@@ -323,7 +323,7 @@ order by
     potential revenue increase is equal to the sum of [l_extendedprice * l_discount] for all lineitems with discounts and
     quantities in the qualifying range.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	sum(l_extendedprice * l_discount) as revenue
 from
@@ -346,7 +346,7 @@ where
 
     Planner enahancement: join reorder.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	supp_nation,
 	cust_nation,
@@ -398,7 +398,7 @@ order by
 
     Planner enhancement: join reorder.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	o_year,
 	sum(case
@@ -449,7 +449,7 @@ order by
 
     Planner enhancement: join reorder.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	nation,
 	o_year,
@@ -495,7 +495,7 @@ order by
 
     Planner enhancement: join reorder, if group-by item have primary key, non-priamry key is useless.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	c_custkey,
 	c_name,
@@ -537,7 +537,7 @@ limit 20;
     the parts that represent a significant percentage of the total value of all available parts. The query displays the part
     number and the value of those parts in descending order of value.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	ps_partkey,
 	sum(ps_supplycost * ps_availqty) as value
@@ -577,7 +577,7 @@ order by
     The late lineitems are partitioned into two groups, those with priority URGENT or HIGH, and those with a
     priority other than URGENT or HIGH.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	l_shipmode,
 	sum(case
@@ -616,7 +616,7 @@ order by
     have 1, 2, 3, etc. A check is made to ensure that the orders counted do not fall into one of several special categories
     of orders. Special categories are identified in the order comment column by looking for a particular pattern.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	c_count,
 	count(*) as custdist
@@ -646,7 +646,7 @@ order by
     promotional parts. The query considers only parts actually shipped in that month and gives the percentage. Revenue
     is defined as (l_extendedprice * (1-l_discount)).
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	100.00 * sum(case
 		when p_type like 'PROMO%'
@@ -717,7 +717,7 @@ drop view revenue0
     type, not of a given brand, and not from a supplier who has had complaints registered at the Better Business Bureau.
     Results must be presented in descending count and ascending brand, type, and size.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	p_brand,
 	p_type,
@@ -761,7 +761,7 @@ order by
 
     Planner enahancement: aggregation pull up through join.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	sum(l_extendedprice) / 7.0 as avg_yearly
 from
@@ -790,7 +790,7 @@ where
 
     Planner enhancement: cost estimation is not so good, join reorder. The inner subquery's result is only 300+ rows.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	c_name,
 	c_custkey,
@@ -835,7 +835,7 @@ limit 100;
     that were shipped by air and delivered in person. Parts are selected based on the combination of specific brands, a
     list of containers, and a range of sizes.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	sum(l_extendedprice* (1 - l_discount)) as revenue
 from
@@ -881,7 +881,7 @@ where
     defined to be more than 50% of the parts like the given part that the supplier shipped in a given year for a given
     nation. Only parts whose names share a certain naming convention are considered.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	s_name,
 	s_address
@@ -928,7 +928,7 @@ order by
     multi-supplier order (with current status of 'F') where they were the only supplier who failed to meet the committed
     delivery date.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	s_name,
 	count(*) as numwait
@@ -979,7 +979,7 @@ limit 100;
     but who have a greater than average “positive” account balance. It also reflects the magnitude of that balance.
     Country code is defined as the first two characters of c_phone.
 */
-explain format = 'brief'
+explain format = 'plan_tree'
 select
 	cntrycode,
 	count(*) as numcust,

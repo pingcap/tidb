@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	impl "github.com/pingcap/tidb/pkg/planner/implementation"
@@ -133,7 +134,7 @@ func (*ImplMemTableScan) OnImplement(
 		Table:     logic.TableInfo,
 		Columns:   logic.TableInfo.Columns,
 		Extractor: logic.Extractor,
-	}.Init(logic.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logic.QueryBlockOffset())
+	}.Init(logic.SCtx(), logicProp.Stats.ScaleByExpectCnt(logic.SCtx().GetSessionVars(), reqProp.ExpectedCnt), logic.QueryBlockOffset())
 	physical.SetSchema(logicProp.Schema)
 	return []memo.Implementation{impl.NewMemTableScanImpl(physical)}, nil
 }
@@ -158,7 +159,7 @@ func (*ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Physi
 	proj := physicalop.PhysicalProjection{
 		Exprs:            logicProj.Exprs,
 		CalculateNoDelay: logicProj.CalculateNoDelay,
-	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicProj.QueryBlockOffset(), childProp)
+	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(logicProj.SCtx().GetSessionVars(), reqProp.ExpectedCnt), logicProj.QueryBlockOffset(), childProp)
 	proj.SetSchema(logicProp.Schema)
 	return []memo.Implementation{impl.NewProjectionImpl(proj)}, nil
 }
@@ -178,10 +179,10 @@ func (*ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *prop
 	logicProp := expr.Group.Prop
 	sg := expr.ExprNode.(*logicalop.TiKVSingleGather)
 	if sg.IsIndexGather {
-		reader := physicalop.GetPhysicalIndexReader(sg, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+		reader := physicalop.GetPhysicalIndexReader(sg, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(sg.SCtx().GetSessionVars(), reqProp.ExpectedCnt), reqProp)
 		return []memo.Implementation{impl.NewIndexReaderImpl(reader, sg.Source)}, nil
 	}
-	reader := plannercore.GetPhysicalTableReader(sg, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+	reader := physicalop.GetPhysicalTableReader(sg, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(sg.SCtx().GetSessionVars(), reqProp.ExpectedCnt), reqProp)
 	return []memo.Implementation{impl.NewTableReaderImpl(reader, sg.Source)}, nil
 }
 
@@ -199,7 +200,7 @@ func (*ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalPropert
 func (*ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	logicalScan := expr.ExprNode.(*logicalop.LogicalTableScan)
-	ts := physicalop.GetPhysicalScan4LogicalTableScan(logicalScan, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
+	ts := physicalop.GetPhysicalScan4LogicalTableScan(logicalScan, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(logicalScan.SCtx().GetSessionVars(), reqProp.ExpectedCnt))
 	if !reqProp.IsSortItemEmpty() {
 		ts.KeepOrder = true
 		ts.Desc = reqProp.SortItems[0].Desc
@@ -221,7 +222,7 @@ func (*ImplIndexScan) Match(expr *memo.GroupExpr, prop *property.PhysicalPropert
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplIndexScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicalScan := expr.ExprNode.(*logicalop.LogicalIndexScan)
-	is := physicalop.GetPhysicalIndexScan4LogicalIndexScan(logicalScan, expr.Group.Prop.Schema, expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
+	is := physicalop.GetPhysicalIndexScan4LogicalIndexScan(logicalScan, expr.Group.Prop.Schema, expr.Group.Prop.Stats.ScaleByExpectCnt(logicalScan.SCtx().GetSessionVars(), reqProp.ExpectedCnt))
 	if !reqProp.IsSortItemEmpty() {
 		is.KeepOrder = true
 		if reqProp.SortItems[0].Desc {
@@ -272,7 +273,7 @@ func (*ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.Physic
 	logicalSel := expr.ExprNode.(*logicalop.LogicalSelection)
 	physicalSel := physicalop.PhysicalSelection{
 		Conditions: logicalSel.Conditions,
-	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.QueryBlockOffset(), reqProp.CloneEssentialFields())
+	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(logicalSel.SCtx().GetSessionVars(), reqProp.ExpectedCnt), logicalSel.QueryBlockOffset(), reqProp.CloneEssentialFields())
 	switch expr.Group.EngineType {
 	case pattern.EngineTiDB:
 		return []memo.Implementation{impl.NewTiDBSelectionImpl(physicalSel)}, nil
@@ -291,7 +292,7 @@ type ImplSort struct {
 // Match implements ImplementationRule match interface.
 func (*ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	ls := expr.ExprNode.(*logicalop.LogicalSort)
-	return plannercore.MatchItems(prop, ls.ByItems)
+	return physicalop.MatchItems(prop, ls.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -299,15 +300,15 @@ func (*ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (m
 // generate a PhysicalSort.
 func (*ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	ls := expr.ExprNode.(*logicalop.LogicalSort)
-	if newProp, canUseNominal := plannercore.GetPropByOrderByItems(ls.ByItems); canUseNominal {
+	if newProp, canUseNominal := physicalop.GetPropByOrderByItems(ls.ByItems); canUseNominal {
 		newProp.ExpectedCnt = reqProp.ExpectedCnt
 		ns := physicalop.NominalSort{}.Init(
-			ls.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
+			ls.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(ls.SCtx().GetSessionVars(), reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
 		return []memo.Implementation{impl.NewNominalSortImpl(ns)}, nil
 	}
 	ps := physicalop.PhysicalSort{ByItems: ls.ByItems}.Init(
 		ls.SCtx(),
-		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
+		expr.Group.Prop.Stats.ScaleByExpectCnt(ls.SCtx().GetSessionVars(), reqProp.ExpectedCnt),
 		ls.QueryBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
 	)
@@ -330,7 +331,7 @@ func (*ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.Physical
 	la := expr.ExprNode.(*logicalop.LogicalAggregation)
 	hashAgg := physicalop.NewPhysicalHashAgg(
 		la,
-		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
+		expr.Group.Prop.Stats.ScaleByExpectCnt(la.SCtx().GetSessionVars(), reqProp.ExpectedCnt),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
 	)
 	hashAgg.SetSchema(expr.Group.Prop.Schema.Clone())
@@ -377,7 +378,7 @@ func (*ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (m
 	if expr.Group.EngineType != pattern.EngineTiDB {
 		return prop.IsSortItemEmpty()
 	}
-	return plannercore.MatchItems(prop, topN.ByItems)
+	return physicalop.MatchItems(prop, topN.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -407,8 +408,8 @@ type ImplTopNAsLimit struct {
 // Match implements ImplementationRule Match interface.
 func (*ImplTopNAsLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	topN := expr.ExprNode.(*logicalop.LogicalTopN)
-	_, canUseLimit := plannercore.GetPropByOrderByItems(topN.ByItems)
-	return canUseLimit && plannercore.MatchItems(prop, topN.ByItems)
+	_, canUseLimit := physicalop.GetPropByOrderByItems(topN.ByItems)
+	return canUseLimit && physicalop.MatchItems(prop, topN.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -438,7 +439,7 @@ func getImplForHashJoin(expr *memo.GroupExpr, prop *property.PhysicalProperty, i
 		expCntScale := prop.ExpectedCnt / stats.RowCount
 		chReqProps[1-innerIdx].ExpectedCnt = expr.Children[1-innerIdx].Prop.Stats.RowCount * expCntScale
 	}
-	hashJoin := physicalop.NewPhysicalHashJoin(join, innerIdx, useOuterToBuild, stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	hashJoin := physicalop.NewPhysicalHashJoin(join, innerIdx, useOuterToBuild, stats.ScaleByExpectCnt(join.SCtx().GetSessionVars(), prop.ExpectedCnt), chReqProps...)
 	hashJoin.SetSchema(expr.Group.Prop.Schema)
 	return impl.NewHashJoinImpl(hashJoin)
 }
@@ -450,7 +451,7 @@ type ImplHashJoinBuildLeft struct {
 // Match implements ImplementationRule Match interface.
 func (*ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	switch expr.ExprNode.(*logicalop.LogicalJoin).JoinType {
-	case logicalop.InnerJoin, logicalop.LeftOuterJoin, logicalop.RightOuterJoin:
+	case base.InnerJoin, base.LeftOuterJoin, base.RightOuterJoin:
 		return prop.IsSortItemEmpty()
 	default:
 		return false
@@ -461,11 +462,11 @@ func (*ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.Physica
 func (*ImplHashJoinBuildLeft) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*logicalop.LogicalJoin)
 	switch join.JoinType {
-	case logicalop.InnerJoin:
+	case base.InnerJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, false)}, nil
-	case logicalop.LeftOuterJoin:
+	case base.LeftOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, true)}, nil
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, false)}, nil
 	default:
 		return nil, nil
@@ -485,14 +486,14 @@ func (*ImplHashJoinBuildRight) Match(_ *memo.GroupExpr, prop *property.PhysicalP
 func (*ImplHashJoinBuildRight) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*logicalop.LogicalJoin)
 	switch join.JoinType {
-	case logicalop.SemiJoin, logicalop.AntiSemiJoin,
-		logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
+	case base.SemiJoin, base.AntiSemiJoin,
+		base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
-	case logicalop.InnerJoin:
+	case base.InnerJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
-	case logicalop.LeftOuterJoin:
+	case base.LeftOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, true)}, nil
 	}
 	return nil, nil
@@ -537,7 +538,7 @@ func (*ImplUnionAll) OnImplement(expr *memo.GroupExpr, reqProp *property.Physica
 	}
 	physicalUnion := physicalop.PhysicalUnionAll{}.Init(
 		logicalUnion.SCtx(),
-		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
+		expr.Group.Prop.Stats.ScaleByExpectCnt(logicalUnion.SCtx().GetSessionVars(), reqProp.ExpectedCnt),
 		logicalUnion.QueryBlockOffset(),
 		chReqProps...,
 	)
@@ -563,7 +564,7 @@ func (*ImplApply) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalPr
 		OuterSchema:      la.CorCols,
 	}.Init(
 		la.SCtx(),
-		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
+		expr.Group.Prop.Stats.ScaleByExpectCnt(la.SCtx().GetSessionVars(), reqProp.ExpectedCnt),
 		la.QueryBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: reqProp.SortItems},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
@@ -618,7 +619,7 @@ func (*ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 		Frame:           lw.Frame,
 	}.Init(
 		lw.SCtx(),
-		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
+		expr.Group.Prop.Stats.ScaleByExpectCnt(lw.SCtx().GetSessionVars(), reqProp.ExpectedCnt),
 		lw.QueryBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems},
 	)

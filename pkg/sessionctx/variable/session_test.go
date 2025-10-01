@@ -134,13 +134,6 @@ func TestSession(t *testing.T) {
 	require.Equal(t, uint16(0), ss.WarningCount())
 }
 
-func TestAllocMPPID(t *testing.T) {
-	ctx := mock.NewContext()
-	require.Equal(t, int64(1), plannercore.AllocMPPTaskID(ctx))
-	require.Equal(t, int64(2), plannercore.AllocMPPTaskID(ctx))
-	require.Equal(t, int64(3), plannercore.AllocMPPTaskID(ctx))
-}
-
 func TestSlowLogFormat(t *testing.T) {
 	ctx := mock.NewContext()
 
@@ -157,7 +150,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
-	execDetail := execdetails.ExecDetails{
+	execDetail := &execdetails.ExecDetails{
 		RequestCount: 2,
 		CopExecDetails: execdetails.CopExecDetails{
 			BackoffTime: time.Millisecond,

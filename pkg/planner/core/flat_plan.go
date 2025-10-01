@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/texttree"
@@ -73,13 +72,13 @@ func (e FlatPlanTree) GetSelectPlan() (FlatPlanTree, int) {
 	hasDML := false
 	for i, op := range e {
 		switch op.Origin.(type) {
-		case *Insert, *Delete, *Update:
+		case *physicalop.Insert, *physicalop.Delete, *physicalop.Update:
 			hasDML = true
 		default:
 			if hasDML {
 				for j := i; j < len(e); j++ {
 					switch e[j].Origin.(type) {
-					case *FKCheck, *FKCascade:
+					case *physicalop.FKCheck, *physicalop.FKCascade:
 						// The later plans are belong to foreign key check/cascade plans, doesn't belong to select plan, just skip it.
 						return e[i:j], i
 					}
@@ -180,7 +179,7 @@ type operatorCtx struct {
 	reqType     physicalop.ReadReqType
 	indent      string
 	isLastChild bool
-	// IsINLProbeChild indicates whether this operator is in indexLookupReader or indexMergeReader inner side.
+	// IsINLProbeChild indicates whether this operator is in indexLookupReader / indexMergeReader / indexLookUp inner side.
 	isINLProbeChild bool
 }
 
@@ -275,6 +274,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		// inherit the isINLProbeChild from the upper.
 		isINLProbeChild: info.isINLProbeChild,
 	}
+	indexOfINLProbeChild := -1
 	// For physical operators, we just enumerate their children and collect their information.
 	// Note that some physical operators are special, and they are handled below this part.
 	if physPlan, ok := p.(base.PhysicalPlan); ok {
@@ -293,7 +293,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 				label[1-plan.InnerChildIdx] = ProbeSide
 			}
 		case *physicalop.PhysicalMergeJoin:
-			if plan.JoinType == logicalop.RightOuterJoin {
+			if plan.JoinType == base.RightOuterJoin {
 				label[0] = BuildSide
 				label[1] = ProbeSide
 			} else {
@@ -309,6 +309,10 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		case *physicalop.PhysicalIndexHashJoin:
 			label[plan.InnerChildIdx] = ProbeSide
 			label[1-plan.InnerChildIdx] = BuildSide
+		case *physicalop.PhysicalLocalIndexLookUp:
+			label[0] = BuildSide
+			label[1] = ProbeSide
+			indexOfINLProbeChild = 1
 		}
 
 		children := make([]base.PhysicalPlan, len(physPlan.Children()))
@@ -329,6 +333,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		for i := range children {
 			childCtx.label = label[i]
 			childCtx.isLastChild = i == len(children)-1
+			childCtx.isINLProbeChild = childCtx.isINLProbeChild || indexOfINLProbeChild == i
 			target, childIdx = f.flattenRecursively(children[i], childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
@@ -398,7 +403,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 			// If it's executed in TiDB, we need to record it since we don't have producer and consumer
 			f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)
 		}
-	case *Insert:
+	case *physicalop.Insert:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
 			childCtx.label = Empty
@@ -415,7 +420,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
-	case *Update:
+	case *physicalop.Update:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
 			childCtx.label = Empty
@@ -424,7 +429,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 			childIdxs = append(childIdxs, childIdx)
 		}
 		target, childIdxs = f.flattenForeignKeyChecksAndCascadesMap(childCtx, target, childIdxs, plan.FKChecks, plan.FKCascades)
-	case *Delete:
+	case *physicalop.Delete:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
 			childCtx.label = Empty
@@ -458,7 +463,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 			target, childIdx = f.flattenRecursively(plan.TargetPlan, initInfo, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
-	case *FKCascade:
+	case *physicalop.FKCascade:
 		for i, child := range plan.CascadePlans {
 			childCtx.label = Empty
 			childCtx.isLastChild = i == len(plan.CascadePlans)-1
@@ -473,7 +478,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 	return target, idx
 }
 
-func (f *FlatPhysicalPlan) flattenForeignKeyChecksAndCascadesMap(childCtx *operatorCtx, target FlatPlanTree, childIdxs []int, fkChecksMap map[int64][]*FKCheck, fkCascadesMap map[int64][]*FKCascade) (FlatPlanTree, []int) {
+func (f *FlatPhysicalPlan) flattenForeignKeyChecksAndCascadesMap(childCtx *operatorCtx, target FlatPlanTree, childIdxs []int, fkChecksMap map[int64][]*physicalop.FKCheck, fkCascadesMap map[int64][]*physicalop.FKCascade) (FlatPlanTree, []int) {
 	tids := make([]int64, 0, len(fkChecksMap))
 	for tid := range fkChecksMap {
 		tids = append(tids, tid)
@@ -494,7 +499,7 @@ func (f *FlatPhysicalPlan) flattenForeignKeyChecksAndCascadesMap(childCtx *opera
 	return target, childIdxs
 }
 
-func (f *FlatPhysicalPlan) flattenForeignKeyChecksAndCascades(childCtx *operatorCtx, target FlatPlanTree, childIdxs []int, fkChecks []*FKCheck, fkCascades []*FKCascade, isLast bool) (FlatPlanTree, []int) {
+func (f *FlatPhysicalPlan) flattenForeignKeyChecksAndCascades(childCtx *operatorCtx, target FlatPlanTree, childIdxs []int, fkChecks []*physicalop.FKCheck, fkCascades []*physicalop.FKCascade, isLast bool) (FlatPlanTree, []int) {
 	var childIdx int
 	for i, fkCheck := range fkChecks {
 		childCtx.isRoot = true

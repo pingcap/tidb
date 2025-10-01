@@ -44,7 +44,7 @@ func TestExampleApplication(t *testing.T) {
 		},
 	)
 
-	_ = testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "scheduler_manager")
 	meta := &taskMeta{
@@ -52,7 +52,8 @@ func TestExampleApplication(t *testing.T) {
 	}
 	bytes, err := json.Marshal(meta)
 	require.NoError(t, err)
-	task, err := handle.SubmitTask(ctx, "test", proto.TaskTypeExample, "", 1, "", 0, bytes)
+	scope := handle.GetTargetScope()
+	task, err := handle.SubmitTask(ctx, "test", proto.TaskTypeExample, store.GetKeyspace(), 1, scope, 0, bytes)
 	require.NoError(t, err)
 	require.NoError(t, handle.WaitTaskDoneByKey(ctx, task.Key))
 }

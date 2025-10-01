@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -112,6 +113,12 @@ func (sm *SlotManager) update(ctx context.Context, nodeMgr *NodeManager, taskMgr
 // are enough resources, or return true on resource shortage when some task
 // scheduled subtasks.
 func (sm *SlotManager) canReserve(task *proto.TaskBase) (execID string, ok bool) {
+	if kerneltype.IsNextGen() {
+		// in nextgen kernel, node resource will be scaled automatically by cluster
+		// controller which will use the schedule status API to make sure the
+		// required resource is available, so we always return true here.
+		return "", true
+	}
 	usedSlots := *sm.usedSlots.Load()
 	capacity := int(sm.capacity.Load())
 	sm.mu.RLock()
@@ -143,6 +150,10 @@ func (sm *SlotManager) canReserve(task *proto.TaskBase) (execID string, ok bool)
 // Reserve reserves resources for a task.
 // Reserve and UnReserve should be called in pair with same parameters.
 func (sm *SlotManager) reserve(task *proto.TaskBase, execID string) {
+	if kerneltype.IsNextGen() {
+		// see comments in canReserve.
+		return
+	}
 	taskClone := *task
 
 	sm.mu.Lock()
@@ -162,6 +173,10 @@ func (sm *SlotManager) reserve(task *proto.TaskBase, execID string) {
 
 // UnReserve un-reserve resources for a task.
 func (sm *SlotManager) unReserve(task *proto.TaskBase, execID string) {
+	if kerneltype.IsNextGen() {
+		// see comments in canReserve.
+		return
+	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	idx, ok := sm.task2Index[task.ID]
