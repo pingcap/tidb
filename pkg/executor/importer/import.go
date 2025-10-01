@@ -72,6 +72,7 @@ import (
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -1235,8 +1236,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-		totalSize  int64
+		totalSize  atomic.Int64 = *atomic.NewInt64(0)
 		sourceType mydump.SourceType
+		format     atomic.String = *atomic.NewString(e.Format)
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1255,8 +1257,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "failed to read file size by seek")
 		}
-		e.detectAndUpdateFormat(fileNameKey)
-		sourceType = e.getSourceType()
+		if format.Load() == DataFormatAuto {
+			format.Store(parseFileType(fileNameKey))
+		}
+		e.updateFormat(format.Load())
+		sourceType = getSourceType(e.Format)
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
@@ -1266,7 +1271,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 		dataFiles = append(dataFiles, &fileMeta)
-		totalSize = size
+		totalSize.Store(size)
 	} else {
 		var commonPrefix string
 		if !storage.IsLocal(u) {
@@ -1282,17 +1287,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		allFiles := make([]mydump.RawFile, 0, 16)
 		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
-				// we have checked in LoadDataExec.Next
-				//nolint: errcheck
-				match, _ := filepath.Match(escapedPath, remotePath)
-				if !match {
-					return nil
-				}
-				// pick arbitrary one file to detect the format.
-				e.detectAndUpdateFormat(remotePath)
-				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
-				totalSize += size
 				return nil
 			}); err != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to walk dir")
@@ -1301,7 +1296,19 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		var err error
 		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
+				// we have checked in LoadDataExec.Next
+				//nolint: errcheck
+				match, _ := filepath.Match(escapedPath, f.Path)
+				if !match {
+					return nil, nil
+				}
 				path, size := f.Path, f.Size
+				// pick arbitrary one file to detect the format.
+				if format.Load() == DataFormatAuto {
+					format.Store(parseFileType(path))
+				}
+				sourceType = getSourceType(format.Load())
+				totalSize.Add(size)
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
@@ -1314,6 +1321,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			}); err != nil {
 			return err
 		}
+		e.updateFormat(format.Load())
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
 		if err2 = e.checkNonCSVFormatOptions(); err2 != nil {
@@ -1322,7 +1330,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	}
 
 	e.dataFiles = dataFiles
-	e.TotalFileSize = totalSize
+	e.TotalFileSize = totalSize.Load()
 
 	return nil
 }
@@ -1368,12 +1376,12 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	return nil
 }
 
-// update format of the validated file by its extension.
-func (e *LoadDataController) detectAndUpdateFormat(path string) {
+// update format from the validated file format.
+func (e *LoadDataController) updateFormat(format string) {
 	if e.Format == DataFormatAuto {
-		e.Format = parseFileType(path)
-		e.logger.Info("detect and update import plan format based on file extension",
-			zap.String("file", path), zap.String("detected format", e.Format))
+		e.Format = format
+		e.logger.Info("auto detect and update import plan format based on file extension",
+			zap.String("detected format", e.Format))
 		e.Parameters.Format = e.Format
 	}
 }
@@ -1397,8 +1405,8 @@ func parseFileType(path string) string {
 	}
 }
 
-func (e *LoadDataController) getSourceType() mydump.SourceType {
-	switch e.Format {
+func getSourceType(format string) mydump.SourceType {
+	switch format {
 	case DataFormatParquet:
 		return mydump.SourceTypeParquet
 	case DataFormatDelimitedData, DataFormatCSV:
