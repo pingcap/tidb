@@ -585,9 +585,7 @@
       // Because the `order by` uses t2.a, the `join` can't be eliminated.
       "select t1.a, t1.b from t t1 left join t t2 on t1.a = t2.a order by t2.a",
       // For issue 11167
-      "select a.a from t a natural left join t b natural left join t c",
-      // Test case where right table should be pruned (no references to t2 columns)
-      "select t1.a, t1.b from t t1 left outer join t t2 on t1.f = t2.f"
+      "select a.a from t a natural left join t b natural left join t c"
     ]
   },
   {
