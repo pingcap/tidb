@@ -185,9 +185,6 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		// TODO: Also do the same for DROP PARTITION
 		c.tblInfo.Partition.DDLAction == model.ActionTruncateTablePartition {
 		allowOverwriteOfOldGlobalIndex = true
-		if len(c.tblInfo.Partition.DroppingDefinitions) > 0 {
-			skipCheck = false
-		}
 	}
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
@@ -311,7 +308,12 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			// In DeleteReorganization, overwrite Global Index keys pointing to
 			// old dropped/truncated partitions.
 			// Note that a partitioned table cannot be temporary table
-			value, err = txn.Get(ctx, key)
+			// Check mem buffer first
+			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
+			if kv.IsErrNotFound(err) {
+				// Not in mem buffer, check database
+				value, err = txn.Get(ctx, key)
+			}
 			if err == nil && len(value) != 0 {
 				handle, errPart := tablecodec.DecodeHandleInIndexValue(value)
 				if errPart != nil {
