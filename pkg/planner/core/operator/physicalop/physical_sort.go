@@ -17,16 +17,19 @@ package physicalop
 import (
 	"bytes"
 	"fmt"
+	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -137,6 +140,113 @@ func (p *PhysicalSort) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bo
 		return nil, false
 	}
 	cloned.BasePhysicalPlan = *basePlan
-	cloned.ByItems = util.CloneByItemss(p.ByItems)
+	cloned.ByItems = sliceutil.DeepClone(p.ByItems)
 	return cloned, true
+}
+
+// ExhaustPhysicalPlans4LogicalSort exhausts all possible physical plans for a LogicalSort operator
+func ExhaustPhysicalPlans4LogicalSort(ls *logicalop.LogicalSort, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	switch prop.TaskTp {
+	case property.RootTaskType:
+		if MatchItems(prop, ls.ByItems) {
+			ret := make([]base.PhysicalPlan, 0, 2)
+			ret = append(ret, getPhysicalSort(ls, prop))
+			ns := getNominalSort(ls, prop)
+			if ns != nil {
+				ret = append(ret, ns)
+			}
+			return ret, true, nil
+		}
+	case property.MppTaskType:
+		// just enumerate mpp task type requirement for child.
+		ps := getNominalSortSimple(ls, prop)
+		if ps != nil {
+			return []base.PhysicalPlan{ps}, true, nil
+		}
+	default:
+		return nil, true, nil
+	}
+	return nil, true, nil
+}
+
+func getPhysicalSort(ls *logicalop.LogicalSort, prop *property.PhysicalProperty) base.PhysicalPlan {
+	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(ls.SCtx().GetSessionVars(), prop.ExpectedCnt), ls.QueryBlockOffset(),
+		&property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64,
+			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown})
+	return ps
+}
+
+func getNominalSort(ls *logicalop.LogicalSort, reqProp *property.PhysicalProperty) *NominalSort {
+	prop, canPass, onlyColumn := GetPropByOrderByItemsContainScalarFunc(ls.ByItems)
+	if !canPass {
+		return nil
+	}
+	prop.ExpectedCnt = reqProp.ExpectedCnt
+	prop.NoCopPushDown = reqProp.NoCopPushDown
+	ps := NominalSort{OnlyColumn: onlyColumn, ByItems: ls.ByItems}.Init(
+		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(ls.SCtx().GetSessionVars(), prop.ExpectedCnt), ls.QueryBlockOffset(), prop)
+	return ps
+}
+
+// GetPropByOrderByItemsContainScalarFunc will check if this sort property can be pushed or not. In order to simplify the
+// problem, we only consider the case that all expression are columns or some special scalar functions.
+func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.PhysicalProperty, _, _ bool) {
+	propItems := make([]property.SortItem, 0, len(items))
+	onlyColumn := true
+	for _, item := range items {
+		switch expr := item.Expr.(type) {
+		case *expression.Column:
+			propItems = append(propItems, property.SortItem{Col: expr, Desc: item.Desc})
+		case *expression.ScalarFunction:
+			col, desc := expr.GetSingleColumn(item.Desc)
+			if col == nil {
+				return nil, false, false
+			}
+			propItems = append(propItems, property.SortItem{Col: col, Desc: desc})
+			onlyColumn = false
+		default:
+			return nil, false, false
+		}
+	}
+	return &property.PhysicalProperty{SortItems: propItems}, true, onlyColumn
+}
+
+func getNominalSortSimple(ls *logicalop.LogicalSort, reqProp *property.PhysicalProperty) *NominalSort {
+	prop, canPass, onlyColumn := GetPropByOrderByItemsContainScalarFunc(ls.ByItems)
+	if !canPass || !onlyColumn {
+		return nil
+	}
+	newProp := reqProp.CloneEssentialFields()
+	newProp.SortItems = prop.SortItems
+	ps := NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(
+		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(ls.SCtx().GetSessionVars(), reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
+	return ps
+}
+
+// MatchItems checks if this prop's columns can match by items totally.
+func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
+	if len(items) < len(p.SortItems) {
+		return false
+	}
+	for i, col := range p.SortItems {
+		sortItem := items[i]
+		if sortItem.Desc != col.Desc || !col.Col.EqualColumn(sortItem.Expr) {
+			return false
+		}
+	}
+	return true
+}
+
+// GetPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
+// consider the case that all expression are columns.
+func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, bool) {
+	propItems := make([]property.SortItem, 0, len(items))
+	for _, item := range items {
+		col, ok := item.Expr.(*expression.Column)
+		if !ok {
+			return nil, false
+		}
+		propItems = append(propItems, property.SortItem{Col: col, Desc: item.Desc})
+	}
+	return &property.PhysicalProperty{SortItems: propItems}, true
 }

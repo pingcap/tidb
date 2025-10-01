@@ -56,11 +56,11 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 	case *logicalop.LogicalCTE:
 		return physicalop.ExhaustPhysicalPlans4LogicalCTE(x, prop)
 	case *logicalop.LogicalSort:
-		return exhaustPhysicalPlans4LogicalSort(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalSort(x, prop)
 	case *logicalop.LogicalTopN:
-		return exhaustPhysicalPlans4LogicalTopN(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalTopN(x, prop)
 	case *logicalop.LogicalLock:
-		return exhaustPhysicalPlans4LogicalLock(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalLock(x, prop)
 	case *logicalop.LogicalJoin:
 		return exhaustPhysicalPlans4LogicalJoin(x, prop)
 	case *logicalop.LogicalApply:
@@ -919,7 +919,7 @@ func buildDataSource2IndexScanByIndexJoinProp(
 		}
 	}
 	var innerTask base.Task
-	if !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop).Matched() {
+	if !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
 		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 	} else {
 		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
@@ -969,7 +969,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 		rangeInfo := indexJoinPathRangeInfo(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
 		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
 		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
-		if matchProperty(ds, indexJoinResult.chosenPath, prop).Matched() {
+		if matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
 			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt)
 		} else {
 			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
@@ -988,7 +988,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 			return base.InvalidTask
 		}
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
-		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop).Matched() {
+		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched {
 			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt)
 		} else {
 			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
@@ -2850,108 +2850,6 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan, pp base.PhysicalPlan) (preferPu
 	return
 }
 
-func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	// topN should always generate rootTaskType for:
-	// case1: after v7.5, since tiFlash Cop has been banned, mppTaskType may return invalid task when there are some root conditions.
-	// case2: for index merge case which can only be run in root type, topN and limit can't be pushed to the inside index merge when it's an intersection.
-	// note: don't change the task enumeration order here.
-	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
-	// we move the pushLimitOrTopNForcibly check to attach2Task to do the prefer choice.
-	mppAllowed := lt.SCtx().GetSessionVars().IsMPPAllowed()
-	if mppAllowed {
-		allTaskTypes = append(allTaskTypes, property.MppTaskType)
-	}
-	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
-	for _, tp := range allTaskTypes {
-		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64,
-			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
-		topN := physicalop.PhysicalTopN{
-			ByItems:     lt.ByItems,
-			PartitionBy: lt.PartitionBy,
-			Count:       lt.Count,
-			Offset:      lt.Offset,
-		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
-		topN.SetSchema(lt.Schema())
-		ret = append(ret, topN)
-	}
-	// If we can generate MPP task and there's vector distance function in the order by column.
-	// We will try to generate a property for possible vector indexes.
-	if mppAllowed {
-		if len(lt.ByItems) != 1 {
-			return ret
-		}
-		vs := expression.InterpretVectorSearchExpr(lt.ByItems[0].Expr)
-		if vs == nil {
-			return ret
-		}
-		// Currently vector index only accept ascending order.
-		if lt.ByItems[0].Desc {
-			return ret
-		}
-		// Currently, we only deal with the case the TopN is directly above a DataSource.
-		ds, ok := lt.Children()[0].(*logicalop.DataSource)
-		if !ok {
-			return ret
-		}
-		// Reject any filters.
-		if len(ds.PushedDownConds) > 0 {
-			return ret
-		}
-		resultProp := &property.PhysicalProperty{
-			TaskTp:            property.MppTaskType,
-			ExpectedCnt:       math.MaxFloat64,
-			CTEProducerStatus: prop.CTEProducerStatus,
-		}
-		resultProp.VectorProp.VSInfo = vs
-		resultProp.VectorProp.TopK = uint32(lt.Count + lt.Offset)
-		topN := physicalop.PhysicalTopN{
-			ByItems:     lt.ByItems,
-			PartitionBy: lt.PartitionBy,
-			Count:       lt.Count,
-			Offset:      lt.Offset,
-		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
-		topN.SetSchema(lt.Schema())
-		ret = append(ret, topN)
-	}
-	return ret
-}
-
-func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	p, canPass := GetPropByOrderByItems(lt.ByItems)
-	if !canPass {
-		return nil
-	}
-	// note: don't change the task enumeration order here.
-	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
-	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
-	for _, tp := range allTaskTypes {
-		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), SortItems: p.SortItems,
-			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
-		limit := physicalop.PhysicalLimit{
-			Count:       lt.Count,
-			Offset:      lt.Offset,
-			PartitionBy: lt.GetPartitionBy(),
-		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
-		limit.SetSchema(lt.Schema())
-		ret = append(ret, limit)
-	}
-	return ret
-}
-
-// MatchItems checks if this prop's columns can match by items totally.
-func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
-	if len(items) < len(p.SortItems) {
-		return false
-	}
-	for i, col := range p.SortItems {
-		sortItem := items[i]
-		if sortItem.Desc != col.Desc || !col.Col.EqualColumn(sortItem.Expr) {
-			return false
-		}
-	}
-	return true
-}
-
 // GetHashJoin is public for cascades planner.
 func GetHashJoin(ge base.GroupExpression, la *logicalop.LogicalApply, prop *property.PhysicalProperty) *physicalop.PhysicalHashJoin {
 	return getHashJoin(ge, &la.LogicalJoin, prop, 1, false)
@@ -3146,22 +3044,6 @@ func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 	return windows, true, nil
 }
 
-func exhaustPhysicalPlans4LogicalLock(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	p := lp.(*logicalop.LogicalLock)
-	if prop.IsFlashProp() {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-			"MPP mode may be blocked because operator `Lock` is not supported now.")
-		return nil, true, nil
-	}
-	childProp := prop.CloneEssentialFields()
-	lock := physicalop.PhysicalLock{
-		Lock:               p.Lock,
-		TblID2Handle:       p.TblID2Handle,
-		TblID2PhysTblIDCol: p.TblID2PhysTblIDCol,
-	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), childProp)
-	return []base.PhysicalPlan{lock}, true, nil
-}
-
 func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalUnionAll)
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
@@ -3219,70 +3101,6 @@ func exhaustPhysicalPlans4LogicalPartitionUnionAll(lp base.LogicalPlan, prop *pr
 		ua.(*physicalop.PhysicalUnionAll).SetTP(plancodec.TypePartitionUnion)
 	}
 	return uas, flagHint, nil
-}
-
-func exhaustPhysicalPlans4LogicalTopN(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	lt := lp.(*logicalop.LogicalTopN)
-	if MatchItems(prop, lt.ByItems) {
-		return append(getPhysTopN(lt, prop), getPhysLimits(lt, prop)...), true, nil
-	}
-	return nil, true, nil
-}
-
-func exhaustPhysicalPlans4LogicalSort(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	ls := lp.(*logicalop.LogicalSort)
-	switch prop.TaskTp {
-	case property.RootTaskType:
-		if MatchItems(prop, ls.ByItems) {
-			ret := make([]base.PhysicalPlan, 0, 2)
-			ret = append(ret, getPhysicalSort(ls, prop))
-			ns := getNominalSort(ls, prop)
-			if ns != nil {
-				ret = append(ret, ns)
-			}
-			return ret, true, nil
-		}
-	case property.MppTaskType:
-		// just enumerate mpp task type requirement for child.
-		ps := getNominalSortSimple(ls, prop)
-		if ps != nil {
-			return []base.PhysicalPlan{ps}, true, nil
-		}
-	default:
-		return nil, true, nil
-	}
-	return nil, true, nil
-}
-
-func getPhysicalSort(ls *logicalop.LogicalSort, prop *property.PhysicalProperty) base.PhysicalPlan {
-	ps := physicalop.PhysicalSort{ByItems: ls.ByItems}.Init(ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(ls.SCtx().GetSessionVars(), prop.ExpectedCnt), ls.QueryBlockOffset(),
-		&property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64,
-			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown})
-	return ps
-}
-
-func getNominalSort(ls *logicalop.LogicalSort, reqProp *property.PhysicalProperty) *physicalop.NominalSort {
-	prop, canPass, onlyColumn := GetPropByOrderByItemsContainScalarFunc(ls.ByItems)
-	if !canPass {
-		return nil
-	}
-	prop.ExpectedCnt = reqProp.ExpectedCnt
-	prop.NoCopPushDown = reqProp.NoCopPushDown
-	ps := physicalop.NominalSort{OnlyColumn: onlyColumn, ByItems: ls.ByItems}.Init(
-		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(ls.SCtx().GetSessionVars(), prop.ExpectedCnt), ls.QueryBlockOffset(), prop)
-	return ps
-}
-
-func getNominalSortSimple(ls *logicalop.LogicalSort, reqProp *property.PhysicalProperty) *physicalop.NominalSort {
-	prop, canPass, onlyColumn := GetPropByOrderByItemsContainScalarFunc(ls.ByItems)
-	if !canPass || !onlyColumn {
-		return nil
-	}
-	newProp := reqProp.CloneEssentialFields()
-	newProp.SortItems = prop.SortItems
-	ps := physicalop.NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(
-		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(ls.SCtx().GetSessionVars(), reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
-	return ps
 }
 
 func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {

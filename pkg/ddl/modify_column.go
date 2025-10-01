@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -42,6 +43,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -49,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -431,6 +435,25 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
+func (w *worker) doAnalyzeRunning(job *model.Job, tblInfo *model.TableInfo) {
+	// after all old index data are reorged. re-analyze it.
+	done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+	if done {
+		job.AnalyzeState = model.AnalyzeStateDone
+	}
+	// previously, when reorg is done, and before we set the state to public, we need all other sub-task to
+	// be ready as well which is via setting this job as NornRevertible, then we can continue skip current
+	// sub and process the others.
+	// And when all sub-task are ready, which means each of them could be public in one more ddl round. And
+	// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
+	// use the schema version generated once.
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible && job.AnalyzeState == model.AnalyzeStateDone {
+		// This is the final revertible state before public.
+		job.MarkNonRevertible()
+	}
+	// not done yet
+}
+
 func (w *worker) doModifyColumnTypeWithData(
 	jobCtx *jobContext,
 	job *model.Job,
@@ -547,37 +570,48 @@ func (w *worker) doModifyColumnTypeWithData(
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-
-		var done bool
-		if job.MultiSchemaInfo != nil {
-			done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
-		} else {
+		switch job.AnalyzeState {
+		case model.AnalyzeStateNone:
+			// reorg the index data.
+			var done bool
 			done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
-		}
-		if !done {
-			return ver, err
-		}
-		failpoint.InjectCall("afterReorgWorkForModifyColumn")
+			if !done {
+				return ver, err
+			}
+			if checkAnalyzeNecessary(job, changingIdxs, tblInfo) {
+				job.AnalyzeState = model.AnalyzeStateRunning
+			} else {
+				job.AnalyzeState = model.AnalyzeStateSkipped
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateRunning:
+			// after all old index data are reorged. re-analyze it.
+			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done {
+				job.AnalyzeState = model.AnalyzeStateDone
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+			failpoint.InjectCall("afterReorgWorkForModifyColumn")
+			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
+			if tblInfo.TTLInfo != nil {
+				updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, colName)
+			}
+			changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
+			intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
+			updateObjectState(oldCol, oldIdxInfos, model.StateWriteOnly)
+			updateObjectState(changingCol, changingIdxInfos, model.StatePublic)
+			markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, colName)
+			moveChangingColumnInfoToDest(tblInfo, oldCol, changingCol, pos)
+			moveOldColumnInfo(tblInfo, oldCol)
+			moveIndexInfoToDest(tblInfo, changingCol, oldIdxInfos, changingIdxInfos)
+			updateModifyingCols(oldCol, changingCol)
 
-		oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
-		if tblInfo.TTLInfo != nil {
-			updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, colName)
-		}
-		changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
-		intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
-
-		updateObjectState(oldCol, oldIdxInfos, model.StateWriteOnly)
-		updateObjectState(changingCol, changingIdxInfos, model.StatePublic)
-		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, colName)
-		moveChangingColumnInfoToDest(tblInfo, oldCol, changingCol, pos)
-		moveOldColumnInfo(tblInfo, oldCol)
-		moveIndexInfoToDest(tblInfo, changingCol, oldIdxInfos, changingIdxInfos)
-		updateModifyingCols(oldCol, changingCol)
-
-		job.SchemaState = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
+			job.SchemaState = model.StatePublic
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		}
 	case model.StatePublic:
 		oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
@@ -591,7 +625,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
-			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
+			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, job.AnalyzeState == model.AnalyzeStateDone)
 			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -619,19 +653,93 @@ func (w *worker) doModifyColumnTypeWithData(
 	return ver, errors.Trace(err)
 }
 
-func doReorgWorkForModifyColumnMultiSchema(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
-	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
-	if job.MultiSchemaInfo.Revertible {
-		done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
-		if done {
-			// We need another round to wait for all the others sub-jobs to finish.
-			job.MarkNonRevertible()
-		}
-		// We need another round to run the reorg process.
-		return false, ver, err
+func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
+	analyzeVer := vardef.DefTiDBAnalyzeVersion
+	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
+		analyzeVer = variable.TidbOptInt(val, analyzeVer)
 	}
-	// Non-revertible means all the sub jobs finished.
-	return true, ver, err
+	enableDDLAnalyze := vardef.DefTiDBEnableDDLAnalyze
+	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok {
+		enableDDLAnalyze = variable.TiDBOptOn(val)
+	}
+	isPartitionedTable := tbl.GetPartitionInfo() == nil
+	hasChangingIdx := len(changingIdxes) > 0
+
+	if enableDDLAnalyze && hasChangingIdx && isPartitionedTable && analyzeVer == 2 {
+		return true
+	}
+	logutil.DDLLogger().Info("skip analyze",
+		zap.Bool("tidb_enable_ddl_analyze", enableDDLAnalyze),
+		zap.Bool("is partitioned table", isPartitionedTable),
+		zap.Int("affected indexes count", len(changingIdxes)),
+		zap.Int("tidb_analyze_version", analyzeVer))
+	return false
+}
+
+// checkAndMarkNonRevertible should be called when the job is in the final revertible state before public.
+func checkAndMarkNonRevertible(job *model.Job) {
+	// previously, when reorg is done, and before we set the state to public, we need all other sub-task to
+	// be ready as well which is via setting this job as NornRevertible, then we can continue skip current
+	// sub and process the others.
+	// And when all sub-task are ready, which means each of them could be public in one more ddl round. And
+	// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
+	// use the schema version generated once.
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+	}
+}
+
+func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) bool {
+	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
+	if doneCh == nil {
+		doneCh = make(chan struct{})
+		eg := util.NewErrorGroupWithRecover()
+		eg.Go(func() error {
+			sessCtx, err := w.sessPool.Get()
+			if err != nil {
+				return err
+			}
+			defer func() {
+				w.sessPool.Put(sessCtx)
+				close(doneCh)
+			}()
+			dbTable := fmt.Sprintf("`%s`.`%s`", dbName, tblName)
+
+			exec, ok := sessCtx.(sqlexec.RestrictedSQLExecutor)
+			if !ok {
+				return errors.Errorf("not restricted SQL executor: %T", sessCtx)
+			}
+			// internal sql may not init the analysis related variable correctly.
+			err = statsutil.UpdateSCtxVarsForStats(sessCtx)
+			if err != nil {
+				return err
+			}
+			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
+			if err != nil {
+				logutil.DDLLogger().Warn("analyze table failed",
+					zap.Int64("jobID", job.ID),
+					zap.String("db", dbName),
+					zap.String("table", tblName),
+					zap.Error(err),
+					zap.Stack("stack"))
+				// We can continue to finish the job even if analyze table failed.
+			}
+			return nil
+		})
+		w.ddlCtx.setAnalyzeDoneCh(job.ID, doneCh)
+	}
+	select {
+	case <-doneCh:
+		logutil.DDLLogger().Info("analyze table after create index done", zap.Int64("jobID", job.ID))
+		return true
+	case <-w.ctx.Done():
+		logutil.DDLLogger().Info("analyze table after create index context done",
+			zap.Int64("jobID", job.ID), zap.Error(w.ctx.Err()))
+		return true
+	case <-time.After(10 * time.Second):
+		logutil.DDLLogger().Info("analyze table after create index timeout check", zap.Int64("jobID", job.ID))
+		return false
+	}
 }
 
 func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
@@ -1012,6 +1120,7 @@ func GetModifiableColumnJob(
 		CtxVars:        []any{needChangeColData},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
 	}
 	err = initJobReorgMetaFromVariables(ctx, job, t, sctx)
 	if err != nil {
