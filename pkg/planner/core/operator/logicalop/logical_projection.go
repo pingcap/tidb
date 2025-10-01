@@ -292,7 +292,7 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 	})
 	cols := make([]*expression.Column, 0, 8)
 	for i, expr := range p.Exprs {
-		expression.ExtractAllColumnsFromExpressionsInUsedSlices(cols, nil, expr)
+		cols = expression.ExtractAllColumnsFromExpressionsInUsedSlices(cols, nil, expr)
 		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(
 			p.SCtx(), cols, childSchema[0], childProfile)
 		cols = cols[:0]
