@@ -100,6 +100,9 @@ type Parser struct {
 	cache  []yySymType
 	yylval yySymType
 	yyVAL  *yySymType
+
+	// arena provides memory arena for AST node allocation
+	arena  *ASTArena
 }
 
 func yySetOffset(yyVAL *yySymType, offset int) {
@@ -126,6 +129,7 @@ func New() *Parser {
 
 	p := &Parser{
 		cache: make([]yySymType, 200),
+		arena: NewASTArena(),
 	}
 	p.reset()
 	return p
@@ -134,6 +138,7 @@ func New() *Parser {
 // Reset resets the parser.
 func (parser *Parser) Reset() {
 	clear(parser.cache)
+	parser.arena.Reset()
 	parser.reset()
 }
 
@@ -161,6 +166,7 @@ func (parser *Parser) SetParserConfig(config ParserConfig) {
 // ParseSQL parses a query string to raw ast.StmtNode.
 func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.StmtNode, warns []error, err error) {
 	resetParams(parser)
+	parser.arena.Reset()
 	parser.lexer.reset(sql)
 	for _, p := range params {
 		if err := p.ApplyOn(parser); err != nil {
