@@ -133,20 +133,23 @@ func Selectivity(
 				return 0, nil, errors.Trace(err)
 			}
 			nodes = append(nodes, &StatsNode{Tp: ColType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
+			var cnt float64
+			var cntEst statistics.RowEstimate
 			if colStats.IsHandle {
 				nodes[len(nodes)-1].Tp = PkType
-				var cnt float64
-				cnt, err = GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
+				cntEst, err = GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}
+				cnt = cntEst.Est
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 				continue
 			}
-			cnt, err := GetRowCountByColumnRanges(ctx, coll, id, ranges)
+			cntEst, err = GetRowCountByColumnRanges(ctx, coll, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
+			cnt = cntEst.Est
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 		} else if !col.IsHidden {
 			// TODO: We are able to remove this path if we remove the async stats load.
@@ -1221,10 +1224,11 @@ func crossValidationSelectivity(
 			Collators:   []collate.Collator{idxPointRange.Collators[i]},
 		}
 
-		rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
+		rowCountEst, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
 		if err != nil {
 			return 0, 0, err
 		}
+		rowCount := rowCountEst.Est
 		crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
 
 		if rowCount < minRowCount {
