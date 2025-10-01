@@ -17,7 +17,9 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -26,7 +28,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
@@ -35,9 +39,11 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 func TestTiDBLastTxnInfoCommitMode(t *testing.T) {
@@ -758,4 +764,121 @@ func TestBuildProjectionForIndexJoinPanic(t *testing.T) {
 	}()
 	err := tk.QueryToErr("select /*+ tidb_inlj(t2) */ t2.b, t1.b from t1 join t2 ON t2.a=t1.a;")
 	require.ErrorContains(t, err, "buildProjectionForIndexJoinPanic")
+}
+
+func TestIndexLookUpPushDownExec(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("IndexLookUp push down is not supported temporarily in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id bigint primary key, a bigint, b bigint, index a(a))")
+	seed := time.Now().UnixNano()
+	logutil.BgLogger().Info("Run TestIndexLookUpPushDownExec with seed", zap.Int64("seed", seed))
+	r := rand.New(rand.NewSource(seed))
+	batch := 100
+	total := batch * 20
+	indexValEnd := 100
+	randIndexVal := func() int {
+		return r.Intn(indexValEnd)
+	}
+	for i := 0; i < total; i += batch {
+		values := make([]string, 0, batch)
+		for j := 0; j < batch; j++ {
+			values = append(values, fmt.Sprintf("(%d, %d, %d)", i+j, randIndexVal(), r.Int63()))
+		}
+		tk.MustExec("insert into t values " + strings.Join(values, ","))
+	}
+
+	runSelectWithCheck := func(where string, skip, limit int) {
+		require.GreaterOrEqual(t, skip, 0)
+		if skip > 0 {
+			require.GreaterOrEqual(t, limit, 0)
+		}
+
+		hitRate := r.Intn(11)
+		message := fmt.Sprintf("seed: %d, hitRate: %d, where: %s, limit: %d", seed, hitRate, where, limit)
+		filterMap := make([]bool, total)
+		for i := 0; i < total; i++ {
+			filterMap[i] = r.Intn(10) < hitRate
+		}
+
+		injectHandleFilter := func(h kv.Handle) bool {
+			return filterMap[h.IntValue()]
+		}
+		var injectCalled atomic.Bool
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/inject-index-lookup-handle-filter", func(f *func(kv.Handle) bool) {
+			*f = injectHandleFilter
+			injectCalled.Store(true)
+		}))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/inject-index-lookup-handle-filter"))
+		}()
+
+		// use index lookup push down
+		injectCalled.Store(false)
+		var sb strings.Builder
+		sb.WriteString("select /*+ index_lookup_pushdown(t, a)*/ * from t where ")
+		sb.WriteString(where)
+		if skip > 0 {
+			sb.WriteString(fmt.Sprintf(" limit %d, %d", skip, limit))
+		} else if limit >= 0 {
+			sb.WriteString(fmt.Sprintf(" limit %d", limit))
+		}
+
+		// make sure the query uses index lookup
+		analyzeResult := tk.MustQuery("explain analyze " + sb.String())
+		require.Contains(t, analyzeResult.String(), "LocalIndexLookUp", analyzeResult.String())
+
+		// get actual result
+		rs := tk.MustQuery(sb.String())
+		require.True(t, injectCalled.Load(), message)
+		actual := rs.Rows()
+		idSets := make(map[string]struct{}, len(actual))
+		for _, row := range actual {
+			id := row[0].(string)
+			_, dup := idSets[id]
+			require.False(t, dup, "dupID: "+id+", "+message)
+			idSets[row[0].(string)] = struct{}{}
+		}
+
+		// use table scan
+		injectCalled.Store(false)
+		matchCondList := tk.MustQuery("select /*+ use_index(t) */* from t where " + where + " order by id").Rows()
+		require.False(t, injectCalled.Load(), message)
+
+		if limit == 0 || skip >= len(matchCondList) {
+			require.Len(t, actual, 0, message)
+		} else if limit < 0 {
+			// no limit two results should have same members
+			require.ElementsMatch(t, matchCondList, actual, message)
+		} else {
+			expectRowCnt := limit
+			if skip+limit > len(matchCondList) {
+				expectRowCnt = len(matchCondList) - skip
+			}
+			require.Len(t, actual, expectRowCnt, message)
+			require.Subset(t, matchCondList, actual, message)
+		}
+	}
+
+	runSelectWithCheck("1", 0, -1)
+	runSelectWithCheck("1", 0, r.Intn(total*2))
+	runSelectWithCheck("1", total/2, r.Intn(total))
+	runSelectWithCheck("1", total-10, 20)
+	runSelectWithCheck("1", total, 10)
+	runSelectWithCheck("1", 10, 0)
+	runSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), 0, -1)
+	runSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), 0, 25)
+	runSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), 0, -1)
+	runSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), 0, r.Intn(100)+1)
+	runSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), 0, -1)
+	runSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), 0, r.Intn(100)+1)
+	start := randIndexVal()
+	runSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), 0, -1)
+	start = randIndexVal()
+	runSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), 0, r.Intn(50)+1)
+	runSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, -1)
+	runSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, r.Intn(50)+1)
 }
