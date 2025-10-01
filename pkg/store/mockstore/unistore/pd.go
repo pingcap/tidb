@@ -397,6 +397,4 @@ func (c *pdClient) WatchGCSafePointV2(ctx context.Context, revision int64) (chan
 	panic("unimplemented")
 }
 
-func (c *pdClient) WithCallerComponent(component caller.Component) pd.Client {
-	return c
-}
+func (c *pdClient) WithCallerComponent(caller.Component) pd.Client { return c }

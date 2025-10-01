@@ -2969,10 +2969,7 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 	if !ok {
 		return 0, fmt.Errorf("not a helper.Storage")
 	}
-	h := &helper.Helper{
-		Store:       hStore,
-		RegionCache: hStore.GetRegionCache(),
-	}
+	h := helper.NewHelper(hStore)
 	pdCli, err := h.TryGetPDHTTPClient()
 	if err != nil {
 		return 0, err

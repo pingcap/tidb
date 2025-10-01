@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -108,7 +109,7 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	})
 
 	//nolint: forcetypeassert
-	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
+	pdCli := store.(tikv.Storage).GetRegionCache().PDClient().WithCallerComponent(caller.Ddl)
 	var cpMgr *CheckpointManager
 	if b.sessPool != nil {
 		cpMgr, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)

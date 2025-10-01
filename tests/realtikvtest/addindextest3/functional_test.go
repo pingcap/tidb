@@ -85,7 +85,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 }
 
 func TestBackendCtxConcurrentUnregister(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store, _ := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (a int);")
