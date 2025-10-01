@@ -185,6 +185,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		// TODO: Also do the same for DROP PARTITION
 		c.tblInfo.Partition.DDLAction == model.ActionTruncateTablePartition {
 		allowOverwriteOfOldGlobalIndex = true
+		if len(c.tblInfo.Partition.DroppingDefinitions) > 0 {
+			skipCheck = false
+		}
 	}
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
