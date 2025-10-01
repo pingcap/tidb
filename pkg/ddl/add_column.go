@@ -653,14 +653,17 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 	case ast.CurrentTimestamp, ast.CurrentDate: // CURRENT_TIMESTAMP() and CURRENT_DATE()
 		tp, fsp := col.FieldType.GetType(), col.FieldType.GetDecimal()
 		if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-			defaultFsp := 0
-			if len(expr.Args) == 1 {
-				if val := expr.Args[0].(*driver.ValueExpr); val != nil {
-					defaultFsp = int(val.GetInt64())
+			// CURRENT_DATE() returns a date without time, so it's always valid for datetime/timestamp columns
+			if expr.FnName.L == ast.CurrentTimestamp {
+				defaultFsp := 0
+				if len(expr.Args) == 1 {
+					if val := expr.Args[0].(*driver.ValueExpr); val != nil {
+						defaultFsp = int(val.GetInt64())
+					}
 				}
-			}
-			if defaultFsp != fsp {
-				return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+				if defaultFsp != fsp {
+					return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+				}
 			}
 		}
 		return nil, false, nil
