@@ -540,7 +540,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	case *ast.LoadStatsStmt:
 		return b.buildLoadStats(x), nil
 	case *ast.RefreshStatsStmt:
-		return b.buildRefreshStats(x), nil
+		return b.buildRefreshStats(x)
 	case *ast.LockStatsStmt:
 		return b.buildLockStats(x), nil
 	case *ast.UnlockStatsStmt:
@@ -4865,14 +4865,39 @@ func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) base.Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) base.Plan {
+func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) (base.Plan, error) {
+	if err := fillDefaultDBForRefreshStats(b.ctx, rs); err != nil {
+		return nil, err
+	}
+	rs.Dedup()
 	// TODO: We need to check the select privilege here.
 	p := &Simple{
 		Statement:    rs,
 		IsFromRemote: false,
 		ResolveCtx:   b.resolveCtx,
 	}
-	return p
+	return p, nil
+}
+
+func fillDefaultDBForRefreshStats(ctx base.PlanContext, rs *ast.RefreshStatsStmt) error {
+	if len(rs.RefreshObjects) == 0 {
+		return nil
+	}
+
+	currentDB := ctx.GetSessionVars().CurrentDB
+	for _, obj := range rs.RefreshObjects {
+		if obj.RefreshObjectScope != ast.RefreshObjectScopeTable {
+			continue
+		}
+		if obj.DBName.L != "" {
+			continue
+		}
+		if currentDB == "" {
+			return plannererrors.ErrNoDB
+		}
+		obj.DBName = ast.NewCIStr(currentDB)
+	}
+	return nil
 }
 
 // buildLockStats requires INSERT and SELECT privilege for the tables same as buildAnalyze.
