@@ -1753,19 +1753,20 @@ var (
 	// AnalyzeDefaultCMSketchDepth is the global default CMSketch depth for analyze operations
 	AnalyzeDefaultCMSketchDepth = atomic.NewUint64(DefTiDBAnalyzeDefaultCMSketchDepth)
 	// AnalyzeDefaultNumSamples is the global default number of samples for analyze operations
-	AnalyzeDefaultNumSamples       = atomic.NewUint64(DefTiDBAnalyzeDefaultNumSamples)
-	GlobalLogMaxDays               = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
-	QueryLogMaxLen                 = atomic.NewInt32(DefTiDBQueryLogMaxLen)
-	EnablePProfSQLCPU              = atomic.NewBool(false)
-	EnableBatchDML                 = atomic.NewBool(false)
-	EnableTmpStorageOnOOM          = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
-	DDLReorgWorkerCounter    int32 = DefTiDBDDLReorgWorkerCount
-	DDLReorgBatchSize        int32 = DefTiDBDDLReorgBatchSize
-	DDLFlashbackConcurrency  int32 = DefTiDBDDLFlashbackConcurrency
-	DDLErrorCountLimit       int64 = DefTiDBDDLErrorCountLimit
-	DDLReorgRowFormat        int64 = DefTiDBRowFormatV2
-	DDLReorgMaxWriteSpeed          = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
-	MaxDeltaSchemaCount      int64 = DefTiDBMaxDeltaSchemaCount
+	AnalyzeDefaultNumSamples = atomic.NewUint64(DefTiDBAnalyzeDefaultNumSamples)
+
+	GlobalLogMaxDays              = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	QueryLogMaxLen                = atomic.NewInt32(DefTiDBQueryLogMaxLen)
+	EnablePProfSQLCPU             = atomic.NewBool(false)
+	EnableBatchDML                = atomic.NewBool(false)
+	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	DDLReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
+	DDLReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
+	DDLFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
+	DDLErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
+	DDLReorgRowFormat       int64 = DefTiDBRowFormatV2
+	DDLReorgMaxWriteSpeed         = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
+	MaxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	ForcePriority                        = int32(DefTiDBForcePriority)

@@ -3058,7 +3058,8 @@ func GetAnalyzeOptionDefaultV2ForTest() map[ast.AnalyzeOptionType]uint64 {
 // This function very similar to handleAnalyzeOptions, but it's used for analyze version 2.
 // Remove this function after we remove the support of analyze version 1.
 func handleAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	defaultV2 := analyzeOptionDefaultV2()
+	optMap := make(map[ast.AnalyzeOptionType]uint64, len(defaultV2))
 	sampleNum, sampleRate := uint64(0), 0.0
 	for _, opt := range opts {
 		datumValue := opt.Value.(*driver.ValueExpr).Datum
@@ -3100,8 +3101,8 @@ func handleAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]ui
 }
 
 func fillAnalyzeOptionsV2(optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
-	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
 	defaultV2 := analyzeOptionDefaultV2()
+	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(defaultV2))
 	for key, defaultVal := range defaultV2 {
 		if val, ok := optMap[key]; ok {
 			filledMap[key] = val
