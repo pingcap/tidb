@@ -93,9 +93,8 @@ func CallWithSCtx(pool syssession.Pool, f func(sctx sessionctx.Context) error, f
 			}
 			if wrapTxn {
 				return WrapTxn(sctx, f)
-			} else {
-				return f(sctx)
 			}
+			return f(sctx)
 		})
 	})
 }
