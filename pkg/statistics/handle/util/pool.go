@@ -27,8 +27,8 @@ type Pool interface {
 	// GPool returns the goroutine pool.
 	GPool() *gp.Pool
 
-	// SPool returns the advanced session pool.
-	SPool() *syssession.AdvancedSessionPool
+	// SPool returns the session pool.
+	SPool() syssession.Pool
 
 	// Close closes the goroutine pool.
 	Close()
@@ -39,11 +39,11 @@ var _ Pool = (*pool)(nil)
 type pool struct {
 	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
 	gpool *gp.Pool
-	pool  *syssession.AdvancedSessionPool
+	pool  syssession.Pool
 }
 
 // NewPool creates a new Pool.
-func NewPool(p *syssession.AdvancedSessionPool) Pool {
+func NewPool(p syssession.Pool) Pool {
 	return &pool{
 		gpool: gp.New(math.MaxInt16, time.Minute),
 		pool:  p,
@@ -56,7 +56,7 @@ func (p *pool) GPool() *gp.Pool {
 }
 
 // SPool returns the advanced session pool.
-func (p *pool) SPool() *syssession.AdvancedSessionPool {
+func (p *pool) SPool() syssession.Pool {
 	return p.pool
 }
 

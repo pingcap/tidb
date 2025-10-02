@@ -77,7 +77,7 @@ var (
 )
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
-func CallWithSCtx(pool *syssession.AdvancedSessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+func CallWithSCtx(pool syssession.Pool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
 	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
 	return pool.WithSession(func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
@@ -178,7 +178,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 }
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
-func GetCurrentPruneMode(pool *syssession.AdvancedSessionPool) (mode string, err error) {
+func GetCurrentPruneMode(pool syssession.Pool) (mode string, err error) {
 	err = CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
 		return nil

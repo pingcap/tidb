@@ -127,7 +127,7 @@ func NewHandle(
 	ctx context.Context,
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
-	pool *syssession.AdvancedSessionPool,
+	pool syssession.Pool,
 	tracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
 	autoAnalyzeProcIDGetter func() uint64,
