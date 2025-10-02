@@ -133,7 +133,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
-	maxAccessConds, numZeroAccessConds, numOneAccessConds := 0, 0, 0
+	maxAccessConds, numZeroAccessConds := 0, 0
 	perfectCoveringIndex, hasSingleScan := false, false
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
@@ -156,15 +156,13 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		}
 		if accessConds == 0 {
 			numZeroAccessConds++
-		} else if accessConds == 1 {
-			numOneAccessConds++
 		}
 	}
 
 	// Prune indexes that have the same prefix as other indexes with the same eqOrInCondCount,
 	// but where the other index also has a higher eqOrInCondCount
 	if len(ds.AllPossibleAccessPaths) > 20 {
-		ds.AllPossibleAccessPaths = pruneIndexesByAccessCondCount(ds.AllPossibleAccessPaths, maxAccessConds, numZeroAccessConds, numOneAccessConds, perfectCoveringIndex, hasSingleScan)
+		ds.AllPossibleAccessPaths = pruneIndexesByAccessCondCount(ds.AllPossibleAccessPaths, maxAccessConds, numZeroAccessConds, perfectCoveringIndex, hasSingleScan)
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
@@ -762,7 +760,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 
 // pruneIndexesByAccessCondCount prunes indexes that have the same prefix as other indexes
 // with the same eqOrInCondCount, but where the other index also has a higher eqOrInCondCount.
-func pruneIndexesByAccessCondCount(paths []*util.AccessPath, maxAccessConds, numZeroAccessConds, numOneAccessConds int, perfectCoveringIndex, hasSingleScan bool) []*util.AccessPath {
+func pruneIndexesByAccessCondCount(paths []*util.AccessPath, maxAccessConds, numZeroAccessConds int, perfectCoveringIndex, hasSingleScan bool) []*util.AccessPath {
 	if len(paths) <= 1 {
 		return paths
 	}
