@@ -158,9 +158,6 @@ func TestRefreshStatsPrivilegeChecks(t *testing.T) {
 	t.Run("table scope requires select", func(t *testing.T) {
 		tk.MustExec("drop user if exists 'refresh_reader'@'%'")
 		tk.MustExec("create user 'refresh_reader'@'%'")
-		t.Cleanup(func() {
-			tk.MustExec("drop user if exists 'refresh_reader'@'%'")
-		})
 
 		tkUser := testkit.NewTestKit(t, store)
 		require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "refresh_reader", Hostname: "%"}, nil, nil, nil))
@@ -173,9 +170,6 @@ func TestRefreshStatsPrivilegeChecks(t *testing.T) {
 	t.Run("database scope requires select", func(t *testing.T) {
 		tk.MustExec("drop user if exists 'refresh_db_reader'@'%'")
 		tk.MustExec("create user 'refresh_db_reader'@'%'")
-		t.Cleanup(func() {
-			tk.MustExec("drop user if exists 'refresh_db_reader'@'%'")
-		})
 
 		tkUser := testkit.NewTestKit(t, store)
 		require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "refresh_db_reader", Hostname: "%"}, nil, nil, nil))
@@ -188,9 +182,6 @@ func TestRefreshStatsPrivilegeChecks(t *testing.T) {
 	t.Run("global scope requires global select", func(t *testing.T) {
 		tk.MustExec("drop user if exists 'refresh_global_reader'@'%'")
 		tk.MustExec("create user 'refresh_global_reader'@'%'")
-		t.Cleanup(func() {
-			tk.MustExec("drop user if exists 'refresh_global_reader'@'%'")
-		})
 
 		tkUser := testkit.NewTestKit(t, store)
 		require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "refresh_global_reader", Hostname: "%"}, nil, nil, nil))
