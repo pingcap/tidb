@@ -163,7 +163,16 @@ func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreTyp
 				return false
 			}
 		}
+		// TiFlash's behavior of converting a float to a bool is different from TiDB.
+		// e.g. `select 1 where 0.000001` returns 1 in TiDB, but empty in TiFlash.
+		// So we disable push down for division that returns float/decimal and is used as a predicate.
+		if sf, ok := expr.(*ScalarFunction); ok && sf.FuncName.L == ast.Div {
+			if sf.RetType.EvalType() == types.ETReal || sf.RetType.EvalType() == types.ETDecimal {
+				return false
+			}
+		}
 	}
+
 	switch x := expr.(type) {
 	case *CorrelatedColumn:
 		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column, true) != nil
