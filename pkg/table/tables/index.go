@@ -315,7 +315,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			// Check mem buffer first. Note that it may be a tombstone
 			// resulting in err == nil and len(value) == 0.
 			// err == nil will also turn off lazyCheck later,
-			// and skip kv.SetPresumeKeyNotExist flag, to allow
+			// and skip kv.SetPresumeKeyNotExists flag, to allow
 			// taking locks on already existing row.
 			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
 			if kv.IsErrNotFound(err) {
