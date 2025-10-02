@@ -18,8 +18,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
@@ -144,4 +146,66 @@ func TestRefreshStatsWhenDatabaseIsEmpty(t *testing.T) {
 	vars.StmtCtx.SetWarnings(nil)
 	tk.MustExec("refresh stats test.*")
 	require.Len(t, vars.StmtCtx.GetWarnings(), 0)
+}
+
+func TestRefreshStatsPrivilegeChecks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_refresh_priv")
+	tk.MustExec("create table t_refresh_priv (a int)")
+
+	t.Run("table scope requires select", func(t *testing.T) {
+		tk.MustExec("drop user if exists 'refresh_reader'@'%'")
+		tk.MustExec("create user 'refresh_reader'@'%'")
+
+		tkUser := testkit.NewTestKit(t, store)
+		require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "refresh_reader", Hostname: "%"}, nil, nil, nil))
+		tkUser.MustGetErrCode("refresh stats test.t_refresh_priv", errno.ErrTableaccessDenied)
+
+		tk.MustExec("grant select on test.t_refresh_priv to 'refresh_reader'@'%'")
+		tkUser.MustExec("refresh stats test.t_refresh_priv")
+	})
+
+	t.Run("database scope requires select", func(t *testing.T) {
+		tk.MustExec("drop user if exists 'refresh_db_reader'@'%'")
+		tk.MustExec("create user 'refresh_db_reader'@'%'")
+
+		tkUser := testkit.NewTestKit(t, store)
+		require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "refresh_db_reader", Hostname: "%"}, nil, nil, nil))
+		tkUser.MustGetErrCode("refresh stats test.*", errno.ErrDBaccessDenied)
+
+		tk.MustExec("grant select on test.* to 'refresh_db_reader'@'%'")
+		tkUser.MustExec("refresh stats test.*")
+	})
+
+	t.Run("global scope requires global select", func(t *testing.T) {
+		tk.MustExec("drop user if exists 'refresh_global_reader'@'%'")
+		tk.MustExec("create user 'refresh_global_reader'@'%'")
+
+		tkUser := testkit.NewTestKit(t, store)
+		require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "refresh_global_reader", Hostname: "%"}, nil, nil, nil))
+		tkUser.MustGetErrCode("refresh stats *.*", errno.ErrPrivilegeCheckFail)
+
+		tk.MustExec("grant select on *.* to 'refresh_global_reader'@'%'")
+		tkUser.MustExec("refresh stats *.*")
+	})
+}
+
+func TestRefreshStatsWithRestoreAdmin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	const user = "restore_admin_tester"
+	defer tk.MustExec("drop user if exists '" + user + "'@'%'")
+
+	tk.MustExec("drop user if exists '" + user + "'@'%'")
+	tk.MustExec("create user '" + user + "'@'%'")
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: user, Hostname: "%"}, nil, nil, nil))
+	tkUser.MustGetErrCode("refresh stats *.*", errno.ErrPrivilegeCheckFail)
+
+	tk.MustExec("grant restore_admin on *.* to '" + user + "'@'%'")
+	tkUser.MustExec("refresh stats *.*")
 }
