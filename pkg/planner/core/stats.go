@@ -765,10 +765,10 @@ func pruneIndexesByAccessCondCount(paths []*util.AccessPath, maxAccessConds, num
 		return paths
 	}
 
-	var perfectCoveringIndexes []*util.AccessPath
-	var preferredIndexes []*util.AccessPath
-	var forcedIndexes []*util.AccessPath
-	var tablePaths []*util.AccessPath
+	perfectCoveringIndexes := make([]*util.AccessPath, 0, 4)      // Usually very few perfect covering indexes
+	preferredIndexes := make([]*util.AccessPath, 0, len(paths)/2) // Expected to be roughly half of paths
+	forcedIndexes := make([]*util.AccessPath, 0, 2)               // Usually very few forced indexes
+	tablePaths := make([]*util.AccessPath, 0, 1)                  // Usually just one table path
 	totalPaths := float64(len(paths))
 	keepOneAccessConds := (numZeroAccessConds > int(totalPaths*0.75)) || maxAccessConds <= 2
 
