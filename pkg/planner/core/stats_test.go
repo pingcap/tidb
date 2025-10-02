@@ -41,6 +41,7 @@ func createTestPath(index *model.IndexInfo, eqOrInCount int, tableFilters, index
 	path := &util.AccessPath{
 		Index:           index,
 		EqOrInCondCount: eqOrInCount,
+		AccessConds:     make([]expression.Expression, eqOrInCount), // Set AccessConds to match eqOrInCount
 		TableFilters:    make([]expression.Expression, len(tableFilters)),
 		IndexFilters:    make([]expression.Expression, len(indexFilters)),
 		IsSingleScan:    isSingleScan,
@@ -56,16 +57,18 @@ func createTablePath() *util.AccessPath {
 	}
 }
 
-func TestPruneIndexesByPrefixAndEqOrInCondCount(t *testing.T) {
+func TestPruneIndexesByAccessCondCount(t *testing.T) {
 	tests := []struct {
-		name          string
-		paths         []*util.AccessPath
-		maxEqOrIn     int
-		numTabFilters int
-		numIdxFilters int
-		expectedCount int
-		expectedNames []string
-		description   string
+		name                 string
+		paths                []*util.AccessPath
+		maxAccessConds       int
+		numZeroAccessConds   int
+		numOneAccessConds    int
+		perfectCoveringIndex bool
+		hasSingleScan        bool
+		expectedCount        int
+		expectedNames        []string
+		description          string
 	}{
 		{
 			name: "Perfect covering index optimization",
@@ -75,12 +78,14 @@ func TestPruneIndexesByPrefixAndEqOrInCondCount(t *testing.T) {
 				createTestPath(createTestIndex("idx_abc", "a", "b", "c"), 3, []string{}, []string{}, false, false),
 				createTestPath(createTestIndex("idx_ac", "a", "c"), 2, []string{"filter1"}, []string{}, false, false),
 			},
-			maxEqOrIn:     3,
-			numTabFilters: 0,
-			numIdxFilters: 0,
-			expectedCount: 1,
-			expectedNames: []string{"idx_abc"},
-			description:   "Should keep only the perfect covering index (maxEqOrIn=3, no filters)",
+			maxAccessConds:       3,
+			numZeroAccessConds:   0,
+			numOneAccessConds:    1,
+			perfectCoveringIndex: true,
+			hasSingleScan:        true,
+			expectedCount:        1,
+			expectedNames:        []string{"idx_abc"},
+			description:          "Should keep only the perfect covering index (maxAccessConds=3, single scan)",
 		},
 		{
 			name: "Perfect covering index with forced index",
@@ -90,12 +95,14 @@ func TestPruneIndexesByPrefixAndEqOrInCondCount(t *testing.T) {
 				createTestPath(createTestIndex("idx_abc", "a", "b", "c"), 3, []string{}, []string{}, false, false),
 				createTestPath(createTestIndex("idx_forced", "a", "d"), 2, []string{"filter1"}, []string{}, false, true),
 			},
-			maxEqOrIn:     3,
-			numTabFilters: 0,
-			numIdxFilters: 0,
-			expectedCount: 2,
-			expectedNames: []string{"idx_abc", "idx_forced"},
-			description:   "Should keep perfect covering index and forced index",
+			maxAccessConds:       3,
+			numZeroAccessConds:   0,
+			numOneAccessConds:    1,
+			perfectCoveringIndex: true,
+			hasSingleScan:        true,
+			expectedCount:        2,
+			expectedNames:        []string{"idx_abc", "idx_forced"},
+			description:          "Should keep perfect covering index and forced index",
 		},
 		{
 			name: "Perfect covering index with table path",
@@ -104,12 +111,14 @@ func TestPruneIndexesByPrefixAndEqOrInCondCount(t *testing.T) {
 				createTestPath(createTestIndex("idx_a", "a"), 1, []string{}, []string{}, false, false),
 				createTestPath(createTestIndex("idx_abc", "a", "b", "c"), 3, []string{}, []string{}, false, false),
 			},
-			maxEqOrIn:     3,
-			numTabFilters: 0,
-			numIdxFilters: 0,
-			expectedCount: 2,
-			expectedNames: []string{"", "idx_abc"}, // Empty string for table path
-			description:   "Should keep table path and perfect covering index",
+			maxAccessConds:       3,
+			numZeroAccessConds:   0,
+			numOneAccessConds:    1,
+			perfectCoveringIndex: true,
+			hasSingleScan:        false,
+			expectedCount:        2,
+			expectedNames:        []string{"", "idx_abc"}, // Empty string for table path
+			description:          "Should keep table path and perfect covering index",
 		},
 		{
 			name: "No perfect covering index - fallback to normal pruning",
@@ -118,12 +127,14 @@ func TestPruneIndexesByPrefixAndEqOrInCondCount(t *testing.T) {
 				createTestPath(createTestIndex("idx_ab", "a", "b"), 2, []string{"filter1"}, []string{}, false, false),
 				createTestPath(createTestIndex("idx_abc", "a", "b", "c"), 3, []string{"filter1"}, []string{}, false, false),
 			},
-			maxEqOrIn:     3,
-			numTabFilters: 1,
-			numIdxFilters: 0,
-			expectedCount: 1,
-			expectedNames: []string{"idx_abc"},
-			description:   "Should prune prefix indexes when no perfect covering index exists",
+			maxAccessConds:       3,
+			numZeroAccessConds:   0,
+			numOneAccessConds:    1,
+			perfectCoveringIndex: false,
+			hasSingleScan:        false,
+			expectedCount:        1,
+			expectedNames:        []string{"idx_abc"},
+			description:          "Should prune prefix indexes when no perfect covering index exists",
 		},
 		{
 			name: "Single scan preservation",
@@ -132,39 +143,45 @@ func TestPruneIndexesByPrefixAndEqOrInCondCount(t *testing.T) {
 				createTestPath(createTestIndex("idx_ab", "a", "b"), 2, []string{}, []string{}, true, false),
 				createTestPath(createTestIndex("idx_abc", "a", "b", "c"), 3, []string{}, []string{}, false, false),
 			},
-			maxEqOrIn:     3,
-			numTabFilters: 1,
-			numIdxFilters: 0,
-			expectedCount: 2,
-			expectedNames: []string{"idx_ab", "idx_abc"},
-			description:   "Should preserve single scan index even if it's a prefix of another",
+			maxAccessConds:       3,
+			numZeroAccessConds:   0,
+			numOneAccessConds:    1,
+			perfectCoveringIndex: false,
+			hasSingleScan:        true,
+			expectedCount:        2,
+			expectedNames:        []string{"idx_ab", "idx_abc"},
+			description:          "Should preserve single scan index even if it's a prefix of another",
 		},
 		{
-			name: "Single scan preservation with eqOrInCount > 1",
+			name: "Single scan preservation with accessConds > 1",
 			paths: []*util.AccessPath{
 				createTestPath(createTestIndex("idx_a", "a"), 1, []string{}, []string{}, false, false),
 				createTestPath(createTestIndex("idx_ab", "a", "b"), 2, []string{}, []string{}, true, false),
 				createTestPath(createTestIndex("idx_abc", "a", "b", "c"), 3, []string{}, []string{}, false, false),
 			},
-			maxEqOrIn:     3,
-			numTabFilters: 1,
-			numIdxFilters: 0,
-			expectedCount: 2,
-			expectedNames: []string{"idx_ab", "idx_abc"},
-			description:   "Should preserve single scan index when eqOrInCount > 1",
+			maxAccessConds:       3,
+			numZeroAccessConds:   0,
+			numOneAccessConds:    1,
+			perfectCoveringIndex: false,
+			hasSingleScan:        true,
+			expectedCount:        2,
+			expectedNames:        []string{"idx_ab", "idx_abc"},
+			description:          "Should preserve single scan index when accessConds > 1",
 		},
 		{
-			name: "Single scan not preserved when eqOrInCount = 1",
+			name: "Single scan not preserved when accessConds = 1",
 			paths: []*util.AccessPath{
 				createTestPath(createTestIndex("idx_a", "a"), 1, []string{}, []string{}, true, false),
 				createTestPath(createTestIndex("idx_ab", "a", "b"), 2, []string{}, []string{}, false, false),
 			},
-			maxEqOrIn:     2,
-			numTabFilters: 1,
-			numIdxFilters: 0,
-			expectedCount: 1,
-			expectedNames: []string{"idx_ab"},
-			description:   "Should prune single scan index when eqOrInCount = 1",
+			maxAccessConds:       2,
+			numZeroAccessConds:   0,
+			numOneAccessConds:    1,
+			perfectCoveringIndex: false,
+			hasSingleScan:        true,
+			expectedCount:        1,
+			expectedNames:        []string{"idx_ab"},
+			description:          "Should prune single scan index when accessConds = 1",
 		},
 		{
 			name: "Different column sequences",
@@ -173,34 +190,40 @@ func TestPruneIndexesByPrefixAndEqOrInCondCount(t *testing.T) {
 				createTestPath(createTestIndex("idx_ba", "b", "a"), 2, []string{}, []string{}, false, false),
 				createTestPath(createTestIndex("idx_abc", "a", "b", "c"), 3, []string{}, []string{}, false, false),
 			},
-			maxEqOrIn:     3,
-			numTabFilters: 1,
-			numIdxFilters: 0,
-			expectedCount: 1,
-			expectedNames: []string{"idx_abc"},
-			description:   "Should prune indexes with same columns in different sequences",
+			maxAccessConds:       3,
+			numZeroAccessConds:   0,
+			numOneAccessConds:    0,
+			perfectCoveringIndex: false,
+			hasSingleScan:        false,
+			expectedCount:        1,
+			expectedNames:        []string{"idx_abc"},
+			description:          "Should prune indexes with same columns in different sequences",
 		},
 		{
-			name:          "Empty paths",
-			paths:         []*util.AccessPath{},
-			maxEqOrIn:     0,
-			numTabFilters: 0,
-			numIdxFilters: 0,
-			expectedCount: 0,
-			expectedNames: []string{},
-			description:   "Should handle empty paths",
+			name:                 "Empty paths",
+			paths:                []*util.AccessPath{},
+			maxAccessConds:       0,
+			numZeroAccessConds:   0,
+			numOneAccessConds:    0,
+			perfectCoveringIndex: false,
+			hasSingleScan:        false,
+			expectedCount:        0,
+			expectedNames:        []string{},
+			description:          "Should handle empty paths",
 		},
 		{
 			name: "Single path",
 			paths: []*util.AccessPath{
 				createTestPath(createTestIndex("idx_a", "a"), 1, []string{}, []string{}, false, false),
 			},
-			maxEqOrIn:     1,
-			numTabFilters: 0,
-			numIdxFilters: 0,
-			expectedCount: 1,
-			expectedNames: []string{"idx_a"},
-			description:   "Should return single path unchanged",
+			maxAccessConds:       1,
+			numZeroAccessConds:   0,
+			numOneAccessConds:    1,
+			perfectCoveringIndex: false,
+			hasSingleScan:        false,
+			expectedCount:        1,
+			expectedNames:        []string{"idx_a"},
+			description:          "Should return single path unchanged",
 		},
 		{
 			name: "Multiple perfect covering indexes",
@@ -209,12 +232,14 @@ func TestPruneIndexesByPrefixAndEqOrInCondCount(t *testing.T) {
 				createTestPath(createTestIndex("idx_abd", "a", "b", "d"), 3, []string{}, []string{}, false, false),
 				createTestPath(createTestIndex("idx_ab", "a", "b"), 2, []string{"filter1"}, []string{}, false, false),
 			},
-			maxEqOrIn:     3,
-			numTabFilters: 0,
-			numIdxFilters: 0,
-			expectedCount: 2,
-			expectedNames: []string{"idx_abc", "idx_abd"},
-			description:   "Should keep all perfect covering indexes",
+			maxAccessConds:       3,
+			numZeroAccessConds:   0,
+			numOneAccessConds:    0,
+			perfectCoveringIndex: true,
+			hasSingleScan:        false,
+			expectedCount:        2,
+			expectedNames:        []string{"idx_abc", "idx_abd"},
+			description:          "Should keep all perfect covering indexes",
 		},
 		{
 			name: "Perfect covering index with index filters",
@@ -222,12 +247,14 @@ func TestPruneIndexesByPrefixAndEqOrInCondCount(t *testing.T) {
 				createTestPath(createTestIndex("idx_a", "a"), 1, []string{}, []string{}, false, false),
 				createTestPath(createTestIndex("idx_abc", "a", "b", "c"), 3, []string{}, []string{"idx_filter"}, false, false),
 			},
-			maxEqOrIn:     3,
-			numTabFilters: 0,
-			numIdxFilters: 1,
-			expectedCount: 1,
-			expectedNames: []string{"idx_abc"},
-			description:   "Should keep the index with higher eqOrInCondCount when no perfect covering index exists",
+			maxAccessConds:       3,
+			numZeroAccessConds:   0,
+			numOneAccessConds:    1,
+			perfectCoveringIndex: false,
+			hasSingleScan:        false,
+			expectedCount:        1,
+			expectedNames:        []string{"idx_abc"},
+			description:          "Should keep the index with higher accessConds when no perfect covering index exists",
 		},
 		{
 			name: "Perfect covering index with table filters",
@@ -235,18 +262,20 @@ func TestPruneIndexesByPrefixAndEqOrInCondCount(t *testing.T) {
 				createTestPath(createTestIndex("idx_a", "a"), 1, []string{}, []string{}, false, false),
 				createTestPath(createTestIndex("idx_abc", "a", "b", "c"), 3, []string{"tab_filter"}, []string{}, false, false),
 			},
-			maxEqOrIn:     3,
-			numTabFilters: 1,
-			numIdxFilters: 0,
-			expectedCount: 1,
-			expectedNames: []string{"idx_abc"},
-			description:   "Should keep the index with higher eqOrInCondCount when no perfect covering index exists",
+			maxAccessConds:       3,
+			numZeroAccessConds:   0,
+			numOneAccessConds:    1,
+			perfectCoveringIndex: false,
+			hasSingleScan:        false,
+			expectedCount:        1,
+			expectedNames:        []string{"idx_abc"},
+			description:          "Should keep the index with higher accessConds when no perfect covering index exists",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := pruneIndexesByPrefixAndEqOrInCondCount(tt.paths, tt.maxEqOrIn, tt.numTabFilters, tt.numIdxFilters)
+			result := pruneIndexesByAccessCondCount(tt.paths, tt.maxAccessConds, tt.numZeroAccessConds, tt.numOneAccessConds, tt.perfectCoveringIndex, tt.hasSingleScan)
 
 			require.Equal(t, tt.expectedCount, len(result), tt.description)
 
@@ -268,7 +297,7 @@ func TestPruneIndexesByPrefixAndEqOrInCondCount(t *testing.T) {
 	}
 }
 
-func TestPruneIndexesByPrefixAndEqOrInCondCountPerformance(t *testing.T) {
+func TestPruneIndexesByAccessCondCountPerformance(t *testing.T) {
 	// Test performance optimization with many indexes
 	t.Run("Performance with perfect covering index", func(t *testing.T) {
 		// Create many indexes to test performance
@@ -289,7 +318,7 @@ func TestPruneIndexesByPrefixAndEqOrInCondCountPerformance(t *testing.T) {
 			))
 		}
 
-		result := pruneIndexesByPrefixAndEqOrInCondCount(paths, 3, 0, 0)
+		result := pruneIndexesByAccessCondCount(paths, 3, 0, 0, true, false)
 
 		// Should only keep the perfect covering index
 		require.Equal(t, 1, len(result))
@@ -300,7 +329,7 @@ func TestPruneIndexesByPrefixAndEqOrInCondCountPerformance(t *testing.T) {
 		// Create many indexes without a perfect covering index
 		paths := make([]*util.AccessPath, 0, 100)
 
-		// Add many indexes with different eqOrInCondCount to trigger pruning
+		// Add many indexes with different accessConds to trigger pruning
 		for i := 0; i < 50; i++ {
 			paths = append(paths, createTestPath(
 				createTestIndex("idx_"+string(rune('a'+i)), "a", "b"),
@@ -322,34 +351,34 @@ func TestPruneIndexesByPrefixAndEqOrInCondCountPerformance(t *testing.T) {
 			))
 		}
 
-		result := pruneIndexesByPrefixAndEqOrInCondCount(paths, 2, 1, 0)
+		result := pruneIndexesByAccessCondCount(paths, 2, 0, 50, false, false)
 
 		// Should apply normal pruning logic and remove some indexes
 		require.Less(t, len(result), len(paths))
 	})
 }
 
-func TestPruneIndexesByPrefixAndEqOrInCondCountEdgeCases(t *testing.T) {
+func TestPruneIndexesByAccessCondCountEdgeCases(t *testing.T) {
 	t.Run("Nil index in path", func(t *testing.T) {
 		paths := []*util.AccessPath{
 			{Index: nil, EqOrInCondCount: 0, IsIntHandlePath: true}, // Table path
 			createTestPath(createTestIndex("idx_a", "a"), 1, []string{}, []string{}, false, false),
 		}
 
-		result := pruneIndexesByPrefixAndEqOrInCondCount(paths, 1, 0, 0)
+		result := pruneIndexesByAccessCondCount(paths, 1, 0, 1, false, false)
 
 		// Should handle nil index gracefully and preserve table path
 		require.Equal(t, 2, len(result))
 	})
 
-	t.Run("Zero maxEqOrIn", func(t *testing.T) {
+	t.Run("Zero maxAccessConds", func(t *testing.T) {
 		paths := []*util.AccessPath{
 			createTestPath(createTestIndex("idx_a", "a"), 0, []string{}, []string{}, false, false),
 		}
 
-		result := pruneIndexesByPrefixAndEqOrInCondCount(paths, 0, 0, 0)
+		result := pruneIndexesByAccessCondCount(paths, 0, 1, 0, false, false)
 
-		// Should handle zero maxEqOrIn
+		// Should handle zero maxAccessConds
 		require.Equal(t, 1, len(result))
 	})
 
@@ -359,7 +388,7 @@ func TestPruneIndexesByPrefixAndEqOrInCondCountEdgeCases(t *testing.T) {
 			createTestPath(createTestIndex("idx_ab", "a", "b"), 2, []string{"f1"}, []string{}, false, false),
 		}
 
-		result := pruneIndexesByPrefixAndEqOrInCondCount(paths, 2, 1, 0)
+		result := pruneIndexesByAccessCondCount(paths, 2, 0, 1, false, false)
 
 		// Should prefer index with fewer filters
 		require.Equal(t, 1, len(result))

@@ -133,7 +133,8 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
-	maxEqOrIn, numTabFilters, numIdxFilters := 0, 0, 0
+	maxAccessConds, numZeroAccessConds, numOneAccessConds := 0, 0, 0
+	perfectCoveringIndex, hasSingleScan := false, false
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
@@ -142,25 +143,28 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		if err != nil {
 			return nil, false, err
 		}
-		if path.EqOrInCondCount > maxEqOrIn {
-			// If we've found a new maxEqOrIn, reset the filter counts
-			maxEqOrIn = path.EqOrInCondCount
-			numTabFilters = len(path.TableFilters)
-			numIdxFilters = len(path.IndexFilters)
-		} else if path.EqOrInCondCount == maxEqOrIn {
-			// Record the filters of the path with the least filters.
-			if (len(path.AccessConds) > maxEqOrIn && numTabFilters >= len(path.TableFilters)) ||
-				(len(path.AccessConds) == maxEqOrIn && numTabFilters > len(path.TableFilters)) {
-				numTabFilters = len(path.TableFilters)
-				numIdxFilters = len(path.IndexFilters)
+		accessConds := max(len(path.AccessConds), path.MinAccessCondsForDNFCond)
+		if accessConds > maxAccessConds {
+			// If we've found a new max
+			maxAccessConds = accessConds
+			if len(path.TableFilters) == 0 && len(path.IndexFilters) == 0 {
+				perfectCoveringIndex = true
 			}
+			if path.IsSingleScan && !path.IsTablePath() {
+				hasSingleScan = true
+			}
+		}
+		if accessConds == 0 {
+			numZeroAccessConds++
+		} else if accessConds == 1 {
+			numOneAccessConds++
 		}
 	}
 
 	// Prune indexes that have the same prefix as other indexes with the same eqOrInCondCount,
 	// but where the other index also has a higher eqOrInCondCount
-	if maxEqOrIn > 1 || len(ds.AllPossibleAccessPaths) > 20 {
-		ds.AllPossibleAccessPaths = pruneIndexesByPrefixAndEqOrInCondCount(ds.AllPossibleAccessPaths, maxEqOrIn, numTabFilters, numIdxFilters)
+	if len(ds.AllPossibleAccessPaths) > 20 {
+		ds.AllPossibleAccessPaths = pruneIndexesByAccessCondCount(ds.AllPossibleAccessPaths, maxAccessConds, numZeroAccessConds, numOneAccessConds, perfectCoveringIndex, hasSingleScan)
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
@@ -756,45 +760,61 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 	return nil
 }
 
-// pruneIndexesByPrefixAndEqOrInCondCount prunes indexes that have the same prefix as other indexes
+// pruneIndexesByAccessCondCount prunes indexes that have the same prefix as other indexes
 // with the same eqOrInCondCount, but where the other index also has a higher eqOrInCondCount.
-func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn, numTabFilters, numIdxFilters int) []*util.AccessPath {
+func pruneIndexesByAccessCondCount(paths []*util.AccessPath, maxAccessConds, numZeroAccessConds, numOneAccessConds int, perfectCoveringIndex, hasSingleScan bool) []*util.AccessPath {
 	if len(paths) <= 1 {
 		return paths
 	}
 
-	// Early optimization: Check for perfect covering indexes
-	// If there's an index with maxEqOrIn and no filters, it's optimal
-	if numTabFilters == 0 && numIdxFilters == 0 {
-		var perfectCoveringIndexes []*util.AccessPath
-		var forcedIndexes []*util.AccessPath
-		var tablePaths []*util.AccessPath
+	var perfectCoveringIndexes []*util.AccessPath
+	var preferredIndexes []*util.AccessPath
+	var forcedIndexes []*util.AccessPath
+	var tablePaths []*util.AccessPath
+	totalPaths := float64(len(paths))
+	keepOneAccessConds := (numZeroAccessConds > int(totalPaths*0.75)) || maxAccessConds <= 2
 
-		for _, path := range paths {
-			if path.IsTablePath() {
-				tablePaths = append(tablePaths, path)
-				continue
-			}
-			if path.Forced {
-				forcedIndexes = append(forcedIndexes, path)
-				continue
-			}
-			// Check if this is a perfect covering index
-			if path.EqOrInCondCount == maxEqOrIn &&
-				len(path.TableFilters) == 0 &&
-				len(path.IndexFilters) == 0 {
+	for _, path := range paths {
+		if path.IsTablePath() {
+			tablePaths = append(tablePaths, path)
+			continue
+		}
+		if path.Forced {
+			forcedIndexes = append(forcedIndexes, path)
+			continue
+		}
+		accessConds := max(len(path.AccessConds), path.MinAccessCondsForDNFCond)
+		// Check if this is a perfect covering index
+		if accessConds == maxAccessConds {
+			if path.IsSingleScan || (perfectCoveringIndex && accessConds > 2) {
 				perfectCoveringIndexes = append(perfectCoveringIndexes, path)
+			} else {
+				preferredIndexes = append(preferredIndexes, path)
+			}
+			continue
+		}
+		if accessConds == 0 {
+			if keepOneAccessConds && !hasSingleScan && path.IsSingleScan {
+				preferredIndexes = append(preferredIndexes, path)
+			}
+			continue
+		}
+		if accessConds == 1 && keepOneAccessConds {
+			if (hasSingleScan && path.IsSingleScan) || !hasSingleScan {
+				preferredIndexes = append(preferredIndexes, path)
+				continue
 			}
 		}
+		preferredIndexes = append(preferredIndexes, path)
+	}
 
-		// If we have perfect covering indexes, return only them plus forced indexes and table paths
-		if len(perfectCoveringIndexes) > 0 {
-			result := make([]*util.AccessPath, 0, len(tablePaths)+len(forcedIndexes)+len(perfectCoveringIndexes))
-			result = append(result, tablePaths...)
-			result = append(result, forcedIndexes...)
-			result = append(result, perfectCoveringIndexes...)
-			return result
-		}
+	// If we have perfect covering indexes or forced indexes, then return those and table paths
+	if len(perfectCoveringIndexes) > 0 || len(forcedIndexes) > 0 {
+		result := make([]*util.AccessPath, 0, len(tablePaths)+len(forcedIndexes)+len(perfectCoveringIndexes))
+		result = append(result, tablePaths...)
+		result = append(result, forcedIndexes...)
+		result = append(result, perfectCoveringIndexes...)
+		return result
 	}
 
 	// Helper function to check if one index is a prefix of another
@@ -821,9 +841,9 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn,
 		return true
 	}
 
-	// Group paths by eqOrInCondCount
+	// Group paths by their eqOrInCondCount
 	pathsByEqOrInCount := make(map[int][]*util.AccessPath)
-	for _, path := range paths {
+	for _, path := range preferredIndexes {
 		if path.IsTablePath() {
 			continue // Skip table paths (including PK)
 		}
@@ -846,9 +866,8 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn,
 					if currentPath.Forced {
 						continue
 					}
-					if currentPath.EqOrInCondCount == maxEqOrIn &&
-						!(len(currentPath.TableFilters) > numTabFilters || len(currentPath.IndexFilters) > numIdxFilters) {
-						continue // Don't prune if the current index has max eqOrInCondCount and least filters
+					if currentPath.EqOrInCondCount == maxAccessConds {
+						continue // Don't prune if the current index has max eqOrInCondCount
 					}
 					// Don't prune if the current index is a single scan and the higher index is not
 					// Single scan indexes can avoid table lookups, so they should be preserved
@@ -866,12 +885,13 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn,
 	}
 
 	// Remove the pruned paths
-	result := make([]*util.AccessPath, 0, len(paths))
-	for _, path := range paths {
+	result := make([]*util.AccessPath, 0, len(preferredIndexes)+len(tablePaths))
+	for _, path := range preferredIndexes {
 		if !pathsToRemove[path] {
 			result = append(result, path)
 		}
 	}
+	result = append(result, tablePaths...)
 
 	return result
 }
