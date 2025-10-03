@@ -161,8 +161,11 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 
 	// Prune indexes that have the same prefix as other indexes with the same eqOrInCondCount,
 	// but where the other index also has a higher eqOrInCondCount
-	if len(ds.AllPossibleAccessPaths) > 20 {
-		ds.AllPossibleAccessPaths = pruneIndexesByAccessCondCount(ds.AllPossibleAccessPaths, maxAccessConds, numZeroAccessConds, perfectCoveringIndex, hasSingleScan)
+	threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
+	if len(ds.AllPossibleAccessPaths) > threshold {
+		// Check if the query has any ordering requirements to determine pruning aggressiveness
+		hasOrderBy := hasOrderingRequirement(ds)
+		ds.AllPossibleAccessPaths = pruneIndexesByAccessCondCount(ds.AllPossibleAccessPaths, maxAccessConds, numZeroAccessConds, perfectCoveringIndex, hasSingleScan, hasOrderBy)
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
@@ -758,9 +761,38 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 	return nil
 }
 
+// hasOrderingRequirement recursively checks if a logical plan contains nodes that require ordering
+func hasOrderingRequirement(lp base.LogicalPlan) bool {
+	// Check if current plan requires ordering
+	switch lp.(type) {
+	case *logicalop.LogicalSort:
+		// Explicit ORDER BY clause
+		return true
+	case *logicalop.LogicalAggregation:
+		// GROUP BY requires ordering for grouping columns
+		// Some aggregate functions like GROUP_CONCAT have ORDER BY
+		return true
+	case *logicalop.LogicalWindow:
+		// Window functions often require ordering for their window frames
+		return true
+	case *logicalop.LogicalExpand:
+		// ROLLUP/CUBE operations require ordering for grouping
+		return true
+	}
+
+	// Recursively check children
+	for _, child := range lp.Children() {
+		if hasOrderingRequirement(child) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // pruneIndexesByAccessCondCount prunes indexes that have the same prefix as other indexes
 // with the same eqOrInCondCount, but where the other index also has a higher eqOrInCondCount.
-func pruneIndexesByAccessCondCount(paths []*util.AccessPath, maxAccessConds, numZeroAccessConds int, perfectCoveringIndex, hasSingleScan bool) []*util.AccessPath {
+func pruneIndexesByAccessCondCount(paths []*util.AccessPath, maxAccessConds, numZeroAccessConds int, perfectCoveringIndex, hasSingleScan, hasOrderBy bool) []*util.AccessPath {
 	if len(paths) <= 1 {
 		return paths
 	}
@@ -771,6 +803,7 @@ func pruneIndexesByAccessCondCount(paths []*util.AccessPath, maxAccessConds, num
 	tablePaths := make([]*util.AccessPath, 0, 1)                  // Usually just one table path
 	totalPaths := float64(len(paths))
 	keepOneAccessConds := (numZeroAccessConds > int(totalPaths*0.75)) || maxAccessConds <= 2
+	minIndexLen := 100
 
 	for _, path := range paths {
 		if path.IsTablePath() {
@@ -784,7 +817,10 @@ func pruneIndexesByAccessCondCount(paths []*util.AccessPath, maxAccessConds, num
 		accessConds := max(len(path.AccessConds), path.MinAccessCondsForDNFCond)
 		// Check if this is a perfect covering index
 		if accessConds == maxAccessConds {
-			if path.IsSingleScan || (perfectCoveringIndex && accessConds > 2) {
+			if path.IsSingleScan || perfectCoveringIndex {
+				if len(path.Index.Columns) < minIndexLen {
+					minIndexLen = len(path.Index.Columns)
+				}
 				perfectCoveringIndexes = append(perfectCoveringIndexes, path)
 			} else {
 				preferredIndexes = append(preferredIndexes, path)
@@ -811,7 +847,17 @@ func pruneIndexesByAccessCondCount(paths []*util.AccessPath, maxAccessConds, num
 		result := make([]*util.AccessPath, 0, len(tablePaths)+len(forcedIndexes)+len(perfectCoveringIndexes))
 		result = append(result, tablePaths...)
 		result = append(result, forcedIndexes...)
-		result = append(result, perfectCoveringIndexes...)
+		// Only add the "best" perfect covering index if there are multiple
+		if len(perfectCoveringIndexes) > 1 && !hasOrderBy && minIndexLen != 100 {
+			for _, perfectCoveringIndex := range perfectCoveringIndexes {
+				if len(perfectCoveringIndex.Index.Columns) == minIndexLen {
+					result = append(result, perfectCoveringIndex)
+					break
+				}
+			}
+		} else {
+			result = append(result, perfectCoveringIndexes...)
+		}
 		return result
 	}
 
@@ -872,9 +918,29 @@ func pruneIndexesByAccessCondCount(paths []*util.AccessPath, maxAccessConds, num
 					if currentPath.EqOrInCondCount > 1 && currentPath.IsSingleScan && !higherPath.IsSingleScan {
 						continue
 					}
-					if isIndexPrefix(currentPath.Index, higherPath.Index, min(currentPath.EqOrInCondCount, higherPath.EqOrInCondCount)) {
+
+					// If there's no ordering requirement, we can be more aggressive about pruning
+					// by considering indexes with fewer access conditions as candidates for pruning
+					shouldPrune := false
+					if !hasOrderBy {
+						// More aggressive pruning: prune if current index has fewer access conditions
+						// and is a prefix of the higher index
+						if currentPath.EqOrInCondCount < higherPath.EqOrInCondCount &&
+							isIndexPrefix(currentPath.Index, higherPath.Index, min(currentPath.EqOrInCondCount, higherPath.EqOrInCondCount)) {
+							shouldPrune = true
+						}
+					} else {
+						// Conservative pruning: only prune if current index is a prefix of higher index
+						// and both have the same access condition count
+						if currentPath.EqOrInCondCount == higherPath.EqOrInCondCount &&
+							isIndexPrefix(currentPath.Index, higherPath.Index, min(currentPath.EqOrInCondCount, higherPath.EqOrInCondCount)) {
+							shouldPrune = true
+						}
+					}
+
+					if shouldPrune {
 						// The current index is a prefix of the higher index, and the higher index
-						// has more eqOrIn conditions, so we can prune the current index
+						// has more or equal eqOrIn conditions, so we can prune the current index
 						pathsToRemove[currentPath] = true
 					}
 				}

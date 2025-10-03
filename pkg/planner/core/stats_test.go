@@ -261,7 +261,7 @@ func TestPruneIndexesByAccessCondCount(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := pruneIndexesByAccessCondCount(tt.paths, tt.maxAccessConds, tt.numZeroAccessConds, tt.perfectCoveringIndex, tt.hasSingleScan)
+			result := pruneIndexesByAccessCondCount(tt.paths, tt.maxAccessConds, tt.numZeroAccessConds, tt.perfectCoveringIndex, tt.hasSingleScan, false)
 
 			require.Equal(t, tt.expectedCount, len(result), tt.description)
 
@@ -304,7 +304,7 @@ func TestPruneIndexesByAccessCondCountPerformance(t *testing.T) {
 			))
 		}
 
-		result := pruneIndexesByAccessCondCount(paths, 3, 0, true, false)
+		result := pruneIndexesByAccessCondCount(paths, 3, 0, true, false, false)
 
 		// Should only keep the perfect covering index
 		require.Equal(t, 1, len(result))
@@ -337,7 +337,7 @@ func TestPruneIndexesByAccessCondCountPerformance(t *testing.T) {
 			))
 		}
 
-		result := pruneIndexesByAccessCondCount(paths, 2, 0, false, false)
+		result := pruneIndexesByAccessCondCount(paths, 2, 0, false, false, false)
 
 		// Should apply normal pruning logic and remove some indexes
 		require.Less(t, len(result), len(paths))
@@ -351,7 +351,7 @@ func TestPruneIndexesByAccessCondCountEdgeCases(t *testing.T) {
 			createTestPath(createTestIndex("idx_a", "a"), 1, []string{}, []string{}, false, false),
 		}
 
-		result := pruneIndexesByAccessCondCount(paths, 1, 0, false, false)
+		result := pruneIndexesByAccessCondCount(paths, 1, 0, false, false, false)
 
 		// Should handle nil index gracefully and preserve table path
 		require.Equal(t, 2, len(result))
@@ -362,7 +362,7 @@ func TestPruneIndexesByAccessCondCountEdgeCases(t *testing.T) {
 			createTestPath(createTestIndex("idx_a", "a"), 0, []string{}, []string{}, false, false),
 		}
 
-		result := pruneIndexesByAccessCondCount(paths, 0, 1, false, false)
+		result := pruneIndexesByAccessCondCount(paths, 0, 1, false, false, false)
 
 		// Should handle zero maxAccessConds
 		require.Equal(t, 1, len(result))
@@ -374,10 +374,27 @@ func TestPruneIndexesByAccessCondCountEdgeCases(t *testing.T) {
 			createTestPath(createTestIndex("idx_ab", "a", "b"), 2, []string{"f1"}, []string{}, false, false),
 		}
 
-		result := pruneIndexesByAccessCondCount(paths, 2, 0, false, false)
+		result := pruneIndexesByAccessCondCount(paths, 2, 0, false, false, false)
 
 		// Should prefer index with fewer filters
 		require.Equal(t, 1, len(result))
 		require.Equal(t, "idx_ab", result[0].Index.Name.O)
+	})
+
+	t.Run("Ordering requirements affect pruning aggressiveness", func(t *testing.T) {
+		// Create two indexes where one is a prefix of the other
+		paths := []*util.AccessPath{
+			createTestPath(createTestIndex("idx_ab", "a", "b"), 1, []string{}, []string{}, false, false),
+			createTestPath(createTestIndex("idx_abc", "a", "b", "c"), 2, []string{}, []string{}, false, false),
+		}
+
+		// Test without ordering requirements - should be more aggressive
+		resultNoOrdering := pruneIndexesByAccessCondCount(paths, 2, 0, false, false, false)
+		// Test with ordering requirements - should be more conservative
+		resultWithOrdering := pruneIndexesByAccessCondCount(paths, 2, 0, false, false, true)
+
+		// Without ordering requirements, we should prune more aggressively
+		// With ordering requirements, we should be more conservative
+		require.LessOrEqual(t, len(resultNoOrdering), len(resultWithOrdering), "Without ordering requirements should prune more aggressively")
 	})
 }
