@@ -169,6 +169,11 @@ func TestShowIndexNDVStorageFallbackWithoutCachePollution(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
+	// disable auto analyze to prevent race conditions
+	originalAutoAnalyze := tk.MustQuery("select @@global.tidb_enable_auto_analyze").Rows()[0][0].(string)
+	tk.MustExec("set global tidb_enable_auto_analyze = 0")
+	defer tk.MustExec("set global tidb_enable_auto_analyze = " + originalAutoAnalyze)
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, index ib(b, c))")

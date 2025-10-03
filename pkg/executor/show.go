@@ -909,55 +909,41 @@ func (e *ShowExec) fetchShowIndex() error {
 // prefetchColumnNDVs prepares a map of colID->NDV using cache-first and storage-fallback without mutating the stats cache
 func (e *ShowExec) prefetchColumnNDVs(tb table.Table, statsTbl *statistics.Table, pkCol *table.Column) map[int64]int64 {
 	ndvByColID := make(map[int64]int64)
-	needed := make(map[int64]struct{})
-	if statsTbl.Pseudo {
-		if pkCol != nil {
-			needed[pkCol.ID] = struct{}{}
-		}
-		for _, idx := range tb.Indices() {
-			idxInfo := idx.Meta()
-			if idxInfo.State != model.StatePublic {
-				continue
-			}
-			for _, ic := range idxInfo.Columns {
-				tblCol := tb.Meta().Columns[ic.Offset]
-				if tblCol.Hidden {
-					continue
-				}
-				needed[tblCol.ID] = struct{}{}
-			}
-		}
-	} else {
-		if pkCol != nil {
-			if colStats := statsTbl.GetCol(pkCol.ID); colStats != nil {
-				ndvByColID[pkCol.ID] = colStats.NDV
+	var colIDs []string
+
+	// helper function to process each column ID
+	processColumnID := func(colID int64) {
+		if statsTbl.Pseudo {
+			colIDs = append(colIDs, strconv.FormatInt(colID, 10))
+		} else {
+			if colStats := statsTbl.GetCol(colID); colStats != nil {
+				ndvByColID[colID] = colStats.NDV
 			} else {
-				needed[pkCol.ID] = struct{}{}
-			}
-		}
-		for _, idx := range tb.Indices() {
-			idxInfo := idx.Meta()
-			if idxInfo.State != model.StatePublic {
-				continue
-			}
-			for _, ic := range idxInfo.Columns {
-				tblCol := tb.Meta().Columns[ic.Offset]
-				if tblCol.Hidden {
-					continue
-				}
-				if colStats := statsTbl.GetCol(tblCol.ID); colStats != nil {
-					ndvByColID[tblCol.ID] = colStats.NDV
-				} else {
-					needed[tblCol.ID] = struct{}{}
-				}
+				colIDs = append(colIDs, strconv.FormatInt(colID, 10))
 			}
 		}
 	}
-	if len(needed) > 0 {
-		colIDs := make([]string, 0, len(needed))
-		for id := range needed {
-			colIDs = append(colIDs, strconv.FormatInt(id, 10))
+
+	// handle pk column
+	if pkCol != nil {
+		processColumnID(pkCol.ID)
+	}
+
+	// process index columns
+	for _, idx := range tb.Indices() {
+		idxInfo := idx.Meta()
+		if idxInfo.State != model.StatePublic {
+			continue
 		}
+		for _, ic := range idxInfo.Columns {
+			tblCol := tb.Meta().Columns[ic.Offset]
+			if tblCol.Hidden {
+				continue
+			}
+			processColumnID(tblCol.ID)
+		}
+	}
+	if len(colIDs) > 0 {
 		if m, err := fetchColumnNDVs(e.Ctx(), tb.Meta().ID, colIDs); err == nil {
 			for k, v := range m {
 				if _, exists := ndvByColID[k]; !exists {
