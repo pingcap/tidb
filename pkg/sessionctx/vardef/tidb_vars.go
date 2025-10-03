@@ -1535,7 +1535,7 @@ const (
 	DefTiDBStmtSummaryRefreshInterval                 = 1800
 	DefTiDBStmtSummaryHistorySize                     = 24
 	DefTiDBStmtSummaryMaxStmtCount                    = 3000
-	DefTiDBStmtSummaryMaxSQLLength                    = 4096
+	DefTiDBStmtSummaryMaxSQLLength                    = 32768
 	DefTiDBCapturePlanBaseline                        = Off
 	DefTiDBIgnoreInlistPlanDigest                     = false
 	DefTiDBEnableIndexMerge                           = true
