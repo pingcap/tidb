@@ -57,9 +57,9 @@ type BackendCtx interface {
 	// FinishAndUnregisterEngines is only used in local disk based ingest.
 	FinishAndUnregisterEngines(opt UnregisterOpt) error
 
-	// IngestIfQuotaExceeded updates the task and count to checkpoint manager, and try to ingest them to disk or TiKV
+	// IngestIfQuotaExceeded try to ingest data to disk or TiKV
 	// according to the last ingest time or the usage of local disk.
-	IngestIfQuotaExceeded(ctx context.Context, taskID int, count int) error
+	IngestIfQuotaExceeded(ctx context.Context) error
 
 	// Ingest checks if all engines need to be flushed and imported. It's concurrent safe.
 	Ingest(ctx context.Context) (err error)
@@ -84,13 +84,13 @@ type CheckpointOperator interface {
 	NextStartKey() tikv.Key
 	TotalKeyCount() int
 
-	AddChunk(id int, endKey tikv.Key)
-	UpdateChunk(id int, count int, done bool)
-	FinishChunk(id int, count int)
+	FinishChunk(rg tikv.KeyRange, delta int, prevKey tikv.Key)
 
-	AdvanceWatermark(imported bool) error
+	AdvanceWatermark() error
 
 	GetImportTS() uint64
+
+	FilterUnimportedRanges(ranges []tikv.KeyRange) []tikv.KeyRange
 }
 
 // litBackendCtx implements BackendCtx.
@@ -108,7 +108,7 @@ type litBackendCtx struct {
 	flushing        atomic.Bool
 	timeOfLastFlush atomicutil.Time
 	updateInterval  time.Duration
-	checkpointMgr   *CheckpointManager
+	checkpointMgr   CheckpointOperator
 	etcdClient      *clientv3.Client
 	initTS          uint64
 	importTS        uint64
@@ -167,8 +167,7 @@ func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Tab
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
 
-func (bc *litBackendCtx) IngestIfQuotaExceeded(ctx context.Context, taskID int, count int) error {
-	bc.FinishChunk(taskID, count)
+func (bc *litBackendCtx) IngestIfQuotaExceeded(ctx context.Context) error {
 	shouldFlush, shouldImport := bc.checkFlush()
 	if !shouldFlush {
 		return nil
@@ -184,7 +183,7 @@ func (bc *litBackendCtx) IngestIfQuotaExceeded(ctx context.Context, taskID int, 
 	bc.timeOfLastFlush.Store(time.Now())
 
 	if !shouldImport {
-		return bc.AdvanceWatermark(false)
+		return bc.AdvanceWatermark()
 	}
 
 	release, err := bc.tryAcquireDistLock()
@@ -199,7 +198,7 @@ func (bc *litBackendCtx) IngestIfQuotaExceeded(ctx context.Context, taskID int, 
 	if err != nil {
 		return err
 	}
-	return bc.AdvanceWatermark(true)
+	return bc.AdvanceWatermark()
 }
 
 // Ingest implements BackendContext.
@@ -224,7 +223,7 @@ func (bc *litBackendCtx) Ingest(ctx context.Context) error {
 		return err
 	}
 
-	return bc.AdvanceWatermark(true)
+	return bc.AdvanceWatermark()
 }
 
 func (bc *litBackendCtx) flushEngines(ctx context.Context) error {
@@ -360,7 +359,7 @@ func (bc *litBackendCtx) Close() {
 // NextStartKey implements CheckpointOperator interface.
 func (bc *litBackendCtx) NextStartKey() tikv.Key {
 	if bc.checkpointMgr != nil {
-		return bc.checkpointMgr.NextKeyToProcess()
+		return bc.checkpointMgr.NextStartKey()
 	}
 	return nil
 }
@@ -373,39 +372,39 @@ func (bc *litBackendCtx) TotalKeyCount() int {
 	return 0
 }
 
-// AddChunk implements CheckpointOperator interface.
-func (bc *litBackendCtx) AddChunk(id int, endKey tikv.Key) {
-	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.Register(id, endKey)
-	}
-}
-
-// UpdateChunk implements CheckpointOperator interface.
-func (bc *litBackendCtx) UpdateChunk(id int, count int, done bool) {
-	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.UpdateTotalKeys(id, count, done)
-	}
-}
-
 // FinishChunk implements CheckpointOperator interface.
-func (bc *litBackendCtx) FinishChunk(id int, count int) {
+func (bc *litBackendCtx) FinishChunk(rg tikv.KeyRange, delta int, prevKey tikv.Key) {
 	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.UpdateWrittenKeys(id, count)
+		bc.checkpointMgr.FinishChunk(rg, delta, prevKey)
 	}
 }
 
 // GetImportTS implements CheckpointOperator interface.
 func (bc *litBackendCtx) GetImportTS() uint64 {
 	if bc.checkpointMgr != nil {
-		return bc.checkpointMgr.GetTS()
+		return bc.checkpointMgr.GetImportTS()
 	}
 	return bc.importTS
 }
 
 // AdvanceWatermark implements CheckpointOperator interface.
-func (bc *litBackendCtx) AdvanceWatermark(imported bool) error {
+func (bc *litBackendCtx) AdvanceWatermark() (err error) {
+	defer func() {
+		if err == nil {
+			failpoint.Inject("ddlIngestFailOnceAfterCheckpointUpdated", func() {
+				err = errors.New("failpoint: ddlIngestFailOnceAfterCheckpointUpdated")
+			})
+		}
+	}()
 	if bc.checkpointMgr != nil {
-		return bc.checkpointMgr.AdvanceWatermark(imported)
+		return bc.checkpointMgr.AdvanceWatermark()
 	}
 	return nil
+}
+
+func (bc *litBackendCtx) FilterUnimportedRanges(ranges []tikv.KeyRange) []tikv.KeyRange {
+	if bc.checkpointMgr != nil {
+		return bc.checkpointMgr.FilterUnimportedRanges(ranges)
+	}
+	return ranges
 }
