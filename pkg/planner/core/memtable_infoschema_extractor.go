@@ -213,18 +213,20 @@ func (e *InfoSchemaBaseExtractor) Extract(
 		if _, ok := patternMatchable[colName]; !ok {
 			continue
 		}
-		var likePatterns []string
-		remained, likePatterns = e.extractLikePatternCol(ctx, schema, names, remained, colName, true, false)
-		if len(likePatterns) == 0 {
+		var patternInfos []PatternInfo
+		remained, patternInfos = e.extractLikePatternColWithEscape(ctx, schema, names, remained, colName, true, false)
+		if len(patternInfos) == 0 {
 			continue
 		}
-		regexp := make([]collate.WildcardPattern, len(likePatterns))
-		for i, pattern := range likePatterns {
+		regexp := make([]collate.WildcardPattern, len(patternInfos))
+		likePatterns := make([]string, len(patternInfos))
+		for i, patternInfo := range patternInfos {
 			// Because @@lower_case_table_names is always 2 in TiDB,
 			// schema object names comparison should be case insensitive.
 			ciCollateID := collate.CollationName2ID(mysql.UTF8MB4GeneralCICollation)
 			regexp[i] = collate.GetCollatorByID(ciCollateID).Pattern()
-			regexp[i].Compile(pattern, byte('\\'))
+			regexp[i].Compile(patternInfo.Pattern, patternInfo.EscapeChar)
+			likePatterns[i] = patternInfo.Pattern
 		}
 		e.LikePatterns[colName] = likePatterns
 		e.colsRegexp[colName] = regexp
