@@ -403,13 +403,13 @@ func convertPartitionKeysIfNeed4PhysicalHashJoin(pp base.PhysicalPlan, lTask, rT
 		lKey := lTask.HashCols[i]
 		rKey := rTask.HashCols[i]
 		if lMask[i] {
-			cType := cTypes[i].Clone()
+			cType := cTypes[i].DeepClone()
 			cType.SetFlag(lKey.Col.RetType.GetFlag())
 			lCast := expression.BuildCastFunction(p.SCtx().GetExprCtx(), lKey.Col, cType)
 			lKey = &property.MPPPartitionColumn{Col: appendExpr(lProj, lCast), CollateID: lKey.CollateID}
 		}
 		if rMask[i] {
-			cType := cTypes[i].Clone()
+			cType := cTypes[i].DeepClone()
 			cType.SetFlag(rKey.Col.RetType.GetFlag())
 			rCast := expression.BuildCastFunction(p.SCtx().GetExprCtx(), rKey.Col, cType)
 			rKey = &property.MPPPartitionColumn{Col: appendExpr(rProj, rCast), CollateID: rKey.CollateID}

@@ -449,7 +449,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 			castedCon := con
 			if !colType.Equal(conType) {
 				oriWarningCnt := s.ctx.GetEvalCtx().WarningCount()
-				newExpr := BuildCastFunction(s.ctx, con, colType.DeepCopy())
+				newExpr := BuildCastFunction(s.ctx, con, colType.DeepClone())
 				s.ctx.GetEvalCtx().TruncateWarnings(oriWarningCnt)
 				if newCon, ok := newExpr.(*Constant); ok {
 					castedCon = newCon
@@ -598,7 +598,7 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 			}
 			con = &Constant{
 				Value:         types.NewMysqlEnumDatum(enum),
-				RetType:       col.RetType.Clone(),
+				RetType:       col.RetType.DeepClone(),
 				collationInfo: col.collationInfo,
 			}
 		case types.KindString:
@@ -609,7 +609,7 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 			}
 			con = &Constant{
 				Value:         types.NewMysqlEnumDatum(enum),
-				RetType:       col.RetType.Clone(),
+				RetType:       col.RetType.DeepClone(),
 				collationInfo: col.collationInfo,
 			}
 		case types.KindMysqlEnum, types.KindMysqlSet:
