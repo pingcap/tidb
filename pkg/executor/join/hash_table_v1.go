@@ -615,41 +615,35 @@ type BaseHashTable interface {
 // A given key can store multiple values.
 // It is not thread-safe, should only be used in one goroutine.
 type unsafeHashTable struct {
-	hashMap    map[uint64]*entry
 	entryStore *entryStore
 	length     uint64
-
-	bInMap   int64 // indicate there are 2^bInMap buckets in hashMap
-	memDelta int64 // the memory delta of the unsafeHashTable since the last calling GetAndCleanMemoryDelta()
+	hashMap    hack.MemAwareMap[uint64, *entry]
+	memDelta   int64 // the memory delta of the unsafeHashTable since the last calling GetAndCleanMemoryDelta()
 }
 
 // newUnsafeHashTable creates a new unsafeHashTable. estCount means the estimated size of the hashMap.
 // If unknown, set it to 0.
 func newUnsafeHashTable(estCount int) *unsafeHashTable {
-	ht := new(unsafeHashTable)
-	ht.hashMap = make(map[uint64]*entry, estCount)
+	ht := &unsafeHashTable{}
+	ht.hashMap.Init(make(map[uint64]*entry, estCount))
 	ht.entryStore = newEntryStore()
 	return ht
 }
 
 // Put puts the key/rowPtr pairs to the unsafeHashTable, multiple rowPtrs are stored in a list.
 func (ht *unsafeHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
-	oldEntry := ht.hashMap[hashKey]
+	oldEntry := ht.hashMap.M[hashKey]
 	newEntry, memDelta := ht.entryStore.GetStore()
 	newEntry.Ptr = rowPtr
 	newEntry.Next = oldEntry
-	ht.hashMap[hashKey] = newEntry
-	if len(ht.hashMap) > (1<<ht.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-		memDelta += hack.DefBucketMemoryUsageForMapIntToPtr * (1 << ht.bInMap)
-		ht.bInMap++
-	}
+	memDelta += ht.hashMap.Set(hashKey, newEntry)
 	ht.length++
 	ht.memDelta += memDelta
 }
 
 // Get gets the values of the "key" and appends them to "values".
 func (ht *unsafeHashTable) Get(hashKey uint64) *entry {
-	entryAddr := ht.hashMap[hashKey]
+	entryAddr := ht.hashMap.M[hashKey]
 	return entryAddr
 }
 
@@ -665,8 +659,7 @@ func (ht *unsafeHashTable) GetAndCleanMemoryDelta() int64 {
 }
 
 func (ht *unsafeHashTable) Iter(traverse func(key uint64, e *entry)) {
-	for k := range ht.hashMap {
-		entryAddr := ht.hashMap[k]
+	for k, entryAddr := range ht.hashMap.M {
 		traverse(k, entryAddr)
 	}
 }
@@ -681,11 +674,15 @@ type concurrentMapHashTable struct {
 
 // NewConcurrentMapHashTable creates a concurrentMapHashTable
 func NewConcurrentMapHashTable() *concurrentMapHashTable {
-	ht := new(concurrentMapHashTable)
+	ht := &concurrentMapHashTable{}
 	ht.hashMap = newConcurrentMap()
 	ht.entryStore = newEntryStore()
 	ht.length = 0
-	ht.memDelta = hack.DefBucketMemoryUsageForMapIntToPtr + int64(unsafe.Sizeof(entry{}))*initialEntrySliceLen
+	ht.memDelta = int64(unsafe.Sizeof(concurrentMapHashTable{})) + int64(len(ht.hashMap))*int64((unsafe.Sizeof(concurrentMapShared{})))
+	for _, m := range ht.hashMap {
+		ht.memDelta += int64(m.items.Bytes)
+	}
+	ht.memDelta += int64(unsafe.Sizeof(entryStore{})) + int64(unsafe.Sizeof(entry{}))*initialEntrySliceLen
 	return ht
 }
 
@@ -719,12 +716,5 @@ func (ht *concurrentMapHashTable) Iter(traverse func(key uint64, e *entry)) {
 
 // GetAndCleanMemoryDelta gets and cleans the memDelta of the concurrentMapHashTable. Memory delta will be cleared after each fetch.
 func (ht *concurrentMapHashTable) GetAndCleanMemoryDelta() int64 {
-	var memDelta int64
-	for {
-		memDelta = atomic.LoadInt64(&ht.memDelta)
-		if atomic.CompareAndSwapInt64(&ht.memDelta, memDelta, 0) {
-			break
-		}
-	}
-	return memDelta
+	return atomic.SwapInt64(&ht.memDelta, 0)
 }
