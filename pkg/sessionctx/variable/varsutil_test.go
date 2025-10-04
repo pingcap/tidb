@@ -697,8 +697,8 @@ func TestOnOffHelpers(t *testing.T) {
 }
 
 func TestAssertionLevel(t *testing.T) {
-	require.Equal(t, AssertionLevelStrict, tidbOptAssertionLevel(vardef.AssertionStrictStr))
-	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel(vardef.AssertionOffStr))
-	require.Equal(t, AssertionLevelFast, tidbOptAssertionLevel(vardef.AssertionFastStr))
+	require.Equal(t, AssertionLevelStrict, tidbOptAssertionLevel(vardef.NormalizeTxnAssertionLevel("STRICT")))
+	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel(vardef.NormalizeTxnAssertionLevel("OFF")))
+	require.Equal(t, AssertionLevelFast, tidbOptAssertionLevel(vardef.NormalizeTxnAssertionLevel("FAST")))
 	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel("bogus"))
 }

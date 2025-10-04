@@ -1598,9 +1598,9 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 			vardef.DefTiDBTxnAssertionLevel,
 			func() string {
 				if kerneltype.IsNextGen() {
-					return vardef.AssertionStrictStr
+					return vardef.NormalizeTxnAssertionLevel("STRICT")
 				}
-				return vardef.AssertionFastStr
+				return vardef.NormalizeTxnAssertionLevel("FAST")
 			}(),
 		},
 		{

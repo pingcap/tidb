@@ -2704,7 +2704,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTxnAssertionLevel, Value: vardef.GetDefaultTxnAssertionLevel(), PossibleValues: []string{vardef.AssertionOffStr, vardef.AssertionFastStr, vardef.AssertionStrictStr}, Hidden: true, Type: vardef.TypeEnum, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTxnAssertionLevel, Value: vardef.GetDefaultTxnAssertionLevel(), PossibleValues: vardef.TxnAssertionLevelValues(), Hidden: true, Type: vardef.TypeEnum, SetSession: func(s *SessionVars, val string) error {
 		s.AssertionLevel = tidbOptAssertionLevel(val)
 		return nil
 	}},
@@ -3690,7 +3690,7 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 		if kerneltype.IsNextGen() {
 			varVal = vardef.GetDefaultTxnAssertionLevel()
 		} else {
-			varVal = vardef.AssertionFastStr
+			varVal = vardef.NormalizeTxnAssertionLevel("FAST")
 		}
 	case vardef.TiDBEnableMutationChecker:
 		varVal = vardef.On

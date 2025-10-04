@@ -1547,7 +1547,7 @@ const (
 	DefSysdateIsNow                                   = false
 	DefTiDBEnableParallelHashaggSpill                 = true
 	DefTiDBEnableMutationChecker                      = false
-	DefTiDBTxnAssertionLevel                          = AssertionOffStr
+	DefTiDBTxnAssertionLevel                          = assertionOffStr
 	DefTiDBIgnorePreparedCacheCloseStmt               = false
 	DefTiDBBatchPendingTiFlashCount                   = 4000
 	DefRCReadCheckTS                                  = false
@@ -2003,12 +2003,12 @@ const (
 
 	// AssertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
 	// even if the performance might be slowed down.
-	AssertionStrictStr = "STRICT"
+	assertionStrictStr = "STRICT"
 	// AssertionFastStr is a choice of variable TiDBTxnAssertionLevel that means assertions that doesn't affect
 	// performance should be performed.
-	AssertionFastStr = "FAST"
+	assertionFastStr = "FAST"
 	// AssertionOffStr is a choice of variable TiDBTxnAssertionLevel that means no assertion should be performed.
-	AssertionOffStr = "OFF"
+	assertionOffStr = "OFF"
 	// OOMActionCancel constants represents the valid action configurations for OOMAction "CANCEL".
 	OOMActionCancel = "CANCEL"
 	// OOMActionLog constants represents the valid action configurations for OOMAction "LOG".
@@ -2193,7 +2193,24 @@ func SetEnableMDL(enabled bool) {
 // For classic, we use off to maintain compatibility.
 func GetDefaultTxnAssertionLevel() string {
 	if kerneltype.IsNextGen() {
-		return AssertionStrictStr
+		return assertionStrictStr
 	}
-	return AssertionOffStr
+	return assertionOffStr
+}
+
+func TxnAssertionLevelValues() []string {
+	return []string{assertionOffStr, assertionFastStr, assertionStrictStr}
+}
+
+// canonicalize any input to one of the three strings
+func NormalizeTxnAssertionLevel(opt string) string {
+	s := strings.ToUpper(strings.TrimSpace(opt))
+	switch s {
+	case assertionStrictStr:
+		return assertionStrictStr
+	case assertionFastStr:
+		return assertionFastStr
+	default:
+		return assertionOffStr
+	}
 }
