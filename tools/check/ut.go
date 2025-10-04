@@ -88,7 +88,7 @@ ut run --race
 ut run --short
 
 // test with long flag
-// when the '--long' flag is set, ut will only run the long tests and have different strategies for concurreny to make them stabler.
+// when the '--long' flag is set, ut will only run the long tests and have different strategies for concurrency to make them stabler.
 ut run --long`
 
 	fmt.Println(msg)
