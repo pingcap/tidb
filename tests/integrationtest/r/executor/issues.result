@@ -1043,3 +1043,12 @@ DELETE FROM test_62458 PARTITION (p1) WHERE c1 = 15;
 CREATE TABLE test_62457 (c INT) PARTITION BY RANGE (c) (PARTITION p VALUES LESS THAN (10));
 ALTER TABLE test_62457 ADD COLUMN c2 INT AS (JSON_EXTRACT(c, '$.number')) VIRTUAL;
 Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_extract; a JSON string or JSON type is required.
+CREATE TABLE test_62574 (
+id INT AUTO_INCREMENT PRIMARY KEY,
+test_bit BIT(10) NULL
+);
+INSERT INTO test_62574 (id, test_bit) VALUES (1, UNHEX('0001'));
+UPDATE test_62574 SET test_bit = UNHEX('00011') WHERE id = 1;
+SELECT * FROM test_62574;
+id	test_bit
+1	 
