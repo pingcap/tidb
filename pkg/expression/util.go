@@ -2287,3 +2287,25 @@ func IsConstNull(expr Expression) bool {
 	}
 	return false
 }
+
+// IsIsNullColumn checks if the expression is in the form of `isnull(col)`.
+func IsIsNullColumn(expr Expression) (*Column, bool) {
+	if e, ok := expr.(*ScalarFunction); ok {
+		if e.FuncName.L == ast.IsNull {
+			c, ok := e.GetArgs()[0].(*Column)
+			return c, ok
+		}
+	}
+	return nil, false
+}
+
+// ExtractIsNullColumns extracts all columns from expressions in the form of `isnull(col)`.
+func ExtractIsNullColumns(exprs []Expression) map[int64]struct{} {
+	cols := make(map[int64]struct{}, len(exprs))
+	for _, expr := range exprs {
+		if col, ok := IsIsNullColumn(expr); ok {
+			cols[col.UniqueID] = struct{}{}
+		}
+	}
+	return cols
+}

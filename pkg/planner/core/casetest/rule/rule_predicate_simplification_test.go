@@ -25,12 +25,17 @@ func TestPredicateSimplification(tt *testing.T) {
 	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
 		tk.MustExec(`CREATE TABLE t1 (
-    id VARCHAR(64) PRIMARY KEY
+    id VARCHAR(64) PRIMARY KEY,
+	i int,
+	j int
 );`)
+		tk.MustExec(`INSERT INTO t1 (id,i,j) VALUES (1,1,1), (2,2,2), (3,NULL,NULL)`)
 		tk.MustExec(`CREATE TABLE t2 (
     c1 VARCHAR(64) NOT NULL,
     c2 VARCHAR(64) NOT NULL,
     c3 VARCHAR(64) NOT NULL,
+	i int,
+	j int,
     PRIMARY KEY (c1, c2, c3),
     KEY c3 (c3)
 );`)
