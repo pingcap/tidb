@@ -311,7 +311,21 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			// In DeleteReorganization, overwrite Global Index keys pointing to
 			// old dropped/truncated partitions.
 			// Note that a partitioned table cannot be temporary table
-			value, err = txn.Get(ctx, key)
+
+			// Check mem buffer first. Note that it may be a tombstone
+			// resulting in err == nil and len(value) == 0.
+			// err == nil will also turn off lazyCheck later,
+			// and skip kv.SetPresumeKeyNotExists flag, to allow
+			// taking locks on already existing row.
+			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
+			if kv.IsErrNotFound(err) {
+				// Not in mem buffer, must do non-lazy read, since we must check
+				// if exists now, to be able to overwrite.
+				value, err = txn.GetSnapshot().Get(ctx, key)
+				if err == nil && len(value) == 0 {
+					err = kv.ErrNotExist
+				}
+			}
 			if err == nil && len(value) != 0 {
 				handle, errPart := tablecodec.DecodeHandleInIndexValue(value)
 				if errPart != nil {
