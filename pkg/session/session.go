@@ -83,6 +83,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	planctx "github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/plugin"
@@ -1498,7 +1499,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MemTracker:            s.sessionVars.MemTracker,
 		DiskTracker:           s.sessionVars.DiskTracker,
 		RunawayChecker:        s.sessionVars.StmtCtx.RunawayChecker,
-		StatsInfo:             plannercore.GetStatsInfo,
+		StatsInfo:             physicalop.GetStatsInfo,
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
 		TableIDs:              s.sessionVars.StmtCtx.TableIDs,
 		IndexNames:            s.sessionVars.StmtCtx.IndexNames,
@@ -1902,6 +1903,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	if execOption.AnalyzeSnapshot != nil {
 		s.sessionVars.EnableAnalyzeSnapshot = *execOption.AnalyzeSnapshot
 	}
+	s.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	prePruneMode := s.sessionVars.PartitionPruneMode.Load()
 	if len(execOption.PartitionPruneMode) > 0 {
 		s.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
@@ -1966,7 +1968,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	if len(execOption.PartitionPruneMode) > 0 {
 		se.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
 	}
-
+	se.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	return se, func() {
 		se.sessionVars.AnalyzeVersion = prevStatsVer
 		se.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot

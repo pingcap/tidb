@@ -444,6 +444,7 @@ func (configInspection) convertReadableSizeToByteSize(sizeStr string) (uint64, e
 	if rate != 1 && len(sizeStr) > 3 {
 		sizeStr = sizeStr[:len(sizeStr)-3]
 	}
+	sizeStr = strings.TrimSuffix(sizeStr, "B")
 	size, err := strconv.Atoi(sizeStr)
 	if err != nil {
 		return 0, errors.Trace(err)
