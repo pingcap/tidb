@@ -656,12 +656,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 	case *ast.CaseExpr:
 		er.asScalar = true
-		if _, ok := expression.DisableFoldFunctions["case"]; ok {
-			er.disableFoldCounter++
-		}
-		if _, ok := expression.TryFoldFunctions["case"]; ok {
-			er.tryFoldCounter++
-		}
+		intest.AssertFunc(func() bool {
+			_, shouldFalse := expression.DisableFoldFunctions["case"]
+			_, shouldTrue := expression.TryFoldFunctions["case"]
+			return !shouldFalse && shouldTrue
+		})
+		er.tryFoldCounter++
 	case *ast.BinaryOperationExpr:
 		er.asScalar = true
 		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
