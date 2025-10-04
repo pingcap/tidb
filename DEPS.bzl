@@ -7398,6 +7398,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_skip2_go_qrcode",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/skip2/go-qrcode",
+        sha256 = "3fc1c4d11c79001d1cc2df0de87493b324b9af141cc59ae8c212612dd2c90e90",
+        strip_prefix = "github.com/skip2/go-qrcode@v0.0.0-20200617195104-da1b6568686e",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/skip2/go-qrcode/com_github_skip2_go_qrcode-v0.0.0-20200617195104-da1b6568686e.zip",
+            "http://ats.apps.svc/gomod/github.com/skip2/go-qrcode/com_github_skip2_go_qrcode-v0.0.0-20200617195104-da1b6568686e.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/skip2/go-qrcode/com_github_skip2_go_qrcode-v0.0.0-20200617195104-da1b6568686e.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/skip2/go-qrcode/com_github_skip2_go_qrcode-v0.0.0-20200617195104-da1b6568686e.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_smartystreets_assertions",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/smartystreets/assertions",

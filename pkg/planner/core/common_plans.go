@@ -722,6 +722,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
+	case format == types.ExplainFormatQRCode:
+		fieldNames = []string{"QRCode"}
 	case e.Explore:
 		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
 			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
@@ -883,6 +885,32 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 		e.Rows = append(e.Rows, []string{str})
+	case types.ExplainFormatQRCode:
+		if e.Rows == nil {
+			flat := FlattenPhysicalPlan(e.TargetPlan, true)
+			rows := ExplainFlatPlanInRowFormat(flat, e.Format, e.Analyze, e.RuntimeStatsColl)
+			var tmp string
+			var result []string
+			for _, row := range rows {
+				tmp += strings.Join(row, "\t")
+				tmp += "\n"
+				if len(tmp) >= 1024 {
+					result = append(result, tmp)
+					tmp = ""
+				}
+			}
+			if len(tmp) > 0 {
+				result = append(result, tmp)
+			}
+			e.Rows = make([][]string, 0, 100)
+			for _, r := range result {
+				row, err := plancodec.PrintAsQrCode(r)
+				if err != nil {
+					return err
+				}
+				e.Rows = append(e.Rows, []string{row})
+			}
+		}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
