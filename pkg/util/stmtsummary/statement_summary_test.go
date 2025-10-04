@@ -156,8 +156,10 @@ func TestAddStatement(t *testing.T) {
 				UnpackedBytesSentTiFlashCrossZone:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPCrossZone,
 				UnpackedBytesReceivedTiFlashCrossZone: stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPCrossZone,
 			},
-			storageKV:  stmtExecInfo1.StmtCtx.IsTiKV.Load(),
-			storageMPP: stmtExecInfo1.StmtCtx.IsTiFlash.Load(),
+			storageKV:         stmtExecInfo1.StmtCtx.IsTiKV.Load(),
+			storageMPP:        stmtExecInfo1.StmtCtx.IsTiFlash.Load(),
+			sumMemArbitration: stmtExecInfo1.MemArbitration,
+			maxMemArbitration: stmtExecInfo1.MemArbitration,
 		},
 	}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
@@ -265,6 +267,7 @@ func TestAddStatement(t *testing.T) {
 			bindingSQL:    "binding_sql2",
 			bindingDigest: "binding_digest2",
 		},
+		MemArbitration: 30000,
 	}
 	stmtExecInfo2.StmtCtx.AddAffectedRows(200)
 	expectedSummaryElement.execCount++
@@ -317,6 +320,8 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.backoffTypes[boTxnLockName] = 1
 	expectedSummaryElement.sumMem += stmtExecInfo2.MemMax
 	expectedSummaryElement.maxMem = stmtExecInfo2.MemMax
+	expectedSummaryElement.maxMemArbitration = stmtExecInfo2.MemArbitration
+	expectedSummaryElement.sumMemArbitration += stmtExecInfo2.MemArbitration
 	expectedSummaryElement.sumDisk += stmtExecInfo2.DiskMax
 	expectedSummaryElement.maxDisk = stmtExecInfo2.DiskMax
 	expectedSummaryElement.sumAffectedRows += stmtExecInfo2.StmtCtx.AffectedRows()
@@ -427,6 +432,7 @@ func TestAddStatement(t *testing.T) {
 			bindingSQL:    "binding_sql3",
 			bindingDigest: "binding_digest3",
 		},
+		MemArbitration: 200,
 	}
 	stmtExecInfo3.StmtCtx.AddAffectedRows(20000)
 	expectedSummaryElement.execCount++
@@ -457,6 +463,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.sumBackoffTimes++
 	expectedSummaryElement.backoffTypes[boTxnLockName] = 2
 	expectedSummaryElement.sumMem += stmtExecInfo3.MemMax
+	expectedSummaryElement.sumMemArbitration += stmtExecInfo3.MemArbitration
 	expectedSummaryElement.sumDisk += stmtExecInfo3.DiskMax
 	expectedSummaryElement.sumAffectedRows += stmtExecInfo3.StmtCtx.AffectedRows()
 	expectedSummaryElement.firstSeen = stmtExecInfo3.StartTime
@@ -609,6 +616,8 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			ssElement1.sumBackoffTimes != ssElement2.sumBackoffTimes ||
 			ssElement1.sumMem != ssElement2.sumMem ||
 			ssElement1.maxMem != ssElement2.maxMem ||
+			ssElement1.sumMemArbitration != ssElement2.sumMemArbitration ||
+			ssElement1.maxMemArbitration != ssElement2.maxMemArbitration ||
 			ssElement1.sumAffectedRows != ssElement2.sumAffectedRows ||
 			!ssElement1.firstSeen.Equal(ssElement2.firstSeen) ||
 			!ssElement1.lastSeen.Equal(ssElement2.lastSeen) ||
@@ -751,6 +760,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 			bindingSQL:    "binding_sql1",
 			bindingDigest: "binding_digest1",
 		},
+		MemArbitration: 10000,
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
@@ -861,6 +871,8 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 		BackoffTypesStr,
 		AvgMemStr,
 		MaxMemStr,
+		AvgMemArbitrationStr,
+		MaxMemArbitrationStr,
 		AvgDiskStr,
 		MaxDiskStr,
 		AvgKvTimeStr,
@@ -956,7 +968,7 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteSize, stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
-		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
+		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.MemArbitration, stmtExecInfo1.MemArbitration, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, stmtExecInfo1.LazyInfo.GetOriginalSQL(), stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
@@ -1007,7 +1019,7 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteSize, stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
-		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
+		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.MemArbitration, stmtExecInfo1.MemArbitration, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, "", "", "", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
