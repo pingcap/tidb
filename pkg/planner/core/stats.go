@@ -159,7 +159,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		}
 	}
 
-	// Prune indexes that have the same prefix as other indexes with the same eqOrInCondCount,
+	// Then, prune indexes that have the same prefix as other indexes with the same eqOrInCondCount,
 	// but where the other index also has a higher eqOrInCondCount
 	threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
 	if len(ds.AllPossibleAccessPaths) > threshold {

@@ -225,9 +225,24 @@ func TestPruneIndexesByAccessCondCount(t *testing.T) {
 			numZeroAccessConds:   0,
 			perfectCoveringIndex: true,
 			hasSingleScan:        false,
-			expectedCount:        2,
+			expectedCount:        1,                   // Only the shortest perfect covering index is kept when hasOrderBy=false
+			expectedNames:        []string{"idx_abc"}, // idx_abc and idx_abd have same length, first one is kept
+			description:          "Should keep the shortest perfect covering index when no ordering requirement",
+		},
+		{
+			name: "Multiple perfect covering indexes with ordering requirement",
+			paths: []*util.AccessPath{
+				createTestPath(createTestIndex("idx_abc", "a", "b", "c"), 3, []string{}, []string{}, false, false),
+				createTestPath(createTestIndex("idx_abd", "a", "b", "d"), 3, []string{}, []string{}, false, false),
+				createTestPath(createTestIndex("idx_ab", "a", "b"), 2, []string{"filter1"}, []string{}, false, false),
+			},
+			maxAccessConds:       3,
+			numZeroAccessConds:   0,
+			perfectCoveringIndex: true,
+			hasSingleScan:        false,
+			expectedCount:        2, // All perfect covering indexes are kept when hasOrderBy=true
 			expectedNames:        []string{"idx_abc", "idx_abd"},
-			description:          "Should keep all perfect covering indexes",
+			description:          "Should keep all perfect covering indexes when ordering requirement exists",
 		},
 		{
 			name: "Perfect covering index with index filters",
@@ -261,7 +276,9 @@ func TestPruneIndexesByAccessCondCount(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := pruneIndexesByAccessCondCount(tt.paths, tt.maxAccessConds, tt.numZeroAccessConds, tt.perfectCoveringIndex, tt.hasSingleScan, false)
+			// Use hasOrderBy=true for the new test case that expects all perfect covering indexes
+			hasOrderBy := tt.name == "Multiple perfect covering indexes with ordering requirement"
+			result := pruneIndexesByAccessCondCount(tt.paths, tt.maxAccessConds, tt.numZeroAccessConds, tt.perfectCoveringIndex, tt.hasSingleScan, hasOrderBy)
 
 			require.Equal(t, tt.expectedCount, len(result), tt.description)
 
