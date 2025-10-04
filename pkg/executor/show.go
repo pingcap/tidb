@@ -988,7 +988,7 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue
 		}
-		if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) {
+		if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) || v.InternalSessionVariable {
 			continue
 		}
 		value, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v.Name)
