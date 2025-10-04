@@ -133,6 +133,8 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
+	maxAccessConds, numZeroAccessConds := 0, 0
+	perfectCoveringIndex, hasSingleScan := false, false
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
@@ -141,6 +143,29 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		if err != nil {
 			return nil, false, err
 		}
+		accessConds := max(len(path.AccessConds), path.MinAccessCondsForDNFCond)
+		if accessConds > maxAccessConds {
+			// If we've found a new max
+			maxAccessConds = accessConds
+			if len(path.TableFilters) == 0 && len(path.IndexFilters) == 0 {
+				perfectCoveringIndex = true
+			}
+			if path.IsSingleScan && !path.IsTablePath() {
+				hasSingleScan = true
+			}
+		}
+		if accessConds == 0 {
+			numZeroAccessConds++
+		}
+	}
+
+	// Then, prune indexes that have the same prefix as other indexes with the same eqOrInCondCount,
+	// but where the other index also has a higher eqOrInCondCount
+	threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
+	if len(ds.AllPossibleAccessPaths) > threshold {
+		// Check if the query has any ordering requirements to determine pruning aggressiveness
+		hasOrderBy := hasOrderingRequirement(ds)
+		ds.AllPossibleAccessPaths = pruneIndexesByAccessCondCount(ds.AllPossibleAccessPaths, maxAccessConds, numZeroAccessConds, perfectCoveringIndex, hasSingleScan, hasOrderBy)
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
@@ -734,6 +759,205 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		}
 	}
 	return nil
+}
+
+// hasOrderingRequirement recursively checks if a logical plan contains nodes that require ordering
+func hasOrderingRequirement(lp base.LogicalPlan) bool {
+	// Check if current plan requires ordering
+	switch lp.(type) {
+	case *logicalop.LogicalSort:
+		// Explicit ORDER BY clause
+		return true
+	case *logicalop.LogicalAggregation:
+		// GROUP BY requires ordering for grouping columns
+		// Some aggregate functions like GROUP_CONCAT have ORDER BY
+		return true
+	case *logicalop.LogicalWindow:
+		// Window functions often require ordering for their window frames
+		return true
+	case *logicalop.LogicalExpand:
+		// ROLLUP/CUBE operations require ordering for grouping
+		return true
+	}
+
+	// Recursively check children
+	for _, child := range lp.Children() {
+		if hasOrderingRequirement(child) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// pruneIndexesByAccessCondCount prunes indexes that have the same prefix as other indexes
+// with the same eqOrInCondCount, but where the other index also has a higher eqOrInCondCount.
+func pruneIndexesByAccessCondCount(paths []*util.AccessPath, maxAccessConds, numZeroAccessConds int, perfectCoveringIndex, hasSingleScan, hasOrderBy bool) []*util.AccessPath {
+	if len(paths) <= 1 {
+		return paths
+	}
+
+	perfectCoveringIndexes := make([]*util.AccessPath, 0, 4)      // Usually very few perfect covering indexes
+	preferredIndexes := make([]*util.AccessPath, 0, len(paths)/2) // Expected to be roughly half of paths
+	forcedIndexes := make([]*util.AccessPath, 0, 2)               // Usually very few forced indexes
+	tablePaths := make([]*util.AccessPath, 0, 1)                  // Usually just one table path
+	totalPaths := float64(len(paths))
+	keepOneAccessConds := (numZeroAccessConds > int(totalPaths*0.75)) || maxAccessConds <= 2
+	minIndexLen := 100
+
+	for _, path := range paths {
+		if path.IsTablePath() {
+			tablePaths = append(tablePaths, path)
+			continue
+		}
+		if path.Forced {
+			forcedIndexes = append(forcedIndexes, path)
+			continue
+		}
+		accessConds := max(len(path.AccessConds), path.MinAccessCondsForDNFCond)
+		// Check if this is a perfect covering index
+		if accessConds == maxAccessConds {
+			if path.IsSingleScan || perfectCoveringIndex {
+				if len(path.Index.Columns) < minIndexLen {
+					minIndexLen = len(path.Index.Columns)
+				}
+				perfectCoveringIndexes = append(perfectCoveringIndexes, path)
+			} else {
+				preferredIndexes = append(preferredIndexes, path)
+			}
+			continue
+		}
+		if accessConds == 0 {
+			if keepOneAccessConds && !hasSingleScan && path.IsSingleScan {
+				preferredIndexes = append(preferredIndexes, path)
+			}
+			continue
+		}
+		if accessConds == 1 && keepOneAccessConds {
+			if (hasSingleScan && path.IsSingleScan) || !hasSingleScan {
+				preferredIndexes = append(preferredIndexes, path)
+				continue
+			}
+		}
+		preferredIndexes = append(preferredIndexes, path)
+	}
+
+	// If we have perfect covering indexes or forced indexes, then return those and table paths
+	if len(perfectCoveringIndexes) > 0 || len(forcedIndexes) > 0 {
+		result := make([]*util.AccessPath, 0, len(tablePaths)+len(forcedIndexes)+len(perfectCoveringIndexes))
+		result = append(result, tablePaths...)
+		result = append(result, forcedIndexes...)
+		// Only add the "best" perfect covering index if there are multiple
+		if len(perfectCoveringIndexes) > 1 && !hasOrderBy && minIndexLen != 100 {
+			for _, perfectCoveringIndex := range perfectCoveringIndexes {
+				if len(perfectCoveringIndex.Index.Columns) == minIndexLen {
+					result = append(result, perfectCoveringIndex)
+					break
+				}
+			}
+		} else {
+			result = append(result, perfectCoveringIndexes...)
+		}
+		return result
+	}
+
+	// Helper function to check if one index is a prefix of another
+	// This supports both same order and different sequence of columns
+	isIndexPrefix := func(idx1, idx2 *model.IndexInfo, minEq int) bool {
+		if minEq == 0 {
+			return false
+		}
+
+		// Check if the first minEq columns of idx1 are contained in idx2
+		// This handles both same order and different sequence cases
+		for i := 0; i < minEq && i < len(idx1.Columns); i++ {
+			found := false
+			for j := range len(idx2.Columns) {
+				if idx1.Columns[i].Name.L == idx2.Columns[j].Name.L {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Group paths by their eqOrInCondCount
+	pathsByEqOrInCount := make(map[int][]*util.AccessPath)
+	for _, path := range preferredIndexes {
+		if path.IsTablePath() {
+			continue // Skip table paths (including PK)
+		}
+		eqOrInCount := path.EqOrInCondCount
+		pathsByEqOrInCount[eqOrInCount] = append(pathsByEqOrInCount[eqOrInCount], path)
+	}
+
+	// For each eqOrInCondCount, check if there are indexes with higher eqOrInCondCount
+	// that have the same prefix as indexes in the current group
+	pathsToRemove := make(map[*util.AccessPath]bool)
+
+	for currentEqOrInCount, currentPaths := range pathsByEqOrInCount {
+		// Check if there are any indexes with higher eqOrInCondCount that have the same prefix
+		for higherEqOrInCount, higherPaths := range pathsByEqOrInCount {
+			if higherEqOrInCount <= currentEqOrInCount {
+				continue
+			}
+			for _, currentPath := range currentPaths {
+				for _, higherPath := range higherPaths {
+					if currentPath.Forced {
+						continue
+					}
+					if currentPath.EqOrInCondCount == maxAccessConds {
+						continue // Don't prune if the current index has max eqOrInCondCount
+					}
+					// Don't prune if the current index is a single scan and the higher index is not
+					// Single scan indexes can avoid table lookups, so they should be preserved
+					if currentPath.EqOrInCondCount > 1 && currentPath.IsSingleScan && !higherPath.IsSingleScan {
+						continue
+					}
+
+					// If there's no ordering requirement, we can be more aggressive about pruning
+					// by considering indexes with fewer access conditions as candidates for pruning
+					shouldPrune := false
+					if !hasOrderBy {
+						// More aggressive pruning: prune if current index has fewer access conditions
+						// and is a prefix of the higher index
+						if currentPath.EqOrInCondCount < higherPath.EqOrInCondCount &&
+							isIndexPrefix(currentPath.Index, higherPath.Index, min(currentPath.EqOrInCondCount, higherPath.EqOrInCondCount)) {
+							shouldPrune = true
+						}
+					} else {
+						// Conservative pruning: only prune if current index is a prefix of higher index
+						// and both have the same access condition count
+						if currentPath.EqOrInCondCount == higherPath.EqOrInCondCount &&
+							isIndexPrefix(currentPath.Index, higherPath.Index, min(currentPath.EqOrInCondCount, higherPath.EqOrInCondCount)) {
+							shouldPrune = true
+						}
+					}
+
+					if shouldPrune {
+						// The current index is a prefix of the higher index, and the higher index
+						// has more or equal eqOrIn conditions, so we can prune the current index
+						pathsToRemove[currentPath] = true
+					}
+				}
+			}
+		}
+	}
+
+	// Remove the pruned paths
+	result := make([]*util.AccessPath, 0, len(preferredIndexes)+len(tablePaths))
+	for _, path := range preferredIndexes {
+		if !pathsToRemove[path] {
+			result = append(result, path)
+		}
+	}
+	result = append(result, tablePaths...)
+
+	return result
 }
 
 // loadTableStats loads the stats of the table and store it in the statement `UsedStatsInfo` if it didn't exist
