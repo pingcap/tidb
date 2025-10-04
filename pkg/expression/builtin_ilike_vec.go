@@ -45,11 +45,11 @@ func LowerAlphaASCIIExcludeEscapeChar(loweredCol *chunk.Column, rowNum int, excl
 	return actualEscapeChar
 }
 
-func (b *builtinIlikeSig) vectorized() bool {
+func (_ *builtinIlikeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIlikeSig) canMemorize(param *funcParam) bool {
+func (_ *builtinIlikeSig) canMemorize(param *funcParam) bool {
 	return param.getCol() == nil
 }
 
@@ -90,7 +90,7 @@ func (b *builtinIlikeSig) getEscape(ctx EvalContext, input *chunk.Chunk, result 
 	return escape, false, nil
 }
 
-func (b *builtinIlikeSig) lowerExpr(param *funcParam, rowNum int) {
+func (_ *builtinIlikeSig) lowerExpr(param *funcParam, rowNum int) {
 	col := param.getCol()
 	if col == nil {
 		str := param.getStringVal(0)
@@ -105,7 +105,7 @@ func (b *builtinIlikeSig) lowerExpr(param *funcParam, rowNum int) {
 	param.setCol(tmpExprCol)
 }
 
-func (b *builtinIlikeSig) lowerPattern(param *funcParam, rowNum int, escape int64) int64 {
+func (_ *builtinIlikeSig) lowerPattern(param *funcParam, rowNum int, escape int64) int64 {
 	col := param.getCol()
 	if col == nil {
 		str := param.getStringVal(0)
@@ -122,7 +122,7 @@ func (b *builtinIlikeSig) lowerPattern(param *funcParam, rowNum int, escape int6
 	return escape
 }
 
-func (b *builtinIlikeSig) vecVec(pattern collate.WildcardPattern, params []*funcParam, rowNum int, escape int64, result *chunk.Column) error {
+func (_ *builtinIlikeSig) vecVec(pattern collate.WildcardPattern, params []*funcParam, rowNum int, escape int64, result *chunk.Column) error {
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(params[0].getCol(), params[1].getCol())
 	i64s := result.Int64s()
@@ -137,7 +137,7 @@ func (b *builtinIlikeSig) vecVec(pattern collate.WildcardPattern, params []*func
 	return nil
 }
 
-func (b *builtinIlikeSig) constVec(pattern collate.WildcardPattern, expr string, param *funcParam, rowNum int, escape int64, result *chunk.Column) error {
+func (_ *builtinIlikeSig) constVec(pattern collate.WildcardPattern, expr string, param *funcParam, rowNum int, escape int64, result *chunk.Column) error {
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(param.getCol())
 	i64s := result.Int64s()
@@ -152,7 +152,7 @@ func (b *builtinIlikeSig) constVec(pattern collate.WildcardPattern, expr string,
 	return nil
 }
 
-func (b *builtinIlikeSig) ilikeWithMemorization(pattern collate.WildcardPattern, exprParam *funcParam, rowNum int, result *chunk.Column) error {
+func (_ *builtinIlikeSig) ilikeWithMemorization(pattern collate.WildcardPattern, exprParam *funcParam, rowNum int, result *chunk.Column) error {
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(exprParam.getCol())
 	i64s := result.Int64s()
