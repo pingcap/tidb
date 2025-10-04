@@ -36,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -265,7 +266,7 @@ func (m *mockStores) AssertIsNormalMode(t *testing.T) {
 
 func fakeCluster(t *testing.T, nodes int, keys ...[]byte) pd.Client {
 	tmp := t.TempDir()
-	_, pdc, cluster, err := unistore.New(tmp, nil, nil)
+	_, pdc, cluster, err := unistore.New(tmp, nil, constants.NullKeyspaceID, nil)
 	unistore.BootstrapWithMultiStores(cluster, nodes)
 	require.NoError(t, err)
 	cluster.SplitArbitrary(keys...)
