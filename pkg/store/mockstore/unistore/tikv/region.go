@@ -508,7 +508,7 @@ func (rm *StandAloneRegionManager) initStore(storeAddr string) error {
 	return nil
 }
 
-// initSplit splits the cluster into multiple regions.
+// initialSplit splits the cluster into multiple regions.
 func (rm *StandAloneRegionManager) initialSplit(root *metapb.Region) {
 	root.EndKey = codec.EncodeBytes(nil, []byte{'m'})
 	root.RegionEpoch.Version = 2
