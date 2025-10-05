@@ -3724,14 +3724,10 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
-	// Store current SELECT statement for query column extraction
-	b.currentSelectStmt = sel
 	defer func() {
 		b.popSelectOffset()
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
-		// Clear current SELECT statement
-		b.currentSelectStmt = nil
 	}()
 	if b.buildingRecursivePartForCTE {
 		if sel.Distinct || sel.OrderBy != nil || sel.Limit != nil {

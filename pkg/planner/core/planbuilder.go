@@ -311,8 +311,6 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
-	// currentSelectStmt stores the current SELECT statement being processed for query column extraction
-	currentSelectStmt *ast.SelectStmt
 	// currentDataSource stores the current DataSource being processed for predicate column tracking
 	currentDataSource *logicalop.DataSource
 }
