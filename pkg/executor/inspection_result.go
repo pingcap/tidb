@@ -241,6 +241,9 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 		"metric.job",
 		"name",
 		"peer-urls",
+		"initial-cluster",
+		"initial-cluster-state",
+		"join",
 
 		// TiKV
 		"server.addr",
