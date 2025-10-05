@@ -702,3 +702,23 @@ func TestAssertionLevel(t *testing.T) {
 	require.Equal(t, AssertionLevelFast, tidbOptAssertionLevel(vardef.NormalizeTxnAssertionLevel("FAST")))
 	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel("bogus"))
 }
+
+func TestTidbOptAssertionLevelNormalization(t *testing.T) {
+	type tc struct {
+		in   string
+		want AssertionLevel
+	}
+	cases := []tc{
+		{"OFF", AssertionLevelOff},
+		{"off", AssertionLevelOff},
+		{"FAST", AssertionLevelFast},
+		{"  fast  ", AssertionLevelFast},
+		{"STRICT", AssertionLevelStrict},
+		{"strict", AssertionLevelStrict},
+		{"", AssertionLevelOff},
+		{"weird", AssertionLevelOff},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.want, tidbOptAssertionLevel(c.in), c.in)
+	}
+}

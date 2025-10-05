@@ -1916,3 +1916,28 @@ func TestTiDBOptSelectivityFactor(t *testing.T) {
 	warn := vars.StmtCtx.GetWarnings()[0].Err
 	require.Equal(t, "[variable:1292]Truncated incorrect tidb_opt_selectivity_factor value: '1.1'", warn.Error())
 }
+
+func TestTxnAssertionLevelPossibleValues(t *testing.T) {
+	sv := GetSysVar(vardef.TiDBTxnAssertionLevel)
+	require.NotNil(t, sv)
+	require.ElementsMatch(t, vardef.TxnAssertionLevelValues(), sv.PossibleValues)
+}
+
+func TestTxnAssertionLevelSetSessionAffectsVars(t *testing.T) {
+	sv := &SessionVars{} // minimal: SetSession only writes AssertionLevel
+
+	// STRICT
+	err := GetSysVar(vardef.TiDBTxnAssertionLevel).SetSession(sv, "STRICT")
+	require.NoError(t, err)
+	require.Equal(t, AssertionLevelStrict, sv.AssertionLevel)
+
+	// FAST
+	err = GetSysVar(vardef.TiDBTxnAssertionLevel).SetSession(sv, "FAST")
+	require.NoError(t, err)
+	require.Equal(t, AssertionLevelFast, sv.AssertionLevel)
+
+	// OFF
+	err = GetSysVar(vardef.TiDBTxnAssertionLevel).SetSession(sv, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, AssertionLevelOff, sv.AssertionLevel)
+}

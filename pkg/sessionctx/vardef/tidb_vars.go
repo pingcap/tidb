@@ -2202,7 +2202,6 @@ func TxnAssertionLevelValues() []string {
 	return []string{assertionOffStr, assertionFastStr, assertionStrictStr}
 }
 
-// canonicalize any input to one of the three strings
 func NormalizeTxnAssertionLevel(opt string) string {
 	s := strings.ToUpper(strings.TrimSpace(opt))
 	switch s {
