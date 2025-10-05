@@ -121,6 +121,12 @@ type DataSource struct {
 
 	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
 	AskedColumnGroup [][]*expression.Column
+
+	// PredicateColumns tracks columns used in predicates for this datasource
+	// This is populated during early query planning stages for index pruning decisions
+	PredicateColumns map[int64]bool // column ID -> whether it's used in predicates
+	OrderByColumns   map[int64]bool // column ID -> whether it's used in ORDER BY
+	GroupByColumns   map[int64]bool // column ID -> whether it's used in GROUP BY
 }
 
 // Init initializes DataSource.
@@ -165,6 +171,10 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 		return nil, dual, nil
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
+
+	// Extract predicate columns for index pruning decisions
+	ds.ExtractPredicateColumns()
+
 	return predicates, ds, nil
 }
 
@@ -347,6 +357,41 @@ func (ds *DataSource) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 // Children inherits BaseLogicalPlan.LogicalPlan.<17th> implementation.
 
 // SetChildren inherits BaseLogicalPlan.LogicalPlan.<18th> implementation.
+
+// ExtractPredicateColumns extracts and stores columns used in predicates, ORDER BY, and GROUP BY
+// This should be called during early query planning stages for index pruning decisions
+func (ds *DataSource) ExtractPredicateColumns() {
+	// Initialize maps if not already done
+	if ds.PredicateColumns == nil {
+		ds.PredicateColumns = make(map[int64]bool)
+	}
+	if ds.OrderByColumns == nil {
+		ds.OrderByColumns = make(map[int64]bool)
+	}
+	if ds.GroupByColumns == nil {
+		ds.GroupByColumns = make(map[int64]bool)
+	}
+
+	// Extract columns from pushed-down conditions (WHERE clause)
+	for _, cond := range ds.PushedDownConds {
+		cols := expression.ExtractColumns(cond)
+		for _, col := range cols {
+			if ds.Schema().Contains(col) {
+				ds.PredicateColumns[col.ID] = true
+			}
+		}
+	}
+
+	// Extract columns from all conditions (including complex ones)
+	for _, cond := range ds.AllConds {
+		cols := expression.ExtractColumns(cond)
+		for _, col := range cols {
+			if ds.Schema().Contains(col) {
+				ds.PredicateColumns[col.ID] = true
+			}
+		}
+	}
+}
 
 // SetChild inherits BaseLogicalPlan.LogicalPlan.<19th> implementation.
 

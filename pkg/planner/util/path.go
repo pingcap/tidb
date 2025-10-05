@@ -144,6 +144,12 @@ type AccessPath struct {
 	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
 	// It's used in plan cache or Apply.
 	GroupByColIdxs []int
+
+	// WhereColumnPositionSum stores the sum of 1-based positions of WHERE clause columns in the index.
+	// Used for ranking indexes - lower sums indicate better prefix alignment.
+	// For example, for WHERE a, b and index (a, b, c), the sum is 1+2=3.
+	// For index (d, c, b, a), the sum is 4+3=7.
+	WhereColumnPositionSum int
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -182,6 +188,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
 		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
 		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
+		WhereColumnPositionSum:       path.WhereColumnPositionSum,
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()

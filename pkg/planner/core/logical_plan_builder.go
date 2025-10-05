@@ -3724,10 +3724,14 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
+	// Store current SELECT statement for query column extraction
+	b.currentSelectStmt = sel
 	defer func() {
 		b.popSelectOffset()
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
+		// Clear current SELECT statement
+		b.currentSelectStmt = nil
 	}()
 	if b.buildingRecursivePartForCTE {
 		if sel.Distinct || sel.OrderBy != nil || sel.Limit != nil {
@@ -4547,7 +4551,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
 
-	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0)
+	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0, b)
 	if err != nil {
 		return nil, err
 	}
@@ -4698,6 +4702,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		IS:                     b.is,
 		IsForUpdateRead:        b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
+
+	// Track current DataSource for predicate column extraction during index pruning
+	b.currentDataSource = ds
+
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, countCnt)...)
 	names := make([]*types.FieldName, 0, countCnt)

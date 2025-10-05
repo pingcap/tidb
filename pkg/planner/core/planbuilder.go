@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"reflect"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -310,6 +311,10 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+	// currentSelectStmt stores the current SELECT statement being processed for query column extraction
+	currentSelectStmt *ast.SelectStmt
+	// currentDataSource stores the current DataSource being processed for predicate column tracking
+	currentDataSource *logicalop.DataSource
 }
 
 type handleColHelper struct {
@@ -1203,7 +1208,7 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 	return true
 }
 
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool, builder *PlanBuilder) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1431,10 +1436,182 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	// Early pruning based on interesting columns to reduce expensive range analysis
-	available = pruneIndexesByInterestingColumnsEarly(ctx, available, tblInfo)
+	// Smart early pruning: use stored predicate column information for intelligent pruning
+	// This leverages the predicate columns extracted during PredicatePushDown
+	threshold := ctx.GetSessionVars().OptIndexPruneThreshold
+	if len(available) > threshold {
+		available = pruneIndexesByPredicateColumns(ctx, available, tblInfo, builder)
+	}
 
 	return available, nil
+}
+
+// pruneIndexesByPredicateColumns intelligently prunes indexes based on stored predicate column information
+func pruneIndexesByPredicateColumns(ctx base.PlanContext, paths []*util.AccessPath, tblInfo *model.TableInfo, builder *PlanBuilder) []*util.AccessPath {
+	// Get predicate columns from the current DataSource if available
+	var predicateColumns map[int64]bool
+	if builder != nil && builder.currentDataSource != nil {
+		predicateColumns = builder.currentDataSource.PredicateColumns
+	}
+
+	// If no predicate columns available, fall back to simple limiting
+	if len(predicateColumns) == 0 {
+		return pruneIndexesBySimpleLimiting(ctx, paths)
+	}
+
+	// Separate table paths from index paths
+	tablePaths := make([]*util.AccessPath, 0, 2)
+	indexPaths := make([]*util.AccessPath, 0, len(paths))
+
+	for _, path := range paths {
+		if path.IsTablePath() {
+			tablePaths = append(tablePaths, path)
+		} else {
+			indexPaths = append(indexPaths, path)
+		}
+	}
+
+	// If there are very few indexes, don't prune aggressively
+	if len(indexPaths) <= 3 {
+		result := make([]*util.AccessPath, 0, len(tablePaths)+len(indexPaths))
+		result = append(result, tablePaths...)
+		result = append(result, indexPaths...)
+		return result
+	}
+
+	// Score indexes based on predicate column coverage
+	scoredIndexes := make([]*scoredIndexPath, 0, len(indexPaths))
+
+	for _, path := range indexPaths {
+		score := calculateIndexScore(path, tblInfo, predicateColumns)
+		scoredIndexes = append(scoredIndexes, &scoredIndexPath{
+			path:  path,
+			score: score,
+		})
+	}
+
+	// Sort by score (higher is better)
+	sort.Slice(scoredIndexes, func(i, j int) bool {
+		if scoredIndexes[i].score != scoredIndexes[j].score {
+			return scoredIndexes[i].score > scoredIndexes[j].score
+		}
+		// If scores are equal, prefer shorter indexes
+		return len(scoredIndexes[i].path.Index.Columns) < len(scoredIndexes[j].path.Index.Columns)
+	})
+
+	// Keep top indexes up to 2x threshold, but always keep forced indexes
+	threshold := ctx.GetSessionVars().OptIndexPruneThreshold
+	maxKeep := threshold * 2
+
+	keptPaths := make([]*util.AccessPath, 0, len(tablePaths)+maxKeep)
+	keptPaths = append(keptPaths, tablePaths...) // Always keep table paths
+
+	keptCount := 0
+	for _, scored := range scoredIndexes {
+		if scored.path.Forced || keptCount < maxKeep {
+			keptPaths = append(keptPaths, scored.path)
+			if !scored.path.Forced {
+				keptCount++
+			}
+		}
+	}
+
+	return keptPaths
+}
+
+type scoredIndexPath struct {
+	path  *util.AccessPath
+	score int
+}
+
+// calculateIndexScore calculates a score for an index based on predicate column coverage
+func calculateIndexScore(path *util.AccessPath, tblInfo *model.TableInfo, predicateColumns map[int64]bool) int {
+	if len(predicateColumns) == 0 {
+		return 0
+	}
+
+	score := 0
+	predicateCount := len(predicateColumns)
+
+	// Count how many predicate columns this index covers
+	coveredPredicates := 0
+	for _, idxCol := range path.Index.Columns {
+		if idxCol.Offset < len(tblInfo.Columns) {
+			colInfo := tblInfo.Columns[idxCol.Offset]
+			if predicateColumns[colInfo.ID] {
+				coveredPredicates++
+			}
+		}
+	}
+
+	// Base score: percentage of predicate columns covered
+	if predicateCount > 0 {
+		score += (coveredPredicates * 100) / predicateCount
+	}
+
+	// Bonus for covering all predicate columns
+	if coveredPredicates == predicateCount {
+		score += 50
+	}
+
+	// Bonus for covering most predicate columns
+	if coveredPredicates >= (predicateCount*2)/3 {
+		score += 25
+	}
+
+	// Penalty for very long indexes that might not be efficient
+	if len(path.Index.Columns) > 5 {
+		score -= 10
+	}
+
+	return score
+}
+
+// pruneIndexesBySimpleLimiting provides a fallback when no predicate information is available
+func pruneIndexesBySimpleLimiting(ctx base.PlanContext, paths []*util.AccessPath) []*util.AccessPath {
+	threshold := ctx.GetSessionVars().OptIndexPruneThreshold
+
+	// Simple approach: keep table paths + up to 2x threshold indexes
+	tablePaths := make([]*util.AccessPath, 0, 2)
+	indexPaths := make([]*util.AccessPath, 0, threshold*2)
+
+	for _, path := range paths {
+		if path.IsTablePath() {
+			tablePaths = append(tablePaths, path)
+		} else {
+			indexPaths = append(indexPaths, path)
+		}
+	}
+
+	// Keep all table paths and limit index paths to 2x threshold
+	if len(indexPaths) > threshold*2 {
+		// Keep forced indexes first, then truncate the rest
+		forcedPaths := make([]*util.AccessPath, 0, len(indexPaths))
+		regularPaths := make([]*util.AccessPath, 0, len(indexPaths))
+
+		for _, path := range indexPaths {
+			if path.Forced {
+				forcedPaths = append(forcedPaths, path)
+			} else {
+				regularPaths = append(regularPaths, path)
+			}
+		}
+
+		// Keep all forced paths + up to (threshold*2 - forced) regular paths
+		maxRegular := threshold*2 - len(forcedPaths)
+		if maxRegular > 0 && len(regularPaths) > maxRegular {
+			regularPaths = regularPaths[:maxRegular]
+		}
+
+		indexPaths = make([]*util.AccessPath, 0, len(forcedPaths)+len(regularPaths))
+		indexPaths = append(indexPaths, forcedPaths...)
+		indexPaths = append(indexPaths, regularPaths...)
+	}
+
+	result := make([]*util.AccessPath, 0, len(tablePaths)+len(indexPaths))
+	result = append(result, tablePaths...)
+	result = append(result, indexPaths...)
+	return result
 }
 
 func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
@@ -1460,71 +1637,6 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 		i++
 	}
 	return paths[:i]
-}
-
-// pruneIndexesByInterestingColumnsEarly prunes indexes whose columns don't intersect with interesting columns
-// from the query. This provides early pruning before expensive range analysis.
-// Since AskedColumnGroup is not available at this stage, we use a heuristic approach based on
-// the table's column usage patterns and common access patterns.
-func pruneIndexesByInterestingColumnsEarly(ctx base.PlanContext, paths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
-	// For now, we'll use a simple heuristic: if there are many indexes (more than 20),
-	// we'll be more aggressive about pruning. This can be enhanced later with more sophisticated
-	// analysis of the query context.
-	indexPaths := make([]*util.AccessPath, 0, len(paths))
-	tablePaths := make([]*util.AccessPath, 0, 2)
-
-	for _, path := range paths {
-		if path.IsTablePath() {
-			tablePaths = append(tablePaths, path)
-		} else {
-			indexPaths = append(indexPaths, path)
-		}
-	}
-
-	// If we have many indexes, apply simple pruning heuristics
-	if len(indexPaths) > 20 {
-		// Simple heuristic: keep indexes on columns that are commonly used
-		// This is a placeholder for more sophisticated analysis
-		prunedIndexPaths := make([]*util.AccessPath, 0, len(indexPaths)/2)
-
-		for _, path := range indexPaths {
-			// Keep primary key indexes, unique indexes, and indexes on frequently accessed columns
-			if path.Index.Primary || path.Index.Unique {
-				prunedIndexPaths = append(prunedIndexPaths, path)
-				continue
-			}
-
-			// Keep indexes that start with commonly accessed columns (heuristic)
-			// This can be enhanced with actual column usage statistics
-			if len(path.Index.Columns) > 0 {
-				firstCol := path.Index.Columns[0]
-				if firstCol.Offset < len(tblInfo.Columns) {
-					colInfo := tblInfo.Columns[firstCol.Offset]
-					// Keep indexes on columns that are likely to be used in predicates
-					// This is a simple heuristic - can be enhanced with actual usage data
-					if colInfo.Name.L == "id" || colInfo.Name.L == "user_id" || colInfo.Name.L == "created_at" ||
-						colInfo.Name.L == "updated_at" || colInfo.Name.L == "status" || colInfo.Name.L == "type" {
-						prunedIndexPaths = append(prunedIndexPaths, path)
-						continue
-					}
-				}
-			}
-
-			// For other indexes, keep only a subset to avoid too much pruning
-			if len(prunedIndexPaths) < len(indexPaths)/2 {
-				prunedIndexPaths = append(prunedIndexPaths, path)
-			}
-		}
-
-		indexPaths = prunedIndexPaths
-	}
-
-	// Combine table paths and pruned index paths
-	result := make([]*util.AccessPath, 0, len(tablePaths)+len(indexPaths))
-	result = append(result, tablePaths...)
-	result = append(result, indexPaths...)
-
-	return result
 }
 
 func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLockInfo) (*logicalop.LogicalLock, error) {
