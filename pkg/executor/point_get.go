@@ -890,13 +890,19 @@ func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.
 		return nil
 	}
 
-	// For columns with case-insensitive collations, we need to fetch row data
-	// to get the correct case of the stored value
+	// For indexed columns with case-insensitive collations in the result set,
+	// we need to fetch row data to get the correct case of the stored value.
+	// This is because e.idxVals contains the search values, not the stored values.
 	for _, col := range schema.Columns {
-		if col.RetType.EvalType() == types.ETString {
-			// Check if this column uses a case-insensitive collation
-			if collate.IsCICollation(col.RetType.GetCollate()) {
-				return e.buildResultFromRowData(ctx, req, schema, sctx)
+		// Check if this column is part of the index
+		for _, idxCol := range e.idxInfo.Columns {
+			if e.tblInfo.Columns[idxCol.Offset].ID == col.ID {
+				// This column is in the index
+				if col.RetType.EvalType() == types.ETString && collate.IsCICollation(col.RetType.GetCollate()) {
+					// For CI collation, the search value might differ from stored value
+					return e.buildResultFromRowData(ctx, req, schema, sctx)
+				}
+				break
 			}
 		}
 	}
