@@ -148,6 +148,8 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID precheck.CheckItemID) (p
 		return NewCheckpointCheckItem(b.cfg, b.preInfoGetter, b.dbMetas, b.checkpointsDB), nil
 	case precheck.CheckCSVHeader:
 		return NewCSVHeaderCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
+	case precheck.CheckParquetDataType:
+		return NewParquetDataTypeCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
 	case precheck.CheckTargetClusterSize:
 		return NewClusterResourceCheckItem(b.preInfoGetter), nil
 	case precheck.CheckTargetClusterEmptyRegion:
