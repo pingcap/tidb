@@ -182,6 +182,11 @@ func (s *builtinSetValSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinJSONSumCRC32Sig) SafeToShareAcrossSession() bool {
+	return false
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinJSONSchemaValidSig) SafeToShareAcrossSession() bool {
 	return false
 }

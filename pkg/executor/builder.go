@@ -511,24 +511,39 @@ func buildIndexLookUpChecker(b *executorBuilder, p *physicalop.PhysicalIndexLook
 	}
 }
 
-func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
-	noMVIndexOrPrefixIndexOrColumnarIndex := true
-	for _, idx := range v.IndexInfos {
-		if idx.MVIndex || idx.IsColumnarIndex() {
-			noMVIndexOrPrefixIndexOrColumnarIndex = false
-			break
-		}
-		for _, col := range idx.Columns {
-			if col.Length != types.UnspecifiedLength {
-				noMVIndexOrPrefixIndexOrColumnarIndex = false
-				break
+// indexSupportFastCheck checks whether the index supports fast check.
+func indexSupportFastCheck(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) bool {
+	// Columnar index does not support fast check.
+	if idxInfo.IsColumnarIndex() {
+		return false
+	}
+
+	for _, col := range idxInfo.Columns {
+		// Currently, MV Index only support fast check for part of data types.
+		tblCol := tblInfo.Columns[col.Offset]
+		if len(ExtractCastArrayExpr(tblCol)) > 0 {
+			// TODO(joechenrh): support all data types.
+			switch tblCol.FieldType.ArrayType().EvalType() {
+			case types.ETDatetime, types.ETDuration, types.ETString, types.ETInt, types.ETReal:
+			default:
+				return false
 			}
 		}
-		if !noMVIndexOrPrefixIndexOrColumnarIndex {
+	}
+
+	return true
+}
+
+func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
+	supportFastAdminCheck := true
+	tblInfo := v.Table.Meta()
+	for _, idx := range v.IndexInfos {
+		if !indexSupportFastCheck(tblInfo, idx) {
+			supportFastAdminCheck = false
 			break
 		}
 	}
-	if b.ctx.GetSessionVars().FastCheckTable && noMVIndexOrPrefixIndexOrColumnarIndex {
+	if b.ctx.GetSessionVars().FastCheckTable && supportFastAdminCheck {
 		e := &FastCheckTableExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			dbName:       v.DBName,

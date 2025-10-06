@@ -1597,6 +1597,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.JSONSumCrc32Expr:
+		if !er.planCtx.builder.ctx.GetSessionVars().InRestrictedSQL {
+			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("use of JSON_SUM_CRC32 in user query")
+			return retNode, false
+		}
+
 		arg := er.ctxStack[len(er.ctxStack)-1]
 		jsonSumFunction, err := expression.BuildJSONSumCrc32FunctionWithCheck(er.sctx, arg, v.Tp)
 		if err != nil {
