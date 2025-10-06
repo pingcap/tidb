@@ -29,6 +29,7 @@ var (
 	GCActionRegionResultCounter            *prometheus.CounterVec
 	GCRegionTooManyLocksCounter            prometheus.Counter
 	GCUnsafeDestroyRangeFailuresCounterVec *prometheus.CounterVec
+	SafePointGauge                         *prometheus.GaugeVec
 )
 
 // InitGCWorkerMetrics initializes GC worker metrics.
@@ -81,6 +82,14 @@ func InitGCWorkerMetrics() {
 			Name:      "gc_region_too_many_locks",
 			Help:      "Counter of gc scan lock request more than once in the same region.",
 		})
+
+	SafePointGauge = metricscommon.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "safepoint",
+			Help:      "Gauge of GC safepoint.",
+		}, []string{"type"})
 }
 
 func init() {
