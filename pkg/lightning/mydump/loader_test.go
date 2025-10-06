@@ -26,6 +26,8 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/atomic"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -1201,7 +1203,9 @@ func TestSetupOptions(t *testing.T) {
 }
 
 func TestParallelProcess(t *testing.T) {
+	var totalSize atomic.Int64
 	hdl := func(ctx context.Context, f md.RawFile) (string, error) {
+		totalSize.Add(f.Size)
 		return strings.ToLower(f.Path), nil
 	}
 
@@ -1216,16 +1220,20 @@ func TestParallelProcess(t *testing.T) {
 
 	oneTest := func(length int, concurrency int) {
 		original := make([]md.RawFile, length)
+		totalSize = *atomic.NewInt64(0)
 		for i := range length {
-			original[i] = md.RawFile{Path: randomString()}
+			original[i] = md.RawFile{Path: randomString(), Size: int64(rand.Intn(1000))}
 		}
 
 		res, err := md.ParallelProcess(context.Background(), original, concurrency, hdl)
 		require.NoError(t, err)
 
+		oneTotalSize := int64(0)
 		for i, s := range original {
 			require.Equal(t, strings.ToLower(s.Path), res[i])
+			oneTotalSize += s.Size
 		}
+		require.Equal(t, oneTotalSize, totalSize.Load())
 	}
 
 	oneTest(10, 0)
