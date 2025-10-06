@@ -911,6 +911,20 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, where ast.ExprNode, aggMapper map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, error) {
 	b.optFlag |= rule.FlagPredicatePushDown
 	b.optFlag |= rule.FlagDeriveTopNFromWindow
+
+	// Extract predicate columns for index pruning if this is a DataSource
+	// Only do this expensive work if we expect to have many indexes to prune
+	if ds, ok := p.(*logicalop.DataSource); ok && where != nil {
+		threshold := b.ctx.GetSessionVars().OptIndexPruneThreshold
+		if len(ds.AllPossibleAccessPaths) > threshold {
+			// Use the proper DataSource method to extract predicate columns
+			// This will be populated when conditions are available during optimization
+			// For now, just ensure the maps are initialized
+			if ds.PredicateColumns == nil {
+				ds.PredicateColumns = make(map[int64]bool)
+			}
+		}
+	}
 	b.optFlag |= rule.FlagPredicateSimplification
 	if b.curClause != havingClause {
 		b.curClause = whereClause

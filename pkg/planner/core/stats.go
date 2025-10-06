@@ -137,12 +137,12 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	// Build ranges with prefix-based caching to avoid duplicate work
 	// for indexes that share the same prefix columns
 	// Only use caching when there are many indexes to avoid overhead for simple queries
-	// DISABLED: Range caching was adding overhead without significant benefit
-	// var rangeCache map[string]*ranger.DetachRangeResult
-	// threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
-	// if len(ds.AllPossibleAccessPaths) > threshold {
-	//	rangeCache = make(map[string]*ranger.DetachRangeResult)
-	// }
+	// Intelligent pruning: use predicate columns to prune indexes before expensive range analysis
+	// Only perform this expensive operation when there are many indexes (threshold > default of 20)
+	pruneThreshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
+	if len(ds.AllPossibleAccessPaths) > pruneThreshold {
+		ds.AllPossibleAccessPaths = pruneIndexesByPredicateColumns(ds.SCtx(), ds.AllPossibleAccessPaths, ds.TableInfo, ds)
+	}
 
 	maxAccessConds, numZeroAccessConds := 0, 0
 	perfectCoveringIndex, hasSingleScan := false, false

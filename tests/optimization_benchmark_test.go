@@ -123,6 +123,8 @@ func BenchmarkOptimization(b *testing.B) {
 		"SELECT * FROM t1 WHERE a = 1 AND b = 2 AND c = 3 AND d = 4 AND e = 5 AND f = 6 GROUP BY a",
 		"SELECT a, COUNT(*) FROM t1 WHERE a = 1 AND b = 2 AND c = 3 GROUP BY a",
 		"SELECT a, b, c FROM t1 WHERE a = 1 AND b = 2 AND c = 3 AND d = 4 AND e = 5 AND f = 6",
+		"SELECT a, b, c FROM t1 WHERE b = 2 AND c = 3 AND d = 4 AND e = 5 AND f = 6",
+		"SELECT b, c FROM t1 WHERE b = 2 AND c = 3",
 		"select a from t1 where (a = 1 and f = 1) or (a = 2 and f = 1) or (a = 3 and f = 1) or (a = 4 and f = 1) or (a = 5 and f = 1) or (a = 6 and f = 1) or (a = 7 and f = 1) or (a = 8 and f = 1) or (a = 9 and f = 1) or (a = 1 and f = 2) or (a = 2 and f = 2) or (a = 3 and f = 2) or (a = 4 and f = 2) or (a = 5 and f = 2) or (a = 6 and f = 2) or (a = 7 and f = 2) or (a = 8 and f = 2) or (a = 9 and f = 2)",
 	}
 

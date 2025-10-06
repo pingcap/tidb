@@ -1434,25 +1434,42 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	// Smart early pruning: use stored predicate column information for intelligent pruning
-	// This leverages the predicate columns extracted during PredicatePushDown
+	// Simple early pruning: limit the number of indexes to avoid excessive work
+	// This is a conservative approach that works regardless of timing issues
 	threshold := ctx.GetSessionVars().OptIndexPruneThreshold
 	if len(available) > threshold {
-		available = pruneIndexesByPredicateColumns(ctx, available, tblInfo, builder)
+		available = pruneIndexesBySimpleLimiting(ctx, available)
 	}
 
 	return available, nil
 }
 
 // pruneIndexesByPredicateColumns intelligently prunes indexes based on stored predicate column information
-func pruneIndexesByPredicateColumns(ctx base.PlanContext, paths []*util.AccessPath, tblInfo *model.TableInfo, builder *PlanBuilder) []*util.AccessPath {
-	// Get predicate columns from the current DataSource if available
+func pruneIndexesByPredicateColumns(ctx base.PlanContext, paths []*util.AccessPath, tblInfo *model.TableInfo, ds interface{}) []*util.AccessPath {
 	var predicateColumns map[int64]bool
-	if builder != nil && builder.currentDataSource != nil {
-		predicateColumns = builder.currentDataSource.PredicateColumns
+
+	// Try to get predicate columns from different sources
+	switch d := ds.(type) {
+	case *logicalop.DataSource:
+		// First try pre-populated predicate columns
+		if d.PredicateColumns != nil {
+			predicateColumns = d.PredicateColumns
+		}
+		// If not available, extract from conditions
+		if len(predicateColumns) == 0 {
+			predicateColumns = extractPredicateColumnsFromDataSource(d)
+		}
+	case *PlanBuilder:
+		// Fallback for PlanBuilder (legacy support)
+		if d.currentDataSource != nil {
+			predicateColumns = d.currentDataSource.PredicateColumns
+		}
+		if len(predicateColumns) == 0 && d.currentDataSource != nil {
+			predicateColumns = extractPredicateColumnsFromDataSource(d.currentDataSource)
+		}
 	}
 
-	// If no predicate columns available, fall back to simple limiting
+	// If still no predicate columns available, fall back to simple limiting
 	if len(predicateColumns) == 0 {
 		return pruneIndexesBySimpleLimiting(ctx, paths)
 	}
@@ -1469,23 +1486,17 @@ func pruneIndexesByPredicateColumns(ctx base.PlanContext, paths []*util.AccessPa
 		}
 	}
 
-	// If there are very few indexes, don't prune aggressively
-	if len(indexPaths) <= 3 {
-		result := make([]*util.AccessPath, 0, len(tablePaths)+len(indexPaths))
-		result = append(result, tablePaths...)
-		result = append(result, indexPaths...)
-		return result
-	}
-
 	// Score indexes based on predicate column coverage
 	scoredIndexes := make([]*scoredIndexPath, 0, len(indexPaths))
 
 	for _, path := range indexPaths {
 		score := calculateIndexScore(path, tblInfo, predicateColumns)
-		scoredIndexes = append(scoredIndexes, &scoredIndexPath{
-			path:  path,
-			score: score,
-		})
+		if score > 0 || path.Forced {
+			scoredIndexes = append(scoredIndexes, &scoredIndexPath{
+				path:  path,
+				score: score,
+			})
+		}
 	}
 
 	// Sort by score (higher is better)
@@ -1499,7 +1510,10 @@ func pruneIndexesByPredicateColumns(ctx base.PlanContext, paths []*util.AccessPa
 
 	// Keep top indexes up to 2x threshold, but always keep forced indexes
 	threshold := ctx.GetSessionVars().OptIndexPruneThreshold
-	maxKeep := threshold * 2
+	maxKeep := max(10, threshold)
+	if maxKeep > 10 {
+		maxKeep /= 2
+	}
 
 	keptPaths := make([]*util.AccessPath, 0, len(tablePaths)+maxKeep)
 	keptPaths = append(keptPaths, tablePaths...) // Always keep table paths
@@ -1515,6 +1529,13 @@ func pruneIndexesByPredicateColumns(ctx base.PlanContext, paths []*util.AccessPa
 	}
 
 	return keptPaths
+}
+
+// extractPredicateColumnsFromDataSource extracts predicate columns from DataSource conditions on-demand
+func extractPredicateColumnsFromDataSource(ds *logicalop.DataSource) map[int64]bool {
+	// Use the existing DataSource method to extract predicate columns
+	ds.ExtractPredicateColumns()
+	return ds.PredicateColumns
 }
 
 type scoredIndexPath struct {

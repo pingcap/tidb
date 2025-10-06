@@ -171,10 +171,6 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 		return nil, dual, nil
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
-
-	// Extract predicate columns for index pruning decisions
-	ds.ExtractPredicateColumns()
-
 	return predicates, ds, nil
 }
 
