@@ -889,7 +889,6 @@ func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.
 		return nil
 	}
 
-
 	// Map index columns to their positions in the schema
 	idxColMap := make(map[int64]types.Datum)
 	for i, idxCol := range e.idxInfo.Columns {
