@@ -28,16 +28,21 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -253,6 +258,17 @@ func (dagBuilder *dagBuilder) addTableScan(colInfos []*tipb.ColumnInfo, tableID 
 	return dagBuilder
 }
 
+func (dagBuilder *dagBuilder) addAggregate(gbyExprs, aggExprs []*tipb.Expr) *dagBuilder {
+	dagBuilder.executors = append(dagBuilder.executors, &tipb.Executor{
+		Tp: tipb.ExecType_TypeAggregation,
+		Aggregation: &tipb.Aggregation{
+			GroupBy: gbyExprs,
+			AggFunc: aggExprs,
+		},
+	})
+	return dagBuilder
+}
+
 func (dagBuilder *dagBuilder) addSelection(expr *tipb.Expr) *dagBuilder {
 	dagBuilder.executors = append(dagBuilder.executors, &tipb.Executor{
 		Tp: tipb.ExecType_TypeSelection,
@@ -379,6 +395,49 @@ func TestClosureExecutor(t *testing.T) {
 	require.Equal(t, 0, rowCount)
 }
 
+func TestMppAggExec(t *testing.T) {
+	data, err := prepareTestTableData(keyNumber, tableID)
+	require.NoError(t, err)
+
+	store, clean, err := newTestStore("cop_handler_test_db", "cop_handler_test_log")
+	require.NoError(t, err)
+	defer func() {
+		err := clean()
+		require.NoError(t, err)
+	}()
+
+	sctx := mock.NewContext()
+	client := new(mock.Client)
+
+	// we don't need to insert any data.(empty set is targeted case)
+	dagRequest := newDagBuilder().
+		setStartTs(dagRequestStartTs).
+		addTableScan(data.colInfos, tableID). // empty-set source
+		addAggregate(nil, buildCountAgg(sctx, client, []expression.Expression{expression.NewOne()})).
+		build()
+
+	dagCtx := newDagContext(t, store, []kv.KeyRange{getTestPointRange(tableID, 1)},
+		dagRequest, dagRequestStartTs)
+	_, chunks, _, _, _, err := buildAndRunMPPExecutor(dagCtx, dagRequest, 0)
+	require.NoError(t, err)
+	require.Equal(t, len(chunks), 1)
+
+	// read tipb.chunk
+	fieldTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	chk := chunk.NewChunkWithCapacity(fieldTypes, 32)
+	rowsData := chunks[0].RowsData
+	decoder := codec.NewDecoder(chk, sctx.GetSessionVars().Location())
+	for !chk.IsFull() && len(rowsData) > 0 {
+		for i := 0; i < len(fieldTypes); i++ {
+			rowsData, err = decoder.DecodeOne(rowsData, i, fieldTypes[i])
+			require.NoError(t, err)
+		}
+	}
+	require.Equal(t, chk.NumRows(), 1)
+	d := chk.GetRow(0).GetDatum(0, fieldTypes[0])
+	require.Equal(t, d.GetInt64(), int64(0)) // count(empty-set) = 0
+}
+
 func TestMppExecutor(t *testing.T) {
 	data, err := prepareTestTableData(keyNumber, tableID)
 	require.NoError(t, err)
@@ -426,6 +485,12 @@ func buildNEIntExpr(colIdx, val int64) *tipb.Expr {
 			},
 		},
 	}
+}
+
+func buildCountAgg(sctx sessionctx.Context, cli kv.Client, args []expression.Expression) []*tipb.Expr {
+	aggFunc, _ := aggregation.NewAggFuncDesc(sctx, ast.AggFuncCount, args, false)
+	aggExpr, _ := aggregation.AggFuncToPBExpr(sctx, cli, aggFunc, kv.TiFlash)
+	return []*tipb.Expr{aggExpr}
 }
 
 func buildEQIntExpr(colIdx, val int64) *tipb.Expr {
