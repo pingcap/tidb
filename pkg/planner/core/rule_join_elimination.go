@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	coreusage "github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -185,6 +186,7 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 		// TODO: this is tied to variable tidb_opt_enable_no_decorrelate_in_select
 		// to enable outer join elimination when correlated subqueries exist in the select
 		// list. Future enhancement can remove the variable check.
+		x.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableNoDecorrelateInSelect)
 		if x.SCtx().GetSessionVars().EnableNoDecorrelateInSelect {
 			// For Apply, only columns from the left child are visible to the parent at this layer.
 			// Filter incoming parentCols to left child's schema and also include correlated columns
@@ -212,9 +214,12 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 		// TODO: this is tied to variable tidb_opt_enable_no_decorrelate_in_select
 		// to enable outer join elimination when correlated subqueries exist in the select
 		// list. Future enhancement can remove the variable check.
-		if x.SCtx().GetSessionVars().EnableNoDecorrelateInSelect && len(x.Children()) > 0 {
-			corCols := coreusage.ExtractCorrelatedCols4LogicalPlan(x.Children()[0])
-			appendUniqueCorrelatedCols(&parentCols, corCols)
+		if len(x.Children()) > 0 {
+			x.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableNoDecorrelateInSelect)
+			if x.SCtx().GetSessionVars().EnableNoDecorrelateInSelect {
+				corCols := coreusage.ExtractCorrelatedCols4LogicalPlan(x.Children()[0])
+				appendUniqueCorrelatedCols(&parentCols, corCols)
+			}
 		}
 	case *logicalop.LogicalAggregation:
 		parentCols = parentCols[:0]
