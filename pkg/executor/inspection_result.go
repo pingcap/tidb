@@ -254,6 +254,9 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 		"raftstore.raftdb-path",
 		"storage.data-dir",
 		"storage.block-cache.capacity",
+
+		// TiProxy
+		"proxy.advertise-addr",
 	}
 	exec := sctx.GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select type, `key`, count(distinct value) as c from information_schema.cluster_config where `key` not in (%?) group by type, `key` having c > 1", ignoreConfigKey)
