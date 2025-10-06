@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to agents when working with code in this repository.
 
 ### Code Organization
 
@@ -60,9 +60,9 @@ Standard Go tests throughout `/pkg/` packages
 ```bash
 # in the root directory of the repository
 make failpoint-enable
-cd pkg/<package_name>
+pushd pkg/<package_name>
 go test -v -run  <TestName>  -record --tags=intest
-# return to the root directory
+popd
 make failpoint-disable
 ```
 
@@ -82,8 +82,9 @@ The test set is located at `/tests/integrationtes/t`, and the result set is in `
 
 ```bash
 # in the root directory of the repository
-cd tests/integrationtest
+pushd tests/integrationtest
 ./run-tests.sh -run <TestName>
+popd
 ```
 
 If you modify the test set `t/planner/core/binary_plan.test`, then the `TestName` will be `planner/core/binary_plan`.
