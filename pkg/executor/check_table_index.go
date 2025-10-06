@@ -384,10 +384,10 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	indexColNames := make([]string, len(idxInfo.Columns))
 	for i, col := range idxInfo.Columns {
 		tblCol := tblMeta.Columns[col.Offset]
-		if tblCol.IsVirtualGenerated() && tblCol.Hidden {
-			indexColNames[i] = tblCol.GeneratedExprString
+		if col.Length == types.UnspecifiedLength {
+			indexColNames[i] = ColumnName(tblCol.Name.O)
 		} else {
-			indexColNames[i] = ColumnName(col.Name.O)
+			indexColNames[i] = fmt.Sprintf("CAST(%s AS CHAR(%d))", ColumnName(col.Name.O), col.Length)
 		}
 	}
 	indexColumns := strings.Join(indexColNames, ",")
