@@ -493,7 +493,7 @@ func generateIndexPrefixKey(idxCols []*expression.Column, idxColLens []int, maxP
 
 	// Create a key based on the prefix columns and their lengths
 	var key strings.Builder
-	for i := 0; i < prefixLen; i++ {
+	for i := range prefixLen {
 		if i > 0 {
 			key.WriteString(",")
 		}
