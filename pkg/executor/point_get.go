@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -887,6 +888,17 @@ func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.
 	// First verify that index key exists
 	if len(e.handleVal) == 0 {
 		return nil
+	}
+
+	// For columns with case-insensitive collations, we need to fetch row data
+	// to get the correct case of the stored value
+	for _, col := range schema.Columns {
+		if col.RetType.EvalType() == types.ETString {
+			// Check if this column uses a case-insensitive collation
+			if collate.IsCICollation(col.RetType.GetCollate()) {
+				return e.buildResultFromRowData(ctx, req, schema, sctx)
+			}
+		}
 	}
 
 	// Map index columns to their positions in the schema
