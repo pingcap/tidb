@@ -855,7 +855,8 @@ type AggregateFuncExpr struct {
 	// but "sum(distinct c1)" is "3".
 	Distinct bool
 	// Order is only used in GROUP_CONCAT
-	Order *OrderByClause
+	Order     *OrderByClause
+	Separator ExprNode
 }
 
 // Restore implements Node interface.
@@ -867,11 +868,11 @@ func (n *AggregateFuncExpr) Restore(ctx *format.RestoreCtx) error {
 	}
 	switch strings.ToLower(n.F) {
 	case "group_concat":
-		for i := range len(n.Args) - 1 {
+		for i, argv := range n.Args {
 			if i != 0 {
 				ctx.WritePlain(", ")
 			}
-			if err := n.Args[i].Restore(ctx); err != nil {
+			if err := argv.Restore(ctx); err != nil {
 				return errors.Annotatef(err, "An error occurred while restore AggregateFuncExpr.Args[%d]", i)
 			}
 		}
@@ -881,9 +882,12 @@ func (n *AggregateFuncExpr) Restore(ctx *format.RestoreCtx) error {
 				return errors.Annotate(err, "An error occur while restore AggregateFuncExpr.Args Order")
 			}
 		}
-		ctx.WriteKeyWord(" SEPARATOR ")
-		if err := n.Args[len(n.Args)-1].Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore AggregateFuncExpr.Args SEPARATOR")
+		// 仅当存在Separator时输出SEPARATOR
+		if n.Separator != nil {
+			ctx.WriteKeyWord(" SEPARATOR ")
+			if err := n.Separator.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore AggregateFuncExpr.Separator")
+			}
 		}
 	default:
 		for i, argv := range n.Args {
