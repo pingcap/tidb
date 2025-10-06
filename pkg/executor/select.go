@@ -972,6 +972,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		clear(sc.TblInfo2UnionScan)
 	}
+	clear(sc.TableDeltaMap)
 	sc.IsStaleness = false
 	sc.EnableOptimizeTrace = false
 	sc.OptimizeTracer = nil

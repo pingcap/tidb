@@ -24,7 +24,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -502,4 +504,56 @@ func TestMemBufferCleanupMemoryLeak(t *testing.T) {
 		require.NoError(t, err)
 	}
 	tk.MustExec("commit")
+}
+
+func TestTxnTableDeltaMap(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int, a int, unique index(id))")
+	tk.MustExec("create table t2 (id int, a int, unique index(id))")
+	tk.MustExec("insert into t2 values (1,1), (2,2)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (1,1), (2,2)")
+	err := tk.ExecToErr("update t2 set id=id+1")
+	require.Error(t, err)
+	require.Equal(t, "[kv:1062]Duplicate entry '2' for key 't2.id'", err.Error())
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tb1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tb2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+	txnCtx := tk.Session().GetSessionVars().TxnCtx
+	require.NotNil(t, txnCtx.TableDeltaMap)
+	require.Equal(t, int64(2), txnCtx.TableDeltaMap[tb1.Meta().ID].Count)
+	require.Equal(t, int64(0), txnCtx.TableDeltaMap[tb2.Meta().ID].Count)
+	require.Equal(t, true, tk.Session().HasDirtyContent(tb1.Meta().ID))
+	require.Equal(t, false, tk.Session().HasDirtyContent(tb2.Meta().ID))
+	tk.MustExec("rollback")
+}
+
+func TestHasDirtyContent(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	testcases := []struct {
+		sql      string
+		hasDirty bool
+	}{
+		{"insert into t values (0)", false},
+		{"begin", false},
+		{"insert into t values (1)", true},
+		{"commit", false},
+		{"set @@autocommit=0", false},
+		{"insert into t values (2)", true},
+		{"commit", false},
+	}
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	for _, ca := range testcases {
+		tk.MustExec(ca.sql)
+		require.Equal(t, ca.hasDirty, tk.Session().HasDirtyContent(tb.Meta().ID))
+	}
 }
