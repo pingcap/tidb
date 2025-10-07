@@ -2900,8 +2900,14 @@ func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
 	defer func() {
 		_ = resp.Close()
 	}()
-	if _, err := resp.Next(ctx); err != nil {
-		return errors.Trace(err)
+	for {
+		subset, err := resp.Next(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if subset == nil {
+			break // all remote tasks finished cleanly
+		}
 	}
 
 	return nil
