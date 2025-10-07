@@ -440,7 +440,7 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 // canIndexProduceAccessConds checks if an index can potentially produce access conditions
 // from the given predicates. This is a fast pre-check to avoid expensive range building
 // when we know the index cannot be useful.
-func canIndexProduceAccessConds(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression) bool {
+/*func canIndexProduceAccessConds(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression) bool {
 	// If no conditions, no access conditions possible
 	if len(conds) == 0 {
 		return false
@@ -474,123 +474,7 @@ func canIndexProduceAccessConds(ds *logicalop.DataSource, path *util.AccessPath,
 
 	return false
 }
-
-// generateIndexPrefixKey creates a cache key based on the index prefix columns and lengths.
-// This allows us to reuse range building results for indexes that share the same prefix.
-func generateIndexPrefixKey(idxCols []*expression.Column, idxColLens []int, maxPrefixLen int) string {
-	if len(idxCols) == 0 {
-		return ""
-	}
-
-	// Use the minimum of maxPrefixLen and actual column count to determine the prefix
-	prefixLen := maxPrefixLen
-	if prefixLen > len(idxCols) {
-		prefixLen = len(idxCols)
-	}
-	if prefixLen <= 0 {
-		prefixLen = len(idxCols)
-	}
-
-	// Create a key based on the prefix columns and their lengths
-	var key strings.Builder
-	for i := range prefixLen {
-		if i > 0 {
-			key.WriteString(",")
-		}
-		key.WriteString(strconv.FormatInt(idxCols[i].ID, 10))
-		key.WriteString(":")
-		key.WriteString(strconv.Itoa(idxColLens[i]))
-	}
-	return key.String()
-}
-
-func fillIndexPathWithCache(
-	ds *logicalop.DataSource,
-	path *util.AccessPath,
-	conds []expression.Expression,
-	rangeCache map[string]*ranger.DetachRangeResult,
-) error {
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.SCtx())
-		defer debugtrace.LeaveContextCommon(ds.SCtx())
-	}
-	path.Ranges = ranger.FullRange()
-	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
-	path.MinCountAfterAccess = 0
-	path.MaxCountAfterAccess = 0
-	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
-	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-	if !path.Index.Unique && !path.Index.Primary {
-		handleCol := ds.GetPKIsHandleCol()
-		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
-			alreadyHandle := false
-			for _, col := range path.IdxCols {
-				if col.ID == model.ExtraHandleID || col.EqualColumn(handleCol) {
-					alreadyHandle = true
-				}
-			}
-			// Don't add one column twice to the index. May cause unexpected errors.
-			if !alreadyHandle {
-				path.FullIdxCols = append(path.FullIdxCols, handleCol)
-				path.FullIdxColLens = append(path.FullIdxColLens, types.UnspecifiedLength)
-				path.IdxCols = append(path.IdxCols, handleCol)
-				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
-				// Also updates the map that maps the index id to its prefix column ids.
-				if len(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
-					ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] = append(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], handleCol.UniqueID)
-				}
-			}
-		}
-	}
-
-	// Use cached range building if available
-	var res *ranger.DetachRangeResult
-	var err error
-
-	if len(path.IdxCols) == 0 {
-		path.TableFilters = conds
-		return nil
-	}
-
-	// Generate cache key based on index prefix - use all columns for now, but could be optimized
-	// to use only the columns that are actually used in the conditions
-	cacheKey := generateIndexPrefixKey(path.IdxCols, path.IdxColLens, len(path.IdxCols))
-
-	if cachedRes, exists := rangeCache[cacheKey]; exists {
-		// Reuse cached result
-		res = cachedRes
-	} else {
-		// Build ranges and cache the result
-		res, err = ranger.DetachCondAndBuildRangeForIndex(ds.SCtx().GetRangerCtx(), conds, path.IdxCols, path.IdxColLens, ds.SCtx().GetSessionVars().RangeMaxSize)
-		if err != nil {
-			return err
-		}
-		// Cache the result for future use
-		rangeCache[cacheKey] = res
-	}
-
-	// Apply the range result to this path
-	path.Ranges = res.Ranges
-	path.AccessConds = res.AccessConds
-	path.TableFilters = res.RemainedConds
-	path.EqCondCount = res.EqCondCount
-	path.EqOrInCondCount = res.EqOrInCount
-	path.IsDNFCond = res.IsDNFCond
-	path.MinAccessCondsForDNFCond = res.MinAccessCondsForDNFCond
-	path.ConstCols = make([]bool, len(path.IdxCols))
-	if res.ColumnValues != nil {
-		for i := range path.ConstCols {
-			path.ConstCols[i] = res.ColumnValues[i] != nil
-		}
-	}
-	indexCols := path.IdxCols
-	if len(indexCols) > len(path.Index.Columns) { // remove clustered primary key if it has been added to path.IdxCols
-		indexCols = indexCols[0:len(path.Index.Columns)]
-	}
-	count, err := cardinality.GetRowCountByIndexRanges(ds.SCtx(), ds.TableStats.HistColl, path.Index.ID, path.Ranges, indexCols)
-	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
-	return err
-}
+*/
 
 func detachCondAndBuildRangeForPath(
 	sctx base.PlanContext,

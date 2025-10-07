@@ -1436,10 +1436,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 	// Simple early pruning: limit the number of indexes to avoid excessive work
 	// This is a conservative approach that works regardless of timing issues
-	threshold := ctx.GetSessionVars().OptIndexPruneThreshold
-	if len(available) > threshold {
-		available = pruneIndexesBySimpleLimiting(ctx, available)
-	}
+	//threshold := ctx.GetSessionVars().OptIndexPruneThreshold
+	//if len(available) > threshold {
+	//	available = pruneIndexesBySimpleLimiting(ctx, available)
+	//}
 
 	return available, nil
 }
@@ -1470,9 +1470,9 @@ func pruneIndexesByPredicateColumns(ctx base.PlanContext, paths []*util.AccessPa
 	}
 
 	// If still no predicate columns available, fall back to simple limiting
-	if len(predicateColumns) == 0 {
-		return pruneIndexesBySimpleLimiting(ctx, paths)
-	}
+	//if len(predicateColumns) == 0 {
+	//	return pruneIndexesBySimpleLimiting(ctx, paths)
+	//}
 
 	// Separate table paths from index paths
 	tablePaths := make([]*util.AccessPath, 0, 2)
@@ -1587,51 +1587,51 @@ func calculateIndexScore(path *util.AccessPath, tblInfo *model.TableInfo, predic
 }
 
 // pruneIndexesBySimpleLimiting provides a fallback when no predicate information is available
-func pruneIndexesBySimpleLimiting(ctx base.PlanContext, paths []*util.AccessPath) []*util.AccessPath {
-	threshold := ctx.GetSessionVars().OptIndexPruneThreshold
+//func pruneIndexesBySimpleLimiting(ctx base.PlanContext, paths []*util.AccessPath) []*util.AccessPath {
+//	threshold := ctx.GetSessionVars().OptIndexPruneThreshold
+//
+//	// Simple approach: keep table paths + up to 2x threshold indexes
+//	tablePaths := make([]*util.AccessPath, 0, 2)
+//	indexPaths := make([]*util.AccessPath, 0, threshold*2)
 
-	// Simple approach: keep table paths + up to 2x threshold indexes
-	tablePaths := make([]*util.AccessPath, 0, 2)
-	indexPaths := make([]*util.AccessPath, 0, threshold*2)
+//	for _, path := range paths {
+//		if path.IsTablePath() {
+//			tablePaths = append(tablePaths, path)
+//		} else {
+//			indexPaths = append(indexPaths, path)
+//		}
+//	}
 
-	for _, path := range paths {
-		if path.IsTablePath() {
-			tablePaths = append(tablePaths, path)
-		} else {
-			indexPaths = append(indexPaths, path)
-		}
-	}
+// Keep all table paths and limit index paths to 2x threshold
+//	if len(indexPaths) > threshold*2 {
+//		// Keep forced indexes first, then truncate the rest
+//		forcedPaths := make([]*util.AccessPath, 0, len(indexPaths))
+//		regularPaths := make([]*util.AccessPath, 0, len(indexPaths))
 
-	// Keep all table paths and limit index paths to 2x threshold
-	if len(indexPaths) > threshold*2 {
-		// Keep forced indexes first, then truncate the rest
-		forcedPaths := make([]*util.AccessPath, 0, len(indexPaths))
-		regularPaths := make([]*util.AccessPath, 0, len(indexPaths))
+//		for _, path := range indexPaths {
+//			if path.Forced {
+//				forcedPaths = append(forcedPaths, path)
+//			} else {
+//				regularPaths = append(regularPaths, path)
+//			}
+//		}
 
-		for _, path := range indexPaths {
-			if path.Forced {
-				forcedPaths = append(forcedPaths, path)
-			} else {
-				regularPaths = append(regularPaths, path)
-			}
-		}
+// Keep all forced paths + up to (threshold*2 - forced) regular paths
+//		maxRegular := threshold*2 - len(forcedPaths)
+//		if maxRegular > 0 && len(regularPaths) > maxRegular {
+//			regularPaths = regularPaths[:maxRegular]
+//		}
 
-		// Keep all forced paths + up to (threshold*2 - forced) regular paths
-		maxRegular := threshold*2 - len(forcedPaths)
-		if maxRegular > 0 && len(regularPaths) > maxRegular {
-			regularPaths = regularPaths[:maxRegular]
-		}
+//		indexPaths = make([]*util.AccessPath, 0, len(forcedPaths)+len(regularPaths))
+//		indexPaths = append(indexPaths, forcedPaths...)
+//		indexPaths = append(indexPaths, regularPaths...)
+//	}
 
-		indexPaths = make([]*util.AccessPath, 0, len(forcedPaths)+len(regularPaths))
-		indexPaths = append(indexPaths, forcedPaths...)
-		indexPaths = append(indexPaths, regularPaths...)
-	}
-
-	result := make([]*util.AccessPath, 0, len(tablePaths)+len(indexPaths))
-	result = append(result, tablePaths...)
-	result = append(result, indexPaths...)
-	return result
-}
+//	result := make([]*util.AccessPath, 0, len(tablePaths)+len(indexPaths))
+//	result = append(result, tablePaths...)
+//	result = append(result, indexPaths...)
+//	return result
+//}
 
 func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
 	if len(ignoredPaths) == 0 {
