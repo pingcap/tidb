@@ -31,9 +31,9 @@ type OuterJoinEliminator struct {
 }
 
 // appendUniqueCorrelatedCols appends correlated columns to the target slice, avoiding duplicates.
-func appendUniqueCorrelatedCols(target *[]*expression.Column, corCols []*expression.CorrelatedColumn) {
+func appendUniqueCorrelatedCols(target []*expression.Column, corCols []*expression.CorrelatedColumn) []*expression.Column {
 	if len(corCols) == 0 {
-		return
+		return target
 	}
 	seen := make(map[int64]struct{})
 	for _, cc := range corCols {
@@ -42,8 +42,9 @@ func appendUniqueCorrelatedCols(target *[]*expression.Column, corCols []*express
 			continue
 		}
 		seen[uid] = struct{}{}
-		*target = append(*target, &cc.Column)
+		target = append(target, &cc.Column)
 	}
+	return target
 }
 
 // tryToEliminateOuterJoin will eliminate outer join plan base on the following rules
@@ -200,7 +201,7 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 			}
 			// Add correlated columns from the right child that map to the left schema
 			corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(x.Children()[1], leftSchema)
-			appendUniqueCorrelatedCols(&filtered, corCols)
+			filtered = appendUniqueCorrelatedCols(filtered, corCols)
 			parentCols = filtered
 		} else {
 			parentCols = append(parentCols[:0], p.Schema().Columns...)
@@ -218,7 +219,7 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 			x.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableNoDecorrelateInSelect)
 			if x.SCtx().GetSessionVars().EnableNoDecorrelateInSelect {
 				corCols := coreusage.ExtractCorrelatedCols4LogicalPlan(x.Children()[0])
-				appendUniqueCorrelatedCols(&parentCols, corCols)
+				parentCols = appendUniqueCorrelatedCols(parentCols, corCols)
 			}
 		}
 	case *logicalop.LogicalAggregation:
