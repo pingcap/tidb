@@ -74,9 +74,9 @@ The following points must be achieved:
 
 ### Integration Tests
 
-Integration tests are located in the `/tests/integrationtes` directory.
+Integration tests are located in the `/tests/integrationtest` directory.
 
-The test set is located at `/tests/integrationtes/t`, and the result set is in `tests/integrationtes/r`. The result set does not need to be modified, but it is necessary to verify its correctness after running the tests.
+The test set is located at `/tests/integrationtest/t`, and the result set is in `tests/integrationtest/r`. The result set does not need to be modified, but it is necessary to verify its correctness after running the tests.
 
 #### How to run integration tests
 
