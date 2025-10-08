@@ -23,6 +23,9 @@ This file provides guidance to agents when working with code in this repository.
 - `/pkg/owner/` - Coordinates tasks that must be executed by a single instance in a TiDB cluster.
 - `/pkg/parser/` - MySQL-compatible SQL parser and AST/data structure definitions.
 - `/pkg/planner/` - Query optimization logic.
+- `/pkg/planner/core/base/` - interfaces for logical and physical plans.
+- `/pkg/planner/core/operator/logicalop` - Logical plan operators.
+- `/pkg/planner/core/operator/physicalop` - Physical plan operators.
 - `/pkg/plugin/` - TiDB plugin framework.
 - `/pkg/privilege/` - User privilege management interface.
 - `/pkg/server/` - MySQL protocol and connection management.
