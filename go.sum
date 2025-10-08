@@ -986,8 +986,8 @@ github.com/xitongsys/parquet-go-source v0.0.0-20190524061010-2b72cbee77d5/go.mod
 github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0 h1:a742S4V5A15F93smuVxA60LQWsrCnN8bKeWDBARU1/k=
 github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0/go.mod h1:HYhIKsdns7xz80OgkbgJYrtQY7FjHWHKH6cvN7+czGE=
 github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:aYKd//L2LvnjZzWKhF00oedf4jCCReLcmhLdhm1A27Q=
-github.com/you06/client-go/v2 v2.0.0-alpha.0.20250930064929-1490dfd1fd59 h1:NYYRiFKF7Fs84dcv/HMhcmFW6mjt4oywy2IJ5i1mxQs=
-github.com/you06/client-go/v2 v2.0.0-alpha.0.20250930064929-1490dfd1fd59/go.mod h1:CFbSXg9mw7Ld1qLhHYR0pPsWtVlaW5Im9vQUbfH9sEI=
+github.com/you06/client-go/v2 v2.0.0-alpha.0.20251008054325-a304330aff1f h1:3V6gWpbgFfb+7k51k8mDy8q6qN4Dm3kKKArgtUUZTpw=
+github.com/you06/client-go/v2 v2.0.0-alpha.0.20251008054325-a304330aff1f/go.mod h1:CFbSXg9mw7Ld1qLhHYR0pPsWtVlaW5Im9vQUbfH9sEI=
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.30/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
