@@ -91,7 +91,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(bo *Backoffer, c *RegionCach
 				bucketKeys = append(bucketKeys, kv.Key(k))
 			}
 			logutil.BgLogger().Warn("[RegionBoundaryDebug] Unexpected bucket is nil",
-				zap.String("region", loc.Region.String()),
+				zap.Stringer("region", &loc.Region),
 				zap.Stringer("startKey", ranges.At(0).StartKey),
 				zap.Stringer("endKey", ranges.At(0).EndKey),
 				zap.Stringers("buckets", bucketKeys),
@@ -265,6 +265,7 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 					zap.Int("index", i),
 					zap.Int("len", locRanges.Len()),
 					zap.Int("notContainedRangeIndex", j),
+					zap.Stringer("region", &loc.Location.Region),
 					zap.Stringer("startKey", kv.Key(loc.Location.StartKey)),
 					zap.Stringer("endKey", kv.Key(loc.Location.EndKey)),
 					zap.Stringer("ranges", locRanges),
