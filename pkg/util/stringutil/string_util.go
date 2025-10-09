@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 // ErrSyntax indicates that a value does not have the right syntax for the target type.
@@ -349,7 +348,7 @@ func IsExactMatch(patTypes []byte) bool {
 
 // Copy deep copies a string.
 func Copy(src string) string {
-	return string(hack.Slice(src))
+	return strings.Clone(src)
 }
 
 // StringerFunc defines string func implement fmt.Stringer.
