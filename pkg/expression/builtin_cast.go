@@ -2489,7 +2489,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res
 		return res, isNull, err
 	default:
 		ec := errCtx(ctx)
-		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(types.TypeStr(b.tp.GetType()), val.String())
+		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(types.TypeStr(b.tp.GetType()), strings.Clone(val.String()))
 		return res, true, ec.HandleError(err)
 	}
 }
