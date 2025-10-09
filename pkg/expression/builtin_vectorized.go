@@ -40,12 +40,18 @@ type localColumnPool struct {
 	sync.Pool
 }
 
+var columnTempl = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
+
 func newLocalColumnPool() *localColumnPool {
-	newColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
 	return &localColumnPool{
 		sync.Pool{
+<<<<<<< HEAD
 			New: func() interface{} {
 				return newColumn.CopyConstruct(nil)
+=======
+			New: func() any {
+				return columnTempl.CopyConstruct(nil)
+>>>>>>> f8a207ce906 (expression: don't allocate column every time when to newLocalColumnPool (#63864))
 			},
 		},
 	}
