@@ -252,21 +252,18 @@ type preprocessor struct {
 	resolveCtx *resolve.Context
 }
 
-type TableNameCollector struct {
-	TableSources []*ast.TableSource
+type tableSourceCollector struct {
+	tableSources []*ast.TableSource
 }
 
-// Enter implements ast.Visitor interface.
-// ref updatableTableListResolver
-func (t *TableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch node := in.(type) {
-	case *ast.TableSource:
-		t.TableSources = append(t.TableSources, node)
+func (t *tableSourceCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	if node, ok := in.(*ast.TableSource); ok {
+		t.tableSources = append(t.tableSources, node)
 	}
 	return in, false
 }
 
-func (t *TableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (_ *tableSourceCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
@@ -276,14 +273,13 @@ type tableWithDBInfo struct {
 }
 
 func (p *preprocessor) getAllDBInfos(node *ast.TableRefsClause) map[*ast.TableSource]*tableWithDBInfo {
-	var m map[*ast.TableSource]*tableWithDBInfo
-	m = make(map[*ast.TableSource]*tableWithDBInfo)
-	t := TableNameCollector{
-		TableSources: make([]*ast.TableSource, 0),
+	m := make(map[*ast.TableSource]*tableWithDBInfo)
+	t := tableSourceCollector{
+		tableSources: make([]*ast.TableSource, 0),
 	}
 	node.Accept(&t)
 
-	for _, tbl := range t.TableSources {
+	for _, tbl := range t.tableSources {
 		name := tbl.Source.(*ast.TableName)
 		table, err := p.tableByName(name)
 		if err != nil {
@@ -311,7 +307,6 @@ func checkColNameValidAndGetDBInfo(col *ast.ColumnName, tableInfos map[*ast.Tabl
 			if colName.Name.L == col.Name.L &&
 				(col.Schema.L == "" || col.Schema.L == tableInfo.Table.Name.L) &&
 				(col.Table.L == "" || col.Table.L == tableInfo.Table.Name.L || (tbl.AsName.L != "" && col.Table.L == tbl.AsName.L)) {
-
 				if colExist {
 					return nil, nil, errors.New("Column xxx in field list is ambiguous")
 				}
