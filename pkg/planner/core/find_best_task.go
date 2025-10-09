@@ -289,7 +289,7 @@ func iteratePhysicalPlan4BaseLogical(
 	childTasks = childTasks[:0]
 	for j, child := range p.Children() {
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, err := physicalop.FindBestTaskHandle(child, childProp)
+		childTask, err := physicalop.FindBestTask(child, childProp)
 		if err != nil {
 			return nil, err
 		}
@@ -381,7 +381,7 @@ func iterateChildPlan4LogicalSequence(
 	for j := range lastIdx {
 		child := p.Children()[j]
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, err := physicalop.FindBestTaskHandle(child, childProp)
+		childTask, err := physicalop.FindBestTask(child, childProp)
 		if err != nil {
 			return nil, err
 		}
@@ -407,7 +407,7 @@ func iterateChildPlan4LogicalSequence(
 	if lastChildProp.IsFlashProp() {
 		lastChildProp.CTEProducerStatus = property.AllCTECanMpp
 	}
-	lastChildTask, err := physicalop.FindBestTaskHandle(p.Children()[lastIdx], lastChildProp)
+	lastChildTask, err := physicalop.FindBestTask(p.Children()[lastIdx], lastChildProp)
 	if err != nil {
 		return nil, err
 	}
@@ -709,7 +709,7 @@ func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.Physica
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
 		// still use the super.
-		t, err = physicalop.FindBestTaskHandle(super, prop)
+		t, err = physicalop.FindBestTask(super, prop)
 		if err != nil {
 			return nil, err
 		}
@@ -1690,7 +1690,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	if prop.CanAddEnforcer {
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
-		unenforcedTask, err = ds.FindBestTask(prop)
+		unenforcedTask, err = physicalop.FindBestTask(ds, prop)
 		if err != nil {
 			return nil, err
 		}

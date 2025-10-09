@@ -326,5 +326,5 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 
 // FindBestTask implements LogicalPlan.<3rd> interface, it's used to override the wrapped logicalPlans.
 func (e *GroupExpression) FindBestTask(prop *property.PhysicalProperty) (bestTask base.Task, err error) {
-	return physicalop.FindBestTaskHandle(e, prop)
+	return physicalop.FindBestTask(e, prop)
 }

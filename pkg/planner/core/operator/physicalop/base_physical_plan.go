@@ -457,11 +457,11 @@ func GetStatsInfo(i any) map[string]uint64 {
 	return statsInfos
 }
 
-// FindBestTaskHandle converts the logical plan to the physical plan.
+// FindBestTask converts the logical plan to the physical plan.
 // It is called recursively from the parent to the children to create the result physical plan.
 // Some logical plans will convert the children to the physical plans in different ways, and return the one
 // With the lowest cost and how many plans are found in this function.
-func FindBestTaskHandle(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask base.Task, err error) {
+func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask base.Task, err error) {
 	// since different logical operator may have different findBestTask before like:
 	// 	utilfuncp.FindBestTask4BaseLogicalPlan = findBestTask
 	//	utilfuncp.FindBestTask4LogicalCTE = findBestTask4LogicalCTE
