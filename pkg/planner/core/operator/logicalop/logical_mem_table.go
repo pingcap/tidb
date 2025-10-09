@@ -108,11 +108,6 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) (bas
 	return p, nil
 }
 
-// FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty) (t base.Task, err error) {
-	return utilfuncp.FindBestTask4LogicalMemTable(p, prop)
-}
-
 // BuildKeyInfo inherits BaseLogicalPlan.<4th> implementation.
 
 // PushDownTopN inherits BaseLogicalPlan.<5th> implementation.

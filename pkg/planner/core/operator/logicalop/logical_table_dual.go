@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -84,11 +83,6 @@ func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) (ba
 		}
 	}
 	return p, nil
-}
-
-// FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalTableDual) FindBestTask(prop *property.PhysicalProperty) (base.Task, error) {
-	return utilfuncp.FindBestTask4LogicalTableDual(p, prop)
 }
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
