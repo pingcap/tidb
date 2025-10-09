@@ -349,9 +349,9 @@ type MySQLPrivilege struct {
 	// In MySQL, a user identity consists of a user + host.
 	// Either portion of user or host can contain wildcards,
 	// requiring the privileges system to use a list-like
+	// structure instead of a hash.
+	// TiDB contains a sensible behavior difference from MySQL,
 	// which is that usernames can not contain wildcards.
-	// This means that DB-records are organized in both a
-	// slice (p.DB) and a Map (p.DBMap).
 
 	user         bTree[itemUser]
 	db           bTree[itemDB]
@@ -839,7 +839,7 @@ func (p *MySQLPrivilege) LoadGlobalPrivTable(exec sqlexec.SQLExecutor) error {
 	return nil
 }
 
-// LoadGlobalGrantsTable loads the mysql.global_priv table from database.
+// LoadGlobalGrantsTable loads the mysql.global_grants table from database.
 func (p *MySQLPrivilege) LoadGlobalGrantsTable(exec sqlexec.SQLExecutor) error {
 	if err := loadTable(exec, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow(nil)); err != nil {
 		return errors.Trace(err)
@@ -1461,7 +1461,7 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
 	records, exists := p.user.Get(itemUser{username: user})
 	if exists {
-		for i := 0; i < len(records.data); i++ {
+		for i := range records.data {
 			record := &records.data[i]
 			if record.Host == host { // exact match
 				return record
@@ -1477,7 +1477,7 @@ func (p *MySQLPrivilege) matchGlobalPriv(user, host string) *globalPrivRecord {
 		return nil
 	}
 	uGlobal := item.data
-	for i := 0; i < len(uGlobal); i++ {
+	for i := range uGlobal {
 		record := &uGlobal[i]
 		if record.match(user, host) {
 			return record
@@ -1490,7 +1490,7 @@ func (p *MySQLPrivilege) matchUser(user, host string) *UserRecord {
 	item, exists := p.user.Get(itemUser{username: user})
 	if exists {
 		records := item.data
-		for i := 0; i < len(records); i++ {
+		for i := range records {
 			record := &records[i]
 			if record.match(user, host) {
 				return record
@@ -1504,7 +1504,7 @@ func (p *MySQLPrivilege) matchDB(user, host, db string) *dbRecord {
 	item, exists := p.db.Get(itemDB{username: user})
 	if exists {
 		records := item.data
-		for i := 0; i < len(records); i++ {
+		for i := range records {
 			record := &records[i]
 			if record.match(user, host, db) {
 				return record
@@ -1518,7 +1518,7 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 	item, exists := p.tablesPriv.Get(itemTablesPriv{username: user})
 	if exists {
 		records := item.data
-		for i := 0; i < len(records); i++ {
+		for i := range records {
 			record := &records[i]
 			if record.match(user, host, db, table) {
 				return record
@@ -1532,7 +1532,7 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 func (p *MySQLPrivilege) MatchColumns(user, host, db, table, column string) *columnsPrivRecord {
 	item, exists := p.columnsPriv.Get(itemColumnsPriv{username: user})
 	if exists {
-		for i := 0; i < len(item.data); i++ {
+		for i := range item.data {
 			record := &item.data[i]
 			if record.match(user, host, db, table, column) {
 				return record
