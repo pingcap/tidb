@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser/mysql",
-        "//pkg/util/hack",
         "@com_github_pingcap_errors//:errors",
     ],
 )
