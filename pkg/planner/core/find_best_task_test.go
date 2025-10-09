@@ -47,7 +47,7 @@ func TestCostOverflow(t *testing.T) {
 	mockPlan.SetChildren(mockDS)
 	// An empty property is enough for this test.
 	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
-	task, err := mockPlan.FindBestTask(prop)
+	task, err := physicalop.FindBestTask(mockPlan, prop)
 	require.NoError(t, err)
 	// The cost should be overflowed, but the task shouldn't be invalid.
 	require.False(t, task.Invalid())
@@ -76,7 +76,7 @@ func TestEnforcedProperty(t *testing.T) {
 		CanAddEnforcer: false,
 	}
 	// should return invalid task because no physical plan can match this property.
-	task, err := mockPlan.FindBestTask(prop0)
+	task, err := physicalop.FindBestTask(mockPlan, prop0)
 	require.NoError(t, err)
 	require.True(t, task.Invalid())
 
@@ -85,7 +85,7 @@ func TestEnforcedProperty(t *testing.T) {
 		CanAddEnforcer: true,
 	}
 	// should return the valid task when the property is enforced.
-	task, err = mockPlan.FindBestTask(prop1)
+	task, err = physicalop.FindBestTask(mockPlan, prop1)
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
 }
@@ -111,7 +111,7 @@ func TestHintCannotFitProperty(t *testing.T) {
 		SortItems:      items,
 		CanAddEnforcer: true,
 	}
-	task, err := mockPlan0.FindBestTask(prop0)
+	task, err := physicalop.FindBestTask(mockPlan0, prop0)
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
 	_, enforcedSort := task.Plan().(*physicalop.PhysicalSort)
@@ -127,7 +127,7 @@ func TestHintCannotFitProperty(t *testing.T) {
 		SortItems:      items,
 		CanAddEnforcer: false,
 	}
-	task, err = mockPlan0.FindBestTask(prop1)
+	task, err = physicalop.FindBestTask(mockPlan0, prop1)
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
 	_, enforcedSort = task.Plan().(*physicalop.PhysicalSort)
@@ -148,7 +148,7 @@ func TestHintCannotFitProperty(t *testing.T) {
 		canGeneratePlan2: false,
 	}.Init(ctx)
 	mockPlan1.SetChildren(mockDS)
-	task, err = mockPlan1.FindBestTask(prop2)
+	task, err = physicalop.FindBestTask(mockPlan1, prop2)
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
 	require.Equal(t, uint16(1), ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -164,7 +164,7 @@ func TestHintCannotFitProperty(t *testing.T) {
 		SortItems:      items,
 		CanAddEnforcer: true,
 	}
-	task, err = mockPlan1.FindBestTask(prop3)
+	task, err = physicalop.FindBestTask(mockPlan1, prop3)
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
 	require.Equal(t, uint16(1), ctx.GetSessionVars().StmtCtx.WarningCount())
