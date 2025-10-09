@@ -1628,9 +1628,6 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 
 	// Reset table.
 	tk.MustExec("truncate admin_test")
-	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
-
-	tk.MustExec("truncate admin_test")
 	indexOpr = getIndex()
 	// No table record
 	for i := range 100 {
@@ -1646,7 +1643,6 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 
 	tk.MustExec("truncate admin_test")
 	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
-
 	indexOpr = getIndex()
 	// Delete an index record randomly.
 	for i := range 10 {
