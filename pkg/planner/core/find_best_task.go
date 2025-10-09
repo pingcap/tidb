@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/findbesttask"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -290,7 +289,7 @@ func iteratePhysicalPlan4BaseLogical(
 	childTasks = childTasks[:0]
 	for j, child := range p.Children() {
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, err := findbesttask.Handle(child, childProp)
+		childTask, err := physicalop.FindBestTaskHandle(child, childProp)
 		if err != nil {
 			return nil, err
 		}
@@ -382,7 +381,7 @@ func iterateChildPlan4LogicalSequence(
 	for j := range lastIdx {
 		child := p.Children()[j]
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, err := findbesttask.Handle(child, childProp)
+		childTask, err := physicalop.FindBestTaskHandle(child, childProp)
 		if err != nil {
 			return nil, err
 		}
@@ -408,7 +407,7 @@ func iterateChildPlan4LogicalSequence(
 	if lastChildProp.IsFlashProp() {
 		lastChildProp.CTEProducerStatus = property.AllCTECanMpp
 	}
-	lastChildTask, err := findbesttask.Handle(p.Children()[lastIdx], lastChildProp)
+	lastChildTask, err := physicalop.FindBestTaskHandle(p.Children()[lastIdx], lastChildProp)
 	if err != nil {
 		return nil, err
 	}
@@ -710,7 +709,7 @@ func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.Physica
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
 		// still use the super.
-		t, err = findbesttask.Handle(super, prop)
+		t, err = physicalop.FindBestTaskHandle(super, prop)
 		if err != nil {
 			return nil, err
 		}
