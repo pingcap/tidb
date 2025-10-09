@@ -206,8 +206,17 @@ func TestNextGenUnsupportedLocalSortAndOptions(t *testing.T) {
 			"max_write_speed",
 			"cloud_storage_uri",
 			"thread",
+			"__max_engine_size",
 		} {
 			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv' with %s='1'", option))
+			require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
+			require.ErrorContains(t, err, option)
+		}
+		for _, option := range []string{
+			"__force_merge_step",
+			"__manual_recovery",
+		} {
+			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv' with %s", option))
 			require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
 			require.ErrorContains(t, err, option)
 		}
