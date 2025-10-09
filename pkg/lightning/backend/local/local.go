@@ -40,10 +40,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	backendkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
@@ -57,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -251,13 +253,13 @@ func NewEncodingBuilder(ctx context.Context) encode.EncodingBuilder {
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
 func (b *encodingBuilder) NewEncoder(_ context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	return kv.NewTableKVEncoder(config, b.metrics)
+	return backendkv.NewTableKVEncoder(config, b.metrics)
 }
 
 // MakeEmptyRows creates an empty KV rows.
 // It implements the `backend.EncodingBuilder` interface.
 func (*encodingBuilder) MakeEmptyRows() encode.Rows {
-	return kv.MakeRowsFromKvPairs(nil)
+	return backendkv.MakeRowsFromKvPairs(nil)
 }
 
 type targetInfoGetter struct {
@@ -802,6 +804,109 @@ func (local *Backend) getImportClient(ctx context.Context, storeID uint64) (sst.
 	return local.importClientFactory.Create(ctx, storeID)
 }
 
+// forceTableSplitRange turns on force_partition_range for importing.
+// See https://github.com/tikv/tikv/pull/18866 for detail.
+// It returns a resetter to turn off.
+func (local *Backend) forceTableSplitRange(ctx context.Context,
+	startKey, endKey kv.Key, stores []*metapb.Store) (resetter func()) {
+	subctx, cancel := context.WithCancel(ctx)
+	var wg util.WaitGroupWrapper
+	clients := make([]sst.ImportSSTClient, 0, len(stores))
+	storeAddrs := make([]string, 0, len(stores))
+	const ttlSecond = uint64(3600) // default 1 hour
+	addReq := &sst.AddPartitionRangeRequest{
+		Range: &sst.Range{
+			Start: startKey,
+			End:   endKey,
+		},
+		TtlSeconds: ttlSecond,
+	}
+	removeReq := &sst.RemovePartitionRangeRequest{
+		Range: &sst.Range{
+			Start: startKey,
+			End:   endKey,
+		},
+	}
+
+	for _, store := range stores {
+		if store.StatusAddress == "" || engine.IsTiFlash(store) {
+			continue
+		}
+		importCli, err := local.getImportClient(subctx, store.Id)
+		if err != nil {
+			log.FromContext(subctx).Warn("create import client failed", zap.Error(err), zap.String("store", store.StatusAddress))
+			continue
+		}
+		clients = append(clients, importCli)
+		storeAddrs = append(storeAddrs, store.StatusAddress)
+	}
+
+	addTableSplitRange := func() {
+		var firstErr error
+		successStores := make([]string, 0, len(clients))
+		failedStores := make([]string, 0, len(clients))
+		for i, c := range clients {
+			_, err := c.AddForcePartitionRange(subctx, addReq)
+			if err == nil {
+				successStores = append(successStores, storeAddrs[i])
+				failpoint.InjectCall("AddPartitionRangeForTable")
+			} else {
+				failedStores = append(failedStores, storeAddrs[i])
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		log.FromContext(subctx).Info("call AddForcePartitionRange",
+			zap.Strings("success stores", successStores),
+			zap.Strings("failed stores", failedStores),
+			zap.Error(firstErr),
+		)
+	}
+
+	addTableSplitRange()
+	wg.Run(func() {
+		timeout := time.Duration(ttlSecond) * time.Second / 5 // 12min
+		ticker := time.NewTicker(timeout)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-subctx.Done():
+				return
+			case <-ticker.C:
+				addTableSplitRange()
+			}
+		}
+	})
+
+	resetter = func() {
+		cancel()
+		wg.Wait()
+
+		var firstErr error
+		successStores := make([]string, 0, len(clients))
+		failedStores := make([]string, 0, len(clients))
+		for i, c := range clients {
+			_, err := c.RemoveForcePartitionRange(ctx, removeReq)
+			if err == nil {
+				successStores = append(successStores, storeAddrs[i])
+				failpoint.InjectCall("RemovePartitionRangeRequest")
+			} else {
+				failedStores = append(failedStores, storeAddrs[i])
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		log.FromContext(ctx).Info("call RemoveForcePartitionRange",
+			zap.Strings("success stores", successStores),
+			zap.Strings("failed stores", failedStores),
+			zap.Error(firstErr),
+		)
+	}
+	return resetter
+}
+
 func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []common.Range {
 	ranges := make([]common.Range, 0, sizeProps.totalSize/uint64(sizeLimit))
 	curSize := uint64(0)
@@ -1311,8 +1416,22 @@ func (local *Backend) ImportEngine(
 	if err != nil {
 		return err
 	}
+	intest.Assert(len(splitKeys) > 0)
+	startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]
 
-	if len(splitKeys) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
+	if len(startKey) > 0 && len(endKey) > 0 {
+		log.FromContext(ctx).Info("force table split range",
+			zap.String("startKey", redact.Key(startKey)),
+			zap.String("endKey", redact.Key(endKey)))
+		stores, err := local.pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+		if err != nil {
+			return err
+		}
+		removeTableSplitRange := local.forceTableSplitRange(ctx, startKey, endKey, stores)
+		defer removeTableSplitRange()
+	}
+
+	if local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
 		log.FromContext(ctx).Info("pause pd scheduler of table scope")
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -1334,10 +1453,10 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
-	if len(splitKeys) > 0 && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
+	if local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
 		log.FromContext(ctx).Info("switch import mode of ranges",
-			zap.String("startKey", hex.EncodeToString(splitKeys[0])),
-			zap.String("endKey", hex.EncodeToString(splitKeys[len(splitKeys)-1])))
+			zap.String("startKey", redact.Key(startKey)),
+			zap.String("endKey", redact.Key(endKey)))
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 

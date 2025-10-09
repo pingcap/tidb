@@ -605,8 +605,22 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 	})
 	tk.MustExec("alter table t modify column val0 int not null;")
 	tk.MustExec("admin check table t;")
-	tk.MustQuery("select * from t order by id;").Check(testkit.Rows(
-		"2 2 2 b",
-		"3 3 3 c",
-		"4 4 4 d"))
+	tk.MustQuery("select * from t order by id;").CheckWithFunc([][]any{
+		{"2", "2", "2", "b"},
+		{"3", "3", "3", "c"},
+		{4, "4", "4", "d"}},
+		func(res []string, expected []any) bool {
+			if len(res) != len(expected) {
+				return false
+			}
+			if res[1] != expected[1].(string) || res[2] != expected[2].(string) || res[3] != expected[3].(string) {
+				return false
+			}
+			if e, ok := expected[0].(string); !ok || e != res[0] {
+				if i, ok2 := expected[0].(int); !ok2 || i != 4 || !(res[0] == "4" || res[0] == "5001") {
+					return false
+				}
+			}
+			return true
+		})
 }

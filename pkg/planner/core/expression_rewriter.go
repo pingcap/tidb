@@ -2864,10 +2864,7 @@ func (er *expressionRewriter) clauseSubstituteAbleForUDV() bool {
 		}
 	})
 	// Currently, we only substitute user defined variable in where clause
-	if er.planCtx.builder.curClause == whereClause {
-		return true
-	}
-	return false
+	return er.planCtx.builder.curClause == whereClause
 }
 
 func (er *expressionRewriter) substituteUserDefVar(v *ast.VariableExpr, retType *types.FieldType) bool {
