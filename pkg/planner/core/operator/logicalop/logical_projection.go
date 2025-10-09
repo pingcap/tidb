@@ -333,9 +333,17 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 		RowCount: childProfile.RowCount,
 		ColNDVs:  make(map[int64]float64, len(p.Exprs)),
 	})
+	cols := make([]*expression.Column, 0, 8)
 	for i, expr := range p.Exprs {
+<<<<<<< HEAD
 		cols := expression.ExtractColumns(expr)
 		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
+=======
+		cols = expression.ExtractAllColumnsFromExpressionsInUsedSlices(cols, nil, expr)
+		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(
+			p.SCtx(), cols, childSchema[0], childProfile)
+		cols = cols[:0]
+>>>>>>> 3a54eaa3ffb (planner: fix LogicalProjection.DeriveStats allocate too many memories (#63829))
 	}
 	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
 	return p.StatsInfo(), nil

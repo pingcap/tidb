@@ -1941,11 +1941,17 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 		}
 	}
 	sumNDV := float64(0)
+	groupingSetCols := make([]*expression.Column, 0, 4)
 	for _, groupingSet := range groupingSets {
 		// for every grouping set, pick its cols out, and combine with normal group cols to get the ndv.
-		groupingSetCols := groupingSet.ExtractCols()
+		groupingSetCols = groupingSet.ExtractCols(groupingSetCols)
 		groupingSetCols = append(groupingSetCols, normalGbyCols...)
+<<<<<<< HEAD
 		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
+=======
+		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(p.SCtx(), groupingSetCols, childSchema, childStats)
+		groupingSetCols = groupingSetCols[:0]
+>>>>>>> 3a54eaa3ffb (planner: fix LogicalProjection.DeriveStats allocate too many memories (#63829))
 		sumNDV += ndv
 	}
 	// After group operator, all same rows are grouped into one row, that means all
