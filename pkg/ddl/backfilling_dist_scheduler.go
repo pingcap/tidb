@@ -116,7 +116,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		// in nextgen, node resource are scaled out automatically, we only consider
 		// the max allowed node for the task, and ignore how many node currently
 		// available.
-		// in some UT, task.MaxNodeCount might be initialized due to below check,
+		// in some UT, task.MaxNodeCount might not initialize due to below check,
 		// so we add a max(1, ...) to avoid nodeCnt being 0:
 		// https://github.com/pingcap/tidb/blob/f13d6599e37d7f660d413c481892e57af418c77d/pkg/ddl/reorg_util.go#L82-L83
 		nodeCnt = max(task.MaxNodeCount, 1)
