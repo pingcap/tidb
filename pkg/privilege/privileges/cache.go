@@ -29,6 +29,7 @@ import (
 
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -348,9 +349,9 @@ type MySQLPrivilege struct {
 	// In MySQL, a user identity consists of a user + host.
 	// Either portion of user or host can contain wildcards,
 	// requiring the privileges system to use a list-like
+	// structure instead of a hash.
+	// TiDB contains a sensible behavior difference from MySQL,
 	// which is that usernames can not contain wildcards.
-	// This means that DB-records are organized in both a
-	// slice (p.DB) and a Map (p.DBMap).
 
 	user         bTree[itemUser]
 	db           bTree[itemDB]
@@ -838,7 +839,7 @@ func (p *MySQLPrivilege) LoadGlobalPrivTable(exec sqlexec.SQLExecutor) error {
 	return nil
 }
 
-// LoadGlobalGrantsTable loads the mysql.global_priv table from database.
+// LoadGlobalGrantsTable loads the mysql.global_grants table from database.
 func (p *MySQLPrivilege) LoadGlobalGrantsTable(exec sqlexec.SQLExecutor) error {
 	if err := loadTable(exec, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow(nil)); err != nil {
 		return errors.Trace(err)
@@ -933,6 +934,10 @@ func loadTable(exec sqlexec.SQLExecutor, sql string,
 	defer terror.Call(rs.Close)
 	fs := rs.Fields()
 	req := rs.NewChunk(nil)
+	forceReset := false
+	failpoint.Inject("forceResetChunkForLoadTable", func(_ failpoint.Value) {
+		forceReset = true
+	})
 	for {
 		err = rs.Next(ctx, req)
 		if err != nil {
@@ -948,7 +953,11 @@ func loadTable(exec sqlexec.SQLExecutor, sql string,
 				return errors.Trace(err)
 			}
 		}
-		req.GrowAndReset(1024)
+		if sql == sqlLoadColumnsPrivTable && forceReset {
+			req.Reset()
+		} else {
+			req.GrowAndReset(1024)
+		}
 	}
 }
 
@@ -985,9 +994,9 @@ func parseHostIPNet(s string) *net.IPNet {
 func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *resolve.ResultField) {
 	switch f.ColumnAsName.L {
 	case "user":
-		record.User = row.GetString(i)
+		record.User = strings.Clone(row.GetString(i))
 	case "host":
-		record.Host = row.GetString(i)
+		record.Host = strings.Clone(row.GetString(i))
 		record.patChars, record.patTypes = stringutil.CompilePatternBinary(record.Host, '\\')
 		record.hostIPNet = parseHostIPNet(record.Host)
 	}
@@ -1331,14 +1340,6 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(userList map[string]struct{})
 			old.username = value.User
 		}
 		old.data = append(old.data, value)
-		logutil.BgLogger().Info("create column privilege record in cache",
-			zap.String("user", value.User),
-			zap.String("host", value.Host),
-			zap.String("DB", value.DB),
-			zap.String("table", value.TableName),
-			zap.String("column", value.ColumnName),
-			zap.String("privileges", value.ColumnPriv.String()),
-		)
 		p.columnsPriv.ReplaceOrInsert(old)
 		return nil
 	}
@@ -1460,7 +1461,7 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
 	records, exists := p.user.Get(itemUser{username: user})
 	if exists {
-		for i := 0; i < len(records.data); i++ {
+		for i := range records.data {
 			record := &records.data[i]
 			if record.Host == host { // exact match
 				return record
@@ -1476,7 +1477,7 @@ func (p *MySQLPrivilege) matchGlobalPriv(user, host string) *globalPrivRecord {
 		return nil
 	}
 	uGlobal := item.data
-	for i := 0; i < len(uGlobal); i++ {
+	for i := range uGlobal {
 		record := &uGlobal[i]
 		if record.match(user, host) {
 			return record
@@ -1489,7 +1490,7 @@ func (p *MySQLPrivilege) matchUser(user, host string) *UserRecord {
 	item, exists := p.user.Get(itemUser{username: user})
 	if exists {
 		records := item.data
-		for i := 0; i < len(records); i++ {
+		for i := range records {
 			record := &records[i]
 			if record.match(user, host) {
 				return record
@@ -1503,7 +1504,7 @@ func (p *MySQLPrivilege) matchDB(user, host, db string) *dbRecord {
 	item, exists := p.db.Get(itemDB{username: user})
 	if exists {
 		records := item.data
-		for i := 0; i < len(records); i++ {
+		for i := range records {
 			record := &records[i]
 			if record.match(user, host, db) {
 				return record
@@ -1517,7 +1518,7 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 	item, exists := p.tablesPriv.Get(itemTablesPriv{username: user})
 	if exists {
 		records := item.data
-		for i := 0; i < len(records); i++ {
+		for i := range records {
 			record := &records[i]
 			if record.match(user, host, db, table) {
 				return record
@@ -1531,7 +1532,7 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 func (p *MySQLPrivilege) MatchColumns(user, host, db, table, column string) *columnsPrivRecord {
 	item, exists := p.columnsPriv.Get(itemColumnsPriv{username: user})
 	if exists {
-		for i := 0; i < len(item.data); i++ {
+		for i := range item.data {
 			record := &item.data[i]
 			if record.match(user, host, db, table, column) {
 				return record
@@ -1833,17 +1834,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	sortFromIdx = len(gs)
 	columnPrivTable := make(map[string]privOnColumns)
 	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
-		logutil.BgLogger().Info("show column privilege record in cache #1", zap.String("user", itm.username), zap.Int("len", len(itm.data)))
 		for _, record := range itm.data {
-			logutil.BgLogger().Info("show column privilege record in cache #2",
-				zap.String("user", record.User),
-				zap.String("host", record.Host),
-				zap.String("DB", record.DB),
-				zap.String("table", record.TableName),
-				zap.String("column", record.ColumnName),
-				zap.String("privileges", record.ColumnPriv.String()),
-				zap.Int("len(allRoles)", len(allRoles)),
-			)
 			if !collectColumnGrant(&record, user, host, columnPrivTable, sqlMode) {
 				for _, r := range allRoles {
 					collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable, sqlMode)
@@ -1853,7 +1844,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		return true
 	})
 	for k, v := range columnPrivTable {
-		privCols := privOnColumnsToString(v)
+		privCols := privOnColumnsToString(v, sqlMode)
 		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
 		gs = append(gs, s)
 	}
@@ -2080,10 +2071,10 @@ func (p *MySQLPrivilege) fetchSchemaPrivileges(users, hosts []string) (rows [][]
 }
 
 type columnStr = string
-type columnStrs = []columnStr
+type columnStrs = map[columnStr]struct{}
 type privOnColumns = map[mysql.PrivilegeType]columnStrs
 
-func privOnColumnsToString(p privOnColumns) string {
+func privOnColumnsToString(p privOnColumns, sqlMode mysql.SQLMode) string {
 	var buf bytes.Buffer
 	idx := 0
 	for _, priv := range mysql.AllColumnPrivs {
@@ -2097,11 +2088,16 @@ func privOnColumnsToString(p privOnColumns) string {
 		}
 		privStr := PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)
 		fmt.Fprintf(&buf, "%s(", privStr)
-		for i, col := range v {
+		columns := make([]columnStr, 0, len(v))
+		for col := range v {
+			columns = append(columns, col)
+		}
+		slices.Sort(columns)
+		for i, col := range columns {
 			if i > 0 {
 				fmt.Fprintf(&buf, ", ")
 			}
-			buf.WriteString(col)
+			buf.WriteString(stringutil.Escape(col, sqlMode))
 		}
 		buf.WriteString(")")
 		idx++
@@ -2120,8 +2116,10 @@ func collectColumnGrant(record *columnsPrivRecord, user, host string, columnPriv
 
 		for _, priv := range mysql.AllColumnPrivs {
 			if priv&record.ColumnPriv > 0 {
-				old := privColumns[priv]
-				privColumns[priv] = append(old, record.ColumnName)
+				if privColumns[priv] == nil {
+					privColumns[priv] = make(map[columnStr]struct{})
+				}
+				privColumns[priv][record.ColumnName] = struct{}{}
 				columnPrivTable[recordKey] = privColumns
 			}
 		}
@@ -2287,7 +2285,6 @@ func (h *Handle) Get() *MySQLPrivilege {
 
 // UpdateAll loads all the users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
-	logutil.BgLogger().Info("UpdateAll to refresh privilege cache")
 	priv := newMySQLPrivilege()
 	res, err := h.sctx.Get()
 	if err != nil {

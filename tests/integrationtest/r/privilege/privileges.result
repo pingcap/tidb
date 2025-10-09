@@ -352,7 +352,7 @@ GRANT Select(a),Update(a,b),Insert(c) ON privilege__privileges.column_table TO  
 SHOW GRANTS;
 Grants for User
 GRANT USAGE ON *.* TO 'column'@'%'
-GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON `privilege__privileges`.`column_table` TO 'column'@'%'
+GRANT SELECT(`a`), INSERT(`c`), UPDATE(`a`, `b`) ON `privilege__privileges`.`column_table` TO 'column'@'%'
 CREATE USER 'tableaccess'@'localhost';
 CREATE TABLE fieldlistt1 (a int);
 desc privilege__privileges.fieldlistt1;
@@ -692,11 +692,11 @@ SHOW GRANTS FOR view_definer_u;
 Grants for view_definer_u@%
 GRANT USAGE ON *.* TO 'view_definer_u'@'%'
 GRANT CREATE VIEW,SHOW VIEW ON `test_view_db`.* TO 'view_definer_u'@'%'
-GRANT SELECT(id, public_col, sensitive_col) ON `test_view_db`.`sensitive_data` TO 'view_definer_u'@'%'
+GRANT SELECT(`id`, `public_col`, `sensitive_col`) ON `test_view_db`.`sensitive_data` TO 'view_definer_u'@'%'
 SHOW GRANTS FOR view_invoker_u1;
 Grants for view_invoker_u1@%
 GRANT USAGE ON *.* TO 'view_invoker_u1'@'%'
-GRANT SELECT(id, public_col) ON `test_view_db`.`sensitive_data` TO 'view_invoker_u1'@'%'
+GRANT SELECT(`id`, `public_col`) ON `test_view_db`.`sensitive_data` TO 'view_invoker_u1'@'%'
 SHOW GRANTS FOR view_invoker_u2;
 Grants for view_invoker_u2@%
 GRANT USAGE ON *.* TO 'view_invoker_u2'@'%'
@@ -773,11 +773,11 @@ SHOW GRANTS FOR view_definer_u;
 Grants for view_definer_u@%
 GRANT USAGE ON *.* TO 'view_definer_u'@'%'
 GRANT CREATE VIEW,SHOW VIEW ON `test_view_db`.* TO 'view_definer_u'@'%'
-GRANT SELECT(id, public_col, sensitive_col) ON `test_view_db`.`sensitive_data` TO 'view_definer_u'@'%'
+GRANT SELECT(`id`, `public_col`, `sensitive_col`) ON `test_view_db`.`sensitive_data` TO 'view_definer_u'@'%'
 SHOW GRANTS FOR view_invoker_u1;
 Grants for view_invoker_u1@%
 GRANT USAGE ON *.* TO 'view_invoker_u1'@'%'
-GRANT SELECT(id, public_col) ON `test_view_db`.`sensitive_data` TO 'view_invoker_u1'@'%'
+GRANT SELECT(`id`, `public_col`) ON `test_view_db`.`sensitive_data` TO 'view_invoker_u1'@'%'
 SHOW GRANTS FOR view_invoker_u2;
 Grants for view_invoker_u2@%
 GRANT USAGE ON *.* TO 'view_invoker_u2'@'%'
