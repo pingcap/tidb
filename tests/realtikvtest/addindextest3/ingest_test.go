@@ -103,8 +103,13 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	wg.Wait()
 	rows := tk.MustQuery("admin show ddl jobs 2;").Rows()
 	require.Len(t, rows, 2)
-	require.True(t, strings.Contains(rows[0][12].(string) /* comments */, "ingest"))
-	require.True(t, strings.Contains(rows[1][12].(string) /* comments */, "ingest"))
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(rows[0][12].(string) /* comments */, "ingest"))
+		require.True(t, strings.Contains(rows[1][12].(string) /* comments */, "ingest"))
+	} else {
+		require.Equal(t, rows[0][12].(string) /* comments */, "")
+		require.Equal(t, rows[1][12].(string) /* comments */, "")
+	}
 	require.Equal(t, rows[0][7].(string) /* row_count */, "3")
 	require.Equal(t, rows[1][7].(string) /* row_count */, "3")
 
@@ -161,7 +166,11 @@ func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
 	jobTp := rows[0][12].(string)
-	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	} else {
+		require.Equal(t, jobTp, "")
+	}
 }
 
 func TestIngestMVIndexOnPartitionTable(t *testing.T) {
@@ -205,7 +214,11 @@ func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 		rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 		require.Len(t, rows, 1)
 		jobTp := rows[0][12].(string)
-		require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+		if kerneltype.IsClassic() {
+			require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+		} else {
+			require.Equal(t, jobTp, "")
+		}
 		addIndexDone.Store(true)
 		wg.Wait()
 		tk.MustExec("admin check table t")
@@ -239,7 +252,11 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
 	jobTp := rows[0][12].(string)
-	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	} else {
+		require.Equal(t, jobTp, "")
+	}
 	ingest.ImporterRangeConcurrencyForTest = nil
 }
 
@@ -256,7 +273,11 @@ func TestAddIndexIngestEmptyTable(t *testing.T) {
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
 	jobTp := rows[0][12].(string)
-	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	} else {
+		require.Equal(t, jobTp, "")
+	}
 }
 
 func TestAddIndexIngestRestoredData(t *testing.T) {
@@ -284,7 +305,11 @@ func TestAddIndexIngestRestoredData(t *testing.T) {
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
 	jobTp := rows[0][12].(string)
-	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	} else {
+		require.Equal(t, jobTp, "")
+	}
 }
 
 func TestAddIndexIngestUniqueKey(t *testing.T) {
@@ -394,7 +419,11 @@ func TestAddIndexMockFlushError(t *testing.T) {
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
 	jobTp := rows[0][12].(string)
-	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	} else {
+		require.Equal(t, jobTp, "")
+	}
 }
 
 func TestAddIndexDiskQuotaTS(t *testing.T) {
