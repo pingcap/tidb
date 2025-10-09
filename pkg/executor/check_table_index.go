@@ -345,15 +345,7 @@ func queryToRow(ctx context.Context, se sessionctx.Context, sql string) ([]chunk
 	if err != nil {
 		return nil, err
 	}
-	row, err := sqlexec.DrainRecordSet(ctx, rs, 4096)
-	if err != nil {
-		return nil, err
-	}
-	err = rs.Close()
-	if err != nil {
-		logutil.BgLogger().Warn("close result set failed", zap.Error(err))
-	}
-	return row, nil
+	return sqlexec.DrainRecordSetAndClose(ctx, rs, 4096)
 }
 
 func verifyIndexSideQuery(ctx context.Context, se sessionctx.Context, sql string) bool {
@@ -495,7 +487,9 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		})
 
 		// compute index side checksum.
-		intest.Assert(verifyIndexSideQuery(ctx, se, idxQuery), "index side query plan is not correct: %s", idxQuery)
+		intest.AssertFunc(func() bool {
+			return verifyIndexSideQuery(ctx, se, idxQuery)
+		}, "index side query plan is not correct: %s", idxQuery)
 		indexChecksum, err := getCheckSum(w.e.contextCtx, se, idxQuery)
 		if err != nil {
 			trySaveErr(err)
@@ -557,7 +551,9 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		tableSQL := fmt.Sprintf(
 			"select /*+ read_from_storage(tikv[%s]), AGG_TO_COP() */ %s, %s, %s from %s use index() where %s = 0 order by %s",
 			tblName, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, groupByKey, handleColumns)
-		intest.Assert(verifyIndexSideQuery(ctx, se, indexSQL), "index side query plan is not correct: %s", indexSQL)
+		intest.AssertFunc(func() bool {
+			return verifyIndexSideQuery(ctx, se, indexSQL)
+		}, "index side query plan is not correct: %s", indexSQL)
 		idxRow, err := queryToRow(ctx, se, indexSQL)
 		if err != nil {
 			trySaveErr(err)
