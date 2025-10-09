@@ -31,16 +31,16 @@ type columnBufferAllocator interface {
 	put(buf *chunk.Column)
 }
 
-// localColumnPool implements columnBufferAllocator interface.
+// columnPool implements columnBufferAllocator interface.
 // It works like a concurrency-safe deque which is implemented by lock-free sync.Pool.
-type localColumnPool struct {
+type columnPool struct {
 	sync.Pool
 }
 
 var columnTempl = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
 
-func newLocalColumnPool() *localColumnPool {
-	return &localColumnPool{
+func newColumnPool() *columnPool {
+	return &columnPool{
 		sync.Pool{
 			New: func() any {
 				return columnTempl.CopyConstruct(nil)
@@ -49,7 +49,7 @@ func newLocalColumnPool() *localColumnPool {
 	}
 }
 
-var globalColumnAllocator = newLocalColumnPool()
+var globalColumnAllocator = newColumnPool()
 
 // GetColumn allocates a column. The allocator is not responsible for initializing the column, so please initialize it before using.
 func GetColumn(_ types.EvalType, _ int) (*chunk.Column, error) {
@@ -61,15 +61,15 @@ func PutColumn(buf *chunk.Column) {
 	globalColumnAllocator.put(buf)
 }
 
-func (r *localColumnPool) get() (*chunk.Column, error) {
+func (r *columnPool) get() (*chunk.Column, error) {
 	col, ok := r.Pool.Get().(*chunk.Column)
 	if !ok {
-		return nil, errors.New("unexpected object in localColumnPool")
+		return nil, errors.New("unexpected object in columnPool")
 	}
 	return col, nil
 }
 
-func (r *localColumnPool) put(col *chunk.Column) {
+func (r *columnPool) put(col *chunk.Column) {
 	if col.TryReset() {
 		r.Pool.Put(col)
 	}
