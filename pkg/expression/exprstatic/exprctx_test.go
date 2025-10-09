@@ -101,6 +101,7 @@ func getExprCtxOptionsForTest() ([]ExprCtxOption, *exprCtxOptionsTestState) {
 		WithEvalCtx(s.evalCtx),
 		WithCharset("gbk", "gbk_bin"),
 		WithDefaultCollationForUTF8MB4("utf8mb4_0900_ai_ci"),
+		WithTiDBDefaultAutoIDCache(0),
 		WithBlockEncryptionMode("aes-256-cbc"),
 		WithSysDateIsNow(true),
 		WithNoopFuncsMode(variable.WarnInt),
@@ -169,6 +170,7 @@ func TestMakeExprContextStatic(t *testing.T) {
 		WithEvalCtx(evalCtx),
 		WithCharset("a", "b"),
 		WithDefaultCollationForUTF8MB4("c"),
+		WithTiDBDefaultAutoIDCache(30000),
 		WithBlockEncryptionMode("d"),
 		WithSysDateIsNow(true),
 		WithNoopFuncsMode(1),
@@ -238,6 +240,15 @@ func TestExprCtxLoadSystemVars(t *testing.T) {
 			assert: func(ctx *ExprContext, vars *variable.SessionVars) {
 				require.Equal(t, "utf8mb4_general_ci", ctx.GetDefaultCollationForUTF8MB4())
 				require.Equal(t, vars.DefaultCollationForUTF8MB4, ctx.GetDefaultCollationForUTF8MB4())
+			},
+		},
+		{
+			name:  "tidb_default_auto_id_cache",
+			val:   "1",
+			field: "$.tidbDefaultAutoIDCache",
+			assert: func(ctx *ExprContext, vars *variable.SessionVars) {
+				require.Equal(t, 1, ctx.GetTiDBDefaultAutoIDCache())
+				require.Equal(t, vars.TiDBDefaultAutoIDCache, ctx.GetTiDBDefaultAutoIDCache())
 			},
 		},
 		{
