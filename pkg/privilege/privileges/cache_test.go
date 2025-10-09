@@ -16,6 +16,7 @@ package privileges_test
 
 import (
 	"fmt"
+	"math/rand"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
@@ -575,4 +577,65 @@ func TestDBIsVisible(t *testing.T) {
 	isVisible = p.DBIsVisible("testvisdb9", "%", "visdb")
 	require.True(t, isVisible)
 	tk.MustExec("TRUNCATE TABLE mysql.user")
+}
+
+func TestColumnPrivilegeCacheCorrectness(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database column_priv_test")
+	tk.MustExec("use column_priv_test")
+	tk.MustExec("set global tidb_accelerate_user_creation_update = on")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/privilege/privileges/forceResetChunkForLoadTable", "return(true)")
+
+	var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
+	const charset = "abcdefghijklmnopqrstuvwxyz"
+	generateRandomString := func(length int) string {
+		b := make([]byte, length)
+		for i := range b {
+			b[i] = charset[seededRand.Intn(len(charset))]
+		}
+		return string(b)
+	}
+
+	const colNum = 512
+	colNames := make([]string, 0, colNum)
+	for range colNum {
+		colNames = append(colNames, generateRandomString(5))
+	}
+	var sb strings.Builder
+	sb.WriteString("create table t(")
+	for i := range colNum {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(fmt.Sprintf("%s int", colNames[i]))
+	}
+	sb.WriteString(")")
+	tk.MustExec(sb.String())
+
+	const userNum = 3
+	userNames := make([]string, 0, userNum)
+	for range userNum {
+		userName := generateRandomString(5)
+		userNames = append(userNames, userName)
+		tk.MustExec(fmt.Sprintf("create user %s", userName))
+	}
+	for i := range userNum {
+		for j := range colNum {
+			tk.MustExec(fmt.Sprintf("grant select(%s) on t to %s", colNames[j], userNames[i]))
+		}
+	}
+	tk.MustQuery("select count(*) from mysql.columns_priv").Check(testkit.Rows(fmt.Sprintf("%d", colNum*userNum)))
+
+	tk.MustExec("set global tidb_accelerate_user_creation_update = off")
+	tk.MustExec("flush privileges")
+
+	for i := range userNum {
+		res1 := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.columns_priv where user = '%s'", userNames[i]))
+		res2 := tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.column_privileges where grantee = \"'%s'@'%%'\"", userNames[i]))
+
+		require.Equal(t, fmt.Sprintf("%d", colNum), res1.Rows()[0][0])
+		require.Equal(t, res1.Rows()[0][0], res2.Rows()[0][0])
+	}
 }

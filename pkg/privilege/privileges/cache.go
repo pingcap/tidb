@@ -29,6 +29,7 @@ import (
 
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -933,6 +934,10 @@ func loadTable(exec sqlexec.SQLExecutor, sql string,
 	defer terror.Call(rs.Close)
 	fs := rs.Fields()
 	req := rs.NewChunk(nil)
+	forceReset := false
+	failpoint.Inject("forceResetChunkForLoadTable", func(_ failpoint.Value) {
+		forceReset = true
+	})
 	for {
 		err = rs.Next(ctx, req)
 		if err != nil {
@@ -948,7 +953,11 @@ func loadTable(exec sqlexec.SQLExecutor, sql string,
 				return errors.Trace(err)
 			}
 		}
-		req.GrowAndReset(1024)
+		if sql == sqlLoadColumnsPrivTable && forceReset {
+			req.Reset()
+		} else {
+			req.GrowAndReset(1024)
+		}
 	}
 }
 
