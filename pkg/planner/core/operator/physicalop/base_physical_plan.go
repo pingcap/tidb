@@ -498,6 +498,6 @@ func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask
 		task.SetPlan(p)
 		return task, nil
 	default:
-		return utilfuncp.FindBestTask4BaseLogicalPlan(e.GetBaseLogicalPlan(), prop)
+		return utilfuncp.FindBestTask4BaseLogicalPlan(e, prop)
 	}
 }

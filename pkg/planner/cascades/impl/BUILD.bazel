@@ -9,6 +9,7 @@ go_library(
         "//pkg/config",
         "//pkg/planner/cascades/memo",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/property",
         "//pkg/planner/util/costusage",
         "//pkg/planner/util/debugtrace",
