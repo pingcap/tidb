@@ -791,7 +791,6 @@ type ResourceGroupTagBuilder struct {
 	sqlDigest    *parser.Digest
 	planDigest   *parser.Digest
 	keyspaceName []byte
-	accessKey    []byte
 }
 
 // NewResourceGroupTagBuilder creates a new ResourceGroupTagBuilder.

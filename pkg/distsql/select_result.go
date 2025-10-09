@@ -28,7 +28,6 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	dcontext "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -50,10 +49,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-)
-
-var (
-	errQueryInterrupted = dbterror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
 )
 
 var (
