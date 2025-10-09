@@ -133,7 +133,7 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 
 	// TODO: Handle dispatch task response correctly, including retry logic and cancel logic.
 	var rpcResp *tikvrpc.Response
-	invalidPDCache := config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler
+	invalidPDCache := config.GetGlobalConfig().DisaggregatedTiFlash && (!config.GetGlobalConfig().UseAutoScaler || config.GetGlobalConfig().UseColumnar)
 	bo := backoff.NewBackofferWithTikvBo(param.Bo)
 
 	// If copTasks is not empty, we should send request according to region distribution.
@@ -207,7 +207,7 @@ func (c *MPPClient) CancelMPPTasks(param kv.CancelMPPTasksParam) {
 	wrappedReq.StoreTp = getEndPointType(kv.TiFlash)
 
 	// send cancel cmd to all stores where tasks run
-	invalidPDCache := config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler
+	invalidPDCache := config.GetGlobalConfig().DisaggregatedTiFlash && (!config.GetGlobalConfig().UseAutoScaler || config.GetGlobalConfig().UseColumnar)
 	wg := util.WaitGroupWrapper{}
 	gotErr := atomic.Bool{}
 	for addr := range usedStoreAddrs {
@@ -264,7 +264,8 @@ func (c *MPPClient) EstablishMPPConns(param kv.EstablishMPPConnsParam) (*tikvrpc
 		if stream != nil {
 			stream.Close()
 		}
-		if config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler {
+		logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
+		if config.GetGlobalConfig().DisaggregatedTiFlash && (!config.GetGlobalConfig().UseAutoScaler || config.GetGlobalConfig().UseColumnar) {
 			c.store.GetRegionCache().InvalidateTiFlashComputeStores()
 		}
 		if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {

@@ -173,6 +173,9 @@ var (
 	// They should be moved to [instance] section.
 	DeprecatedOptions []InstanceConfigSection
 
+	// FTSFunctionIsUsedKey marks whether an FTS function is used in the planning context.
+	FTSFunctionIsUsedKey = struct{}{}
+
 	// TikvConfigLock protects against concurrent tikv config refresh
 	TikvConfigLock sync.Mutex
 )
@@ -314,6 +317,9 @@ type Config struct {
 	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
 	AutoScalerClusterID          string `toml:"autoscaler-cluster-id" json:"autoscaler-cluster-id"`
 	UseAutoScaler                bool   `toml:"use-autoscaler" json:"use-autoscaler"`
+
+	// UseColumnar is used to control whether to enable columnar execution.
+	UseColumnar bool `toml:"use-columnar" json:"use-columnar"`
 
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
@@ -1187,6 +1193,7 @@ var defaultConf = Config{
 	IsTiFlashComputeFixedPool:            false,
 	AutoScalerClusterID:                  "",
 	UseAutoScaler:                        false,
+	UseColumnar:                          false,
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 	TiDBEnableExitCheck:                  false,

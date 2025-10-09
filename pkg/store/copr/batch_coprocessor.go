@@ -490,7 +490,12 @@ func buildBatchCopTasksForPartitionedTable(
 	tiflashReplicaReadPolicy tiflash.ReplicaRead,
 	appendWarning func(error)) (batchTasks []*batchCopTask, err error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
-		if config.GetGlobalConfig().UseAutoScaler {
+		// TODO: remove this check after columnar supports FTS
+		ftsFunctionIsUsed := false
+		if val := ctx.Value(config.FTSFunctionIsUsedKey); val != nil {
+			ftsFunctionIsUsed = val.(bool)
+		}
+		if config.GetGlobalConfig().UseAutoScaler && (!config.GetGlobalConfig().UseColumnar || ftsFunctionIsUsed) {
 			batchTasks, err = buildBatchCopTasksConsistentHash(ctx, bo, store, rangesForEachPhysicalTable, storeType, ttl, dispatchPolicy)
 		} else {
 			// todo: remove this after AutoScaler is stable.
