@@ -280,12 +280,8 @@ func TestGetSortedKVMetas(t *testing.T) {
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 			proto.ImportStepMergeSort:     mergeStepMetas,
 		},
-<<<<<<< HEAD
-	}, &LogicalPlan{})
-=======
 		ThreadCnt: 16,
-	}, &LogicalPlan{}, nil)
->>>>>>> 06674e23094 (*: adjusts the merge sort overlap threshold/merge sort file count step based on concurrency (#62483))
+	}, &LogicalPlan{})
 	require.NoError(t, err)
 	require.Len(t, allKVMetas, 2)
 	require.Equal(t, []byte("x_0_a"), allKVMetas["data"].StartKey)
