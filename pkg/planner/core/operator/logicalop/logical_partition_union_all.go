@@ -73,4 +73,9 @@ func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalP
 	return utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll(p, prop)
 }
 
+// GetWrappedLogicalPlan implements the logical plan interface.
+func (p *LogicalPartitionUnionAll) GetWrappedLogicalPlan() base.LogicalPlan {
+	return p
+}
+
 // *************************** end implementation of LogicalPlan interface ***************************
