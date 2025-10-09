@@ -40,13 +40,13 @@ type localColumnPool struct {
 	sync.Pool
 }
 
-var newColumn = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
+var columnTempl = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
 
 func newLocalColumnPool() *localColumnPool {
 	return &localColumnPool{
 		sync.Pool{
 			New: func() any {
-				return newColumn.CopyConstruct(nil)
+				return columnTempl.CopyConstruct(nil)
 			},
 		},
 	}
