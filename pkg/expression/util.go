@@ -212,7 +212,7 @@ func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, filter func(*
 	slices.SortFunc(reuse, func(a, b *Column) int {
 		return cmp.Compare(a.UniqueID, b.UniqueID)
 	})
-	slices.CompactFunc(reuse, func(a, b *Column) bool {
+	reuse = slices.CompactFunc(reuse, func(a, b *Column) bool {
 		return a.UniqueID == b.UniqueID
 	})
 	return reuse
