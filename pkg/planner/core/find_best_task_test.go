@@ -19,22 +19,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/stretchr/testify/require"
 )
-
-type mockDataSource struct {
-	logicalop.BaseLogicalPlan
-}
-
-func (ds mockDataSource) Init(ctx base.PlanContext) *mockDataSource {
-	ds.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, "mockDS", &ds, 0)
-	return &ds
-}
 
 func TestCostOverflow(t *testing.T) {
 	ctx := coretestsdk.MockContext()
@@ -43,7 +33,7 @@ func TestCostOverflow(t *testing.T) {
 	}()
 	// Plan Tree: mockPlan -> mockDataSource
 	mockPlan := mockLogicalPlan4Test{costOverflow: true}.Init(ctx.GetPlanCtx())
-	mockDS := mockDataSource{}.Init(ctx.GetPlanCtx())
+	mockDS := logicalop.MockDataSource{}.Init(ctx.GetPlanCtx())
 	mockPlan.SetChildren(mockDS)
 	// An empty property is enough for this test.
 	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
@@ -60,7 +50,7 @@ func TestEnforcedProperty(t *testing.T) {
 	}()
 	// PlanTree : mockLogicalPlan -> mockDataSource
 	mockPlan := mockLogicalPlan4Test{}.Init(ctx.GetPlanCtx())
-	mockDS := mockDataSource{}.Init(ctx.GetPlanCtx())
+	mockDS := logicalop.MockDataSource{}.Init(ctx.GetPlanCtx())
 	mockPlan.SetChildren(mockDS)
 
 	col0 := &expression.Column{UniqueID: 1}
@@ -100,7 +90,7 @@ func TestHintCannotFitProperty(t *testing.T) {
 		hasHintForPlan2:  true,
 		canGeneratePlan2: true,
 	}.Init(ctx.GetPlanCtx())
-	mockDS := mockDataSource{}.Init(ctx.GetPlanCtx())
+	mockDS := logicalop.MockDataSource{}.Init(ctx.GetPlanCtx())
 	mockPlan0.SetChildren(mockDS)
 
 	col0 := &expression.Column{UniqueID: 1}
