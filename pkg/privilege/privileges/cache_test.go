@@ -579,6 +579,10 @@ func TestDBIsVisible(t *testing.T) {
 	tk.MustExec("TRUNCATE TABLE mysql.user")
 }
 
+// This test case aims to make sure that no memory leak happens during building
+// privilege cache. When loading privilege table into cache, if we forget to 'clone'
+// a string from a chunk row into cache record, inconsistency between privilege
+// table and cache happens.
 func TestColumnPrivilegeCacheCorrectness(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
