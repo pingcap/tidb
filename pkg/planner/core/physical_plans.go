@@ -3133,6 +3133,7 @@ func buildPushDownIndexLookUpPlan(
 // Init initializes PhysicalLocalIndexLookUp.
 func (p PhysicalLocalIndexLookUp) Init(ctx base.PlanContext, indexPlan base.PhysicalPlan, tableScan *PhysicalTableScan, offset int) *PhysicalLocalIndexLookUp {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeLocalIndexLookUp, &p, offset)
+	setTableScanToTableRowIDScan(tableScan)
 	p.SetChildren(indexPlan, tableScan)
 	p.SetStats(tableScan.StatsInfo())
 	p.SetSchema(tableScan.Schema())

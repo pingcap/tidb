@@ -259,6 +259,7 @@ func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, tryPus
 	}
 	p.TablePlans = flattenListPushDownPlan(p.tablePlan)
 	p.IndexPlans, p.IndexPlansUnNatureOrders = flattenTreePushDownPlan(p.indexPlan)
+	setTableScanToTableRowIDScan(p.tablePlan)
 	return &p
 }
 

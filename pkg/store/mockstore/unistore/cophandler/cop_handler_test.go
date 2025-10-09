@@ -412,7 +412,7 @@ func TestMppExecutor(t *testing.T) {
 
 	dagCtx := newDagContext(t, store, []kv.KeyRange{getTestPointRange(tableID, 1)},
 		dagRequest, dagRequestStartTs)
-	_, _, _, rowCount, _, err := buildAndRunMPPExecutor(dagCtx, dagRequest, 0)
+	_, _, _, _, rowCount, _, err := buildAndRunMPPExecutor(dagCtx, dagRequest, 0)
 	require.Equal(t, rowCount[0], int64(1))
 	require.NoError(t, err)
 }
@@ -616,7 +616,7 @@ func BenchmarkExecutors(b *testing.B) {
 			// })
 			b.Run(fmt.Sprintf("(row=%d, limit=%d)", row, lim), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
-					_, _, _, _, _, err := buildAndRunMPPExecutor(dagCtx, dagReq, 0)
+					_, _, _, _, _, _, err := buildAndRunMPPExecutor(dagCtx, dagReq, 0)
 					if err != nil {
 						b.Fatal(err)
 					}

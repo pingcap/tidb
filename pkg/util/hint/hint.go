@@ -19,12 +19,10 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -204,10 +202,6 @@ const (
 	// PreferTiFlash indicates that the optimizer prefers to use TiFlash layer.
 	PreferTiFlash
 )
-
-// EnableIndexLookUpPushDownForTest is only used for testing to enable index lookup push down.
-// TODO: remove it when index lookup push down finished to dev
-var EnableIndexLookUpPushDownForTest atomic.Bool
 
 // StmtHints are hints that apply to the entire statement, like 'max_exec_time', 'memory_quota'.
 type StmtHints struct {
@@ -843,10 +837,6 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			case HintNoOrderIndex:
 				hintType = ast.HintNoOrderIndex
 			case HintIndexLookUpPushDown:
-				if !EnableIndexLookUpPushDownForTest.Load() {
-					warnHandler.SetHintWarningFromError(parser.ErrWarnOptimizerHintUnsupportedHint.FastGenByArgs(hint.HintName.O))
-					continue
-				}
 				if len(hint.Indexes) == 0 {
 					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, the index names should be specified")
 					continue
