@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -110,9 +111,17 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	execIDs []string,
 	nextStep proto.Step,
 ) (subtaskMeta [][]byte, err error) {
+	nodeCnt := len(execIDs)
+	if kerneltype.IsNextGen() {
+		// in nextgen, node resource are scaled out automatically, we only consider
+		// the max allowed node for the task, and ignore how many node currently
+		// available.
+		nodeCnt = task.MaxNodeCount
+	}
 	logger := logutil.DDLLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
+		zap.Int("node-count", nodeCnt),
 		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 	)
@@ -132,9 +141,9 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		// TODO(tangenta): use available disk during adding index.
 		availableDisk := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
-		return generateReadIndexPlan(ctx, sch.d, store, tbl, job, sch.GlobalSort, len(execIDs), logger)
+		return generateReadIndexPlan(ctx, sch.d, store, tbl, job, sch.GlobalSort, nodeCnt, logger)
 	case proto.BackfillStepMergeSort:
-		return generateMergeSortPlan(ctx, taskHandle, task, len(execIDs), backfillMeta.CloudStorageURI, logger)
+		return generateMergeSortPlan(ctx, taskHandle, task, nodeCnt, backfillMeta.CloudStorageURI, logger)
 	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
 			failpoint.Inject("mockWriteIngest", func() {
@@ -160,7 +169,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return generateMergeTempIndexPlan(ctx, store, tbl, len(execIDs), jobArgs, logger)
+		return generateMergeTempIndexPlan(ctx, store, tbl, nodeCnt, jobArgs, logger)
 	default:
 		return nil, nil
 	}
