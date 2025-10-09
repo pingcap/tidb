@@ -420,7 +420,7 @@ function start_tidb_cluster()
     tidb_port=$(find_available_port 4000)
     DOWNSTREAM_PORT=$tidb_port
 	tidb_status_port=$(find_available_port 10080)
-    start_tidb_server "127.0.0.1:$pd_client_port" $tidb_port $tidb_status_port $TIDB_LOG_FILE2 keyspace1
+    start_tidb_server "127.0.0.1:$pd_client_port" $tidb_port $tidb_status_port $TIDB_LOG_FILE2 SYSTEM
 
     echo "TiDB cluster started successfully!"
 }
