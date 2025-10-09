@@ -47,7 +47,11 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 		for i := range n {
 			//nolint: forcetypeassert
 			jobTp := rows[i][12].(string)
-			require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+			if kerneltype.IsClassic() {
+				require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+			} else {
+				require.Equal(t, jobTp, "")
+			}
 		}
 	}
 	tk.MustExec("create table t (a int, b int, c int as (b+10), d int as (b+c), primary key (a) clustered);")
