@@ -75,8 +75,8 @@ func (p *PhysicalTableDual) ExplainInfo() string {
 	return str.String()
 }
 
-// FindBestTask4LogicalTableDual will be called by LogicalTableDual in logicalOp pkg.
-func FindBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
+// findBestTask4LogicalTableDual will be called by LogicalTableDual in logicalOp pkg.
+func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, nil
