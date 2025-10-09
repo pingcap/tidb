@@ -764,27 +764,6 @@ func setGlobalVars() {
 		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
 
-	// set instance variables
-	setInstanceVar := func(name string, value string) {
-		if value == "" || value == "0" {
-			return
-		}
-		old := variable.GetSysVar(name)
-		tmp := *old
-		tmp.Value = value
-		tmp.Scope |= variable.ScopeInstance
-		variable.RegisterSysVar(&tmp)
-	}
-	{
-		setInstanceVar(variable.TiDBStmtSummaryMaxStmtCount, strconv.FormatUint(cfg.Instance.StmtSummaryMaxStmtCount, 10))
-		setInstanceVar(variable.TiDBServerMemoryLimit, cfg.Instance.ServerMemoryLimit)
-		setInstanceVar(variable.TiDBServerMemoryLimitGCTrigger, cfg.Instance.ServerMemoryLimitGCTrigger)
-		setInstanceVar(variable.TiDBInstancePlanCacheMaxMemSize, cfg.Instance.InstancePlanCacheMaxMemSize)
-		setInstanceVar(variable.TiDBStatsCacheMemQuota, strconv.FormatUint(cfg.Instance.StatsCacheMemQuota, 10))
-		setInstanceVar(variable.TiDBMemQuotaBindingCache, strconv.FormatUint(cfg.Instance.MemQuotaBindingCache, 10))
-		setInstanceVar(variable.TiDBSchemaCacheSize, cfg.Instance.SchemaCacheSize)
-	}
-
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(cfg.Performance.ProjectionPushDown))
