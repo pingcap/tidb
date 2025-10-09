@@ -18,7 +18,6 @@ go_library(
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/operator/physicalop",
-        "//pkg/planner/core/operator/physicalop/findbesttask",
         "//pkg/planner/property",
         "//pkg/planner/util/utilfuncp",
         "//pkg/util/intest",
