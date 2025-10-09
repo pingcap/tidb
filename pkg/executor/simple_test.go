@@ -245,7 +245,7 @@ func TestRefreshStatsWithFullMode(t *testing.T) {
 
 	// Insert additional data and run ANALYZE again.
 	tk.MustExec("insert into t1 values (4,4), (5,5)")
-	// Analyze loads statistics using the stats currently held in memory when running in lite mode.
+	// Analyze loads statistics based on the current state of the in-memory stats (all statistics have been loaded) while running in lite mode.
 	tk.MustExec("analyze table t1 all columns with 1 topn, 2 buckets")
 	statsAfterAnalyze := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
 	require.NoError(t, err)
