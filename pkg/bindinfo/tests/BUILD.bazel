@@ -5,20 +5,11 @@ go_test(
     timeout = "moderate",
     srcs = [
         "bind_test.go",
-<<<<<<< HEAD
-=======
-        "bind_usage_info_test.go",
-        "cross_db_binding_test.go",
->>>>>>> 70c7d5051c5 (bindinfo: add last_used_date to track bindinfo usage frequency (#63409))
         "main_test.go",
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
     shard_count = 19,
-=======
-    shard_count = 23,
->>>>>>> 70c7d5051c5 (bindinfo: add last_used_date to track bindinfo usage frequency (#63409))
     deps = [
         "//pkg/bindinfo",
         "//pkg/bindinfo/internal",
