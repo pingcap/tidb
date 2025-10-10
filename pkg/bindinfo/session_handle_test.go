@@ -89,7 +89,7 @@ func TestSessionBinding(t *testing.T) {
 		}
 
 		handle := tk.Session().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		stmt, err := parser.New().ParseOneStmt(testSQL.originSQL, "", "")
+		stmt, err := parser.New().ParseOneStmt(testSQL.querySQL, "", "")
 		require.NoErrorf(t, err, "testSQL %+v", testSQL)
 
 		_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, "", true)

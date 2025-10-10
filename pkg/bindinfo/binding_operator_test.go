@@ -347,6 +347,15 @@ var testSQLs = []struct {
 		memoryUsage: float64(166),
 	},
 	{
+		createSQL:   "binding for select min(i),s from t group by s order by min(i) using select min(i),s from t use index(index_t) group by s order by min(i)",
+		overlaySQL:  "",
+		querySQL:    "select min(i),s from t group by s order by min(t.i)",
+		originSQL:   "select min ( `i` ) , `s` from `test` . `t` group by `s` order by min ( `i` )",
+		bindSQL:     "SELECT min(`i`),`s` FROM `test`.`t` USE INDEX (`index_t`) GROUP BY `s` ORDER BY min(`i`)",
+		dropSQL:     "binding for select min(i),s from t group by s order by min(i)",
+		memoryUsage: float64(256),
+	},
+	{
 		createSQL:   "binding for delete from t where i = 1 using delete /*+ use_index(t,index_t) */ from t where i = 1",
 		overlaySQL:  "",
 		querySQL:    "delete    from t where   i = 2",
