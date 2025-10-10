@@ -132,7 +132,9 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[][]*expression.Constant":
 			structureName := strings.Split(f.Type.String(), ".")[1]
 			c.write("cloned.%v = Clone%v2DForPlanCache(op.%v)", f.Name, structureName, f.Name)
-		case "[]*ranger.Range", "[]*util.ByItems", "[]model.CIStr", "[]property.SortItem",
+		case "[]*ranger.Range", "[]*util.ByItems", "[]property.SortItem":
+			c.write("cloned.%v = sliceutil.DeepClone(op.%v)", f.Name, f.Name)
+		case "[]model.CIStr",
 			"[]types.Datum", "[]kv.Handle", "[]*expression.Assignment":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
 			c.write("cloned.%v = util.Clone%v(op.%v)", f.Name, structureName, f.Name)
@@ -269,6 +271,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 )
 `
 

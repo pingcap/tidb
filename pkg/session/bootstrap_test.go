@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -156,6 +157,12 @@ func TestBootstrap(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, 0, req.NumRows())
+	se.Close()
+	r = MustExecToRecodeSet(t, se, fmt.Sprintf("select * from mysql.bind_info where original_sql = '%s'", bindinfo.BuiltinPseudoSQL4BindLock))
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
 	se.Close()
 }
 
@@ -2862,7 +2869,7 @@ func TestBindInfoUniqueIndex(t *testing.T) {
 	for _, sqlDigest := range []string{"null", "'x'", "'y'"} {
 		for _, planDigest := range []string{"null", "'x'", "'y'"} {
 			insertStmt := fmt.Sprintf(`insert into mysql.bind_info values (
-             "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s)`,
+             "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s, null)`,
 				sqlDigest, planDigest)
 			MustExec(t, seV245, insertStmt)
 			MustExec(t, seV245, insertStmt)

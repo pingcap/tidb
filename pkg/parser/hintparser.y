@@ -31,6 +31,8 @@ import (
 	hints []*ast.TableOptimizerHint
 	table 	ast.HintTable
 	modelIdents []ast.CIStr
+    leadingList *ast.LeadingList
+    leadingElement interface{} // Modified: Represents either *ast.HintTable or *ast.LeadingList
 }
 
 %token	<number>
@@ -84,6 +86,7 @@ import (
 	/* TiDB hint names */
 	hintAggToCop              "AGG_TO_COP"
 	hintIgnorePlanCache       "IGNORE_PLAN_CACHE"
+	hintWriteSlowLog          "WRITE_SLOW_LOG"
 	hintHashAgg               "HASH_AGG"
 	hintMpp1PhaseAgg          "MPP_1PHASE_AGG"
 	hintMpp2PhaseAgg          "MPP_2PHASE_AGG"
@@ -186,6 +189,12 @@ import (
 	PartitionList    "partition name list in optimizer hint"
 	PartitionListOpt "optional partition name list in optimizer hint"
 
+%type	<leadingList>
+	LeadingTableList "leading table list"
+
+%type	<leadingElement>
+	LeadingTableElement "leading element (table or list)"
+
 
 %start	Start
 
@@ -241,6 +250,27 @@ TableOptimizerHintOpt:
 	{
 		h := $3
 		h.HintName = ast.NewCIStr($1)
+		$$ = h
+	}
+|	"LEADING" '(' QueryBlockOpt LeadingTableList ')'
+	{
+		h := &ast.TableOptimizerHint{
+			HintName: ast.NewCIStr($1),
+			QBName:   ast.NewCIStr($3),
+			HintData: $4,
+		}
+		// For LEADING hints we need to maintain two views of the tables:
+		// h.HintData:
+		//   - Stores the structured AST node (LeadingList).
+		//   - Preserves the nesting and order information of LEADING(...),
+		//
+		// h.Tables:
+		//   - Stores a flat slice of all HintTable elements inside the LeadingList.
+		//   - Only used for initialization.
+		if leadingList, ok := h.HintData.(*ast.LeadingList); ok {
+			// be compatible with the prior flatten writing style
+			h.Tables = ast.FlattenLeadingList(leadingList)
+		}
 		$$ = h
 	}
 |	UnsupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
@@ -346,6 +376,12 @@ TableOptimizerHintOpt:
 			QBName:   ast.NewCIStr($3),
 		}
 	}
+|	"WRITE_SLOW_LOG"
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: ast.NewCIStr($1),
+		}
+	}
 |	"QUERY_TYPE" '(' QueryBlockOpt HintQueryType ')'
 	{
 		$$ = &ast.TableOptimizerHint{
@@ -405,6 +441,28 @@ HintStorageTypeAndTable:
 		h := $3
 		h.HintData = ast.NewCIStr($1)
 		$$ = h
+	}
+
+LeadingTableList:
+	LeadingTableElement
+	{
+		$$ = &ast.LeadingList{Items: []interface{}{$1}}
+	}
+|	LeadingTableList ',' LeadingTableElement
+	{
+		$$ = $1
+		$$.Items = append($$.Items, $3)
+	}
+
+LeadingTableElement:
+	HintTable
+	{
+		tmp := $1
+		$$ = &tmp
+	}
+|	'(' LeadingTableList ')'
+	{
+		$$ = $2
 	}
 
 QueryBlockOpt:
@@ -646,7 +704,6 @@ SupportedTableLevelOptimizerHintName:
 |	"NO_HASH_JOIN"
 |	"HASH_JOIN_BUILD"
 |	"HASH_JOIN_PROBE"
-|	"LEADING"
 |	"HYPO_INDEX"
 
 UnsupportedIndexLevelOptimizerHintName:
@@ -741,6 +798,7 @@ Identifier:
 |	"AGG_TO_COP"
 |	"LIMIT_TO_COP"
 |	"IGNORE_PLAN_CACHE"
+|	"WRITE_SLOW_LOG"
 |	"HASH_AGG"
 |	"MPP_1PHASE_AGG"
 |	"MPP_2PHASE_AGG"

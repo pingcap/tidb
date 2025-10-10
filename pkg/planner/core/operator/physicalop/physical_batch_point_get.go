@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -283,9 +282,6 @@ func (p *PointGetPlan) AccessCols() []*expression.Column {
 func (p *PointGetPlan) SetAccessCols(cols []*expression.Column) {
 	p.accessCols = cols
 }
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (*PointGetPlan) AppendChildCandidate(_ *optimizetrace.PhysicalOptimizeOp) {}
 
 const emptyPointGetPlanSize = int64(unsafe.Sizeof(PointGetPlan{}))
 
@@ -713,9 +709,6 @@ func (p *BatchPointGetPlan) OutputNames() types.NameSlice {
 func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.SimpleSchemaProducer.SetOutputNames(names)
 }
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (*BatchPointGetPlan) AppendChildCandidate(_ *optimizetrace.PhysicalOptimizeOp) {}
 
 const emptyBatchPointGetPlanSize = int64(unsafe.Sizeof(BatchPointGetPlan{}))
 

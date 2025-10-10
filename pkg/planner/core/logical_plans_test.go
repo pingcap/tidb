@@ -1836,7 +1836,7 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 	if err != nil {
 		return nil, nil, err
 	}
-	p, _, err = physicalOptimize(p.(base.LogicalPlan), &PlanCounterDisabled)
+	p, _, err = physicalOptimize(p.(base.LogicalPlan))
 	return p.(base.PhysicalPlan), stmt, err
 }
 
@@ -2310,28 +2310,6 @@ func TestFastPathInvalidBatchPointGet(t *testing.T) {
 			require.Nil(t, plan)
 		}
 	}
-}
-
-func TestTraceFastPlan(t *testing.T) {
-	s := coretestsdk.CreatePlannerSuiteElems()
-	defer s.Close()
-	s.GetCtx().GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-	defer func() {
-		s.GetCtx().GetSessionVars().StmtCtx.EnableOptimizeTrace = false
-	}()
-	s.GetCtx().GetSessionVars().SnapshotInfoschema = s.GetIS()
-	sql := "select * from t where a=1"
-	comment := fmt.Sprintf("sql:%s", sql)
-	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
-	require.NoError(t, err, comment)
-	nodeW := resolve.NewNodeW(stmt)
-	err = Preprocess(context.Background(), s.GetSCtx(), nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.GetIS()}))
-	require.NoError(t, err, comment)
-	plan := TryFastPlan(s.GetCtx(), nodeW)
-	require.NotNil(t, plan)
-	require.NotNil(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer)
-	require.NotNil(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer.FinalPlan)
-	require.True(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer.IsFastPlan)
 }
 
 func TestWindowLogicalPlanAmbiguous(t *testing.T) {

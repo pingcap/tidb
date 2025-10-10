@@ -185,3 +185,23 @@ func (p *BasePhysicalJoin) MemoryUsage() (sum int64) {
 	}
 	return
 }
+
+// BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
+func BuildPhysicalJoinSchema(joinType base.JoinType, join base.PhysicalPlan) *expression.Schema {
+	leftSchema := join.Children()[0].Schema()
+	switch joinType {
+	case base.SemiJoin, base.AntiSemiJoin:
+		return leftSchema.Clone()
+	case base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
+		newSchema := leftSchema.Clone()
+		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
+		return newSchema
+	}
+	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
+	if joinType == base.LeftOuterJoin {
+		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
+	} else if joinType == base.RightOuterJoin {
+		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
+	}
+	return newSchema
+}

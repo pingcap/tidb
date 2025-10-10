@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -384,7 +385,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 	for {
 		kvRanges, err := loadTableRanges(
 			src.ctx,
-			src.tbl,
+			src.tbl.GetPhysicalID(),
 			src.store,
 			startKey,
 			src.endKey,
@@ -946,4 +947,379 @@ func (s *indexWriteResultSink) Close() error {
 
 func (*indexWriteResultSink) String() string {
 	return "indexWriteResultSink"
+}
+
+// tempIndexScanTask contains the start key and end key of a temp index region.
+type tempIndexScanTask struct {
+	ID    int
+	Start kv.Key
+	End   kv.Key
+
+	ctx *OperatorCtx
+}
+
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (t tempIndexScanTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+	return metrics.LblAddIndex, "RecoverArgs", func() {
+		t.ctx.onError(dbterror.ErrReorgPanic)
+	}, false
+}
+
+// String implement fmt.Stringer interface.
+func (t tempIndexScanTask) String() string {
+	return fmt.Sprintf("TempIndexScanTask: id=%d, startKey=%s, endKey=%s",
+		t.ID, hex.EncodeToString(t.Start), hex.EncodeToString(t.End))
+}
+
+// TempIndexScanTaskSource produces TempIndexScanTask by splitting regions of a temp index range.
+type TempIndexScanTaskSource struct {
+	ctx *OperatorCtx
+
+	errGroup errgroup.Group
+	sink     operator.DataChannel[tempIndexScanTask]
+
+	tbl      table.PhysicalTable
+	store    kv.Storage
+	startKey kv.Key
+	endKey   kv.Key
+}
+
+// NewTempIndexScanTaskSource creates a new TempIndexScanTaskSource.
+func NewTempIndexScanTaskSource(
+	ctx *OperatorCtx,
+	store kv.Storage,
+	physicalTable table.PhysicalTable,
+	startKey kv.Key,
+	endKey kv.Key,
+) *TempIndexScanTaskSource {
+	return &TempIndexScanTaskSource{
+		ctx:      ctx,
+		errGroup: errgroup.Group{},
+		tbl:      physicalTable,
+		store:    store,
+		startKey: startKey,
+		endKey:   endKey,
+	}
+}
+
+// SetSink implements WithSink interface.
+func (src *TempIndexScanTaskSource) SetSink(sink operator.DataChannel[tempIndexScanTask]) {
+	src.sink = sink
+}
+
+// Open implements Operator interface.
+func (src *TempIndexScanTaskSource) Open() error {
+	src.errGroup.Go(src.generateTasks)
+	return nil
+}
+
+// Close implements Operator interface.
+func (src *TempIndexScanTaskSource) Close() error {
+	return src.errGroup.Wait()
+}
+
+// String implements fmt.Stringer interface.
+func (*TempIndexScanTaskSource) String() string {
+	return "TempIndexScanTaskSource"
+}
+
+func (src *TempIndexScanTaskSource) generateTasks() error {
+	taskIDAlloc := newTaskIDAllocator()
+	defer src.sink.Finish()
+
+	startKey := src.startKey
+	for {
+		kvRanges, err := loadTableRanges(
+			src.ctx,
+			src.tbl.GetPhysicalID(),
+			src.store,
+			startKey,
+			src.endKey,
+			nil,
+			backfillTaskChanSize,
+		)
+		if err != nil {
+			return err
+		}
+		if len(kvRanges) == 0 {
+			break
+		}
+
+		batchTasks := src.getBatchTempIndexScanTask(kvRanges, taskIDAlloc)
+		for _, task := range batchTasks {
+			select {
+			case <-src.ctx.Done():
+				return src.ctx.Err()
+			case src.sink.Channel() <- task:
+			}
+		}
+		startKey = kvRanges[len(kvRanges)-1].EndKey
+		if startKey.Cmp(src.endKey) >= 0 {
+			break
+		}
+	}
+	return nil
+}
+
+func (src *TempIndexScanTaskSource) getBatchTempIndexScanTask(
+	kvRanges []kv.KeyRange,
+	taskIDAlloc *taskIDAllocator,
+) []tempIndexScanTask {
+	batchTasks := make([]tempIndexScanTask, 0, len(kvRanges))
+	prefix := tablecodec.GenTableIndexPrefix(src.tbl.GetPhysicalID())
+
+	// Build reorg tasks.
+	for _, keyRange := range kvRanges {
+		taskID := taskIDAlloc.alloc()
+		startKey := keyRange.StartKey
+		if len(startKey) == 0 {
+			startKey = prefix
+		}
+		endKey := keyRange.EndKey
+		if len(endKey) == 0 {
+			endKey = prefix.PrefixNext()
+		}
+
+		task := tempIndexScanTask{
+			ID:    taskID,
+			Start: startKey,
+			End:   endKey,
+			ctx:   src.ctx,
+		}
+		batchTasks = append(batchTasks, task)
+	}
+	return batchTasks
+}
+
+// MergeTempIndexOperator merges the temporary index records into the original index.
+type MergeTempIndexOperator struct {
+	*operator.AsyncOperator[tempIndexScanTask, tempIdxResult]
+	logger     *zap.Logger
+	totalCount *atomic.Int64
+}
+
+// NewMergeTempIndexOperator creates a new MergeTempIndexOperator.
+func NewMergeTempIndexOperator(
+	ctx *OperatorCtx,
+	store kv.Storage,
+	ptbl table.PhysicalTable,
+	idxInfo *model.IndexInfo,
+	jobID int64,
+	concurrency int,
+	batchSize int,
+	reorgMeta *model.DDLReorgMeta,
+) *MergeTempIndexOperator {
+	totalCount := new(atomic.Int64)
+	pool := workerpool.NewWorkerPool(
+		"MergeTempIndexOperator",
+		util.DDL,
+		concurrency,
+		func() workerpool.Worker[tempIndexScanTask, tempIdxResult] {
+			return &mergeTempIndexWorker{
+				ctx:        ctx,
+				store:      store,
+				ptbl:       ptbl,
+				idxInfo:    idxInfo,
+				jobID:      jobID,
+				batchCnt:   batchSize,
+				totalCount: totalCount,
+				reorgMeta:  reorgMeta,
+				buffers:    newTempIdxBuffers(batchSize),
+			}
+		})
+	return &MergeTempIndexOperator{
+		AsyncOperator: operator.NewAsyncOperator(ctx, pool),
+		logger:        logutil.Logger(ctx),
+		totalCount:    totalCount,
+	}
+}
+
+// Close implements operator.Operator interface.
+func (o *MergeTempIndexOperator) Close() error {
+	defer func() {
+		o.logger.Info("merge temp index operator total count", zap.Int64("count", o.totalCount.Load()))
+	}()
+	return o.AsyncOperator.Close()
+}
+
+type mergeTempIndexWorker struct {
+	ctx       *OperatorCtx
+	store     kv.Storage
+	ptbl      table.PhysicalTable
+	idxInfo   *model.IndexInfo
+	reorgMeta *model.DDLReorgMeta
+	jobID     int64
+
+	batchCnt   int
+	buffers    *tempIdxBuffers
+	totalCount *atomic.Int64
+}
+
+func (w *mergeTempIndexWorker) HandleTask(task tempIndexScanTask, sender func(tempIdxResult)) {
+	failpoint.Inject("injectPanicForTableScan", func() {
+		panic("mock panic")
+	})
+	start := task.Start
+	done := false
+	for !done {
+		task.Start = start
+		rs, err := w.handleOneRange(task)
+		if err != nil {
+			w.ctx.onError(err)
+			return
+		}
+		sender(rs)
+		done = rs.done
+		start = rs.nextKey
+	}
+}
+
+func (*mergeTempIndexWorker) Close() {}
+
+func (w *mergeTempIndexWorker) handleOneRange(
+	task tempIndexScanTask,
+) (tempIdxResult, error) {
+	var currentTxnStartTS uint64
+	oprStartTime := time.Now()
+	ctx := kv.WithInternalSourceAndTaskType(w.ctx, "ddl_merge_temp_index", kvutil.ExplicitTypeDDL)
+	originBatchCnt := w.batchCnt
+	defer func() {
+		w.batchCnt = originBatchCnt
+	}()
+	jobCtx := NewReorgContext()
+	jobCtx.tp = "ddl_merge_temp_index"
+	jobCtx.getResourceGroupTaggerForTopSQL()
+	jobCtx.resourceGroupName = w.reorgMeta.ResourceGroupName
+
+	start, end := task.Start, task.End
+	attempts := 0
+	var result tempIdxResult
+	for {
+		attempts++
+		err := kv.RunInNewTxn(ctx, w.store, false, func(_ context.Context, txn kv.Transaction) error {
+			currentTxnStartTS = txn.StartTS()
+			updateTxnEntrySizeLimitIfNeeded(txn)
+			rs, err := fetchTempIndexVals(jobCtx, w.store, w.ptbl, w.idxInfo, txn, start, end, w.batchCnt, w.buffers)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			result = rs
+			err = batchCheckTemporaryUniqueKey(txn, w.ptbl, w.idxInfo, w.buffers.originIdxKeys, w.buffers.tmpIdxRecords)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			for i, idxRecord := range w.buffers.tmpIdxRecords {
+				// The index is already exists, we skip it, no needs to backfill it.
+				// The following update, delete, insert on these rows, TiDB can handle it correctly.
+				// If all batch are skipped, update first index key to make txn commit to release lock.
+				if idxRecord.skip {
+					continue
+				}
+
+				originIdxKey := w.buffers.originIdxKeys[i]
+				if idxRecord.delete {
+					err = txn.GetMemBuffer().Delete(originIdxKey)
+				} else {
+					err = txn.GetMemBuffer().Set(originIdxKey, idxRecord.vals)
+				}
+				if err != nil {
+					return err
+				}
+
+				err = txn.GetMemBuffer().Delete(w.buffers.tmpIdxKeys[i])
+				if err != nil {
+					return err
+				}
+
+				failpoint.InjectCall("mockDMLExecutionMergingInTxn")
+
+				result.addCount++
+			}
+			return nil
+		})
+		if err != nil {
+			if kv.IsTxnRetryableError(err) {
+				if w.batchCnt > 1 {
+					w.batchCnt /= 2
+				}
+				backoff := kv.BackOff(uint(attempts))
+				logutil.Logger(ctx).Warn("temp index merge worker retry",
+					zap.Int64("jobID", w.jobID),
+					zap.Int("batchCnt", w.batchCnt),
+					zap.Int("attempts", attempts),
+					zap.Duration("backoff", time.Duration(backoff)),
+					zap.Uint64("startTS", currentTxnStartTS),
+					zap.Error(err))
+				continue
+			}
+			w.ctx.onError(err)
+			return result, err
+		}
+		break
+	}
+
+	metrics.DDLSetTempIndexScanAndMerge(w.ptbl.GetPhysicalID(), uint64(result.scanCount), uint64(result.addCount))
+	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) && MockDMLExecutionMerging != nil {
+			MockDMLExecutionMerging()
+		}
+	})
+	logSlowOperations(time.Since(oprStartTime), "mergeTempIndexExecutorHandleOneRange", 3000)
+	w.totalCount.Add(int64(result.scanCount))
+	return result, nil
+}
+
+type tempIndexResultSink struct {
+	ctx       *OperatorCtx
+	tbl       table.PhysicalTable
+	collector execute.Collector
+	errGroup  errgroup.Group
+	source    operator.DataChannel[tempIdxResult]
+}
+
+func newTempIndexResultSink(
+	ctx *OperatorCtx,
+	tbl table.PhysicalTable,
+	collector execute.Collector,
+) *tempIndexResultSink {
+	return &tempIndexResultSink{
+		ctx:       ctx,
+		tbl:       tbl,
+		errGroup:  errgroup.Group{},
+		collector: collector,
+	}
+}
+
+func (s *tempIndexResultSink) SetSource(source operator.DataChannel[tempIdxResult]) {
+	s.source = source
+}
+
+func (s *tempIndexResultSink) Open() error {
+	s.errGroup.Go(s.collectResult)
+	return nil
+}
+
+func (s *tempIndexResultSink) collectResult() error {
+	for {
+		select {
+		case <-s.ctx.Done():
+			logutil.BgLogger().Info("temp index result sink context done", zap.Error(s.ctx.Err()))
+			return s.ctx.Err()
+		case rs, ok := <-s.source.Channel():
+			if !ok {
+				return nil
+			}
+			s.collector.Processed(0, int64(rs.addCount))
+		}
+	}
+}
+
+func (s *tempIndexResultSink) Close() error {
+	return s.errGroup.Wait()
+}
+
+func (*tempIndexResultSink) String() string {
+	return "tempIndexResultSink"
 }

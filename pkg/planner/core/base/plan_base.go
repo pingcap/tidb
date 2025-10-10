@@ -24,10 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -81,8 +79,6 @@ type Plan interface {
 	//		`select /*+ use_index(@sel_2 t2, a) */ * from t1, (select a*2 as b from t2) tx where a>b`
 	// the hint should be applied on the sub-query, whose query block is 2.
 	QueryBlockOffset() int
-
-	BuildPlanTrace() *tracing.PlanTrace
 
 	// CloneForPlanCache clones this Plan for Plan Cache.
 	// Compared with Clone, CloneForPlanCache doesn't deep clone every fields, fields with tag
@@ -140,10 +136,6 @@ type PhysicalPlan interface {
 	// Clone clones this physical plan.
 	Clone(newCtx PlanContext) (PhysicalPlan, error)
 
-	// AppendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
-	// be tracked during findBestTask or enumeratePhysicalPlans4Task
-	AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp)
-
 	// MemoryUsage return the memory usage of PhysicalPlan
 	MemoryUsage() int64
 
@@ -168,27 +160,6 @@ type PhysicalPlan interface {
 	GetActualProbeCnt(*execdetails.RuntimeStatsColl) int64
 }
 
-// PlanCounterTp is used in hint nth_plan() to indicate which plan to use.
-type PlanCounterTp int64
-
-// Dec minus PlanCounterTp value by x.
-func (c *PlanCounterTp) Dec(x int64) {
-	if *c <= 0 {
-		return
-	}
-	*c = max(PlanCounterTp(int64(*c)-x), 0)
-}
-
-// Empty indicates whether the PlanCounterTp is clear now.
-func (c *PlanCounterTp) Empty() bool {
-	return *c == 0
-}
-
-// IsForce indicates whether to force a plan.
-func (c *PlanCounterTp) IsForce() bool {
-	return *c != -1
-}
-
 // LogicalPlan is a tree of logical operators.
 // We can do a lot of logical optimizations to it, like predicate push-down and column pruning.
 type LogicalPlan interface {
@@ -211,11 +182,7 @@ type LogicalPlan interface {
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
 	// With the lowest cost and how many plans are found in this function.
-	// planCounter is a counter for planner to force a plan.
-	// If planCounter > 0, the clock_th plan generated in this function will be returned.
-	// If planCounter = 0, the plan generated in this function will not be considered.
-	// If planCounter = -1, then we will not force plan.
-	FindBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *optimizetrace.PhysicalOptimizeOp) (Task, int64, error)
+	FindBestTask(prop *property.PhysicalProperty) (Task, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use
@@ -315,21 +282,21 @@ type GroupExpression interface {
 	InputsLen() int
 }
 
-// GetGEAndLogical is get the possible group expression and logical operator from common super pointer.
-func GetGEAndLogical[T LogicalPlan](super LogicalPlan) (ge GroupExpression, proj T) {
+// GetGEAndLogicalOp is get the possible group expression and logical operator from common super pointer.
+func GetGEAndLogicalOp[T LogicalPlan](super LogicalPlan) (ge GroupExpression, logicalOp T) {
 	switch x := super.(type) {
 	case T:
 		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
 		// to downcast as the every specific logical operator.
-		proj = x
+		logicalOp = x
 	case GroupExpression:
 		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
 		// naturally can be referred as a LogicalPlan, and we need to use GetWrappedLogicalPlan to
 		// get the specific logical operator inside.
 		ge = x
-		proj = ge.GetWrappedLogicalPlan().(T)
+		logicalOp = ge.GetWrappedLogicalPlan().(T)
 	}
-	return ge, proj
+	return ge, logicalOp
 }
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
