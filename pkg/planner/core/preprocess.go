@@ -263,7 +263,7 @@ func (t *tableSourceCollector) Enter(in ast.Node) (out ast.Node, skipChildren bo
 	return in, false
 }
 
-func (_ *tableSourceCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*tableSourceCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
