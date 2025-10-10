@@ -272,7 +272,7 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 		case proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateResuming:
 			taskCnt := sm.getSchedulerCount()
 			if taskCnt >= proto.MaxConcurrentTask {
-				break
+				continue
 			}
 			reservedExecID, ok = sm.slotMgr.canReserve(task)
 			if !ok {
