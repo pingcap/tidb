@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -37,6 +38,7 @@ var _ scheduler.Scheduler = (*schedulerImpl)(nil)
 func NewScheduler(ctx context.Context, task *proto.Task, param scheduler.Param) *schedulerImpl {
 	return &schedulerImpl{
 		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
+		logger:        logutil.BgLogger().With(zap.Int64("taskID", task.ID)),
 	}
 }
 

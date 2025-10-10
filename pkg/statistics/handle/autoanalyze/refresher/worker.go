@@ -15,9 +15,17 @@
 package refresher
 
 import (
+	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/txn"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -43,6 +51,17 @@ type worker struct {
 
 // NewWorker creates a new worker.
 func NewWorker(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker, maxConcurrency int) *worker {
+	taskexecutor.RegisterTaskType(proto.Txn,
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return txn.NewTaskExecutor(ctx, task, param, statsHandle.SPool())
+		},
+	)
+
+	scheduler.RegisterSchedulerFactory(proto.Txn,
+		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+			return txn.NewScheduler(ctx, task, param)
+		},
+	)
 	w := &worker{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
@@ -80,7 +99,22 @@ func (w *worker) SubmitJob(job priorityqueue.AnalysisJob) bool {
 
 	w.wg.RunWithRecover(
 		func() {
+			bytes, err := txn.NewTxnTask("refresh stats a.a")
+			if err != nil {
+				panic(err)
+			}
 			w.processJob(job)
+			ctx := context.Background()
+			ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
+			scope := handle.GetTargetScope()
+			task, err := handle.SubmitTask(ctx, fmt.Sprintf("%d", job.GetTableID()), proto.Txn, "", 3, scope, 3, bytes)
+			if err != nil {
+				panic(err)
+			}
+			err = handle.WaitTaskDoneByKey(ctx, task.Key)
+			if err != nil {
+				panic(err)
+			}
 		},
 		func(r any) {
 			if r != nil {

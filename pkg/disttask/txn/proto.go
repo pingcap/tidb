@@ -14,8 +14,21 @@
 
 package txn
 
+import "encoding/json"
+
 type taskMeta struct {
 	SQL string `json:"sql"`
+}
+
+func NewTxnTask(sql string) ([]byte, error) {
+	meta := &taskMeta{
+		SQL: sql,
+	}
+	bytes, err := json.Marshal(meta)
+	if err != nil {
+		return nil, err
+	}
+	return bytes, nil
 }
 
 type subtaskMeta struct {
