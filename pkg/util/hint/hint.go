@@ -545,21 +545,22 @@ type IndexJoinHints struct {
 // PlanHints are hints that are used to control the optimizer plan choices like 'use_index', 'hash_join'.
 // TODO: move ignore_plan_cache, straight_join, no_decorrelate here.
 type PlanHints struct {
-	IndexJoin          IndexJoinHints // inlj_join, inlhj_join, inlmj_join
-	NoIndexJoin        IndexJoinHints // no_inlj_join, no_inlhj_join, no_inlmj_join
-	HashJoin           []HintedTable  // hash_join
-	NoHashJoin         []HintedTable  // no_hash_join
-	SortMergeJoin      []HintedTable  // merge_join
-	NoMergeJoin        []HintedTable  // no_merge_join
-	BroadcastJoin      []HintedTable  // bcj_join
-	ShuffleJoin        []HintedTable  // shuffle_join
-	IndexHintList      []HintedIndex  // use_index, ignore_index
-	IndexMergeHintList []HintedIndex  // use_index_merge
-	TiFlashTables      []HintedTable  // isolation_read_engines(xx=tiflash)
-	TiKVTables         []HintedTable  // isolation_read_engines(xx=tikv)
-	LeadingJoinOrder   []HintedTable  // leading
-	HJBuild            []HintedTable  // hash_join_build
-	HJProbe            []HintedTable  // hash_join_probe
+	IndexJoin          IndexJoinHints   // inlj_join, inlhj_join, inlmj_join
+	NoIndexJoin        IndexJoinHints   // no_inlj_join, no_inlhj_join, no_inlmj_join
+	HashJoin           []HintedTable    // hash_join
+	NoHashJoin         []HintedTable    // no_hash_join
+	SortMergeJoin      []HintedTable    // merge_join
+	NoMergeJoin        []HintedTable    // no_merge_join
+	BroadcastJoin      []HintedTable    // bcj_join
+	ShuffleJoin        []HintedTable    // shuffle_join
+	IndexHintList      []HintedIndex    // use_index, ignore_index
+	IndexMergeHintList []HintedIndex    // use_index_merge
+	TiFlashTables      []HintedTable    // isolation_read_engines(xx=tiflash)
+	TiKVTables         []HintedTable    // isolation_read_engines(xx=tikv)
+	LeadingJoinOrder   []HintedTable    // leading
+	LeadingList        *ast.LeadingList //leading recursive
+	HJBuild            []HintedTable    // hash_join_build
+	HJProbe            []HintedTable    // hash_join_probe
 
 	// Hints belows are not associated with any particular table.
 	PreferAggType    uint // hash_agg, merge_agg, agg_to_cop and so on

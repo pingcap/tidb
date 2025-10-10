@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
@@ -401,7 +402,137 @@ type baseSingleGroupJoinOrderSolver struct {
 	*basicJoinGroupInfo
 }
 
-func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []base.LogicalPlan, hintInfo *h.PlanHints, hasOuterJoin bool) (bool, []base.LogicalPlan) {
+// give priority to processing nested LeadingList; otherwise, fall back to the flat logic.
+func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(
+	curJoinGroup []base.LogicalPlan, hintInfo *hint.PlanHints, hasOuterJoin bool,
+) (bool, []base.LogicalPlan) {
+	if hintInfo == nil {
+		return false, nil
+	}
+	// nested LeadingList;
+	if hintInfo.LeadingList != nil {
+		return s.generateNestedLeadingJoinGroup(curJoinGroup, hintInfo.LeadingList, hasOuterJoin)
+	}
+	// flat logic
+	return s.generateFlatLeadingJoinGroup(curJoinGroup, hintInfo.LeadingJoinOrder, hasOuterJoin)
+}
+
+// generateNestedLeadingJoinGroup processing nested LEADING hint structure
+func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
+	curJoinGroup []base.LogicalPlan, leadingList *ast.LeadingList, hasOuterJoin bool,
+) (bool, []base.LogicalPlan) {
+	leftJoinGroup := make([]base.LogicalPlan, len(curJoinGroup))
+	copy(leftJoinGroup, curJoinGroup)
+
+	leadingJoin, remainingGroup, ok := s.buildLeadingTreeFromList(leadingList, leftJoinGroup, hasOuterJoin)
+	if !ok {
+		return false, nil
+	}
+	s.leadingJoinGroup = leadingJoin
+	return true, remainingGroup
+}
+
+// buildLeadingTreeFromList recursively constructs a LEADING tree, with items coming from ast.LeadingList.Items (*ast.HintTable | *ast.LeadingList)
+func (s *baseSingleGroupJoinOrderSolver) buildLeadingTreeFromList(
+	leadingList *ast.LeadingList, availableGroups []base.LogicalPlan, hasOuterJoin bool,
+) (base.LogicalPlan, []base.LogicalPlan, bool) {
+	if leadingList == nil || len(leadingList.Items) == 0 {
+		return nil, availableGroups, false
+	}
+
+	var currentJoin base.LogicalPlan
+	remainingGroups := availableGroups
+
+	for i, item := range leadingList.Items {
+		switch element := item.(type) {
+		case *ast.HintTable:
+			// find and remove the plan node that matches ast.HintTable from remainingGroups
+			tablePlan, newRemaining, ok := s.findAndRemovePlanByAstHint(remainingGroups, element)
+			if !ok {
+				return nil, availableGroups, false
+			}
+			remainingGroups = newRemaining
+
+			if i == 0 {
+				currentJoin = tablePlan
+			} else {
+				// connect the current table to the existing join tree
+				lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, tablePlan)
+				if hasOuterJoin && usedEdges == nil {
+					return nil, availableGroups, false
+				}
+				var rem []expression.Expression
+				currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType)
+				s.otherConds = rem
+			}
+		case *ast.LeadingList:
+			// recursively handle nested lists
+			nestedJoin, newRemaining, ok := s.buildLeadingTreeFromList(element, remainingGroups, hasOuterJoin)
+			if !ok {
+				return nil, availableGroups, false
+			}
+			remainingGroups = newRemaining
+
+			if i == 0 {
+				currentJoin = nestedJoin
+			} else {
+				lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, nestedJoin)
+				if hasOuterJoin && usedEdges == nil {
+					return nil, availableGroups, false
+				}
+				var rem []expression.Expression
+				currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType)
+				s.otherConds = rem
+			}
+		default:
+			s.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
+			return nil, availableGroups, false
+		}
+	}
+
+	return currentJoin, remainingGroups, true
+}
+
+// findAndRemovePlanByAstHint: Find the plan in `plans` that matches `ast.HintTable` and remove that plan, returning the new slice.
+// Matching rules: first match the regular table name (db/table or *), then consider the query-block alias (PlannerSelectBlockAsName).
+func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
+	plans []base.LogicalPlan, astTbl *ast.HintTable,
+) (base.LogicalPlan, []base.LogicalPlan, bool) {
+	// get the possible query block alias list (consistent with the flat logic)
+	var queryBlockNames []ast.HintTable
+	if p := s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
+		queryBlockNames = *p
+	}
+
+	for i, joinGroup := range plans {
+		tableAlias := util.ExtractTableAlias(joinGroup, joinGroup.QueryBlockOffset())
+		if tableAlias != nil {
+			// Match db/table (supports astTbl.DBName == "*")
+			if (astTbl.DBName.L == tableAlias.DBName.L || astTbl.DBName.L == "*") &&
+				astTbl.TableName.L == tableAlias.TblName.L {
+				newPlans := append(plans[:i], plans[i+1:]...)
+				return joinGroup, newPlans, true
+			}
+		}
+
+		// query-block alias (subquery block)
+		blockOffset := joinGroup.QueryBlockOffset()
+		if blockOffset > 1 && blockOffset < len(queryBlockNames) {
+			blockName := queryBlockNames[blockOffset]
+			// blockName from PlannerSelectBlockAsName which type is ast.HintTable（DBName/TableName）
+			if astTbl.DBName.L == blockName.DBName.L && astTbl.TableName.L == blockName.TableName.L {
+				newPlans := append(plans[:i], plans[i+1:]...)
+				return joinGroup, newPlans, true
+			}
+		}
+	}
+	return nil, plans, false
+}
+
+// generateFlatLeadingJoinGroup stay the same with the old leading logic，hintTables from hintInfo.LeadingJoinOrder ([]hint.HintedTable)
+func (s *baseSingleGroupJoinOrderSolver) generateFlatLeadingJoinGroup(
+	curJoinGroup []base.LogicalPlan, hintTables []hint.HintedTable, hasOuterJoin bool,
+) (bool, []base.LogicalPlan) {
 	var leadingJoinGroup []base.LogicalPlan
 	leftJoinGroup := make([]base.LogicalPlan, len(curJoinGroup))
 	copy(leftJoinGroup, curJoinGroup)
@@ -409,7 +540,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 	if p := s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
 		queryBlockNames = *p
 	}
-	for _, hintTbl := range hintInfo.LeadingJoinOrder {
+	for _, hintTbl := range hintTables {
 		match := false
 		for i, joinGroup := range leftJoinGroup {
 			tableAlias := util.ExtractTableAlias(joinGroup, joinGroup.QueryBlockOffset())
@@ -451,7 +582,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 			leftJoinGroup = slices.Delete(leftJoinGroup, groupIdx, groupIdx+1)
 		}
 	}
-	if len(leadingJoinGroup) != len(hintInfo.LeadingJoinOrder) || leadingJoinGroup == nil {
+	if len(leadingJoinGroup) != len(hintTables) || leadingJoinGroup == nil {
 		return false, nil
 	}
 	leadingJoin := leadingJoinGroup[0]
@@ -464,7 +595,9 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 			// If the joinGroups contain the outer join, we disable the cartesian product.
 			return false, nil
 		}
-		leadingJoin, s.otherConds = s.makeJoin(leadingJoin, leadingJoinGroup[0], usedEdges, joinType)
+		var rem []expression.Expression
+		leadingJoin, rem = s.makeJoin(leadingJoin, leadingJoinGroup[0], usedEdges, joinType)
+		s.otherConds = rem
 		leadingJoinGroup = leadingJoinGroup[1:]
 	}
 	s.leadingJoinGroup = leadingJoin
