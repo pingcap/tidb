@@ -337,3 +337,13 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE A ( col_int int(11) DEFAULT NULL, col_decimal decimal(10,0) DEFAULT NULL, col_int_not_null int(11) NOT NULL, col_varchar_10 varchar(10) DEFAULT NULL, pk int(11) NOT NULL AUTO_INCREMENT, col_varchar_10_not_null varchar(10) NOT NULL, col_datetime datetime DEFAULT NULL, col_datetime_not_null datetime NOT NULL, col_decimal_not_null decimal(10,0) NOT NULL, PRIMARY KEY (pk) ) ENGINE=InnoDB AUTO_INCREMENT=101 DEFAULT CHARSET=latin1;")
+	tk.MustExec("CREATE TABLE C ( col_datetime datetime DEFAULT NULL, pk int(11) NOT NULL AUTO_INCREMENT, col_datetime_not_null datetime NOT NULL, col_varchar_10 varchar(10) DEFAULT NULL, col_varchar_10_not_null varchar(10) NOT NULL, col_int_not_null int(11) NOT NULL, col_decimal_not_null decimal(10,0) NOT NULL, col_decimal decimal(10,0) DEFAULT NULL, col_int int(11) DEFAULT NULL, PRIMARY KEY (pk) ) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=latin1;")
+	tk.MustExec("CREATE TABLE DD ( col_decimal_not_null decimal(10,0) NOT NULL, col_varchar_10 varchar(10) DEFAULT NULL, col_datetime datetime DEFAULT NULL, col_int int(11) DEFAULT NULL, col_decimal decimal(10,0) DEFAULT NULL, col_varchar_10_not_null varchar(10) NOT NULL, col_datetime_not_null datetime NOT NULL, pk int(11) NOT NULL AUTO_INCREMENT, col_int_not_null int(11) NOT NULL, PRIMARY KEY (pk) ) ENGINE=InnoDB AUTO_INCREMENT=501 DEFAULT CHARSET=latin1;")
+	tk.MustQuery(`explain SELECT OUTR . col_decimal_not_null AS X FROM C AS OUTR2 LEFT JOIN A AS OUTR ON ( OUTR2 . col_int_not_null = OUTR . pk AND OUTR2 . col_datetime_not_null = OUTR . col_datetime ) WHERE OUTR . col_decimal_not_null IN ( SELECT INNR . col_int + 1 AS Y FROM DD AS INNR WHERE INNR . col_datetime_not_null < '2000-08-27' )`).Check(testkit.Rows())
+}

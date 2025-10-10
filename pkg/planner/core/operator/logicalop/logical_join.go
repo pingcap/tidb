@@ -268,6 +268,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 
 // simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
 func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	if p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.InnerJoin {
 		return
 	}
