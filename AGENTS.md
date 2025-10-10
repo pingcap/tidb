@@ -66,8 +66,12 @@ make failpoint-enable
 pushd pkg/<package_name>
 go test -v -run  <TestName>  -record --tags=intest
 popd
-make failpoint-disable
+make failpoint-disable # The command should be executed regardless of whether the `go test` is successful or not.
 ```
+
+- If the execution is successful, please check whether the result set file has been modified. If it has been modified, 
+  Please verify that the modifications are correct and notify the developer.
+- If the execution fails, please check the error message and notify the developer.
 
 #### Unit Tests Specification
 
