@@ -24,6 +24,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -311,6 +312,8 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+	// currentDataSource stores the current DataSource being processed for predicate column tracking
+	currentDataSource *logicalop.DataSource
 }
 
 type handleColHelper struct {
@@ -1212,7 +1215,7 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 	return true
 }
 
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool, builder *PlanBuilder) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1440,8 +1443,204 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
+	// Simple early pruning: limit the number of indexes to avoid excessive work
+	// This is a conservative approach that works regardless of timing issues
+	//threshold := ctx.GetSessionVars().OptIndexPruneThreshold
+	//if len(available) > threshold {
+	//	available = pruneIndexesBySimpleLimiting(ctx, available)
+	//}
+
 	return available, nil
 }
+
+// pruneIndexesByPredicateColumns intelligently prunes indexes based on stored predicate column information
+func pruneIndexesByPredicateColumns(ctx base.PlanContext, paths []*util.AccessPath, tblInfo *model.TableInfo, ds interface{}) []*util.AccessPath {
+	var predicateColumns map[int64]bool
+
+	// Try to get predicate columns from different sources
+	switch d := ds.(type) {
+	case *logicalop.DataSource:
+		// First try pre-populated predicate columns
+		if d.PredicateColumns != nil {
+			predicateColumns = d.PredicateColumns
+		}
+		// If not available, extract from conditions
+		if len(predicateColumns) == 0 {
+			predicateColumns = extractPredicateColumnsFromDataSource(d)
+		}
+	case *PlanBuilder:
+		// Fallback for PlanBuilder (legacy support)
+		if d.currentDataSource != nil {
+			predicateColumns = d.currentDataSource.PredicateColumns
+		}
+		if len(predicateColumns) == 0 && d.currentDataSource != nil {
+			predicateColumns = extractPredicateColumnsFromDataSource(d.currentDataSource)
+		}
+	}
+
+	// If still no predicate columns available, fall back to simple limiting
+	//if len(predicateColumns) == 0 {
+	//	return pruneIndexesBySimpleLimiting(ctx, paths)
+	//}
+
+	// Separate table paths from index paths
+	tablePaths := make([]*util.AccessPath, 0, 2)
+	indexPaths := make([]*util.AccessPath, 0, len(paths))
+
+	for _, path := range paths {
+		if path.IsTablePath() {
+			tablePaths = append(tablePaths, path)
+		} else {
+			indexPaths = append(indexPaths, path)
+		}
+	}
+
+	// Score indexes based on predicate column coverage
+	scoredIndexes := make([]*scoredIndexPath, 0, len(indexPaths))
+
+	for _, path := range indexPaths {
+		score := calculateIndexScore(path, tblInfo, predicateColumns)
+		if score > 0 || path.Forced {
+			scoredIndexes = append(scoredIndexes, &scoredIndexPath{
+				path:  path,
+				score: score,
+			})
+		}
+	}
+
+	// Sort by score (higher is better)
+	sort.Slice(scoredIndexes, func(i, j int) bool {
+		if scoredIndexes[i].score != scoredIndexes[j].score {
+			return scoredIndexes[i].score > scoredIndexes[j].score
+		}
+		// If scores are equal, prefer shorter indexes
+		return len(scoredIndexes[i].path.Index.Columns) < len(scoredIndexes[j].path.Index.Columns)
+	})
+
+	// Keep top indexes up to 2x threshold, but always keep forced indexes
+	threshold := ctx.GetSessionVars().OptIndexPruneThreshold
+	maxKeep := max(10, threshold)
+	if maxKeep > 10 {
+		maxKeep /= 2
+	}
+
+	keptPaths := make([]*util.AccessPath, 0, len(tablePaths)+maxKeep)
+	keptPaths = append(keptPaths, tablePaths...) // Always keep table paths
+
+	keptCount := 0
+	for _, scored := range scoredIndexes {
+		if scored.path.Forced || keptCount < maxKeep {
+			keptPaths = append(keptPaths, scored.path)
+			if !scored.path.Forced {
+				keptCount++
+			}
+		}
+	}
+
+	return keptPaths
+}
+
+// extractPredicateColumnsFromDataSource extracts predicate columns from DataSource conditions on-demand
+func extractPredicateColumnsFromDataSource(ds *logicalop.DataSource) map[int64]bool {
+	// Use the existing DataSource method to extract predicate columns
+	ds.ExtractPredicateColumns()
+	return ds.PredicateColumns
+}
+
+type scoredIndexPath struct {
+	path  *util.AccessPath
+	score int
+}
+
+// calculateIndexScore calculates a score for an index based on predicate column coverage
+func calculateIndexScore(path *util.AccessPath, tblInfo *model.TableInfo, predicateColumns map[int64]bool) int {
+	if len(predicateColumns) == 0 {
+		return 0
+	}
+
+	score := 0
+	predicateCount := len(predicateColumns)
+
+	// Count how many predicate columns this index covers
+	coveredPredicates := 0
+	for _, idxCol := range path.Index.Columns {
+		if idxCol.Offset < len(tblInfo.Columns) {
+			colInfo := tblInfo.Columns[idxCol.Offset]
+			if predicateColumns[colInfo.ID] {
+				coveredPredicates++
+			}
+		}
+	}
+
+	// Base score: percentage of predicate columns covered
+	if predicateCount > 0 {
+		score += (coveredPredicates * 100) / predicateCount
+	}
+
+	// Bonus for covering all predicate columns
+	if coveredPredicates == predicateCount {
+		score += 50
+	}
+
+	// Bonus for covering most predicate columns
+	if coveredPredicates >= (predicateCount*2)/3 {
+		score += 25
+	}
+
+	// Penalty for very long indexes that might not be efficient
+	if len(path.Index.Columns) > 5 {
+		score -= 10
+	}
+
+	return score
+}
+
+// pruneIndexesBySimpleLimiting provides a fallback when no predicate information is available
+//func pruneIndexesBySimpleLimiting(ctx base.PlanContext, paths []*util.AccessPath) []*util.AccessPath {
+//	threshold := ctx.GetSessionVars().OptIndexPruneThreshold
+//
+//	// Simple approach: keep table paths + up to 2x threshold indexes
+//	tablePaths := make([]*util.AccessPath, 0, 2)
+//	indexPaths := make([]*util.AccessPath, 0, threshold*2)
+
+//	for _, path := range paths {
+//		if path.IsTablePath() {
+//			tablePaths = append(tablePaths, path)
+//		} else {
+//			indexPaths = append(indexPaths, path)
+//		}
+//	}
+
+// Keep all table paths and limit index paths to 2x threshold
+//	if len(indexPaths) > threshold*2 {
+//		// Keep forced indexes first, then truncate the rest
+//		forcedPaths := make([]*util.AccessPath, 0, len(indexPaths))
+//		regularPaths := make([]*util.AccessPath, 0, len(indexPaths))
+
+//		for _, path := range indexPaths {
+//			if path.Forced {
+//				forcedPaths = append(forcedPaths, path)
+//			} else {
+//				regularPaths = append(regularPaths, path)
+//			}
+//		}
+
+// Keep all forced paths + up to (threshold*2 - forced) regular paths
+//		maxRegular := threshold*2 - len(forcedPaths)
+//		if maxRegular > 0 && len(regularPaths) > maxRegular {
+//			regularPaths = regularPaths[:maxRegular]
+//		}
+
+//		indexPaths = make([]*util.AccessPath, 0, len(forcedPaths)+len(regularPaths))
+//		indexPaths = append(indexPaths, forcedPaths...)
+//		indexPaths = append(indexPaths, regularPaths...)
+//	}
+
+//	result := make([]*util.AccessPath, 0, len(tablePaths)+len(indexPaths))
+//	result = append(result, tablePaths...)
+//	result = append(result, indexPaths...)
+//	return result
+//}
 
 func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
 	if len(ignoredPaths) == 0 {

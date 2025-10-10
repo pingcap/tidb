@@ -774,13 +774,30 @@ func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.Index
 // the return value will be only the 1st corresponding *Column and its length.
 // TODO: Use a struct to represent {*Column, int}. And merge IndexInfo2PrefixCols and IndexInfo2Cols.
 func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+	// Build a map for O(1) column lookups instead of O(n) linear search
+	colMap := make(map[string]int, len(colInfos))
+	for i, info := range colInfos {
+		colMap[info.Name.L] = i
+	}
+
 	retCols := make([]*Column, 0, len(index.Columns))
 	lengths := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
-		if col == nil {
+		idx, found := colMap[c.Name.L]
+		if !found {
 			return retCols, lengths
 		}
+
+		info := colInfos[idx]
+		var col *Column
+		if c.Length > 0 && info.FieldType.GetFlen() > c.Length {
+			colCopy := *cols[idx]
+			colCopy.IsPrefix = true
+			col = &colCopy
+		} else {
+			col = cols[idx]
+		}
+
 		retCols = append(retCols, col)
 		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
 			lengths = append(lengths, types.UnspecifiedLength)
@@ -796,15 +813,32 @@ func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *m
 // If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
 // the return value will be [col1, nil, col2].
 func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+	// Build a map for O(1) column lookups instead of O(n) linear search
+	colMap := make(map[string]int, len(colInfos))
+	for i, info := range colInfos {
+		colMap[info.Name.L] = i
+	}
+
 	retCols := make([]*Column, 0, len(index.Columns))
 	lens := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
-		if col == nil {
-			retCols = append(retCols, col)
+		idx, found := colMap[c.Name.L]
+		if !found {
+			retCols = append(retCols, nil)
 			lens = append(lens, types.UnspecifiedLength)
 			continue
 		}
+
+		info := colInfos[idx]
+		var col *Column
+		if c.Length > 0 && info.FieldType.GetFlen() > c.Length {
+			colCopy := *cols[idx]
+			colCopy.IsPrefix = true
+			col = &colCopy
+		} else {
+			col = cols[idx]
+		}
+
 		retCols = append(retCols, col)
 		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
 			lens = append(lens, types.UnspecifiedLength)

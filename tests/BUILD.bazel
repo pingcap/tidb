@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "tests_test",
+    timeout = "short",
+    srcs = ["optimization_benchmark_test.go"],
+    flaky = True,
+    deps = [
+        "//pkg/planner/core",
+        "//pkg/planner/core/resolve",
+        "//pkg/session",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)
