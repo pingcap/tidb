@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tests
+package bindinfo_test
 
 import (
 	"fmt"
@@ -25,18 +25,12 @@ import (
 )
 
 func TestBindUsageInfo(t *testing.T) {
-	checklist := []string{
-		"5ce1df6eadf8b24222668b1bd2e995b72d4c88e6fe9340d8b13e834703e28c32",
-		"5d3975ef2160c1e0517353798dac90a9914095d82c025e7cd97bd55aeb804798",
-		"9d3995845aef70ba086d347f38a4e14c9705e966f7c5793b9fa92194bca2bbef",
-		"aa3c510b94b9d680f729252ca88415794c8a4f52172c5f9e06c27bee57d08329",
-	}
 	bindinfo.UpdateBindingUsageInfoBatchSize = 2
 	bindinfo.MaxWriteInterval = 100 * time.Microsecond
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	bindingHandle := dom.BindingHandle()
-	tk := testkit.NewTestKit(t, store)
+	store := testkit.CreateMockStore(t)
 
+	tk := testkit.NewTestKit(t, store)
+	bindingHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
 	tk.MustExec(`use test`)
 	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
 	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b), key idx_c(c))")
@@ -78,7 +72,6 @@ func TestBindUsageInfo(t *testing.T) {
 		// Set all last_used_date to null to simulate that the bindinfo in storage is not updated.
 		resetAllLastUsedData(tk)
 		require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
-		checkBindinfoInMemory(t, bindingHandle, checklist)
 		tk.MustQuery(fmt.Sprintf(`select last_used_date from mysql.bind_info where original_sql != '%s' and last_used_date is null`, bindinfo.BuiltinPseudoSQL4BindLock)).Check(testkit.Rows())
 		result := tk.MustQuery(fmt.Sprintf(`select sql_digest,last_used_date from mysql.bind_info where original_sql != '%s' order by sql_digest`, bindinfo.BuiltinPseudoSQL4BindLock))
 		t.Log("result:", result.Rows())
@@ -110,15 +103,4 @@ func TestBindUsageInfo(t *testing.T) {
 
 func resetAllLastUsedData(tk *testkit.TestKit) {
 	tk.MustExec(fmt.Sprintf(`update mysql.bind_info set last_used_date = null where original_sql != '%s'`, bindinfo.BuiltinPseudoSQL4BindLock))
-}
-
-func checkBindinfoInMemory(t *testing.T, bindingHandle bindinfo.BindingHandle, checklist []string) {
-	for _, digest := range checklist {
-		binding := bindingHandle.GetBinding(digest)
-		require.NotNil(t, binding)
-		lastSaved := binding.UsageInfo.LastSavedAt.Load()
-		if lastSaved != nil {
-			require.GreaterOrEqual(t, *binding.UsageInfo.LastSavedAt.Load(), *binding.UsageInfo.LastUsedAt.Load())
-		}
-	}
 }

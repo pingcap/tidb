@@ -2108,7 +2108,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}
 			case <-writeBindingUsageTicker.C:
-				bindHandle := do.BindingHandle()
+				bindHandle := do.BindHandle()
 				err := bindHandle.UpdateBindingUsageInfoToStorage()
 				if err != nil {
 					logutil.BgLogger().Warn("BindingHandle.UpdateBindingUsageInfoToStorage", zap.Error(err))

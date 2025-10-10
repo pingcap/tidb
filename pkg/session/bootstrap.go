@@ -1207,12 +1207,16 @@ const (
 	// Add last_stats_histograms_version to mysql.stats_meta.
 	version220 = 220
 
+	// version 221
+	// Add last_used_date to mysql.bind_info
+	version221 = 221
+
 	// next version should start with 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version220
+var currentBootstrapVersion int64 = version221
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1388,6 +1392,7 @@ var (
 		upgradeToVer218,
 		upgradeToVer219,
 		upgradeToVer220,
+		upgradeToVer221,
 	}
 )
 
@@ -3262,6 +3267,13 @@ func upgradeToVer220(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer221(s sessiontypes.Session, ver int64) {
+	if ver >= version221 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN last_used_date DATE DEFAULT NULL AFTER `plan_digest`", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
