@@ -475,7 +475,7 @@ func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask
 	// same time, we will pass ge (also implement LogicalPlan interface) as the first parameter for iterate
 	// ge's children in memo scenario.
 	// And since base.LogicalPlan is a common parent pointer of GE and LogicalPlan, we can use same portal.
-	switch e.GetWrappedLogicalPlan().(type) {
+	switch lop := e.GetWrappedLogicalPlan().(type) {
 	case *logicalop.LogicalCTE:
 		return utilfuncp.FindBestTask4LogicalCTE(e, prop)
 	case *logicalop.LogicalShow:
@@ -485,13 +485,13 @@ func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask
 	case *logicalop.LogicalMemTable:
 		return utilfuncp.FindBestTask4LogicalMemTable(e, prop)
 	case *logicalop.LogicalTableDual:
-		return findBestTask4LogicalTableDual(e, prop)
+		return findBestTask4LogicalTableDual(lop, prop)
 	case *logicalop.DataSource:
 		return utilfuncp.FindBestTask4LogicalDataSource(e, prop)
 	case *logicalop.LogicalShowDDLJobs:
 		return utilfuncp.FindBestTask4LogicalShowDDLJobs(e, prop)
 	case *logicalop.MockDataSource:
-		return findBestTask4LogicalMockDatasource(e, prop)
+		return findBestTask4LogicalMockDatasource(lop, prop)
 	default:
 		return utilfuncp.FindBestTask4BaseLogicalPlan(e, prop)
 	}
