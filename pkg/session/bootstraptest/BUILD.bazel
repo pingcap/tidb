@@ -8,11 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD:pkg/session/bootstraptest/BUILD.bazel
-    shard_count = 12,
-=======
-    shard_count = 15,
->>>>>>> 70c7d5051c5 (bindinfo: add last_used_date to track bindinfo usage frequency (#63409)):pkg/session/test/bootstraptest/BUILD.bazel
+    shard_count = 13,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
