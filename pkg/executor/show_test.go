@@ -124,6 +124,11 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show tables from test like 't1';").Check(testkit.Rows( /* empty */ ))
 	tk.MustExec("create global temporary table test.t2(id int) ON COMMIT DELETE ROWS;")
 	tk.MustQuery("show tables from test like 't2';").Check(testkit.Rows("t2"))
+
+	// filter internal session variables
+	tk.MustQuery("show variables like 'tidb_redact_log'").Check(testkit.Rows())
+	tk.MustQuery("show session variables like 'tidb_redact_log'").Check(testkit.Rows())
+	tk.MustQuery("show global variables like 'tidb_redact_log'").Check(testkit.Rows("tidb_redact_log OFF"))
 }
 
 func TestShowIndex(t *testing.T) {
