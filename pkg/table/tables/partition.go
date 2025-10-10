@@ -1149,11 +1149,11 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(tc types.Context, ec e
 		if lp.defaultPartitionIdx >= 0 {
 			return lp.defaultPartitionIdx, nil
 		}
-		indices := make([]int, 0, len(lp.ColPrunes))
+		colIndices := make([]int, 0, len(lp.ColPrunes))
 		for _, colPrune := range lp.ColPrunes {
-			indices = append(indices, colPrune.ExprCol.Index)
+			colIndices = append(colIndices, colPrune.ExprCol.Index)
 		}
-		valueMsg, err := formatPartitionValues(r, indices)
+		valueMsg, err := formatPartitionValues(r, colIndices)
 		if err != nil {
 			return -1, errors.Trace(err)
 		}
@@ -1162,12 +1162,12 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(tc types.Context, ec e
 	return location[0].PartIdx, nil
 }
 
-func formatPartitionValues(row []types.Datum, indices []int) (string, error) {
-	if len(indices) == 0 {
+func formatPartitionValues(row []types.Datum, colIndices []int) (string, error) {
+	if len(colIndices) == 0 {
 		return "from column_list", nil
 	}
-	values := make([]string, 0, len(indices))
-	for _, idx := range indices {
+	values := make([]string, 0, len(colIndices))
+	for _, idx := range colIndices {
 		if idx < 0 || idx >= len(row) {
 			return "", errors.Errorf("partition column index %d out of range", idx)
 		}
