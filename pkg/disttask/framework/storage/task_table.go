@@ -344,7 +344,7 @@ func (mgr *TaskManager) getTopTasks(ctx context.Context, states ...proto.TaskSta
 		return nil, err
 	}
 	var holders strings.Builder
-	for i := range len(states) {
+	for i := range states {
 		if i > 0 {
 			holders.WriteString(",")
 		}
