@@ -29,13 +29,13 @@ import (
 )
 
 func TestExampleApplication(t *testing.T) {
-	taskexecutor.RegisterTaskType(proto.Analyze,
+	taskexecutor.RegisterTaskType(proto.Txn,
 		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
 			return NewTaskExecutor(ctx, task, param, nil /* spool */)
 		},
 	)
 
-	scheduler.RegisterSchedulerFactory(proto.Analyze,
+	scheduler.RegisterSchedulerFactory(proto.Txn,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			return NewScheduler(ctx, task, param)
 		},
@@ -51,7 +51,7 @@ func TestExampleApplication(t *testing.T) {
 	require.NoError(t, err)
 
 	scope := handle.GetTargetScope()
-	task, err := handle.SubmitTask(ctx, "test", proto.TaskTypeExample, store.GetKeyspace(), 1, scope, 0, bytes)
+	task, err := handle.SubmitTask(ctx, "test", proto.Txn, store.GetKeyspace(), 1, scope, 0, bytes)
 	require.NoError(t, err)
 	require.NoError(t, handle.WaitTaskDoneByKey(ctx, task.Key))
 }
