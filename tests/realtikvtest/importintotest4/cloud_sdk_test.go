@@ -228,9 +228,9 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 	}{
 		// CSV-only option applied to SQL file
 		{objectName: "data.sql", options: "fields_enclosed_by='\"'", wantSubstr: "Unsupported option fields_enclosed_by for non-CSV"},
-		// SQL data present but no suffix -> should be detected as SQL and error even without extra options
+		// SQL data present but no suffix
 		{objectName: "sql_noext", options: "", wantSubstr: "encode kv erro"},
-		// CSV data but filename ends with .sql -> detected as SQL and should error without extra options
+		// CSV data but filename ends with .sql
 		{objectName: "csv_as_sql.sql", options: "", wantSubstr: "encode kv erro"},
 	}
 
@@ -238,7 +238,6 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 		path := fmt.Sprintf("gs://auto_detect/%s?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", nc.objectName, gcsEndpoint)
 		var badImportSQL string
 		if nc.options == "" {
-			// no extra options, still include cloud_storage_uri
 			badImportSQL = fmt.Sprintf("import into auto_detect.t from '%s' with cloud_storage_uri='%s'", path, sortStorageURI)
 		} else {
 			badImportSQL = fmt.Sprintf("import into auto_detect.t from '%s' with %s, cloud_storage_uri='%s'", path, nc.options, sortStorageURI)
