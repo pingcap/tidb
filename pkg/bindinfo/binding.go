@@ -15,6 +15,7 @@
 package bindinfo
 
 import (
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -74,6 +75,10 @@ type Binding struct {
 
 	// TableNames records all schema and table names in this binding statement, which are used for fuzzy matching.
 	TableNames []*ast.TableName `json:"-"`
+
+	// UsageInfo is to track the usage information `last_used_time` of this binding
+	// and it will be updated when this binding is used.
+	UsageInfo bindingInfoUsageInfo
 }
 
 func (b *Binding) isSame(rb *Binding) bool {
@@ -234,4 +239,25 @@ func (br Bindings) size() float64 {
 func (b *Binding) size() float64 {
 	res := len(b.OriginalSQL) + len(b.Db) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
 	return float64(res)
+}
+
+// UpdateLastUsedAt is to update binding usage info when this binding is used.
+func (b *Binding) UpdateLastUsedAt() {
+	now := time.Now()
+	b.UsageInfo.LastUsedAt.Store(&now)
+}
+
+// UpdateLastSavedAt is to update the last saved time
+func (b *Binding) UpdateLastSavedAt(ts *time.Time) {
+	b.UsageInfo.LastSavedAt.Store(ts)
+}
+
+type bindingInfoUsageInfo struct {
+	// LastUsedAt records the last time when this binding is used.
+	// It is nil if this binding has never been used.
+	// It is updated when this binding is used.
+	// It is used to update the `last_used_time` field in mysql.bind_info table.
+	LastUsedAt atomic.Pointer[time.Time]
+	// LastSavedAt records the last time when this binding is saved into storage.
+	LastSavedAt atomic.Pointer[time.Time]
 }
