@@ -746,8 +746,8 @@ func (job *Job) MayNeedReorg() bool {
 	}
 }
 
-// CanEmbededAnalyze indicates that this job can do embeded analyze right after the schema change.
-func (job *Job) CanEmbededAnalyze() bool {
+// CanEmbeddedAnalyze indicates that this job can do embedded analyze right after the schema change.
+func (job *Job) CanEmbeddedAnalyze() bool {
 	switch job.Type {
 	case ActionAddIndex, ActionAddPrimaryKey:
 		return true
