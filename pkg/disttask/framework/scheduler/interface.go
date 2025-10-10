@@ -33,8 +33,8 @@ type TaskManager interface {
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetTopNoNeedResourceTasks returns tasks that don't need resource to run,
 	// those tasks are in reverting/pausing/cancelling/modifying states.
-	// we can fast respond to those requests as we can only schedule a limited
-	// number of tasks at the same time
+	// we need this API for fast respond to those requests, as we can only
+	// schedule a limited number of tasks at the same time
 	GetTopNoNeedResourceTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllTasks gets all tasks with basic columns.
 	GetAllTasks(ctx context.Context) ([]*proto.TaskBase, error)
