@@ -53,7 +53,8 @@ var globalColumnAllocator = newColumnPool()
 
 func init() {
 	// Pre-allocate some column buffers to avoid frequent memory allocation when to startup.
-	for i := 0; i < 16; i++ {
+	for range 64 {
+		// align to the 64 cpu-core server.
 		globalColumnAllocator.put(columnTempl.CopyConstruct(nil))
 	}
 }
