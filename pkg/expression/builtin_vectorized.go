@@ -51,6 +51,13 @@ func newColumnPool() *columnPool {
 
 var globalColumnAllocator = newColumnPool()
 
+func init() {
+	// Pre-allocate some column buffers to avoid frequent memory allocation when to startup.
+	for i := 0; i < 16; i++ {
+		globalColumnAllocator.put(columnTempl.CopyConstruct(nil))
+	}
+}
+
 // GetColumn allocates a column. The allocator is not responsible for initializing the column, so please initialize it before using.
 func GetColumn(_ types.EvalType, _ int) (*chunk.Column, error) {
 	return globalColumnAllocator.get()
