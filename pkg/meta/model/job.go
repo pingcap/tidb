@@ -746,6 +746,23 @@ func (job *Job) MayNeedReorg() bool {
 	}
 }
 
+// CanEmbededAnalyze indicates that this job can do embeded analyze right after the schema change.
+func (job *Job) CanEmbededAnalyze() bool {
+	switch job.Type {
+	case ActionAddIndex, ActionAddPrimaryKey:
+		return true
+	case ActionModifyColumn:
+		intest.Assert(len(job.CtxVars) > 0)
+		if len(job.CtxVars) > 0 {
+			needReorg, ok := job.CtxVars[0].(bool)
+			return ok && needReorg
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 // IsRollbackable checks whether the job can be rollback.
 // TODO(lance6716): should make sure it's the same as convertJob2RollbackJob
 func (job *Job) IsRollbackable() bool {
@@ -832,6 +849,7 @@ type SubJob struct {
 	CtxVars      []any           `json:"-"`
 	SchemaVer    int64           `json:"schema_version"`
 	ReorgTp      ReorgType       `json:"reorg_tp"`
+	NeedAnalyze  bool            `json:"need_analyze"`
 	AnalyzeState int8            `json:"analyze_state"`
 }
 
@@ -880,7 +898,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
 		ReorgMeta:       parentJob.ReorgMeta,
-		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
+		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq), NeedAnalyze: sub.NeedAnalyze},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
 		Charset:         parentJob.Charset,
@@ -934,6 +952,8 @@ type MultiSchemaInfo struct {
 
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
+	// NeedAnalyze is used to indicate whether we need to analyze the table after the sub-job is done.
+	NeedAnalyze bool `json:"-"`
 
 	AddColumns    []ast.CIStr `json:"-"`
 	DropColumns   []ast.CIStr `json:"-"`
