@@ -15,8 +15,7 @@
 package txn
 
 type taskMeta struct {
-	SQL      string `json:"sql"`
-	ServerID string `json:"server_id"`
+	SQL string `json:"sql"`
 }
 
 type subtaskMeta struct {

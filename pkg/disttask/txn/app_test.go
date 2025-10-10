@@ -29,28 +29,29 @@ import (
 )
 
 func TestExampleApplication(t *testing.T) {
-	taskexecutor.RegisterTaskType(proto.InitStats,
+	taskexecutor.RegisterTaskType(proto.Analyze,
 		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
 			return NewTaskExecutor(ctx, task, param, nil /* spool */)
 		},
 	)
 
-	scheduler.RegisterSchedulerFactory(proto.InitStats,
+	scheduler.RegisterSchedulerFactory(proto.Analyze,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			return NewScheduler(ctx, task, param)
 		},
 	)
 
-	_ = testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "scheduler_manager")
 	meta := &taskMeta{
-		SQL:      "init stats",
-		ServerID: "1",
+		SQL: "init stats",
 	}
 	bytes, err := json.Marshal(meta)
 	require.NoError(t, err)
-	task, err := handle.SubmitTask(ctx, "test", proto.InitStats, 1, "", 0, bytes)
+
+	scope := handle.GetTargetScope()
+	task, err := handle.SubmitTask(ctx, "test", proto.TaskTypeExample, store.GetKeyspace(), 1, scope, 0, bytes)
 	require.NoError(t, err)
 	require.NoError(t, handle.WaitTaskDoneByKey(ctx, task.Key))
 }
