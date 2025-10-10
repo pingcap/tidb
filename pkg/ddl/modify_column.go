@@ -228,6 +228,7 @@ func getModifyColumnInfo(
 		return nil, nil, nil, errors.Trace(err)
 	}
 
+	job.PrintArgs("before init")
 	var oldCol *model.ColumnInfo
 	// Use column ID to locate the old column.
 	// It is persisted to job arguments after the first execution.
@@ -238,8 +239,13 @@ func getModifyColumnInfo(
 		if oldCol != nil {
 			args.OldColumnID = oldCol.ID
 			logutil.DDLLogger().Info("run modify column job, init old column id",
+				zap.Int64("jobID", job.ID),
 				zap.String("oldColumnName", args.OldColumnName.L),
-				zap.Int64("oldColumnID", oldCol.ID))
+				zap.Int64("oldColumnID", oldCol.ID),
+				zap.String("addr", fmt.Sprintf("%p", &args.OldColumnID)),
+			)
+			failpoint.InjectCall("initOldColumnID")
+			job.PrintArgs("after init")
 		}
 	}
 	if oldCol == nil {

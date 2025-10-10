@@ -393,6 +393,13 @@ func (w *worker) runReorgJob(
 	for {
 		select {
 		case res := <-rc.doneCh:
+			failpoint.Inject("mockReorgJobTimeout", func(val failpoint.Value) {
+				if val.(bool) {
+					rc.doneCh <- res
+					failpoint.Return(jobCtx.genReorgTimeoutErr(job.ID))
+				}
+			})
+
 			err := res.err
 			curTS := w.ddlCtx.reorgCtx.getOwnerTS()
 			if res.ownerTS != curTS {
@@ -400,8 +407,7 @@ func (w *worker) runReorgJob(
 				logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
 					zap.Int64("prevTS", res.ownerTS),
 					zap.Int64("curTS", curTS))
-				jobCtx.reorgTimeoutOccurred = true
-				return dbterror.ErrWaitReorgTimeout
+				return jobCtx.genReorgTimeoutErr(job.ID)
 			}
 			// Since job is cancelled，we don't care about its partial counts.
 			// TODO(lance6716): should we also do for paused job?
@@ -440,8 +446,7 @@ func (w *worker) runReorgJob(
 			w.mergeWarningsIntoJob(job)
 
 			rc.resetWarnings()
-			jobCtx.reorgTimeoutOccurred = true
-			return dbterror.ErrWaitReorgTimeout
+			return jobCtx.genReorgTimeoutErr(job.ID)
 		}
 	}
 }
