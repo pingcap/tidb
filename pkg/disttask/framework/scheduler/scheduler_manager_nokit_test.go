@@ -190,7 +190,7 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/exitScheduler"))
 }
 
-func TestCancelTaskWhenSchedulersReachLimit(t *testing.T) {
+func TestFastRespondNoNeedResourceTaskWhenSchedulersReachLimit(t *testing.T) {
 	bak := proto.MaxConcurrentTask
 	t.Cleanup(func() {
 		proto.MaxConcurrentTask = bak
@@ -208,46 +208,56 @@ func TestCancelTaskWhenSchedulersReachLimit(t *testing.T) {
 			mockScheduler.Extension = GetTestSchedulerExt(ctrl)
 			return mockScheduler
 		})
-	ch := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeRefreshTask", func(task *proto.Task) {
-		if task.ID == 1 {
-			<-ch
-		}
-	})
-	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil).AnyTimes()
-	task1 := &proto.TaskBase{
-		ID:          int64(1),
-		Concurrency: 1,
-		Type:        proto.TaskTypeExample,
-		State:       proto.TaskStatePending,
-	}
-	task1Success := *task1
-	task1Success.State = proto.TaskStateSucceed
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(1)).Return(&proto.Task{TaskBase: *task1}, nil)
-	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), int64(1)).Return(&task1Success, nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(1)).Return(&proto.Task{TaskBase: task1Success}, nil)
+	for _, state := range []proto.TaskState{
+		proto.TaskStateCancelling,
+		proto.TaskStateReverting,
+		proto.TaskStateModifying,
+		proto.TaskStatePausing,
+	} {
+		t.Run(state.String(), func(t *testing.T) {
+			ch := make(chan struct{})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeRefreshTask", func(task *proto.Task) {
+				if task.ID == 1 {
+					<-ch
+				}
+			})
+			taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil).AnyTimes()
+			task1 := &proto.TaskBase{
+				ID:          int64(1),
+				Concurrency: 1,
+				Type:        proto.TaskTypeExample,
+				State:       proto.TaskStatePending,
+			}
+			task1Success := *task1
+			task1Success.State = proto.TaskStateSucceed
+			taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(1)).Return(&proto.Task{TaskBase: *task1}, nil)
+			taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), int64(1)).Return(&task1Success, nil)
+			taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(1)).Return(&proto.Task{TaskBase: task1Success}, nil)
 
-	task2 := &proto.TaskBase{
-		ID:          int64(2),
-		Concurrency: 1,
-		Type:        proto.TaskTypeExample,
-		State:       proto.TaskStateCancelling,
-	}
-	task2Reverted := *task2
-	task2Reverted.State = proto.TaskStateReverted
-	var cancelCalled atomic.Bool
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(2)).Return(&proto.Task{TaskBase: *task2}, nil)
-	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), int64(2)).DoAndReturn(func(context.Context, int64) (*proto.TaskBase, error) {
-		cancelCalled.Store(true)
-		return &task2Reverted, nil
-	})
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(2)).Return(&proto.Task{TaskBase: task2Reverted}, nil)
+			task2 := &proto.TaskBase{
+				ID:          int64(2),
+				Concurrency: 1,
+				Type:        proto.TaskTypeExample,
+				State:       state,
+			}
+			// we use 'reverted' to finish the task, no matter what state it is.
+			task2Reverted := *task2
+			task2Reverted.State = proto.TaskStateReverted
+			var cancelCalled atomic.Bool
+			taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(2)).Return(&proto.Task{TaskBase: *task2}, nil)
+			taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), int64(2)).DoAndReturn(func(context.Context, int64) (*proto.TaskBase, error) {
+				cancelCalled.Store(true)
+				return &task2Reverted, nil
+			})
+			taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(2)).Return(&proto.Task{TaskBase: task2Reverted}, nil)
 
-	require.NoError(t, mgr.startSchedulers([]*proto.TaskBase{task1, task2}))
-	require.Eventually(t, func() bool {
-		return cancelCalled.Load()
-	}, 15*time.Second, 100*time.Millisecond)
-	close(ch)
-	mgr.schedulerWG.Wait()
-	require.True(t, ctrl.Satisfied())
+			require.NoError(t, mgr.startSchedulers([]*proto.TaskBase{task1, task2}))
+			require.Eventually(t, func() bool {
+				return cancelCalled.Load()
+			}, 15*time.Second, 100*time.Millisecond)
+			close(ch)
+			mgr.schedulerWG.Wait()
+			require.True(t, ctrl.Satisfied())
+		})
+	}
 }
