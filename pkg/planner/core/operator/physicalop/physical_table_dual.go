@@ -76,7 +76,7 @@ func (p *PhysicalTableDual) ExplainInfo() string {
 }
 
 // findBestTask4LogicalTableDual will be called by LogicalTableDual in logicalOp pkg.
-func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
+func findBestTask4LogicalTableDual(super *logicalop.LogicalTableDual, prop *property.PhysicalProperty) (base.Task, error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, nil
@@ -95,4 +95,14 @@ func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.Physic
 	rt := &RootTask{}
 	rt.SetPlan(dual)
 	return rt, nil
+}
+
+// findBestTask4LogicalMockDatasource will be called by LogicalMockDataSource in logicalOp pkg.
+func findBestTask4LogicalMockDatasource(e *logicalop.MockDataSource, prop *property.PhysicalProperty) (base.Task, error) {
+	// It can satisfy any of the property!
+	// Just use a TableDual for convenience.
+	p := PhysicalTableDual{}.Init(e.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
+	task := &RootTask{}
+	task.SetPlan(p)
+	return task, nil
 }

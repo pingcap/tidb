@@ -491,12 +491,7 @@ func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask
 	case *logicalop.LogicalShowDDLJobs:
 		return utilfuncp.FindBestTask4LogicalShowDDLJobs(e, prop)
 	case *logicalop.MockDataSource:
-		// It can satisfy any of the property!
-		// Just use a TableDual for convenience.
-		p := PhysicalTableDual{}.Init(e.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
-		task := &RootTask{}
-		task.SetPlan(p)
-		return task, nil
+		return findBestTask4LogicalMockDatasource(e, prop)
 	default:
 		return utilfuncp.FindBestTask4BaseLogicalPlan(e, prop)
 	}
