@@ -21,8 +21,8 @@ const (
 	ImportInto TaskType = "ImportInto"
 	// Backfill is TaskType of add index Backfilling process.
 	Backfill TaskType = "backfill"
-	// InitStats is TaskType of init stats.
-	InitStats TaskType = "init_stats"
+	// Analyze is TaskType of statistics collection.
+	Analyze TaskType = "analyze"
 )
 
 // Type2Int converts task type to int.
@@ -34,7 +34,7 @@ func Type2Int(t TaskType) int {
 		return 2
 	case Backfill:
 		return 3
-	case InitStats:
+	case Analyze:
 		return 4
 	default:
 		return 0
@@ -51,7 +51,7 @@ func Int2Type(i int) TaskType {
 	case 3:
 		return Backfill
 	case 4:
-		return InitStats
+		return Analyze
 	default:
 		return ""
 	}
