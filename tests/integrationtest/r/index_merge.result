@@ -335,6 +335,7 @@ c1	c2	c3
 3	3	6
 4	4	8
 5	5	10
+drop global binding for select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 ///// CREATE TABLE/VIEW
 drop table if exists t1;
 create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));

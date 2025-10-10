@@ -55,10 +55,18 @@ var (
 type rowToEncode struct {
 	row   []types.Datum
 	rowID int64
-	// endOffset represents the offset after the current row in encode reader.
+	// endOffset represents the offset of lower level reader after parsing the
+	// current row , it mostly > the offset where parser has parsed.
+	// we use this offset for progress reporting, we meet a case in lightning
+	// that the parser parsed pos goes back, and negative delta causes prometheus
+	// panic, but we cannot reproduce it now. so we always use the lower level
+	// reader offset for this purpose.
 	// it will be negative if the data source is not file.
 	endOffset int64
-	resetFn   func()
+	// startPos is the offset when the parser start parsing current row.
+	// it will be negative if the data source is not file.
+	startPos int64
+	resetFn  func()
 }
 
 type encodeReaderFn func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error)
@@ -73,7 +81,6 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 		}
 
 		err = parser.ReadRow()
-		// todo: we can implement a ScannedPos which don't return error, will change it later.
 		currOffset, _ := parser.ScannedPos()
 		switch errors.Cause(err) {
 		case nil:
@@ -82,7 +89,7 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 			err = nil
 			return
 		default:
-			err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(filename, currOffset)
+			err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(filename, readPos)
 			return
 		}
 		lastRow := parser.LastRow()
@@ -90,6 +97,7 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 			row:       lastRow.Row,
 			rowID:     lastRow.RowID,
 			endOffset: currOffset,
+			startPos:  readPos,
 			resetFn:   func() { parser.RecycleRow(lastRow) },
 		}
 		return
@@ -136,6 +144,7 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum)
 		row:       row,
 		rowID:     r.currChk.RowIDOffset + int64(r.cursor),
 		endOffset: -1,
+		startPos:  -1,
 		resetFn:   func() {},
 	}
 	return
@@ -325,7 +334,10 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		return nil
 	}
 
-	var readRowCache []types.Datum
+	var (
+		readRowCache []types.Datum
+		rowNumber    int
+	)
 	for {
 		readDurStart := time.Now()
 		data, closed, err := p.readFn(ctx, readRowCache)
@@ -335,6 +347,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		if closed {
 			break
 		}
+		rowNumber++
 		readRowCache = data.row
 		readDur += time.Since(readDurStart)
 
@@ -343,8 +356,8 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		currOffset = data.endOffset
 		data.resetFn()
 		if encodeErr != nil {
-			// todo: record and ignore encode error if user set max-errors param
-			return common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.endOffset)
+			err2 := common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.startPos)
+			return errors.Annotatef(err2, "when encoding %d-th data row in this chunk", rowNumber)
 		}
 		encodeDur += time.Since(encodeDurStart)
 

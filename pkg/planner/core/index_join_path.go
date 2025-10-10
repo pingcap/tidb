@@ -631,7 +631,7 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 }
 
 // getBestIndexJoinInnerTaskByProp tries to build the best inner child task from ds for index join by the given property.
-func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (base.Task, int64, error) {
+func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty) (base.Task, error) {
 	// the below code is quite similar from the original logic
 	// reason1: we need to leverage original indexPathInfo down related logic to build constant range for index plan.
 	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
@@ -648,13 +648,12 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 		innerCopTask = buildDataSource2IndexScanByIndexJoinProp(ds, prop)
 	}
 	if innerCopTask.Invalid() {
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
-	planCounter.Dec(1)
 	if prop.TaskTp == property.RootTaskType {
-		return innerCopTask.ConvertToRootTask(ds.SCtx()), 1, nil
+		return innerCopTask.ConvertToRootTask(ds.SCtx()), nil
 	}
-	return innerCopTask, 1, nil
+	return innerCopTask, nil
 }
 
 // getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds
