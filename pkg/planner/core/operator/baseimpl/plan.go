@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // Plan Should be used as embedded struct in Plan implementations.
@@ -138,12 +137,6 @@ func (p *Plan) MemoryUsage() (sum int64) {
 
 	sum = PlanSize + int64(len(p.tp))
 	return sum
-}
-
-// BuildPlanTrace is to build the plan trace.
-func (p *Plan) BuildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
-	return planTrace
 }
 
 // CloneWithNewCtx clones the plan with new context.
