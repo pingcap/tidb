@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -303,9 +304,14 @@ func showCommentsFromJob(job *model.Job) string {
 	if m == nil {
 		return ""
 	}
+	isAddingIndex := job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionAddPrimaryKey
+	if isAddingIndex && kerneltype.IsNextGen() {
+		// The parameters are determined automatically in next-gen.
+		return ""
+	}
 	var labels []string
-	if job.Type == model.ActionAddIndex ||
-		job.Type == model.ActionAddPrimaryKey {
+	if isAddingIndex {
 		switch m.ReorgTp {
 		case model.ReorgTypeTxn:
 			labels = append(labels, model.ReorgTypeTxn.String())
@@ -345,6 +351,10 @@ func showCommentsFromJob(job *model.Job) string {
 }
 
 func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
+	if kerneltype.IsNextGen() {
+		// The parameters are determined automatically in next-gen.
+		return ""
+	}
 	var labels []string
 	if sub.ReorgTp == model.ReorgTypeNone {
 		return ""
