@@ -33,7 +33,6 @@ func init() {
 	utilfuncp.FindBestTask4LogicalShow = findBestTask4LogicalShow
 	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
 	utilfuncp.FindBestTask4LogicalMemTable = findBestTask4LogicalMemTable
-	utilfuncp.FindBestTask4LogicalTableDual = findBestTask4LogicalTableDual
 	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
 	utilfuncp.FindBestTask4LogicalShowDDLJobs = findBestTask4LogicalShowDDLJobs
 	utilfuncp.ExhaustPhysicalPlans4LogicalJoin = exhaustPhysicalPlans4LogicalJoin

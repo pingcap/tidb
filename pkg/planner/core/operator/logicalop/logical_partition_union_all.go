@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -55,16 +56,24 @@ func (p *LogicalPartitionUnionAll) PruneColumns(parentUsedCols []*expression.Col
 
 // PushDownTopN implements LogicalPlan interface.
 func (p *LogicalPartitionUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
-	transformedUnionAll := p.LogicalUnionAll.PushDownTopN(topNLogicalPlan)
-
-	unionAll, isUnionAll := transformedUnionAll.(*LogicalUnionAll)
-	if !isUnionAll {
-		// Return the transformed plan if it's no longer a LogicalUnionAll
-		return transformedUnionAll
+	var topN *LogicalTopN
+	if topNLogicalPlan != nil {
+		topN = topNLogicalPlan.(*LogicalTopN)
 	}
-
-	// Update the wrapped LogicalUnionAll with the transformed result
-	p.LogicalUnionAll = *unionAll
+	for i, child := range p.Children() {
+		var newTopN *LogicalTopN
+		if topN != nil {
+			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, PreferLimitToCop: topN.PreferLimitToCop}.Init(p.SCtx(), topN.QueryBlockOffset())
+			for _, by := range topN.ByItems {
+				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
+			}
+			// newTopN to push down Union's child
+		}
+		p.Children()[i] = child.PushDownTopN(newTopN)
+	}
+	if topN != nil {
+		return topN.AttachChild(p)
+	}
 	return p
 }
 
