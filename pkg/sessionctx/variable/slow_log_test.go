@@ -437,6 +437,16 @@ func TestParseSessionSlowLogRules(t *testing.T) {
 	require.Equal(t, 2, len(slowLogRules.Rules[0].Conditions))
 }
 
+func checkRuleByField(t *testing.T, rules []*slowlogrule.SlowLogRule, field, val string) {
+	for _, r := range rules {
+		for _, cond := range r.Conditions {
+			if cond.Field == field {
+				require.Equal(t, cond.Threshold, val)
+			}
+		}
+	}
+}
+
 func TestParseGlobalSlowLogRules(t *testing.T) {
 	// normal tests
 	rawRule := `Conn_ID: 123, Exec_retry_count: 10, DB: db1, Succ: true, Query_time: 0.5276, Resource_group: rg1`
@@ -474,6 +484,7 @@ func TestParseGlobalSlowLogRules(t *testing.T) {
 	require.NotNil(t, slowLogRuleSet)
 	require.Empty(t, slowLogRuleSet.RulesMap)
 	require.Equal(t, "", slowLogRuleSet.RawRules)
+	require.Equal(t, uint64(0x0), slowLogRuleSet.RawRulesHash)
 
 	// special ConnID with empty raw rule
 	slowLogRuleSet, err = variable.ParseGlobalSlowLogRules("Conn_id:123;")
@@ -504,12 +515,12 @@ func TestParseGlobalSlowLogRules(t *testing.T) {
 	require.True(t, strings.Contains(slowLogRuleSet.RawRules, "conn_id:789"))
 	require.Len(t, slowLogRuleSet.RulesMap, 4)
 	// Conn_ID: 123
-	require.Equal(t, "db1", slowLogRuleSet.RulesMap[123].Rules[0].Conditions[1].Threshold)
-	require.Len(t, slowLogRuleSet.RulesMap[123].Rules[1].Conditions, 1)
+	checkRuleByField(t, slowLogRuleSet.RulesMap[123].Rules, variable.SlowLogDBStr, "db1")
+	checkRuleByField(t, slowLogRuleSet.RulesMap[123].Rules, variable.SlowLogConnIDStr, "123")
 	require.Equal(t, "", slowLogRuleSet.RulesMap[123].RawRules)
 	require.Equal(t, allConditionFields, slowLogRuleSet.RulesMap[123].Fields)
 	// Conn_ID: 456
-	require.Equal(t, "db2", slowLogRuleSet.RulesMap[456].Rules[0].Conditions[1].Threshold)
+	checkRuleByField(t, slowLogRuleSet.RulesMap[456].Rules, variable.SlowLogDBStr, "db2")
 	require.Equal(t, "", slowLogRuleSet.RulesMap[456].RawRules)
 	require.Equal(t, allConditionFields, slowLogRuleSet.RulesMap[456].Fields)
 	// Conn_ID: -1

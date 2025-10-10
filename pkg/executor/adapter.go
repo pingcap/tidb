@@ -1677,6 +1677,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		globalRules := vardef.GlobalSlowLogRules.Load()
 		slowItems = PrepareSlowLogItemsForRules(a.GoCtx, globalRules, sessVars)
 		var matchRules bool
+		// EffectiveFields is not empty (unique fields for this session including global rules),
+		// so we use these rules to decide whether to write the slow log.
 		if len(sessVars.SlowLogRules.EffectiveFields) != 0 {
 			matchRules = ShouldWriteSlowLog(globalRules, sessVars, slowItems)
 			defer putSlowLogItems(slowItems)
