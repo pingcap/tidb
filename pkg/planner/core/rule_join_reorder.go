@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/util/hint"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
@@ -404,7 +403,7 @@ type baseSingleGroupJoinOrderSolver struct {
 
 // give priority to processing nested LeadingList; otherwise, fall back to the flat logic.
 func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(
-	curJoinGroup []base.LogicalPlan, hintInfo *hint.PlanHints, hasOuterJoin bool,
+	curJoinGroup []base.LogicalPlan, hintInfo *h.PlanHints, hasOuterJoin bool,
 ) (bool, []base.LogicalPlan) {
 	if hintInfo == nil {
 		return false, nil
@@ -531,7 +530,7 @@ func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
 
 // generateFlatLeadingJoinGroup stay the same with the old leading logic，hintTables from hintInfo.LeadingJoinOrder ([]hint.HintedTable)
 func (s *baseSingleGroupJoinOrderSolver) generateFlatLeadingJoinGroup(
-	curJoinGroup []base.LogicalPlan, hintTables []hint.HintedTable, hasOuterJoin bool,
+	curJoinGroup []base.LogicalPlan, hintTables []h.HintedTable, hasOuterJoin bool,
 ) (bool, []base.LogicalPlan) {
 	var leadingJoinGroup []base.LogicalPlan
 	leftJoinGroup := make([]base.LogicalPlan, len(curJoinGroup))
