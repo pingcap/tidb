@@ -98,7 +98,7 @@ func findBestTask4LogicalTableDual(super *logicalop.LogicalTableDual, prop *prop
 }
 
 // findBestTask4LogicalMockDatasource will be called by LogicalMockDataSource in logicalOp pkg.
-func findBestTask4LogicalMockDatasource(e *logicalop.MockDataSource, prop *property.PhysicalProperty) (base.Task, error) {
+func findBestTask4LogicalMockDatasource(e *logicalop.MockDataSource, _ *property.PhysicalProperty) (base.Task, error) {
 	// It can satisfy any of the property!
 	// Just use a TableDual for convenience.
 	p := PhysicalTableDual{}.Init(e.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
