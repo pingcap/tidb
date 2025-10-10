@@ -752,7 +752,6 @@ func (job *Job) CanEmbeddedAnalyze() bool {
 	case ActionAddIndex, ActionAddPrimaryKey:
 		return true
 	case ActionModifyColumn:
-		intest.Assert(len(job.CtxVars) > 0)
 		if len(job.CtxVars) > 0 {
 			needReorg, ok := job.CtxVars[0].(bool)
 			return ok && needReorg
