@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -347,7 +348,7 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 }
 
 // DumpColStatsUsageEntries batches and executes the insert/update for column_stats_usage.
-func DumpColStatsUsageEntries(pool util.DestroyableSessionPool, entries []ColStatsUsageEntry, rec TimeCostRecorderForTest) error {
+func DumpColStatsUsageEntries(pool syssession.Pool, entries []ColStatsUsageEntry, rec TimeCostRecorderForTest) error {
 	if len(entries) == 0 {
 		return nil
 	}
