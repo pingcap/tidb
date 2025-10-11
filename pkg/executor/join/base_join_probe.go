@@ -149,6 +149,9 @@ type baseJoinProbe struct {
 	spilledIdx []int
 
 	probeCollision uint64
+
+	memoryUsagePerRowBuffer []int64
+	isFirst                 bool
 }
 
 func (j *baseJoinProbe) GetProbeCollision() uint64 {

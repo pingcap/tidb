@@ -69,6 +69,9 @@ type Collator interface {
 	Pattern() WildcardPattern
 	// Clone returns a copy of the collator.
 	Clone() Collator
+	// MaxLenOneByte returns the max length after one byte is converted.
+	// This is an inaccurate estimated figure.
+	MaxLenOneByte() int
 }
 
 // WildcardPattern is the interface used for wildcard pattern match.

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -423,6 +424,171 @@ const (
 	KeepVarColumnLength
 )
 
+// PreAllocForSerializedKeyBuffer estimates key length
+func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps []*types.FieldType, usedRows []int, filterVector []bool, nullVector []bool, serializeModes []SerializeMode, serializedKeysVectorBuffer [][]byte, isFirst bool, memoryUsagePerRow *[]int64) error {
+	rowNum := len(usedRows)
+	if cap((*memoryUsagePerRow)) < rowNum {
+		(*memoryUsagePerRow) = make([]int64, rowNum)
+	} else {
+		(*memoryUsagePerRow) = (*memoryUsagePerRow)[:rowNum]
+		for i := range rowNum {
+			(*memoryUsagePerRow)[i] = 0
+		}
+	}
+
+	for i, idx := range buildKeyIndex {
+		column := chk.Column(idx)
+		canSkip := func(index int) bool {
+			if column.IsNull(index) {
+				nullVector[index] = true
+			}
+			return (filterVector != nil && !filterVector[index]) || (nullVector != nil && nullVector[index])
+		}
+
+		switch tps[i].GetType() {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+			for j := range *memoryUsagePerRow {
+				(*memoryUsagePerRow)[j] += size.SizeOfByte + 8
+			}
+		case mysql.TypeFloat, mysql.TypeDouble:
+			for j := range *memoryUsagePerRow {
+				(*memoryUsagePerRow)[j] += int64(sizeFloat64)
+			}
+		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			collator := collate.GetCollator(tps[i].GetCollate())
+
+			for j, physicalRowIndex := range usedRows {
+				if canSkip(physicalRowIndex) {
+					continue
+				}
+				strLen := int64(len(column.GetBytes(physicalRowIndex)) * collator.MaxLenOneByte())
+				if serializeModes[i] == KeepVarColumnLength {
+					strLen += int64(sizeUint32)
+				}
+
+				(*memoryUsagePerRow)[j] += strLen
+			}
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			for j := range *memoryUsagePerRow {
+				(*memoryUsagePerRow)[j] += int64(sizeUint64)
+			}
+		case mysql.TypeDuration:
+			for j := range *memoryUsagePerRow {
+				(*memoryUsagePerRow)[j] += 8
+			}
+		case mysql.TypeNewDecimal:
+			ds := column.Decimals()
+			needLen := int64(0)
+			for _, physicalRowindex := range usedRows {
+				if canSkip(physicalRowindex) {
+					continue
+				}
+
+				// Buffer length for all decimal in one column should be same
+				b, err := ds[physicalRowindex].ToHashKey()
+				if err != nil {
+					return err
+				}
+
+				if serializeModes[i] == KeepVarColumnLength {
+					needLen += int64(sizeUint8)
+				}
+				needLen += int64(len(b))
+				break
+			}
+
+			for j := range *memoryUsagePerRow {
+				(*memoryUsagePerRow)[j] += needLen
+			}
+		case mysql.TypeEnum:
+			if mysql.HasEnumSetAsIntFlag(tps[i].GetFlag()) {
+				needLen := int64(0)
+				if serializeModes[i] == NeedSignFlag {
+					needLen += size.SizeOfByte
+				}
+				needLen += int64(sizeUint64)
+
+				for j := range *memoryUsagePerRow {
+					(*memoryUsagePerRow)[j] += needLen
+				}
+			} else {
+				sizeByteNum := int64(0)
+				if serializeModes[i] == NeedSignFlag {
+					sizeByteNum = int64(sizeUint32)
+				}
+
+				collator := collate.GetCollator(tps[i].GetCollate())
+				for j, physicalRowindex := range usedRows {
+					if canSkip(physicalRowindex) {
+						continue
+					}
+
+					v := column.GetEnum(physicalRowindex).Value
+					str := ""
+					if enum, err := types.ParseEnumValue(tps[i].GetElems(), v); err == nil {
+						str = enum.Name
+					}
+
+					(*memoryUsagePerRow)[j] += sizeByteNum + int64(len(str)*collator.MaxLenOneByte())
+				}
+			}
+		case mysql.TypeSet:
+			sizeByteNum := int64(0)
+			if serializeModes[i] == NeedSignFlag {
+				sizeByteNum = int64(sizeUint32)
+			}
+
+			collator := collate.GetCollator(tps[i].GetCollate())
+			for j, physicalRowindex := range usedRows {
+				if canSkip(physicalRowindex) {
+					continue
+				}
+
+				s, err := types.ParseSetValue(tps[i].GetElems(), column.GetSet(physicalRowindex).Value)
+				if err != nil {
+					return err
+				}
+
+				(*memoryUsagePerRow)[j] += sizeByteNum + int64(len(s.Name)*collator.MaxLenOneByte())
+			}
+		case mysql.TypeBit:
+			signFlagLen := int64(0)
+			if serializeModes[i] == NeedSignFlag {
+				signFlagLen = size.SizeOfByte
+			}
+			for j, physicalRowindex := range usedRows {
+				if canSkip(physicalRowindex) {
+					continue
+				}
+
+				(*memoryUsagePerRow)[j] += signFlagLen + int64(sizeUint64)
+			}
+		case mysql.TypeJSON:
+
+		case mysql.TypeNull:
+		default:
+			return errors.Errorf("unsupport column type for pre-alloc %d", tps[i].GetType())
+		}
+	}
+
+	if isFirst {
+		// TODO
+		// continuousMem := make([]byte, maxLen*int64(len(usedRows)))
+		// start := int64(0)
+		// for i := range serializedKeysVectorBuffer {
+		// 	serializedKeysVectorBuffer[i] = continuousMem[start : start : start+maxLen]
+		// 	start += maxLen
+		// }
+	} else {
+		for i := range serializedKeysVectorBuffer {
+			if int64(cap(serializedKeysVectorBuffer[i])) < (*memoryUsagePerRow)[i] {
+				serializedKeysVectorBuffer[i] = make([]byte, 0, (*memoryUsagePerRow)[i])
+			}
+		}
+	}
+	return nil
+}
+
 // SerializeKeys is used in join
 func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType, colIdx int, usedRows []int, filterVector []bool, nullVector []bool, serializeMode SerializeMode, serializedKeysVector [][]byte) (err error) {
 	column := chk.Column(colIdx)
@@ -611,11 +777,6 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], jsonHashBuffer...)
 		}
 	case mysql.TypeNull:
-		for _, physicalRowindex := range usedRows {
-			if canSkip(physicalRowindex) {
-				continue
-			}
-		}
 	default:
 		return errors.Errorf("unsupport column type for encode %d", tp.GetType())
 	}

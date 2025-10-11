@@ -79,6 +79,11 @@ func (*generalCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return buf
 }
 
+// MaxLenOneByte implement Collator interface.
+func (*generalCICollator) MaxLenOneByte() int {
+	return 2
+}
+
 // Pattern implements Collator interface.
 func (*generalCICollator) Pattern() WildcardPattern {
 	return &ciPattern{}
