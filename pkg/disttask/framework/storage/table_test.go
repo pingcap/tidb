@@ -406,34 +406,33 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		require.Equal(t, int64(12), rs[0].GetInt64(0))
 		return err
 	}))
+	getTaskKeys := func(tasks []*proto.TaskBase) []string {
+		taskKeys := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			taskKeys = append(taskKeys, task.Key)
+		}
+		return taskKeys
+	}
 	tasks, err := gm.GetTopUnfinishedTasks(ctx)
 	require.NoError(t, err)
 	require.Len(t, tasks, 8)
-<<<<<<< HEAD
-	taskKeys := make([]string, 0, len(tasks))
-	for _, task := range tasks {
-		taskKeys = append(taskKeys, task.Key)
-	}
-	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, taskKeys)
-=======
 	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, getTaskKeys(tasks))
 
 	proto.MaxConcurrentTask = 6
 	tasks, err = gm.GetTopUnfinishedTasks(ctx)
 	require.NoError(t, err)
-	require.Len(t, tasks, 11)
-	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9", "key/10", "key/11", "key/12"}, getTaskKeys(tasks))
+	require.Len(t, tasks, 10)
+	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9", "key/10", "key/11"}, getTaskKeys(tasks))
 
 	proto.MaxConcurrentTask = 3
 	tasks, err = gm.GetTopNoNeedResourceTasks(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []string{"key/5", "key/3", "key/4", "key/12"}, getTaskKeys(tasks))
+	require.Equal(t, []string{"key/5", "key/3", "key/4"}, getTaskKeys(tasks))
 
 	proto.MaxConcurrentTask = 1
 	tasks, err = gm.GetTopNoNeedResourceTasks(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"key/5", "key/3"}, getTaskKeys(tasks))
->>>>>>> 50a1e5a631d (dxf: fix task cannot be cancelled when the number of active scheduler reached the limit (#63897))
 }
 
 func TestGetUsedSlotsOnNodes(t *testing.T) {

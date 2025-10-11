@@ -209,17 +209,6 @@ func (sm *Manager) scheduleTaskLoop() {
 		case <-handle.TaskChangedCh:
 		}
 
-<<<<<<< HEAD
-		taskCnt := sm.getSchedulerCount()
-		if taskCnt >= proto.MaxConcurrentTask {
-			sm.logger.Debug("scheduled tasks reached limit",
-				zap.Int("current", taskCnt), zap.Int("max", proto.MaxConcurrentTask))
-			continue
-		}
-
-=======
-		failpoint.InjectCall("beforeGetSchedulableTasks")
->>>>>>> 50a1e5a631d (dxf: fix task cannot be cancelled when the number of active scheduler reached the limit (#63897))
 		schedulableTasks, err := sm.getSchedulableTasks()
 		if err != nil {
 			continue

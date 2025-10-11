@@ -16,12 +16,7 @@ package storage
 
 import (
 	"context"
-<<<<<<< HEAD
-=======
-	"encoding/json"
-	goerrors "errors"
 	"fmt"
->>>>>>> 50a1e5a631d (dxf: fix task cannot be cancelled when the number of active scheduler reached the limit (#63897))
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -248,26 +243,13 @@ func (mgr *TaskManager) CreateTaskWithSession(
 
 // GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error) {
-<<<<<<< HEAD
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+basicTaskColumns+` from mysql.tidb_global_task t
-		where state in (%?, %?, %?, %?, %?, %?)
-		order by priority asc, create_time asc, id asc
-		limit %?`,
-=======
 	return mgr.getTopTasks(ctx,
->>>>>>> 50a1e5a631d (dxf: fix task cannot be cancelled when the number of active scheduler reached the limit (#63897))
 		proto.TaskStatePending,
 		proto.TaskStateRunning,
 		proto.TaskStateReverting,
 		proto.TaskStateCancelling,
 		proto.TaskStatePausing,
 		proto.TaskStateResuming,
-<<<<<<< HEAD
-		proto.MaxConcurrentTask*2,
-=======
-		proto.TaskStateModifying,
->>>>>>> 50a1e5a631d (dxf: fix task cannot be cancelled when the number of active scheduler reached the limit (#63897))
 	)
 }
 
@@ -277,14 +259,10 @@ func (mgr *TaskManager) GetTopNoNeedResourceTasks(ctx context.Context) ([]*proto
 		proto.TaskStateReverting,
 		proto.TaskStateCancelling,
 		proto.TaskStatePausing,
-		proto.TaskStateModifying,
 	)
 }
 
 func (mgr *TaskManager) getTopTasks(ctx context.Context, states ...proto.TaskState) ([]*proto.TaskBase, error) {
-	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
-		return nil, err
-	}
 	var holders strings.Builder
 	for i := range states {
 		if i > 0 {

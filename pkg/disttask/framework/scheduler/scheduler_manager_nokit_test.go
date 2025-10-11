@@ -24,12 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-<<<<<<< HEAD
-=======
-	mockScheduler "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
->>>>>>> 50a1e5a631d (dxf: fix task cannot be cancelled when the number of active scheduler reached the limit (#63897))
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -182,7 +177,7 @@ func TestFastRespondNoNeedResourceTaskWhenSchedulersReachLimit(t *testing.T) {
 	defer ctrl.Finish()
 
 	taskMgr := mock.NewMockTaskManager(ctrl)
-	mgr := NewManager(context.Background(), nil, taskMgr, "1", proto.NodeResourceForTest)
+	mgr := NewManager(context.Background(), taskMgr, "1")
 	taskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]proto.ManagedNode{{CPUCount: 8}}, nil)
 	mgr.nodeMgr.refreshNodes(mgr.ctx, mgr.taskMgr, mgr.slotMgr)
 	RegisterSchedulerFactory(proto.TaskTypeExample,
@@ -194,7 +189,6 @@ func TestFastRespondNoNeedResourceTaskWhenSchedulersReachLimit(t *testing.T) {
 	for _, state := range []proto.TaskState{
 		proto.TaskStateCancelling,
 		proto.TaskStateReverting,
-		proto.TaskStateModifying,
 		proto.TaskStatePausing,
 	} {
 		t.Run(state.String(), func(t *testing.T) {

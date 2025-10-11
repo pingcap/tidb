@@ -15,10 +15,6 @@ import (
 
 	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	storage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
-<<<<<<< HEAD
-=======
-	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
->>>>>>> 50a1e5a631d (dxf: fix task cannot be cancelled when the number of active scheduler reached the limit (#63897))
 	sessionctx "github.com/pingcap/tidb/pkg/sessionctx"
 	gomock "go.uber.org/mock/gomock"
 )
