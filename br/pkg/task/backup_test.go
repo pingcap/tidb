@@ -233,14 +233,14 @@ func TestChecksumProgress(t *testing.T) {
 	{
 		var checksumProgress int64 = 0
 		checksumMap := make(map[int64]*metautil.ChecksumStats)
-		
+
 		if len(checksumMap) > 0 {
 			checksumProgress = 5 // Simulating schemas.Len()
 		}
-		
+
 		require.Equal(t, int64(0), checksumProgress, "checksumProgress should be 0 when checksumMap is empty")
 	}
-	
+
 	// Test Case 2: Non-empty checksumMap should result in checksumProgress = schemas.Len()
 	{
 		var checksumProgress int64 = 0
@@ -248,14 +248,14 @@ func TestChecksumProgress(t *testing.T) {
 			1: {Crc64Xor: 123, TotalKvs: 456, TotalBytes: 789},
 		}
 		schemasLen := int64(5)
-		
+
 		if len(checksumMap) > 0 {
 			checksumProgress = schemasLen
 		}
-		
+
 		require.Equal(t, schemasLen, checksumProgress, "checksumProgress should equal schemas.Len() when checksumMap is not empty")
 	}
-	
+
 	// Test Case 3: Verify the logic handles nil schemas check correctly
 	// This simulates the check at line 732: if schemas != nil && schemas.Len() > 0
 	{
@@ -263,7 +263,7 @@ func TestChecksumProgress(t *testing.T) {
 		shouldProcessSchemas := schemas != nil && schemas.Len() > 0
 		require.False(t, shouldProcessSchemas, "Should not process when schemas is nil")
 	}
-	
+
 	// Test Case 4: Verify schemas with length 0
 	{
 		schemas := backup.NewBackupSchemas(func(kv.Storage, func(*model.DBInfo, *model.TableInfo)) error {
