@@ -259,14 +259,14 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 }
 
 // UpdateBindingUsageInfoToStorage is to update the binding usage info into storage
-func (u *globalBindingHandle) UpdateBindingUsageInfoToStorage() error {
+func (h *globalBindingHandle) UpdateBindingUsageInfoToStorage() error {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BindLogger().Warn("panic when update usage info for binding", zap.Any("recover", r))
 		}
 	}()
-	bindings := u.GetAllGlobalBindings()
-	return u.updateBindingUsageInfoToStorage(bindings)
+	bindings := h.GetAllGlobalBindings()
+	return h.updateBindingUsageInfoToStorage(bindings)
 }
 
 // CreateGlobalBinding creates a Bindings to the storage and the cache.
