@@ -121,6 +121,18 @@ type DataSource struct {
 
 	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
 	AskedColumnGroup [][]*expression.Column
+
+	// JoinColumns stores columns from this DataSource that are used in join conditions.
+	// These are columns that participate in join predicates with other tables.
+	JoinColumns []*expression.Column
+
+	// WhereColumns stores columns from this DataSource that are used in WHERE/selection conditions.
+	// These are columns that appear in filter predicates (excluding join conditions).
+	WhereColumns []*expression.Column
+
+	// SortColumns stores columns that are used in sort operations above this DataSource.
+	// These help identify when indexes can be used to avoid sorting.
+	SortColumns []*expression.Column
 }
 
 // Init initializes DataSource.

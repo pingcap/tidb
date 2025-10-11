@@ -59,6 +59,12 @@ type columnStatsUsageCollector struct {
 
 	// operatorNum is the number of operators in the logical plan.
 	operatorNum uint64
+
+	// sortColumns tracks columns used in sort operations that should be propagated down to DataSource
+	sortColumns []*expression.Column
+
+	// joinColumns tracks columns used in join conditions that should be propagated down to DataSource
+	joinColumns []*expression.Column
 }
 
 func newColumnStatsUsageCollector(enabledPlanCapture bool) *columnStatsUsageCollector {
@@ -161,6 +167,46 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 	}
 	// We should use `PushedDownConds` here. `AllConds` is used for partition pruning, which doesn't need stats.
 	c.addPredicateColumnsFromExpressions(ds.PushedDownConds, true)
+
+	// Store WHERE columns directly in the DataSource
+	// PushedDownConds contains WHERE clause conditions and LeftConditions/RightConditions from joins
+	whereCols := expression.ExtractColumnsFromExpressions(ds.PushedDownConds, nil)
+	whereColSet := make(map[int64]struct{})
+	for _, col := range whereCols {
+		if ds.Schema().Contains(col) {
+			if _, exists := whereColSet[col.UniqueID]; !exists {
+				ds.WhereColumns = append(ds.WhereColumns, col)
+				whereColSet[col.UniqueID] = struct{}{}
+			}
+		}
+	}
+
+	// Store join columns in the DataSource if they belong to this DataSource
+	// Join columns come from EqualConditions and OtherConditions of joins
+	if len(c.joinColumns) > 0 {
+		joinColSet := make(map[int64]struct{})
+		for _, joinCol := range c.joinColumns {
+			if ds.Schema().Contains(joinCol) {
+				if _, exists := joinColSet[joinCol.UniqueID]; !exists {
+					ds.JoinColumns = append(ds.JoinColumns, joinCol)
+					joinColSet[joinCol.UniqueID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	// Store sort columns in the DataSource if they belong to this DataSource
+	if len(c.sortColumns) > 0 {
+		sortColSet := make(map[int64]struct{})
+		for _, sortCol := range c.sortColumns {
+			if ds.Schema().Contains(sortCol) {
+				if _, exists := sortColSet[sortCol.UniqueID]; !exists {
+					ds.SortColumns = append(ds.SortColumns, sortCol)
+					sortColSet[sortCol.UniqueID] = struct{}{}
+				}
+			}
+		}
+	}
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *logicalop.LogicalJoin) {
@@ -181,6 +227,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *logicalop.
 	}
 	// Currently, join predicates only need meta info like NDV.
 	c.addPredicateColumnsFromExpressions(exprs, false)
+	// Note: Join columns already extracted in collectFromPlan before visiting children
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logicalop.LogicalUnionAll) {
@@ -205,6 +252,48 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expression.Column, lp base.LogicalPlan) {
 	// derive the new current op's new asked column groups accordingly.
 	curColGroups := lp.ExtractColGroups(askedColGroups)
+
+	// IMPORTANT: Extract sort and join columns BEFORE visiting children
+	// so that DataSource nodes can see them when we traverse down
+	switch x := lp.(type) {
+	case *logicalop.LogicalSort:
+		// Extract and store sort columns to propagate to DataSource
+		sortExprs := make([]expression.Expression, 0, len(x.ByItems))
+		for _, item := range x.ByItems {
+			sortExprs = append(sortExprs, item.Expr)
+		}
+		c.sortColumns = expression.ExtractColumnsFromExpressions(sortExprs, nil)
+	case *logicalop.LogicalTopN:
+		// Extract and store sort columns to propagate to DataSource
+		sortExprs := make([]expression.Expression, 0, len(x.ByItems))
+		for _, item := range x.ByItems {
+			sortExprs = append(sortExprs, item.Expr)
+		}
+		c.sortColumns = expression.ExtractColumnsFromExpressions(sortExprs, nil)
+	case *logicalop.LogicalJoin:
+		// Extract and store join columns to propagate to DataSource
+		// Note: LeftConditions and RightConditions are not join conditions between tables,
+		// they are filters on individual tables, so we only extract from EqualConditions and OtherConditions
+		joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
+		for _, cond := range x.EqualConditions {
+			joinExprs = append(joinExprs, cond)
+		}
+		for _, cond := range x.OtherConditions {
+			joinExprs = append(joinExprs, cond)
+		}
+		c.joinColumns = expression.ExtractColumnsFromExpressions(joinExprs, nil)
+	case *logicalop.LogicalApply:
+		// Extract and store join columns to propagate to DataSource
+		joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
+		for _, cond := range x.EqualConditions {
+			joinExprs = append(joinExprs, cond)
+		}
+		for _, cond := range x.OtherConditions {
+			joinExprs = append(joinExprs, cond)
+		}
+		c.joinColumns = expression.ExtractColumnsFromExpressions(joinExprs, nil)
+	}
+
 	for _, child := range lp.Children() {
 		// passing the new asked column groups down.
 		c.collectFromPlan(curColGroups, child)
@@ -262,11 +351,13 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		for _, item := range x.ByItems {
 			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr}, false)
 		}
+		// Note: Sort columns already extracted above before visiting children
 	case *logicalop.LogicalTopN:
 		// Assume statistics of all the columns in ByItems are needed.
 		for _, item := range x.ByItems {
 			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr}, false)
 		}
+		// Note: Sort columns already extracted above before visiting children
 	case *logicalop.LogicalUnionAll:
 		c.collectPredicateColumnsForUnionAll(x)
 	case *logicalop.LogicalPartitionUnionAll:

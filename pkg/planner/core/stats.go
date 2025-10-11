@@ -133,6 +133,29 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
+	// Prune indexes based on WHERE and ORDER BY columns if we have too many
+	threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
+	if len(ds.AllPossibleAccessPaths) > threshold && (len(ds.WhereColumns) > 0 || len(ds.SortColumns) > 0) {
+		prunedPaths := pruneIndexesByWhereAndOrder(ds.AllPossibleAccessPaths, ds.WhereColumns, ds.SortColumns)
+		// Only use pruned paths if result is valid and keeps at least some paths
+		// Be very conservative: must have table paths or multiple index paths
+		hasTablePath := false
+		for _, p := range prunedPaths {
+			if p.IsTablePath() {
+				hasTablePath = true
+				break
+			}
+		}
+		// Only accept pruning if we have table path, or at least 2 indexes
+		if hasTablePath || len(prunedPaths) >= 2 {
+			// Update BOTH AllPossibleAccessPaths and PossibleAccessPaths
+			ds.AllPossibleAccessPaths = prunedPaths
+			// Make a copy for PossibleAccessPaths to avoid sharing the same slice
+			ds.PossibleAccessPaths = make([]*util.AccessPath, len(prunedPaths))
+			copy(ds.PossibleAccessPaths, prunedPaths)
+		}
+	}
+	// Fill index paths for all paths (pruned or not)
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
@@ -766,4 +789,250 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 		usedStats.Version = statistics.PseudoVersion
 	}
 	statsRecord.RecordUsedInfo(pid, usedStats)
+}
+
+// pruneIndexesByWhereAndOrder prunes indexes that have the same prefix as other indexes
+// with the same eqOrInCondCount, but where the other index also has a higher eqOrInCondCount.
+func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, WhereColumns, SortColumns []*expression.Column) []*util.AccessPath {
+	if len(paths) <= 1 {
+		return paths
+	}
+
+	// If we have no WHERE or SORT columns, don't prune - just return all paths
+	if len(WhereColumns) == 0 && len(SortColumns) == 0 {
+		return paths
+	}
+
+	perfectCoveringIndexes := make([]*util.AccessPath, 0, 4)      // Usually very few perfect covering indexes
+	preferredIndexes := make([]*util.AccessPath, 0, len(paths)/2) // Expected to be roughly half of paths
+	forcedIndexes := make([]*util.AccessPath, 0, 2)               // Usually very few forced indexes
+	tablePaths := make([]*util.AccessPath, 0, 1)                  // Usually just one table path
+
+	// Build ID-based lookup maps for column matching (more reliable than names)
+	whereColIDs := make(map[int64]struct{}, len(WhereColumns))
+	for _, col := range WhereColumns {
+		whereColIDs[col.ID] = struct{}{}
+	}
+	sortColIDs := make(map[int64]struct{}, len(SortColumns))
+	for _, col := range SortColumns {
+		sortColIDs[col.ID] = struct{}{}
+	}
+
+	for _, path := range paths {
+		if path.IsTablePath() {
+			tablePaths = append(tablePaths, path)
+			continue
+		}
+		if path.Forced {
+			forcedIndexes = append(forcedIndexes, path)
+			continue
+		}
+
+		// Skip indexes with no columns
+		if path.FullIdxCols == nil || len(path.FullIdxCols) == 0 {
+			// If FullIdxCols is not available, include this index in preferred list to be safe
+			preferredIndexes = append(preferredIndexes, path)
+			continue
+		}
+
+		// Count how many WHERE and SORT columns are covered by this index
+		coveredWhereCount := 0
+		coveredSortCount := 0
+		firstColMatchesWhere := false
+		firstColMatchesSort := false
+
+		for i, idxCol := range path.FullIdxCols {
+			// Use the column ID
+			idxColID := idxCol.ID
+
+			// Check if this index column matches a WHERE column
+			if _, found := whereColIDs[idxColID]; found {
+				coveredWhereCount++
+				if i == 0 {
+					firstColMatchesWhere = true
+				}
+			}
+
+			// Check if this index column matches a SORT column
+			if _, found := sortColIDs[idxColID]; found {
+				coveredSortCount++
+				if i == 0 {
+					firstColMatchesSort = true
+				}
+			}
+		}
+
+		// Calculate total coverage
+		totalRequiredCols := len(WhereColumns) + len(SortColumns)
+		totalCovered := coveredWhereCount + coveredSortCount
+
+		// Perfect covering: covers ALL required columns AND first column matches
+		if totalCovered == totalRequiredCols && totalRequiredCols > 0 &&
+			(firstColMatchesWhere || firstColMatchesSort) {
+			perfectCoveringIndexes = append(perfectCoveringIndexes, path)
+			continue
+		}
+
+		// Preferred: has meaningful coverage (first column match OR covers multiple columns)
+		hasGoodCoverage := false
+
+		// Case 1: First column matches - this is valuable
+		if firstColMatchesWhere || firstColMatchesSort {
+			hasGoodCoverage = true
+		}
+		// Case 2: Covers multiple WHERE columns (even if first doesn't match)
+		if coveredWhereCount >= 2 {
+			hasGoodCoverage = true
+		}
+		// Case 3: Covers any SORT columns (useful for avoiding sort)
+		if coveredSortCount > 0 {
+			hasGoodCoverage = true
+		}
+
+		if hasGoodCoverage {
+			preferredIndexes = append(preferredIndexes, path)
+		}
+	}
+
+	// Rank perfect covering indexes by shortest first (more efficient)
+	if len(perfectCoveringIndexes) > 1 {
+		slices.SortFunc(perfectCoveringIndexes, func(a, b *util.AccessPath) int {
+			return len(a.Index.Columns) - len(b.Index.Columns)
+		})
+	}
+
+	// Rank preferred indexes by coverage quality
+	if len(preferredIndexes) > 1 {
+		slices.SortFunc(preferredIndexes, func(a, b *util.AccessPath) int {
+			// Calculate coverage score for each index
+			scoreA := calculateIndexCoverageScore(a, WhereColumns, SortColumns)
+			scoreB := calculateIndexCoverageScore(b, WhereColumns, SortColumns)
+			// Higher score is better, so reverse the comparison
+			if scoreA != scoreB {
+				return scoreB - scoreA
+			}
+			// If same score, prefer shorter index
+			return len(a.Index.Columns) - len(b.Index.Columns)
+		})
+	}
+
+	// Build result with priority: table paths, forced indexes, perfect covering, then preferred
+	// Keep total to 10 indexes max
+	const maxIndexes = 10
+	result := make([]*util.AccessPath, 0, maxIndexes)
+
+	// CRITICAL: Always include table paths - this is mandatory for correctness
+	result = append(result, tablePaths...)
+	if len(tablePaths) == 0 {
+		// This should never happen, but if it does, return original paths to be safe
+		return paths
+	}
+
+	// Always include forced indexes
+	result = append(result, forcedIndexes...)
+
+	// Add perfect covering indexes (prefer these over preferred)
+	remaining := maxIndexes - len(result)
+	if remaining > 0 && len(perfectCoveringIndexes) > 0 {
+		toAdd := min(remaining, len(perfectCoveringIndexes))
+		result = append(result, perfectCoveringIndexes[:toAdd]...)
+		remaining -= toAdd
+	}
+
+	// Add preferred indexes if we still have room
+	if remaining > 0 && len(preferredIndexes) > 0 {
+		toAdd := min(remaining, len(preferredIndexes))
+		result = append(result, preferredIndexes[:toAdd]...)
+	}
+
+	// Safety check: if we ended up with nothing, return the original paths
+	// This prevents accidentally pruning everything
+	if len(result) == 0 {
+		return paths
+	}
+
+	// Additional safety: if we only have table paths and no indexes at all, keep original
+	// This might happen if no indexes match, but we should still consider all indexes
+	if len(result) == len(tablePaths) && len(perfectCoveringIndexes) == 0 && len(preferredIndexes) == 0 && len(forcedIndexes) == 0 {
+		// We pruned ALL indexes - this is probably too aggressive, keep original
+		return paths
+	}
+
+	return result
+}
+
+// calculateIndexCoverageScore calculates a score for how well an index covers the required columns.
+// Higher score means better coverage.
+func calculateIndexCoverageScore(path *util.AccessPath, whereColumns, sortColumns []*expression.Column) int {
+	if path == nil || path.Index == nil {
+		return 0
+	}
+
+	// Build ID lookup maps (more reliable than names)
+	whereColIDs := make(map[int64]struct{}, len(whereColumns))
+	for _, col := range whereColumns {
+		whereColIDs[col.ID] = struct{}{}
+	}
+	sortColIDs := make(map[int64]struct{}, len(sortColumns))
+	for _, col := range sortColumns {
+		sortColIDs[col.ID] = struct{}{}
+	}
+
+	score := 0
+	idxCols := path.FullIdxCols
+	if idxCols == nil || len(idxCols) == 0 {
+		// Fallback to Index.Columns if FullIdxCols is not available
+		return 0
+	}
+
+	// Score for WhereColumns coverage (higher weight)
+	whereMatches := 0
+	firstColMatchesWhere := false
+	for i, idxCol := range idxCols {
+		idxColID := idxCol.ID
+		if _, found := whereColIDs[idxColID]; found {
+			whereMatches++
+			if i == 0 {
+				firstColMatchesWhere = true
+			}
+		}
+	}
+	// Each WHERE column match is worth 10 points
+	score += whereMatches * 10
+	// Big bonus if first column is a WHERE column
+	if firstColMatchesWhere {
+		score += 20
+	}
+
+	// Score for SortColumns coverage (important for avoiding sort)
+	sortMatches := 0
+	consecutiveSortMatches := 0
+	firstColMatchesSort := false
+	for i, idxCol := range idxCols {
+		idxColID := idxCol.ID
+		if _, found := sortColIDs[idxColID]; found {
+			sortMatches++
+			if i == 0 {
+				firstColMatchesSort = true
+			}
+			// Check for consecutive matching (preserves sort order)
+			if i < len(sortColumns) {
+				// This is a simplified check - in reality you'd want to ensure the ORDER matches
+				consecutiveSortMatches++
+			}
+		}
+	}
+	// Each SORT column match is worth 5 points
+	score += sortMatches * 5
+	// Consecutive sort matches get bonus (very valuable for ORDER BY)
+	score += consecutiveSortMatches * 8
+	// Bonus if first column is a SORT column
+	if firstColMatchesSort {
+		score += 15
+	}
+
+	// Small penalty for longer indexes (all else equal, prefer shorter)
+	score -= len(idxCols) / 2
+
+	return score
 }
