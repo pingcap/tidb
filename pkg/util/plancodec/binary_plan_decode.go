@@ -379,7 +379,7 @@ func PrintAsQrCode(binaryPlan string) (string, error) {
 	}
 	result := matrix.ToString(true)
 
-	result = strings.Replace(result, "  ", " ", -1)
-	result = strings.Replace(result, "██", "◼︎", -1)
+	result = strings.ReplaceAll(result, "  ", " ")
+	result = strings.ReplaceAll(result, "██", "◼︎")
 	return matrix.ToString(true), nil
 }
