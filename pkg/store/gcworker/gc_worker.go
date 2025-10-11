@@ -67,6 +67,7 @@ import (
 type GCWorker struct {
 	uuid                 string
 	desc                 string
+	keyspaceID           uint32
 	keyspaceIDLabel      string
 	store                kv.Storage
 	tikvStore            tikv.Storage
@@ -99,6 +100,7 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 	worker := &GCWorker{
 		uuid:                 uuid,
 		desc:                 fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
+		keyspaceID:           keyspaceID,
 		keyspaceIDLabel:      strconv.FormatUint(uint64(keyspaceID), 10),
 		store:                store,
 		tikvStore:            tikvStore,
@@ -1231,7 +1233,7 @@ func (w *GCWorker) resolveLocks(
 	}
 
 	runnerName := "resolve-locks-runner"
-	if uint32(w.store.GetCodec().GetKeyspaceID()) != constants.NullKeyspaceID {
+	if w.keyspaceID != constants.NullKeyspaceID {
 		runnerName += "-" + w.keyspaceIDLabel
 	}
 
@@ -1729,6 +1731,8 @@ func RunDistributedGCJob(ctx context.Context, regionLockResolver tikv.RegionLock
 	gcWorker := &GCWorker{
 		tikvStore:            s,
 		uuid:                 identifier,
+		keyspaceID:           constants.NullKeyspaceID,
+		keyspaceIDLabel:      strconv.FormatUint(uint64(constants.NullKeyspaceID), 10),
 		pdClient:             pd,
 		pdGCControllerClient: pd.GetGCInternalController(constants.NullKeyspaceID),
 		regionLockResolver:   regionLockResolver,
