@@ -191,6 +191,7 @@ go_library(
         "//pkg/session/txninfo",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sessionstates",
+        "//pkg/sessionctx/slowlogrule",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
@@ -458,6 +459,7 @@ go_test(
         "//pkg/session/sessionapi",
         "//pkg/session/sessmgr",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/slowlogrule",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
@@ -538,5 +540,6 @@ go_test(
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )
