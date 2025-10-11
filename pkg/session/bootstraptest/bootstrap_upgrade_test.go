@@ -875,3 +875,33 @@ func TestUpgradeWithCrossJoinDisabled(t *testing.T) {
 		require.NoError(t, store.Close())
 	}()
 }
+
+func TestUpgradeBindInfo(t *testing.T) {
+	fromVersion := 220
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	seV220 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(fromVersion))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	revertVersionAndVariables(t, seV220, fromVersion)
+	require.NoError(t, err)
+	session.MustExec(t, seV220, "ADMIN RELOAD BINDINGS;")
+	session.UnsetStoreBootstrapped(store.UUID())
+	ver, err := session.GetBootstrapVersion(seV220)
+	require.NoError(t, err)
+	require.Equal(t, int64(fromVersion), ver)
+	dom.Close()
+	newVer, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+	session.MustExec(t, seLatestV, "ADMIN RELOAD BINDINGS;")
+	newVer.Close()
+	seLatestV.Close()
+}
