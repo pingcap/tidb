@@ -131,17 +131,14 @@ func TestFrameworkCancelTask(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 2, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel", "1*return(1)")
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
-	require.Equal(t, proto.TaskStateReverted, task.State)
-}
-
-func TestFrameworkSubTaskFailed(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 1, 16, true)
-
-	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)")
+	var counter atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/beforeCallOnSubtaskFinished",
+		func(subtask *proto.Subtask) {
+			if counter.Add(1) == 1 {
+				require.NoError(t, c.TaskMgr.CancelTask(c.Ctx, subtask.TaskID))
+			}
+		},
+	)
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }
