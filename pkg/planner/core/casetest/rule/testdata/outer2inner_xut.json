@@ -284,12 +284,13 @@
           "  │   └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_blob_key))",
           "  │     └─TableFullScan 10000.00 cop[tikv] table:alias2 keep order:false, stats:pseudo",
           "  └─Projection(Probe) 12487.50 root  test.d.pk, test.d.col_blob, test.d.col_blob_key, test.d.col_varchar_key, test.d.col_date, test.d.col_int_key, test.dd.pk, test.dd.col_blob, test.dd.col_blob_key, test.dd.col_date, test.dd.col_int_key, cast(test.dd.col_blob_key, datetime(6) BINARY)->Column#41",
-          "    └─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.d.col_date, test.dd.col_date)]",
+          "    └─HashJoin 12487.50 root  inner join, equal:[eq(test.d.col_date, test.dd.col_date)]",
           "      ├─TableReader(Build) 9990.00 root  data:Selection",
           "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_date))",
           "      │   └─TableFullScan 10000.00 cop[tikv] table:outr2 keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "        └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo"
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.d.col_date))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -314,16 +315,17 @@
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_blob))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo",
-          "└─HashAgg(Probe) 63872064.00 root  group by:test.dd.col_blob_key, funcs:firstrow(test.dd.col_blob_key)->test.dd.col_blob_key",
-          "  └─HashJoin 99800100.00 root  inner join, equal:[eq(Column#21, Column#20)]",
-          "    ├─Projection(Build) 79920000.00 root  cast(test.d.col_date, double BINARY)->Column#20",
-          "    │ └─TableReader 79920000.00 root  data:Selection",
-          "    │   └─Selection 79920000.00 cop[tikv]  gt(test.dd.col_int_key, 6)",
-          "    │     └─TableFullScan 99900000.00 cop[tikv] table:innrcte keep order:false, stats:pseudo",
-          "    └─Projection(Probe) 79840080.00 root  test.dd.col_blob_key, cast(test.dd.pk, double BINARY)->Column#21",
-          "      └─TableReader 79840080.00 root  data:Selection",
-          "        └─Selection 79840080.00 cop[tikv]  gt(test.dd.col_int_key, 6), not(isnull(test.dd.col_blob_key))",
-          "          └─TableFullScan 99900000.00 cop[tikv] table:innr1 keep order:false, stats:pseudo"
+          "└─HashAgg(Probe) 51148800.00 root  group by:test.dd.col_blob_key, funcs:firstrow(test.dd.col_blob_key)->test.dd.col_blob_key",
+          "  └─Selection 79920000.00 root  not(isnull(test.dd.col_blob_key))",
+          "    └─HashJoin 99900000.00 root  left outer join, left side:Projection, equal:[eq(Column#20, Column#21)]",
+          "      ├─Projection(Build) 79920000.00 root  cast(test.d.col_date, double BINARY)->Column#20",
+          "      │ └─TableReader 79920000.00 root  data:Selection",
+          "      │   └─Selection 79920000.00 cop[tikv]  gt(test.dd.col_int_key, 6)",
+          "      │     └─TableFullScan 99900000.00 cop[tikv] table:innrcte keep order:false, stats:pseudo",
+          "      └─Projection(Probe) 79920000.00 root  test.dd.col_blob_key, cast(test.dd.pk, double BINARY)->Column#21",
+          "        └─TableReader 79920000.00 root  data:Selection",
+          "          └─Selection 79920000.00 cop[tikv]  gt(test.dd.col_int_key, 6)",
+          "            └─TableFullScan 99900000.00 cop[tikv] table:innr1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -599,24 +601,24 @@
       {
         "SQL": "select * from t0 left outer join t11 on a0=a1 where t0.b0 in ('5', t11.b1) -- some = in the in list is not null filtering",
         "Plan": [
-          "HashJoin 12487.50 root  inner join, equal:[eq(test.t0.a0, test.t11.a1)], other cond:in(test.t0.b0, \"5\", test.t11.b1)",
-          "├─TableReader(Build) 9990.00 root  data:Selection",
-          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t11.a1))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 9990.00 root  data:Selection",
-          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.a0))",
+          "Selection 9990.00 root  in(test.t0.b0, \"5\", test.t11.b1)",
+          "└─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t0.a0, test.t11.a1)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t11.a1))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from t0 left outer join t11 on a0=a1 where '5' in (t0.b0, t11.b1) -- some = in the in list is not null filtering",
         "Plan": [
-          "HashJoin 12487.50 root  inner join, equal:[eq(test.t0.a0, test.t11.a1)], other cond:in(\"5\", test.t0.b0, test.t11.b1)",
-          "├─TableReader(Build) 9990.00 root  data:Selection",
-          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t11.a1))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 9990.00 root  data:Selection",
-          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.a0))",
+          "Selection 9990.00 root  in(\"5\", test.t0.b0, test.t11.b1)",
+          "└─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t0.a0, test.t11.a1)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t11.a1))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo"
         ]
       }
