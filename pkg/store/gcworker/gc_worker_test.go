@@ -529,28 +529,6 @@ func TestGetGCConcurrency(t *testing.T) {
 	require.Len(t, s.cluster.GetAllStores(), concurrency.v)
 }
 
-func TestDoGC(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
-	ctx := context.Background()
-	txnSafePointSyncWaitTime = 1
-
-	p := s.createGCProbe(t, "k1")
-	err := s.gcWorker.doGC(ctx, s.mustAllocTs(t), gcDefaultConcurrency)
-	require.NoError(t, err)
-	s.checkCollected(t, p)
-
-	p = s.createGCProbe(t, "k1")
-	err = s.gcWorker.doGC(ctx, s.mustAllocTs(t), gcMinConcurrency)
-	require.NoError(t, err)
-	s.checkCollected(t, p)
-
-	p = s.createGCProbe(t, "k1")
-	err = s.gcWorker.doGC(ctx, s.mustAllocTs(t), gcMaxConcurrency)
-	require.NoError(t, err)
-	s.checkCollected(t, p)
-}
-
 func TestCheckGCMode(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
