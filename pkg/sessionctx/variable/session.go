@@ -1791,10 +1791,10 @@ type SessionVars struct {
 	}
 
 	// InPacketBytes records the total incoming packet bytes from clients for current session.
-	InPacketBytes uint64
+	InPacketBytes atomic.Uint64
 
 	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
-	OutPacketBytes uint64
+	OutPacketBytes atomic.Uint64
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
