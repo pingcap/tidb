@@ -219,14 +219,12 @@ const (
 )
 
 func tidbOptAssertionLevel(opt string) AssertionLevel {
-	switch opt {
-	case vardef.AssertionStrictStr:
+	switch vardef.NormalizeTxnAssertionLevel(opt) {
+	case "STRICT":
 		return AssertionLevelStrict
-	case vardef.AssertionFastStr:
+	case "FAST":
 		return AssertionLevelFast
-	case vardef.AssertionOffStr:
-		return AssertionLevelOff
-	default:
+	default: // "OFF" (and any invalid input → OFF)
 		return AssertionLevelOff
 	}
 }

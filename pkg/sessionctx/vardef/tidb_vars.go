@@ -1467,7 +1467,7 @@ const (
 	DefTiDBHashAggPartialConcurrency        = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency          = ConcurrencyUnset
 	DefTiDBWindowConcurrency                = ConcurrencyUnset
-	DefTiDBMergeJoinConcurrency             = 1 // disable optimization by default
+	DefTiDBMergeJoinConcurrency             = 1        // disable optimization by default
 	DefTiDBStreamAggConcurrency             = 1
 	DefTiDBForcePriority                    = mysql.NoPriority
 	DefEnableWindowFunction                 = true
@@ -1478,23 +1478,23 @@ const (
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
 	DefTiDBSkipIsolationLevelCheck          = false
-	DefTiDBExpensiveQueryTimeThreshold      = 60      // 60s
-	DefTiDBExpensiveTxnTimeThreshold        = 60 * 10 // 10 minutes
+	DefTiDBExpensiveQueryTimeThreshold      = 60       // 60s
+	DefTiDBExpensiveTxnTimeThreshold        = 60 * 10  // 10 minutes
 	DefTiDBScatterRegion                    = ScatterOff
 	DefTiDBWaitSplitRegionFinish            = true
-	DefWaitSplitRegionTimeout               = 300 // 300s
+	DefWaitSplitRegionTimeout               = 300      // 300s
 	DefTiDBEnableNoopFuncs                  = Off
 	DefTiDBEnableNoopVariables              = true
 	DefTiDBAllowRemoveAutoInc               = false
 	DefTiDBUsePlanBaselines                 = true
 	DefTiDBEvolvePlanBaselines              = false
-	DefTiDBEvolvePlanTaskMaxTime            = 600 // 600s
+	DefTiDBEvolvePlanTaskMaxTime            = 600      // 600s
 	DefTiDBEvolvePlanTaskStartTime          = "00:00 +0000"
 	DefTiDBEvolvePlanTaskEndTime            = "23:59 +0000"
-	DefInnodbLockWaitTimeout                = 50 // 50s
+	DefInnodbLockWaitTimeout                = 50       // 50s
 	DefTiDBStoreLimit                       = 0
-	DefTiDBMetricSchemaStep                 = 60 // 60s
-	DefTiDBMetricSchemaRangeDuration        = 60 // 60s
+	DefTiDBMetricSchemaStep                 = 60       // 60s
+	DefTiDBMetricSchemaRangeDuration        = 60       // 60s
 	DefTiDBFoundInPlanCache                 = false
 	DefTiDBFoundInBinding                   = false
 	DefTiDBEnableCollectExecutionInfo       = true
@@ -1547,7 +1547,7 @@ const (
 	DefSysdateIsNow                                   = false
 	DefTiDBEnableParallelHashaggSpill                 = true
 	DefTiDBEnableMutationChecker                      = false
-	DefTiDBTxnAssertionLevel                          = AssertionOffStr
+	DefTiDBTxnAssertionLevel                          = assertionOffStr
 	DefTiDBIgnorePreparedCacheCloseStmt               = false
 	DefTiDBBatchPendingTiFlashCount                   = 4000
 	DefRCReadCheckTS                                  = false
@@ -2001,14 +2001,14 @@ const (
 	// Marker is a special log redact behavior
 	Marker = "MARKER"
 
-	// AssertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
+	// assertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
 	// even if the performance might be slowed down.
-	AssertionStrictStr = "STRICT"
-	// AssertionFastStr is a choice of variable TiDBTxnAssertionLevel that means assertions that doesn't affect
+	assertionStrictStr = "STRICT"
+	// assertionFastStr is a choice of variable TiDBTxnAssertionLevel that means assertions that doesn't affect
 	// performance should be performed.
-	AssertionFastStr = "FAST"
-	// AssertionOffStr is a choice of variable TiDBTxnAssertionLevel that means no assertion should be performed.
-	AssertionOffStr = "OFF"
+	assertionFastStr = "FAST"
+	// assertionOffStr is a choice of variable TiDBTxnAssertionLevel that means no assertion should be performed.
+	assertionOffStr = "OFF"
 	// OOMActionCancel constants represents the valid action configurations for OOMAction "CANCEL".
 	OOMActionCancel = "CANCEL"
 	// OOMActionLog constants represents the valid action configurations for OOMAction "LOG".
@@ -2193,7 +2193,28 @@ func SetEnableMDL(enabled bool) {
 // For classic, we use off to maintain compatibility.
 func GetDefaultTxnAssertionLevel() string {
 	if kerneltype.IsNextGen() {
-		return AssertionStrictStr
+		return assertionStrictStr
 	}
-	return AssertionOffStr
+	return assertionOffStr
+}
+
+// TxnAssertionLevelValues returns the allowed values for the
+// tidb_txn_assertion_level system variable in canonical form.
+func TxnAssertionLevelValues() []string {
+	return []string{assertionOffStr, assertionFastStr, assertionStrictStr}
+}
+
+// NormalizeTxnAssertionLevel canonicalizes a user-provided value of
+// tidb_txn_assertion_level to one of "OFF", "FAST", or "STRICT".
+// Invalid/empty values map to "OFF".
+func NormalizeTxnAssertionLevel(opt string) string {
+	s := strings.ToUpper(strings.TrimSpace(opt))
+	switch s {
+	case assertionStrictStr:
+		return assertionStrictStr
+	case assertionFastStr:
+		return assertionFastStr
+	default:
+		return assertionOffStr
+	}
 }
