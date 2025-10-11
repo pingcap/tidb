@@ -139,6 +139,13 @@ func (c *jobContext) cleanStepCtx() {
 	c.stepCtx = nil // unset stepCtx for the next step initialization
 }
 
+// genReorgTimeoutErr generates a reorganization timeout error.
+func (c *jobContext) genReorgTimeoutErr(jobID int64) error {
+	c.reorgTimeoutOccurred = true
+	logutil.DDLLogger().Info("run reorg job timeout", zap.Int64("jobID", jobID))
+	return dbterror.ErrWaitReorgTimeout
+}
+
 func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
 	return &asAutoIDRequirement{
 		store:     c.store,

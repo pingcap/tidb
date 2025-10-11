@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"go.uber.org/zap"
 )
 
 // ActionType is the type for DDL action.
@@ -528,10 +530,27 @@ func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 	return rawArgs, errors.Trace(err)
 }
 
+func (job *Job) PrintArgs(locate string) {
+	logutil.BgLogger().Info("print job args",
+		zap.String("locate", locate),
+		zap.Int64("job id", job.ID),
+		zap.Any("args", job.args),
+		zap.String("raw args", string(job.RawArgs)),
+	)
+}
+
 // Encode encodes job with json format.
 // updateRawArgs is used to determine whether to update the raw args.
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
+	if job.Type == ActionModifyColumn {
+		logutil.BgLogger().Info("encode job",
+			zap.Int64("job id", job.ID),
+			zap.Bool("update raw args", updateRawArgs),
+			zap.Any("args", job.args),
+			zap.String("raw args", string(job.RawArgs)),
+		)
+	}
 	if updateRawArgs {
 		job.RawArgs, err = marshalArgs(job.Version, job.args)
 		if err != nil {
