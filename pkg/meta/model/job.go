@@ -746,22 +746,6 @@ func (job *Job) MayNeedReorg() bool {
 	}
 }
 
-// CanEmbeddedAnalyze indicates that this job can do embedded analyze right after the schema change.
-func (job *Job) CanEmbeddedAnalyze() bool {
-	switch job.Type {
-	case ActionAddIndex, ActionAddPrimaryKey:
-		return true
-	case ActionModifyColumn:
-		if len(job.CtxVars) > 0 {
-			needReorg, ok := job.CtxVars[0].(bool)
-			return ok && needReorg
-		}
-		return false
-	default:
-		return false
-	}
-}
-
 // IsRollbackable checks whether the job can be rollback.
 // TODO(lance6716): should make sure it's the same as convertJob2RollbackJob
 func (job *Job) IsRollbackable() bool {
@@ -868,6 +852,22 @@ func (sub *SubJob) IsFinished() bool {
 	return sub.State == JobStateDone ||
 		sub.State == JobStateRollbackDone ||
 		sub.State == JobStateCancelled
+}
+
+// CanEmbeddedAnalyze indicates that this sub-job can do embedded analyze right after the schema change.
+func (sub *SubJob) CanEmbeddedAnalyze() bool {
+	switch sub.Type {
+	case ActionAddIndex, ActionAddPrimaryKey:
+		return true
+	case ActionModifyColumn:
+		if len(sub.CtxVars) > 0 {
+			needReorg, ok := sub.CtxVars[0].(bool)
+			return ok && needReorg
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 // ToProxyJob converts a sub-job to a proxy job.

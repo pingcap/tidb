@@ -368,11 +368,10 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 }
 
 // setNeedAnalyze sets NeedAnalyze for the last sub-job that can do embedded analyze.
-func setNeedAnalyze(parentJob *model.Job, info *model.MultiSchemaInfo) {
+func setNeedAnalyze(info *model.MultiSchemaInfo) {
 	for i := len(info.SubJobs) - 1; i >= 0; i-- {
 		subJob := info.SubJobs[i]
-		proxyJob := subJob.ToProxyJob(parentJob, i)
-		if proxyJob.CanEmbeddedAnalyze() {
+		if subJob.CanEmbeddedAnalyze() {
 			subJob.NeedAnalyze = true
 			break
 		}
