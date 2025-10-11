@@ -836,7 +836,9 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 	if e.isVersionAware {
-		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+		intType := types.NewFieldType(mysql.TypeLonglong)
+		intType.SetFlag(mysql.NotNullFlag)
+		tps = append(tps, intType)
 	}
 	return tps
 }
@@ -1387,10 +1389,13 @@ func (w *indexWorker) getHandleOffsets(indexTpsLen int) ([]int, error) {
 		numColsWithoutPid = numColsWithoutPid - 1
 	}
 	handleOffset := make([]int, 0, len(w.idxLookup.handleCols))
-	for i := range w.idxLookup.handleCols {
-		if !w.idxLookup.isVersionAware {
+
+	if !w.idxLookup.isVersionAware {
+		for i := range w.idxLookup.handleCols {
 			handleOffset = append(handleOffset, numColsWithoutPid-len(w.idxLookup.handleCols)+i)
-		} else {
+		}
+	} else {
+		for i := range w.idxLookup.handleCols {
 			handleOffset = append(handleOffset, numColsWithoutPid-1-len(w.idxLookup.handleCols)+i)
 		}
 	}

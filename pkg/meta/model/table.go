@@ -94,7 +94,7 @@ var ExtraHandleName = ast.NewCIStr("_tidb_rowid")
 var ExtraPhysTblIDName = ast.NewCIStr("_tidb_tid")
 
 // ExtraVersionName is the name of ExtraVersion Column.
-var ExtraVersionName = ast.NewCIStr("_tidb_version_tici")
+var ExtraVersionName = ast.NewCIStr("_tidb_mvcc_version")
 
 // VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
 // When read column by vector index, sometimes there is no need to read vector column just need distance,

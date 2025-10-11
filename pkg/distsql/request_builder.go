@@ -642,8 +642,7 @@ func tableHandlesToKVRangesWithVersionMap(tid int64, handles []kv.Handle, handle
 			hints = append(hints, 1)
 		} else {
 			low := codec.EncodeInt(nil, handles[i].IntValue())
-			high := codec.EncodeInt(nil, handles[i].IntValue())
-			high = kv.Key(high).PrefixNext()
+			high := kv.Key(low).PrefixNext()
 			startKey := tablecodec.EncodeRowKey(tid, low)
 			endKey := tablecodec.EncodeRowKey(tid, high)
 			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
@@ -658,9 +657,6 @@ func tableHandlesToKVRangesWithVersionMap(tid int64, handles []kv.Handle, handle
 			panic(fmt.Sprintf("handle %v version %v is not uint64", handles[i], version))
 		}
 		currentRange := krs[len(krs)-1]
-		if !currentRange.IsPoint() {
-			panic(fmt.Sprintf("handle %v version %v is not point", handles[i], version))
-		}
 		// use start key as the key for version map, StartKey should never be changed
 		keyVersionMap[currentRange.StartKey.AsString()] = uint64Version
 	}
@@ -727,14 +723,13 @@ func partitionHandlesToKVRangesWithVersion(handles []kv.Handle, handleVersionMap
 		if commonHandle, ok := h.(*kv.CommonHandle); ok {
 			ran := kv.KeyRange{
 				StartKey: tablecodec.EncodeRowKey(pid, commonHandle.Encoded()),
-				EndKey:   tablecodec.EncodeRowKey(pid, append(commonHandle.Encoded(), 0)),
+				EndKey:   tablecodec.EncodeRowKey(pid, kv.Key(commonHandle.Encoded()).PrefixNext()),
 			}
 			krs = append(krs, ran)
 			hints = append(hints, 1)
 		} else {
 			low := codec.EncodeInt(nil, handles[i].IntValue())
-			high := codec.EncodeInt(nil, handles[i].IntValue())
-			high = kv.Key(high).PrefixNext()
+			high := kv.Key(low).PrefixNext()
 			startKey := tablecodec.EncodeRowKey(pid, low)
 			endKey := tablecodec.EncodeRowKey(pid, high)
 			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
@@ -749,9 +744,6 @@ func partitionHandlesToKVRangesWithVersion(handles []kv.Handle, handleVersionMap
 			panic(fmt.Sprintf("handle %v version %v is not uint64", handles[i], version))
 		}
 		currentRange := krs[len(krs)-1]
-		if !currentRange.IsPoint() {
-			panic(fmt.Sprintf("handle %v version %v is not point", handles[i], version))
-		}
 		// use start key as the key for version map, StartKey should never be changed
 		rangeVersionMap[currentRange.StartKey.AsString()] = uint64Version
 	}
