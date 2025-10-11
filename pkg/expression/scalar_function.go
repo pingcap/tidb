@@ -391,9 +391,21 @@ func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 		return false
 	}
 	if sf.hashcode != nil && fun.hashcode != nil {
+		if intest.InTest {
+			assertCheckHashCode(sf)
+			assertCheckHashCode(fun)
+		}
 		return bytes.Equal(sf.hashcode, fun.hashcode)
 	}
 	return sf.Function.equal(ctx, fun.Function)
+}
+
+func assertCheckHashCode(sf *ScalarFunction) {
+	intest.Assert(intest.InTest)
+	copyhashcode := make([]byte, len(sf.hashcode))
+	copy(copyhashcode, sf.hashcode)
+	ReHashCode(sf)
+	intest.Assert(bytes.Equal(sf.hashcode, copyhashcode), "HashCode should not change after ReHashCode is called")
 }
 
 // IsCorrelated implements Expression interface.
@@ -566,10 +578,7 @@ func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (typ
 func (sf *ScalarFunction) HashCode() []byte {
 	if len(sf.hashcode) > 0 {
 		if intest.InTest {
-			copyhashcode := make([]byte, len(sf.hashcode))
-			copy(copyhashcode, sf.hashcode)
-			ReHashCode(sf)
-			intest.Assert(bytes.Equal(sf.hashcode, copyhashcode), "HashCode should not change after ReHashCode is called")
+			assertCheckHashCode(sf)
 		}
 		return sf.hashcode
 	}
