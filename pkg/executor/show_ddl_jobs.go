@@ -297,6 +297,9 @@ func showCommentsFromJob(job *model.Job) string {
 		return ""
 	}
 	var labels []string
+	if job.AnalyzeState == model.AnalyzeStateRunning {
+		labels = append(labels, "analyzing")
+	}
 	if job.Type == model.ActionAddIndex ||
 		job.Type == model.ActionAddPrimaryKey {
 		switch m.ReorgTp {
