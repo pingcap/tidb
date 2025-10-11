@@ -2926,7 +2926,7 @@ var defaultSysVars = []*SysVar{
 		Value: BoolToOnOff(vardef.DefTiDBEnableAsyncMergeGlobalStats),
 		Type:  vardef.TypeBool,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-			vars.StmtCtx.AppendWarning(errors.New("The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future release; changing it is discouraged."))
+			vars.StmtCtx.AppendWarning(errors.NewNoStackError("The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future release; changing it is discouraged."))
 			return normalizedValue, nil
 		},
 		SetSession: func(s *SessionVars, val string) error {
