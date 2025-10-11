@@ -1773,7 +1773,7 @@ func (*builtinCastStringAsIntSig) handleOverflow(ctx EvalContext, origRes int64,
 			uval := uint64(math.MaxUint64)
 			res = int64(uval)
 		}
-		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", origStr)
+		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", strings.Clone(origStr))
 		err = ec.HandleErrorWithAlias(origErr, origErr, warnErr)
 	}
 	return
@@ -2489,7 +2489,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res
 		return res, isNull, err
 	default:
 		ec := errCtx(ctx)
-		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(types.TypeStr(b.tp.GetType()), val.String())
+		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(types.TypeStr(b.tp.GetType()), strings.Clone(val.String()))
 		return res, true, ec.HandleError(err)
 	}
 }

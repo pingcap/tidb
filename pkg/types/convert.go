@@ -410,7 +410,7 @@ func getValidIntPrefix(ctx Context, str string, isFuncCast bool) (string, error)
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(str) {
-		return valid, errors.Trace(ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", str)))
+		return valid, errors.Trace(ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", strings.Clone(str))))
 	}
 	return valid, nil
 }
@@ -560,7 +560,7 @@ func StrToFloat(ctx Context, str string, isFuncCast bool) (float64, error) {
 		if err2, ok := err1.(*strconv.NumError); ok {
 			// value will truncate to MAX/MIN if out of range.
 			if err2.Err == strconv.ErrRange {
-				err1 = ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", str))
+				err1 = ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", strings.Clone(str)))
 				if math.IsInf(f, 1) {
 					f = math.MaxFloat64
 				} else if math.IsInf(f, -1) {
@@ -582,13 +582,13 @@ func ConvertJSONToInt64(ctx Context, j BinaryJSON, unsigned bool) (int64, error)
 func ConvertJSONToInt(ctx Context, j BinaryJSON, unsigned bool, tp byte) (int64, error) {
 	switch j.TypeCode {
 	case JSONTypeCodeObject, JSONTypeCodeArray, JSONTypeCodeOpaque, JSONTypeCodeDate, JSONTypeCodeDatetime, JSONTypeCodeTimestamp, JSONTypeCodeDuration:
-		return 0, ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
+		return 0, ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", strings.Clone(j.String())))
 	case JSONTypeCodeLiteral:
 		switch j.Value[0] {
 		case JSONLiteralFalse:
 			return 0, nil
 		case JSONLiteralNil:
-			return 0, ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
+			return 0, ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", strings.Clone(j.String())))
 		default:
 			return 1, nil
 		}
@@ -748,7 +748,7 @@ func getValidFloatPrefix(ctx Context, s string, isFuncCast bool) (valid string, 
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(s) {
-		err = errors.Trace(ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", s)))
+		err = errors.Trace(ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", strings.Clone(s))))
 	}
 	return valid, err
 }

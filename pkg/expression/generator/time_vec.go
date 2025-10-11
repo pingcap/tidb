@@ -103,11 +103,15 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 	}
 	buf0 := result
 {{ else }}
-	buf0, err := b.bufAllocator.get()
+	buf0, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf0)
+		}
+	}()
 	if err := b.args[0].VecEval{{ .TypeA.TypeName }}(ctx, input, buf0); err != nil {
 		return err
 	}
@@ -124,11 +128,15 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 	}
 {{ end }}
 
-	buf1, err := b.bufAllocator.get()
+	buf1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 	if err := b.args[1].VecEval{{ .TypeB.TypeName }}(ctx, input, buf1); err != nil {
 		return err
 	}
@@ -360,18 +368,26 @@ func (b *{{.SigName}}) vectorized() bool {
 
 var timeDiff = template.Must(template.New("").Parse(`
 {{ define "BufAllocator0" }}
-	buf0, err := b.bufAllocator.get()
+	buf0, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf0)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf0)
+		}
+	}()
 {{ end }}
 {{ define "BufAllocator1" }}
-	buf1, err := b.bufAllocator.get()
+	buf1, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf1)
+		}
+	}()
 {{ end }}
 {{ define "ArgsVecEval" }}
 	if err := b.args[0].VecEval{{ .TypeA.TypeName }}(ctx, input, buf0); err != nil {

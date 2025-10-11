@@ -1827,17 +1827,17 @@ func ParseDuration(ctx Context, str string, fsp int) (Duration, bool, error) {
 		return d, isNull, nil
 	}
 	if !canFallbackToDateTime(rest) {
-		return d, isNull, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return d, isNull, ErrTruncatedWrongVal.GenWithStackByArgs("time", strings.Clone(str))
 	}
 
 	datetime, err := ParseDatetime(ctx, rest)
 	if err != nil {
-		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", strings.Clone(str))
 	}
 
 	d, err = datetime.ConvertToDuration()
 	if err != nil {
-		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", strings.Clone(str))
 	}
 
 	d, err = d.RoundFrac(fsp, ctx.Location())
