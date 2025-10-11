@@ -435,25 +435,6 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
-func (w *worker) doAnalyzeRunning(job *model.Job, tblInfo *model.TableInfo) {
-	// after all old index data are reorged. re-analyze it.
-	done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-	if done {
-		job.AnalyzeState = model.AnalyzeStateDone
-	}
-	// previously, when reorg is done, and before we set the state to public, we need all other sub-task to
-	// be ready as well which is via setting this job as NornRevertible, then we can continue skip current
-	// sub and process the others.
-	// And when all sub-task are ready, which means each of them could be public in one more ddl round. And
-	// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
-	// use the schema version generated once.
-	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible && job.AnalyzeState == model.AnalyzeStateDone {
-		// This is the final revertible state before public.
-		job.MarkNonRevertible()
-	}
-	// not done yet
-}
-
 func (w *worker) doModifyColumnTypeWithData(
 	jobCtx *jobContext,
 	job *model.Job,
@@ -691,6 +672,11 @@ func checkAndMarkNonRevertible(job *model.Job) {
 
 func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) bool {
 	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
+	if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.NeedAnalyze {
+		// If the job is a multi-schema-change job,
+		// we only analyze the table once after all schema changes are done.
+		return true
+	}
 	if doneCh == nil {
 		doneCh = make(chan struct{})
 		eg := util.NewErrorGroupWithRecover()
