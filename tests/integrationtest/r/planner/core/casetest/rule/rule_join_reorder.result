@@ -2170,8 +2170,6 @@ Warning	1815	There are no matching table names for (t1) in optimizer hint /*+ LE
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 select /*+ leading(t4) */ * from (select t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b;
 b	a	b
-Level	Code	Message
-Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 select /*+ leading(t3, t2@sel_2) */ * from (select t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b;
 b	a	b
 Level	Code	Message
