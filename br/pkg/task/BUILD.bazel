@@ -117,7 +117,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
-    shard_count = 40,
+    shard_count = 41,
     deps = [
         "//br/pkg/backup",
         "//br/pkg/config",
@@ -136,6 +136,7 @@ go_test(
         "//br/pkg/utiltest",
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

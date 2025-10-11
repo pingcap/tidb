@@ -712,7 +712,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	checksumProgress := int64(schemas.Len())
+	var checksumProgress int64 = 0
+	// if checksumMap is not empty, then checksumProgress will be set to len(schemas)
+	if len(checksumMap) > 0 {
+		checksumProgress = int64(schemas.Len())
+	}
+
 	if skipChecksum {
 		if isIncrementalBackup {
 			// Since we don't support checksum for incremental data, fast checksum should be skipped.
@@ -723,12 +728,14 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 	}
 	updateCh = g.StartProgress(ctx, "Checksum", checksumProgress, !cfg.LogProgress)
-	schemasConcurrency := min(cfg.TableConcurrency, uint(schemas.Len()))
 
-	err = schemas.BackupSchemas(
-		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, checksumMap, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
-	if err != nil {
-		return errors.Trace(err)
+	if schemas != nil && schemas.Len() > 0 {
+		schemasConcurrency := min(cfg.TableConcurrency, uint(schemas.Len()))
+		err = schemas.BackupSchemas(
+			ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, checksumMap, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	err = metawriter.FlushBackupMeta(ctx)
