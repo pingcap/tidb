@@ -256,15 +256,7 @@ func TestChecksumProgress(t *testing.T) {
 		require.Equal(t, schemasLen, checksumProgress, "checksumProgress should equal schemas.Len() when checksumMap is not empty")
 	}
 
-	// Test Case 3: Verify the logic handles nil schemas check correctly
-	// This simulates the check at line 732: if schemas != nil && schemas.Len() > 0
-	{
-		var schemas *backup.Schemas = nil
-		shouldProcessSchemas := schemas != nil && schemas.Len() > 0
-		require.False(t, shouldProcessSchemas, "Should not process when schemas is nil")
-	}
-
-	// Test Case 4: Verify schemas with length 0
+	// Test Case 3: Verify schemas with length 0
 	{
 		schemas := backup.NewBackupSchemas(func(kv.Storage, func(*model.DBInfo, *model.TableInfo)) error {
 			return nil
