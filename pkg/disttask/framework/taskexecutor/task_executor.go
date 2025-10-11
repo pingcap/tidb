@@ -284,10 +284,11 @@ func (e *BaseTaskExecutor) RunStep(resource *proto.StepResource) (resErr error) 
 	}
 	execute.SetFrameworkInfo(stepExecutor, resource)
 
+	err = stepExecutor.Init(runStepCtx)
 	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
-		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
+		err = errors.New("mockExecSubtaskInitEnvErr")
 	})
-	if err := stepExecutor.Init(runStepCtx); err != nil {
+	if err != nil {
 		if e.IsRetryableError(err) {
 			e.logger.Info("meet retryable err when init step executor", zap.Error(err))
 		} else {
