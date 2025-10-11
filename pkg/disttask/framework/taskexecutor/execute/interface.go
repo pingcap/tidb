@@ -33,7 +33,9 @@ type StepExecutor interface {
 	StepExecFrameworkInfo
 
 	// Init is used to initialize the environment.
-	// if failed, task executor will retry later.
+	// task executor will retry if the returned error is retryable, see
+	// IsRetryableError in TaskExecutor.Extension, else framework will mark random
+	// subtask as failed, to trigger task failure.
 	Init(context.Context) error
 	// RunSubtask is used to run the subtask.
 	RunSubtask(ctx context.Context, subtask *proto.Subtask) error
@@ -42,9 +44,13 @@ type StepExecutor interface {
 	RealtimeSummary() *SubtaskSummary
 
 	// OnFinished is used to handle the subtask when it is finished.
-	// The subtask meta can be updated in place.
+	// The subtask meta can be updated in place. only when OnFinished returns no
+	// err, a subtask can be marked as 'success', if it returns error, the subtask
+	// might be completely rerun, so don't put code that's prone to error in it.
 	OnFinished(ctx context.Context, subtask *proto.Subtask) error
-	// Cleanup is used to clean up the environment.
+	// Cleanup is used to clean up the environment for this step.
+	// the returned error will not affect task/subtask state, it's only logged,
+	// so don't put code that's prone to error in it.
 	Cleanup(context.Context) error
 }
 
