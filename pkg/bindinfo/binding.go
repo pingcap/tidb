@@ -15,7 +15,6 @@
 package bindinfo
 
 import (
-	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -244,12 +243,12 @@ func (b *Binding) size() float64 {
 // UpdateLastUsedAt is to update binding usage info when this binding is used.
 func (b *Binding) UpdateLastUsedAt() {
 	now := time.Now()
-	b.UsageInfo.LastUsedAt.Store(&now)
+	b.UsageInfo.LastUsedAt = &now
 }
 
 // UpdateLastSavedAt is to update the last saved time
 func (b *Binding) UpdateLastSavedAt(ts *time.Time) {
-	b.UsageInfo.LastSavedAt.Store(ts)
+	b.UsageInfo.LastSavedAt = ts
 }
 
 type bindingInfoUsageInfo struct {
@@ -257,7 +256,7 @@ type bindingInfoUsageInfo struct {
 	// It is nil if this binding has never been used.
 	// It is updated when this binding is used.
 	// It is used to update the `last_used_time` field in mysql.bind_info table.
-	LastUsedAt atomic.Pointer[time.Time]
+	LastUsedAt *time.Time
 	// LastSavedAt records the last time when this binding is saved into storage.
-	LastSavedAt atomic.Pointer[time.Time]
+	LastSavedAt *time.Time
 }

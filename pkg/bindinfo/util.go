@@ -62,11 +62,11 @@ func (u *globalBindingHandle) updateBindingUsageInfoToStorage(bindings []Binding
 		}
 	}()
 	for _, binding := range bindings {
-		lastUsed := binding.UsageInfo.LastUsedAt.Load()
+		lastUsed := binding.UsageInfo.LastUsedAt
 		if lastUsed == nil {
 			continue
 		}
-		lastSaved := binding.UsageInfo.LastSavedAt.Load()
+		lastSaved := binding.UsageInfo.LastSavedAt
 		if shouldUpdateBinding(lastSaved, lastUsed) {
 			toWrite = append(toWrite, binding)
 			cnt++
@@ -100,7 +100,7 @@ func (h *globalBindingHandle) updateBindingUsageInfoToStorageInternal(bindings [
 			return errors.Trace(err)
 		}
 		for _, binding := range bindings {
-			lastUsed := binding.UsageInfo.LastUsedAt.Load()
+			lastUsed := binding.UsageInfo.LastUsedAt
 			intest.Assert(lastUsed != nil)
 			err = saveBindingUsage(sctx, binding.SQLDigest, binding.PlanDigest, *lastUsed)
 			if err != nil {
