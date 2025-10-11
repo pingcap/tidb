@@ -712,7 +712,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	var checksumProgress int64 = 1
+	var checksumProgress int64 = 0
 	// if checksumMap is not empty, then checksumProgress will be set to len(schemas)
 	if len(checksumMap) > 0 {
 		checksumProgress = int64(schemas.Len())
