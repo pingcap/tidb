@@ -692,7 +692,9 @@ func (bc *Client) BuildBackupRangeAndSchema(
 		return BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup)
 	}
 	ranges, schemas, policies, err := BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup)
-	schemas.SetCheckpointChecksum(bc.checkpointMeta.CheckpointChecksum)
+	if schemas != nil {
+		schemas.SetCheckpointChecksum(bc.checkpointMeta.CheckpointChecksum)
+	}
 	return ranges, schemas, policies, errors.Trace(err)
 }
 
