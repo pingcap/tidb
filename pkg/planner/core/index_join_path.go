@@ -102,7 +102,7 @@ type indexJoinPathInfo struct {
 	innerJoinKeys         []*expression.Column
 	innerSchema           *expression.Schema
 	innerPushedConditions []expression.Expression
-	innerStats            *property.StatsInfo
+	innerTableStats       *property.StatsInfo // the original table's stats
 }
 
 // indexJoinPathTmp records temporary information when building IndexJoin.
@@ -316,7 +316,11 @@ func indexJoinPathConstructResult(
 	lastColManager *physicalop.ColWithCmpFuncManager,
 	usedColsLen int) *indexJoinPathResult {
 	var innerNDV float64
-	if stats := indexJoinInfo.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
+	if stats := indexJoinInfo.innerTableStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
+		// NOTE: use the original table's stats (DataSource.TableStats) to estimate NDV instead of stats
+		// AFTER APPLYING ALL FILTERS (DataSource.stats). Because here we'll use the NDV to measure how many
+		// rows we need to scan in double-read, and these filters will be applied after the scanning, so we need to
+		// ignore these filters to avoid underestimation. See #63869.
 		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(
 			sctx, path.IdxCols[:usedColsLen], indexJoinInfo.innerSchema, stats)
 	}
@@ -668,7 +672,7 @@ func getBestIndexJoinPathResultByProp(
 		innerJoinKeys:         indexJoinProp.InnerJoinKeys,
 		innerPushedConditions: innerDS.PushedDownConds,
 		innerSchema:           innerDS.Schema(),
-		innerStats:            innerDS.StatsInfo(),
+		innerTableStats:       innerDS.TableStats,
 	}
 	var bestResult *indexJoinPathResult
 	for _, path := range innerDS.PossibleAccessPaths {
@@ -716,7 +720,7 @@ func getBestIndexJoinPathResult(
 		innerJoinKeys:         innerJoinKeys,
 		innerPushedConditions: innerChild.PushedDownConds,
 		innerSchema:           innerChild.Schema(),
-		innerStats:            innerChild.StatsInfo(),
+		innerTableStats:       innerChild.TableStats,
 	}
 	var bestResult *indexJoinPathResult
 	for _, path := range innerChild.PossibleAccessPaths {
