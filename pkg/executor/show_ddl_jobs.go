@@ -304,13 +304,16 @@ func showCommentsFromJob(job *model.Job) string {
 	if m == nil {
 		return ""
 	}
+	var labels []string
+	if job.AnalyzeState == model.AnalyzeStateRunning {
+		labels = append(labels, "analyzing")
+	}
 	isAddingIndex := job.Type == model.ActionAddIndex ||
 		job.Type == model.ActionAddPrimaryKey
 	if isAddingIndex && kerneltype.IsNextGen() {
 		// The parameters are determined automatically in next-gen.
-		return ""
+		return strings.Join(labels, ", ")
 	}
-	var labels []string
 	if isAddingIndex {
 		switch m.ReorgTp {
 		case model.ReorgTypeTxn:
