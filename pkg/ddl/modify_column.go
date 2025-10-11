@@ -435,25 +435,6 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
-func (w *worker) doAnalyzeRunning(job *model.Job, tblInfo *model.TableInfo) {
-	// after all old index data are reorged. re-analyze it.
-	done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-	if done {
-		job.AnalyzeState = model.AnalyzeStateDone
-	}
-	// previously, when reorg is done, and before we set the state to public, we need all other sub-task to
-	// be ready as well which is via setting this job as NornRevertible, then we can continue skip current
-	// sub and process the others.
-	// And when all sub-task are ready, which means each of them could be public in one more ddl round. And
-	// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
-	// use the schema version generated once.
-	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible && job.AnalyzeState == model.AnalyzeStateDone {
-		// This is the final revertible state before public.
-		job.MarkNonRevertible()
-	}
-	// not done yet
-}
-
 func (w *worker) doModifyColumnTypeWithData(
 	jobCtx *jobContext,
 	job *model.Job,
@@ -570,7 +551,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		switch job.AnalyzeState {
+		switch job.ReorgMeta.AnalyzeState {
 		case model.AnalyzeStateNone:
 			// reorg the index data.
 			var done bool
@@ -579,16 +560,16 @@ func (w *worker) doModifyColumnTypeWithData(
 				return ver, err
 			}
 			if checkAnalyzeNecessary(job, changingIdxs, tblInfo) {
-				job.AnalyzeState = model.AnalyzeStateRunning
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 			} else {
-				job.AnalyzeState = model.AnalyzeStateSkipped
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
 			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
 			if done {
-				job.AnalyzeState = model.AnalyzeStateDone
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
@@ -625,7 +606,8 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
-			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, job.AnalyzeState == model.AnalyzeStateDone)
+			analyzed := job.ReorgMeta.AnalyzeState == model.AnalyzeStateDone
+			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
 			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)

@@ -1162,7 +1162,7 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		switch job.AnalyzeState {
+		switch job.ReorgMeta.AnalyzeState {
 		case model.AnalyzeStateNone:
 			// reorg the index data.
 			var done bool
@@ -1171,16 +1171,16 @@ SwitchIndexState:
 				return ver, err
 			}
 			if checkAnalyzeNecessary(job, allIndexInfos, tblInfo) {
-				job.AnalyzeState = model.AnalyzeStateRunning
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 			} else {
-				job.AnalyzeState = model.AnalyzeStateSkipped
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
 			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
 			if done {
-				job.AnalyzeState = model.AnalyzeStateDone
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
@@ -1229,7 +1229,8 @@ SwitchIndexState:
 			}
 			job.FillFinishedArgs(a)
 
-			addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos, job.AnalyzeState == model.AnalyzeStateDone)
+			analyzed := job.ReorgMeta.AnalyzeState == model.AnalyzeStateDone
+			addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos, analyzed)
 			err2 := asyncNotifyEvent(jobCtx, addIndexEvent, job, noSubJob, w.sess)
 			if err2 != nil {
 				return ver, errors.Trace(err2)
