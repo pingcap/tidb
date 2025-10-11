@@ -209,6 +209,7 @@ func TestAddIndexShowAnalyzeProgress(t *testing.T) {
 			jobID = job.ID
 		}
 	})
+	analyzed := false
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/saveAnalyzeResultToStorage", func() {
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
@@ -218,6 +219,8 @@ func TestAddIndexShowAnalyzeProgress(t *testing.T) {
 		showRs := tk2.MustQuery(fmt.Sprintf("admin show ddl jobs where job_id = %d", jobID)).Rows()
 		show := showRs[0][12].(string)
 		require.Contains(t, show, "analyzing")
+		analyzed = true
 	})
 	tk1.MustExec("alter table t modify column b smallint;")
+	require.True(t, analyzed)
 }
