@@ -775,6 +775,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		leadingJoinOrder                                                                []HintedTable
 		hjBuildTables, hjProbeTables                                                    []HintedTable
 		leadingHintCnt                                                                  int
+		leadingList                                                                     *ast.LeadingList
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -915,6 +916,12 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintLeading:
 			if leadingHintCnt == 0 {
 				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+				// get LeadingList
+				if hint.HintData != nil {
+					if list, ok := hint.HintData.(*ast.LeadingList); ok {
+						leadingList = list
+					}
+				}
 			}
 			leadingHintCnt++
 		case HintSemiJoinRewrite:
@@ -961,6 +968,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		PreferLimitToCop:   preferLimitToCop,
 		CTEMerge:           cteMerge,
 		LeadingJoinOrder:   leadingJoinOrder,
+		LeadingList:        leadingList,
 		HJBuild:            hjBuildTables,
 		HJProbe:            hjProbeTables,
 	}, subQueryHintFlags, nil
