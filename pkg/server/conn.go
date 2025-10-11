@@ -501,6 +501,9 @@ func (cc *clientConn) writePacket(data []byte) error {
 			failpoint.Return(nil)
 		}
 	})
+	if cc.getCtx() != nil {
+		cc.ctx.GetSessionVars().OutPacketBytes.Add(uint64(len(data)))
+	}
 	return cc.pkt.WritePacket(data)
 }
 
@@ -1286,6 +1289,8 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	defer func() {
 		// reset killed for each request
 		cc.ctx.GetSessionVars().SQLKiller.Reset()
+		cc.ctx.GetSessionVars().InPacketBytes.Store(0)
+		cc.ctx.GetSessionVars().OutPacketBytes.Store(0)
 	}()
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
@@ -1308,6 +1313,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.mu.Unlock()
 
 	cc.lastPacket = data
+	cc.ctx.GetSessionVars().InPacketBytes.Store(uint64(len(data)))
 	cmd := data[0]
 	data = data[1:]
 	if topsqlstate.TopSQLEnabled() {
