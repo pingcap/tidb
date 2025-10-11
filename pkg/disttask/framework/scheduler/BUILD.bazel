@@ -57,7 +57,11 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
+<<<<<<< HEAD
     shard_count = 34,
+=======
+    shard_count = 42,
+>>>>>>> 50a1e5a631d (dxf: fix task cannot be cancelled when the number of active scheduler reached the limit (#63897))
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/mock",

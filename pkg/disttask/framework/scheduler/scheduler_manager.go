@@ -209,6 +209,7 @@ func (sm *Manager) scheduleTaskLoop() {
 		case <-handle.TaskChangedCh:
 		}
 
+<<<<<<< HEAD
 		taskCnt := sm.getSchedulerCount()
 		if taskCnt >= proto.MaxConcurrentTask {
 			sm.logger.Debug("scheduled tasks reached limit",
@@ -216,6 +217,9 @@ func (sm *Manager) scheduleTaskLoop() {
 			continue
 		}
 
+=======
+		failpoint.InjectCall("beforeGetSchedulableTasks")
+>>>>>>> 50a1e5a631d (dxf: fix task cannot be cancelled when the number of active scheduler reached the limit (#63897))
 		schedulableTasks, err := sm.getSchedulableTasks()
 		if err != nil {
 			continue
@@ -229,7 +233,15 @@ func (sm *Manager) scheduleTaskLoop() {
 }
 
 func (sm *Manager) getSchedulableTasks() ([]*proto.TaskBase, error) {
-	tasks, err := sm.taskMgr.GetTopUnfinishedTasks(sm.ctx)
+	getTasksFn := sm.taskMgr.GetTopUnfinishedTasks
+	taskCnt := sm.getSchedulerCount()
+	if taskCnt >= proto.MaxConcurrentTask {
+		// when we have reached the limit of concurrent tasks, we only handle
+		// tasks in states that don't need resources, e.g. reverting/cancelling/
+		// pausing/modifying.
+		getTasksFn = sm.taskMgr.GetTopNoNeedResourceTasks
+	}
+	tasks, err := getTasksFn(sm.ctx)
 	if err != nil {
 		sm.logger.Warn("get unfinished tasks failed", zap.Error(err))
 		return nil, err
@@ -264,15 +276,15 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 		return err
 	}
 	for _, task := range schedulableTasks {
-		taskCnt := sm.getSchedulerCount()
-		if taskCnt >= proto.MaxConcurrentTask {
-			break
-		}
 		var reservedExecID string
 		allocateSlots := true
 		var ok bool
 		switch task.State {
 		case proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateResuming:
+			taskCnt := sm.getSchedulerCount()
+			if taskCnt >= proto.MaxConcurrentTask {
+				continue
+			}
 			reservedExecID, ok = sm.slotMgr.canReserve(task)
 			if !ok {
 				// task of lower rank might be able to be scheduled.
