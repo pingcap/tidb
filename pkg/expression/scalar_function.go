@@ -380,11 +380,18 @@ func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 	if !ok {
 		return false
 	}
+	// If they are the same object, they must be equal.
+	if sf == fun {
+		return true
+	}
 	if sf.FuncName.L != fun.FuncName.L {
 		return false
 	}
 	if !sf.RetType.Equal(fun.RetType) {
 		return false
+	}
+	if sf.hashcode != nil && fun.hashcode != nil {
+		return bytes.Equal(sf.hashcode, fun.hashcode)
 	}
 	return sf.Function.equal(ctx, fun.Function)
 }
