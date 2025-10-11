@@ -2570,12 +2570,18 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBRedactLog, Value: vardef.DefTiDBRedactLog, Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On, vardef.Marker}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		s.EnableRedactLog = val
-		// NOTE: switch of errors is a singleton, thus we can not set it for different sessions
-		errors.RedactLogEnabled.Store(val)
-		return nil
-	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBRedactLog, Value: vardef.DefTiDBRedactLog, Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On, vardef.Marker}, InternalSessionVariable: true,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			s.EnableRedactLog = val
+			// NOTE: switch of errors is a singleton, thus we can not set it for different sessions
+			errors.RedactLogEnabled.Store(val)
+			return nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableRedactLog = val
+			return nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBShardAllocateStep, Value: strconv.Itoa(vardef.DefTiDBShardAllocateStep), Type: vardef.TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), SetSession: func(s *SessionVars, val string) error {
 		s.ShardAllocateStep = TidbOptInt64(val, vardef.DefTiDBShardAllocateStep)
 		return nil

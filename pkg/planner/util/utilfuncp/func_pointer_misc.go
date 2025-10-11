@@ -65,10 +65,6 @@ var FindBestTask4LogicalShowDDLJobs func(lp base.LogicalPlan,
 var FindBestTask4LogicalCTE func(lp base.LogicalPlan,
 	prop *property.PhysicalProperty) (t base.Task, err error)
 
-// FindBestTask4LogicalTableDual will be called by LogicalTableDual in logicalOp pkg.
-var FindBestTask4LogicalTableDual func(lp base.LogicalPlan,
-	prop *property.PhysicalProperty) (base.Task, error)
-
 // FindBestTask4LogicalDataSource will be called by LogicalDataSource in logicalOp pkg.
 var FindBestTask4LogicalDataSource func(lp base.LogicalPlan,
 	prop *property.PhysicalProperty) (t base.Task, err error)

@@ -1096,7 +1096,7 @@ func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost floa
 	}
 
 	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
-	t, err := logic.FindBestTask(prop)
+	t, err := physicalop.FindBestTask(logic, prop)
 	if err != nil {
 		return nil, 0, err
 	}
