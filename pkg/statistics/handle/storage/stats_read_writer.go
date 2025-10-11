@@ -111,19 +111,26 @@ func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) 
 
 	// Update stats meta to avoid other nodes missing the delta update.
 	statsVer := uint64(0)
-	err := util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, tableID)
-		failpoint.Inject("failToSaveStats", func(val failpoint.Value) {
-			if val.(bool) {
-				err = errors.New("mock update stats meta version failed")
+	var err error
+	for range 10 {
+		err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+			startTS, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, tableID)
+			failpoint.Inject("failToSaveStats", func(val failpoint.Value) {
+				if val.(bool) {
+					err = errors.New("mock update stats meta version failed")
+				}
+			})
+			if err != nil {
+				return errors.Trace(err)
 			}
-		})
-		if err != nil {
-			return errors.Trace(err)
+			statsVer = startTS
+			return nil
+		}, util.FlagWrapTxn)
+		if err == nil {
+			break
 		}
-		statsVer = startTS
-		return nil
-	}, util.FlagWrapTxn)
+		time.Sleep(10 * time.Millisecond)
+	}
 	if err != nil {
 		statslogutil.StatsLogger().Error("Failed to update stats meta version for slow saving, the stats cache on other TiDB nodes may be inconsistent",
 			zap.Int64("physicalID", tableID),
@@ -143,10 +150,16 @@ func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) 
 func (s *statsReadWriter) SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
 	var statsVer uint64
 	start := time.Now()
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		statsVer, err = SaveAnalyzeResultToStorage(sctx, results, analyzeSnapshot)
-		return err
-	}, util.FlagWrapTxn)
+	for range 10 {
+		err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+			statsVer, err = SaveAnalyzeResultToStorage(sctx, results, analyzeSnapshot)
+			return err
+		}, util.FlagWrapTxn)
+		if err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if err == nil && statsVer != 0 {
 		tableID := results.TableID.GetStatisticsID()
 		// Check if saving was slow and update stats version if needed
