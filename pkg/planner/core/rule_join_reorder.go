@@ -401,22 +401,18 @@ type baseSingleGroupJoinOrderSolver struct {
 	*basicJoinGroupInfo
 }
 
-// give priority to processing nested LeadingList; otherwise, fall back to the flat logic.
+// generateLeadingJoinGroup processes both flat and nested leading hints through the unified LeadingList structure
 func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(
 	curJoinGroup []base.LogicalPlan, hintInfo *h.PlanHints, hasOuterJoin bool,
 ) (bool, []base.LogicalPlan) {
-	if hintInfo == nil {
+	if hintInfo == nil || hintInfo.LeadingList == nil {
 		return false, nil
 	}
-	// nested LeadingList;
-	if hintInfo.LeadingList != nil {
-		return s.generateNestedLeadingJoinGroup(curJoinGroup, hintInfo.LeadingList, hasOuterJoin)
-	}
-	// flat logic
-	return s.generateFlatLeadingJoinGroup(curJoinGroup, hintInfo.LeadingJoinOrder, hasOuterJoin)
+	// Use the unified nested processing for both flat and nested structures
+	return s.generateNestedLeadingJoinGroup(curJoinGroup, hintInfo.LeadingList, hasOuterJoin)
 }
 
-// generateNestedLeadingJoinGroup processing nested LEADING hint structure
+// generateNestedLeadingJoinGroup processes both flat and nested LEADING hint structures
 func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 	curJoinGroup []base.LogicalPlan, leadingList *ast.LeadingList, hasOuterJoin bool,
 ) (bool, []base.LogicalPlan) {
@@ -458,6 +454,7 @@ func (s *baseSingleGroupJoinOrderSolver) buildLeadingTreeFromList(
 				// connect the current table to the existing join tree
 				lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, tablePlan)
 				if hasOuterJoin && usedEdges == nil {
+					// If the joinGroups contain the outer join, we disable the cartesian product.
 					return nil, availableGroups, false
 				}
 				var rem []expression.Expression
@@ -477,6 +474,7 @@ func (s *baseSingleGroupJoinOrderSolver) buildLeadingTreeFromList(
 			} else {
 				lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, nestedJoin)
 				if hasOuterJoin && usedEdges == nil {
+					// If the joinGroups contain the outer join, we disable the cartesian product.
 					return nil, availableGroups, false
 				}
 				var rem []expression.Expression
@@ -507,8 +505,10 @@ func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
 		tableAlias := util.ExtractTableAlias(joinGroup, joinGroup.QueryBlockOffset())
 		if tableAlias != nil {
 			// Match db/table (supports astTbl.DBName == "*")
-			if (astTbl.DBName.L == tableAlias.DBName.L || astTbl.DBName.L == "*") &&
-				astTbl.TableName.L == tableAlias.TblName.L {
+			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == tableAlias.DBName.L || astTbl.DBName.L == "*"
+			tableMatch := astTbl.TableName.L == tableAlias.TblName.L
+
+			if dbMatch && tableMatch {
 				newPlans := append(plans[:i], plans[i+1:]...)
 				return joinGroup, newPlans, true
 			}
@@ -518,89 +518,15 @@ func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
 		blockOffset := joinGroup.QueryBlockOffset()
 		if blockOffset > 1 && blockOffset < len(queryBlockNames) {
 			blockName := queryBlockNames[blockOffset]
-			// blockName from PlannerSelectBlockAsName which type is ast.HintTable（DBName/TableName）
-			if astTbl.DBName.L == blockName.DBName.L && astTbl.TableName.L == blockName.TableName.L {
+			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == blockName.DBName.L
+			tableMatch := astTbl.TableName.L == blockName.TableName.L
+			if dbMatch && tableMatch {
 				newPlans := append(plans[:i], plans[i+1:]...)
 				return joinGroup, newPlans, true
 			}
 		}
 	}
 	return nil, plans, false
-}
-
-// generateFlatLeadingJoinGroup stay the same with the old leading logic，hintTables from hintInfo.LeadingJoinOrder ([]hint.HintedTable)
-func (s *baseSingleGroupJoinOrderSolver) generateFlatLeadingJoinGroup(
-	curJoinGroup []base.LogicalPlan, hintTables []h.HintedTable, hasOuterJoin bool,
-) (bool, []base.LogicalPlan) {
-	var leadingJoinGroup []base.LogicalPlan
-	leftJoinGroup := make([]base.LogicalPlan, len(curJoinGroup))
-	copy(leftJoinGroup, curJoinGroup)
-	var queryBlockNames []ast.HintTable
-	if p := s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
-		queryBlockNames = *p
-	}
-	for _, hintTbl := range hintTables {
-		match := false
-		for i, joinGroup := range leftJoinGroup {
-			tableAlias := util.ExtractTableAlias(joinGroup, joinGroup.QueryBlockOffset())
-			if tableAlias == nil {
-				continue
-			}
-			if (hintTbl.DBName.L == tableAlias.DBName.L || hintTbl.DBName.L == "*") && hintTbl.TblName.L == tableAlias.TblName.L && hintTbl.SelectOffset == tableAlias.SelectOffset {
-				match = true
-				leadingJoinGroup = append(leadingJoinGroup, joinGroup)
-				leftJoinGroup = slices.Delete(leftJoinGroup, i, i+1)
-				break
-			}
-		}
-		if match {
-			continue
-		}
-
-		// consider query block alias: select /*+ leading(t1, t2) */ * from (select ...) t1, t2 ...
-		groupIdx := -1
-		for i, joinGroup := range leftJoinGroup {
-			blockOffset := joinGroup.QueryBlockOffset()
-			if blockOffset > 1 && blockOffset < len(queryBlockNames) {
-				blockName := queryBlockNames[blockOffset]
-				if hintTbl.DBName.L == blockName.DBName.L && hintTbl.TblName.L == blockName.TableName.L {
-					// this can happen when multiple join groups are from the same block, for example:
-					//   select /*+ leading(tx) */ * from (select * from t1, t2 ...) tx, ...
-					// `tx` is split to 2 join groups `t1` and `t2`, and they have the same block offset.
-					// TODO: currently we skip this case for simplification, we can support it in the future.
-					if groupIdx != -1 {
-						groupIdx = -1
-						break
-					}
-					groupIdx = i
-				}
-			}
-		}
-		if groupIdx != -1 {
-			leadingJoinGroup = append(leadingJoinGroup, leftJoinGroup[groupIdx])
-			leftJoinGroup = slices.Delete(leftJoinGroup, groupIdx, groupIdx+1)
-		}
-	}
-	if len(leadingJoinGroup) != len(hintTables) || leadingJoinGroup == nil {
-		return false, nil
-	}
-	leadingJoin := leadingJoinGroup[0]
-	leadingJoinGroup = leadingJoinGroup[1:]
-	for len(leadingJoinGroup) > 0 {
-		var usedEdges []*expression.ScalarFunction
-		var joinType *joinTypeWithExtMsg
-		leadingJoin, leadingJoinGroup[0], usedEdges, joinType = s.checkConnection(leadingJoin, leadingJoinGroup[0])
-		if hasOuterJoin && usedEdges == nil {
-			// If the joinGroups contain the outer join, we disable the cartesian product.
-			return false, nil
-		}
-		var rem []expression.Expression
-		leadingJoin, rem = s.makeJoin(leadingJoin, leadingJoinGroup[0], usedEdges, joinType)
-		s.otherConds = rem
-		leadingJoinGroup = leadingJoinGroup[1:]
-	}
-	s.leadingJoinGroup = leadingJoin
-	return true, leftJoinGroup
 }
 
 // generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
