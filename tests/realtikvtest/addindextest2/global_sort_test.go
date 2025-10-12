@@ -294,8 +294,15 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		tk.MustExec("set @@session.tidb_scatter_region = ''")
 	})
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/collectTaskError", "return(true)")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRegionBatch", `return(1)`)
+	testErrStep := proto.StepInit
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/changeRunSubtaskError",
+		func(e taskexecutor.TaskExecutor, errP *error) {
+			if errP != nil {
+				testErrStep = e.GetTaskBase().Step
+			}
+		},
+	)
 
 	testcases := []struct {
 		caseName        string
@@ -348,22 +355,20 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	}
 
 	checkSubtaskStepAndReset := func(t *testing.T, expectedStep proto.Step) {
-		errorSubtask := taskexecutor.GetErrorSubtask4Test.Swap(nil)
-		require.NotEmpty(t, errorSubtask)
-		require.Equal(t, expectedStep, errorSubtask.Step)
+		require.Equal(t, expectedStep, testErrStep)
+		testErrStep = proto.StepInit
 	}
 
 	checkRedactMsgAndReset := func(addUniqueKeySQL string) {
 		tk.MustExec("set session tidb_redact_log = on;")
 		tk.MustContainErrMsg(addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
 		tk.MustExec("set session tidb_redact_log = off;")
-		taskexecutor.GetErrorSubtask4Test.Store(nil)
+		testErrStep = proto.StepInit
 	}
 
 	for _, tc := range testcases {
 		t.Run(tc.caseName, func(tt *testing.T) {
 			// init
-			taskexecutor.GetErrorSubtask4Test.Store(nil)
 			tk.MustExec(tc.createTableSQL)
 			tk.MustExec(tc.initDataSQL)
 			tt.Cleanup(func() {

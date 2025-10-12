@@ -55,11 +55,6 @@ var (
 	ErrNonIdempotentSubtask = errors.New("subtask in running state and is not idempotent")
 )
 
-var (
-	// GetErrorSubtask4Test is used for UT to collect error
-	GetErrorSubtask4Test atomic.Pointer[proto.TaskBase]
-)
-
 // BaseTaskExecutor is the base implementation of TaskExecutor.
 type BaseTaskExecutor struct {
 	// id, it's the same as server id now, i.e. host:port.
