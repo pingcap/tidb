@@ -210,7 +210,6 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *logicalop.
 	}
 	// Currently, join predicates only need meta info like NDV.
 	c.addPredicateColumnsFromExpressions(exprs, false)
-	// Note: Join columns already extracted in collectFromPlan before visiting children
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logicalop.LogicalUnionAll) {
@@ -236,8 +235,6 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 	// derive the new current op's new asked column groups accordingly.
 	curColGroups := lp.ExtractColGroups(askedColGroups)
 
-	// IMPORTANT: Extract sort and join columns BEFORE visiting children
-	// so that DataSource nodes can see them when we traverse down
 	switch x := lp.(type) {
 	case *logicalop.LogicalSort:
 		// Extract and store sort columns to propagate to DataSource
@@ -253,26 +250,6 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 			sortExprs = append(sortExprs, item.Expr)
 		}
 		c.sortColumns = expression.ExtractColumnsFromExpressions(sortExprs, nil)
-	case *logicalop.LogicalJoin:
-		// Extract and store join columns to propagate to DataSource
-		// Note: LeftConditions and RightConditions are not join conditions between tables,
-		// they are filters on individual tables, so we only extract from EqualConditions and OtherConditions
-		joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
-		for _, cond := range x.EqualConditions {
-			joinExprs = append(joinExprs, cond)
-		}
-		for _, cond := range x.OtherConditions {
-			joinExprs = append(joinExprs, cond)
-		}
-	case *logicalop.LogicalApply:
-		// Extract and store join columns to propagate to DataSource
-		joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
-		for _, cond := range x.EqualConditions {
-			joinExprs = append(joinExprs, cond)
-		}
-		for _, cond := range x.OtherConditions {
-			joinExprs = append(joinExprs, cond)
-		}
 	}
 
 	for _, child := range lp.Children() {
