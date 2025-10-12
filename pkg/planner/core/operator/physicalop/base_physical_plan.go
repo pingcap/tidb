@@ -487,7 +487,7 @@ func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask
 	case *logicalop.LogicalCTETable:
 		return utilfuncp.FindBestTask4LogicalCTETable(e, prop)
 	case *logicalop.LogicalMemTable:
-		return FindBestTask4LogicalMemTable(e, prop)
+		return findBestTask4LogicalMemTable(lop, prop)
 	case *logicalop.LogicalTableDual:
 		return findBestTask4LogicalTableDual(lop, prop)
 	case *logicalop.DataSource:

@@ -81,8 +81,8 @@ func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
 	return ""
 }
 
-// FindBestTask4LogicalMemTable converts the LogicalMemTable to PhysicalMemTable.
-func FindBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
+// findBestTask4LogicalMemTable converts the LogicalMemTable to PhysicalMemTable.
+func findBestTask4LogicalMemTable(super *logicalop.LogicalMemTable, prop *property.PhysicalProperty) (t base.Task, err error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, nil
