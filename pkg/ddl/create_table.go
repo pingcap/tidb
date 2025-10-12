@@ -927,7 +927,7 @@ func setTemporaryType(tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
 		tbInfo.TempTableType = model.TempTableGlobal
 		// "create global temporary table ... on commit preserve rows"
 		if !s.OnCommitDelete {
-			return errors.Trace(dbterror.ErrUnsupportedOnCommitPreserve)
+			tbInfo.TempTableType = model.TempTableGlobalSession
 		}
 	case ast.TemporaryLocal:
 		tbInfo.TempTableType = model.TempTableLocal
