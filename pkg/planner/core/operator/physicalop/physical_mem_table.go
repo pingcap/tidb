@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
@@ -99,7 +98,7 @@ func findBestTask4LogicalMemTable(super *logicalop.LogicalMemTable, prop *proper
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
 		// still use the super.
-		t, err = utilfuncp.FindBestTask4BaseLogicalPlan(super, prop)
+		t, err = FindBestTask(super, prop)
 		if err != nil {
 			return nil, err
 		}
