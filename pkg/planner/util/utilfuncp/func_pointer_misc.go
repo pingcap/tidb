@@ -461,9 +461,6 @@ var Attach2Task4PhysicalIndexMergeJoin func(pp base.PhysicalPlan, tasks ...base.
 
 // ****************************************** task related ***********************************************
 
-// EnforceProperty will be called by FindBestTask4LogicalMemTable in physicalOp pkg.
-var EnforceProperty func(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanContext, fd *funcdep.FDSet) base.Task
-
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
 var AttachPlan2Task func(p base.PhysicalPlan, t base.Task) base.Task
 
