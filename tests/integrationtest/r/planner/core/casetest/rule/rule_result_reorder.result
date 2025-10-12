@@ -276,7 +276,8 @@ id	task	access object	operator info
 Batch_Point_Get	root	table:t1, index:b(b)	keep order:true, desc:false
 explain format='plan_tree' select b from t1 where b in (1, 2, 3, 4);
 id	task	access object	operator info
-Batch_Point_Get	root	table:t1, index:b(b)	keep order:true, desc:false
+IndexReader	root		index:IndexRangeScan
+└─IndexRangeScan	cop[tikv]	table:t1, index:b(b)	range:[1,4], keep order:true, stats:pseudo
 explain format='plan_tree' select * from t1 where a > 10 union all select * from t2 where b > 20;
 id	task	access object	operator info
 Sort	root		Column#9, Column#10, Column#11, Column#12
