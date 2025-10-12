@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -80,7 +80,7 @@ type IndexLookUpJoin struct {
 	innerPtrBytes [][]byte
 
 	// LastColHelper store the information for last col if there's complicated filter like col > x_col and col < x_col + 100.
-	LastColHelper *plannercore.ColWithCmpFuncManager
+	LastColHelper *physicalop.ColWithCmpFuncManager
 
 	memTracker *memory.Tracker // track memory usage.
 
@@ -102,7 +102,7 @@ type OuterCtx struct {
 // is added to avoid cycle import
 type IndexJoinExecutorBuilder interface {
 	BuildExecutorForIndexJoin(ctx context.Context, lookUpContents []*IndexJoinLookUpContent,
-		indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error)
+		indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error)
 }
 
 // InnerCtx is the inner side ctx used in index lookup join
@@ -163,7 +163,7 @@ type innerWorker struct {
 	lookup      *IndexLookUpJoin
 
 	indexRanges           []*ranger.Range
-	nextColCompareFilters *plannercore.ColWithCmpFuncManager
+	nextColCompareFilters *physicalop.ColWithCmpFuncManager
 	keyOff2IdxOff         []int
 	stats                 *innerWorkerRuntimeStats
 	memTracker            *memory.Tracker
@@ -380,7 +380,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			ow.lookup.Finished.Store(true)
-			logutil.Logger(ctx).Error("outerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("outerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
 			err := util.GetRecoverError(r)
 			task.doneCh <- err
@@ -509,7 +509,7 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			iw.lookup.Finished.Store(true)
-			logutil.Logger(ctx).Error("innerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("innerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err := util.GetRecoverError(r)
 			// "task != nil" is guaranteed when panic happened.
 			task.doneCh <- err

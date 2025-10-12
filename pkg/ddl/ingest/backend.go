@@ -42,9 +42,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// MockDMLExecutionStateBeforeImport is a failpoint to mock the DML execution state before import.
-var MockDMLExecutionStateBeforeImport func()
-
 // BackendCtx is the backend context for one add index reorg task.
 type BackendCtx interface {
 	// Register create a new engineInfo for each index ID and register it to the
@@ -220,11 +217,7 @@ func (bc *litBackendCtx) Ingest(ctx context.Context) error {
 		defer release()
 	}
 
-	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
-		if MockDMLExecutionStateBeforeImport != nil {
-			MockDMLExecutionStateBeforeImport()
-		}
-	})
+	failpoint.InjectCall("beforeBackendIngest")
 
 	err = bc.unsafeImportAndResetAllEngines(ctx)
 	if err != nil {
@@ -277,7 +270,7 @@ func (bc *litBackendCtx) unsafeImportAndResetAllEngines(ctx context.Context) err
 }
 
 func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInfo) error {
-	logger := log.FromContext(bc.ctx).With(
+	logger := log.Wrap(logutil.Logger(bc.ctx)).With(
 		zap.Stringer("engineUUID", ei.uuid),
 	)
 	logger.Info(LitInfoUnsafeImport,

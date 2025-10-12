@@ -64,6 +64,13 @@ import (
 //     trailing 1 is for RS divided by odd number.
 //   - else RangeS = floor(TempRangeS / RS) * RS.
 //
+// Note: below calculation only consider the memory taken by the KV pair itself,
+// golang takes 24*2 = 48B for each KV pair, so if the size of KV pair itself is
+// very small, the real memory taken by each KV pair might be doubled, so it's
+// only an estimation.
+// such as, for a simple table "create table t(id bigint primary key, v bigint, index(v))",
+// each index KV is 38B, golang need 86B memory to store it.
+//
 // RangeS for different region size and cpu:mem ratio, the number in parentheses
 // is the number of SST files per region:
 //
@@ -151,6 +158,7 @@ type Engine struct {
 	dupFile         string
 	dupWriter       storage.ExternalFileWriter
 	dupKVStore      *KeyValueStore
+	onReaderClose   OnReaderCloseFunc
 }
 
 var _ engineapi.Engine = (*Engine)(nil)
@@ -161,6 +169,7 @@ const (
 
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
+	ctx context.Context,
 	storage storage.ExternalStorage,
 	dataFiles []string,
 	statsFiles []string,
@@ -176,10 +185,11 @@ func NewExternalEngine(
 	memCapacity int64,
 	onDup engineapi.OnDuplicateKey,
 	filePrefix string,
+	onReaderClose OnReaderCloseFunc,
 ) *Engine {
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
-	logutil.BgLogger().Info("create external engine",
+	logutil.Logger(ctx).Info("create external engine",
 		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))))
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
@@ -210,6 +220,7 @@ func NewExternalEngine(
 		memLimit:          memLimit,
 		onDup:             onDup,
 		filePrefix:        filePrefix,
+		onReaderClose:     onReaderClose,
 	}
 }
 
@@ -272,6 +283,8 @@ func getFilesReadConcurrency(
 			)
 		}
 	}
+	// Note: this is the file size of the range group, KV size is smaller, as we
+	// need additional 8*2 for each KV.
 	logutil.Logger(ctx).Info("estimated file size of this range group",
 		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 	return result, startOffs, nil
@@ -299,6 +312,7 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		e.smallBlockBufPool,
 		e.largeBlockBufPool,
 		&e.memKVsAndBuffers,
+		e.onReaderClose,
 	)
 	if err != nil {
 		return err
@@ -480,7 +494,7 @@ func (e *Engine) lazyInitDupWriter(ctx context.Context) error {
 		Concurrency: 1,
 		PartSize:    3 * MinUploadPartSize})
 	if err != nil {
-		logutil.Logger(ctx).Info("create dup writer failed", zap.Error(err))
+		logutil.Logger(ctx).Error("create dup writer failed", zap.Error(err))
 		return err
 	}
 	e.dupFile = dupFile
@@ -497,7 +511,7 @@ func (e *Engine) closeDupWriterAsNeeded(ctx context.Context) error {
 	e.dupKVStore, e.dupWriter = nil, nil
 	kvStore.finish()
 	if err := writer.Close(ctx); err != nil {
-		logutil.Logger(ctx).Info("close dup writer failed", zap.Error(err))
+		logutil.Logger(ctx).Error("close dup writer failed", zap.Error(err))
 		return err
 	}
 	return nil

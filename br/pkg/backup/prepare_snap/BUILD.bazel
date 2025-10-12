@@ -39,16 +39,17 @@ go_test(
     shard_count = 10,
     deps = [
         ":prepare_snap",
+        "//br/pkg/logutil",
         "//br/pkg/utils",
         "//pkg/store/mockstore/unistore",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/errorpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//constants",
         "@org_uber_go_zap//zapcore",
     ],
 )

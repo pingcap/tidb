@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "execute",
@@ -9,4 +9,13 @@ go_library(
         "//pkg/disttask/framework/proto",
         "@org_uber_go_atomic//:atomic",
     ],
+)
+
+go_test(
+    name = "execute_test",
+    timeout = "short",
+    srcs = ["interface_test.go"],
+    embed = [":execute"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
 )

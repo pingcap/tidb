@@ -147,7 +147,10 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 	// For static partitioned tables, we need to recreate the job for each partition.
 	if partitionInfo != nil && pruneMode == variable.Static {
 		for _, def := range partitionInfo.Definitions {
-			partitionStats := pq.statsHandle.GetPartitionStatsForAutoAnalyze(tableInfo, def.ID)
+			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
+			if !found {
+				return nil
+			}
 			err := pq.recreateAndPushJob(sctx, lockedTables, pruneMode, partitionStats)
 			if err != nil {
 				return err
@@ -155,7 +158,10 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 		}
 		return nil
 	}
-	stats := pq.statsHandle.GetTableStatsForAutoAnalyze(tableInfo)
+	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	if !found {
+		return nil
+	}
 	return pq.recreateAndPushJob(sctx, lockedTables, pruneMode, stats)
 }
 
@@ -163,7 +169,11 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	sctx sessionctx.Context,
 	event *notifier.SchemaChangeEvent,
 ) error {
-	tableInfo, idxes := event.GetAddIndexInfo()
+	tableInfo, idxes, analyzed := event.GetAddIndexInfo()
+	if analyzed {
+		// if an added index is already analyzed in ddl, skip it here.
+		return nil
+	}
 
 	intest.AssertFunc(func() bool {
 		// Columnar index has a separate job type. We should not see columnar index here.
@@ -194,15 +204,23 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 		// For static partitioned tables, we need to recreate the job for each partition.
 		for _, def := range partitionInfo.Definitions {
 			partitionID := def.ID
-			partitionStats := pq.statsHandle.GetPartitionStatsForAutoAnalyze(tableInfo, partitionID)
+			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(partitionID)
+			if !found {
+				return nil
+			}
 			job := pq.tryCreateJob(is, partitionStats, pruneMode, jobFactory, lockedTables)
-			return pq.pushWithoutLock(job)
+			if err := pq.pushWithoutLock(job); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
 
 	// For normal tables and dynamic partitioned tables, we only need to recreate the job for the table.
-	stats := pq.statsHandle.GetTableStatsForAutoAnalyze(tableInfo)
+	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	if !found {
+		return nil
+	}
 	// Directly create a new job for the newly added index.
 	job := pq.tryCreateJob(is, stats, pruneMode, jobFactory, lockedTables)
 	return pq.pushWithoutLock(job)

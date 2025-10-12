@@ -443,7 +443,7 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	for _, sv := range GetSysVars() {
-		if sv.HasSessionScope() && !sv.ReadOnly {
+		if sv.HasSessionScope() && !sv.ReadOnly && !sv.InternalSessionVariable {
 			val, err := sv.Validate(vars, sv.Value, vardef.ScopeSession)
 			require.NoError(t, err)
 			require.Equal(t, val, sv.Value)
@@ -579,6 +579,15 @@ func TestValidateWithRelaxedValidation(t *testing.T) {
 	sv = GetSysVar(vardef.InitConnect)
 	val = sv.ValidateWithRelaxedValidation(vars, "RandomText - should be valid SQL", vardef.ScopeGlobal)
 	require.Equal(t, "RandomText - should be valid SQL", val)
+}
+
+func TestValidateInternalSessionVariable(t *testing.T) {
+	vars := NewSessionVars(nil)
+	for _, n := range []string{vardef.TiDBRedactLog, vardef.TiDBInstancePlanCacheMaxMemSize} {
+		sv := GetSysVar(n)
+		_, err := sv.Validate(vars, "1", vardef.ScopeSession)
+		require.NotNil(t, err)
+	}
 }
 
 func TestInstanceConfigHasMatchingSysvar(t *testing.T) {

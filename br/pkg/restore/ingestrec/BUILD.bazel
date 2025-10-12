@@ -2,13 +2,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "ingestrec",
-    srcs = ["ingest_recorder.go"],
+    srcs = [
+        "foreign_key.go",
+        "ingest_recorder.go",
+    ],
     importpath = "github.com/pingcap/tidb/br/pkg/restore/ingestrec",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/ast",
+        "//pkg/parser/mysql",
         "//pkg/types",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
@@ -19,17 +23,23 @@ go_library(
 go_test(
     name = "ingestrec_test",
     timeout = "short",
-    srcs = ["ingest_recorder_test.go"],
+    srcs = [
+        "export_test.go",
+        "foreign_key_test.go",
+        "ingest_recorder_test.go",
+    ],
+    embed = [":ingestrec"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 7,
     deps = [
-        ":ingestrec",
+        "//br/pkg/utiltest",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/store/mockstore",
+        "//pkg/testkit",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],

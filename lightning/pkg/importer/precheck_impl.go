@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -591,7 +592,7 @@ func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 
 	// Warn the user if diskQuota is 0 or negative, as it's likely a misconfiguration
 	if diskQuota <= 0 {
-		log.FromContext(ctx).Warn("`tikv-importer.disk-quota` is set to 0 or less; please configure a valid positive value")
+		logutil.Logger(ctx).Warn("`tikv-importer.disk-quota` is set to 0 or less; please configure a valid positive value")
 	}
 
 	switch {
@@ -606,7 +607,7 @@ func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 			availableStr,
 			diskQuotaStr)
 		theResult.Passed = false
-		log.FromContext(ctx).Error(theResult.Message)
+		logutil.Logger(ctx).Error(theResult.Message)
 	default:
 		theResult.Message = fmt.Sprintf("local disk space may not enough to finish import, "+
 			"estimate sorted data size is %s, but local available is %s,"+
@@ -614,7 +615,7 @@ func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 			estimatedStr,
 			availableStr, diskQuotaStr)
 		theResult.Passed = true
-		log.FromContext(ctx).Warn(theResult.Message)
+		logutil.Logger(ctx).Warn(theResult.Message)
 	}
 	return theResult, nil
 }
@@ -682,7 +683,7 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// there is no checkpoint
-			log.FromContext(ctx).Debug("no checkpoint detected", zap.String("table", uniqueName))
+			logutil.Logger(ctx).Debug("no checkpoint detected", zap.String("table", uniqueName))
 			return nil, nil
 		}
 		return nil, errors.Trace(err)
@@ -744,12 +745,12 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 		}
 	}
 	if len(columns) == 0 {
-		log.FromContext(ctx).Debug("no valid checkpoint detected", zap.String("table", uniqueName))
+		logutil.Logger(ctx).Debug("no valid checkpoint detected", zap.String("table", uniqueName))
 		return nil, nil
 	}
 	info := dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if info != nil {
-		permFromTiDB, err := parseColumnPermutations(info.Core, columns, nil, log.FromContext(ctx))
+		permFromTiDB, err := parseColumnPermutations(info.Core, columns, nil, log.Wrap(logutil.Logger(ctx)))
 		if err != nil {
 			msgs = append(msgs, fmt.Sprintf("failed to calculate columns %s, table %s's info has changed,"+
 				"consider remove this checkpoint, and start import again.", err.Error(), uniqueName))
@@ -938,7 +939,7 @@ func (ci *schemaCheckItem) Check(ctx context.Context) (*precheck.CheckResult, er
 // SchemaIsValid checks the import file and cluster schema is match.
 func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
 	if len(tableInfo.DataFiles) == 0 {
-		log.FromContext(ctx).Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
+		logutil.Logger(ctx).Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
 		return nil, nil
 	}
 
@@ -973,7 +974,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 
 	colCountFromTiDB := len(info.Core.Columns)
 	if len(fullExtendColsSet) > 0 {
-		log.FromContext(ctx).Info("check extend column count through data files", zap.String("db", tableInfo.DB),
+		logutil.Logger(ctx).Info("check extend column count through data files", zap.String("db", tableInfo.DB),
 			zap.String("table", tableInfo.Name))
 		igColCnt := 0
 		for _, col := range info.Core.Columns {
@@ -1030,7 +1031,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 
 	// only check the first file of this table.
 	dataFile := tableInfo.DataFiles[0]
-	log.FromContext(ctx).Info("datafile to check", zap.String("db", tableInfo.DB),
+	logutil.Logger(ctx).Info("datafile to check", zap.String("db", tableInfo.DB),
 		zap.String("table", tableInfo.Name), zap.String("path", dataFile.FileMeta.Path))
 	// get columns name from data file.
 	dataFileMeta := dataFile.FileMeta
@@ -1048,7 +1049,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 		row = rows[0]
 	}
 	if colsFromDataFile == nil && len(row) == 0 {
-		log.FromContext(ctx).Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
+		logutil.Logger(ctx).Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
 		return msgs, nil
 	}
 
@@ -1296,7 +1297,7 @@ outer:
 	if hasUniqueField && len(rows) > 1 {
 		theResult.Severity = precheck.Critical
 	} else {
-		ok, err := checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0], log.FromContext(ctx))
+		ok, err := checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0], log.Wrap(logutil.Logger(ctx)))
 		if err != nil {
 			return nil, err
 		}

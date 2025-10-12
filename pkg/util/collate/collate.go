@@ -60,6 +60,9 @@ type Collator interface {
 	Compare(a, b string) int
 	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
 	Key(str string) []byte
+	// ImmutableKey is the same as Key except that the returned key should not be changed by future calls.
+	// It can avoid memory allocation and copy in some collations. The caller should not modify the returned value.
+	ImmutableKey(str string) []byte
 	// KeyWithoutTrimRightSpace returns the collate key for str. The difference with Key is str will not be trimed.
 	KeyWithoutTrimRightSpace(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.

@@ -144,9 +144,10 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExecToErr("alter table t1 add index idx2(a);")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectPanicForTableScan"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectPanicForIndexIngest", "return()"))
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockIndexIngestWorkerFault", func() {
+		panic("mock panic")
+	})
 	tk.MustExecToErr("alter table t1 add index idx2(a);")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectPanicForIndexIngest"))
 
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 	checkTmpDDLDir(t)
@@ -238,8 +239,13 @@ func TestAddIndexDistCancel(t *testing.T) {
 	wg.Wait()
 	rows := tk.MustQuery("admin show ddl jobs 2;").Rows()
 	require.Len(t, rows, 2)
-	require.True(t, strings.Contains(rows[0][12].(string) /* comments */, "ingest"))
-	require.True(t, strings.Contains(rows[1][12].(string) /* comments */, "ingest"))
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(rows[0][12].(string) /* comments */, "ingest"))
+		require.True(t, strings.Contains(rows[1][12].(string) /* comments */, "ingest"))
+	} else {
+		require.Equal(t, rows[0][12].(string) /* comments */, "")
+		require.Equal(t, rows[1][12].(string) /* comments */, "")
+	}
 	require.Equal(t, "3", rows[0][7].(string) /* row_count */)
 	require.Equal(t, "3", rows[1][7].(string) /* row_count */)
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone")
@@ -417,10 +423,24 @@ func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_enable_dist_task = off;")
 	})
-	tk.MustExec("create table t (a int, b int);")
-	tk.MustExec("insert into t values (1, 1);")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", "1*return(true)")
-	tk.MustExec("alter table t add index idx(b);")
+	retryableErrs := []string{
+		"requested lease not found",
+		"mvcc: required revision has been compacted",
+	}
+	for _, errStr := range retryableErrs {
+		t.Run(errStr, func(t *testing.T) {
+			tk.MustExec("drop table if exists t;")
+			tk.MustExec("create table t (a int, b int);")
+			tk.MustExec("insert into t values (1, 1);")
+			var once sync.Once
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", func(errP *error) {
+				once.Do(func() {
+					*errP = errors.New(errStr)
+				})
+			})
+			tk.MustExec("alter table t add index idx(b);")
+		})
+	}
 }
 
 func TestAddIndexScheduleAway(t *testing.T) {

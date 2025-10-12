@@ -16,6 +16,7 @@ package base
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
@@ -83,4 +84,9 @@ type DataAccesser interface {
 // PartitionAccesser is a plan that can access partitioned data.
 type PartitionAccesser interface {
 	AccessObject(PlanContext) AccessObject
+}
+
+// PartitionTable is for those tables which implement partition.
+type PartitionTable interface {
+	PartitionExpr() *tables.PartitionExpr
 }

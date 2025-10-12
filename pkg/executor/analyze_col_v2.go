@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -148,15 +149,23 @@ func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for _, sample := range collector.Base().Samples {
 		for i, columns := range sample.Columns {
-			if schema.Columns[i].VirtualExpr != nil {
-				continue
-			}
+			// Virtual columns will be decoded as null first.
 			_, err := decoder.DecodeOne(columns.GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType)
 			if err != nil {
 				return err
 			}
 		}
 	}
+	intest.AssertFunc(func() bool {
+		// Ensure all columns in the chunk have the same number of rows.
+		// Checking for virtual columns.
+		for i := 1; i < chk.NumCols(); i++ {
+			if chk.Column(i).Rows() != chk.Column(0).Rows() {
+				return false
+			}
+		}
+		return true
+	}, "all columns in chunk should have the same number of rows")
 	err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx.GetExprCtx(), chk)
 	if err != nil {
 		return err
@@ -429,7 +438,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult, samplingStatsConcurrency int) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("analyze ndv for special index panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.BgLogger().Warn("analyze ndv for special index panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			totalResultCh <- analyzeIndexNDVTotalResult{
 				err: getAnalyzePanicErr(r),
@@ -488,7 +497,7 @@ func (e *AnalyzeColumnsExecV2) subIndexWorkerForNDV(taskCh chan *analyzeTask, re
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultsCh <- &statistics.AnalyzeResults{
 				Err: getAnalyzePanicErr(r),
@@ -585,7 +594,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	closeTheResultCh := index == 0
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- &samplingMergeResult{err: getAnalyzePanicErr(r)}
 		}
@@ -663,7 +672,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- getAnalyzePanicErr(r)
 		}

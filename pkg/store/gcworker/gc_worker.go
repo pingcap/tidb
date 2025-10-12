@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -231,7 +231,7 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func createSession(store kv.Storage) sessiontypes.Session {
+func createSession(store kv.Storage) sessionapi.Session {
 	for {
 		se, err := session.CreateSession(store)
 		if err != nil {
@@ -761,7 +761,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency g
 	txnSafePoint := safePoint
 	err := w.resolveLocks(ctx, txnSafePoint, concurrency.v)
 	if err != nil {
-		logutil.Logger(ctx).Error("resolve locks returns an error", zap.String("category", "gc worker"),
+		logutil.Logger(ctx).Warn("resolve locks returns an error", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
 			zap.Uint64("txnSafePoint", txnSafePoint),
 			zap.Error(err))
@@ -870,7 +870,7 @@ func (w *GCWorker) deleteRanges(
 		})
 
 		if err != nil {
-			logutil.Logger(ctx).Error("delete range failed on range", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Warn("delete range failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Stringer("startKey", startKey),
 				zap.Stringer("endKey", endKey),
@@ -880,7 +880,7 @@ func (w *GCWorker) deleteRanges(
 
 		err = doGCPlacementRules(se, safePoint, r, &gcPlacementRuleCache)
 		if err != nil {
-			logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Warn("gc placement rules failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),
@@ -982,7 +982,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64,
 
 		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		if err != nil {
-			logutil.Logger(ctx).Error("redo-delete range failed on range", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Warn("redo-delete range failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Stringer("startKey", startKey),
 				zap.Stringer("endKey", endKey),
@@ -1228,7 +1228,7 @@ func (w *GCWorker) resolveLocks(
 	// Run resolve lock on the whole TiKV cluster. Empty keys means the range is unbounded.
 	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
 	if err != nil {
-		logutil.Logger(ctx).Error("resolve locks failed", zap.String("category", "gc worker"),
+		logutil.Logger(ctx).Warn("resolve locks failed", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
 			zap.Uint64("safePoint", safePoint),
 			zap.Error(err))
@@ -1560,7 +1560,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
-func doGCPlacementRules(se sessiontypes.Session, _ uint64,
+func doGCPlacementRules(se sessionapi.Session, _ uint64,
 	dr util.DelRangeTask, gcPlacementRuleCache *sync.Map) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job

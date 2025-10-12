@@ -29,10 +29,10 @@ var testDataMap = make(testdata.BookKeeper)
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
-	testDataMap.LoadTestSuiteData("testdata", "outer2inner")
-	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window")
-	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
-	testDataMap.LoadTestSuiteData("testdata", "predicate_pushdown_suite")
+	testDataMap.LoadTestSuiteData("testdata", "outer2inner", true)
+	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window", true)
+	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "predicate_pushdown_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification", true)
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),

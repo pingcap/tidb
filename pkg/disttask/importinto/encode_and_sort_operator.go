@@ -22,11 +22,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -48,10 +49,12 @@ type encodeAndSortOperator struct {
 	wg       tidbutil.WaitGroupWrapper
 	firstErr atomic.Error
 
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx       context.Context
+	cancel    context.CancelFunc
+	collector execute.Collector
 
 	taskID, subtaskID int64
+	taskKeyspace      string
 	tableImporter     *importer.TableImporter
 	sharedVars        *SharedVars
 	logger            *zap.Logger
@@ -66,6 +69,7 @@ func newEncodeAndSortOperator(
 	ctx context.Context,
 	executor *importStepExecutor,
 	sharedVars *SharedVars,
+	collector execute.Collector,
 	subtaskID int64,
 	concurrency int,
 ) *encodeAndSortOperator {
@@ -73,8 +77,10 @@ func newEncodeAndSortOperator(
 	op := &encodeAndSortOperator{
 		ctx:           subCtx,
 		cancel:        cancel,
+		collector:     collector,
 		taskID:        executor.taskID,
 		subtaskID:     subtaskID,
+		taskKeyspace:  executor.taskMeta.Plan.Keyspace,
 		tableImporter: executor.tableImporter,
 		sharedVars:    sharedVars,
 		logger:        executor.logger,
@@ -158,6 +164,9 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
+					op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
+					metering.NewRecorder(op.tableImporter.GetKVStore(), metering.TaskTypeImportInto, op.taskID).
+						RecordPutRequestCount(summary.PutRequestCount)
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
 				SetBlockSize(indexBlockSize).
@@ -171,7 +180,12 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
-			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
+			SetOnCloseFunc(func(summary *external.WriterSummary) {
+				op.sharedVars.mergeDataSummary(summary)
+				op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
+				metering.NewRecorder(op.tableImporter.GetKVStore(), metering.TaskTypeImportInto, op.taskID).
+					RecordPutRequestCount(summary.PutRequestCount)
+			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
@@ -193,7 +207,7 @@ func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.
 	// we don't use the input send function, it makes workflow more complex
 	// we send result to errCh and handle it here.
 	executor := newImportMinimalTaskExecutor(task)
-	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter); err != nil {
+	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter, w.op.collector); err != nil {
 		w.op.onError(err)
 	}
 }
@@ -226,7 +240,7 @@ func subtaskPrefix(taskID, subtaskID int64) string {
 
 func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan) (
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) {
-	indexKVGroupCnt := getNumOfIndexGenKV(plan.DesiredTableInfo)
+	indexKVGroupCnt := importer.GetNumOfIndexGenKV(plan.DesiredTableInfo)
 	memPerCon := resource.Mem.Capacity() / int64(plan.ThreadCnt)
 	// we use half of the total available memory for data writer, and the other half
 	// for encoding and other stuffs, it's an experience value, might not optimal.
@@ -241,31 +255,4 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 	// 	| 13              | 192/64 MiB            |
 	memPerShare := float64(memPerCon) / 2 / float64(indexKVGroupCnt+3)
 	return uint64(memPerShare * 3), uint64(memPerShare)
-}
-
-func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
-	return len(getIndicesGenKV(tblInfo))
-}
-
-type genKVIndex struct {
-	name   string
-	unique bool
-}
-
-func getIndicesGenKV(tblInfo *model.TableInfo) map[int64]genKVIndex {
-	res := make(map[int64]genKVIndex, len(tblInfo.Indices))
-	for _, idxInfo := range tblInfo.Indices {
-		// all public non-primary index generates index KVs
-		if idxInfo.State != model.StatePublic {
-			continue
-		}
-		if idxInfo.Primary && tblInfo.HasClusteredIndex() {
-			continue
-		}
-		res[idxInfo.ID] = genKVIndex{
-			name:   idxInfo.Name.L,
-			unique: idxInfo.Unique,
-		}
-	}
-	return res
 }

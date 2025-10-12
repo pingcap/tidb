@@ -24,9 +24,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spkg/bom"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding/charmap"
@@ -132,9 +132,19 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage,
 		}
 	}
 
+	// require trailing semicolon for any remaining non-comment statement
+	if len(buffer) > 0 {
+		stmtTrimB := bytes.TrimSpace(buffer)
+		// Skip pure block comment like "/* ... */" without semicolon.
+		if len(stmtTrimB) > 0 && !(bytes.HasPrefix(stmtTrimB, []byte("/*")) && bytes.HasSuffix(stmtTrimB, []byte("*/"))) {
+			return nil, errors.Annotatef(errors.New("last SQL statement missing trailing semicolon"), "file: %s", sqlFile.FileMeta.Path)
+		}
+		buffer = buffer[:0]
+	}
+
 	data, err = decodeCharacterSet(data, characterSet)
 	if err != nil {
-		log.FromContext(ctx).Error("cannot decode input file, please convert to target encoding manually",
+		logutil.Logger(ctx).Error("cannot decode input file, please convert to target encoding manually",
 			zap.String("encoding", characterSet),
 			zap.String("Path", sqlFile.FileMeta.Path),
 		)

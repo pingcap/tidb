@@ -17,6 +17,7 @@ package executor
 import (
 	"fmt"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -136,8 +137,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 
 func generateIndexRange(vals ...int64) *ranger.Range {
 	lowDatums := generateDatumSlice(vals...)
-	highDatums := make([]types.Datum, len(vals))
-	copy(highDatums, lowDatums)
+	highDatums := slices.Clone(lowDatums)
 	return &ranger.Range{LowVal: lowDatums, HighVal: highDatums, Collators: collate.GetBinaryCollatorSlice(len(lowDatums))}
 }
 

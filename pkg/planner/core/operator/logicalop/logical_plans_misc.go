@@ -21,10 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 )
 
 //go:generate go run ../../generator/hash64_equals/hash64_equals_generator.go -- hash64_equals_generated.go
@@ -74,7 +72,7 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 		return true
 	case *LogicalJoin:
 		switch x.JoinType {
-		case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		case base.SemiJoin, base.AntiSemiJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
 			return childMaxOneRow[0]
 		default:
 			return childMaxOneRow[0] && childMaxOneRow[1]
@@ -83,13 +81,18 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 	return false
 }
 
-func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int, opt *optimizetrace.LogicalOptimizeOp) {
+// AddSelection adds a LogicalSelection to the given LogicalPlan.
+func AddSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int) {
 	if len(conditions) == 0 {
 		p.Children()[chIdx] = child
 		return
 	}
-	conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), conditions, true)
+	conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), conditions, true, nil)
 	if len(conditions) == 0 {
+		p.Children()[chIdx] = child
+		return
+	}
+	if dual, ok := child.(*LogicalTableDual); ok && dual.RowCount == 0 {
 		p.Children()[chIdx] = child
 		return
 	}
@@ -97,18 +100,15 @@ func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expre
 	dual := Conds2TableDual(child, conditions)
 	if dual != nil {
 		p.Children()[chIdx] = dual
-		AppendTableDualTraceStep(child, dual, conditions, opt)
 		return
 	}
 	selection := LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.QueryBlockOffset())
 	selection.SetChildren(child)
 	p.Children()[chIdx] = selection
-	AppendAddSelectionTraceStep(p, child, selection, opt)
 }
 
 // pushDownTopNForBaseLogicalPlan can be moved when LogicalTopN has been moved to logicalop.
-func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.LogicalPlan,
-	opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
 	s := lp.GetBaseLogicalPlan().(*BaseLogicalPlan)
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
@@ -116,15 +116,15 @@ func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.Lo
 	}
 	p := s.Self()
 	for i, child := range p.Children() {
-		p.Children()[i] = child.PushDownTopN(nil, opt)
+		p.Children()[i] = child.PushDownTopN(nil)
 	}
 	if topN != nil {
-		return topN.AttachChild(p, opt)
+		return topN.AttachChild(p)
 	}
 	return p
 }
 
-func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (byItems []*util.ByItems,
+func pruneByItems(p base.LogicalPlan, old []*util.ByItems) (byItems []*util.ByItems,
 	parentUsedCols []*expression.Column) {
 	prunedByItems := make([]*util.ByItems, 0)
 	byItems = make([]*util.ByItems, 0, len(old))
@@ -151,7 +151,6 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.Lo
 			prunedByItems = append(prunedByItems, byItem)
 		}
 	}
-	logicaltrace.AppendByItemsPruneTraceStep(p, prunedByItems, opt)
 	return
 }
 
@@ -212,6 +211,7 @@ func CanSelfBeingPushedToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool
 }
 
 // CanPushToCopImpl checks whether the logical plan can be pushed to coprocessor.
+// Deprecated: don't depend on subtree based push check, use prop based `CanSelfBeingPushedToCopImpl` instead.
 func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool {
 	p := lp.GetBaseLogicalPlan().(*BaseLogicalPlan)
 	ret := true

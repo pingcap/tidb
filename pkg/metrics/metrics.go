@@ -92,6 +92,7 @@ func InitMetrics() {
 	InitSessionMetrics()
 	InitSliMetrics()
 	InitStatsMetrics()
+	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
 	InitDistTaskMetrics()
@@ -260,6 +261,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(FairLockingUsageCount)
 	prometheus.MustRegister(PessimisticLockKeysDuration)
 	prometheus.MustRegister(MemoryLimit)
+	prometheus.MustRegister(LogBackupCurrentLastRegionID)
+	prometheus.MustRegister(LogBackupCurrentLastRegionLeaderStoreID)
 
 	prometheus.MustRegister(TTLQueryDuration)
 	prometheus.MustRegister(TTLProcessedExpiredRowsCounter)
@@ -289,6 +292,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GlobalSortUploadWorkerCount)
 	prometheus.MustRegister(AddIndexScanRate)
 	prometheus.MustRegister(RetryableErrorCount)
+	prometheus.MustRegister(MergeSortWriteBytes)
+	prometheus.MustRegister(MergeSortReadBytes)
 
 	prometheus.MustRegister(InfoSchemaV2CacheCounter)
 	prometheus.MustRegister(InfoSchemaV2CacheMemUsage)

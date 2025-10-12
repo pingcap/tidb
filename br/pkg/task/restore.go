@@ -937,7 +937,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer printRestoreMetrics()
 
 	// build restore registry
-	restoreRegistry, err := registry.NewRestoreRegistry(g, mgr.GetDomain())
+	restoreRegistry, err := registry.NewRestoreRegistry(c, g, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1378,7 +1378,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR)
+	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR, client.IsIncremental())
 
 	archiveSize := metautil.ArchiveTablesSize(tables)
 	// some more checks once we get tables and files information
@@ -1410,6 +1410,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		loadStatsPhysical = false
 	}
 	tables = client.CleanTablesIfTemporarySystemTablesRenamed(loadStatsPhysical, loadSysTablePhysical, tables)
+	preAllocRange, err := client.GetPreAllocedTableIDRange()
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
 	var restoreSchedulersFunc pdutil.UndoFunc
@@ -1417,11 +1421,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if (isFullRestore(cmdName) && !cfg.ExplicitFilter) || client.IsIncremental() {
 		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
 	} else {
-		var preAllocRange [2]int64
-		preAllocRange, err = client.GetPreAllocedTableIDRange()
-		if err != nil {
-			return errors.Trace(err)
-		}
 		if isPiTR && cfg.tableMappingManager != nil {
 			cfg.tableMappingManager.SetPreallocatedRange(preAllocRange[0], preAllocRange[1])
 		}
@@ -1650,6 +1649,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
+	compactProtectStartKey, compactProtectEndKey := encodeCompactAndCheckKey(mgr.GetStorage().GetCodec(), preAllocRange)
 	rtCtx := snapclient.RestoreTablesContext{
 		LogProgress:    cfg.LogProgress,
 		SplitSizeBytes: kvConfigs.MergeRegionSize.Value,
@@ -1663,6 +1663,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 		CreatedTables:            createdTables,
 		CheckpointSetWithTableID: checkpointSetWithTableID,
+
+		CompactProtectStartKey: compactProtectStartKey,
+		CompactProtectEndKey:   compactProtectEndKey,
 
 		Glue: g,
 	}
@@ -1917,7 +1920,7 @@ func filterRestoreFiles(
 		if checkpoint.IsCheckpointDB(dbName) {
 			continue
 		}
-		if !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
+		if !loadStatsPhysical && !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
 			continue
 		}
 		dbMap[db.Info.ID] = db
@@ -2385,6 +2388,12 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 	return
 }
 
+func encodeCompactAndCheckKey(codec tikv.Codec, preAlloced [2]int64) ([]byte, []byte) {
+	checkStartKey := tablecodec.EncodeTablePrefix(preAlloced[0])
+	checkEndKey := tablecodec.EncodeTablePrefix(preAlloced[1])
+	return codec.EncodeRange(checkStartKey, checkEndKey)
+}
+
 func rewriteKeyRanges(preAlloced [2]int64) [][2]kv.Key {
 	if preAlloced == [2]int64{} {
 		return nil
@@ -2558,8 +2567,9 @@ func createDBsAndTables(
 	return createdTables, nil
 }
 
-func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool) {
-	if cfg.ExplicitFilter && isPiTR {
+func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool,
+	isIncremental bool) {
+	if cfg.ExplicitFilter && isPiTR && !isIncremental {
 		for i, table := range tables {
 			// skip sequence as there is extra steps need to do after creation and restoreMode will block it
 			if table.Info.IsSequence() {
@@ -2581,6 +2591,11 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
+
+	// update keyspace to be user specified
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = cfg.KeyspaceName
+	})
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, true, conn.NormalVersionChecker)
@@ -2632,7 +2647,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	}
 
 	// build restore registry
-	restoreRegistry, err := registry.NewRestoreRegistry(g, mgr.GetDomain())
+	restoreRegistry, err := registry.NewRestoreRegistry(ctx, g, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}

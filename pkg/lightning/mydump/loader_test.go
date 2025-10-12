@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	md "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"github.com/stretchr/testify/assert"
@@ -193,7 +194,7 @@ func TestTableInfoNotFound(t *testing.T) {
 	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
 		logger, buffer := log.MakeTestLogger()
-		logCtx := log.NewContext(ctx, logger)
+		logCtx := logutil.WithLogger(ctx, logger.Logger)
 		dbSQL := dbMeta.GetSchema(logCtx, store)
 		require.Equal(t, "CREATE DATABASE IF NOT EXISTS `db`", dbSQL)
 		for _, tblMeta := range dbMeta.Tables {
@@ -1178,13 +1179,9 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 	err = store.WriteFile(ctx, fileName, bf.Bytes())
 	require.NoError(t, err)
 
-	rowSize, err := md.SampleParquetRowSize(ctx, md.SourceFileMeta{
+	rowCount, rowSize, err := md.SampleParquetRowSize(ctx, md.SourceFileMeta{
 		Path: fileName,
 	}, store)
-	require.NoError(t, err)
-	rowCount, err := md.ReadParquetFileRowCountByFile(ctx, store, md.SourceFileMeta{
-		Path: fileName,
-	})
 	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
 	require.InDelta(t, totalRowSize, int64(rowSize*float64(rowCount)), float64(totalRowSize)/10)

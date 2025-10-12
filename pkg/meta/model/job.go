@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -115,6 +116,7 @@ const (
 	ActionModifyEngineAttribute  ActionType = 74
 	ActionAlterTableMode         ActionType = 75
 	ActionRefreshMeta            ActionType = 76
+	ActionModifySchemaReadOnly   ActionType = 77 // reserve for database read-only feature
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -190,6 +192,7 @@ var ActionMap = map[ActionType]string{
 	ActionModifyEngineAttribute:         "modify engine attribute",
 	ActionAlterTableMode:                "alter table mode",
 	ActionRefreshMeta:                   "refresh meta",
+	ActionModifySchemaReadOnly:          "modify schema read only",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -390,8 +393,16 @@ type Job struct {
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
 
-	// SessionVars store session variables
+	// SessionVars store system variables used in the DDL execution.
+	// To keep the backward compatibility, we still name it SessionVars.
 	SessionVars map[string]string `json:"session_vars,omitempty"`
+
+	// LastSchemaVersion records the latest schema version returned by runOneJobStep.
+	// If it is zero, for non-MDL scenario, scheduler can skip waitVersionSyncedWithoutMDL.
+	LastSchemaVersion int64 `json:"last_schema_version"`
+
+	// AnalyzeState indicate current whether current ddl job is in analyze state
+	AnalyzeState int8 `json:"analyze_state"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -696,13 +707,15 @@ func (job *Job) InFinalState() bool {
 	return job.State == JobStateSynced || job.State == JobStateCancelled || job.State == JobStatePaused
 }
 
-// AddSessionVars add a session variable in DDL job.
-func (job *Job) AddSessionVars(name, value string) {
+// AddSystemVars adds a system variable to the DDL job.
+// These variables are passed from the front-end DDL session to the back-end worker that executes the job.
+// Retrieve them using job.GetSystemVars(xxx).
+func (job *Job) AddSystemVars(name string, value string) {
 	job.SessionVars[name] = value
 }
 
-// GetSessionVars get a session variable in DDL job.
-func (job *Job) GetSessionVars(name string) (string, bool) {
+// GetSystemVars get a system variable stored in DDL job.
+func (job *Job) GetSystemVars(name string) (string, bool) {
 	value, ok := job.SessionVars[name]
 	return value, ok
 }
@@ -746,6 +759,10 @@ func (job *Job) IsRollbackable() bool {
 		if job.SchemaState == StateDeleteOnly ||
 			job.SchemaState == StateDeleteReorganization ||
 			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionModifyColumn:
+		if job.SchemaState == StatePublic {
 			return false
 		}
 	case ActionAddTablePartition:
@@ -801,20 +818,22 @@ func (job *Job) ClearDecodedArgs() {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type        ActionType `json:"type"`
-	JobArgs     JobArgs    `json:"-"`
-	args        []any
-	RawArgs     json.RawMessage `json:"raw_args"`
-	SchemaState SchemaState     `json:"schema_state"`
-	SnapshotVer uint64          `json:"snapshot_ver"`
-	RealStartTS uint64          `json:"real_start_ts"`
-	Revertible  bool            `json:"revertible"`
-	State       JobState        `json:"state"`
-	RowCount    int64           `json:"row_count"`
-	Warning     *terror.Error   `json:"warning"`
-	CtxVars     []any           `json:"-"`
-	SchemaVer   int64           `json:"schema_version"`
-	ReorgTp     ReorgType       `json:"reorg_tp"`
+	Type         ActionType `json:"type"`
+	JobArgs      JobArgs    `json:"-"`
+	args         []any
+	RawArgs      json.RawMessage `json:"raw_args"`
+	SchemaState  SchemaState     `json:"schema_state"`
+	SnapshotVer  uint64          `json:"snapshot_ver"`
+	RealStartTS  uint64          `json:"real_start_ts"`
+	Revertible   bool            `json:"revertible"`
+	State        JobState        `json:"state"`
+	RowCount     int64           `json:"row_count"`
+	Warning      *terror.Error   `json:"warning"`
+	CtxVars      []any           `json:"-"`
+	SchemaVer    int64           `json:"schema_version"`
+	ReorgTp      ReorgType       `json:"reorg_tp"`
+	NeedAnalyze  bool            `json:"need_analyze"`
+	AnalyzeState int8            `json:"analyze_state"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -833,6 +852,22 @@ func (sub *SubJob) IsFinished() bool {
 	return sub.State == JobStateDone ||
 		sub.State == JobStateRollbackDone ||
 		sub.State == JobStateCancelled
+}
+
+// CanEmbeddedAnalyze indicates that this sub-job can do embedded analyze right after the schema change.
+func (sub *SubJob) CanEmbeddedAnalyze() bool {
+	switch sub.Type {
+	case ActionAddIndex, ActionAddPrimaryKey:
+		return true
+	case ActionModifyColumn:
+		if len(sub.CtxVars) > 0 {
+			needReorg, ok := sub.CtxVars[0].(bool)
+			return ok && needReorg
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 // ToProxyJob converts a sub-job to a proxy job.
@@ -856,18 +891,20 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		SchemaState:     sub.SchemaState,
 		SnapshotVer:     sub.SnapshotVer,
 		RealStartTS:     sub.RealStartTS,
+		AnalyzeState:    sub.AnalyzeState,
 		StartTS:         parentJob.StartTS,
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
 		ReorgMeta:       parentJob.ReorgMeta,
-		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
+		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq), NeedAnalyze: sub.NeedAnalyze},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
 		Charset:         parentJob.Charset,
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
 		TraceInfo:       parentJob.TraceInfo,
+		SessionVars:     parentJob.SessionVars,
 	}
 }
 
@@ -885,6 +922,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	if proxyJob.ReorgMeta != nil {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
 	}
+	sub.AnalyzeState = proxyJob.AnalyzeState
 }
 
 // FillArgs fills args.
@@ -913,6 +951,8 @@ type MultiSchemaInfo struct {
 
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
+	// NeedAnalyze is used to indicate whether we need to analyze the table after the sub-job is done.
+	NeedAnalyze bool `json:"-"`
 
 	AddColumns    []ast.CIStr `json:"-"`
 	DropColumns   []ast.CIStr `json:"-"`
@@ -1129,6 +1169,8 @@ type SchemaDiff struct {
 	// ReadTableFromMeta is set to avoid the diff is too large to be saved in SchemaDiff.
 	// infoschema should read latest meta directly.
 	ReadTableFromMeta bool `json:"read_table_from_meta,omitempty"`
+	// IsRefreshMeta is set to true only when this diff is initiated by refreshMeta DDL that's only used by BR
+	IsRefreshMeta bool `json:"-"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }
@@ -1230,5 +1272,12 @@ func NewJobW(job *Job, bytes []byte) *JobW {
 }
 
 func init() {
-	SetJobVerInUse(JobVersion1)
+	// as the cluster might be upgraded from old TiDB version, so we set to v1
+	// initially, and then we detect the right version when DDL start.
+	ver := JobVersion1
+	if kerneltype.IsNextGen() {
+		// nextgen doesn't need to consider the compatibility with old TiDB versions,
+		ver = JobVersion2
+	}
+	SetJobVerInUse(ver)
 }

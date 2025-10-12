@@ -22,18 +22,17 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -74,12 +73,6 @@ func NewJobSubmitterForTest() *JobSubmitter {
 
 func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
 	return s.ddlJobDoneChMap
-}
-
-func createMockStore(t *testing.T) kv.Storage {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	return store
 }
 
 func TestGetIntervalFromPolicy(t *testing.T) {
@@ -240,7 +233,7 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	keyRanges := getTableDataKeyRanges([]int64{})
 	require.Len(t, keyRanges, 1)
 	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
-	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
 
 	// case 2, insert a execluded table ID
 	keyRanges = getTableDataKeyRanges([]int64{3})
@@ -248,7 +241,7 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
 	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
 	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
-	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
 
 	// case 3, insert some execluded table ID
 	keyRanges = getTableDataKeyRanges([]int64{3, 5, 9})
@@ -260,7 +253,7 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	require.Equal(t, keyRanges[2].StartKey, tablecodec.EncodeTablePrefix(6))
 	require.Equal(t, keyRanges[2].EndKey, tablecodec.EncodeTablePrefix(9))
 	require.Equal(t, keyRanges[3].StartKey, tablecodec.EncodeTablePrefix(10))
-	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
 }
 
 func TestMergeContinuousKeyRanges(t *testing.T) {
@@ -401,17 +394,17 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 
 	d.etcdCli = &clientv3.Client{}
 	mockGetAllServerInfo := func(t *testing.T, versions ...string) {
-		serverInfos := make(map[string]*infosync.ServerInfo, len(versions))
+		serverInfos := make(map[string]*serverinfo.ServerInfo, len(versions))
 		for i, v := range versions {
-			serverInfos[fmt.Sprintf("node%d", i)] = &infosync.ServerInfo{
-				StaticServerInfo: infosync.StaticServerInfo{
-					ServerVersionInfo: infosync.ServerVersionInfo{Version: v},
+			serverInfos[fmt.Sprintf("node%d", i)] = &serverinfo.ServerInfo{
+				StaticInfo: serverinfo.StaticInfo{
+					VersionInfo: serverinfo.VersionInfo{Version: v},
 				}}
 		}
 		bytes, err := json.Marshal(serverInfos)
 		require.NoError(t, err)
 		inTerms := fmt.Sprintf("return(`%s`)", string(bytes))
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", inTerms)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", inTerms)
 	}
 
 	t.Run("all support v2, even with pre-release label", func(t *testing.T) {

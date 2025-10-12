@@ -49,7 +49,7 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats := handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.True(t, tblStats.Pseudo)
 
 	job.Analyze(handle, dom.SysProcTracker())
@@ -58,7 +58,7 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats = handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.False(t, tblStats.Pseudo)
 	require.Equal(t, int64(1), tblStats.RealtimeCount)
 }
@@ -91,7 +91,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats := handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.True(t, tblStats.Pseudo)
 	require.NotNil(t, tblStats.GetIdx(1))
 	require.False(t, tblStats.GetIdx(1).IsAnalyzed())
@@ -104,7 +104,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats = handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.False(t, tblStats.Pseudo)
 	require.NotNil(t, tblStats.GetIdx(1))
 	require.True(t, tblStats.GetIdx(1).IsAnalyzed())
@@ -112,7 +112,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	require.True(t, tblStats.GetIdx(2).IsAnalyzed())
 	// partition p1
 	pid = tbl.Meta().GetPartitionInfo().Definitions[1].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats = handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.False(t, tblStats.Pseudo)
 	require.NotNil(t, tblStats.GetIdx(1))
 	require.True(t, tblStats.GetIdx(1).IsAnalyzed())
@@ -127,7 +127,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(session.CreateAnalyzeJobs)
+	tk.MustExec(session.CreateAnalyzeJobsTable)
 	tk.MustExec("create database example_schema")
 	tk.MustExec("use example_schema")
 	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
@@ -183,7 +183,7 @@ func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 func TestPerformanceOfValidateAndPrepare(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(session.CreateAnalyzeJobs)
+	tk.MustExec(session.CreateAnalyzeJobsTable)
 	tk.MustExec("create database example_schema")
 	tk.MustExec("use example_schema")
 	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")

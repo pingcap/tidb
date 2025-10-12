@@ -1451,16 +1451,16 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: -1, index-values:\"\" != record-values:\"handle: -1, values: [KindInt64 -10]\"")
 	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
-	tk.MustExec("set @@tidb_redact_log=1;")
+	tk.MustExec("set @@global.tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
 
-	tk.MustExec("set @@tidb_redact_log=marker;")
+	tk.MustExec("set @@global.tidb_redact_log=marker;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ‹-1›, index-values:‹\"\"› != record-values:‹\"handle: -1, values: [KindInt64 -10]\"›")
-	tk.MustExec("set @@tidb_redact_log=0;")
+	tk.MustExec("set @@global.tidb_redact_log=0;")
 	r := tk.MustQuery("admin recover index admin_test c2")
 	r.Check(testkit.Rows("1 7"))
 	tk.MustExec("admin check table admin_test")
@@ -1477,15 +1477,15 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 0, index-values:\"handle: 0, values: [KindInt64 0]\" != record-values:\"\"")
-	tk.MustExec("set @@tidb_redact_log=1;")
+	tk.MustExec("set @@global.tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
-	tk.MustExec("set @@tidb_redact_log=marker;")
+	tk.MustExec("set @@global.tidb_redact_log=marker;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ‹0›, index-values:‹\"handle: 0, values: [KindInt64 0]\"› != record-values:‹\"\"›")
-	tk.MustExec("set @@tidb_redact_log=0;")
+	tk.MustExec("set @@global.tidb_redact_log=0;")
 
 	// Add one row of index.
 	// Table count < index count.
@@ -1504,15 +1504,15 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 10, index-values:\"handle: 10, values: [KindInt64 19]\" != record-values:\"handle: 10, values: [KindInt64 20]\"")
-	tk.MustExec("set @@tidb_redact_log=1;")
+	tk.MustExec("set @@global.tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
-	tk.MustExec("set @@tidb_redact_log=marker;")
+	tk.MustExec("set @@global.tidb_redact_log=marker;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ‹10›, index-values:‹\"handle: 10, values: [KindInt64 19]\"› != record-values:‹\"handle: 10, values: [KindInt64 20]\"›")
-	tk.MustExec("set @@tidb_redact_log=0;")
+	tk.MustExec("set @@global.tidb_redact_log=0;")
 
 	// Table count = index count.
 	// Two indices have the same handle.
@@ -1527,15 +1527,15 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2")
-	tk.MustExec("set @@tidb_redact_log=1;")
+	tk.MustExec("set @@global.tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
-	tk.MustExec("set @@tidb_redact_log=marker;")
+	tk.MustExec("set @@global.tidb_redact_log=marker;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ‹10›, index-values:‹\"handle: 10, values: [KindInt64 19]\"› != record-values:‹\"handle: 10, values: [KindInt64 20]\"›")
-	tk.MustExec("set @@tidb_redact_log=0;")
+	tk.MustExec("set @@global.tidb_redact_log=0;")
 
 	// Table count = index count.
 	// Index c2 has one line of data is 19, the corresponding table data is 20.
@@ -1550,15 +1550,15 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 10, index-values:\"handle: 10, values: [KindInt64 19]\" != record-values:\"handle: 10, values: [KindInt64 20]\"")
-	tk.MustExec("set @@tidb_redact_log=1;")
+	tk.MustExec("set @@global.tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
-	tk.MustExec("set @@tidb_redact_log=marker;")
+	tk.MustExec("set @@global.tidb_redact_log=marker;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ‹10›, index-values:‹\"handle: 10, values: [KindInt64 19]\"› != record-values:‹\"handle: 10, values: [KindInt64 20]\"›")
-	tk.MustExec("set @@tidb_redact_log=0;")
+	tk.MustExec("set @@global.tidb_redact_log=0;")
 
 	tk.MustExec("create table other (a int);")
 	tk.MustGetErrMsg("admin check table other, admin_test;",
@@ -1592,22 +1592,58 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	tk.MustExec("set cte_max_recursion_depth=10000;")
 	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
 
-	// Make some corrupted index. Build the index information.
 	sctx := mock.NewContext()
-	sctx.Store = store
 	ctx := sctx.GetTableCtx()
-	is := domain.InfoSchema()
-	dbName := ast.NewCIStr("test")
-	tblName := ast.NewCIStr("admin_test")
-	tbl, err := is.TableByName(context.Background(), dbName, tblName)
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	idxInfo := tblInfo.Indices[0]
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+
+	// Make some corrupted index. Build the index information.
+	getIndex := func() table.Index {
+		sctx.Store = store
+		is := domain.InfoSchema()
+		dbName := ast.NewCIStr("test")
+		tblName := ast.NewCIStr("admin_test")
+		tbl, err := is.TableByName(context.Background(), dbName, tblName)
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+		idxInfo := tblInfo.Indices[0]
+		indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+		return indexOpr
+	}
+
+	indexOpr := getIndex()
 
 	pattern := "handle:\\s(\\d+)"
 	r := regexp.MustCompile(pattern)
 
+	// No index record
+	for i := range 10001 {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		err = indexOpr.Delete(ctx, txn, types.MakeDatums(i), kv.IntHandle(i))
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+	}
+	err := tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+
+	// Reset table.
+	tk.MustExec("truncate admin_test")
+	indexOpr = getIndex()
+	// No table record
+	for i := range 100 {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(i), kv.IntHandle(i), nil)
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+	}
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+
+	tk.MustExec("truncate admin_test")
+	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
+	indexOpr = getIndex()
 	// Delete an index record randomly.
 	for i := range 10 {
 		txn, err := store.Begin()
