@@ -44,5 +44,11 @@ type InfoSchema interface {
 	// So it's all in memory operation. No need to worry about network or disk cost.
 	TableItemByPartitionID(partitionID int64) (TableItem, bool)
 	GetAutoIDRequirement() autoid.Requirement
+	// GetDatabaseCount returns the number of databases in the information schema.
+	GetDatabaseCount() int64
+	// GetTableCount returns the total number of tables in the information schema.
+	GetTableCount() int64
+	// GetSchemaVersion returns the current schema version.
+	GetSchemaVersion() int64
 	base() *infoSchema
 }

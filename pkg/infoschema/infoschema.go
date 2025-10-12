@@ -927,6 +927,21 @@ func (ts *SessionExtendedInfoSchema) DetachTemporaryTableInfoSchema() *SessionEx
 	}
 }
 
+// GetDatabaseCount returns the number of databases in the information schema.
+func (ts *SessionExtendedInfoSchema) GetDatabaseCount() int64 {
+	return ts.InfoSchema.GetDatabaseCount()
+}
+
+// GetTableCount returns the total number of tables in the information schema.
+func (ts *SessionExtendedInfoSchema) GetTableCount() int64 {
+	return ts.InfoSchema.GetTableCount()
+}
+
+// GetSchemaVersion returns the current schema version.
+func (ts *SessionExtendedInfoSchema) GetSchemaVersion() int64 {
+	return ts.InfoSchema.GetSchemaVersion()
+}
+
 // FindTableByTblOrPartID looks for table.Table for the given id in the InfoSchema.
 // The id can be either a table id or a partition id.
 // If the id is a table id, the corresponding table.Table will be returned, and the second return value is nil.
@@ -946,6 +961,25 @@ func getTableInfo(tbl table.Table) *model.TableInfo {
 		return nil
 	}
 	return tbl.Meta()
+}
+
+// GetDatabaseCount returns the number of databases in the information schema.
+func (is *infoSchema) GetDatabaseCount() int64 {
+	return int64(len(is.schemaMap))
+}
+
+// GetTableCount returns the total number of tables in the information schema.
+func (is *infoSchema) GetTableCount() int64 {
+	var count int64
+	for _, schemaTables := range is.schemaMap {
+		count += int64(len(schemaTables.tables))
+	}
+	return count
+}
+
+// GetSchemaVersion returns the current schema version.
+func (is *infoSchema) GetSchemaVersion() int64 {
+	return is.schemaMetaVersion
 }
 
 func getTableInfoList(tables []table.Table) []*model.TableInfo {

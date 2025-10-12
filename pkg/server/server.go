@@ -465,10 +465,48 @@ func (s *Server) reportConfig() {
 	metrics.ConfigStatus.WithLabelValues("max_connections").Set(float64(s.cfg.Instance.MaxConnections))
 }
 
+// StartMetrics starts the periodic metrics update goroutine.
+func (s *Server) StartMetrics(dom *domain.Domain) {
+	if dom == nil {
+		return
+	}
+	
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		
+		for {
+			select {
+			case <-ticker.C:
+				s.updateMetrics(dom)
+			}
+		}
+	}()
+}
+
+// updateMetrics updates the database count, table count, and schema version metrics.
+func (s *Server) updateMetrics(dom *domain.Domain) {
+	if dom == nil {
+		return
+	}
+	
+	// Get the current information schema
+	is := dom.InfoSchema()
+	if is == nil {
+		return
+	}
+	
+	// Update metrics
+	metrics.DatabaseCount.Set(float64(is.GetDatabaseCount()))
+	metrics.TableCount.Set(float64(is.GetTableCount()))
+	metrics.SchemaVersion.Set(float64(is.GetSchemaVersion()))
+}
+
 // Run runs the server.
 func (s *Server) Run(dom *domain.Domain) error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
 	s.reportConfig()
+	s.StartMetrics(dom)
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
