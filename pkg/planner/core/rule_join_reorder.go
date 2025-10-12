@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 
@@ -241,7 +242,9 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 	}
 
 	var err error
-
+	if !ctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	result := extractJoinGroup(p)
 	curJoinGroup, joinTypes, joinOrderHintInfo, hasOuterJoin := result.group, result.joinTypes, result.joinOrderHintInfo, result.hasOuterJoin
 	if len(curJoinGroup) > 1 {
@@ -510,9 +513,15 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 		} else if rightPlan.Schema().Contains(lCol) && leftPlan.Schema().Contains(rCol) {
 			joinType = s.joinTypes[idx]
 			if joinType.JoinType != base.InnerJoin {
+				if !leftPlan.SCtx().GetSessionVars().InRestrictedSQL {
+					fmt.Println("wwz")
+				}
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
 			} else {
+				if !leftPlan.SCtx().GetSessionVars().InRestrictedSQL {
+					fmt.Println("wwz")
+				}
 				funcName := edge.FuncName.L
 				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
 
@@ -552,6 +561,9 @@ func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expre
 func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan base.LogicalPlan, eqEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg) (base.LogicalPlan, []expression.Expression) {
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
 	copy(remainOtherConds, s.otherConds)
+	if !leftPlan.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	var (
 		otherConds []expression.Expression
 		leftConds  []expression.Expression
