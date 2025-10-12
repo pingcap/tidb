@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -454,4 +455,44 @@ func GetStatsInfo(i any) map[string]uint64 {
 	statsInfos := make(map[string]uint64)
 	statsInfos = CollectPlanStatsVersion(physicalPlan, statsInfos)
 	return statsInfos
+}
+
+// FindBestTask converts the logical plan to the physical plan.
+// It is called recursively from the parent to the children to create the result physical plan.
+// Some logical plans will convert the children to the physical plans in different ways, and return the one
+// With the lowest cost and how many plans are found in this function.
+func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask base.Task, err error) {
+	// since different logical operator may have different findBestTask before like:
+	// 	utilfuncp.FindBestTask4BaseLogicalPlan = findBestTask
+	//	utilfuncp.FindBestTask4LogicalCTE = findBestTask4LogicalCTE
+	//	utilfuncp.FindBestTask4LogicalShow = findBestTask4LogicalShow
+	//	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
+	//	utilfuncp.FindBestTask4LogicalMemTable = findBestTask4LogicalMemTable
+	//	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
+	//	utilfuncp.FindBestTask4LogicalShowDDLJobs = findBestTask4LogicalShowDDLJobs
+	// once we call GE's findBestTask from group expression level, we should judge from here, and get the
+	// wrapped logical plan and then call their specific function pointer to handle logic inside. At the
+	// same time, we will pass ge (also implement LogicalPlan interface) as the first parameter for iterate
+	// ge's children in memo scenario.
+	// And since base.LogicalPlan is a common parent pointer of GE and LogicalPlan, we can use same portal.
+	switch lop := e.GetWrappedLogicalPlan().(type) {
+	case *logicalop.LogicalCTE:
+		return utilfuncp.FindBestTask4LogicalCTE(e, prop)
+	case *logicalop.LogicalShow:
+		return utilfuncp.FindBestTask4LogicalShow(e, prop)
+	case *logicalop.LogicalCTETable:
+		return utilfuncp.FindBestTask4LogicalCTETable(e, prop)
+	case *logicalop.LogicalMemTable:
+		return utilfuncp.FindBestTask4LogicalMemTable(e, prop)
+	case *logicalop.LogicalTableDual:
+		return findBestTask4LogicalTableDual(lop, prop)
+	case *logicalop.DataSource:
+		return utilfuncp.FindBestTask4LogicalDataSource(e, prop)
+	case *logicalop.LogicalShowDDLJobs:
+		return utilfuncp.FindBestTask4LogicalShowDDLJobs(e, prop)
+	case *logicalop.MockDataSource:
+		return findBestTask4LogicalMockDatasource(lop, prop)
+	default:
+		return utilfuncp.FindBestTask4BaseLogicalPlan(e, prop)
+	}
 }

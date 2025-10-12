@@ -18,6 +18,7 @@ go_library(
         "logical_lock.go",
         "logical_max_one_row.go",
         "logical_mem_table.go",
+        "logical_mock.go",
         "logical_partition_union_all.go",
         "logical_plans_misc.go",
         "logical_projection.go",

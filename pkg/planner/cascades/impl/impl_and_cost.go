@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -124,10 +125,10 @@ func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, c
 		// for each group expression inside un-optimized group, try to find the best physical plan prop-accordingly.
 		// GroupExpression overrides the base.LogicalPlan's FindBestTask to do the router job, And this is because
 		// if we call ge.LogicalOperator.FindBestTask, the function receiver will be logical operator himself rather
-		// than the group expression as we expected. ge.FindBestTask will directly call the logicalOp's findBestTask4xxx
+		// than the group expression as we expected. physicalop.FindBestTask will directly call the logicalOp's findBestTask4xxx
 		// for the same effect while pass the ge as the first the parameter because ge also implement the LogicalPlan
 		// interface as well.
-		task, err := ge.FindBestTask(prop)
+		task, err := physicalop.FindBestTask(ge, prop)
 		if err != nil {
 			implErr = err
 			return false
