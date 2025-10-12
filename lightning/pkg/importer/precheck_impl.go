@@ -1115,6 +1115,67 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 	return msgs, nil
 }
 
+type parquetDataTypeCheckItem struct {
+	cfg           *config.Config
+	preInfoGetter PreImportInfoGetter
+	dbMetas       []*mydump.MDDatabaseMeta
+}
+
+func NewParquetDataTypeCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) precheck.Checker {
+	return &parquetDataTypeCheckItem{
+		cfg:           cfg,
+		preInfoGetter: preInfoGetter,
+		dbMetas:       dbMetas,
+	}
+}
+
+func (*parquetDataTypeCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckParquetDataType
+}
+
+func (ci *parquetDataTypeCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
+		Item:     ci.GetCheckItemID(),
+		Severity: precheck.Critical,
+		Passed:   true,
+	}
+
+	store := ci.preInfoGetter.GetStorage()
+	checkFn := func(ctx context.Context, file mydump.SourceFileMeta) (bool, error) {
+		return mydump.CheckParquetDataType(ctx, store, file)
+	}
+
+	// For each table, we check the first 32 parquet files to see if they have the same schema.
+	for _, dbMeta := range ci.dbMetas {
+		for _, tblMeta := range dbMeta.Tables {
+			checkFiles := make([]mydump.SourceFileMeta, 0, 32)
+			for _, f := range tblMeta.DataFiles {
+				if f.FileMeta.Type == mydump.SourceTypeParquet {
+					checkFiles = append(checkFiles, f.FileMeta)
+					if len(checkFiles) >= 32 {
+						break
+					}
+				}
+			}
+
+			// Do the check
+			res, err := mydump.ParallelProcess(ctx, checkFiles, 8, checkFn)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			for _, r := range res {
+				if !r {
+					theResult.Passed = false
+					theResult.Message = "parquet files contains unsupported data types"
+					return theResult, nil
+				}
+			}
+		}
+	}
+
+	return theResult, nil
+}
+
 type csvHeaderCheckItem struct {
 	cfg           *config.Config
 	preInfoGetter PreImportInfoGetter

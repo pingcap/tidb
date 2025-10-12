@@ -38,6 +38,7 @@ const (
 	CheckSourceSchemaValid        CheckItemID = "CHECK_SOURCE_SCHEMA_VALID"
 	CheckCheckpoints              CheckItemID = "CHECK_CHECKPOINTS"
 	CheckCSVHeader                CheckItemID = "CHECK_CSV_HEADER"
+	CheckParquetDataType          CheckItemID = "CHECK_PARQUET_DATA_TYPE"
 	CheckTargetClusterSize        CheckItemID = "CHECK_TARGET_CLUSTER_SIZE"
 	CheckTargetClusterEmptyRegion CheckItemID = "CHECK_TARGET_CLUSTER_EMPTY_REGION"
 	CheckTargetClusterRegionDist  CheckItemID = "CHECK_TARGET_CLUSTER_REGION_DISTRIBUTION"
@@ -57,6 +58,7 @@ var (
 		CheckSourceSchemaValid:        "Source schema valid",
 		CheckCheckpoints:              "Checkpoints",
 		CheckCSVHeader:                "CSV header",
+		CheckParquetDataType:          "Parquet data type",
 		CheckTargetClusterSize:        "Target cluster size",
 		CheckTargetClusterEmptyRegion: "Target cluster empty region",
 		CheckTargetClusterRegionDist:  "Target cluster region dist",
