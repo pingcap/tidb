@@ -27,6 +27,7 @@ go_test(
         ":tblsession",
         "//pkg/infoschema",
         "//pkg/meta/model",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/table",
         "//pkg/table/tables",
