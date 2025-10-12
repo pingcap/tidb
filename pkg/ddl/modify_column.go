@@ -666,6 +666,11 @@ func checkAndMarkNonRevertible(job *model.Job) {
 
 func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) bool {
 	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
+	if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.NeedAnalyze {
+		// If the job is a multi-schema-change job,
+		// we only analyze the table once after all schema changes are done.
+		return true
+	}
 	if doneCh == nil {
 		doneCh = make(chan struct{})
 		eg := util.NewErrorGroupWithRecover()
