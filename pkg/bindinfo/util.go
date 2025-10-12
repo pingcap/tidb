@@ -88,8 +88,8 @@ func (u *globalBindingHandle) updateBindingUsageInfoToStorage(bindings []Binding
 	return nil
 }
 
-func (h *globalBindingHandle) updateBindingUsageInfoToStorageInternal(bindings []Binding) error {
-	err := h.callWithSCtx(true, func(sctx sessionctx.Context) (err error) {
+func (u *globalBindingHandle) updateBindingUsageInfoToStorageInternal(bindings []Binding) error {
+	err := u.callWithSCtx(true, func(sctx sessionctx.Context) (err error) {
 		if err = lockBindInfoTable(sctx); err != nil {
 			return errors.Trace(err)
 		}
