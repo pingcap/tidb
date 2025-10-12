@@ -60,8 +60,8 @@ type columnStatsUsageCollector struct {
 	// operatorNum is the number of operators in the logical plan.
 	operatorNum uint64
 
-	// sortColumns tracks columns used in sort operations that should be propagated down to DataSource
-	sortColumns []*expression.Column
+	// orderingColumns tracks columns that require ordered access (sorts and MIN/MAX) to propagate to DataSource
+	orderingColumns []*expression.Column
 }
 
 func newColumnStatsUsageCollector(enabledPlanCapture bool) *columnStatsUsageCollector {
@@ -178,14 +178,14 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 		}
 	}
 
-	// Store sort columns in the DataSource if they belong to this DataSource
-	if len(c.sortColumns) > 0 {
-		sortColSet := make(map[int64]struct{})
-		for _, sortCol := range c.sortColumns {
-			if ds.Schema().Contains(sortCol) {
-				if _, exists := sortColSet[sortCol.UniqueID]; !exists {
-					ds.SortColumns = append(ds.SortColumns, sortCol)
-					sortColSet[sortCol.UniqueID] = struct{}{}
+	// Store ordering columns (sort + MIN/MAX) in the DataSource if they belong to this DataSource
+	if len(c.orderingColumns) > 0 {
+		orderingColSet := make(map[int64]struct{})
+		for _, orderingCol := range c.orderingColumns {
+			if ds.Schema().Contains(orderingCol) {
+				if _, exists := orderingColSet[orderingCol.UniqueID]; !exists {
+					ds.OrderingColumns = append(ds.OrderingColumns, orderingCol)
+					orderingColSet[orderingCol.UniqueID] = struct{}{}
 				}
 			}
 		}
@@ -237,19 +237,19 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 
 	switch x := lp.(type) {
 	case *logicalop.LogicalSort:
-		// Extract and store sort columns to propagate to DataSource
+		// Extract and store ordering columns to propagate to DataSource
 		sortExprs := make([]expression.Expression, 0, len(x.ByItems))
 		for _, item := range x.ByItems {
 			sortExprs = append(sortExprs, item.Expr)
 		}
-		c.sortColumns = expression.ExtractColumnsFromExpressions(sortExprs, nil)
+		c.orderingColumns = expression.ExtractColumnsFromExpressions(sortExprs, nil)
 	case *logicalop.LogicalTopN:
-		// Extract and store sort columns to propagate to DataSource
+		// Extract and store ordering columns to propagate to DataSource
 		sortExprs := make([]expression.Expression, 0, len(x.ByItems))
 		for _, item := range x.ByItems {
 			sortExprs = append(sortExprs, item.Expr)
 		}
-		c.sortColumns = expression.ExtractColumnsFromExpressions(sortExprs, nil)
+		c.orderingColumns = expression.ExtractColumnsFromExpressions(sortExprs, nil)
 	}
 
 	for _, child := range lp.Children() {
@@ -282,6 +282,12 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		schema := x.Schema()
 		for i, aggFunc := range x.AggFuncs {
 			c.updateColMapFromExpressions(schema.Columns[i], aggFunc.Args)
+			// Extract columns from MIN/MAX aggregates - these can benefit from ordered indexes
+			// MIN(col) ≈ ORDER BY col ASC LIMIT 1, MAX(col) ≈ ORDER BY col DESC LIMIT 1
+			if aggFunc.Name == "min" || aggFunc.Name == "max" {
+				minMaxCols := expression.ExtractColumnsFromExpressions(aggFunc.Args, nil)
+				c.orderingColumns = append(c.orderingColumns, minMaxCols...)
+			}
 		}
 	case *logicalop.LogicalWindow:
 		// Statistics of the columns in LogicalWindow.PartitionBy are used in optimizeByShuffle4Window.
@@ -309,13 +315,13 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		for _, item := range x.ByItems {
 			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr}, false)
 		}
-		// Note: Sort columns already extracted above before visiting children
+		// Note: Ordering columns already extracted above before visiting children
 	case *logicalop.LogicalTopN:
 		// Assume statistics of all the columns in ByItems are needed.
 		for _, item := range x.ByItems {
 			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr}, false)
 		}
-		// Note: Sort columns already extracted above before visiting children
+		// Note: Ordering columns already extracted above before visiting children
 	case *logicalop.LogicalUnionAll:
 		c.collectPredicateColumnsForUnionAll(x)
 	case *logicalop.LogicalPartitionUnionAll:

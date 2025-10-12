@@ -126,9 +126,12 @@ type DataSource struct {
 	// These are columns that appear in filter predicates (excluding join conditions).
 	WhereColumns []*expression.Column
 
-	// SortColumns stores columns that are used in sort operations above this DataSource.
-	// These help identify when indexes can be used to avoid sorting.
-	SortColumns []*expression.Column
+	// OrderingColumns stores columns that require ordered access from this DataSource.
+	// This includes columns used in:
+	//   - ORDER BY clauses (need sorted data)
+	//   - MIN/MAX aggregates (MIN(col) ≈ ORDER BY col ASC LIMIT 1, MAX(col) ≈ ORDER BY col DESC LIMIT 1)
+	// Indexes on these columns can eliminate sorting or enable efficient min/max retrieval.
+	OrderingColumns []*expression.Column
 }
 
 // Init initializes DataSource.

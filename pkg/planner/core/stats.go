@@ -133,36 +133,13 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
-	// Prune indexes based on WHERE and ORDER BY columns if we have too many
-	// Skip pruning if any paths are forced (index hints already did the pruning)
-	hasForced := false
-	for _, path := range ds.AllPossibleAccessPaths {
-		if path.Forced {
-			hasForced = true
-			break
-		}
-	}
-
+	// Prune indexes based on WHERE and ordering columns (ORDER BY, MIN/MAX) if we have too many
 	threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
-	if !hasForced && len(ds.AllPossibleAccessPaths) > threshold && (len(ds.WhereColumns) > 0 || len(ds.SortColumns) > 0) {
-		prunedPaths := pruneIndexesByWhereAndOrder(ds.AllPossibleAccessPaths, ds.WhereColumns, ds.SortColumns, threshold)
-		// Only use pruned paths if result is valid and keeps at least some paths
-		// Be very conservative: must have table paths or multiple index paths
-		hasTablePath := false
-		for _, p := range prunedPaths {
-			if p.IsTablePath() {
-				hasTablePath = true
-				break
-			}
-		}
-		// Only accept pruning if we have table path, or at least 2 indexes
-		if hasTablePath || len(prunedPaths) >= 2 {
-			// Update BOTH AllPossibleAccessPaths and PossibleAccessPaths
-			ds.AllPossibleAccessPaths = prunedPaths
-			// Make a copy for PossibleAccessPaths to avoid sharing the same slice
-			ds.PossibleAccessPaths = make([]*util.AccessPath, len(prunedPaths))
-			copy(ds.PossibleAccessPaths, prunedPaths)
-		}
+	if len(ds.AllPossibleAccessPaths) > threshold && (len(ds.WhereColumns) > 0 || len(ds.OrderingColumns) > 0) {
+		ds.AllPossibleAccessPaths = pruneIndexesByWhereAndOrder(ds.AllPossibleAccessPaths, ds.WhereColumns, ds.OrderingColumns, threshold)
+		// Make a copy for PossibleAccessPaths to avoid sharing the same slice
+		ds.PossibleAccessPaths = make([]*util.AccessPath, len(ds.AllPossibleAccessPaths))
+		copy(ds.PossibleAccessPaths, ds.AllPossibleAccessPaths)
 	}
 	// Fill index paths for all paths (pruned or not)
 	for _, path := range ds.AllPossibleAccessPaths {
@@ -800,15 +777,15 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 	statsRecord.RecordUsedInfo(pid, usedStats)
 }
 
-// pruneIndexesByWhereAndOrder prunes indexes that have the same prefix as other indexes
-// with the same eqOrInCondCount, but where the other index also has a higher eqOrInCondCount.
-func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, sortColumns []*expression.Column, threshold int) []*util.AccessPath {
+// pruneIndexesByWhereAndOrder prunes indexes based on their coverage of WHERE and ordering columns.
+// Ordering columns include both ORDER BY and MIN/MAX aggregates since both benefit from ordered indexes.
+func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, orderingColumns []*expression.Column, threshold int) []*util.AccessPath {
 	if len(paths) <= 1 {
 		return paths
 	}
 
-	// If we have no WHERE or SORT columns, don't prune - just return all paths
-	if len(whereColumns) == 0 && len(sortColumns) == 0 {
+	// If we have no WHERE or ordering columns, don't prune - just return all paths
+	if len(whereColumns) == 0 && len(orderingColumns) == 0 {
 		return paths
 	}
 
@@ -821,9 +798,9 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, sortCol
 	for _, col := range whereColumns {
 		whereColIDs[col.ID] = struct{}{}
 	}
-	sortColIDs := make(map[int64]struct{}, len(sortColumns))
-	for _, col := range sortColumns {
-		sortColIDs[col.ID] = struct{}{}
+	orderingColIDs := make(map[int64]struct{}, len(orderingColumns))
+	for _, col := range orderingColumns {
+		orderingColIDs[col.ID] = struct{}{}
 	}
 
 	for _, path := range paths {
@@ -832,11 +809,18 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, sortCol
 			continue
 		}
 
-		// Count how many WHERE and SORT columns are covered by this index
+		// If we have forced paths, we shouldn't prune any paths.
+		// Hints processing should have already done the pruning.
+		// And it means we have entered this function due to a low threshold.
+		if path.Forced {
+			return paths
+		}
+
+		// Count how many WHERE and ordering columns are covered by this index
 		coveredWhereCount := 0
-		coveredSortCount := 0
+		coveredOrderingCount := 0
 		firstColMatchesWhere := false
-		firstColMatchesSort := false
+		firstColMatchesOrdering := false
 
 		for i, idxCol := range path.FullIdxCols {
 			// Use the column ID
@@ -850,22 +834,22 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, sortCol
 				}
 			}
 
-			// Check if this index column matches a SORT column
-			if _, found := sortColIDs[idxColID]; found {
-				coveredSortCount++
+			// Check if this index column matches an ordering column (ORDER BY or MIN/MAX)
+			if _, found := orderingColIDs[idxColID]; found {
+				coveredOrderingCount++
 				if i == 0 {
-					firstColMatchesSort = true
+					firstColMatchesOrdering = true
 				}
 			}
 		}
 
 		// Calculate total coverage
-		totalRequiredCols := len(whereColumns) + len(sortColumns)
-		totalCovered := coveredWhereCount + coveredSortCount
+		totalRequiredCols := len(whereColumns) + len(orderingColumns)
+		totalCovered := coveredWhereCount + coveredOrderingCount
 
 		// Perfect covering: covers ALL required columns AND first column matches
 		if totalCovered == totalRequiredCols && totalRequiredCols > 0 &&
-			(firstColMatchesWhere || firstColMatchesSort) {
+			(firstColMatchesWhere || firstColMatchesOrdering) {
 			perfectCoveringIndexes = append(perfectCoveringIndexes, path)
 			continue
 		}
@@ -879,15 +863,15 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, sortCol
 		hasGoodCoverage := false
 
 		// Case 1: First column matches - this is valuable
-		if firstColMatchesWhere || firstColMatchesSort {
+		if firstColMatchesWhere || firstColMatchesOrdering {
 			hasGoodCoverage = true
 		}
 		// Case 2: Covers multiple WHERE columns (even if first doesn't match)
 		if coveredWhereCount >= 2 {
 			hasGoodCoverage = true
 		}
-		// Case 3: Covers any SORT columns (useful for avoiding sort)
-		if coveredSortCount == len(sortColumns) && len(sortColumns) > 0 {
+		// Case 3: Covers ALL ordering columns (useful for avoiding sort or enabling min/max optimization)
+		if coveredOrderingCount == len(orderingColumns) && len(orderingColumns) > 0 {
 			hasGoodCoverage = true
 		}
 
@@ -907,8 +891,8 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, sortCol
 	if len(preferredIndexes) > 1 {
 		slices.SortFunc(preferredIndexes, func(a, b *util.AccessPath) int {
 			// Calculate coverage score for each index
-			scoreA := calculateIndexCoverageScore(a, whereColumns, sortColumns)
-			scoreB := calculateIndexCoverageScore(b, whereColumns, sortColumns)
+			scoreA := calculateIndexCoverageScore(a, whereColumns, orderingColumns)
+			scoreB := calculateIndexCoverageScore(b, whereColumns, orderingColumns)
 			// Higher score is better, so reverse the comparison
 			if scoreA != scoreB {
 				return scoreB - scoreA
@@ -961,8 +945,9 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, sortCol
 }
 
 // calculateIndexCoverageScore calculates a score for how well an index covers the required columns.
+// Ordering columns include both ORDER BY and MIN/MAX since both benefit from ordered access.
 // Higher score means better coverage.
-func calculateIndexCoverageScore(path *util.AccessPath, whereColumns, sortColumns []*expression.Column) int {
+func calculateIndexCoverageScore(path *util.AccessPath, whereColumns, orderingColumns []*expression.Column) int {
 	if path == nil || path.Index == nil {
 		return 0
 	}
@@ -972,9 +957,9 @@ func calculateIndexCoverageScore(path *util.AccessPath, whereColumns, sortColumn
 	for _, col := range whereColumns {
 		whereColIDs[col.ID] = struct{}{}
 	}
-	sortColIDs := make(map[int64]struct{}, len(sortColumns))
-	for _, col := range sortColumns {
-		sortColIDs[col.ID] = struct{}{}
+	orderingColIDs := make(map[int64]struct{}, len(orderingColumns))
+	for _, col := range orderingColumns {
+		orderingColIDs[col.ID] = struct{}{}
 	}
 
 	score := 0
@@ -1003,30 +988,30 @@ func calculateIndexCoverageScore(path *util.AccessPath, whereColumns, sortColumn
 		score += 20
 	}
 
-	// Score for SortColumns coverage (important for avoiding sort)
-	sortMatches := 0
-	consecutiveSortMatches := 0
-	firstColMatchesSort := false
+	// Score for ordering columns (ORDER BY, MIN/MAX) - important for avoiding sort or enabling optimizations
+	orderingMatches := 0
+	consecutiveOrderingMatches := 0
+	firstColMatchesOrdering := false
 	for i, idxCol := range idxCols {
 		idxColID := idxCol.ID
-		if _, found := sortColIDs[idxColID]; found {
-			sortMatches++
+		if _, found := orderingColIDs[idxColID]; found {
+			orderingMatches++
 			if i == 0 {
-				firstColMatchesSort = true
+				firstColMatchesOrdering = true
 			}
-			// Check for consecutive matching (preserves sort order)
-			if i < len(sortColumns) {
+			// Check for consecutive matching (preserves order for sorting or min/max)
+			if i < len(orderingColumns) {
 				// This is a simplified check - in reality you'd want to ensure the ORDER matches
-				consecutiveSortMatches++
+				consecutiveOrderingMatches++
 			}
 		}
 	}
-	// Each SORT column match is worth 5 points
-	score += sortMatches * 5
-	// Consecutive sort matches get bonus (very valuable for ORDER BY)
-	score += consecutiveSortMatches * 8
-	// Bonus if first column is a SORT column
-	if firstColMatchesSort {
+	// Each ordering column match is worth 5 points
+	score += orderingMatches * 5
+	// Consecutive ordering matches get bonus (very valuable for ORDER BY and MIN/MAX)
+	score += consecutiveOrderingMatches * 8
+	// Bonus if first column is an ordering column
+	if firstColMatchesOrdering {
 		score += 15
 	}
 
