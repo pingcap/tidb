@@ -62,9 +62,6 @@ type columnStatsUsageCollector struct {
 
 	// sortColumns tracks columns used in sort operations that should be propagated down to DataSource
 	sortColumns []*expression.Column
-
-	// joinColumns tracks columns used in join conditions that should be propagated down to DataSource
-	joinColumns []*expression.Column
 }
 
 func newColumnStatsUsageCollector(enabledPlanCapture bool) *columnStatsUsageCollector {
@@ -181,20 +178,6 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 		}
 	}
 
-	// Store join columns in the DataSource if they belong to this DataSource
-	// Join columns come from EqualConditions and OtherConditions of joins
-	if len(c.joinColumns) > 0 {
-		joinColSet := make(map[int64]struct{})
-		for _, joinCol := range c.joinColumns {
-			if ds.Schema().Contains(joinCol) {
-				if _, exists := joinColSet[joinCol.UniqueID]; !exists {
-					ds.JoinColumns = append(ds.JoinColumns, joinCol)
-					joinColSet[joinCol.UniqueID] = struct{}{}
-				}
-			}
-		}
-	}
-
 	// Store sort columns in the DataSource if they belong to this DataSource
 	if len(c.sortColumns) > 0 {
 		sortColSet := make(map[int64]struct{})
@@ -281,7 +264,6 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		for _, cond := range x.OtherConditions {
 			joinExprs = append(joinExprs, cond)
 		}
-		c.joinColumns = expression.ExtractColumnsFromExpressions(joinExprs, nil)
 	case *logicalop.LogicalApply:
 		// Extract and store join columns to propagate to DataSource
 		joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
@@ -291,7 +273,6 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		for _, cond := range x.OtherConditions {
 			joinExprs = append(joinExprs, cond)
 		}
-		c.joinColumns = expression.ExtractColumnsFromExpressions(joinExprs, nil)
 	}
 
 	for _, child := range lp.Children() {
