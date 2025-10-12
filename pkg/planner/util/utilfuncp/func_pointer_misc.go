@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -49,10 +50,6 @@ var ExhaustPhysicalPlans4LogicalMaxOneRow func(p base.LogicalPlan, prop *propert
 // FindBestTask4LogicalCTETable will be called by LogicalCTETable in logicalOp pkg.
 var FindBestTask4LogicalCTETable func(lp base.LogicalPlan,
 	prop *property.PhysicalProperty) (t base.Task, err error)
-
-// FindBestTask4LogicalMemTable will be called by LogicalMemTable in logicalOp pkg.
-var FindBestTask4LogicalMemTable func(lp base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task,
-	err error)
 
 // FindBestTask4LogicalShow will be called by LogicalShow in logicalOp pkg.
 var FindBestTask4LogicalShow func(lp base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error)
@@ -463,6 +460,9 @@ var GetPlanCostVer14PhysicalIndexMergeJoin func(pp base.PhysicalPlan,
 var Attach2Task4PhysicalIndexMergeJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
 // ****************************************** task related ***********************************************
+
+// EnforceProperty will be called by FindBestTask4LogicalMemTable in physicalOp pkg.
+var EnforceProperty func(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanContext, fd *funcdep.FDSet) base.Task
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
 var AttachPlan2Task func(p base.PhysicalPlan, t base.Task) base.Task
