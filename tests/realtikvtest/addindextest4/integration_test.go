@@ -224,3 +224,40 @@ func TestAddIndexShowAnalyzeProgress(t *testing.T) {
 	tk1.MustExec("alter table t modify column b smallint;")
 	require.True(t, analyzed)
 }
+
+func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("set @@tidb_enable_ddl_analyze = true;")
+	tk1.MustExec("set @@sql_mode = '';")
+	dbCnt := 0
+
+	checkFn := func(sql, containRes string) {
+		dbCnt++
+		dbName := fmt.Sprintf("test_%d", dbCnt)
+		tk1.MustExec("drop database if exists " + dbName)
+		tk1.MustExec("create database " + dbName)
+		defer tk1.MustExec("drop database " + dbName)
+		tk1.MustExec("use " + dbName)
+		tk1.MustExec("create table t (a int, b int, c char(6), key i_a(a), key i_b(b), key i_c(c));")
+		tk1.MustExec("insert into t values (1, 1, '111111');")
+		beginRs := tk1.MustQuery("select now();").Rows()
+		begin := beginRs[0][0].(string)
+		tk1.MustExec(sql)
+		analyzeStatusRs := tk1.MustQuery(
+			fmt.Sprintf("show analyze status where start_time >= '%s' and table_schema = '%s';", begin, dbName)).Rows()
+		if containRes == "" {
+			require.Len(t, analyzeStatusRs, 0)
+			return
+		}
+		require.Len(t, analyzeStatusRs, 1)
+		require.Contains(t, analyzeStatusRs[0][3].(string), containRes)
+	}
+
+	checkFn("alter table t add index i_a_2(a), add index i_b_2(b), modify column c char(5);", "all columns")
+	checkFn("alter table t modify column c char(5), modify column a smallint;", "all columns")
+	checkFn("alter table t modify column c char(5), modify column a bigint, modify column b bigint;", "all columns")
+	checkFn("alter table t modify column a bigint, modify column c char(5), modify column b bigint;", "all columns")
+	checkFn("alter table t modify column a bigint, modify column b bigint;", "") // no lossy change
+}
