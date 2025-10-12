@@ -343,7 +343,7 @@ a	b
 explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p0	data:Selection
-└─Selection	1.00	cop[tikv]		or(0, eq(executor__partition__partition_boundaries.t.a, -1))
+└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_boundaries.t.a, -1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1;
 a	b
@@ -389,7 +389,7 @@ a	b
 explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p0	data:Selection
-└─Selection	1.00	cop[tikv]		or(0, or(eq(executor__partition__partition_boundaries.t.a, -1), eq(executor__partition__partition_boundaries.t.a, 0)))
+└─Selection	1.00	cop[tikv]		or(eq(executor__partition__partition_boundaries.t.a, -1), eq(executor__partition__partition_boundaries.t.a, 0))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0;
 a	b
@@ -434,7 +434,7 @@ a	b
 explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1;
 id	estRows	task	access object	operator info
 TableReader	2.00	root	partition:p0,p1	data:Selection
-└─Selection	2.00	cop[tikv]		or(or(0, eq(executor__partition__partition_boundaries.t.a, -1)), or(eq(executor__partition__partition_boundaries.t.a, 0), eq(executor__partition__partition_boundaries.t.a, 1)))
+└─Selection	2.00	cop[tikv]		or(eq(executor__partition__partition_boundaries.t.a, -1), or(eq(executor__partition__partition_boundaries.t.a, 0), eq(executor__partition__partition_boundaries.t.a, 1)))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1;
 a	b
@@ -478,7 +478,7 @@ a	b
 explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2;
 id	estRows	task	access object	operator info
 TableReader	3.00	root	partition:p0,p1,p2	data:Selection
-└─Selection	3.00	cop[tikv]		or(or(0, eq(executor__partition__partition_boundaries.t.a, -1)), or(eq(executor__partition__partition_boundaries.t.a, 0), or(eq(executor__partition__partition_boundaries.t.a, 1), eq(executor__partition__partition_boundaries.t.a, 2))))
+└─Selection	3.00	cop[tikv]		or(eq(executor__partition__partition_boundaries.t.a, -1), or(eq(executor__partition__partition_boundaries.t.a, 0), or(eq(executor__partition__partition_boundaries.t.a, 1), eq(executor__partition__partition_boundaries.t.a, 2))))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2;
 a	b
@@ -521,7 +521,7 @@ a	b
 explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3;
 id	estRows	task	access object	operator info
 TableReader	4.00	root	partition:p0,p1,p2,p3	data:Selection
-└─Selection	4.00	cop[tikv]		or(or(0, or(eq(executor__partition__partition_boundaries.t.a, -1), eq(executor__partition__partition_boundaries.t.a, 0))), or(eq(executor__partition__partition_boundaries.t.a, 1), or(eq(executor__partition__partition_boundaries.t.a, 2), eq(executor__partition__partition_boundaries.t.a, 3))))
+└─Selection	4.00	cop[tikv]		or(or(eq(executor__partition__partition_boundaries.t.a, -1), eq(executor__partition__partition_boundaries.t.a, 0)), or(eq(executor__partition__partition_boundaries.t.a, 1), or(eq(executor__partition__partition_boundaries.t.a, 2), eq(executor__partition__partition_boundaries.t.a, 3))))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3;
 a	b
@@ -563,7 +563,7 @@ a	b
 explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4;
 id	estRows	task	access object	operator info
 TableReader	5.00	root	partition:p0,p1,p2,p3,p4	data:Selection
-└─Selection	5.00	cop[tikv]		or(or(0, or(eq(executor__partition__partition_boundaries.t.a, -1), eq(executor__partition__partition_boundaries.t.a, 0))), or(or(eq(executor__partition__partition_boundaries.t.a, 1), eq(executor__partition__partition_boundaries.t.a, 2)), or(eq(executor__partition__partition_boundaries.t.a, 3), eq(executor__partition__partition_boundaries.t.a, 4))))
+└─Selection	5.00	cop[tikv]		or(or(eq(executor__partition__partition_boundaries.t.a, -1), eq(executor__partition__partition_boundaries.t.a, 0)), or(or(eq(executor__partition__partition_boundaries.t.a, 1), eq(executor__partition__partition_boundaries.t.a, 2)), or(eq(executor__partition__partition_boundaries.t.a, 3), eq(executor__partition__partition_boundaries.t.a, 4))))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4;
 a	b
@@ -604,7 +604,7 @@ a	b
 explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5;
 id	estRows	task	access object	operator info
 TableReader	6.00	root	partition:p0,p1,p2,p3,p4,p5	data:Selection
-└─Selection	6.00	cop[tikv]		or(or(or(0, eq(executor__partition__partition_boundaries.t.a, -1)), or(eq(executor__partition__partition_boundaries.t.a, 0), eq(executor__partition__partition_boundaries.t.a, 1))), or(or(eq(executor__partition__partition_boundaries.t.a, 2), eq(executor__partition__partition_boundaries.t.a, 3)), or(eq(executor__partition__partition_boundaries.t.a, 4), eq(executor__partition__partition_boundaries.t.a, 5))))
+└─Selection	6.00	cop[tikv]		or(or(eq(executor__partition__partition_boundaries.t.a, -1), or(eq(executor__partition__partition_boundaries.t.a, 0), eq(executor__partition__partition_boundaries.t.a, 1))), or(or(eq(executor__partition__partition_boundaries.t.a, 2), eq(executor__partition__partition_boundaries.t.a, 3)), or(eq(executor__partition__partition_boundaries.t.a, 4), eq(executor__partition__partition_boundaries.t.a, 5))))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5;
 a	b
@@ -644,7 +644,7 @@ a	b
 explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6;
 id	estRows	task	access object	operator info
 TableReader	7.00	root	partition:all	data:Selection
-└─Selection	7.00	cop[tikv]		or(or(or(0, eq(executor__partition__partition_boundaries.t.a, -1)), or(eq(executor__partition__partition_boundaries.t.a, 0), eq(executor__partition__partition_boundaries.t.a, 1))), or(or(eq(executor__partition__partition_boundaries.t.a, 2), eq(executor__partition__partition_boundaries.t.a, 3)), or(eq(executor__partition__partition_boundaries.t.a, 4), or(eq(executor__partition__partition_boundaries.t.a, 5), eq(executor__partition__partition_boundaries.t.a, 6)))))
+└─Selection	7.00	cop[tikv]		or(or(eq(executor__partition__partition_boundaries.t.a, -1), or(eq(executor__partition__partition_boundaries.t.a, 0), eq(executor__partition__partition_boundaries.t.a, 1))), or(or(eq(executor__partition__partition_boundaries.t.a, 2), eq(executor__partition__partition_boundaries.t.a, 3)), or(eq(executor__partition__partition_boundaries.t.a, 4), or(eq(executor__partition__partition_boundaries.t.a, 5), eq(executor__partition__partition_boundaries.t.a, 6)))))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6;
 a	b
@@ -686,7 +686,7 @@ a	b
 explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6 OR a = 7;
 id	estRows	task	access object	operator info
 TableReader	7.00	root	partition:all	data:Selection
-└─Selection	7.00	cop[tikv]		or(or(or(0, eq(executor__partition__partition_boundaries.t.a, -1)), or(eq(executor__partition__partition_boundaries.t.a, 0), or(eq(executor__partition__partition_boundaries.t.a, 1), eq(executor__partition__partition_boundaries.t.a, 2)))), or(or(eq(executor__partition__partition_boundaries.t.a, 3), eq(executor__partition__partition_boundaries.t.a, 4)), or(eq(executor__partition__partition_boundaries.t.a, 5), or(eq(executor__partition__partition_boundaries.t.a, 6), eq(executor__partition__partition_boundaries.t.a, 7)))))
+└─Selection	7.00	cop[tikv]		or(or(eq(executor__partition__partition_boundaries.t.a, -1), or(eq(executor__partition__partition_boundaries.t.a, 0), or(eq(executor__partition__partition_boundaries.t.a, 1), eq(executor__partition__partition_boundaries.t.a, 2)))), or(or(eq(executor__partition__partition_boundaries.t.a, 3), eq(executor__partition__partition_boundaries.t.a, 4)), or(eq(executor__partition__partition_boundaries.t.a, 5), or(eq(executor__partition__partition_boundaries.t.a, 6), eq(executor__partition__partition_boundaries.t.a, 7)))))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6 OR a = 7;
 a	b
