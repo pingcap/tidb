@@ -284,6 +284,10 @@ func (p *preprocessor) getAllDBInfos(node *ast.TableRefsClause) map[*ast.TableSo
 	for _, tbl := range t.tableSources {
 		name := tbl.Source.(*ast.TableName)
 		table, err := p.tableByName(name)
+		if errors.ErrorEqual(err, infoschema.ErrTableNotExists) {
+			// Maybe cte or alies, other place will handle it.
+			continue
+		}
 		if err != nil {
 			p.err = err
 			return nil
