@@ -818,16 +818,23 @@ func TestAutoRandomWithLargeSignedShowTableRegions(t *testing.T) {
 func TestShowEscape(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
 	tk.MustExec("use test")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	tk.MustExec("drop table if exists `t``abl\"e`")
 	tk.MustExec("create table `t``abl\"e`(`c``olum\"n` int(11) primary key)")
+	tk.MustExec("create user `u`")
+	tk.MustExec("grant select, update( `c``olum\"n`) on `t``abl\"e` to u")
 	tk.MustQuery("show create table `t``abl\"e`").Check(testkit.RowsWithSep("|",
 		""+
 			"t`abl\"e CREATE TABLE `t``abl\"e` (\n"+
 			"  `c``olum\"n` int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (`c``olum\"n`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustQuery("show grants for u").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'u'@'%'",
+		"GRANT SELECT ON `test`.`t``abl\"e` TO 'u'@'%'",
+		"GRANT UPDATE(`c``olum\"n`) ON `test`.`t``abl\"e` TO 'u'@'%'",
 	))
 
 	// ANSI_QUOTES will change the SHOW output
@@ -839,6 +846,11 @@ func TestShowEscape(t *testing.T) {
 			"  \"c`olum\"\"n\" int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (\"c`olum\"\"n\") /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustQuery("show grants for u").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'u'@'%'",
+		"GRANT SELECT ON \"test\".\"t`abl\"\"e\" TO 'u'@'%'",
+		"GRANT UPDATE(\"c`olum\"\"n\") ON \"test\".\"t`abl\"\"e\" TO 'u'@'%'",
 	))
 
 	tk.MustExec("rename table \"t`abl\"\"e\" to t")
@@ -1220,4 +1232,29 @@ func TestShowBindingDigestField(t *testing.T) {
 	tk.MustExec("drop global binding for select * from t1, t2 where t1.id = t2.id")
 	result = tk.MustQuery("show global bindings;")
 	require.Equal(t, len(result.Rows()), 0)
+}
+
+func TestShowGrantsWithRoles(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE USER u")
+	tk.MustExec("CREATE USER r1")
+	tk.MustExec("CREATE USER r2")
+	tk.MustExec("CREATE TABLE t (c1 int, c2 int)")
+
+	tk.MustExec("GRANT select(c1, c2) ON test.t TO u")
+	tk.MustExec("GRANT select(c1, c2) ON test.t TO r1")
+	tk.MustExec("GRANT select(c1, c2) ON test.t TO r2")
+	tk.MustExec("GRANT r1 TO u")
+	tk.MustExec("GRANT r2 TO u")
+	tk.MustExec("SET DEFAULT ROLE ALL to u")
+
+	usertk := testkit.NewTestKit(t, store)
+	require.NoError(t, usertk.Session().Auth(&auth.UserIdentity{Username: "u", Hostname: "%"}, nil, nil, nil))
+	usertk.MustQuery("show grants").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'u'@'%'",
+		"GRANT SELECT(`c1`, `c2`) ON `test`.`t` TO 'u'@'%'",
+		"GRANT 'r1'@'%', 'r2'@'%' TO 'u'@'%'",
+	))
 }
