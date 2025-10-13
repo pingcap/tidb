@@ -162,6 +162,7 @@ func testInnerJoinSpillCase5(t *testing.T, ctx *mock.Context, info *hashJoinInfo
 	rightDataSource.PrepareChunks()
 	hashJoinExec := buildHashJoinV2Exec(info)
 	err := executeHashJoinExecAndGetError(t, hashJoinExec)
+	require.NotEqual(t, nil, err)
 	require.Equal(t, exceedMaxSpillRoundErrInfo, err.Error())
 }
 
@@ -274,7 +275,7 @@ func TestInnerJoinSpillBasic(t *testing.T) {
 	params := []spillTestParam{
 		// Normal case
 		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 500000, 10000}, testFuncName},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 500000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 400000, 10000}, testFuncName},
 		// rightUsed is empty
 		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{2000000, 2000000, 3000000, 250000, 10000}, testFuncName},
 		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 500000, 10000}, testFuncName},

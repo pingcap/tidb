@@ -446,11 +446,6 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 				for _, partID := range partitionsNeedSpill {
 					// finalize current segment of every partition in the worker
 					worker := h.hashJoinExec.BuildWorkers[workerID]
-					builder := worker.builder
-
-					if builder.rowNumberInCurrentRowTableSeg[partID] > 0 {
-						worker.HashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, worker.builder, false)
-					}
 					spilledSegments := worker.getSegmentsInRowTable(partID)
 					worker.clearSegmentsInRowTable(partID)
 

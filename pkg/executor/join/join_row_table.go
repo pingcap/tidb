@@ -27,6 +27,7 @@ const sizeOfUintptr = int(unsafe.Sizeof(uintptr(0)))
 
 var (
 	fakeAddrPlaceHolder = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+	fakeAddrPlaceHolderLen = len(fakeAddrPlaceHolder)
 	usedFlagMask        uint32
 	bitMaskInUint32     [32]uint32
 )
@@ -106,7 +107,6 @@ type rowTableSegment struct {
 	hashValues      []uint64 // the hash value of each rows
 	rowStartOffset  []uint64 // the start address of each row
 	validJoinKeyPos []int    // the pos of rows that need to be inserted into hash table, used in hash table build
-	finalized       bool     // after finalized is set to true, no further modification is allowed
 	// taggedBits is the bit that can be used to tag for all pointer in rawData, it use the MSB to tag, so if the n MSB is all 0, the taggedBits is n
 	taggedBits uint8
 }
@@ -186,9 +186,7 @@ type rowTable struct {
 func (rt *rowTable) getTotalMemoryUsage() int64 {
 	totalMemoryUsage := int64(0)
 	for _, seg := range rt.segments {
-		if seg.finalized {
-			totalMemoryUsage += seg.totalUsedBytes()
-		}
+		totalMemoryUsage += seg.totalUsedBytes()
 	}
 	return totalMemoryUsage
 }
@@ -222,16 +220,6 @@ func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 		startOffset += len(rt.segments[segIndex].rowStartOffset)
 	}
 	return -1
-}
-
-func (rt *rowTable) getTotalUsedBytesInSegments() int64 {
-	totalUsedBytes := int64(0)
-	for _, seg := range rt.segments {
-		if seg.finalized {
-			totalUsedBytes += seg.totalUsedBytes()
-		}
-	}
-	return totalUsedBytes
 }
 
 func newRowTable() *rowTable {

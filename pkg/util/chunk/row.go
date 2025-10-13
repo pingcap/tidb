@@ -221,6 +221,10 @@ func (r Row) DatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) {
 	}
 }
 
+func (r Row) GetRawLen(colIdx int) int {
+	return len(r.c.columns[colIdx].GetRaw(r.idx))
+}
+
 // GetRaw returns the underlying raw bytes with the colIdx.
 func (r Row) GetRaw(colIdx int) []byte {
 	return r.c.columns[colIdx].GetRaw(r.idx)

@@ -119,7 +119,6 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, buildFilter != nil, keepFilteredRows, meta.nullMapLength)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err, "processOneChunk returns error")
-	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	require.Equal(t, chk.NumRows(), len(builder.usedRows))
 	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
 	checkRowLocationAlignment(t, rowTables)
@@ -327,7 +326,6 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
-	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	require.NoError(t, err, "processOneChunk returns error")
 	require.Equal(t, chk.NumRows(), len(builder.usedRows))
 	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
@@ -554,7 +552,6 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, true, true, meta.nullMapLength)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err)
-	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
 	for i := range int(hashJoinCtx.partitionNumber) {
 		require.Equal(t, int(3000/hashJoinCtx.partitionNumber), int(rowTables[i].rowCount()))

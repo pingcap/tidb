@@ -397,7 +397,6 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		err := builder.processOneChunk(buildChunks[i], hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 		require.NoError(t, err)
 	}
-	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	checkRowLocationAlignment(t, hashJoinCtx.hashTableContext.rowTables[0])
 	hashJoinCtx.hashTableContext.mergeRowTablesToHashTable(hashJoinCtx.partitionNumber, nil)
 	// build hash table
