@@ -1248,19 +1248,34 @@ func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) bool {
 	return false
 }
 
+var (
+	// maxMemoryLimitForOverlongType is the memory limit for overlong type column check.
+	// Why is it not 512 ?
+	// Because many customers allocate a portion of memory to their management programs,
+	// the actual amount of usable memory does not align to 512GB.
+	// It is only changed by tests.
+	maxMemoryLimitForOverlongType = 500 * size.GB
+	MaxFlenForOverlongType        = mysql.MaxBlobWidth * 2
+)
+
 // existsOverlongType Check if exists long type column.
 func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
 	if schema == nil {
 		return false
 	}
+	totalFlen := 0
 	for _, column := range schema.Columns {
 		switch column.RetType.GetType() {
-		case mysql.TypeMediumBlob, mysql.TypeLongBlob,
+		case mysql.TypeLongBlob,
 			mysql.TypeBlob, mysql.TypeJSON, mysql.TypeTiDBVectorFloat32:
 			return true
-		case mysql.TypeTinyBlob:
+		case mysql.TypeTinyBlob, mysql.TypeMediumBlob:
 			if pointGet {
-				return false
+				totalFlen += column.RetType.GetFlen()
+				if checkOverlongType(totalFlen) {
+					return true
+				}
+				continue
 			}
 			return true
 		case mysql.TypeVarString, mysql.TypeVarchar:
@@ -1269,23 +1284,30 @@ func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
 			// the column is considered a large type and
 			// disable chunk_reuse.
 			if column.RetType.GetFlen() <= 1000 {
-				return false
+				continue
 			}
-			totalMemory, err := memory.MemTotal()
-			if pointGet && err != nil && totalMemory > 0 {
-				if totalMemory/size.GB > 500 {
-					// Why is it not 512 ?
-					// Because many customers allocate a portion of memory to their management programs,
-					// the actual amount of usable memory does not align to 512GB.
-					if column.RetType.GetFlen() > mysql.MaxBlobWidth {
-						// MaxBlobWidth * 4 / 1024 / 1024 = 64MB
-						return true
-					}
-					return false
+			if pointGet {
+				totalFlen += column.RetType.GetFlen()
+				if checkOverlongType(totalFlen) {
+					return true
 				}
+				continue
 			}
 			return true
 		}
 	}
 	return false
+}
+
+func checkOverlongType(totalFlen int) bool {
+	totalMemory, err := memory.MemTotal()
+	if err != nil || totalMemory <= 0 {
+		return true
+	}
+	if totalMemory >= maxMemoryLimitForOverlongType {
+		if totalFlen <= MaxFlenForOverlongType {
+			return false
+		}
+	}
+	return true
 }
