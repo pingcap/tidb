@@ -400,7 +400,7 @@ func (w *worker) runReorgJob(
 				logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
 					zap.Int64("prevTS", res.ownerTS),
 					zap.Int64("curTS", curTS))
-				return jobCtx.genReorgTimeoutErr(job.ID)
+				return jobCtx.genReorgTimeoutErr()
 			}
 			// Since job is cancelled，we don't care about its partial counts.
 			// TODO(lance6716): should we also do for paused job?
@@ -439,7 +439,7 @@ func (w *worker) runReorgJob(
 			w.mergeWarningsIntoJob(job)
 
 			rc.resetWarnings()
-			return jobCtx.genReorgTimeoutErr(job.ID)
+			return jobCtx.genReorgTimeoutErr()
 		}
 	}
 }
