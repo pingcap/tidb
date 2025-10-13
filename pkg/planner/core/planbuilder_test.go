@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -1274,4 +1275,45 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 	clonedForCache, ok = reader.CloneForPlanCache(ctx)
 	require.True(t, ok)
 	check(clonedForCache)
+}
+
+// TestDataSourceColumnMaps ensures that AppendColumn keeps the Columns slice
+// coherent with the ColIdxsByName map, and that AppendTableCol keeps the
+// TblCols slice coherent with the TblColsByID map.
+func TestDataSourceColumnMaps(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	b, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+
+	colInfos := []*model.ColumnInfo{
+		{ID: 1, Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
+		{ID: 2, Name: ast.NewCIStr("name"), FieldType: *types.NewFieldType(mysql.TypeString)},
+		{ID: 3, Name: ast.NewCIStr("age"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
+	}
+	colCount := len(colInfos)
+
+	ds := logicalop.DataSource{
+		Columns:       make([]*model.ColumnInfo, 0, colCount),
+		ColIdxsByName: make(map[string]int, colCount),
+		TblCols:       make([]*expression.Column, 0, colCount),
+		TblColsByID:   make(map[int64]*expression.Column, colCount),
+	}.Init(b.ctx, b.getSelectOffset())
+	ds.SetSchema(expression.NewSchema(make([]*expression.Column, 0, colCount)...))
+	for _, colInfo := range colInfos {
+		newCol := &expression.Column{ID: colInfo.ID}
+		ds.AppendColumn(newCol, colInfo)
+		ds.AppendTableCol(newCol)
+	}
+
+	for _, colInfo := range colInfos {
+		colIdx, found := ds.ColIdxsByName[colInfo.Name.L]
+		require.True(t, found)
+		require.Equal(t, ds.Columns[colIdx], colInfo)
+
+		tblCol, found := ds.TblColsByID[colInfo.ID]
+		require.True(t, found)
+		require.Equal(t, ds.TblCols[colIdx], tblCol)
+	}
 }

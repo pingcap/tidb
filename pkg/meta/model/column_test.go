@@ -104,3 +104,26 @@ func TestDefaultValue(t *testing.T) {
 	require.Equal(t, mysql.NotNullFlag, extraPhysTblIDCol.GetFlag())
 	require.Equal(t, mysql.TypeLonglong, extraPhysTblIDCol.GetType())
 }
+
+func TestColIdxsByName(t *testing.T) {
+	const numCols int64 = 10
+	colInfos := make([]*ColumnInfo, 0, numCols)
+	names := make([]string, 0, numCols)
+	for i := range numCols {
+		name := ast.NewCIStr(fmt.Sprintf("col%d", i))
+		colInfo := &ColumnInfo{
+			ID:   i,
+			Name: name,
+		}
+		colInfos = append(colInfos, colInfo)
+		names = append(names, name.L)
+	}
+
+	colIdxsByName := GetColIdxsByName(colInfos)
+	for _, name := range names {
+		i, found := colIdxsByName[name]
+		require.True(t, found)
+		colInfo := colInfos[i]
+		require.Equal(t, name, colInfo.Name.L)
+	}
+}

@@ -17,6 +17,7 @@ package physicalop
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -97,6 +98,8 @@ type PhysicalTableScan struct {
 	DBName  ast.CIStr           `plan-cache-clone:"shallow"`
 	Ranges  []*ranger.Range     `plan-cache-clone:"shallow"`
 
+	ColIdxsByName map[string]int `plan-cache-clone:"shallow"`
+
 	TableAsName *ast.CIStr `plan-cache-clone:"shallow"`
 
 	PhysicalTableID int64
@@ -161,6 +164,7 @@ func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *exp
 	ts := PhysicalTableScan{
 		Table:           ds.TableInfo,
 		Columns:         ds.Columns,
+		ColIdxsByName:   ds.ColIdxsByName,
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		isPartition:     ds.PartitionDefIdx != nil,
@@ -180,6 +184,7 @@ func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	ts := PhysicalTableScan{
 		Table:           ds.TableInfo,
 		Columns:         slices.Clone(ds.Columns),
+		ColIdxsByName:   maps.Clone(ds.ColIdxsByName),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		isPartition:     ds.PartitionDefIdx != nil,
@@ -767,6 +772,7 @@ func BuildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 	ts := PhysicalTableScan{
 		Table:           ds.TableInfo,
 		Columns:         slices.Clone(ds.Columns),
+		ColIdxsByName:   maps.Clone(ds.ColIdxsByName),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		PhysicalTableID: ds.PhysicalTableID,

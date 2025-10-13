@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"maps"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -51,6 +52,8 @@ type DataSource struct {
 	TableInfo     *model.TableInfo `hash64-equals:"true"`
 	Columns       []*model.ColumnInfo
 	DBName        ast.CIStr
+
+	ColIdxsByName map[string]int
 
 	TableAsName *ast.CIStr `hash64-equals:"true"`
 	// IndexMergeHints are the hint for indexmerge.
@@ -195,6 +198,10 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 				expression.GcColumnExprIsTidbShard(ds.Schema().Columns[i].VirtualExpr) {
 				continue
 			}
+			delete(ds.ColIdxsByName, ds.Columns[i].Name.L)
+			for i := i + 1; i < len(ds.Columns); i++ {
+				ds.ColIdxsByName[ds.Columns[i].Name.L] = i - 1
+			}
 			// TODO: investigate why we cannot use slices.Delete for these two:
 			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
@@ -207,8 +214,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 		var handleCol *expression.Column
 		var handleColInfo *model.ColumnInfo
 		handleCol, handleColInfo = preferKeyColumnFromTable(ds, originSchemaColumns, originColumns)
-		ds.Columns = append(ds.Columns, handleColInfo)
-		ds.Schema().Append(handleCol)
+		ds.AppendColumn(handleCol, handleColInfo)
 		addOneHandle = true
 	}
 	// ref: https://github.com/pingcap/tidb/issues/44579
@@ -498,6 +504,8 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
+	is.ColIdxsByName = make(map[string]int, len(ds.Columns))
+	maps.Copy(is.ColIdxsByName, ds.ColIdxsByName)
 	is.SetSchema(ds.Schema())
 	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.Schema().Columns, is.Index)
 
@@ -693,6 +701,15 @@ func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column,
 		}
 	}
 	return false
+}
+
+// AppendColumn appends the given column and info to the columns and schema's
+// columns of this data source.
+func (ds *DataSource) AppendColumn(col *expression.Column, colInfo *model.ColumnInfo) {
+	colIdx := len(ds.Columns)
+	ds.ColIdxsByName[colInfo.Name.L] = colIdx
+	ds.Columns = append(ds.Columns, colInfo)
+	ds.Schema().Append(col)
 }
 
 // AppendTableCol appends a column to the original columns of the table before pruning,

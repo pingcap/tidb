@@ -42,6 +42,7 @@ type LogicalIndexScan struct {
 
 	Index          *model.IndexInfo
 	Columns        []*model.ColumnInfo
+	ColIdxsByName  map[string]int
 	FullIdxCols    []*expression.Column
 	FullIdxColLens []int
 	IdxCols        []*expression.Column
