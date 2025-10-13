@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -260,7 +260,7 @@ func (s *mockGCSSuite) getCompressedData(compression mydump.Compression, data []
 	case mydump.CompressionSnappy:
 		w = snappy.NewBufferedWriter(&buf)
 	default:
-		panic(fmt.Sprintf("unknown compression type: %d", compression))
+		s.FailNow("unknown compression type", compression)
 	}
 	_, err := w.Write(data)
 	s.NoError(err)
