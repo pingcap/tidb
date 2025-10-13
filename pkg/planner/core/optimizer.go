@@ -57,7 +57,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
@@ -1232,8 +1234,13 @@ func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) bool {
 	}
 	switch plan.(type) {
 	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
-		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader, *physicalop.PointGetPlan:
-		if existsOverlongType(plan.Schema()) {
+		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
+		if existsOverlongType(plan.Schema(), false) {
+			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true
+		}
+	case *physicalop.PointGetPlan:
+		if existsOverlongType(plan.Schema(), true) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true
 		}
@@ -1242,21 +1249,39 @@ func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) bool {
 }
 
 // existsOverlongType Check if exists long type column.
-func existsOverlongType(schema *expression.Schema) bool {
+func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
 	if schema == nil {
 		return false
 	}
 	for _, column := range schema.Columns {
 		switch column.RetType.GetType() {
-		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+		case mysql.TypeMediumBlob, mysql.TypeLongBlob,
 			mysql.TypeBlob, mysql.TypeJSON, mysql.TypeTiDBVectorFloat32:
+			return true
+		case mysql.TypeTinyBlob:
+			if pointGet {
+				return false
+			}
 			return true
 		case mysql.TypeVarString, mysql.TypeVarchar:
 			// if the column is varchar and the length of
 			// the column is defined to be more than 1000,
 			// the column is considered a large type and
 			// disable chunk_reuse.
-			if column.RetType.GetFlen() > 1000 {
+			if column.RetType.GetFlen() <= 1000 {
+				totalMemory, err := memory.MemTotal()
+				if pointGet && err != nil && totalMemory > 0 {
+					if totalMemory/size.GB > 500 {
+						// Why is it not 512 ?
+						// Because many customers allocate a portion of memory to their management programs,
+						// the actual amount of usable memory does not align to 512GB.
+						if column.RetType.GetFlen() > mysql.MaxBlobWidth {
+							// MaxBlobWidth * 4 / 1024 / 1024 = 64MB
+							return true
+						}
+						return false
+					}
+				}
 				return true
 			}
 		}
