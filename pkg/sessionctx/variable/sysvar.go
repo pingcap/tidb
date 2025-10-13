@@ -65,6 +65,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle/oracles"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -3667,6 +3668,36 @@ var defaultSysVars = []*SysVar{
 		},
 		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
 			return vardef.AdvancerCheckPointLagLimit.Load().String(), nil
+		},
+	},
+	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBSlowLogMaxPerSec,
+		Value:    "",
+		Type:     vardef.TypeInt,
+		MinValue: 0, MaxValue: 1000000,
+		Validation: func(_ *SessionVars, val string, _ string, _ vardef.ScopeFlag) (string, error) {
+			_, err := strconv.Atoi(val)
+			if err != nil {
+				return "", errors.Errorf("invalid tidb_slow_log_max_per_sec value %s", val)
+			}
+			return val, nil
+		},
+		SetGlobal: func(_ context.Context, sv *SessionVars, s string) error {
+			d := TidbOptInt(s, 0)
+			if d == int(vardef.GlobalSlowLogRateLimiter.Limit()) {
+				return nil
+			}
+
+			if d == 0 {
+				vardef.GlobalSlowLogRateLimiter.SetLimit(rate.Inf)
+				return nil
+			}
+			vardef.GlobalSlowLogRateLimiter.SetLimit(rate.Limit(d))
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+			return strconv.Itoa(int(vardef.GlobalSlowLogRateLimiter.Limit())), nil
 		},
 	},
 }

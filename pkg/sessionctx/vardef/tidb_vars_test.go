@@ -15,6 +15,7 @@
 package vardef
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -35,4 +36,52 @@ func TestIsMDLEnabledInNextGen(t *testing.T) {
 	require.True(t, IsMDLEnabled())
 	SetEnableMDL(true)
 	require.True(t, IsMDLEnabled())
+}
+
+func runConcurrentTest(b *testing.B, limiter interface {
+	Allow() bool
+}, goroutines int) {
+	var wg sync.WaitGroup
+	startCh := make(chan struct{})
+
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			<-startCh
+			for i := 0; i < b.N; i++ {
+				limiter.Allow()
+			}
+		}()
+	}
+
+	b.ResetTimer()
+	close(startCh)
+	wg.Wait()
+	b.StopTimer()
+}
+
+const limit = int64(10000)
+const goroutines = 100
+
+func BenchmarkRateLimiterSimple(b *testing.B) {
+	b.ReportAllocs()
+	rl := NewRateLimiter(int(limit))
+	runConcurrentTest(b, rl, 1)
+}
+
+func BenchmarkRateLimiterCurrency(b *testing.B) {
+	b.ReportAllocs()
+	rl := NewRateLimiter(int(limit))
+	runConcurrentTest(b, rl, goroutines)
+
+	lim := NewRateLimiter(int(limit))
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			lim.Allow()
+		}
+	})
 }

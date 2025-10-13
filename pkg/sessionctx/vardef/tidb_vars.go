@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
+	"golang.org/x/time/rate"
 )
 
 /*
@@ -226,6 +227,9 @@ const (
 
 	// TiDBSlowLogThreshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
+
+	// TiDBSlowLogMaxPerSec is the maximum number of slow logs that can be recorded per second in the server.
+	TiDBSlowLogMaxPerSec = "tidb_slow_log_max_per_sec"
 
 	// TiDBSlowTxnLogThreshold is used to set the slow transaction log threshold in the server.
 	TiDBSlowTxnLogThreshold = "tidb_slow_txn_log_threshold"
@@ -1718,6 +1722,41 @@ const (
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 )
 
+// RateLimiter controls the frequency of slow log printing.
+// It uses a rate-limiting mechanism to prevent excessive slow log output
+// under high concurrency scenarios.
+type RateLimiter struct {
+	limiter *rate.Limiter
+}
+
+// NewRateLimiter creates a new RateLimiter instance.
+// The parameter ratePerSec specifies the maximum number of slow logs
+// allowed per second. If ratePerSec <= 0, it defaults to 1 per second.
+func NewRateLimiter(ratePerSec int) *RateLimiter {
+	if ratePerSec <= 0 {
+		ratePerSec = 1
+	}
+	return &RateLimiter{
+		limiter: rate.NewLimiter(rate.Limit(ratePerSec), ratePerSec),
+	}
+}
+
+// Allow checks whether the current operation is allowed (i.e., passes the rate limit).
+// Returns true if a slow log can be printed, or false if it should be skipped.
+func (o *RateLimiter) Allow() bool {
+	return o.limiter.Allow()
+}
+
+// Limit returns the maximum overall event rate.
+func (o *RateLimiter) Limit() int {
+	return int(o.limiter.Limit())
+}
+
+// SetLimiter updates the rate limit of the RateLimiter at the current time.
+func (o *RateLimiter) SetLimiter(newLimit int) {
+	o.limiter.SetLimitAt(time.Now(), rate.Limit(newLimit))
+}
+
 // Process global variables.
 var (
 	ProcessGeneralLog              = atomic.NewBool(false)
@@ -1731,19 +1770,20 @@ var (
 	//    the value of `tidb_analyze_column_options` determines the behavior of the analyze operation.
 	// 2. If `tidb_persist_analyze_options` is disabled, `tidb_analyze_column_options` is used directly to decide
 	//    whether to analyze all columns or just the predicate columns.
-	AnalyzeColumnOptions          = atomic.NewString(DefTiDBAnalyzeColumnOptions)
-	GlobalLogMaxDays              = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
-	QueryLogMaxLen                = atomic.NewInt32(DefTiDBQueryLogMaxLen)
-	EnablePProfSQLCPU             = atomic.NewBool(false)
-	EnableBatchDML                = atomic.NewBool(false)
-	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
-	DDLReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
-	DDLReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
-	DDLFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
-	DDLErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
-	DDLReorgRowFormat       int64 = DefTiDBRowFormatV2
-	DDLReorgMaxWriteSpeed         = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
-	MaxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
+	AnalyzeColumnOptions           = atomic.NewString(DefTiDBAnalyzeColumnOptions)
+	GlobalLogMaxDays               = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	QueryLogMaxLen                 = atomic.NewInt32(DefTiDBQueryLogMaxLen)
+	EnablePProfSQLCPU              = atomic.NewBool(false)
+	EnableBatchDML                 = atomic.NewBool(false)
+	EnableTmpStorageOnOOM          = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	DDLReorgWorkerCounter    int32 = DefTiDBDDLReorgWorkerCount
+	DDLReorgBatchSize        int32 = DefTiDBDDLReorgBatchSize
+	DDLFlashbackConcurrency  int32 = DefTiDBDDLFlashbackConcurrency
+	DDLErrorCountLimit       int64 = DefTiDBDDLErrorCountLimit
+	DDLReorgRowFormat        int64 = DefTiDBRowFormatV2
+	DDLReorgMaxWriteSpeed          = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
+	MaxDeltaSchemaCount      int64 = DefTiDBMaxDeltaSchemaCount
+	GlobalSlowLogRateLimiter       = rate.NewLimiter(rate.Inf, 100)
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	ForcePriority                        = int32(DefTiDBForcePriority)
