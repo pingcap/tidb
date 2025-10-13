@@ -502,6 +502,7 @@ func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask
 }
 
 // EnforceProperty enforces a physical property to a task.
+// TODO: we can move it into property package.
 func EnforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanContext, fd *funcdep.FDSet) base.Task {
 	if p.TaskTp == property.MppTaskType {
 		mpp, ok := tsk.(*MppTask)
