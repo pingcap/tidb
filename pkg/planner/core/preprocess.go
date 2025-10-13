@@ -257,8 +257,10 @@ type tableSourceCollector struct {
 }
 
 func (t *tableSourceCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	if node, ok := in.(*ast.TableSource); ok {
-		t.tableSources = append(t.tableSources, node)
+	if ts, ok := in.(*ast.TableSource); ok {
+		if _, ok := ts.Source.(*ast.TableName); ok {
+			t.tableSources = append(t.tableSources, ts)
+		}
 	}
 	return in, false
 }
@@ -368,14 +370,29 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 			}
 		}
 	case *ast.DeleteStmt:
+		dbInfos := p.getAllDBInfos(node.TableRefs)
 		if node.Tables != nil {
+			// multiple table delete statement
 			for _, tbl := range node.Tables.Tables {
+				var tableInfo *model.TableInfo
 				table, err := p.tableByName(tbl)
+				if errors.ErrorEqual(err, infoschema.ErrTableNotExists) {
+					for tblSource, db := range dbInfos {
+						if tblSource.AsName.L == tbl.Name.L {
+							tableInfo = db.Table
+							err = nil
+							break
+						}
+					}
+				}
 				if err != nil {
 					p.err = err
 					break
 				}
-				if table.Meta().TempTableType == model.TempTableNone {
+				if tableInfo == nil {
+					tableInfo = table.Meta()
+				}
+				if tableInfo.TempTableType == model.TempTableNone {
 					dbName := tbl.Schema
 					if dbName.L == "" {
 						dbName = pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
@@ -384,7 +401,7 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 				}
 			}
 		} else {
-			for _, db := range p.getAllDBInfos(node.TableRefs) {
+			for _, db := range dbInfos {
 				if db.Table.TempTableType == model.TempTableNone {
 					dbNames = append(dbNames, db.DB.Name)
 				}
