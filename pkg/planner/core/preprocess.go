@@ -252,6 +252,79 @@ type preprocessor struct {
 	resolveCtx *resolve.Context
 }
 
+type tableSourceCollector struct {
+	tableSources []*ast.TableSource
+}
+
+func (t *tableSourceCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	if ts, ok := in.(*ast.TableSource); ok {
+		if _, ok := ts.Source.(*ast.TableName); ok {
+			t.tableSources = append(t.tableSources, ts)
+		}
+	}
+	return in, false
+}
+
+func (*tableSourceCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
+type tableWithDBInfo struct {
+	Table *model.TableInfo
+	DB    *model.DBInfo
+}
+
+func (p *preprocessor) getAllDBInfos(node *ast.TableRefsClause) map[*ast.TableSource]*tableWithDBInfo {
+	m := make(map[*ast.TableSource]*tableWithDBInfo)
+	t := tableSourceCollector{
+		tableSources: make([]*ast.TableSource, 0),
+	}
+	node.Accept(&t)
+
+	for _, tbl := range t.tableSources {
+		name := tbl.Source.(*ast.TableName)
+		table, err := p.tableByName(name)
+		if errors.ErrorEqual(err, infoschema.ErrTableNotExists) {
+			// Maybe cte or alies, other place will handle it.
+			continue
+		}
+		if err != nil {
+			p.err = err
+			return nil
+		}
+		if dbInfo, ok := infoschema.SchemaByTable(p.ensureInfoSchema(), table.Meta()); ok {
+			m[tbl] = &tableWithDBInfo{
+				Table: table.Meta().Clone(),
+				DB:    dbInfo.Clone(),
+			}
+		}
+	}
+	return m
+}
+
+func checkColNameValidAndGetDBInfo(col *ast.ColumnName, tableInfos map[*ast.TableSource]*tableWithDBInfo) (*model.TableInfo, *model.DBInfo, error) {
+	colExist := false
+	var (
+		db    *model.DBInfo
+		table *model.TableInfo
+	)
+	for tbl, tableInfo := range tableInfos {
+		for _, colName := range tableInfo.Table.Cols() {
+			if colName.Name.L == col.Name.L &&
+				(col.Schema.L == "" || col.Schema.L == tableInfo.Table.Name.L) &&
+				(col.Table.L == "" || col.Table.L == tableInfo.Table.Name.L || (tbl.AsName.L != "" && col.Table.L == tbl.AsName.L)) {
+				if colExist {
+					return nil, nil, errors.New("Column xxx in field list is ambiguous")
+				}
+				colExist = true
+				db = tableInfo.DB
+				table = tableInfo.Table
+			}
+		}
+	}
+	return table, db, nil
+}
+
 // extractTableName extracts the db name from the ast.Node for checking database read only.
 func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 	dbNames := make([]pmodel.CIStr, 0, 1)
@@ -294,6 +367,73 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.LoadDataStmt:
 		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.InsertStmt:
+		for _, tbl := range p.resolveCtx.GetTableNames() {
+			if tbl.TableInfo.TempTableType == model.TempTableNone {
+				dbNames = append(dbNames, tbl.DBInfo.Name)
+			}
+		}
+	case *ast.DeleteStmt:
+		dbInfos := p.getAllDBInfos(node.TableRefs)
+		if node.Tables != nil {
+			// multiple table delete statement
+			for _, tbl := range node.Tables.Tables {
+				var tableInfo *model.TableInfo
+				// check alies
+				for tblSource, db := range dbInfos {
+					if tblSource.AsName.L == tbl.Name.L {
+						tableInfo = db.Table
+					}
+				}
+				if tableInfo == nil {
+					table, err := p.tableByName(tbl)
+					if err != nil {
+						if !errors.ErrorEqual(err, infoschema.ErrTableNotExists) {
+							p.err = err
+						}
+						break
+					}
+					tableInfo = table.Meta()
+				}
+				if tableInfo.TempTableType == model.TempTableNone {
+					dbName := tbl.Schema
+					if dbName.L == "" {
+						dbName = pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+					}
+					dbNames = append(dbNames, dbName)
+				}
+			}
+		} else {
+			for _, db := range dbInfos {
+				if db.Table.TempTableType == model.TempTableNone {
+					dbNames = append(dbNames, db.DB.Name)
+				}
+			}
+		}
+	case *ast.UpdateStmt:
+		for _, set := range node.List {
+			// todo: handle temporary table
+			if set.Column.Schema.L != "" {
+				dbNames = append(dbNames, set.Column.Schema)
+			} else {
+				dbNames = append(dbNames, pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB))
+			}
+		}
+	case *ast.SelectStmt:
+		if node.LockInfo != nil {
+			if node.LockInfo.LockType == ast.SelectLockForUpdate ||
+				node.LockInfo.LockType == ast.SelectLockForUpdateNoWait ||
+				node.LockInfo.LockType == ast.SelectLockForUpdateWaitN ||
+				((node.LockInfo.LockType == ast.SelectLockForShare || node.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
+					p.sctx.GetSessionVars().SharedLockPromotion) {
+				dbInfos := p.getAllDBInfos(node.From)
+				for _, tbl := range dbInfos {
+					if tbl.Table.TempTableType == model.TempTableNone {
+						dbNames = append(dbNames, tbl.DB.Name)
+					}
+				}
+			}
+		}
 	}
 	return dbNames
 }
