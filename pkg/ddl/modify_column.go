@@ -242,6 +242,7 @@ func getModifyColumnInfo(
 			oldCol = model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
 		}
 		if oldCol != nil {
+			args.OldColumnID = oldCol.ID
 			logutil.DDLLogger().Info("run modify column job, find old column by name",
 				zap.Int64("jobID", job.ID),
 				zap.String("oldColumnName", args.OldColumnName.L),
