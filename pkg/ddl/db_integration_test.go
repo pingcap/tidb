@@ -140,40 +140,27 @@ func TestModifyColumnAfterAddIndex(t *testing.T) {
 	tk.MustExec(`insert into city values ("abc"), ("abd");`)
 }
 
-func TestModifyColumnInitOldColumnIDOnce(t *testing.T) {
-	model.SetJobVerInUse(model.JobVersion1)
+func TestModifyColumnOldColumnIDNotFound(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
-	counter := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/initOldColumnID", func() {
-		counter++
-	})
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockReorgJobTimeout", "3*return(true)")
-	mockOwnerChange := true
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+	model.SetJobVerInUse(model.JobVersion1)
+	mockOwnerChange := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionModifyColumn &&
 			job.SchemaState == model.StateWriteReorganization &&
-			job.SnapshotVer != 0 {
-			mockOwnerChange = false
-		}
-	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
-		if job.Type == model.ActionModifyColumn && mockOwnerChange {
-			args, err := model.GetModifyColumnArgs(job)
-			require.NoError(t, err)
-			require.NotZero(t, args.OldColumnID)
-			// Mock the first few phases of this DDL job is executed in old version TiDB,
-			// so the OldColumnID is not set.
-			args.OldColumnID = 0
-			counter = 0
-			t.Log("reset counter to 0")
+			!mockOwnerChange {
+			// Mock the first few phases of this DDL job is executed in old version TiDB.
+			model.UpdateJobArgsForTest(job, func(args []any) []any {
+				return args[:len(args)-1]
+			})
+			mockOwnerChange = true
 		}
 	})
 	tk.MustExec("alter table t modify column a tinyint;")
-	require.Equal(t, 1, counter)
+	require.True(t, mockOwnerChange)
 }
 
 func TestIssue2293(t *testing.T) {

@@ -142,7 +142,6 @@ func (c *jobContext) cleanStepCtx() {
 // genReorgTimeoutErr generates a reorganization timeout error.
 func (c *jobContext) genReorgTimeoutErr(jobID int64) error {
 	c.reorgTimeoutOccurred = true
-	logutil.DDLLogger().Info("run reorg job timeout", zap.Int64("jobID", jobID))
 	return dbterror.ErrWaitReorgTimeout
 }
 
