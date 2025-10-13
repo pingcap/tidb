@@ -1259,6 +1259,11 @@ var (
 )
 
 // existsOverlongType Check if exists long type column.
+// If pointGet is true, we will check the total Flen of all columns, if it exceeds maxFlenForOverlongType,
+// we will disable chunk reuse.
+// For a point get, there is only one row, so we can easily estimate the size.
+// However, for a non-point get, there may be many rows, and it is impossible to determine the memory size used.
+// Therefore, we can only forcibly skip the reuse chunk.
 func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
 	if schema == nil {
 		return false
@@ -1272,7 +1277,7 @@ func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
 		case mysql.TypeTinyBlob, mysql.TypeMediumBlob:
 			if pointGet {
 				totalFlen += column.RetType.GetFlen()
-				if checkOverlongType(totalFlen) {
+				if checkOverlongTypeForPointGet(totalFlen) {
 					return true
 				}
 				continue
@@ -1288,7 +1293,7 @@ func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
 			}
 			if pointGet {
 				totalFlen += column.RetType.GetFlen()
-				if checkOverlongType(totalFlen) {
+				if checkOverlongTypeForPointGet(totalFlen) {
 					return true
 				}
 				continue
@@ -1299,7 +1304,7 @@ func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
 	return false
 }
 
-func checkOverlongType(totalFlen int) bool {
+func checkOverlongTypeForPointGet(totalFlen int) bool {
 	totalMemory, err := memory.MemTotal()
 	if err != nil || totalMemory <= 0 {
 		return true
