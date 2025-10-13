@@ -1252,7 +1252,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	var (
 		totalSize  atomic.Int64 = *atomic.NewInt64(0)
 		sourceType mydump.SourceType
-		format     atomic.String = *atomic.NewString(e.Format)
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1271,11 +1270,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err3), "failed to read file size by seek")
 		}
-		if format.Load() == DataFormatAuto {
-			format.Store(parseFileType(fileNameKey))
-		}
-		e.updateFormat(format.Load())
-		sourceType = getSourceType(e.Format)
+		e.detectAndUpdateFormat(fileNameKey)
+		sourceType = e.getSourceType()
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
@@ -1318,10 +1314,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				}
 				path, size := f.Path, f.Size
 				// pick arbitrary one file to detect the format.
-				if format.Load() == DataFormatAuto {
-					format.Store(parseFileType(path))
-				}
-				sourceType = getSourceType(format.Load())
+				var once sync.Once
+				once.Do(func() {
+					e.detectAndUpdateFormat(path)
+					sourceType = e.getSourceType()
+				})
 				totalSize.Add(size)
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
@@ -1343,7 +1340,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			}
 		}
 		e.dataFiles = filtered
-		e.updateFormat(format.Load())
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
 		if err2 = e.checkNonCSVFormatOptions(); err2 != nil {
@@ -1398,12 +1394,12 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	return nil
 }
 
-// update format from the validated file format.
-func (e *LoadDataController) updateFormat(format string) {
+// update format of the validated file by its extension.
+func (e *LoadDataController) detectAndUpdateFormat(path string) {
 	if e.Format == DataFormatAuto {
-		e.Format = format
-		e.logger.Info("auto detect and update import plan format based on file extension",
-			zap.String("detected format", e.Format))
+		e.Format = parseFileType(path)
+		e.logger.Info("detect and update import plan format based on file extension",
+			zap.String("file", path), zap.String("detected format", e.Format))
 		e.Parameters.Format = e.Format
 	}
 }
@@ -1427,8 +1423,8 @@ func parseFileType(path string) string {
 	}
 }
 
-func getSourceType(format string) mydump.SourceType {
-	switch format {
+func (e *LoadDataController) getSourceType() mydump.SourceType {
+	switch e.Format {
 	case DataFormatParquet:
 		return mydump.SourceTypeParquet
 	case DataFormatDelimitedData, DataFormatCSV:
