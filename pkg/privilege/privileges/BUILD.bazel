@@ -41,6 +41,7 @@ go_library(
         "@com_github_lestrrat_go_jwx_v2//jwt",
         "@com_github_lestrrat_go_jwx_v2//jwt/openid",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -73,6 +74,7 @@ go_test(
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/testkit/testutil",
         "//pkg/util",
