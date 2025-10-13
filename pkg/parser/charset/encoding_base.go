@@ -101,8 +101,7 @@ func (b encodingBase) Foreach(src []byte, op Op, fn func(from, to []byte, ok boo
 		nDst, _, err := tfm.Transform(buf[:], src[i:i+w], false)
 		meetErr := err != nil || (op&opToUTF8 != 0 &&
 			beginWithReplacementChar(buf[:nDst]) &&
-			ok &&
-			!runeErrorChecker.runeErrorIsLastInput())
+			(!ok || !runeErrorChecker.runeErrorIsLastInput()))
 		if !fn(src[i:i+w], buf[:nDst], !meetErr) {
 			return
 		}
