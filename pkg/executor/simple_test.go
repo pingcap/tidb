@@ -235,6 +235,17 @@ func TestRefreshStatsWithFullMode(t *testing.T) {
 	statsAfterDefaultRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
 	require.NotSame(t, statsBeforeRefresh, statsAfterDefaultRefresh)
 	require.Nil(t, statsAfterDefaultRefresh.GetIdx(1), "index stats should not be loaded in lite mode")
+
+	tk.MustExec("select * from t1 where a = 1")
+	statsAfterSelect := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	require.NotSame(t, statsBeforeRefresh, statsAfterSelect, "stats versuon should not be changed after select")
+	require.NotNil(t, statsAfterSelect.GetIdx(1), "index stats will be loaded after select")
+
+	tk.MustExec("refresh stats t1")
+	statsAfterDefaultRefresh = handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	require.NotSame(t, statsBeforeRefresh, statsAfterDefaultRefresh)
+	require.Nil(t, statsAfterDefaultRefresh.GetIdx(1), "index stats should be removed in lite mode")
+
 	// Issue a full refresh to ensure the index stats are loaded.
 	tk.MustExec("refresh stats t1 full")
 	statsAfterFullRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
