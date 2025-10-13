@@ -1255,7 +1255,7 @@ var (
 	// the actual amount of usable memory does not align to 512GB.
 	// It is only changed by tests.
 	maxMemoryLimitForOverlongType = 500 * size.GB
-	MaxFlenForOverlongType        = mysql.MaxBlobWidth * 2
+	maxFlenForOverlongType        = mysql.MaxBlobWidth * 2
 )
 
 // existsOverlongType Check if exists long type column.
@@ -1305,7 +1305,7 @@ func checkOverlongType(totalFlen int) bool {
 		return true
 	}
 	if totalMemory >= maxMemoryLimitForOverlongType {
-		if totalFlen <= MaxFlenForOverlongType {
+		if totalFlen <= maxFlenForOverlongType {
 			return false
 		}
 	}
