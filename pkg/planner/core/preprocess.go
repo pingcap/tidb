@@ -375,21 +375,18 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 			// multiple table delete statement
 			for _, tbl := range node.Tables.Tables {
 				var tableInfo *model.TableInfo
-				table, err := p.tableByName(tbl)
-				if errors.ErrorEqual(err, infoschema.ErrTableNotExists) {
-					for tblSource, db := range dbInfos {
-						if tblSource.AsName.L == tbl.Name.L {
-							tableInfo = db.Table
-							err = nil
-							break
-						}
+				// check alies
+				for tblSource, db := range dbInfos {
+					if tblSource.AsName.L == tbl.Name.L {
+						tableInfo = db.Table
 					}
 				}
-				if err != nil {
-					p.err = err
-					break
-				}
 				if tableInfo == nil {
+					table, err := p.tableByName(tbl)
+					if err != nil {
+						p.err = err
+						break
+					}
 					tableInfo = table.Meta()
 				}
 				if tableInfo.TempTableType == model.TempTableNone {
