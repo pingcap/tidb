@@ -1269,21 +1269,22 @@ func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
 			// the column is considered a large type and
 			// disable chunk_reuse.
 			if column.RetType.GetFlen() <= 1000 {
-				totalMemory, err := memory.MemTotal()
-				if pointGet && err != nil && totalMemory > 0 {
-					if totalMemory/size.GB > 500 {
-						// Why is it not 512 ?
-						// Because many customers allocate a portion of memory to their management programs,
-						// the actual amount of usable memory does not align to 512GB.
-						if column.RetType.GetFlen() > mysql.MaxBlobWidth {
-							// MaxBlobWidth * 4 / 1024 / 1024 = 64MB
-							return true
-						}
-						return false
-					}
-				}
-				return true
+				return false
 			}
+			totalMemory, err := memory.MemTotal()
+			if pointGet && err != nil && totalMemory > 0 {
+				if totalMemory/size.GB > 500 {
+					// Why is it not 512 ?
+					// Because many customers allocate a portion of memory to their management programs,
+					// the actual amount of usable memory does not align to 512GB.
+					if column.RetType.GetFlen() > mysql.MaxBlobWidth {
+						// MaxBlobWidth * 4 / 1024 / 1024 = 64MB
+						return true
+					}
+					return false
+				}
+			}
+			return true
 		}
 	}
 	return false
