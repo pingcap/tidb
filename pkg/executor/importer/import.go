@@ -1335,6 +1335,14 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			}); err != nil {
 			return err
 		}
+		// filter unmatch files
+		filtered := make([]*mydump.SourceFileMeta, 0, len(dataFiles))
+		for _, f := range dataFiles {
+			if f != nil {
+				filtered = append(filtered, f)
+			}
+		}
+		e.dataFiles = filtered
 		e.updateFormat(format.Load())
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
