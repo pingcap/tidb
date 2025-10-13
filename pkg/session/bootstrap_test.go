@@ -2027,11 +2027,11 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	MustExec(t, seV174, "use test")
 	MustExec(t, seV174, "create table t (a int, b int, c int, key(c))")
 	_, digest := parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1,2,3)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
+	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '', null)", digest.String()))
 	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
+	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '', null)", digest.String()))
 	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
+	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '', null)", digest.String()))
 
 	showBindings := func(s sessiontypes.Session) (records []string) {
 		MustExec(t, s, "admin reload bindings")
