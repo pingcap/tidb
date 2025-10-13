@@ -388,7 +388,9 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 				if tableInfo == nil {
 					table, err := p.tableByName(tbl)
 					if err != nil {
-						p.err = err
+						if !errors.ErrorEqual(err, infoschema.ErrTableNotExists) {
+							p.err = err
+						}
 						break
 					}
 					tableInfo = table.Meta()
