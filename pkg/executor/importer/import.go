@@ -1305,6 +1305,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 		var err error
 		var processedFiles []*mydump.SourceFileMeta
+		var once sync.Once
 		if processedFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				// we have checked in LoadDataExec.Next
@@ -1315,7 +1316,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				}
 				path, size := f.Path, f.Size
 				// pick arbitrary one file to detect the format.
-				var once sync.Once
 				once.Do(func() {
 					e.detectAndUpdateFormat(path)
 					sourceType = e.getSourceType()
