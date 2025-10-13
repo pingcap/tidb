@@ -294,6 +294,9 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 		}
 
 		if useGreedy {
+			if !p.SCtx().GetSessionVars().InRestrictedSQL {
+				fmt.Println("wwz")
+			}
 			groupSolver := &joinReorderGreedySolver{
 				allInnerJoin:                   allInnerJoin,
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
