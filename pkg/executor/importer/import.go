@@ -1304,7 +1304,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		var err error
-		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
+		processedFiles := make([]*mydump.SourceFileMeta, 0, len(allFiles))
+		if processedFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				// we have checked in LoadDataExec.Next
 				//nolint: errcheck
@@ -1333,13 +1334,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return err
 		}
 		// filter unmatch files
-		filtered := make([]*mydump.SourceFileMeta, 0, len(dataFiles))
-		for _, f := range dataFiles {
+		for _, f := range processedFiles {
 			if f != nil {
-				filtered = append(filtered, f)
+				dataFiles = append(dataFiles, f)
 			}
 		}
-		e.dataFiles = filtered
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
 		if err2 = e.checkNonCSVFormatOptions(); err2 != nil {
