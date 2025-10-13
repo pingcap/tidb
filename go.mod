@@ -180,6 +180,7 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
+	modernc.org/mathutil v1.7.1 // indirect
 )
 
 require (
@@ -338,4 +339,4 @@ replace (
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/tikv/client-go/v2 => github.com/MyonKeminta/client-go/v2 v2.0.0-20250722110857-c38aa36897d7
+replace github.com/tikv/client-go/v2 => github.com/MyonKeminta/client-go/v2 v2.0.0-20251013071606-e05be7b296a8
