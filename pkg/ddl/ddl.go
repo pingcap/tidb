@@ -483,6 +483,27 @@ func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) *kv.ResourceGroup
 	return ctx.getResourceGroupTaggerForTopSQL()
 }
 
+func (dc *ddlCtx) setAnalyzeDoneCh(jobID int64, ch chan struct{}) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		ctx = NewReorgContext()
+		dc.jobCtx.jobCtxMap[jobID] = ctx
+	}
+	ctx.analyzeDone = ch
+}
+
+func (dc *ddlCtx) getAnalyzeDoneCh(jobID int64) chan struct{} {
+	dc.jobCtx.RLock()
+	defer dc.jobCtx.RUnlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		return nil
+	}
+	return ctx.analyzeDone
+}
+
 func (dc *ddlCtx) removeJobCtx(job *model.Job) {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()

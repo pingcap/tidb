@@ -45,8 +45,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -320,11 +320,7 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 		cost     float64
 		physical base.PhysicalPlan
 	)
-	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
-	if planCounter == 0 {
-		planCounter = -1
-	}
-	physical, cost, err = impl.ImplementMemoAndCost(cas.GetMemo().GetRootGroup(), &planCounter)
+	physical, cost, err = impl.ImplementMemoAndCost(cas.GetMemo().GetRootGroup())
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -332,9 +328,6 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	finalPlan := postOptimize(ctx, sctx, physical)
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
-	}
-	if sessVars.StmtCtx.EnableOptimizeTrace {
-		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.BuildPlanTrace())
 	}
 	return logic, finalPlan, cost, nil
 }
@@ -350,11 +343,7 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
-	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
-	if planCounter == 0 {
-		planCounter = -1
-	}
-	physical, cost, err := physicalOptimize(logic, &planCounter)
+	physical, cost, err := physicalOptimize(logic)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -362,9 +351,6 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
-	}
-	if sessVars.StmtCtx.EnableOptimizeTrace {
-		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.BuildPlanTrace())
 	}
 	return logic, finalPlan, cost, nil
 }
@@ -465,7 +451,7 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 	tableReader, isTableReader := p.(*physicalop.PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
 		mergeContinuousSelections(tableReader.TablePlan)
-		tableReader.TablePlans = physicalop.FlattenPushDownPlan(tableReader.TablePlan)
+		tableReader.TablePlans = physicalop.FlattenListPushDownPlan(tableReader.TablePlan)
 	}
 }
 
@@ -1034,18 +1020,6 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	opt := optimizetrace.DefaultLogicalOptimizeOption()
-	vars := logic.SCtx().GetSessionVars()
-	if vars.StmtCtx.EnableOptimizeTrace {
-		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
-		tracer := &tracing.LogicalOptimizeTracer{
-			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
-		}
-		opt = opt.WithEnableOptimizeTracer(tracer)
-		defer func() {
-			vars.StmtCtx.OptimizeTracer.Logical = tracer
-		}()
-	}
 	var err error
 	// todo: the normalization rule driven way will be changed as stack-driven.
 	for i, rule := range normalizeRuleList {
@@ -1055,13 +1029,11 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
-		logic, _, err = rule.Optimize(ctx, logic, opt)
+		logic, _, err = rule.Optimize(ctx, logic)
 		if err != nil {
 			return nil, err
 		}
 	}
-	opt.RecordFinalLogicalPlan(logic.BuildPlanTrace)
 	return logic, err
 }
 
@@ -1069,18 +1041,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
-	}
-	opt := optimizetrace.DefaultLogicalOptimizeOption()
-	vars := logic.SCtx().GetSessionVars()
-	if vars.StmtCtx.EnableOptimizeTrace {
-		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
-		tracer := &tracing.LogicalOptimizeTracer{
-			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
-		}
-		opt = opt.WithEnableOptimizeTracer(tracer)
-		defer func() {
-			vars.StmtCtx.OptimizeTracer.Logical = tracer
-		}()
 	}
 	var err error
 	var againRuleList []base.LogicalOptRule
@@ -1091,9 +1051,8 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		var planChanged bool
-		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
+		logic, planChanged, err = rule.Optimize(ctx, logic)
 		if err != nil {
 			return nil, err
 		}
@@ -1105,15 +1064,13 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	}
 
 	// Trigger the interaction rule
-	for i, rule := range againRuleList {
-		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
-		logic, _, err = rule.Optimize(ctx, logic, opt)
+	for _, rule := range againRuleList {
+		logic, _, err = rule.Optimize(ctx, logic)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	opt.RecordFinalLogicalPlan(logic.BuildPlanTrace)
 	return logic, err
 }
 
@@ -1122,7 +1079,7 @@ func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 	return disabled
 }
 
-func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
+func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost float64, err error) {
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
@@ -1138,33 +1095,10 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	opt := optimizetrace.DefaultPhysicalOptimizeOption()
-	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
-	if stmtCtx.EnableOptimizeTrace {
-		tracer := &tracing.PhysicalOptimizeTracer{
-			PhysicalPlanCostDetails: make(map[string]*tracing.PhysicalPlanCostDetail),
-			Candidates:              make(map[int]*tracing.CandidatePlanTrace),
-		}
-		opt = opt.WithEnableOptimizeTracer(tracer)
-		defer func() {
-			r := recover()
-			if r != nil {
-				panic(r) /* pass panic to upper function to handle */
-			}
-			if err == nil {
-				tracer.RecordFinalPlanTrace(plan.BuildPlanTrace())
-				stmtCtx.OptimizeTracer.Physical = tracer
-			}
-		}()
-	}
-
 	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
-	t, _, err := logic.FindBestTask(prop, planCounter, opt)
+	t, err := physicalop.FindBestTask(logic, prop)
 	if err != nil {
 		return nil, 0, err
-	}
-	if *planCounter > 0 {
-		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The parameter of nth_plan() is out of range"))
 	}
 	if t.Invalid() {
 		errMsg := "Can't find a proper physical plan for this query"
@@ -1175,12 +1109,12 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 	}
 
 	// collect the warnings from task.
-	logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.(*RootTask).warnings.GetWarnings())
+	logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.(*physicalop.RootTask).Warnings.GetWarnings())
 
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = getPlanCost(t.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+	cost, err = getPlanCost(t.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
 	return t.Plan(), cost, err
 }
 

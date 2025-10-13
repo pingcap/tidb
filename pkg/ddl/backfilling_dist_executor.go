@@ -50,6 +50,7 @@ type BackfillTaskMeta struct {
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
+	MergeTempIndex  bool   `json:"merge_temp_index"`
 
 	Version int `json:"version,omitempty"`
 }
@@ -201,6 +202,8 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
 		return newCloudImportExecutor(jobMeta, store, indexInfos, tbl, cloudStorageURI, s.GetTaskBase().Concurrency)
+	case proto.BackfillStepMergeTempIndex:
+		return newMergeTempIndexExecutor(jobMeta, store, tbl)
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
@@ -246,7 +249,10 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
 	switch task.Step {
-	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
+	case proto.BackfillStepReadIndex,
+		proto.BackfillStepMergeSort,
+		proto.BackfillStepWriteAndIngest,
+		proto.BackfillStepMergeTempIndex:
 		return s.newBackfillStepExecutor(task.Step)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)

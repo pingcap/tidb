@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1161,72 +1162,86 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		var done bool
-		if job.MultiSchemaInfo != nil {
-			done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, jobCtx, job, tbl, allIndexInfos)
-		} else {
+		switch job.AnalyzeState {
+		case model.AnalyzeStateNone:
+			// reorg the index data.
+			var done bool
 			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
-		}
-		if !done {
-			return ver, err
-		}
-
-		// Set column index flag.
-		for _, indexInfo := range allIndexInfos {
-			AddIndexColumnFlag(tblInfo, indexInfo)
-			if isPK {
-				if err = UpdateColsNull2NotNull(tblInfo, indexInfo); err != nil {
-					return ver, errors.Trace(err)
-				}
+			if !done {
+				return ver, err
 			}
-			indexInfo.State = model.StatePublic
-		}
-
-		// Inject the failpoint to prevent the progress of index creation.
-		failpoint.Inject("create-index-stuck-before-public", func(v failpoint.Value) {
-			if sigFile, ok := v.(string); ok {
-				for {
-					time.Sleep(1 * time.Second)
-					if _, err := os.Stat(sigFile); err != nil {
-						if os.IsNotExist(err) {
-							continue
-						}
-						failpoint.Return(ver, errors.Trace(err))
+			if checkAnalyzeNecessary(job, allIndexInfos, tblInfo) {
+				job.AnalyzeState = model.AnalyzeStateRunning
+			} else {
+				job.AnalyzeState = model.AnalyzeStateSkipped
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateRunning:
+			// after all old index data are reorged. re-analyze it.
+			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done {
+				job.AnalyzeState = model.AnalyzeStateDone
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+			// Set column index flag.
+			for _, indexInfo := range allIndexInfos {
+				AddIndexColumnFlag(tblInfo, indexInfo)
+				if isPK {
+					if err = UpdateColsNull2NotNull(tblInfo, indexInfo); err != nil {
+						return ver, errors.Trace(err)
 					}
-					break
 				}
+				indexInfo.State = model.StatePublic
 			}
-		})
 
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StatePublic)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		a := &model.ModifyIndexArgs{
-			PartitionIDs: getPartitionIDs(tbl.Meta()),
-			OpType:       model.OpAddIndex,
-		}
-		for _, indexInfo := range allIndexInfos {
-			a.IndexArgs = append(a.IndexArgs, &model.IndexArg{
-				IndexID:  indexInfo.ID,
-				IfExist:  false,
-				IsGlobal: indexInfo.Global,
+			// Inject the failpoint to prevent the progress of index creation.
+			failpoint.Inject("create-index-stuck-before-public", func(v failpoint.Value) {
+				if sigFile, ok := v.(string); ok {
+					for {
+						time.Sleep(1 * time.Second)
+						if _, err := os.Stat(sigFile); err != nil {
+							if os.IsNotExist(err) {
+								continue
+							}
+							failpoint.Return(ver, errors.Trace(err))
+						}
+						break
+					}
+				}
 			})
-		}
-		job.FillFinishedArgs(a)
 
-		addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos)
-		err2 := asyncNotifyEvent(jobCtx, addIndexEvent, job, noSubJob, w.sess)
-		if err2 != nil {
-			return ver, errors.Trace(err2)
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StatePublic)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+
+			a := &model.ModifyIndexArgs{
+				PartitionIDs: getPartitionIDs(tbl.Meta()),
+				OpType:       model.OpAddIndex,
+			}
+			for _, indexInfo := range allIndexInfos {
+				a.IndexArgs = append(a.IndexArgs, &model.IndexArg{
+					IndexID:  indexInfo.ID,
+					IfExist:  false,
+					IsGlobal: indexInfo.Global,
+				})
+			}
+			job.FillFinishedArgs(a)
+
+			addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos, job.AnalyzeState == model.AnalyzeStateDone)
+			err2 := asyncNotifyEvent(jobCtx, addIndexEvent, job, noSubJob, w.sess)
+			if err2 != nil {
+				return ver, errors.Trace(err2)
+			}
+
+			// Finish this job.
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			logutil.DDLLogger().Info("run add index job done",
+				zap.String("charset", job.Charset),
+				zap.String("collation", job.Collate))
 		}
 
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		logutil.DDLLogger().Info("run add index job done",
-			zap.String("charset", job.Charset),
-			zap.String("collation", job.Collate))
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", allIndexInfos[0].State)
 	}
@@ -1447,22 +1462,6 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
 }
 
-func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
-	if job.MultiSchemaInfo.Revertible {
-		done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
-		if done {
-			job.MarkNonRevertible()
-			if err == nil {
-				ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
-			}
-		}
-		// We need another round to wait for all the others sub-jobs to finish.
-		return false, ver, err
-	}
-	return true, ver, err
-}
-
 func doReorgWorkForCreateIndex(
 	w *worker,
 	jobCtx *jobContext,
@@ -1546,7 +1545,8 @@ func doReorgWorkForCreateIndex(
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
 		}
-		return true, ver, err
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+		return true, ver, errors.Trace(err)
 	default:
 		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", allIndexInfos[0].BackfillState)
 	}
@@ -2396,26 +2396,28 @@ func writeOneKV(
 	idxDt, rsData []types.Datum,
 	handle kv.Handle,
 ) (int64, error) {
+	var kvBytes int64
 	iter := index.GenIndexKVIter(errCtx, loc, idxDt, handle, rsData)
 	for iter.Valid() {
 		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf, writeBufs.RowValBuf)
 		if err != nil {
-			return writer.WrittenBytes(), errors.Trace(err)
+			return kvBytes, errors.Trace(err)
 		}
 		failpoint.Inject("mockLocalWriterPanic", func() {
 			panic("mock panic")
 		})
 		err = writer.WriteRow(ctx, key, idxVal, handle)
 		if err != nil {
-			return writer.WrittenBytes(), errors.Trace(err)
+			return kvBytes, errors.Trace(err)
 		}
+		kvBytes += int64(len(key) + len(idxVal))
 		failpoint.Inject("mockLocalWriterError", func() {
 			failpoint.Return(0, errors.New("mock engine error"))
 		})
 		writeBufs.IndexKeyBuf = key
 		writeBufs.RowValBuf = idxVal
 	}
-	return writer.WrittenBytes(), nil
+	return kvBytes, nil
 }
 
 // BackfillData will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,
@@ -2499,6 +2501,7 @@ func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBac
 			MockDMLExecution()
 		}
 	})
+	failpoint.InjectCall("mockAddIndexTxnWorkerStuck")
 	return
 }
 
@@ -2533,20 +2536,21 @@ func (w *worker) addTableIndex(
 	reorgInfo *reorgInfo,
 ) error {
 	ctx := jobCtx.stepCtx
-	// TODO: Support typeAddIndexMergeTmpWorker.
-	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			err := w.executeDistTask(jobCtx, t, reorgInfo)
-			if err != nil {
-				return err
-			}
-			if reorgInfo.ReorgMeta.UseCloudStorage {
-				// When adding unique index by global sort, it detects duplicate keys in each step.
-				// A duplicate key must be detected before, so we can skip the check bellow.
-				return nil
-			}
-			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.store)
+	if reorgInfo.ReorgMeta.IsDistReorg && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		err := w.executeDistTask(jobCtx, t, reorgInfo)
+		if err != nil {
+			return err
 		}
+		if reorgInfo.ReorgMeta.UseCloudStorage {
+			// When adding unique index by global sort, it detects duplicate keys in each step.
+			// A duplicate key must be detected before, so we can skip the check bellow.
+			return nil
+		}
+		if reorgInfo.mergingTmpIdx {
+			// Merging temp index checks the duplicate keys in subtask executors.
+			return nil
+		}
+		return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.store)
 	}
 
 	var err error
@@ -2635,33 +2639,74 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
+// TaskKeyBuilder is used to build task key for the backfill job.
+type TaskKeyBuilder struct {
+	keyspace       string
+	multiSchemaSeq int32
+	mergeTempIdx   bool
+	jobID          int64
+}
+
+// NewTaskKeyBuilder creates a new TaskKeyBuilder.
+func NewTaskKeyBuilder() *TaskKeyBuilder {
+	return &TaskKeyBuilder{multiSchemaSeq: -1}
+}
+
+// SetMergeTempIndex sets whether to merge the temporary index.
+func (b *TaskKeyBuilder) SetMergeTempIndex(flag bool) *TaskKeyBuilder {
+	b.mergeTempIdx = flag
+	return b
+}
+
+// SetMultiSchema sets the multi-schema change information.
+func (b *TaskKeyBuilder) SetMultiSchema(info *model.MultiSchemaInfo) *TaskKeyBuilder {
+	if info != nil {
+		b.multiSchemaSeq = info.Seq
+	}
+	return b
+}
+
+// Build builds the task key for the backfill job.
+func (b *TaskKeyBuilder) Build(jobID int64) string {
+	labels := make([]string, 0, 8)
+	if kerneltype.IsNextGen() {
+		labels = append(labels, keyspace.GetKeyspaceNameBySettings())
+	}
+	labels = append(labels, "ddl", proto.Backfill.String(), strconv.FormatInt(jobID, 10))
+	if b.multiSchemaSeq >= 0 {
+		labels = append(labels, strconv.Itoa(int(b.multiSchemaSeq)))
+	}
+	if b.mergeTempIdx {
+		labels = append(labels, "merge")
+	}
+	return strings.Join(labels, "/")
+}
+
 // TaskKey generates a task key for the backfill job.
-func TaskKey(jobID int64) string {
+func TaskKey(jobID int64, mergeTempIdx bool) string {
+	labels := make([]string, 0, 8)
 	if kerneltype.IsNextGen() {
 		ks := keyspace.GetKeyspaceNameBySettings()
-		return fmt.Sprintf("%s/ddl/%s/%d", ks, proto.Backfill, jobID)
+		labels = append(labels, ks)
 	}
-	return fmt.Sprintf("ddl/%s/%d", proto.Backfill, jobID)
+	labels = append(labels, "ddl", proto.Backfill.String(), strconv.FormatInt(jobID, 10))
+	if mergeTempIdx {
+		labels = append(labels, "merge")
+	}
+	return strings.Join(labels, "/")
 }
 
 func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
-	if reorgInfo.mergingTmpIdx {
-		return errors.New("do not support merge index")
-	}
-
 	stepCtx := jobCtx.stepCtx
 	taskType := proto.Backfill
-	taskKey := TaskKey(reorgInfo.Job.ID)
+	tkBuilder := NewTaskKeyBuilder().
+		SetMultiSchema(reorgInfo.Job.MultiSchemaInfo).
+		SetMergeTempIndex(reorgInfo.mergingTmpIdx)
+	taskKey := tkBuilder.Build(reorgInfo.Job.ID)
 	g, ctx := errgroup.WithContext(w.workCtx)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
 
 	done := make(chan struct{})
-
-	// generate taskKey for multi schema change.
-	if mInfo := reorgInfo.Job.MultiSchemaInfo; mInfo != nil {
-		taskKey = fmt.Sprintf("%s/%d", taskKey, mInfo.Seq)
-	}
-
 	// For resuming add index task.
 	// Need to fetch task by taskKey in tidb_global_task and tidb_global_task_history tables.
 	// When pausing the related ddl job, it is possible that the task with taskKey is succeed and in tidb_global_task_history.
@@ -2734,6 +2779,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			EleIDs:          extractElemIDs(reorgInfo),
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
+			MergeTempIndex:  reorgInfo.mergingTmpIdx,
 			EstimateRowSize: rowSize,
 			Version:         BackfillTaskMetaVersion1,
 		}

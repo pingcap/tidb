@@ -564,7 +564,6 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	// Add join reorder flag regardless of inner join or outer join.
 	b.optFlag = b.optFlag | rule.FlagJoinReOrder
 	b.optFlag |= rule.FlagPredicateSimplification
-	b.optFlag |= rule.FlagConvertOuterToInnerJoin
 	b.optFlag |= rule.FlagEmptySelectionEliminator
 
 	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left, false)
@@ -1737,7 +1736,6 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	if err != nil {
 		return nil, err
 	}
-	b.optFlag |= rule.FlagConvertOuterToInnerJoin
 
 	joinPlan := logicalop.LogicalJoin{JoinType: joinType}.Init(b.ctx, b.getSelectOffset())
 	joinPlan.SetChildren(leftPlan, rightPlan)
@@ -3687,10 +3685,11 @@ func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) 
 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
-	currentDB := b.ctx.GetSessionVars().CurrentDB
-	warnHandler := b.ctx.GetSessionVars().StmtCtx
+	sessionVars := b.ctx.GetSessionVars()
+	currentDB := sessionVars.CurrentDB
+	warnHandler := sessionVars.StmtCtx
 	planHints, subQueryHintFlags, err := h.ParsePlanHints(hints, currentLevel, currentDB,
-		b.hintProcessor, b.ctx.GetSessionVars().StmtCtx.StraightJoinOrder,
+		b.hintProcessor, sessionVars.StmtCtx.StraightJoinOrder,
 		b.subQueryCtx == handlingInSubquery,
 		b.subQueryCtx == handlingExistsSubquery, b.subQueryCtx == notHandlingSubquery, warnHandler)
 	if err != nil {
@@ -5082,7 +5081,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
 	selectLogicalPlan, err := b.Build(ctx, nodeW)
 	if err != nil {
-		logutil.BgLogger().Error("build plan for view failed", zap.Error(err))
+		logutil.BgLogger().Warn("build plan for view failed", zap.Error(err))
 		if terror.ErrorNotEqual(err, plannererrors.ErrViewRecursive) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrNoSuchTable) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrInternal) &&
@@ -5177,7 +5176,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName ast.CIStr, tab
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPlan, tp base.JoinType, markNoDecorrelate bool) base.LogicalPlan {
-	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConvertOuterToInnerJoin | rule.FlagConstantPropagation
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConstantPropagation
 	ap := logicalop.LogicalApply{LogicalJoin: logicalop.LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetOutputNames(make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len()))
@@ -5241,7 +5240,6 @@ func (b *PlanBuilder) buildMaxOneRow(p base.LogicalPlan) base.LogicalPlan {
 }
 
 func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCondition []expression.Expression, asScalar, not, forceRewrite bool) (*logicalop.LogicalJoin, error) {
-	b.optFlag |= rule.FlagConvertOuterToInnerJoin
 	joinPlan := logicalop.LogicalJoin{}.Init(b.ctx, b.getSelectOffset())
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())

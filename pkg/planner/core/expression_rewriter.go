@@ -599,6 +599,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			case *ast.ParenthesesExpr:
 				x = y.Expr
 			default:
+				// Expect its left and right child to be a scalar value.
+				er.asScalar = true
 				return inNode, false
 			}
 		}
@@ -1813,9 +1815,15 @@ func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx
 			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION or GLOBAL")
 			return
 		}
-		if !v.IsGlobal && !v.IsInstance && !sysVar.HasSessionScope() {
-			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
-			return
+		if !v.IsGlobal && !v.IsInstance {
+			if !sysVar.HasSessionScope() {
+				er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
+				return
+			}
+			if sysVar.InternalSessionVariable {
+				er.err = variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+				return
+			}
 		}
 	}
 	var val string

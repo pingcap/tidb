@@ -40,7 +40,7 @@ func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
 
 func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanContext, fd *funcdep.FDSet) base.Task {
 	if p.TaskTp == property.MppTaskType {
-		mpp, ok := tsk.(*MppTask)
+		mpp, ok := tsk.(*physicalop.MppTask)
 		if !ok || mpp.Invalid() {
 			return base.InvalidTask
 		}
@@ -48,7 +48,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanC
 			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
 			return base.InvalidTask
 		}
-		tsk = mpp.enforceExchanger(p, fd)
+		tsk = mpp.EnforceExchanger(p, fd)
 	}
 	// when task is double cop task warping a index merge reader, tsk.plan() may be nil when indexPlanFinished is marked
 	// as false, while the real plan is in idxMergePartPlans. tsk.plan()==nil is not right here.

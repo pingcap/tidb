@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/docker/go-units"
@@ -171,6 +172,12 @@ var (
 		maxWriteSpeedOption:   {},
 		cloudStorageURIOption: {},
 		threadOption:          {},
+	}
+
+	disallowedOptionsForSEM = map[string]struct{}{
+		maxEngineSizeOption:  {},
+		forceMergeStep:       {},
+		manualRecoveryOption: {},
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
@@ -691,6 +698,14 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		for k := range disallowedOptionsOfNextGen {
 			if _, ok := specifiedOptions[k]; ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "nextgen kernel")
+			}
+		}
+	}
+
+	if semv1.IsEnabled() {
+		for k := range disallowedOptionsForSEM {
+			if _, ok := specifiedOptions[k]; ok {
+				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "SEM enabled")
 			}
 		}
 	}
@@ -1328,23 +1343,41 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 // CalResourceParams calculates resource related parameters according to the total
 // file size and target node cpu count.
-func (e *LoadDataController) CalResourceParams(ctx context.Context) error {
+func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []byte) error {
+	start := time.Now()
 	targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
+	if err != nil {
+		return err
+	}
+	factors, err := handle.GetScheduleTuneFactors(ctx, e.Keyspace)
 	if err != nil {
 		return err
 	}
 	totalSize := e.TotalFileSize
 	failpoint.InjectCall("mockImportDataSize", &totalSize)
-	e.ThreadCnt = scheduler.CalcConcurrencyByDataSize(totalSize, targetNodeCPUCnt)
-	e.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(totalSize, targetNodeCPUCnt)
+	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
+	var indexSizeRatio float64
+	if numOfIndexGenKV > 0 {
+		indexSizeRatio, err = e.sampleIndexSizeRatio(ctx, ksCodec)
+		if err != nil {
+			e.logger.Warn("meet error when sampling index size ratio", zap.Error(err))
+		}
+	}
+	cal := scheduler.NewRCCalc(totalSize, targetNodeCPUCnt, indexSizeRatio, factors)
+	e.ThreadCnt = cal.CalcConcurrency()
+	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
 	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
 	e.logger.Info("auto calculate resource related params",
-		zap.Int("thread count", e.ThreadCnt),
-		zap.Int("max node count", e.MaxNodeCnt),
-		zap.Int("dist sql scan concurrency", e.DistSQLScanConcurrency),
-		zap.Int("target node cpu count", targetNodeCPUCnt),
-		zap.String("total file size", units.BytesSize(float64(totalSize))),
-		zap.Int("file count", len(e.dataFiles)),
+		zap.Int("thread", e.ThreadCnt),
+		zap.Int("maxNode", e.MaxNodeCnt),
+		zap.Int("distsqlScanConcurrency", e.DistSQLScanConcurrency),
+		zap.Int("targetNodeCPU", targetNodeCPUCnt),
+		zap.String("totalFileSize", units.BytesSize(float64(totalSize))),
+		zap.Int("fileCount", len(e.dataFiles)),
+		zap.Int("numOfIndexGenKV", numOfIndexGenKV),
+		zap.Float64("indexSizeRatio", indexSizeRatio),
+		zap.Float64("amplifyFactor", factors.AmplifyFactor),
+		zap.Duration("costTime", time.Since(start)),
 	)
 	return nil
 }

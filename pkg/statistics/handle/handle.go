@@ -216,7 +216,7 @@ func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.Tabl
 // FlushStats flushes the cached stats update into store.
 func (h *Handle) FlushStats() {
 	if err := h.DumpStatsDeltaToKV(true); err != nil {
-		statslogutil.StatsLogger().Error("dump stats delta fail", zap.Error(err))
+		statslogutil.StatsLogger().Warn("dump stats delta fail", zap.Error(err))
 	}
 }
 
