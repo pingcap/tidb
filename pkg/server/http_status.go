@@ -44,6 +44,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/autoid"
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -246,6 +247,11 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/ddl/history", tikvhandler.NewDDLHistoryJobHandler(tikvHandlerTool)).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", tikvhandler.NewDDLResignOwnerHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Owner_Resign")
 
+	if kerneltype.IsNextGen() {
+		router.Handle("/dxf/schedule/status", tikvhandler.NewDXFScheduleStatusHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Status")
+		router.Handle("/dxf/schedule", tikvhandler.NewDXFScheduleHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule")
+	}
+
 	// HTTP path for transaction GC states.
 	router.Handle("/txn-gc-states", tikvhandler.NewTxnGCStatesHandler(tikvHandlerTool.Store))
 
@@ -265,6 +271,16 @@ func (s *Server) startHTTPServer() {
 
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
+
+	// HTTP path for ingest configurations
+	router.Handle("/ingest/max-batch-split-ranges", tikvhandler.NewIngestConcurrencyHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxBatchSplitRanges)).Name("IngestMaxBatchSplitRanges")
+	router.Handle("/ingest/max-split-ranges-per-sec", tikvhandler.NewIngestConcurrencyHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxSplitRangesPerSec)).Name("IngestMaxSplitRangesPerSec")
+	router.Handle("/ingest/max-ingest-inflight", tikvhandler.NewIngestConcurrencyHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxInflight)).Name("IngestMaxInflight")
+	router.Handle("/ingest/max-ingest-per-sec", tikvhandler.NewIngestConcurrencyHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxPerSecond)).Name("IngestMaxPerSec")
 
 	if s.cfg.Store == config.StoreTypeTiKV {
 		// HTTP path for tikv.

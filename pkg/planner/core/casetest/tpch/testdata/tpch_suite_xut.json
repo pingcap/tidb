@@ -337,6 +337,29 @@
     ]
   },
   {
+    "Name": "TestQ14",
+    "Cases": [
+      {
+        "SQL": "SELECT 100.00 * SUM(CASE WHEN p_type LIKE 'PROMO%' THEN l_extendedprice * (1 - l_discount) ELSE 0 END) / SUM(l_extendedprice * (1 - l_discount)) AS promo_revenue FROM lineitem, part WHERE l_partkey = p_partkey AND l_shipdate >= '1996-12-01' AND l_shipdate < DATE_ADD('1996-12-01', INTERVAL '1' MONTH);",
+        "Result": [
+          "Projection 1.00 root  div(mul(100.00, Column#26), Column#27)->Column#28",
+          "└─HashAgg 1.00 root  funcs:sum(Column#30)->Column#26, funcs:sum(Column#31)->Column#27",
+          "  └─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#34)->Column#30, funcs:sum(Column#35)->Column#31",
+          "        └─Projection 299338.16 mpp[tiflash]  case(like(test.part.p_type, PROMO%, 92), mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount)), 0.0000)->Column#34, mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount))->Column#35",
+          "          └─Projection 299338.16 mpp[tiflash]  test.lineitem.l_extendedprice, test.lineitem.l_discount, test.part.p_type",
+          "            └─Projection 299338.16 mpp[tiflash]  test.part.p_type, test.lineitem.l_extendedprice, test.lineitem.l_discount",
+          "              └─HashJoin 299338.16 mpp[tiflash]  inner join, equal:[eq(test.part.p_partkey, test.lineitem.l_partkey)]",
+          "                ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "                │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "                │   └─TableFullScan 10000.00 mpp[tiflash] table:part keep order:false, stats:pseudo",
+          "                └─TableFullScan(Probe) 76800575.90 mpp[tiflash] table:lineitem pushed down filter:ge(test.lineitem.l_shipdate, 1996-12-01 00:00:00.000000), lt(test.lineitem.l_shipdate, 1997-01-01 00:00:00.000000), keep order:false"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestQ18",
     "Cases": [
       {

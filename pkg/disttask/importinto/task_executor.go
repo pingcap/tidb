@@ -59,6 +59,7 @@ import (
 // StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
 	taskexecutor.BaseStepExecutor
+	execute.NoopCollector
 
 	taskID        int64
 	taskMeta      *TaskMeta
@@ -84,6 +85,7 @@ func getTableImporter(
 	taskID int64,
 	taskMeta *TaskMeta,
 	store tidbkv.Storage,
+	logger *zap.Logger,
 ) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
@@ -94,7 +96,7 @@ func getTableImporter(
 	if err != nil {
 		return nil, err
 	}
-	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl, astArgs)
+	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl, astArgs, importer.WithLogger(logger))
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +111,7 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	s.logger.Info("init subtask env")
 	var tableImporter *importer.TableImporter
 	var taskManager *dxfstorage.TaskManager
-	tableImporter, err = getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
+	tableImporter, err = getTableImporter(ctx, s.taskID, s.taskMeta, s.store, s.logger)
 	if err != nil {
 		return err
 	}
@@ -165,8 +167,8 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	return nil
 }
 
-// Add implements Collector.Add interface.
-func (s *importStepExecutor) Add(bytes, rowCnt int64) {
+// Processed implements Collector.Processed interface.
+func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
 	s.summary.Bytes.Add(bytes)
 	s.summary.RowCnt.Add(rowCnt)
 }
@@ -219,6 +221,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		Checksum:         verification.NewKVGroupChecksumWithKeyspace(s.tableImporter.GetKeySpace()),
 		SortedDataMeta:   &external.SortedKVMeta{},
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
+		summary:          &s.summary,
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
@@ -241,6 +244,7 @@ outer:
 			Chunk:      chunk,
 			SharedVars: sharedVars,
 			panicked:   &panicked,
+			logger:     logger,
 		}:
 		case <-op.Done():
 			break outer
@@ -399,10 +403,13 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	var mu sync.Mutex
 	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
-	onClose := func(summary *external.WriterSummary) {
+	onWriterClose := func(summary *external.WriterSummary) {
 		mu.Lock()
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
+	}
+	onReaderClose := func(summary *external.ReaderSummary) {
+		m.summary.GetReqCnt.Add(summary.GetRequestCount)
 	}
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
@@ -418,7 +425,8 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		partSize,
 		prefix,
 		external.DefaultOneWriterBlockSize,
-		onClose,
+		onWriterClose,
+		onReaderClose,
 		external.NewMergeCollector(ctx, &m.summary),
 		int(m.GetResource().CPU.Capacity()),
 		false,
@@ -471,11 +479,12 @@ func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 }
 
 type ingestCollector struct {
+	execute.NoopCollector
 	summary *execute.SubtaskSummary
 	kvGroup string
 }
 
-func (c *ingestCollector) Add(bytes, rowCnt int64) {
+func (c *ingestCollector) Processed(bytes, rowCnt int64) {
 	c.summary.Bytes.Add(bytes)
 	if c.kvGroup == dataKVGroup {
 		c.summary.RowCnt.Add(rowCnt)
@@ -497,7 +506,7 @@ type writeAndIngestStepExecutor struct {
 var _ execute.StepExecutor = &writeAndIngestStepExecutor{}
 
 func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
-	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta, e.store)
+	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta, e.store, e.logger)
 	if err != nil {
 		return err
 	}
@@ -555,6 +564,9 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			TotalKVCount:  0,
 			CheckHotspot:  false,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
+			OnReaderClose: func(summary *external.ReaderSummary) {
+				e.summary.GetReqCnt.Add(summary.GetRequestCount)
+			},
 		},
 		TS: sm.TS,
 	}, engineUUID)

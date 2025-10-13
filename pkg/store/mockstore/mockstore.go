@@ -21,7 +21,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	cp "github.com/otiai10/copy"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -315,18 +314,6 @@ func ImageAvailable() bool {
 	}
 	_, err = os.ReadDir(filepath.Join(ImageFilePath, "kv"))
 	return err == nil
-}
-
-func copyImage() (string, error) {
-	path, err := os.MkdirTemp("", "tidb-unistore-temp")
-	if err != nil {
-		return "", err
-	}
-	err = cp.Copy(ImageFilePath, path)
-	if err != nil {
-		return "", err
-	}
-	return path, nil
 }
 
 // BootstrapWithSingleStore initializes a Cluster with 1 Region and 1 Store.

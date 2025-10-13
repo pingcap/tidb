@@ -16,6 +16,7 @@ package stmtctx
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"maps"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -143,7 +145,7 @@ type stmtCtxMu struct {
 	foundRows uint64
 
 	/*
-		following variables are ported from 'COPY_INFO' struct of MySQL server source,
+		These variables serve a similar purpose to those in MySQL's `COPY_INFO`,
 		they are used to count rows for INSERT/REPLACE/UPDATE queries:
 		  If a row is inserted then the copied variable is incremented.
 		  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
@@ -1496,4 +1498,22 @@ func (r StatsLoadResult) ErrorMsg() string {
 	b.WriteString(", err:")
 	b.WriteString(r.Error.Error())
 	return b.String()
+}
+
+type stmtLabelKeyType struct{}
+
+var stmtLabelKey stmtLabelKeyType
+
+// WithStmtLabel sets the label for the statement node.
+func WithStmtLabel(ctx context.Context, label string) context.Context {
+	return context.WithValue(ctx, stmtLabelKey, label)
+}
+
+// GetStmtLabel returns the label for the statement node.
+// context with stmtLabelKey will return the label if it exists.
+func GetStmtLabel(ctx context.Context, node ast.StmtNode) string {
+	if val := ctx.Value(stmtLabelKey); val != nil {
+		return val.(string)
+	}
+	return ast.GetStmtLabel(node)
 }

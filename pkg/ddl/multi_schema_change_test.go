@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -782,6 +783,54 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 	require.NoError(t, checkErr)
 }
 
+func TestMultiSchemaChangeModifyColumnOrderByStates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("alter table t modify column b smallint, add column d int;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("alter table t modify column a smallint, add column c int, modify column b smallint;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int, c char(10));")
+	tk.MustExec("insert into t values (1, 1, '1');")
+	tk.MustExec("alter table t modify column c int after a, add column d int, add column e int, modify column b smallint;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (id bigint, c1 bigint, c2 bigint);")
+	tk.MustExec("alter table t modify column c2 int after id, modify column id int after c2;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t1(id bigint, c1 bigint, c2 bigint);")
+	tk.MustExec("alter table t1 modify column c2 int, drop column id;")
+}
+
+func TestMultiSchemaChangeDMLUpdate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, d int)")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("insert into t(a, c) values (1, 2), (2, 3), (3, 4), (4, 5)")
+		tk.MustExec("update t set c = 5 where a = 1")
+		tk.MustExec("delete from t")
+	})
+	tk.MustExec("alter table t change column b e int unsigned, change column d f int unsigned")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+
+	tk.MustExec("drop table t")
+}
+
 func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -848,6 +897,9 @@ func TestMultiSchemaChangeMDLView(t *testing.T) {
 }
 
 func TestMultiSchemaChangeWithoutMDL(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -48,6 +49,9 @@ import (
 )
 
 func TestAnalyzeBuildSucc(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the next-gen kernel does not support analyze version 1")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -414,7 +418,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 }
 
 func testDAGPlanBuilderSplitAvg(t *testing.T, root base.PhysicalPlan) {
-	if p, ok := root.(*core.PhysicalTableReader); ok {
+	if p, ok := root.(*physicalop.PhysicalTableReader); ok {
 		if p.TablePlans != nil {
 			baseAgg := p.TablePlans[len(p.TablePlans)-1]
 			if agg, ok := baseAgg.(*physicalop.PhysicalHashAgg); ok {
@@ -485,7 +489,7 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 					}
 				}
 				return nil
-			case *core.PhysicalTableReader:
+			case *physicalop.PhysicalTableReader:
 				for _, child := range v.TablePlans {
 					if sel := findSelection(child); sel != nil {
 						return sel

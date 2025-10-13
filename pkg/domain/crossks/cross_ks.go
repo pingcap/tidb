@@ -16,6 +16,8 @@ package crossks
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -62,6 +64,14 @@ func NewManager(store kv.Storage) *Manager {
 		store:    store,
 		sessMgrs: make(map[string]*SessionManager),
 	}
+}
+
+// GetAllKeyspace returns all keyspace names that have session managers.
+// used in tests.
+func (m *Manager) GetAllKeyspace() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return slices.Collect(maps.Keys(m.sessMgrs))
 }
 
 // Get gets a session manager for the specified keyspace.
@@ -111,7 +121,7 @@ func (m *Manager) GetOrCreate(
 		if err != nil {
 			err2 := store.Close()
 			if err2 != nil {
-				logutil.BgLogger().Error("failed to close store", zap.Error(err2))
+				logutil.BgLogger().Warn("failed to close store", zap.Error(err2))
 			}
 		}
 	}()
@@ -152,7 +162,7 @@ func (m *Manager) GetOrCreate(
 			cancel()
 			err2 := etcdCli.Close()
 			if err2 != nil {
-				logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+				logutil.BgLogger().Warn("failed to close etcd client", zap.Error(err2))
 			}
 		}
 	}()
@@ -304,14 +314,14 @@ func (m *SessionManager) close() {
 	m.wg.Wait()
 	m.schemaVerSyncer.Close()
 	if err := m.etcdCli.Close(); err != nil {
-		logger.Error("failed to close etcd client", zap.Error(err))
+		logger.Warn("failed to close etcd client", zap.Error(err))
 	}
 	// lifecycle of SYSTEM store is managed outside, skip close.
 	needCloseStore := ks != keyspace.System
 	failpoint.InjectCall("skipCloseStore", &needCloseStore)
 	if needCloseStore {
 		if err := m.store.Close(); err != nil {
-			logger.Error("failed to close store", zap.Error(err))
+			logger.Warn("failed to close store", zap.Error(err))
 		}
 	}
 }

@@ -17,6 +17,7 @@ go_test(
     timeout = "short",
     srcs = ["globalconfig_test.go"],
     flaky = True,
+    shard_count = 2,
     deps = [
         ":globalconfigsync",
         "//pkg/kv",

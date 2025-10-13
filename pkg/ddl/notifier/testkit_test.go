@@ -28,6 +28,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -547,6 +548,9 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 }
 
 func TestCommitFailed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	// Make sure events don't get lost if internal txn commit failed.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

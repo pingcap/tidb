@@ -298,7 +298,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		}
 
 		if p.collector != nil {
-			p.collector.Add(delta, int64(rowCount))
+			p.collector.Processed(delta, int64(rowCount))
 		}
 
 		// the ownership of rowBatch is transferred to the receiver of sendFn, we should
@@ -640,7 +640,7 @@ func (*IndexRouteWriter) IsSynced() bool {
 }
 
 // Close implements backend.EngineWriter interface.
-func (w *IndexRouteWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+func (w *IndexRouteWriter) Close(ctx context.Context) (common.ChunkFlushStatus, error) {
 	var firstErr error
 	for _, writer := range w.writers {
 		if err := writer.Close(ctx); err != nil {

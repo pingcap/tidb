@@ -24,14 +24,7 @@ import (
 	usconf "github.com/pingcap/tidb/pkg/store/mockstore/unistore/config"
 	ussvr "github.com/pingcap/tidb/pkg/store/mockstore/unistore/server"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/constants"
 )
-
-// NewClassic creates an embed unistore client, pd client and cluster handler as the classic kernel, i.e., no keyspace
-// is used.
-func NewClassic(path string, pdAddrs []string) (*RPCClient, pd.Client, *Cluster, error) {
-	return New(path, pdAddrs, constants.NullKeyspaceID, nil)
-}
 
 // New creates an embed unistore client, pd client and cluster handler.
 func New(

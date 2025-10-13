@@ -75,6 +75,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const requestDefaultTimeout = 10 * time.Second
+
 // SettingsHandler is the handler for list tidb server settings.
 type SettingsHandler struct {
 	*handler.TikvHandlerTool
@@ -2013,7 +2015,7 @@ func (LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				}
 			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
 		if err := infosync.UpdateServerLabel(ctx, labels); err != nil {
 			logutil.BgLogger().Error("update etcd labels failed", zap.Any("labels", cfg.Labels), zap.Error(err))
 		}

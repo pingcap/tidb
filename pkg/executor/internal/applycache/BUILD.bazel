@@ -24,6 +24,7 @@ go_test(
     ],
     embed = [":applycache"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",

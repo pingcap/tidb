@@ -184,6 +184,35 @@ func TestQ5(t *testing.T) {
 	})
 }
 
+func TestQ14(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		createLineItem(t, tk, dom)
+		createPart(t, tk, dom)
+		testkit.LoadTableStats("test.lineitem.json", dom)
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		integrationSuiteData := GetTPCHSuiteData()
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		costTraceFormat := `explain format='brief' `
+		for i := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = input[i]
+			})
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
+			})
+			tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
+			checkCost(t, tk, input[i])
+		}
+	})
+}
+
 // check the cost trace's cost and verbose's cost. they should be the same.
 // it is from https://github.com/pingcap/tidb/issues/61155
 func checkCost(t *testing.T, tk *testkit.TestKit, q4 string) {

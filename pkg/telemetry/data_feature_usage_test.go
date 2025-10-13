@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -77,13 +78,15 @@ func TestTxnUsageInfo(t *testing.T) {
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RCWriteCheckTS)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 0", vardef.TiDBPessimisticTransactionFairLocking))
-		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
-		require.False(t, txnUsage.FairLocking)
+		if kerneltype.IsClassic() {
+			tk.MustExec(fmt.Sprintf("set global %s = 0", vardef.TiDBPessimisticTransactionFairLocking))
+			txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+			require.False(t, txnUsage.FairLocking)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBPessimisticTransactionFairLocking))
-		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
-		require.True(t, txnUsage.FairLocking)
+			tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBPessimisticTransactionFairLocking))
+			txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+			require.True(t, txnUsage.FairLocking)
+		}
 	})
 
 	t.Run("Count", func(t *testing.T) {
@@ -547,31 +550,36 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
 	require.NoError(t, err)
-
-	allow := vardef.EnableFastReorg.Load()
-	require.Equal(t, true, allow)
-	tk.MustExec("set global tidb_enable_metadata_lock = 0")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tele_t")
 	tk.MustExec("create table tele_t(id int, b int)")
 	tk.MustExec("insert into tele_t values(1,1),(2,2);")
-	tk.MustExec("alter table tele_t add index idx_org(b)")
-	usage, err = telemetry.GetFeatureUsage(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
-	require.Equal(t, false, usage.DDLUsageCounter.MetadataLockUsed)
+
+	var expectedCnt int64
+	if kerneltype.IsClassic() {
+		allow := vardef.EnableFastReorg.Load()
+		require.Equal(t, true, allow)
+		tk.MustExec("set global tidb_enable_metadata_lock = 0")
+		tk.MustExec("alter table tele_t add index idx_org(b)")
+		usage, err = telemetry.GetFeatureUsage(tk.Session())
+		require.NoError(t, err)
+		expectedCnt++
+		require.Equal(t, expectedCnt, usage.DDLUsageCounter.AddIndexIngestUsed)
+		require.Equal(t, false, usage.DDLUsageCounter.MetadataLockUsed)
+		tk.MustExec("set global tidb_enable_metadata_lock = 1")
+	}
 
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
-	tk.MustExec("set global tidb_enable_metadata_lock = 1")
-	allow = vardef.EnableFastReorg.Load()
+	allow := vardef.EnableFastReorg.Load()
 	require.Equal(t, true, allow)
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, expectedCnt, usage.DDLUsageCounter.AddIndexIngestUsed)
 	tk.MustExec("alter table tele_t add index idx_new(b)")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(2), usage.DDLUsageCounter.AddIndexIngestUsed)
+	expectedCnt++
+	require.Equal(t, expectedCnt, usage.DDLUsageCounter.AddIndexIngestUsed)
 	require.Equal(t, true, usage.DDLUsageCounter.MetadataLockUsed)
 }
 
@@ -849,6 +857,9 @@ func TestStoreBatchCopr(t *testing.T) {
 }
 
 func TestFairLockingUsage(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("fair locking is not supported for next-gen yet")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)

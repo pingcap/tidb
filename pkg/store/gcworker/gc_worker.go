@@ -757,7 +757,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency g
 	txnSafePoint := safePoint
 	err := w.resolveLocks(ctx, txnSafePoint, concurrency.v)
 	if err != nil {
-		logutil.Logger(ctx).Error("resolve locks returns an error", zap.String("category", "gc worker"),
+		logutil.Logger(ctx).Warn("resolve locks returns an error", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
 			zap.Uint64("txnSafePoint", txnSafePoint),
 			zap.Error(err))
@@ -866,7 +866,7 @@ func (w *GCWorker) deleteRanges(
 		})
 
 		if err != nil {
-			logutil.Logger(ctx).Error("delete range failed on range", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Warn("delete range failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Stringer("startKey", startKey),
 				zap.Stringer("endKey", endKey),
@@ -876,7 +876,7 @@ func (w *GCWorker) deleteRanges(
 
 		err = doGCPlacementRules(se, safePoint, r, &gcPlacementRuleCache)
 		if err != nil {
-			logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Warn("gc placement rules failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),
@@ -978,7 +978,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64,
 
 		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		if err != nil {
-			logutil.Logger(ctx).Error("redo-delete range failed on range", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Warn("redo-delete range failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Stringer("startKey", startKey),
 				zap.Stringer("endKey", endKey),
@@ -1240,7 +1240,7 @@ func (w *GCWorker) resolveLocks(
 	if !isNullKeyspace || len(allKeyspaces) == 0 {
 		err := runner.RunOnRange(ctx, []byte(""), []byte(""))
 		if err != nil {
-			logutil.Logger(ctx).Error("resolve locks failed", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Warn("resolve locks failed", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Uint64("txnSafePoint", txnSafePoint),
 				zap.Error(err))
@@ -1288,7 +1288,7 @@ func (w *GCWorker) resolveLocks(
 		for _, r := range nullKeyspaceKeyRanges {
 			err := runner.RunOnRange(ctx, r.StartKey, r.EndKey)
 			if err != nil {
-				logutil.Logger(ctx).Error("resolve locks for null keyspace sub-range failed", zap.String("category", "gc worker"),
+				logutil.Logger(ctx).Warn("resolve locks for null keyspace sub-range failed", zap.String("category", "gc worker"),
 					zap.String("uuid", w.uuid),
 					zap.Uint64("txnSafePoint", txnSafePoint),
 					zap.String("subRangeStartKey", hex.EncodeToString(r.StartKey)),
@@ -1308,7 +1308,7 @@ func (w *GCWorker) resolveLocks(
 			codecOfKeyspace, err := tikv.NewCodecV2(tikv.ModeTxn, keyspace)
 			if err != nil {
 				err = errors.Annotatef(err, "failed to find codec for keyspace when trying to resolve locks for it, keyspaceID: %v, keyspaceName: %v", keyspace.GetId(), keyspace.GetName())
-				logutil.Logger(ctx).Error("resolve locks for unified-GC keyspace failed", zap.String("category", "gc worker"),
+				logutil.Logger(ctx).Warn("resolve locks for unified-GC keyspace failed", zap.String("category", "gc worker"),
 					zap.String("uuid", w.uuid),
 					zap.Uint64("txnSafePoint", txnSafePoint),
 					zap.Error(err))
@@ -1318,7 +1318,7 @@ func (w *GCWorker) resolveLocks(
 			startKey, endKey := codecOfKeyspace.EncodeRange([]byte(""), []byte(""))
 			err = runner.RunOnRange(ctx, startKey, endKey)
 			if err != nil {
-				logutil.Logger(ctx).Error("resolve locks for unified-GC keyspace failed", zap.String("category", "gc worker"),
+				logutil.Logger(ctx).Warn("resolve locks for unified-GC keyspace failed", zap.String("category", "gc worker"),
 					zap.String("uuid", w.uuid),
 					zap.Uint64("txnSafePoint", txnSafePoint),
 					zap.Error(err))

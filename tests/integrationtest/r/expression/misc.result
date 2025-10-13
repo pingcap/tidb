@@ -333,11 +333,11 @@ COUNT(*)
 drop table if exists t;
 create table t(a bigint, b bigint);
 insert into t values(1, 1);
-desc format='brief' select ifnull("aaaa", a) from t;
-id	estRows	task	access object	operator info
-Projection	10000.00	root		aaaa->Column#4
-└─TableReader	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select ifnull("aaaa", a) from t;
+id	task	access object	operator info
+Projection	root		aaaa->Column#4
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select ifnull("aaaa", a) from t;
 ifnull("aaaa", a)
 aaaa

@@ -276,8 +276,8 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	}.Init(ctx, t.p.StatsInfo())
 	sender.SetChildren(t.p)
 
-	p := PhysicalTableReader{
-		tablePlan: sender,
+	p := physicalop.PhysicalTableReader{
+		TablePlan: sender,
 		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.QueryBlockOffset())
 	p.SetStats(t.p.StatsInfo())
@@ -305,7 +305,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
 		}
-		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.GetPlan().StatsInfo().Scale(selectivity), rt.GetPlan().QueryBlockOffset())
+		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.GetPlan().StatsInfo().Scale(ctx.GetSessionVars(), selectivity), rt.GetPlan().QueryBlockOffset())
 		sel.FromDataSource = true
 		sel.SetChildren(rt.GetPlan())
 		rt.SetPlan(sel)
@@ -467,7 +467,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		ts := tp.(*physicalop.PhysicalTableScan)
 		prevColumnLen := len(ts.Columns)
 		prevSchema := ts.Schema().Clone()
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
+		ts.Columns = physicalop.ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
 		if !t.needExtraProj && len(ts.Columns) > prevColumnLen {
 			// Add a projection to make sure not to output extract columns.
 			t.needExtraProj = true
@@ -476,9 +476,9 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	}
 	newTask := &RootTask{}
 	if t.idxMergePartPlans != nil {
-		p := PhysicalIndexMergeReader{
-			partialPlans:       t.idxMergePartPlans,
-			tablePlan:          t.tablePlan,
+		p := physicalop.PhysicalIndexMergeReader{
+			PartialPlansRaw:    t.idxMergePartPlans,
+			TablePlan:          t.tablePlan,
 			IsIntersectionType: t.idxMergeIsIntersection,
 			AccessMVIndex:      t.idxMergeAccessMVIndex,
 			KeepOrder:          t.keepOrder,
@@ -498,7 +498,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	if t.indexPlan != nil && t.tablePlan != nil {
 		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
-		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.QueryBlockOffset())
+		p := physicalop.PhysicalIndexReader{IndexPlan: t.indexPlan}.Init(ctx, t.indexPlan.QueryBlockOffset())
 		p.PlanPartInfo = t.physPlanPartInfo
 		p.SetStats(t.indexPlan.StatsInfo())
 		newTask.SetPlan(p)
@@ -508,8 +508,8 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			tp = tp.Children()[0]
 		}
 		ts := tp.(*physicalop.PhysicalTableScan)
-		p := PhysicalTableReader{
-			tablePlan:      t.tablePlan,
+		p := physicalop.PhysicalTableReader{
+			TablePlan:      t.tablePlan,
 			StoreType:      ts.StoreType,
 			IsCommonHandle: ts.Table.IsCommonHandle,
 		}.Init(ctx, t.tablePlan.QueryBlockOffset())
@@ -523,7 +523,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		// schema will be broken, the final agg will fail to find needed columns in ResolveIndices().
 		// Besides, the agg would only be pushed down if it doesn't contain virtual columns, so virtual column should not be affected.
 		aggPushedDown := false
-		switch p.tablePlan.(type) {
+		switch p.TablePlan.(type) {
 		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 			aggPushedDown = true
 		}

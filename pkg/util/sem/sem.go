@@ -158,6 +158,7 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		vardef.TiDBTopSQLMaxTimeSeriesCount,
 		vardef.TiDBTopSQLMaxMetaCount,
 		vardef.TiDBServiceScope,
+		vardef.TiDBCloudStorageURI,
 		tidbAuditRetractLog:
 		return true
 	}

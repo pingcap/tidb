@@ -59,11 +59,11 @@ type readIndexStepExecutor struct {
 	avgRowSize      int
 	cloudStorageURI string
 
-	*execute.SubtaskSummary
+	summary *execute.SubtaskSummary
 
-	subtaskSummary sync.Map // subtaskID => readIndexSummary
-	backendCfg     *local.BackendConfig
-	backend        *local.Backend
+	summaryMap sync.Map // subtaskID => readIndexSummary
+	backendCfg *local.BackendConfig
+	backend    *local.Backend
 	// pipeline of current running subtask, it's nil when no subtask is running.
 	currPipe atomic.Pointer[operator.AsyncPipeline]
 
@@ -96,7 +96,7 @@ func newReadIndexExecutor(
 		jc:              jc,
 		cloudStorageURI: cloudStorageURI,
 		avgRowSize:      avgRowSize,
-		SubtaskSummary:  &execute.SubtaskSummary{},
+		summary:         &execute.SubtaskSummary{},
 	}, nil
 }
 
@@ -185,7 +185,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	logutil.DDLLogger().Info("read index executor run subtask",
 		zap.Bool("use cloud", r.isGlobalSort()))
 
-	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{
+	r.summaryMap.Store(subtask.ID, &readIndexSummary{
 		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
 	})
 
@@ -196,7 +196,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	opCtx, cancel := NewDistTaskOperatorCtx(ctx)
 	defer cancel()
-	r.Reset()
+	r.summary.Reset()
 
 	concurrency := int(r.GetResource().CPU.Capacity())
 	if r.isGlobalSort() {
@@ -206,7 +206,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 }
 
 func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	return r.SubtaskSummary
+	return r.summary
 }
 
 func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
@@ -270,7 +270,7 @@ func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 	if err != nil {
 		return err
 	}
-	sum, _ := r.subtaskSummary.LoadAndDelete(subtask.ID)
+	sum, _ := r.summaryMap.LoadAndDelete(subtask.ID)
 	s := sum.(*readIndexSummary)
 	sm.MetaGroups = s.metaGroups
 	sm.EleIDs = make([]int64, 0, len(r.indexes))
@@ -361,7 +361,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.SubtaskSummary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
+	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewAddIndexIngestPipeline(
 		opCtx,
 		r.store,
@@ -392,8 +392,8 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		return nil, err
 	}
 
-	onClose := func(summary *external.WriterSummary) {
-		sum, _ := r.subtaskSummary.Load(subtaskID)
+	onWriterClose := func(summary *external.WriterSummary) {
+		sum, _ := r.summaryMap.Load(subtaskID)
 		s := sum.(*readIndexSummary)
 		s.mu.Lock()
 		kvMeta := s.metaGroups[summary.GroupOffset]
@@ -402,6 +402,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 			s.metaGroups[summary.GroupOffset] = kvMeta
 		}
 		kvMeta.MergeSummary(summary)
+		r.summary.PutReqCnt.Add(summary.PutRequestCount)
 		s.mu.Unlock()
 	}
 	var idxNames strings.Builder
@@ -411,7 +412,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		idxNames.WriteString(idx.Name.O)
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.SubtaskSummary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
+	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
 		r.store,
@@ -423,7 +424,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		r.indexes,
 		start,
 		end,
-		onClose,
+		onWriterClose,
 		r.job.ReorgMeta,
 		r.avgRowSize,
 		concurrency,
@@ -436,17 +437,28 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 type distTaskRowCntCollector struct {
 	summary *execute.SubtaskSummary
 	counter prometheus.Counter
+	store   kv.Storage
 }
 
-func newDistTaskRowCntCollector(summary *execute.SubtaskSummary, dbName, tblName, idxName string) *distTaskRowCntCollector {
+func newDistTaskRowCntCollector(
+	store kv.Storage,
+	summary *execute.SubtaskSummary,
+	dbName, tblName, idxName string,
+) *distTaskRowCntCollector {
 	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName)
 	return &distTaskRowCntCollector{
 		summary: summary,
 		counter: counter,
+		store:   store,
 	}
 }
 
-func (d *distTaskRowCntCollector) Add(_, rowCnt int64) {
+func (d *distTaskRowCntCollector) Accepted(bytes int64) {
+	d.summary.ReadBytes.Add(bytes)
+}
+
+func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
+	d.summary.Bytes.Add(bytes)
 	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
 }

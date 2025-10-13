@@ -511,7 +511,8 @@ mock_s3iface: mockgen
 # mock interface for lightning and IMPORT INTO
 .PHONY: mock_lightning
 mock_lightning: mockgen
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter,ChunkFlushStatus > br/pkg/mock/backend.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter > br/pkg/mock/backend.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/common ChunkFlushStatus > br/pkg/mock/common.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
 	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
@@ -659,6 +660,10 @@ bazel_test: failpoint-enable bazel_prepare ## Run all tests using Bazel
 
 .PHONY: bazel_coverage_test
 bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
+		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest,nextgen \
+		-- //pkg/statistics/... //pkg/planner/... //pkg/bindinfo/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
@@ -709,95 +714,95 @@ bazel_golangcilinter:
 
 .PHONY: bazel_brietest
 bazel_brietest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //tests/realtikvtest/brietest/...
 
 .PHONY: bazel_pessimistictest
 bazel_pessimistictest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/pessimistictest/...
 
 .PHONY: bazel_sessiontest
 bazel_sessiontest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/sessiontest/...
 
 .PHONY: bazel_statisticstest
 bazel_statisticstest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/statisticstest/...
 
 .PHONY: bazel_txntest
 bazel_txntest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/txntest/...
 
 .PHONY: bazel_addindextest
 bazel_addindextest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/addindextest/...
 
 .PHONY: bazel_addindextest1
 bazel_addindextest1: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/addindextest1/...
 
 .PHONY: bazel_addindextest2
 bazel_addindextest2: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/addindextest2/...
 
 .PHONY: bazel_addindextest3
 bazel_addindextest3: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/addindextest3/...
 
 .PHONY: bazel_addindextest4
 bazel_addindextest4: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/addindextest4/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_importintotest
 bazel_importintotest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/importintotest/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_importintotest2
 bazel_importintotest2: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/importintotest2/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_importintotest3
 bazel_importintotest3: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/importintotest3/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_importintotest4
 bazel_importintotest4: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/importintotest4/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_pipelineddmltest
 bazel_pipelineddmltest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/pipelineddmltest/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_flashbacktest
 bazel_flashbacktest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/flashbacktest/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_ddltest
 bazel_ddltest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/ddltest/...
 
 .PHONY: bazel_lint

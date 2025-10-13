@@ -27,9 +27,9 @@ import (
 
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
-	BaseLogicalPlan
+	BaseLogicalPlan `hash64-equals:"true"`
 
-	Lock         *ast.SelectLockInfo
+	Lock         *ast.SelectLockInfo `hash64-equals:"true"`
 	TblID2Handle map[int64][]util.HandleCols
 
 	// tblID2phyTblIDCol is used for partitioned tables,

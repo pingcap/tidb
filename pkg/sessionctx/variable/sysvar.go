@@ -90,7 +90,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
 	{Scope: vardef.ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},
 	/* TiDB specific variables */
-	{Scope: vardef.ScopeNone, Name: vardef.TiDBEnableEnhancedSecurity, Value: vardef.Off, Type: vardef.TypeBool},
+	{Scope: vardef.ScopeNone, Name: vardef.TiDBEnableEnhancedSecurity, Value: vardef.Off, Type: vardef.TypeStr},
 	{Scope: vardef.ScopeNone, Name: vardef.TiDBAllowFunctionForExpressionIndex, ReadOnly: true, Value: collectAllowFuncName4ExpressionIndex()},
 
 	/* The system variables below have SESSION scope  */
@@ -295,6 +295,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptimizerEnableNAAJ, Value: BoolToOnOff(vardef.DefTiDBEnableNAAJ), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.OptimizerEnableNAAJ = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableSemiJoinRewrite, Value: BoolToOnOff(vardef.DefOptEnableSemiJoinRewrite), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableSemiJoinRewrite = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBDDLReorgPriority, Value: "PRIORITY_LOW", Type: vardef.TypeEnum, skipInit: true, PossibleValues: []string{"PRIORITY_LOW", "PRIORITY_NORMAL", "PRIORITY_HIGH"}, SetSession: func(s *SessionVars, val string) error {
@@ -2038,12 +2042,28 @@ var defaultSysVars = []*SysVar{
 		s.CorrelationExpFactor = int(TidbOptInt64(val, vardef.DefOptCorrelationExpFactor))
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRiskScaleNDVSkewRatio, Value: strconv.FormatFloat(vardef.DefOptRiskScaleNDVSkewRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
+		s.RiskScaleNDVSkewRatio = tidbOptFloat64(val, vardef.DefOptRiskScaleNDVSkewRatio)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptCartesianJoinOrderThreshold, Value: strconv.FormatFloat(vardef.DefOptCartesianJoinOrderThreshold, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.CartesianJoinOrderThreshold = tidbOptFloat64(val, vardef.DefOptCartesianJoinOrderThreshold)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRiskEqSkewRatio, Value: strconv.FormatFloat(vardef.DefOptRiskEqSkewRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
 		s.RiskEqSkewRatio = tidbOptFloat64(val, vardef.DefOptRiskEqSkewRatio)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRiskRangeSkewRatio, Value: strconv.FormatFloat(vardef.DefOptRiskRangeSkewRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
 		s.RiskRangeSkewRatio = tidbOptFloat64(val, vardef.DefOptRiskRangeSkewRatio)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRiskGroupNDVSkewRatio, Value: strconv.FormatFloat(vardef.DefOptRiskGroupNDVSkewRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
+		s.RiskGroupNDVSkewRatio = tidbOptFloat64(val, vardef.DefOptRiskGroupNDVSkewRatio)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptAlwaysKeepJoinKey, Value: BoolToOnOff(vardef.DefOptAlwaysKeepJoinKey), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.AlwaysKeepJoinKey = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptCPUFactor, Value: strconv.FormatFloat(vardef.DefOptCPUFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
@@ -2148,6 +2168,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinCostFactor, Value: strconv.FormatFloat(vardef.DefOptIndexJoinCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		s.IndexJoinCostFactor = tidbOptFloat64(val, vardef.DefOptIndexJoinCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptSelectivityFactor, Value: strconv.FormatFloat(vardef.DefOptSelectivityFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
+		s.SelectivityFactor = tidbOptFloat64(val, vardef.DefOptSelectivityFactor)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptimizerEnableNewOnlyFullGroupByCheck, Value: BoolToOnOff(vardef.DefTiDBOptimizerEnableNewOFGB), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -2352,6 +2376,10 @@ var defaultSysVars = []*SysVar{
 		s.EnablePipelinedWindowExec = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableNoDecorrelateInSelect, Value: BoolToOnOff(vardef.DefOptEnableNoDecorrelateInSelect), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableNoDecorrelateInSelect = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(vardef.DefEnableStrictDoubleTypeCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
 		return nil
@@ -2536,8 +2564,9 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBRedactLog, Value: vardef.DefTiDBRedactLog, Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On, vardef.Marker}, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBRedactLog, Value: vardef.DefTiDBRedactLog, Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On, vardef.Marker}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		s.EnableRedactLog = val
+		// NOTE: switch of errors is a singleton, thus we can not set it for different sessions
 		errors.RedactLogEnabled.Store(val)
 		return nil
 	}},
@@ -2669,7 +2698,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTxnAssertionLevel, Value: vardef.DefTiDBTxnAssertionLevel, PossibleValues: []string{vardef.AssertionOffStr, vardef.AssertionFastStr, vardef.AssertionStrictStr}, Hidden: true, Type: vardef.TypeEnum, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTxnAssertionLevel, Value: vardef.GetDefaultTxnAssertionLevel(), PossibleValues: []string{vardef.AssertionOffStr, vardef.AssertionFastStr, vardef.AssertionStrictStr}, Hidden: true, Type: vardef.TypeEnum, SetSession: func(s *SessionVars, val string) error {
 		s.AssertionLevel = tidbOptAssertionLevel(val)
 		return nil
 	}},
@@ -3644,7 +3673,11 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	case vardef.TiDBRowFormatVersion:
 		varVal = strconv.Itoa(vardef.DefTiDBRowFormatV2)
 	case vardef.TiDBTxnAssertionLevel:
-		varVal = vardef.AssertionFastStr
+		if kerneltype.IsNextGen() {
+			varVal = vardef.GetDefaultTxnAssertionLevel()
+		} else {
+			varVal = vardef.AssertionFastStr
+		}
 	case vardef.TiDBEnableMutationChecker:
 		varVal = vardef.On
 	case vardef.TiDBPessimisticTransactionFairLocking:

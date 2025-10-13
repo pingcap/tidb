@@ -74,15 +74,3 @@ func (p *PhysicalUnionAll) GetPlanCostVer1(taskType property.TaskType, option *o
 func (p *PhysicalUnionAll) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalUnionAll(p, taskType, option)
 }
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalUnionAll) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalUnionAll)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	return cloned, true
-}

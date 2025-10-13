@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -89,6 +90,9 @@ func TestCopClientSend(t *testing.T) {
 
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	if kerneltype.IsNextGen() {
+		tableStart = store.GetCodec().EncodeKey(tableStart)
+	}
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
 
 	ctx := context.Background()

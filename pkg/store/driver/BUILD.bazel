@@ -47,14 +47,10 @@ go_test(
     flaky = True,
     shard_count = 8,
     deps = [
-        "//pkg/config",
-        "//pkg/ddl",
-        "//pkg/domain",
         "//pkg/kv",
         "//pkg/session",
-        "//pkg/store/copr",
         "//pkg/store/mockstore",
-        "//pkg/store/mockstore/unistore",
+        "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/util",
         "//pkg/util/tracing",
@@ -66,7 +62,6 @@ go_test(
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
-        "@com_github_tikv_pd_client//constants",
         "@org_uber_go_goleak//:goleak",
     ],
 )

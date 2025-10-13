@@ -178,6 +178,15 @@ func (partitionCol *MPPPartitionColumn) MemoryUsage() (sum int64) {
 	return
 }
 
+// ChoosePartitionKeys chooses partition keys according to the matches.
+func ChoosePartitionKeys(keys []*MPPPartitionColumn, matches []int) []*MPPPartitionColumn {
+	newKeys := make([]*MPPPartitionColumn, 0, len(matches))
+	for _, id := range matches {
+		newKeys = append(newKeys, keys[id])
+	}
+	return newKeys
+}
+
 // ExplainColumnList generates explain information for a list of columns.
 func ExplainColumnList(ctx expression.EvalContext, cols []*MPPPartitionColumn) []byte {
 	buffer := bytes.NewBufferString("")

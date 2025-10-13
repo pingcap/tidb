@@ -52,6 +52,7 @@ go_library(
         "//pkg/util/printer",
         "//pkg/util/redact",
         "//pkg/util/sem",
+        "//pkg/util/sem/v2:sem",
         "//pkg/util/signal",
         "//pkg/util/stmtsummary/v2:stmtsummary",
         "//pkg/util/sys/linux",
@@ -105,6 +106,7 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":tidb-server_lib"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/config",
         "//pkg/parser/mysql",

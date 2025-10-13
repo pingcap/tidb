@@ -229,9 +229,11 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		"mergeID",
 		1000,
 		func(summary *WriterSummary) { onefile = summary.MultipleFilesStats[0].Filenames[0] },
+		dummyOnReaderCloseFunc,
 		collector,
 		true,
 		engineapi.OnDuplicateKeyIgnore,
+		1,
 	))
 
 	require.EqualValues(t, kvCount, collector.Rows.Load())
@@ -331,9 +333,11 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		"mergeID",
 		1000,
 		onClose,
+		dummyOnReaderCloseFunc,
 		nil,
 		true,
 		engineapi.OnDuplicateKeyIgnore,
+		1,
 	))
 
 	bufSize := rand.Intn(100) + 1
