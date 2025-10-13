@@ -190,16 +190,16 @@ func (l *LocalStorage) Open(_ context.Context, path string, o *ReaderOption) (Ex
 			pos = *o.StartOffset
 		}
 	}
-	return &localFile{File: f, pos: pos, endPos: endPos}, nil
+	return &LocalFile{File: f, pos: pos, endPos: endPos}, nil
 }
 
-type localFile struct {
+type LocalFile struct {
 	*os.File
 	pos    int64
 	endPos int64
 }
 
-func (f *localFile) Read(p []byte) (n int, err error) {
+func (f *LocalFile) Read(p []byte) (n int, err error) {
 	if f.endPos == -1 {
 		return f.File.Read(p)
 	}
@@ -217,7 +217,7 @@ func (f *localFile) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func (f *localFile) Seek(offset int64, whence int) (int64, error) {
+func (f *LocalFile) Seek(offset int64, whence int) (int64, error) {
 	n, err := f.File.Seek(offset, whence)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -226,7 +226,7 @@ func (f *localFile) Seek(offset int64, whence int) (int64, error) {
 	return n, nil
 }
 
-func (f *localFile) GetFileSize() (int64, error) {
+func (f *LocalFile) GetFileSize() (int64, error) {
 	stat, err := f.Stat()
 	if err != nil {
 		return 0, errors.Trace(err)
