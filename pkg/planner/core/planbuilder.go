@@ -22,6 +22,7 @@ import (
 	"math"
 	"net/url"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -540,7 +541,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	case *ast.LoadStatsStmt:
 		return b.buildLoadStats(x), nil
 	case *ast.RefreshStatsStmt:
-		return b.buildRefreshStats(x), nil
+		return b.buildRefreshStats(x)
 	case *ast.LockStatsStmt:
 		return b.buildLockStats(x), nil
 	case *ast.UnlockStatsStmt:
@@ -945,6 +946,14 @@ func constructSQLBindOPFromPlanDigest(
 	}
 	if query == "" {
 		return nil, errors.New("can't find any plans for '" + planDigest + "'")
+	}
+	// Check if the SQL is truncated (ends with "(len:<num>)" pattern)
+	if query[len(query)-1] == ')' {
+		match, err2 := regexp.MatchString(`\(len:\d+\)$`, query)
+		if match || err2 != nil {
+			return nil, errors.NewNoStackErrorf("binding failed: SQL query is truncated due to tidb_stmt_summary_max_sql_length limit. "+
+				"Please increase tidb_stmt_summary_max_sql_length. Plan Digest: %v", planDigest)
+		}
 	}
 	ctx.GetSessionVars().StmtCtx.SetWarnings(warnings)
 	parser4binding := parser.New()
@@ -2120,7 +2129,12 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 		err := b.addColumnsWithVirtualExprs(tbl, cols, func(columns []*expression.Column) []expression.Expression {
 			virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 			for _, idx := range tblInfo.Indices {
-				if idx.State != model.StatePublic || idx.MVIndex || idx.IsColumnarIndex() {
+				// for an index in state public, we can always analyze it for internal analyze session.
+				// for an index in state WriteReorg, we can only analyze it under variable EnableDDLAnalyze is on.
+				indexStateAnalyzable := idx.State == model.StatePublic ||
+					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().EnableDDLAnalyzeExecOpt)
+				// for mv index and ci index fail it first, then analyze those analyzable indexes.
+				if idx.MVIndex || idx.IsColumnarIndex() || !indexStateAnalyzable {
 					continue
 				}
 				for _, idxCol := range idx.Columns {
@@ -2389,7 +2403,7 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 // For a special global index, we also need to analyze it as independent index analyze task.
 // See comments for AnalyzeResults.ForMVIndex for more details.
 func getModifiedIndexesInfoForAnalyze(
-	stmtCtx *stmtctx.StatementContext,
+	sCtx base.PlanContext,
 	tblInfo *model.TableInfo,
 	allColumns bool,
 	colsInfo []*model.ColumnInfo,
@@ -2398,7 +2412,11 @@ func getModifiedIndexesInfoForAnalyze(
 	independentIdxsInfo = make([]*model.IndexInfo, 0)
 	specialGlobalIdxsInfo = make([]*model.IndexInfo, 0)
 	for _, originIdx := range tblInfo.Indices {
-		if originIdx.State != model.StatePublic {
+		// for an index in state public, we can always analyze it for internal analyze session.
+		// for an index in state WriteReorg, we can only analyze it under variable EnableDDLAnalyze is on.
+		indexStateAnalyzable := originIdx.State == model.StatePublic ||
+			(originIdx.State == model.StateWriteReorganization && sCtx.GetSessionVars().EnableDDLAnalyzeExecOpt)
+		if !indexStateAnalyzable {
 			continue
 		}
 		if handleutil.IsSpecialGlobalIndex(originIdx, tblInfo) {
@@ -2410,7 +2428,7 @@ func getModifiedIndexesInfoForAnalyze(
 			continue
 		}
 		if originIdx.IsColumnarIndex() {
-			stmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", originIdx.Name.L))
+			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {
@@ -2431,18 +2449,9 @@ func getModifiedIndexesInfoForAnalyze(
 
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
 func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *resolve.TableNameW, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo, skipCol []*model.ColumnInfo) {
-	// If the session is in restricted SQL mode, it uses @@global.tidb_analyze_skip_column_types to get the skipTypes list.
+	// For auto-analyze, it uses @@global.tidb_analyze_skip_column_types to obtain the skipTypes list.
+	// This is already handled before executing the query by the CallWithSCtx utility function.
 	skipTypes := b.ctx.GetSessionVars().AnalyzeSkipColumnTypes
-	if b.ctx.GetSessionVars().InRestrictedSQL {
-		// For auto analyze, we need to use @@global.tidb_analyze_skip_column_types.
-		val, err1 := b.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
-		if err1 != nil {
-			logutil.BgLogger().Error("loading tidb_analyze_skip_column_types failed", zap.Error(err1))
-			result = origin
-			return
-		}
-		skipTypes = variable.ParseAnalyzeSkipColumnTypes(val)
-	}
 	mustAnalyze, err1 := b.getMustAnalyzedColumns(tbl, mustAnalyzedCols)
 	if err1 != nil {
 		logutil.BgLogger().Error("getting must-analyzed columns failed", zap.Error(err1))
@@ -2610,7 +2619,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			var skipColsInfo []*model.ColumnInfo
 			execColsInfo, skipColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 			allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-			indexes, independentIndexes, specialGlobalIndexes = getModifiedIndexesInfoForAnalyze(b.ctx.GetSessionVars().StmtCtx, tbl.TableInfo, allColumns, execColsInfo)
+			indexes, independentIndexes, specialGlobalIndexes = getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 			newTask := AnalyzeColumnsTask{
 				HandleCols:   handleCols,
@@ -4856,14 +4865,82 @@ func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) base.Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) base.Plan {
-	// TODO: We need to check the select privilege here.
+func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) (base.Plan, error) {
+	if err := fillDefaultDBForRefreshStats(b.ctx, rs); err != nil {
+		return nil, err
+	}
+	rs.Dedup()
+	b.requireSelectOrRestoreAdminPrivForRefreshStats(rs)
 	p := &Simple{
 		Statement:    rs,
 		IsFromRemote: false,
 		ResolveCtx:   b.resolveCtx,
 	}
-	return p
+	return p, nil
+}
+
+func fillDefaultDBForRefreshStats(ctx base.PlanContext, rs *ast.RefreshStatsStmt) error {
+	if len(rs.RefreshObjects) == 0 {
+		return nil
+	}
+
+	currentDB := ctx.GetSessionVars().CurrentDB
+	for _, obj := range rs.RefreshObjects {
+		if obj.RefreshObjectScope != ast.RefreshObjectScopeTable {
+			continue
+		}
+		if obj.DBName.L != "" {
+			continue
+		}
+		if currentDB == "" {
+			return plannererrors.ErrNoDB
+		}
+		obj.DBName = ast.NewCIStr(currentDB)
+	}
+	return nil
+}
+
+func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.RefreshStatsStmt) {
+	if len(rs.RefreshObjects) == 0 {
+		intest.Assert(len(rs.RefreshObjects) > 0, "RefreshStatsStmt.RefreshObjects should not be empty")
+		return
+	}
+
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	if checker != nil {
+		activeRoles := b.ctx.GetSessionVars().ActiveRoles
+		if checker.RequestDynamicVerification(activeRoles, "RESTORE_ADMIN", false) {
+			return
+		}
+	}
+
+	user := b.ctx.GetSessionVars().User
+	for _, obj := range rs.RefreshObjects {
+		switch obj.RefreshObjectScope {
+		case ast.RefreshObjectScopeGlobal:
+			var err error
+			if user != nil {
+				err = plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs("SELECT")
+			} else {
+				err = plannererrors.ErrPrivilegeCheckFail
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, "", "", "", err)
+			return
+		case ast.RefreshObjectScopeDatabase:
+			var err error
+			if user != nil {
+				err = plannererrors.ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, obj.DBName.O)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, obj.DBName.L, "", "", err)
+		case ast.RefreshObjectScopeTable:
+			dbName := obj.DBName.L
+			var err error
+			if user != nil {
+				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, obj.TableName.O)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, obj.TableName.L, "", err)
+		}
+	}
 }
 
 // buildLockStats requires INSERT and SELECT privilege for the tables same as buildAnalyze.

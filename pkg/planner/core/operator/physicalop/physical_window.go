@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -169,7 +168,7 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	FormatWindowFuncDescs(ectx, buffer, p.WindowFuncDescs, p.Schema())
 	buffer.WriteString(" over(")
 	isFirst := true
-	buffer = util.ExplainPartitionBy(ectx, buffer, p.PartitionBy, false)
+	buffer = property.ExplainPartitionBy(ectx, buffer, p.PartitionBy, false)
 	if len(p.PartitionBy) > 0 {
 		isFirst = false
 	}

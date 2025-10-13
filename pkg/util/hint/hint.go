@@ -20,12 +20,11 @@ import (
 	"maps"
 	"sort"
 	"strings"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/types"
@@ -129,6 +128,9 @@ const (
 	// HintMaxExecutionTime specifies the max allowed execution time in milliseconds
 	HintMaxExecutionTime = "max_execution_time"
 
+	// HintWriteSlowLog is a SQL hint used to explicitly trigger writing a statement into the slow log.
+	HintWriteSlowLog = "write_slow_log"
+
 	// HintFlagSemiJoinRewrite corresponds to HintSemiJoinRewrite.
 	HintFlagSemiJoinRewrite uint64 = 1 << iota
 	// HintFlagNoDecorrelate corresponds to HintNoDecorrelate.
@@ -205,10 +207,6 @@ const (
 	PreferTiFlash
 )
 
-// EnableIndexLookUpPushDownForTest is only used for testing to enable index lookup push down.
-// TODO: remove it when index lookup push down finished to dev
-var EnableIndexLookUpPushDownForTest atomic.Bool
-
 // StmtHints are hints that apply to the entire statement, like 'max_exec_time', 'memory_quota'.
 type StmtHints struct {
 	// This is true iff there were hints in the statement.
@@ -229,6 +227,7 @@ type StmtHints struct {
 	ResourceGroup string
 	// Do not store plan in either plan cache.
 	IgnorePlanCache bool
+	WriteSlowLog    bool
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
@@ -276,6 +275,7 @@ func (sh *StmtHints) Clone() *StmtHints {
 		ForceNthPlan:                   sh.ForceNthPlan,
 		ResourceGroup:                  sh.ResourceGroup,
 		IgnorePlanCache:                sh.IgnorePlanCache,
+		WriteSlowLog:                   sh.WriteSlowLog,
 		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
 		HasReplicaReadHint:             sh.HasReplicaReadHint,
@@ -408,6 +408,8 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			setVarsOffs = append(setVarsOffs, i)
 		case HintIgnorePlanCache:
 			stmtHints.IgnorePlanCache = true
+		case HintWriteSlowLog:
+			stmtHints.WriteSlowLog = true
 		}
 	}
 	stmtHints.OriginalTableHints = hints
@@ -852,12 +854,15 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			case HintNoOrderIndex:
 				hintType = ast.HintNoOrderIndex
 			case HintIndexLookUpPushDown:
-				if !EnableIndexLookUpPushDownForTest.Load() {
-					warnHandler.SetHintWarningFromError(parser.ErrWarnOptimizerHintUnsupportedHint.FastGenByArgs(hint.HintName.O))
-					continue
+				inapplicableMsg := ""
+				switch {
+				case !kerneltype.IsClassic():
+					inapplicableMsg = "only classic kernel type is supported"
+				case len(hint.Indexes) == 0:
+					inapplicableMsg = "the index names should be specified"
 				}
-				if len(hint.Indexes) == 0 {
-					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, the index names should be specified")
+				if inapplicableMsg != "" {
+					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, " + inapplicableMsg)
 					continue
 				}
 				hintType = ast.HintUse

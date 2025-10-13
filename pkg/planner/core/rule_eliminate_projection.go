@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
@@ -149,14 +148,14 @@ type ProjectionEliminator struct {
 }
 
 // Optimize implements the logicalOptRule interface.
-func (pe *ProjectionEliminator) Optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (pe *ProjectionEliminator) Optimize(_ context.Context, lp base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	root := pe.eliminate(lp, make(map[string]*expression.Column), false, opt)
+	root := pe.eliminate(lp, make(map[string]*expression.Column), false)
 	return root, planChanged, nil
 }
 
 // eliminate eliminates the redundant projection in a logical plan.
-func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string]*expression.Column, canEliminate bool, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string]*expression.Column, canEliminate bool) base.LogicalPlan {
 	// LogicalCTE's logical optimization is independent.
 	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p
@@ -171,7 +170,7 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 		childFlag = true
 	}
 	for i, child := range p.Children() {
-		p.Children()[i] = pe.eliminate(child, replace, childFlag, opt)
+		p.Children()[i] = pe.eliminate(child, replace, childFlag)
 	}
 
 	// replace logical plan schema

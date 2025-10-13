@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -228,11 +227,11 @@ func wrapCastFunction(ctx expression.BuildContext, arg expression.Expression, ta
 }
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
-func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, planChanged, err := a.Optimize(ctx, child, opt)
+		newChild, planChanged, err := a.Optimize(ctx, child)
 		if err != nil {
 			return nil, planChanged, err
 		}

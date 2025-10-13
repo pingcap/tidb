@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // SemiJoinRewriter rewrites semi join to inner join with aggregation.
@@ -37,7 +36,7 @@ type SemiJoinRewriter struct {
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (smj *SemiJoinRewriter) Optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (smj *SemiJoinRewriter) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	newLogicalPlan, err := smj.recursivePlan(p)
 	return newLogicalPlan, planChanged, err

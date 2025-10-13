@@ -962,3 +962,33 @@ func TestUpgradeBDRSecondary(t *testing.T) {
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
 	newVer.Close()
 }
+
+func TestUpgradeBindInfo(t *testing.T) {
+	fromVersion := 251
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	seV251 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(fromVersion))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	revertVersionAndVariables(t, seV251, fromVersion)
+	require.NoError(t, err)
+	session.MustExec(t, seV251, "ADMIN RELOAD BINDINGS;")
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	ver, err := session.GetBootstrapVersion(seV251)
+	require.NoError(t, err)
+	require.Equal(t, int64(fromVersion), ver)
+	dom.Close()
+	newVer, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+	session.MustExec(t, seLatestV, "ADMIN RELOAD BINDINGS;")
+	newVer.Close()
+	seLatestV.Close()
+}

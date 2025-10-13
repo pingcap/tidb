@@ -367,6 +367,17 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	info.SubJobs = newSubJobs
 }
 
+// setNeedAnalyze sets NeedAnalyze for the last sub-job that can do embedded analyze.
+func setNeedAnalyze(info *model.MultiSchemaInfo) {
+	for i := len(info.SubJobs) - 1; i >= 0; i-- {
+		subJob := info.SubJobs[i]
+		if subJob.CanEmbeddedAnalyze() {
+			subJob.NeedAnalyze = true
+			break
+		}
+	}
+}
+
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {
 	var remainIndexes, droppingIndexes []*model.IndexInfo
 	tbInfo := t.Meta()

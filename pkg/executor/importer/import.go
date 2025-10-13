@@ -175,6 +175,12 @@ var (
 		threadOption:          {},
 	}
 
+	disallowedOptionsForSEM = map[string]struct{}{
+		maxEngineSizeOption:  {},
+		forceMergeStep:       {},
+		manualRecoveryOption: {},
+	}
+
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
 		threadOption:          {},
 		disablePrecheckOption: {},
@@ -693,6 +699,14 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		for k := range disallowedOptionsOfNextGen {
 			if _, ok := specifiedOptions[k]; ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "nextgen kernel")
+			}
+		}
+	}
+
+	if semv1.IsEnabled() {
+		for k := range disallowedOptionsForSEM {
+			if _, ok := specifiedOptions[k]; ok {
+				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "SEM enabled")
 			}
 		}
 	}
