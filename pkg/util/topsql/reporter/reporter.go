@@ -253,7 +253,7 @@ func (tsr *RemoteTopSQLReporter) processStmtStatsData() {
 		kthNetworkBytes := findKthNetworkBytes(data, k, u64Slice)
 		for digest, item := range data {
 			sqlDigest, planDigest := []byte(digest.SQLDigest), []byte(digest.PlanDigest)
-			// Note, by filtering with the kthNetworkBytes, we get fewer than N records. The actual picked records
+			// Note, by filtering with the kthNetworkBytes, we get fewer than N records(N - 1 records, at most time). The actual picked records
 			// count is decided by the count of duplicated kthNetworkBytes，if kthNetworkBytes is unique,
 			// For performance reason, do not convert the whole map into a slice and pick exactly topN records.
 			if item.NetworkInBytes+item.NetworkOutBytes > kthNetworkBytes || !tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {

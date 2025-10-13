@@ -199,20 +199,23 @@ func (r *record) appendCPUTime(timestamp uint64, cpuTimeMs uint32) {
 		// Before:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [0]
-		//   stmtStats.ExecCount: [?]
-		// stmtStats.KvExecCount: [map{"?": ?}]
-		// stmtStats.DurationSum: [?]
+		//             timestamp:    [10000]
+		//             cpuTimeMs:    [0]
+		//   stmtStats.ExecCount:    [?]
+		// stmtStats.KvExecCount:    [map{"?": ?}]
+		// stmtStats.DurationSum:    [?]
+		// stmtStats.NetworkInBytes: [?]
 		//
 		// After:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [123]
-		//   stmtStats.ExecCount: [?]
-		// stmtStats.KvExecCount: [map{"?": ?}]
-		// stmtStats.DurationSum: [?]
+		//             timestamp:    [10000]
+		//             cpuTimeMs:    [123]
+		//   stmtStats.ExecCount:    [?]
+		// stmtStats.KvExecCount:    [map{"?": ?}]
+		// stmtStats.DurationSum:    [?]
+		// stmtStats.DurationSum:    [?]
+		// stmtStats.NetworkInBytes: [?]
 		//
 		r.tsItems[index].cpuTimeMs += cpuTimeMs
 	} else {
@@ -224,20 +227,24 @@ func (r *record) appendCPUTime(timestamp uint64, cpuTimeMs uint32) {
 		// Before:
 		//     tsIndex: []
 		//     tsItems:
-		//             timestamp: []
-		//             cpuTimeMs: []
-		//   stmtStats.ExecCount: []
-		// stmtStats.KvExecCount: []
-		// stmtStats.DurationSum: []
+		//             timestamp:     []
+		//             cpuTimeMs:     []
+		//   stmtStats.ExecCount:     []
+		// stmtStats.KvExecCount:     []
+		// stmtStats.DurationSum:     []
+		// stmtStats.NetworkInBytes:  []
+		// stmtStats.NetworkOutBytes: []
 		//
 		// After:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [123]
-		//   stmtStats.ExecCount: [0]
-		// stmtStats.KvExecCount: [map{}]
-		// stmtStats.DurationSum: [0]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [123]
+		//   stmtStats.ExecCount:     [0]
+		// stmtStats.KvExecCount:     [map{}]
+		// stmtStats.DurationSum:     [0]
+		// stmtStats.NetworkInBytes:  [0]
+		// stmtStats.NetworkOutBytes: [0]
 		//
 		newItem := zeroTsItem()
 		newItem.timestamp = timestamp
@@ -257,25 +264,29 @@ func (r *record) appendStmtStatsItem(timestamp uint64, item stmtstats.StatementS
 		// corresponding stmtStats has been set to 0 (or other values,
 		// although impossible), so we merge it.
 		//
-		// let timestamp = 10000, execCount = 123, kvExecCount = map{"1.1.1.1:1": 123}, durationSum = 456
-		//
+		// let timestamp = 10000, execCount = 123, kvExecCount = map{"1.1.1.1:1": 123}, durationSum = 456,
+		//    networkInBytes = 10, networkOutBytes = 20
 		// Before:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [?]
-		//   stmtStats.ExecCount: [0]
-		// stmtStats.KvExecCount: [map{}]
-		// stmtStats.DurationSum: [0]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [?]
+		//   stmtStats.ExecCount:     [0]
+		// stmtStats.KvExecCount:     [map{}]
+		// stmtStats.DurationSum:     [0]
+		// stmtStats.NetworkInBytes:  [0]
+		// stmtStats.NetworkOutBytes: [0]
 		//
 		// After:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [?]
-		//   stmtStats.ExecCount: [123]
-		// stmtStats.KvExecCount: [map{"1.1.1.1:1": 123}]
-		// stmtStats.DurationSum: [456]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [?]
+		//   stmtStats.ExecCount:     [123]
+		// stmtStats.KvExecCount:     [map{"1.1.1.1:1": 123}]
+		// stmtStats.DurationSum:     [456]
+		// stmtStats.NetworkInBytes:  [10]
+		// stmtStats.NetworkOutBytes: [20]
 		//
 		r.tsItems[index].stmtStats.Merge(&item)
 	} else {
@@ -283,24 +294,29 @@ func (r *record) appendStmtStatsItem(timestamp uint64, item stmtstats.StatementS
 		// Other fields in tsItem except stmtStats will be initialized to 0.
 		//
 		// let timestamp = 10000, execCount = 123, kvExecCount = map{"1.1.1.1:1": 123}, durationSum = 456
+		//    networkInBytes = 10, networkOutBytes = 20
 		//
 		// Before:
 		//     tsIndex: []
 		//     tsItems:
-		//             timestamp: []
-		//             cpuTimeMs: []
-		//   stmtStats.ExecCount: []
-		// stmtStats.KvExecCount: []
-		// stmtStats.DurationSum: []
+		//             timestamp:     []
+		//             cpuTimeMs:     []
+		//   stmtStats.ExecCount:     []
+		// stmtStats.KvExecCount:     []
+		// stmtStats.DurationSum:     []
+		// stmtStats.NetworkInBytes:  []
+		// stmtStats.NetworkOutBytes: []
 		//
 		// After:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp: [10000]
-		//             cpuTimeMs: [0]
-		//   stmtStats.ExecCount: [123]
-		// stmtStats.KvExecCount: [map{"1.1.1.1:1": 123}]
-		// stmtStats.DurationSum: [456]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [0]
+		//   stmtStats.ExecCount:     [123]
+		// stmtStats.KvExecCount:     [map{"1.1.1.1:1": 123}]
+		// stmtStats.DurationSum:     [456]
+		// stmtStats.NetworkInBytes:  [10]
+		// stmtStats.NetworkOutBytes: [20]
 		//
 		newItem := zeroTsItem()
 		newItem.timestamp = timestamp
