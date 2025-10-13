@@ -391,14 +391,22 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 			}
 		}
 	case *ast.UpdateStmt:
-		dbInfos := p.getAllDBInfos(node.TableRefs)
 		for _, set := range node.List {
-			if tableInfo, dbInfo, err := checkColNameValidAndGetDBInfo(set.Column, dbInfos); err != nil {
-				p.err = err
-			} else if tableInfo.TempTableType == model.TempTableNone {
-				dbNames = append(dbNames, dbInfo.Name)
+			// todo: handle temporary table
+			if set.Column.Schema.L != "" {
+				dbNames = append(dbNames, set.Column.Schema)
+			} else {
+				dbNames = append(dbNames, pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB))
 			}
 		}
+		//dbInfos := p.getAllDBInfos(node.TableRefs)
+		//for _, set := range node.List {
+		//	if tableInfo, dbInfo, err := checkColNameValidAndGetDBInfo(set.Column, dbInfos); err != nil {
+		//		p.err = err
+		//	} else if tableInfo.TempTableType == model.TempTableNone {
+		//		dbNames = append(dbNames, dbInfo.Name)
+		//	}
+		//}
 	case *ast.SelectStmt:
 		if node.LockInfo != nil {
 			if node.LockInfo.LockType == ast.SelectLockForUpdate ||
