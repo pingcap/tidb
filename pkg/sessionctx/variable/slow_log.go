@@ -955,11 +955,7 @@ func parseSlowLogRuleEntry(rawRule string, allowConnID bool) (int64, *slowlogrul
 				return connID, nil, errors.Errorf("do not allow ConnID value:%s", value)
 			}
 
-			id, err := strconv.ParseUint(value, 10, 64)
-			if err != nil {
-				return connID, nil, errors.Errorf("invalid ConnID value:%s", value)
-			}
-			connID = int64(id)
+			connID = int64(fieldValue.(uint64))
 		}
 
 		fieldMap[fieldName] = fieldValue

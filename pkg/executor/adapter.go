@@ -1665,6 +1665,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	stmtCtx := sessVars.StmtCtx
 	cfg := config.GetGlobalConfig()
 	var slowItems *variable.SlowQueryLogItems
+	var matchRules bool
 	if !stmtCtx.WriteSlowLog {
 		// If the level is Debug, or trace is enabled, print slow logs anyway.
 		force := log.GetLevel() <= zapcore.DebugLevel || trace.IsEnabled()
@@ -1676,7 +1677,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		sessVars.StmtCtx.ExecRetryCount = uint64(a.retryCount)
 		globalRules := vardef.GlobalSlowLogRules.Load()
 		slowItems = PrepareSlowLogItemsForRules(a.GoCtx, globalRules, sessVars)
-		var matchRules bool
 		// EffectiveFields is not empty (unique fields for this session including global rules),
 		// so we use these rules to decide whether to write the slow log.
 		if len(sessVars.SlowLogRules.EffectiveFields) != 0 {
@@ -1709,11 +1709,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		trace.Log(a.GoCtx, "details", slowLog)
 	}
 
-	costTime := slowItems.TimeTotal
-	threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
-	if costTime < threshold {
+	if !matchRules {
 		return
 	}
+	costTime := slowItems.TimeTotal
 	execDetail := slowItems.ExecDetail
 	if sessVars.InRestrictedSQL {
 		executor_metrics.TotalQueryProcHistogramInternal.Observe(costTime.Seconds())
