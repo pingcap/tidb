@@ -26,8 +26,6 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/atomic"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -41,6 +39,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xitongsys/parquet-go/parquet"
 	"github.com/xitongsys/parquet-go/writer"
+	"go.uber.org/atomic"
 )
 
 type testMydumpLoaderSuite struct {
