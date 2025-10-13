@@ -1274,16 +1274,7 @@ func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
 		case mysql.TypeLongBlob,
 			mysql.TypeBlob, mysql.TypeJSON, mysql.TypeTiDBVectorFloat32:
 			return true
-		case mysql.TypeTinyBlob, mysql.TypeMediumBlob:
-			if pointGet {
-				totalFlen += column.RetType.GetFlen()
-				if checkOverlongTypeForPointGet(totalFlen) {
-					return true
-				}
-				continue
-			}
-			return true
-		case mysql.TypeVarString, mysql.TypeVarchar:
+		case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeTinyBlob, mysql.TypeMediumBlob:
 			// if the column is varchar and the length of
 			// the column is defined to be more than 1000,
 			// the column is considered a large type and
