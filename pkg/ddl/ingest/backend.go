@@ -183,7 +183,7 @@ func (bc *litBackendCtx) IngestIfQuotaExceeded(ctx context.Context) error {
 	bc.timeOfLastFlush.Store(time.Now())
 
 	if !shouldImport {
-		return bc.AdvanceWatermark()
+		return nil
 	}
 
 	release, err := bc.tryAcquireDistLock()

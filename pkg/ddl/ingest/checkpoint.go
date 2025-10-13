@@ -196,7 +196,6 @@ type CheckpointManager struct {
 	// Persisted to the storage.
 	// importedKeyLowWatermark: first not-yet-imported key
 	importedKeyLowWatermark kv.Key
-	flushedKeyCnt           int
 	importedKeyCnt          int
 
 	ts uint64
@@ -312,7 +311,7 @@ func (s *CheckpointManager) NextStartKey() kv.Key {
 func (s *CheckpointManager) TotalKeyCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.flushedKeyCnt + s.localWrittenRows
+	return s.importedKeyCnt + s.localWrittenRows
 }
 
 // FinishChunk records write-to-local progress for a range.
@@ -358,22 +357,18 @@ func (s *CheckpointManager) AdvanceWatermark() error {
 	pend := append([]ProcessedRange(nil), s.pendingFinishedRanges...)
 	s.pendingFinishedRanges = s.pendingFinishedRanges[:0]
 	oldWM := s.importedKeyLowWatermark.Clone()
-	s.mu.Unlock()
 
-	// Merge pending ranges into imported ranges.
-	s.mu.Lock()
-	s.importedRanges = mergeAndCompactRanges(append(s.importedRanges, pend...))
-	s.importedRanges = pruneRanges(s.importedRanges, s.importedKeyLowWatermark)
+	s.importedRanges = MergeAndCompactRanges(append(s.importedRanges, pend...))
+	s.importedRanges = PruneRanges(s.importedRanges, s.importedKeyLowWatermark)
 
 	consumed := 0
-	for len(s.importedRanges) > 0 && canPromoteWatermark(s.importedRanges[0], s.importedKeyLowWatermark) {
+	for len(s.importedRanges) > 0 && CanPromoteWatermark(s.importedRanges[0], s.importedKeyLowWatermark) {
 		s.importedKeyLowWatermark = rangeExclusiveUpper(s.importedRanges[0]).Clone()
 		s.importedRanges = s.importedRanges[1:]
 		consumed++
 	}
 
-	s.flushedKeyCnt += s.localWrittenRows
-	s.importedKeyCnt = s.flushedKeyCnt
+	s.importedKeyCnt += s.localWrittenRows
 	s.localWrittenRows = 0
 	newWM := s.importedKeyLowWatermark.Clone()
 	s.dirty = true
@@ -394,20 +389,23 @@ func (s *CheckpointManager) AdvanceWatermark() error {
 	return s.updateCheckpoint()
 }
 
-// canPromoteWatermark reports whether the first imported range can extend the low watermark.
-func canPromoteWatermark(r ProcessedRange, low kv.Key) bool {
+// CanPromoteWatermark reports whether the first imported range can extend the low watermark.
+// export for test.
+func CanPromoteWatermark(r ProcessedRange, low kv.Key) bool {
 	if len(r.PrevTailKey) > 0 {
 		return r.PrevTailKey.Cmp(low) <= 0
 	}
 	return r.StartKey.Cmp(low) <= 0
 }
 
-// mergeAndCompactRanges merges (pending + existing) ranges into non-overlapping sorted segments.
+// MergeAndCompactRanges merges (pending + existing) ranges into non-overlapping sorted segments.
 // It:
 //  1. Filters invalid ranges
 //  2. Sorts by [StartKey, EndKey]
 //  3. Merges overlapping or PrevTailKey-stitched segments
-func mergeAndCompactRanges(rs []ProcessedRange) []ProcessedRange {
+//
+// export for test.
+func MergeAndCompactRanges(rs []ProcessedRange) []ProcessedRange {
 	if len(rs) <= 1 {
 		return rs
 	}
@@ -447,8 +445,9 @@ func mergeAndCompactRanges(rs []ProcessedRange) []ProcessedRange {
 	return out
 }
 
-// pruneRanges discards ranges fully below the global low watermark.
-func pruneRanges(rs []ProcessedRange, low kv.Key) []ProcessedRange {
+// PruneRanges discards ranges fully below the global low watermark.
+// export for test.
+func PruneRanges(rs []ProcessedRange, low kv.Key) []ProcessedRange {
 	if len(low) == 0 || len(rs) == 0 {
 		return rs
 	}
@@ -481,10 +480,11 @@ func toKeyRanges(rs []ProcessedRange) []kv.KeyRange {
 	return out
 }
 
-// subtractRanges subtracts imported ranges from input
+// SubtractRanges subtracts imported ranges from input
 // input: half-open [StartKey, EndKey)
 // imported: closed [StartKey, EndKey]
-func subtractRanges(input []kv.KeyRange, imported []kv.KeyRange) []kv.KeyRange {
+// export for test.
+func SubtractRanges(input []kv.KeyRange, imported []ProcessedRange) []kv.KeyRange {
 	if len(imported) == 0 || len(input) == 0 {
 		return input
 	}
@@ -494,22 +494,23 @@ func subtractRanges(input []kv.KeyRange, imported []kv.KeyRange) []kv.KeyRange {
 		for _, im := range imported {
 			next := cur[:0]
 			for _, piece := range cur {
-				next = append(next, subtractOne(piece, im)...)
-			}
-			if len(next) == 0 {
-				break
+				next = append(next, SubtractOne(piece, im)...)
 			}
 			cur = next
+			if len(cur) == 0 {
+				break
+			}
 		}
 		res = append(res, cur...)
 	}
 	return res
 }
 
-// subtractOne subtracts range b from a and may return up to two residual pieces.
+// SubtractOne subtracts range b from a and may return up to two residual pieces.
 // a is half-open [StartKey, EndKey)
 // b is closed [StartKey, EndKey]
-func subtractOne(a, b kv.KeyRange) []kv.KeyRange {
+// export for test.
+func SubtractOne(a kv.KeyRange, b ProcessedRange) []kv.KeyRange {
 	// Non-overlap cases:
 	// 1) b entirely before a: b.End < a.Start  (strict < because if == they share a.Start key -> overlap)
 	// 2) b starts at or after a's exclusive end: b.Start >= a.End
@@ -531,7 +532,6 @@ func subtractOne(a, b kv.KeyRange) []kv.KeyRange {
 // FilterUnimportedRanges removes already imported (or below watermark) portions from the input ranges.
 func (s *CheckpointManager) FilterUnimportedRanges(ranges []kv.KeyRange) []kv.KeyRange {
 	s.mu.Lock()
-	imported := toKeyRanges(s.importedRanges)
 	global := s.importedKeyLowWatermark.Clone()
 	s.mu.Unlock()
 
@@ -552,11 +552,11 @@ func (s *CheckpointManager) FilterUnimportedRanges(ranges []kv.KeyRange) []kv.Ke
 		s.logger.Info("filter ranges result empty")
 		return nil
 	}
-	res := subtractRanges(out, imported)
+	res := SubtractRanges(out, s.importedRanges)
 	s.logger.Info("filter ranges done",
 		zap.Int("input_count", len(ranges)),
 		zap.Int("output_count", len(res)),
-		zap.Int("imported_segments", len(imported)),
+		zap.Int("imported_segments", len(s.importedRanges)),
 	)
 	return res
 }
@@ -653,6 +653,9 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 		return err
 	}
 
+	// Always discard any existing local sorted data to avoid re‑ingesting stale SSTs.
+	s.cleanupLocalStoreDirUnsafe()
+
 	if cp != nil {
 		if cp.PhysicalID != s.physicalID {
 			s.logger.Info("checkpoint physical table ID mismatch",
@@ -667,6 +670,7 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 			s.importedKeyLowWatermark = s.initialStartKey.Clone()
 		}
 
+		s.importedKeyCnt = cp.GlobalKeyCount
 		s.ts = cp.TS
 
 		// Load imported ranges.
@@ -680,14 +684,10 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 			}
 		}
 		if len(imp) > 0 {
-			imp = mergeAndCompactRanges(imp)
-			imp = pruneRanges(imp, s.importedKeyLowWatermark)
+			imp = MergeAndCompactRanges(imp)
+			imp = PruneRanges(imp, s.importedKeyLowWatermark)
 			s.importedRanges = imp
 		}
-
-		// Always discard any existing local sorted data to avoid re‑ingesting stale SSTs.
-		s.cleanupLocalStoreDirUnsafe()
-		s.flushedKeyCnt = 0
 
 		s.logger.Info("resume checkpoint",
 			zap.String("imported key low watermark", hex.EncodeToString(s.importedKeyLowWatermark)),
@@ -722,7 +722,6 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 	s.mu.Lock()
 	checkpoint := &ReorgCheckpoint{
 		GlobalSyncKey:  s.importedKeyLowWatermark,
-		LocalKeyCount:  s.flushedKeyCnt,
 		GlobalKeyCount: s.importedKeyCnt,
 		InstanceAddr:   s.instanceAddr,
 		PhysicalID:     s.physicalID,
@@ -738,9 +737,7 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 		logFunc = s.logger.With(zap.Error(err)).Error
 	}
 	logFunc("update checkpoint",
-		zap.String("local checkpoint", hex.EncodeToString(checkpoint.LocalSyncKey)),
 		zap.String("global checkpoint", hex.EncodeToString(checkpoint.GlobalSyncKey)),
-		zap.Int("flushed keys", checkpoint.LocalKeyCount),
 		zap.Int("imported keys", checkpoint.GlobalKeyCount),
 		zap.Int64("global physical ID", checkpoint.PhysicalID),
 		zap.Uint64("ts", checkpoint.TS),
