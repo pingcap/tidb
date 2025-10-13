@@ -6964,26 +6964,23 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
 	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion); ok {
 		return val
-	} else {
-		logutil.DDLLogger().Info("system variable tidb_scatter_region not found, use default value")
 	}
+	logutil.DDLLogger().Info("system variable tidb_scatter_region not found, use default value")
 	return vardef.DefTiDBScatterRegion
 }
 
 func getEnableDDLAnalyze(sctx sessionctx.Context) string {
 	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBEnableDDLAnalyze); ok {
 		return val
-	} else {
-		logutil.DDLLogger().Info("system variable tidb_enable_ddl_analyze not found, use default value")
 	}
+	logutil.DDLLogger().Info("system variable tidb_enable_ddl_analyze not found, use default value")
 	return variable.BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze)
 }
 
 func getAnalyzeVersion(sctx sessionctx.Context) string {
 	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBAnalyzeVersion); ok {
 		return val
-	} else {
-		logutil.DDLLogger().Info("system variable tidb_analyze_version not found, use default value")
 	}
+	logutil.DDLLogger().Info("system variable tidb_analyze_version not found, use default value")
 	return strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
 }
