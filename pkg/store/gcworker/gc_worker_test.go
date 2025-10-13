@@ -51,7 +51,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/gc"
-	"github.com/tikv/pd/client/constants"
 )
 
 type mockGCWorkerLockResolver struct {
@@ -207,11 +206,9 @@ func (s *mockGCWorkerSuite) mustAllocTs(t *testing.T) uint64 {
 }
 
 func (s *mockGCWorkerSuite) mustGetSafePointFromPd(t *testing.T) uint64 {
-	// UpdateGCSafePoint returns the newest safePoint after the updating, which can be used to check whether the
-	// safePoint is successfully uploaded.
-	safePoint, err := s.pdClient.UpdateGCSafePoint(context.Background(), 0)
+	gcStates, err := s.pdClient.GetGCStatesClient(uint32(s.store.GetCodec().GetKeyspaceID())).GetGCState(context.Background())
 	require.NoError(t, err)
-	return safePoint
+	return gcStates.GCSafePoint
 }
 
 func (s *mockGCWorkerSuite) mustGetMinServiceSafePointFromPd(t *testing.T) uint64 {
@@ -299,9 +296,6 @@ func TestGetOracleTime(t *testing.T) {
 }
 
 func TestPrepareGC(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("skip TestPrepareGC when kernel type is NextGen - test not yet adjusted to support next-gen")
-	}
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error. as we keep adding offset to time oracle,
 	// so we need set a very large lease.
@@ -420,11 +414,12 @@ func TestPrepareGC(t *testing.T) {
 
 	// Check skipping GC if safe point is not changed.
 	// Use a GC barrier to block GC from pushing forward.
-	gcStatesCli := s.pdClient.GetGCStatesClient(constants.NullKeyspaceID)
+	gcStatesCli := s.pdClient.GetGCStatesClient(uint32(s.store.GetCodec().GetKeyspaceID()))
 	gcStates, err := gcStatesCli.GetGCState(context.Background())
 	require.NoError(t, err)
 	lastTxnSafePoint := gcStates.TxnSafePoint
-	_, err = s.pdClient.GetGCStatesClient(constants.NullKeyspaceID).SetGCBarrier(context.Background(), "a", lastTxnSafePoint, gc.TTLNeverExpire)
+	require.NotEqual(t, uint64(0), lastTxnSafePoint)
+	_, err = gcStatesCli.SetGCBarrier(context.Background(), "a", lastTxnSafePoint, gc.TTLNeverExpire)
 	require.NoError(t, err)
 	s.oracle.AddOffset(time.Minute * 40)
 	ok, safepoint, err := s.gcWorker.prepare(gcContext())
@@ -956,9 +951,6 @@ Loop:
 }
 
 func TestLeaderTick(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("skip TestLeaderTick when kernel type is NextGen - test not yet adjusted to support next-gen")
-	}
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error.
 	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, time.Hour)
@@ -1247,9 +1239,6 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 }
 
 func TestRunGCJob(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("skip TestRunGCJob when kernel type is NextGen - test not yet adjusted to support next-gen")
-	}
 	s := createGCWorkerSuite(t)
 
 	txnSafePointSyncWaitTime = 0
@@ -1258,7 +1247,7 @@ func TestRunGCJob(t *testing.T) {
 	useDistributedGC := s.gcWorker.checkUseDistributedGC()
 	require.True(t, useDistributedGC)
 	safePoint := s.mustAllocTs(t)
-	ctl := s.pdClient.GetGCInternalController(constants.NullKeyspaceID)
+	ctl := s.pdClient.GetGCInternalController(uint32(s.store.GetCodec().GetKeyspaceID()))
 	// runGCJob doesn't contain the AdvanceTxnSafePoint step. Do it explicitly.
 	res, err := ctl.AdvanceTxnSafePoint(gcContext(), safePoint)
 	require.NoError(t, err)
@@ -1420,7 +1409,7 @@ func TestStartWithRunGCJobFailures(t *testing.T) {
 }
 
 func (s *mockGCWorkerSuite) loadTxnSafePoint(t *testing.T) uint64 {
-	gcStates, err := s.pdClient.GetGCStatesClient(constants.NullKeyspaceID).GetGCState(context.Background())
+	gcStates, err := s.pdClient.GetGCStatesClient(uint32(s.store.GetCodec().GetKeyspaceID())).GetGCState(context.Background())
 	require.NoError(t, err)
 	return gcStates.TxnSafePoint
 }
@@ -1625,9 +1614,6 @@ func TestGCWithPendingTxn2(t *testing.T) {
 }
 
 func TestSkipGCAndOnlyResolveLock(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("skip TestSkipGCAndOnlyResolveLock when kernel type is NextGen - test not yet adjusted to support next-gen")
-	}
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error.
 	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 10*time.Minute)
