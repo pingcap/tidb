@@ -67,7 +67,6 @@ func prepareSimpleHashJoinEnv(fileNamePrefixForTest string) (*testutil.MockDataS
 
 	param := spillTestParam{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 1500000, 10000}, fileNamePrefixForTest}
 
-	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 	joinType := base.InnerJoin
 
@@ -182,7 +181,6 @@ func TestOuterJoinSpillBasic(t *testing.T) {
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/slowWorkers", "return(true)")
 
-	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
 	joinTypes := make([]base.JoinType, 0)
@@ -230,7 +228,6 @@ func TestOuterJoinSpillWithSel(t *testing.T) {
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/slowWorkers", "return(true)")
 
-	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
 	joinTypes := make([]base.JoinType, 0)
@@ -286,7 +283,6 @@ func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/slowWorkers", "return(true)")
 
-	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
 	joinTypes := make([]base.JoinType, 0)
@@ -333,7 +329,6 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 		fileNamePrefixForTest: testFuncName,
 	}
 
-	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
 	joinTypes := make([]base.JoinType, 0)
@@ -416,7 +411,6 @@ func TestHashJoinRandomFail(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/slowWorkers", "return(true)")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/panicOrError", "return(true)")
 
-	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
 	joinTypes := make([]base.JoinType, 0)

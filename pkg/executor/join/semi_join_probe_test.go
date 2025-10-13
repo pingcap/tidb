@@ -280,8 +280,6 @@ func testSemiOrAntiSemiJoin(t *testing.T, rightAsBuildSide bool, hasOtherConditi
 	ctx.GetSessionVars().MaxChunkSize = maxChunkSizeInTest
 	leftDataSource, rightDataSource, expectedResult := buildSemiDataSourceAndExpectResult(ctx, semiJoinleftCols, semiJoinrightCols, rightAsBuildSide, hasOtherCondition, hasDuplicateKey, isAntiSemiJoin)
 
-	maxRowTableSegmentSize = 100
-
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 
 	leftKeys := []*expression.Column{
@@ -400,7 +398,6 @@ func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
 
-	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
 	joinTypes := []base.JoinType{base.SemiJoin}

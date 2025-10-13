@@ -594,7 +594,6 @@ func testLeftOuterSemiJoinOrLeftOuterAntiSemiJoinSpill(t *testing.T, isAnti bool
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
 
-	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
 	joinType := base.LeftOuterSemiJoin
