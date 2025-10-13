@@ -6885,12 +6885,37 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 }
 
 func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
+<<<<<<< HEAD
 	var scatterScope string
 	val, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegion)
 	if !ok {
 		logutil.DDLLogger().Info("won't scatter region since system variable didn't set")
 	} else {
 		scatterScope = val
+=======
+	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion); ok {
+		return val
+>>>>>>> fa42e905f4f (ddl: find old column by name for old version modify column job (#63901))
 	}
-	return scatterScope
+	logutil.DDLLogger().Info("system variable tidb_scatter_region not found, use default value")
+	return vardef.DefTiDBScatterRegion
 }
+<<<<<<< HEAD
+=======
+
+func getEnableDDLAnalyze(sctx sessionctx.Context) string {
+	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBEnableDDLAnalyze); ok {
+		return val
+	}
+	logutil.DDLLogger().Info("system variable tidb_enable_ddl_analyze not found, use default value")
+	return variable.BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze)
+}
+
+func getAnalyzeVersion(sctx sessionctx.Context) string {
+	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBAnalyzeVersion); ok {
+		return val
+	}
+	logutil.DDLLogger().Info("system variable tidb_analyze_version not found, use default value")
+	return strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
+}
+>>>>>>> fa42e905f4f (ddl: find old column by name for old version modify column job (#63901))
