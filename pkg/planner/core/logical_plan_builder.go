@@ -3685,10 +3685,11 @@ func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) 
 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
-	currentDB := b.ctx.GetSessionVars().CurrentDB
-	warnHandler := b.ctx.GetSessionVars().StmtCtx
+	sessionVars := b.ctx.GetSessionVars()
+	currentDB := sessionVars.CurrentDB
+	warnHandler := sessionVars.StmtCtx
 	planHints, subQueryHintFlags, err := h.ParsePlanHints(hints, currentLevel, currentDB,
-		b.hintProcessor, b.ctx.GetSessionVars().StmtCtx.StraightJoinOrder,
+		b.hintProcessor, sessionVars.StmtCtx.StraightJoinOrder,
 		b.subQueryCtx == handlingInSubquery,
 		b.subQueryCtx == handlingExistsSubquery, b.subQueryCtx == notHandlingSubquery, warnHandler)
 	if err != nil {
@@ -5080,7 +5081,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
 	selectLogicalPlan, err := b.Build(ctx, nodeW)
 	if err != nil {
-		logutil.BgLogger().Error("build plan for view failed", zap.Error(err))
+		logutil.BgLogger().Warn("build plan for view failed", zap.Error(err))
 		if terror.ErrorNotEqual(err, plannererrors.ErrViewRecursive) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrNoSuchTable) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrInternal) &&

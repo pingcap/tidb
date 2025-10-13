@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -40,6 +41,14 @@ type PhysicalTopN struct {
 	PartitionBy []property.SortItem
 	Offset      uint64
 	Count       uint64
+}
+
+// ExhaustPhysicalPlans4LogicalTopN exhausts PhysicalTopN plans from LogicalTopN.
+func ExhaustPhysicalPlans4LogicalTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	if MatchItems(prop, lt.ByItems) {
+		return append(getPhysTopN(lt, prop), getPhysLimits(lt, prop)...), true, nil
+	}
+	return nil, true, nil
 }
 
 // Init initializes PhysicalTopN.
@@ -106,7 +115,7 @@ func (p *PhysicalTopN) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
+		buffer = property.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
 		buffer.WriteString(" ")
 	}
 	if len(p.ByItems) > 0 {
@@ -133,7 +142,7 @@ func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), true)
+		buffer = property.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), true)
 		buffer.WriteString(" ")
 	}
 	if len(p.ByItems) > 0 {
@@ -225,4 +234,70 @@ func (p *PhysicalTopN) ResolveIndices() (err error) {
 // Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalTopN(p, tasks...)
+}
+
+func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	// topN should always generate rootTaskType for:
+	// case1: after v7.5, since tiFlash Cop has been banned, mppTaskType may return invalid task when there are some root conditions.
+	// case2: for index merge case which can only be run in root type, topN and limit can't be pushed to the inside index merge when it's an intersection.
+	// note: don't change the task enumeration order here.
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	// we move the pushLimitOrTopNForcibly check to attach2Task to do the prefer choice.
+	mppAllowed := lt.SCtx().GetSessionVars().IsMPPAllowed()
+	if mppAllowed {
+		allTaskTypes = append(allTaskTypes, property.MppTaskType)
+	}
+	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
+	for _, tp := range allTaskTypes {
+		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64,
+			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
+		topN := PhysicalTopN{
+			ByItems:     lt.ByItems,
+			PartitionBy: lt.PartitionBy,
+			Count:       lt.Count,
+			Offset:      lt.Offset,
+		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		topN.SetSchema(lt.Schema())
+		ret = append(ret, topN)
+	}
+	// If we can generate MPP task and there's vector distance function in the order by column.
+	// We will try to generate a property for possible vector indexes.
+	if mppAllowed {
+		if len(lt.ByItems) != 1 {
+			return ret
+		}
+		vs := expression.InterpretVectorSearchExpr(lt.ByItems[0].Expr)
+		if vs == nil {
+			return ret
+		}
+		// Currently vector index only accept ascending order.
+		if lt.ByItems[0].Desc {
+			return ret
+		}
+		// Currently, we only deal with the case the TopN is directly above a DataSource.
+		ds, ok := lt.Children()[0].(*logicalop.DataSource)
+		if !ok {
+			return ret
+		}
+		// Reject any filters.
+		if len(ds.PushedDownConds) > 0 {
+			return ret
+		}
+		resultProp := &property.PhysicalProperty{
+			TaskTp:            property.MppTaskType,
+			ExpectedCnt:       math.MaxFloat64,
+			CTEProducerStatus: prop.CTEProducerStatus,
+		}
+		resultProp.VectorProp.VSInfo = vs
+		resultProp.VectorProp.TopK = uint32(lt.Count + lt.Offset)
+		topN := PhysicalTopN{
+			ByItems:     lt.ByItems,
+			PartitionBy: lt.PartitionBy,
+			Count:       lt.Count,
+			Offset:      lt.Offset,
+		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		topN.SetSchema(lt.Schema())
+		ret = append(ret, topN)
+	}
+	return ret
 }

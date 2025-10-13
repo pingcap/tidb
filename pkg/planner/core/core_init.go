@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -32,12 +33,8 @@ func init() {
 	utilfuncp.FindBestTask4LogicalShow = findBestTask4LogicalShow
 	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
 	utilfuncp.FindBestTask4LogicalMemTable = findBestTask4LogicalMemTable
-	utilfuncp.FindBestTask4LogicalTableDual = findBestTask4LogicalTableDual
 	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
 	utilfuncp.FindBestTask4LogicalShowDDLJobs = findBestTask4LogicalShowDDLJobs
-	utilfuncp.ExhaustPhysicalPlans4LogicalSort = exhaustPhysicalPlans4LogicalSort
-	utilfuncp.ExhaustPhysicalPlans4LogicalTopN = exhaustPhysicalPlans4LogicalTopN
-	utilfuncp.ExhaustPhysicalPlans4LogicalLock = exhaustPhysicalPlans4LogicalLock
 	utilfuncp.ExhaustPhysicalPlans4LogicalJoin = exhaustPhysicalPlans4LogicalJoin
 	utilfuncp.ExhaustPhysicalPlans4LogicalApply = exhaustPhysicalPlans4LogicalApply
 	utilfuncp.ExhaustPhysicalPlans4LogicalWindow = exhaustPhysicalPlans4LogicalWindow
@@ -185,7 +182,7 @@ func init() {
 	statistics.PrepareCols4MVIndex = PrepareIdxColsAndUnwrapArrayType
 
 	// For basic optimizer init.
-	base.InvalidTask = &RootTask{} // invalid if p is nil
+	base.InvalidTask = &physicalop.RootTask{} // invalid if p is nil
 	expression.EvalSimpleAst = evalAstExpr
 	expression.BuildSimpleExpr = buildSimpleExpr
 	helper := tidbCodecFuncHelper{}

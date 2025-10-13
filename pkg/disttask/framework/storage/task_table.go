@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	goerrors "errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -317,14 +318,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 
 // GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error) {
-	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
-		return nil, err
-	}
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+basicTaskColumns+` from mysql.tidb_global_task t
-		where state in (%?, %?, %?, %?, %?, %?, %?)
-		order by priority asc, create_time asc, id asc
-		limit %?`,
+	return mgr.getTopTasks(ctx,
 		proto.TaskStatePending,
 		proto.TaskStateRunning,
 		proto.TaskStateReverting,
@@ -332,8 +326,40 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Tas
 		proto.TaskStatePausing,
 		proto.TaskStateResuming,
 		proto.TaskStateModifying,
-		proto.MaxConcurrentTask*2,
 	)
+}
+
+// GetTopNoNeedResourceTasks implements the scheduler.TaskManager interface.
+func (mgr *TaskManager) GetTopNoNeedResourceTasks(ctx context.Context) ([]*proto.TaskBase, error) {
+	return mgr.getTopTasks(ctx,
+		proto.TaskStateReverting,
+		proto.TaskStateCancelling,
+		proto.TaskStatePausing,
+		proto.TaskStateModifying,
+	)
+}
+
+func (mgr *TaskManager) getTopTasks(ctx context.Context, states ...proto.TaskState) ([]*proto.TaskBase, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	var holders strings.Builder
+	for i := range states {
+		if i > 0 {
+			holders.WriteString(",")
+		}
+		holders.WriteString("%?")
+	}
+	sql := fmt.Sprintf(`select %s from mysql.tidb_global_task t
+		where state in (%s)
+		order by priority asc, create_time asc, id asc
+		limit %%?`, basicTaskColumns, holders.String())
+	args := make([]any, 0, len(states)+1)
+	for _, s := range states {
+		args = append(args, s)
+	}
+	args = append(args, proto.MaxConcurrentTask*2)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}

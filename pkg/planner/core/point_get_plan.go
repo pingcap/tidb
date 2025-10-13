@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
 )
@@ -99,12 +98,6 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 			if vars.SelectLimit != math2.MaxUint64 && p != nil {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("sql_select_limit is set, so point get plan is not activated"))
 				p = nil
-			}
-			if vars.StmtCtx.EnableOptimizeTrace && p != nil {
-				if vars.StmtCtx.OptimizeTracer == nil {
-					vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
-				}
-				vars.StmtCtx.OptimizeTracer.SetFastPlan(p.BuildPlanTrace())
 			}
 		}()
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to

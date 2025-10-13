@@ -313,7 +313,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 		optHistoryEnabled:      atomic2.NewBool(true),
 		optRefreshInterval:     atomic2.NewInt64(1800),
 		optHistorySize:         atomic2.NewInt32(24),
-		optMaxSQLLength:        atomic2.NewInt32(4096),
+		optMaxSQLLength:        atomic2.NewInt32(32768),
 		other:                  ssbde,
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {

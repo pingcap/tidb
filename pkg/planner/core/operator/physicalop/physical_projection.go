@@ -47,7 +47,7 @@ type PhysicalProjection struct {
 
 // ExhaustPhysicalPlans4LogicalProjection will be called by LogicalLimit in logicalOp pkg.
 func ExhaustPhysicalPlans4LogicalProjection(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	ge, p := base.GetGEAndLogical[*logicalop.LogicalProjection](super)
+	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalProjection](super)
 	var childSchema *expression.Schema
 	if ge != nil {
 		_, childSchema = ge.GetChildStatsAndSchema()

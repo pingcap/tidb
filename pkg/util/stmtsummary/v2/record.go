@@ -618,7 +618,7 @@ func maxSQLLength() uint32 {
 	if GlobalStmtSummary != nil {
 		return GlobalStmtSummary.MaxSQLLength()
 	}
-	return 4096
+	return 32768
 }
 
 // GenerateStmtExecInfo4Test generates a new StmtExecInfo for testing purposes.
