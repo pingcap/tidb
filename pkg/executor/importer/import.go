@@ -1304,7 +1304,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		var err error
-		processedFiles := make([]*mydump.SourceFileMeta, 0, len(allFiles))
+		processedFiles := []*mydump.SourceFileMeta{}
 		if processedFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				// we have checked in LoadDataExec.Next
