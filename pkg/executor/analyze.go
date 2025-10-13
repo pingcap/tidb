@@ -87,7 +87,17 @@ const (
 
 // Next implements the Executor Next interface.
 // It will collect all the sample task and run them concurrently.
-func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
+	defer func() {
+		// TODO: Find a better palcae
+		if !e.Ctx().GetSessionVars().InRestrictedSQL {
+			if err != nil {
+				metrics.ManualAnalyzeCounter.WithLabelValues("failed").Inc()
+				return
+			}
+			metrics.ManualAnalyzeCounter.WithLabelValues("succ").Inc()
+		}
+	}()
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	sessionVars := e.Ctx().GetSessionVars()
@@ -99,9 +109,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	warnLockedTableMsg(sessionVars, needAnalyzeTableCnt, skippedTables)
 
-	if len(tasks) == 0 {
-		return nil
-	}
 	tableAndPartitionIDs := make([]int64, 0, len(tasks))
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
