@@ -1766,6 +1766,8 @@ func RunResolveLocks(ctx context.Context, s tikv.Storage, pd pd.Client, safePoin
 	gcWorker := &GCWorker{
 		tikvStore:          s,
 		uuid:               identifier,
+		keyspaceID:         constants.NullKeyspaceID,
+		keyspaceIDLabel:    strconv.FormatUint(uint64(constants.NullKeyspaceID), 10),
 		pdClient:           pd,
 		regionLockResolver: tikv.NewRegionLockResolver("test-resolver", s),
 	}
@@ -1788,14 +1790,16 @@ func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
 		hostName = "unknown"
 	}
 	worker := &GCWorker{
-		uuid:        strconv.FormatUint(ver.Ver, 16),
-		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
-		store:       store,
-		tikvStore:   store.(tikv.Storage),
-		gcIsRunning: false,
-		lastFinish:  time.Now(),
-		done:        make(chan error),
-		pdClient:    store.(tikv.Storage).GetRegionCache().PDClient(),
+		uuid:            strconv.FormatUint(ver.Ver, 16),
+		desc:            fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
+		keyspaceID:      constants.NullKeyspaceID,
+		keyspaceIDLabel: strconv.FormatUint(uint64(constants.NullKeyspaceID), 10),
+		store:           store,
+		tikvStore:       store.(tikv.Storage),
+		gcIsRunning:     false,
+		lastFinish:      time.Now(),
+		done:            make(chan error),
+		pdClient:        store.(tikv.Storage).GetRegionCache().PDClient(),
 	}
 	return &MockGCWorker{worker: worker}, nil
 }
