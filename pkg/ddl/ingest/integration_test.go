@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -46,7 +47,11 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 		for i := range n {
 			//nolint: forcetypeassert
 			jobTp := rows[i][12].(string)
-			require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+			if kerneltype.IsClassic() {
+				require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+			} else {
+				require.Equal(t, jobTp, "")
+			}
 		}
 	}
 	tk.MustExec("create table t (a int, b int, c int as (b+10), d int as (b+c), primary key (a) clustered);")
@@ -101,7 +106,11 @@ func TestIngestError(t *testing.T) {
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
 	jobTp := rows[0][12].(string)
-	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	} else {
+		require.Equal(t, jobTp, "")
+	}
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int primary key, b int);")
@@ -117,7 +126,11 @@ func TestIngestError(t *testing.T) {
 	rows = tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
 	jobTp = rows[0][12].(string)
-	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	} else {
+		require.Equal(t, jobTp, "")
+	}
 }
 
 func TestAddIndexIngestPanic(t *testing.T) {

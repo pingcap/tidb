@@ -20,7 +20,6 @@ go_test(
     srcs = [
         "main_test.go",
         "noop_bench_test.go",
-        "opt_trace_test.go",
         "util_test.go",
     ],
     embed = [":tracing"],

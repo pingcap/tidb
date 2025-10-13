@@ -124,8 +124,12 @@ func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
 	tk.MustExec("admin check table t;")
 	rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rs, 1)
-	require.Contains(t, rs[0][12], "ingest")
-	require.Contains(t, rs[0][12], "cloud")
+	if kerneltype.IsClassic() {
+		require.Contains(t, rs[0][12], "ingest")
+		require.Contains(t, rs[0][12], "cloud")
+	} else {
+		require.Equal(t, rs[0][12], "")
+	}
 	require.Equal(t, rs[0][7], strconv.Itoa(count))
 }
 
@@ -143,7 +147,8 @@ func getTaskID(t *testing.T, jobID int64) int64 {
 	mgr, err := diststorage.GetTaskManager()
 	require.NoError(t, err)
 	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
-	task, err := mgr.GetTaskByKeyWithHistory(ctx, ddl.TaskKey(jobID))
+	tkBuilder := ddl.NewTaskKeyBuilder()
+	task, err := mgr.GetTaskByKeyWithHistory(ctx, tkBuilder.Build(jobID))
 	require.NoError(t, err)
 	return task.ID
 }
@@ -322,8 +327,12 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
 	jobType, rowCnt := rows[0][12].(string), rows[0][7].(string)
-	require.True(t, strings.Contains(jobType, "ingest"), jobType)
-	require.False(t, strings.Contains(jobType, "cloud"), jobType)
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(jobType, "ingest"), jobType)
+		require.False(t, strings.Contains(jobType, "cloud"), jobType)
+	} else {
+		require.Equal(t, jobType, "")
+	}
 	require.Equal(t, rowCnt, "3")
 }
 
