@@ -55,11 +55,6 @@ var (
 	ErrNonIdempotentSubtask = errors.New("subtask in running state and is not idempotent")
 )
 
-var (
-	// GetErrorSubtask4Test is used for UT to collect error
-	GetErrorSubtask4Test atomic.Pointer[proto.TaskBase]
-)
-
 // BaseTaskExecutor is the base implementation of TaskExecutor.
 type BaseTaskExecutor struct {
 	// id, it's the same as server id now, i.e. host:port.
@@ -284,10 +279,11 @@ func (e *BaseTaskExecutor) RunStep(resource *proto.StepResource) (resErr error) 
 	}
 	execute.SetFrameworkInfo(stepExecutor, resource)
 
+	err = stepExecutor.Init(runStepCtx)
 	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
-		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
+		err = errors.New("mockExecSubtaskInitEnvErr")
 	})
-	if err := stepExecutor.Init(runStepCtx); err != nil {
+	if err != nil {
 		if e.IsRetryableError(err) {
 			e.logger.Info("meet retryable err when init step executor", zap.Error(err))
 		} else {
@@ -388,97 +384,24 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		}()
 		return stepExecutor.RunSubtask(ctx, subtask)
 	}()
-<<<<<<< HEAD
-	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
-		if val.(bool) {
-			err = ErrCancelSubtask
-		}
-	})
-
-	failpoint.Inject("MockRunSubtaskContextCanceled", func(val failpoint.Value) {
-		if val.(bool) {
-			err = context.Canceled
-		}
-	})
-=======
 	failpoint.InjectCall("changeRunSubtaskError", e, &subtaskErr)
 	logTask.End2(zap.InfoLevel, subtaskErr)
->>>>>>> 3002c1c1c72 (dxf: refactor error handling in task executor (#57837))
 
 	failpoint.InjectCall("mockTiDBShutdown", e, e.id, e.GetTaskBase())
 
-<<<<<<< HEAD
-	finished := e.markSubTaskCanceledOrFailed(ctx, subtask)
-	if finished {
-		return
-	}
-
-	failpoint.Inject("mockTiDBShutdown", func() {
-		if MockTiDBDown(e.id, e.GetTaskBase()) {
-			failpoint.Return()
-=======
 	if subtaskErr != nil {
 		if err := e.markSubTaskCanceledOrFailed(ctx, subtask, subtaskErr); err != nil {
 			logger.Error("failed to handle subtask error", zap.Error(err))
->>>>>>> 3002c1c1c72 (dxf: refactor error handling in task executor (#57837))
 		}
 		return subtaskErr
 	}
 
-<<<<<<< HEAD
-	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
-		if val.(bool) {
-			e.onError(errors.New("MockExecutorRunErr"))
-		}
-	})
-	failpoint.Inject("MockExecutorRunCancel", func(val failpoint.Value) {
-		if taskID, ok := val.(int); ok {
-			mgr, err := storage.GetTaskManager()
-			if err != nil {
-				e.logger.Error("get task manager failed", zap.Error(err))
-			} else {
-				err = mgr.CancelTask(ctx, int64(taskID))
-				if err != nil {
-					e.logger.Error("cancel task failed", zap.Error(err))
-				}
-			}
-		}
-	})
-	e.onSubtaskFinished(ctx, stepExecutor, subtask)
-}
-
-func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execute.StepExecutor, subtask *proto.Subtask) {
-	if err := e.getError(); err == nil {
-		if err = executor.OnFinished(ctx, subtask); err != nil {
-			e.onError(errors.Trace(err))
-		}
-	}
-	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
-		if val.(bool) {
-			e.onError(errors.Trace(ErrCancelSubtask))
-		}
-	})
-
-	finished := e.markSubTaskCanceledOrFailed(ctx, subtask)
-	if finished {
-		return
-	}
-
-	e.finishSubtask(ctx, subtask)
-
-	finished = e.markSubTaskCanceledOrFailed(ctx, subtask)
-	if finished {
-		return
-	}
-
-=======
 	failpoint.InjectCall("beforeCallOnSubtaskFinished", subtask)
 	if err := stepExecutor.OnFinished(ctx, subtask); err != nil {
 		logger.Info("OnFinished failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	err := e.finishSubtask(ctx, subtask)
->>>>>>> 3002c1c1c72 (dxf: refactor error handling in task executor (#57837))
 	failpoint.InjectCall("syncAfterSubtaskFinish")
 	return err
 }
@@ -534,56 +457,8 @@ func (e *BaseTaskExecutor) cancelRunStepWith(cause error) {
 	}
 }
 
-<<<<<<< HEAD
-func (e *BaseTaskExecutor) onError(err error) {
-	if err == nil {
-		return
-	}
-	failpoint.Inject("collectTaskError", func() {
-		GetErrorSubtask4Test.CompareAndSwap(nil, e.GetTaskBase())
-	})
-	if errors.HasStack(err) {
-		e.logger.Error("onError", zap.Error(err), zap.Stack("stack"), zap.String("error stack", fmt.Sprintf("%+v", err)))
-	} else {
-		e.logger.Error("onError", zap.Error(err), zap.Stack("stack"))
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if e.mu.err == nil {
-		e.mu.err = err
-		e.logger.Error("taskExecutor met first error", zap.Error(err))
-	}
-
-	if e.mu.runtimeCancel != nil {
-		e.mu.runtimeCancel(err)
-	}
-}
-
-func (e *BaseTaskExecutor) markErrorHandled() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.mu.handled = true
-}
-
-func (e *BaseTaskExecutor) getError() error {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.mu.err
-}
-
-func (e *BaseTaskExecutor) resetError() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.mu.err = nil
-	e.mu.handled = false
-}
-
-func (e *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, execID string, subtaskID int64, state proto.SubtaskState, subTaskErr error) {
-=======
 func (e *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, execID string, subtaskID int64, state proto.SubtaskState, subTaskErr error) error {
 	start := time.Now()
->>>>>>> 3002c1c1c72 (dxf: refactor error handling in task executor (#57837))
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, e.logger,

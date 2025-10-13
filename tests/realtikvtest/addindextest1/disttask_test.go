@@ -98,9 +98,6 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("alter table t1 add index idx(a);")
 	tk.MustExec("admin check index t1 idx;")
 
-<<<<<<< HEAD
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockRunSubtaskContextCanceled", "1*return(true)"))
-=======
 	var counter atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/changeRunSubtaskError",
 		func(e taskexecutor.TaskExecutor, errP *error) {
@@ -109,10 +106,9 @@ func TestAddIndexDistBasic(t *testing.T) {
 			}
 		},
 	)
->>>>>>> 3002c1c1c72 (dxf: refactor error handling in task executor (#57837))
 	tk.MustExec("alter table t1 add index idx1(a);")
 	tk.MustExec("admin check index t1 idx1;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockRunSubtaskContextCanceled"))
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/changeRunSubtaskError")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectPanicForTableScan", "return()"))
 	tk.MustExecToErr("alter table t1 add index idx2(a);")
