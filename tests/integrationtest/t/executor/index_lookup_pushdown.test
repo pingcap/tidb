@@ -1,5 +1,5 @@
 drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
-create table t1(id int, a varchar(32), b int, c int, index i(a, b));
+create table t1(id int primary key, a varchar(32), b int, c int, index i(a, b));
 create table t2(a int, b int, c int, d int, primary key(a, b) CLUSTERED, index i(c));
 create table t3 (
     id int primary key,

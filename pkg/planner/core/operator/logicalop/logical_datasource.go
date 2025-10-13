@@ -235,12 +235,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	return ds, nil
 }
 
-// FindBestTask implements the base.LogicalPlan.<3rd> interface.
-// It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty) (t base.Task, err error) {
-	return utilfuncp.FindBestTask4LogicalDataSource(ds, prop)
-}
-
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.PKOrUK = nil

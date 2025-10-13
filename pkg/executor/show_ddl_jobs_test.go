@@ -17,12 +17,16 @@ package executor
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
 func TestShowCommentsFromJob(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("The parameters are determined automatically in next-gen")
+	}
 	job := &model.Job{}
 	job.Type = model.ActionAddCheckConstraint
 	res := showCommentsFromJob(job)
@@ -109,6 +113,9 @@ func TestShowCommentsFromJob(t *testing.T) {
 }
 
 func TestShowCommentsFromSubJob(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("The parameters are determined automatically in next-gen")
+	}
 	subJob := &model.SubJob{
 		Type: model.ActionAddPrimaryKey,
 	}
