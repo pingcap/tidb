@@ -1442,6 +1442,7 @@ func (b *builtinUUIDShortSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool
 
 var globalUUIDShortAllocator = &UUIDShortAllocator{ts: time.Now().Unix()}
 
+// UUIDShortAllocator is used to allocate unique 64 bit unsigned integers.
 type UUIDShortAllocator struct {
 	sync.Mutex
 	ts    int64
