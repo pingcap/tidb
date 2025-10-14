@@ -1256,7 +1256,9 @@ var (
 	// Why is it not 512 ?
 	// Because many customers allocate a portion of memory to their management programs,
 	// the actual amount of usable memory does not align to 512GB.
-	// It is only changed by tests.
+	// TODO: We are also lacking test data for instances with less than 512 GB of memory, so we need to plan the rules here.
+	// TODO: internal sql can force to use chunk reuse if we ensure the memory usage is safe.
+	// TODO: We can consider the limit/Topn in the future.
 	maxMemoryLimitForOverlongType = 500 * size.GB
 	maxFlenForOverlongType        = mysql.MaxBlobWidth * 2
 )
