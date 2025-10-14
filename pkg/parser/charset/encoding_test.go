@@ -205,6 +205,7 @@ func TestEncodingGB18030(t *testing.T) {
 		},
 		// check encoded rune error and invalid data together
 		{"\x80\x84\x31\xa4\x37\x80\x84\x31\xa4\x37", "?\ufffd?\ufffd", false},
+		{"\x84\x31\xa4\x37\x81", "\ufffd?", false},
 	}
 	for _, tc := range GB18030Cases {
 		cmt := fmt.Sprintf("utf8Str: %s, result: %s, isValid: %t", tc.utf8Str, tc.result, tc.isValid)
