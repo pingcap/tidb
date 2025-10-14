@@ -478,7 +478,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 			}
 		case mysql.TypeNewDecimal:
 			ds := column.Decimals()
-			needLen := int64(0)
+			elemLen := int64(0)
 			for _, physicalRowindex := range usedRows {
 				if canSkip(physicalRowindex) {
 					continue
@@ -491,25 +491,25 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 				}
 
 				if serializeModes[i] == KeepVarColumnLength {
-					needLen += int64(sizeUint8)
+					elemLen += int64(sizeUint8)
 				}
-				needLen += int64(len(b))
+				elemLen += int64(len(b))
 				break
 			}
 
 			for j := range *memoryUsagePerRow {
-				(*memoryUsagePerRow)[j] += needLen
+				(*memoryUsagePerRow)[j] += elemLen
 			}
 		case mysql.TypeEnum:
 			if mysql.HasEnumSetAsIntFlag(tps[i].GetFlag()) {
-				needLen := int64(0)
+				elemLen := int64(0)
 				if serializeModes[i] == NeedSignFlag {
-					needLen += size.SizeOfByte
+					elemLen += size.SizeOfByte
 				}
-				needLen += int64(sizeUint64)
+				elemLen += int64(sizeUint64)
 
 				for j := range *memoryUsagePerRow {
-					(*memoryUsagePerRow)[j] += needLen
+					(*memoryUsagePerRow)[j] += elemLen
 				}
 			} else {
 				sizeByteNum := int64(0)
@@ -572,13 +572,17 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 	}
 
 	if isFirst {
-		// TODO
-		// continuousMem := make([]byte, maxLen*int64(len(usedRows)))
-		// start := int64(0)
-		// for i := range serializedKeysVectorBuffer {
-		// 	serializedKeysVectorBuffer[i] = continuousMem[start : start : start+maxLen]
-		// 	start += maxLen
-		// }
+		totalMemUsage := int64(0)
+		for _, usage := range *memoryUsagePerRow {
+			totalMemUsage += usage
+		}
+		continuousMem := make([]byte, totalMemUsage)
+		start := int64(0)
+		for i := range serializedKeysVectorBuffer {
+			rowLen := (*memoryUsagePerRow)[i]
+			serializedKeysVectorBuffer[i] = continuousMem[start : start : start+rowLen]
+			start += rowLen
+		}
 	} else {
 		for i := range serializedKeysVectorBuffer {
 			if int64(cap(serializedKeysVectorBuffer[i])) < (*memoryUsagePerRow)[i] {
