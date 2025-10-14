@@ -150,7 +150,7 @@ func NewAddIndexIngestPipeline(
 		indexes = append(indexes, index)
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
-	copCtx, err := NewReorgCopContext(store, reorgMeta, tbl.Meta(), idxInfos, reqSrc)
+	copCtx, err := NewReorgCopContext(store, reorgMeta, tbl.Meta(), tbl.GetPhysicalID(), idxInfos, reqSrc)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +206,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		indexes = append(indexes, index)
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
-	copCtx, err := NewReorgCopContext(store, reorgMeta, tbl.Meta(), idxInfos, reqSrc)
+	copCtx, err := NewReorgCopContext(store, reorgMeta, tbl.Meta(), tbl.GetPhysicalID(), idxInfos, reqSrc)
 	if err != nil {
 		return nil, err
 	}
@@ -573,7 +573,7 @@ func (w *tableScanWorker) lastRecordKeyFromChunk(copCtx copr.CopContext, chk *ch
 	if err != nil {
 		return nil, false
 	}
-	prefix := tablecodec.GenTableRecordPrefix(c.TableInfo.ID)
+	prefix := tablecodec.GenTableRecordPrefix(c.PhysicalID)
 	return tablecodec.EncodeRecordKey(prefix, h), true
 }
 

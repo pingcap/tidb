@@ -471,15 +471,6 @@ func rangeExclusiveUpper(r ProcessedRange) kv.Key {
 	return r.EndKey.Next()
 }
 
-// toKeyRanges converts ProcessedRange slice to plain kv.KeyRange slice (ignores PrevTailKey).
-func toKeyRanges(rs []ProcessedRange) []kv.KeyRange {
-	out := make([]kv.KeyRange, 0, len(rs))
-	for _, r := range rs {
-		out = append(out, kv.KeyRange{StartKey: r.StartKey.Clone(), EndKey: r.EndKey.Clone()})
-	}
-	return out
-}
-
 // SubtractRanges subtracts imported ranges from input
 // input: half-open [StartKey, EndKey)
 // imported: closed [StartKey, EndKey]

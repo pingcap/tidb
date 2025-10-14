@@ -111,7 +111,10 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 			sctx.GetExprCtx(),
 			sctx.GetDistSQLCtx(),
 			sctx.GetSessionVars().StmtCtx.PushDownFlags(),
-			mockTableInfo, mockIdxInfo, "",
+			mockTableInfo,
+			mockIdxInfo.ID,
+			mockIdxInfo,
+			"",
 		)
 		require.NoError(t, err)
 		base := copCtx.GetBase()

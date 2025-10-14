@@ -123,6 +123,7 @@ func NewReorgCopContext(
 	store kv.Storage,
 	reorgMeta *model.DDLReorgMeta,
 	tblInfo *model.TableInfo,
+	physicalID int64,
 	allIdxInfo []*model.IndexInfo,
 	requestSource string,
 ) (copr.CopContext, error) {
@@ -146,6 +147,7 @@ func NewReorgCopContext(
 		distSQLCtx,
 		pushDownFlags,
 		tblInfo,
+		physicalID,
 		allIdxInfo,
 		requestSource,
 	)
