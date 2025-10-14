@@ -72,7 +72,6 @@ import (
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -1250,7 +1249,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-		totalSize  atomic.Int64 = *atomic.NewInt64(0)
+		totalSize  int64
 		sourceType mydump.SourceType
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
@@ -1281,7 +1280,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 		dataFiles = append(dataFiles, &fileMeta)
-		totalSize.Store(size)
+		totalSize = size
 	} else {
 		var commonPrefix string
 		if !storage.IsLocal(u) {
@@ -1320,7 +1319,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					e.detectAndUpdateFormat(path)
 					sourceType = e.getSourceType()
 				})
-				totalSize.Add(size)
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
@@ -1337,6 +1335,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		for _, f := range processedFiles {
 			if f != nil {
 				dataFiles = append(dataFiles, f)
+				totalSize += f.FileSize
 			}
 		}
 	}
