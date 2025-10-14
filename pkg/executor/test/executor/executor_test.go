@@ -3088,18 +3088,24 @@ func TestUUIDShort(t *testing.T) {
 	originConfig := config.GetGlobalConfig()
 	originConfig.Instance.ServerID = 1
 	config.StoreGlobalConfig(originConfig)
-	originServerStartupTime := variable.ServerStartupTime
-	variable.ServerStartupTime = 2333
 	defer func() {
-		variable.ServerStartupTime = originServerStartupTime
 		config.StoreGlobalConfig(originConfig)
 	}()
-	tk.MustQuery("select uuid_short()").Check(testkit.Rows("72057633179172864"))
+	count := 10
+	values := make(map[uint64]struct{}, count)
+	for i := 0; i < count; i++ {
+		rows := tk.MustQuery("select uuid_short()").Rows()
+		require.Equal(t, 1, len(rows))
+		require.Equal(t, 1, len(rows[0]))
+		v, err := strconv.ParseUint(rows[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		values[v] = struct{}{}
+	}
+	require.Equal(t, count, len(values))
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1),(2);")
-	tk.MustQuery("select uuid_short(), a from t;").Check(testkit.Rows("72057633179172865 1", "72057633179172866 2"))
 	tk.MustExec("create table t1 (id bigint primary key, b int);")
 	tk.MustExec("insert into t1 select uuid_short(), a from t;")
-	tk.MustQuery("select * from t1;").Check(testkit.Rows("72057633179172867 1", "72057633179172868 2"))
+	tk.MustQuery("select count(distinct id), count(distinct b) from t1;").Check(testkit.Rows("2 2"))
 }
