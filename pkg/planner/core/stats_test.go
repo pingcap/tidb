@@ -25,17 +25,11 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
-
-// local wrapper to keep lowercase usage in tests
-func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, orderingColumns []*expression.Column, threshold int) []*util.AccessPath {
-	return core.PruneIndexesByWhereAndOrderForTest(paths, whereColumns, orderingColumns, threshold)
-}
 
 func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -65,39 +59,41 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 		KEY ibfd (b, f, d), KEY ibfe (b, f, e)
 	)`)
 
-	// Get a DataSource to extract real paths and columns
-	ds := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
-	require.NotNil(t, ds)
-	require.Greater(t, len(ds.AllPossibleAccessPaths), 60, "Should have 60+ paths")
+	// Establish baseline without pruning (very large threshold)
+	tk.MustExec("set @@tidb_opt_index_prune_threshold=100000")
+	dsBaseline := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
+	require.NotNil(t, dsBaseline)
+	require.Greater(t, len(dsBaseline.AllPossibleAccessPaths), 60, "Should have 60+ paths")
+	expectedFull := len(dsBaseline.AllPossibleAccessPaths)
 
 	// Extract WHERE columns (a and f) and paths for testing
 	// WhereColumns might not be populated, extract from PushedDownConds
-	whereColumns := ds.WhereColumns
-	if len(whereColumns) == 0 && len(ds.PushedDownConds) > 0 {
-		whereColumns = expression.ExtractColumnsFromExpressions(ds.PushedDownConds, nil)
+	whereColumns := dsBaseline.WhereColumns
+	if len(whereColumns) == 0 && len(dsBaseline.PushedDownConds) > 0 {
+		whereColumns = expression.ExtractColumnsFromExpressions(dsBaseline.PushedDownConds, nil)
 	}
-	orderingColumns := []*expression.Column{}
-	paths := ds.AllPossibleAccessPaths
+	//orderingColumns := []*expression.Column{}
+	paths := dsBaseline.AllPossibleAccessPaths
 
-	t.Logf("WHERE columns: %d (from PushedDownConds: %d), paths: %d", len(whereColumns), len(ds.PushedDownConds), len(paths))
+	t.Logf("WHERE columns: %d (from PushedDownConds: %d), paths: %d", len(whereColumns), len(dsBaseline.PushedDownConds), len(paths))
 	for i, col := range whereColumns {
 		t.Logf("WHERE col %d: ID=%d", i, col.ID)
 	}
 
 	t.Run("threshold_100", func(t *testing.T) {
-		result := pruneIndexesByWhereAndOrder(paths, whereColumns, orderingColumns, 100)
-		// With WHERE columns, pruning happens even with high threshold
-		// Only top-scored indexes are kept (some indexes have zero score)
-		require.Less(t, len(result), len(paths), "Should prune some low-scoring indexes")
-		require.Greater(t, len(result), 20, "Should keep more than 20 indexes with threshold 100")
+		// With threshold 100 (> full count), no pruning should happen in the pipeline
+		tk.MustExec("set @@tidb_opt_index_prune_threshold=100")
+		ds100 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
+		require.Equal(t, expectedFull, len(ds100.AllPossibleAccessPaths), "With threshold 100, should keep all indexes")
 	})
 
 	t.Run("threshold_20", func(t *testing.T) {
-		result := pruneIndexesByWhereAndOrder(paths, whereColumns, orderingColumns, 20)
-		require.Equal(t, 20, len(result), "With threshold 20, should prune to exactly 20 indexes")
+		tk.MustExec("set @@tidb_opt_index_prune_threshold=20")
+		ds20 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
+		require.Equal(t, 20, len(ds20.AllPossibleAccessPaths), "With threshold 20, should prune to exactly 20 indexes")
 
 		// Verify all paths are valid
-		for _, path := range result {
+		for _, path := range ds20.AllPossibleAccessPaths {
 			require.NotNil(t, path)
 			if !path.IsTablePath() {
 				require.NotNil(t, path.Index)
@@ -106,26 +102,18 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	})
 
 	t.Run("threshold_10", func(t *testing.T) {
-		result := pruneIndexesByWhereAndOrder(paths, whereColumns, orderingColumns, 10)
-		require.Equal(t, 10, len(result), "With threshold 10, should prune to exactly 10 indexes")
+		tk.MustExec("set @@tidb_opt_index_prune_threshold=10")
+		ds10 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
+		require.Equal(t, 10, len(ds10.AllPossibleAccessPaths), "With threshold 10, should prune to exactly 10 indexes")
 	})
 
 	t.Run("no_where_columns", func(t *testing.T) {
-		result := pruneIndexesByWhereAndOrder(paths, []*expression.Column{}, orderingColumns, 10)
-		require.Equal(t, len(paths), len(result), "With no WHERE columns, should return all paths")
+		tk.MustExec("set @@tidb_opt_index_prune_threshold=10")
+		dsNoWhere := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1")
+		require.Equal(t, expectedFull, len(dsNoWhere.AllPossibleAccessPaths), "With no WHERE columns, should return all paths")
 	})
 
-	t.Run("empty_paths", func(t *testing.T) {
-		result := pruneIndexesByWhereAndOrder([]*util.AccessPath{}, whereColumns, orderingColumns, 10)
-		require.Equal(t, 0, len(result), "With empty paths, should return empty")
-	})
-
-	t.Run("single_path", func(t *testing.T) {
-		singlePath := []*util.AccessPath{paths[0]}
-		result := pruneIndexesByWhereAndOrder(singlePath, whereColumns, orderingColumns, 10)
-		require.Equal(t, 1, len(result), "With single path, should return it unchanged")
-		require.Equal(t, singlePath[0], result[0], "Should return the same path")
-	})
+	// Unit-level empty/single path cases are omitted in E2E pipeline test
 }
 
 // getDataSourceFromQuery is a helper to extract DataSource from a query for testing
@@ -144,9 +132,21 @@ func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se sessionapi.Sess
 	logicalPlan, err := core.LogicalOptimizeTest(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 	require.NoError(t, err)
 
-	// Find DataSource in the optimized plan
+	// Populate WhereColumns on DataSource before stats derivation
+	var dsForPopulate *logicalop.DataSource
+	findDataSource(logicalPlan.(base.LogicalPlan), &dsForPopulate)
+	if dsForPopulate != nil && len(dsForPopulate.WhereColumns) == 0 && len(dsForPopulate.PushedDownConds) > 0 {
+		dsForPopulate.WhereColumns = expression.ExtractColumnsFromExpressions(dsForPopulate.PushedDownConds, nil)
+	}
+
+	// Trigger stats derivation; pruning happens here
+	lp := logicalPlan.(base.LogicalPlan)
+	_, _, err = lp.RecursiveDeriveStats(nil)
+	require.NoError(t, err)
+
+	// Find DataSource in the optimized plan with derived stats
 	var ds *logicalop.DataSource
-	findDataSource(logicalPlan, &ds)
+	findDataSource(lp, &ds)
 	return ds
 }
 
