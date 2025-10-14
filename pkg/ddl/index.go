@@ -2384,7 +2384,7 @@ func writeChunk(
 		count++
 	}
 	if count > 0 && haveFirst {
-		prefix := tablecodec.GenTableRecordPrefix(c.TableInfo.ID)
+		prefix := tablecodec.GenTableRecordPrefix(c.PhysicalID)
 		startKey := tablecodec.EncodeRecordKey(prefix, firstHandle)
 		endKey := tablecodec.EncodeRecordKey(prefix, lastHandle)
 		rg = kv.KeyRange{StartKey: startKey, EndKey: endKey}
