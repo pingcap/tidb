@@ -73,7 +73,6 @@ go_library(
         "//pkg/util/collate",
         "//pkg/util/engine",
         "//pkg/util/table-filter",
-        "@com_github_coreos_go_semver//semver",
         "@com_github_docker_go_units//:go-units",
         "@com_github_fatih_color//:color",
         "@com_github_gogo_protobuf//proto",
