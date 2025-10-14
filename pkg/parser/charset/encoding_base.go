@@ -85,17 +85,22 @@ func (b encodingBase) Transform(dest *bytes.Buffer, src []byte, op Op) (result [
 }
 
 func (b encodingBase) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
-	var tfm transform.Transformer
+	var (
+		tfm              transform.Transformer
+		runeErrorChecker runeErrorMaybeInputTransformer
+		ok               bool
+	)
 	var peek func([]byte) []byte
 	if op&opFromUTF8 != 0 {
 		tfm = b.enc.NewEncoder()
 		peek = EncodingUTF8Impl.Peek
 	} else {
-		tfm = b.enc.NewDecoder()
+		dec := b.enc.NewDecoder()
+		tfm = dec
+		runeErrorChecker, ok = dec.Transformer.(runeErrorMaybeInputTransformer)
 		peek = b.self.Peek
 	}
 	var buf [4]byte
-	runeErrorChecker, ok := tfm.(runeErrorMaybeInputTransformer)
 	for i, w := 0, 0; i < len(src); i += w {
 		w = len(peek(src[i:]))
 		nDst, _, err := tfm.Transform(buf[:], src[i:i+w], false)
