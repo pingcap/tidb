@@ -1217,35 +1217,38 @@ func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if !sctx.GetSessionVars().IsAllocValid() {
 		return
 	}
-
-	if checkOverlongColType(sctx, plan) {
+	if disableReuseChunk, continueIterating := checkOverlongColType(sctx, plan); disableReuseChunk || !continueIterating {
 		return
 	}
-
 	for _, child := range plan.Children() {
 		disableReuseChunkIfNeeded(sctx, child)
 	}
 }
 
 // checkOverlongColType Check if read field type is long field.
-func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) bool {
+func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) (skipReuseChunk bool, continueIterating bool) {
 	if plan == nil {
-		return false
+		return false, false
 	}
 	switch plan.(type) {
 	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
 		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
 		if existsOverlongType(plan.Schema(), false) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
-			return true
+			return true, false
 		}
 	case *physicalop.PointGetPlan:
 		if existsOverlongType(plan.Schema(), true) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
-			return true
+			return true, false
 		}
+	default:
+		// Other physical operators do not read data, so we can continue to iterate.
+		return false, true
 	}
-	return false
+	// PhysicalReader and PointGet is at the root, their children are nil or on the tikv/tiflash side.
+	// So we can stop iterating.
+	return false, false
 }
 
 var (
