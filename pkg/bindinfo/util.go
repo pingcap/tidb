@@ -21,13 +21,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo/internal/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -58,7 +58,7 @@ func (u *globalBindingHandle) updateBindingUsageInfoToStorage(bindings []Binding
 	cnt := 0
 	defer func() {
 		if cnt > 0 {
-			logutil.BgLogger().Info("update binding usage info to storage", zap.Int("count", cnt), zap.Duration("duration", time.Since(now)))
+			logutil.BindLogger().Info("update binding usage info to storage", zap.Int("count", cnt), zap.Duration("duration", time.Since(now)))
 		}
 	}()
 	for _, binding := range bindings {
@@ -113,10 +113,12 @@ func (u *globalBindingHandle) updateBindingUsageInfoToStorageInternal(bindings [
 		ts := time.Now()
 		for _, binding := range bindings {
 			binding.UpdateLastSavedAt(&ts)
-			u.getCache().SetBinding(binding.SQLDigest, []Binding{binding})
+			err := u.getCache().SetBinding(binding.SQLDigest, []Binding{binding})
+			if err != nil {
+				logutil.BindLogger().Warn("update binding cache error", zap.Error(err))
+			}
 		}
 	}
-
 	return err
 }
 
@@ -143,7 +145,7 @@ func addLockForBinds(sctx sessionctx.Context, bindings []Binding) error {
 		}
 		condition = append(condition, sql)
 	}
-	locksql := "select 1 from mysql.bind_info where (plan_digest, sql_digest) in (" +
+	locksql := "select 1 from mysql.bind_info use index(digest_index) where (plan_digest, sql_digest) in (" +
 		strings.Join(condition, " , ") + ") for update"
 	_, err := exec(sctx, locksql)
 	if err != nil {
@@ -154,7 +156,7 @@ func addLockForBinds(sctx sessionctx.Context, bindings []Binding) error {
 
 func saveBindingUsage(sctx sessionctx.Context, sqldigest, planDigest string, ts time.Time) error {
 	lastUsedTime := ts.UTC().Format(types.TimeFormat)
-	var sql = "UPDATE mysql.bind_info SET last_used_date = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE) WHERE sql_digest = %?"
+	var sql = "UPDATE mysql.bind_info USE INDEX(digest_index) SET last_used_date = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE) WHERE sql_digest = %?"
 	if planDigest == "" {
 		sql += " AND plan_digest = ''"
 	} else {

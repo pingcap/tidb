@@ -144,7 +144,10 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 					break
 				}
 			}
-			bindingCache.SetBinding(sqlDigest, bindings) // update the last used time
+			err := bindingCache.SetBinding(sqlDigest, bindings) // update the last used time
+			if err != nil {
+				logutil.BindLogger().Warn("bindingCache.SetBinding", zap.Error(err))
+			}
 		} else {
 			missingSQLDigest = append(missingSQLDigest, sqlDigest)
 		}

@@ -301,7 +301,8 @@ const (
 		plan_digest varchar(64),
 		last_used_date date DEFAULT NULL,
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
-		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
+		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time",
+    	UNIQUE INDEX digest_index(plan_digest, sql_digest) COMMENT "avoid duplicated records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRoleEdgesTable stores the role and user relationship information.
@@ -3274,6 +3275,7 @@ func upgradeToVer221(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN last_used_date DATE DEFAULT NULL AFTER `plan_digest`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD UNIQUE INDEX digest_index(plan_digest, sql_digest)", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
