@@ -307,7 +307,13 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 
 			binding.CreateTime = now
 			binding.UpdateTime = now
-
+			var sqlDigest, planDigest any // null by default
+			if binding.SQLDigest != "" {
+				sqlDigest = binding.SQLDigest
+			}
+			if binding.PlanDigest != "" {
+				planDigest = binding.PlanDigest
+			}
 			// Insert the Bindings to the storage.
 			_, err = exec(
 				sctx,
@@ -323,8 +329,8 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 				binding.Charset,
 				binding.Collation,
 				binding.Source,
-				binding.SQLDigest,
-				binding.PlanDigest,
+				sqlDigest,
+				planDigest,
 			)
 			failpoint.Inject("CreateGlobalBindingNthFail", func(val failpoint.Value) {
 				n := val.(int)
