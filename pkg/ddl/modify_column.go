@@ -234,12 +234,20 @@ func getModifyColumnInfo(
 	if args.OldColumnID > 0 {
 		oldCol = model.FindColumnInfoByID(tblInfo.Columns, args.OldColumnID)
 	} else {
-		oldCol = model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
+		// Lower version TiDB doesn't persist the old column ID to job arguments.
+		// We have to use the old column name to locate the old column.
+		oldCol = model.FindColumnInfo(tblInfo.Columns, getRemovingObjName(args.OldColumnName.L))
+		if oldCol == nil {
+			// The old column maybe not in removing state.
+			oldCol = model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
+		}
 		if oldCol != nil {
 			args.OldColumnID = oldCol.ID
-			logutil.DDLLogger().Info("run modify column job, init old column id",
+			logutil.DDLLogger().Info("run modify column job, find old column by name",
+				zap.Int64("jobID", job.ID),
 				zap.String("oldColumnName", args.OldColumnName.L),
-				zap.Int64("oldColumnID", oldCol.ID))
+				zap.Int64("oldColumnID", oldCol.ID),
+			)
 		}
 	}
 	if oldCol == nil {
