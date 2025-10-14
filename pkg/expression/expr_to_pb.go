@@ -179,7 +179,6 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 		tp = tipb.ExprType_TiDBVectorFloat32
 		val = d.GetVectorFloat32().ZeroCopySerialize()
 	case types.KindMysqlJSON:
-		d.GetMysqlJSON()
 		tp = tipb.ExprType_MysqlJson
 		var err error
 		val, err = codec.EncodeValue(nil, nil, d)
