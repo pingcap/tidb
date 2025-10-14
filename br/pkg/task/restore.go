@@ -13,6 +13,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -2250,25 +2251,78 @@ func PreCheckTableTiFlashReplica(
 	return nil
 }
 
+// checkTablesClusterIndex checks cluster index option for multiple tables in parallel
+func checkTablesClusterIndex(tables []*metautil.Table, dom *domain.Domain) error {
+	// maybe we need to make it configurable?
+	const maxConcurrency = 10
+	
+	type result struct {
+		table *metautil.Table
+		err   error
+	}
+	
+	// Create work channel and result channel
+	workCh := make(chan *metautil.Table, len(tables))
+	resultCh := make(chan result, len(tables))
+	
+	// Start workers
+	var wg sync.WaitGroup
+	for i := 0; i < maxConcurrency && i < len(tables); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for table := range workCh {
+				oldTableInfo, err := restore.GetTableSchema(dom, table.DB.Name, table.Info.Name)
+				// table exists in database
+				if err == nil {
+					if table.Info.IsCommonHandle != oldTableInfo.IsCommonHandle {
+						log.Error("Clustered index option mismatch", 
+							zap.String("schemaName", table.DB.Name.O), 
+							zap.String("tableName", table.Info.Name.O))
+						resultCh <- result{
+							table: table,
+							err: errors.Annotatef(berrors.ErrRestoreModeMismatch,
+								"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
+								restore.TransferBoolToValue(table.Info.IsCommonHandle),
+								table.Info.IsCommonHandle,
+								oldTableInfo.IsCommonHandle),
+						}
+						return
+					}
+				}
+				resultCh <- result{table: table, err: nil}
+			}
+		}()
+	}
+	
+	for _, table := range tables {
+		workCh <- table
+	}
+	close(workCh)
+	
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
+	
+	for res := range resultCh {
+		if res.err != nil {
+			return res.err
+		}
+	}
+	
+	return nil
+}
+
 // PreCheckTableClusterIndex checks whether backup tables and existed tables have different cluster index options。
 func PreCheckTableClusterIndex(
 	tables []*metautil.Table,
 	ddlJobs []*model.Job,
 	dom *domain.Domain,
 ) error {
-	for _, table := range tables {
-		oldTableInfo, err := restore.GetTableSchema(dom, table.DB.Name, table.Info.Name)
-		// table exists in database
-		if err == nil {
-			if table.Info.IsCommonHandle != oldTableInfo.IsCommonHandle {
-				log.Error("Clustered index option mismatch", zap.String("schemaName", table.DB.Name.O), zap.String("tableName", table.Info.Name.O))
-				return errors.Annotatef(berrors.ErrRestoreModeMismatch,
-					"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
-					restore.TransferBoolToValue(table.Info.IsCommonHandle),
-					table.Info.IsCommonHandle,
-					oldTableInfo.IsCommonHandle)
-			}
-		}
+	// Check tables in parallel
+	if err := checkTablesClusterIndex(tables, dom); err != nil {
+		return err
 	}
 	for _, job := range ddlJobs {
 		if job.Type == model.ActionCreateTable {
