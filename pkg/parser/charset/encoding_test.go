@@ -196,6 +196,13 @@ func TestEncodingGB18030(t *testing.T) {
 		{"aa\x80ab", "aa?ab", false},
 		{"a你好\x80a测试", "a浣犲ソ?a娴嬭瘯", false},
 		{"aa\x80", "aa?", false},
+		{string([]byte{0xb0, 0xb2}), "安", true},
+		// rune error is encoded to gb18030, we must decode as-is and report no error
+		{
+			string([]byte{0xb0, 0xb2, 0x84, 0x31, 0xa4, 0x37, 0x30, 0x84, 0x31, 0xa4, 0x37, 0x32}),
+			"安\ufffd0\ufffd2",
+			true,
+		},
 	}
 	for _, tc := range GB18030Cases {
 		cmt := fmt.Sprintf("utf8Str: %s, result: %s, isValid: %t", tc.utf8Str, tc.result, tc.isValid)
