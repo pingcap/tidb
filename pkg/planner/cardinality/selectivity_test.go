@@ -2096,19 +2096,43 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 
 func TestUninitializedStats(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, index idx(a))")
-	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx(a))")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 
-	testKit.MustExec("drop table if exists t1;")
-	testKit.MustExec("create table t1(id int, c1 int, c2 varchar(100), primary key(id), key idx_expr ((cast(json_unquote(json_extract(`c2`, '$.location_id')) as char(255)))));")
-	testKit.MustExec(`insert into t1 values(1, 1, '{"foo": "bar"}'), (2, 1, '{"foo": "bar"}');`)
-	testKit.MustExec("analyze table t1;")
-	testKit.MustExec("analyze table t1;")
-	testKit.MustExec("analyze table t1;")
-	time.Sleep(time.Second)
-	testKit.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where cast(json_unquote(json_extract(`c2`, '$.location_id')) as char(255)) > '100'  and c2 > 'abc';").CheckContain("unInitialized")
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 'OFF';")
+	tk.MustExec("use test;")
+	tk.MustExec("drop database if exists business_db;")
+	tk.MustExec("create database business_db;")
+	tk.MustExec("USE business_db;")
+	tk.MustExec("set names utf8mb4;")
+	tk.MustExec(`CREATE TABLE event_log (
+    id varchar(255) NOT NULL,
+    created_time datetime(3) DEFAULT CURRENT_TIMESTAMP(3),
+    modified_time datetime(3) DEFAULT CURRENT_TIMESTAMP(3),
+    money_info json DEFAULT NULL,
+    actors json DEFAULT NULL,
+    recipient varchar(255) GENERATED ALWAYS AS (json_extract(actors, _utf8mb4'$[*].recipient')) STORED,
+    operator_id varchar(255) GENERATED ALWAYS AS (json_extract(actors, _utf8mb4'$[*].operator_id')) STORED,
+    category varchar(255) DEFAULT NULL,
+    action varchar(255) DEFAULT NULL,
+    cancelled_by_id varchar(255) DEFAULT NULL,
+    cancellation_of_id varchar(255) DEFAULT NULL,
+    metadata json DEFAULT NULL,
+    money_details json DEFAULT NULL,
+    PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+    KEY idx_metadata_location_id ((
+        cast(json_unquote(json_extract(metadata, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`insert into event_log(id, metadata) values(1, '{"foo": "bar"}'), (2, '{"foo": "bar"}');`)
+	tk.MustQuery(`explain analyze
+SELECT /*+ use_index(e, idx_metadata_location_id) */ SQL_NO_CACHE e.id, e.category, e.created_time, e.money_info
+FROM event_log e
+WHERE 
+(cast(json_unquote(json_extract(e.metadata, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) = "498"
+ORDER BY e.created_time DESC
+LIMIT 70000;`).CheckNotContain("unInitialized")
 }
