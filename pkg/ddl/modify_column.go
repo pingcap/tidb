@@ -591,7 +591,7 @@ func getModifyColumnType(
 	}
 
 	relatedIndexes := buildRelatedIndexIDs(tblInfo, oldCol.ID)
-	if len(relatedIndexes) == 0 {
+	if len(relatedIndexes) == 0 && !needDoIndexReorg(tblInfo, oldCol, args.Column, sqlMode) {
 		return ModifyTypeNoReorgWithCheck
 	}
 	return ModifyTypeIndexReorg
@@ -606,7 +606,7 @@ func needDoIndexReorg(tblInfo *model.TableInfo, oldCol, changingCol *model.Colum
 		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
 	}
 
-	// TODO(joechenrh): support CHAR to VARCHAR
+	// FIXME(joechenrh)!!!: seems like there are some problems with CHAR to VARCHAR now
 	return true
 }
 
