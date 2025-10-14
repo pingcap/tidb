@@ -127,18 +127,6 @@ type runeErrorMaybeInputTransformer interface {
 	runeErrorIsLastInput() bool
 }
 
-type runeErrorMaybeInputWrapper struct {
-	*encoding.Decoder
-}
-
-func (r runeErrorMaybeInputWrapper) runeErrorIsLastInput() bool {
-	impl, ok := r.Decoder.Transformer.(runeErrorMaybeInputTransformer)
-	if !ok {
-		return false
-	}
-	return impl.runeErrorIsLastInput()
-}
-
 // NewDecoder returns simplifiedchinese.GB18030.NewDecoder().
 func (customGB18030) NewDecoder() *encoding.Decoder {
 	return &encoding.Decoder{
