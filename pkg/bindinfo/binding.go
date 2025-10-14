@@ -206,6 +206,8 @@ func merge(lBindings, rBindings Bindings) Bindings {
 			if lbind.isSame(&rbind) {
 				found = true
 				if rbind.UpdateTime.Compare(lbind.UpdateTime) >= 0 {
+					rbind.LastUsedAt = lbind.LastUsedAt
+					rbind.LastSavedAt = lbind.LastSavedAt
 					result[j] = rbind
 				}
 				break
