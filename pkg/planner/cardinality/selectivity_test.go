@@ -2093,3 +2093,22 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 		require.InDelta(t, 109.99, idxOtherCount.Est, 0.1, "Index other count should be approximately 109.99")
 	}
 }
+
+func TestUninitializedStats(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, index idx(a))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+
+	testKit.MustExec("drop table if exists t1;")
+	testKit.MustExec("create table t1(id int, c1 int, c2 varchar(100), primary key(id), key idx_expr ((cast(json_unquote(json_extract(`c2`, '$.location_id')) as char(255)))));")
+	testKit.MustExec(`insert into t1 values(1, 1, '{"foo": "bar"}'), (2, 1, '{"foo": "bar"}');`)
+	testKit.MustExec("analyze table t1;")
+	testKit.MustExec("analyze table t1;")
+	testKit.MustExec("analyze table t1;")
+	time.Sleep(time.Second)
+	testKit.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where cast(json_unquote(json_extract(`c2`, '$.location_id')) as char(255)) > '100'  and c2 > 'abc';").CheckContain("unInitialized")
+}
