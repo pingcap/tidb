@@ -45,12 +45,19 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
 )
+
+// createFulltextIndexOnTiCI is defined as a variable to allow tests to override the
+// TiCI RPC invocation. Production code should call this variable instead of the
+// tici package directly so that tests can stub the behaviour without relying on
+// failpoints or external services.
+var createFulltextIndexOnTiCI = tici.CreateFulltextIndex
 
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
@@ -152,10 +159,35 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 			return tbInfo, errors.Trace(err)
 		}
 
+		// Check whether the table contains full-text index, if so, we need to create the full-text index in TiCI.
+		if err := createFulltextIndexesOnTiCI(jobCtx, job, tbInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return tbInfo, errors.Trace(err)
+		}
+
 		return tbInfo, nil
 	default:
 		return tbInfo, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
+}
+
+func createFulltextIndexesOnTiCI(jobCtx *jobContext, job *model.Job, tbInfo *model.TableInfo) error {
+	if jobCtx == nil || job == nil || tbInfo == nil {
+		return nil
+	}
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
+	for _, idx := range tbInfo.Indices {
+		if !idx.IsFulltextIndexOnTiCI() {
+			continue
+		}
+		if err := createFulltextIndexOnTiCI(ctx, tbInfo, idx, job.SchemaName); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type autoIDType struct {
