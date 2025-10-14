@@ -777,6 +777,16 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 	statsRecord.RecordUsedInfo(pid, usedStats)
 }
 
+// indexWithScore stores an access path along with its pre-calculated coverage information.
+// This avoids re-iterating through index columns during sorting.
+type indexWithScore struct {
+	path                     *util.AccessPath
+	whereCount               int
+	orderingCount            int
+	consecutiveWhereCount    int // Consecutive WHERE columns from start of index
+	consecutiveOrderingCount int // Consecutive ordering columns from start of index
+}
+
 // pruneIndexesByWhereAndOrder prunes indexes based on their coverage of WHERE and ordering columns.
 // Ordering columns include both ORDER BY and MIN/MAX aggregates since both benefit from ordered indexes.
 func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, orderingColumns []*expression.Column, threshold int) []*util.AccessPath {
@@ -789,9 +799,12 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, orderin
 		return paths
 	}
 
-	perfectCoveringIndexes := make([]*util.AccessPath, 0, 4)      // Usually very few perfect covering indexes
-	preferredIndexes := make([]*util.AccessPath, 0, len(paths)/2) // Expected to be roughly half of paths
-	tablePaths := make([]*util.AccessPath, 0, 1)                  // Usually just one table path
+	// Keep total to 10 indexes max
+	const maxIndexes = 10
+	maxToKeep := max(maxIndexes, threshold)
+	perfectCoveringIndexes := make([]indexWithScore, 0, maxIndexes) // Store with coverage info for sorting
+	preferredIndexes := make([]indexWithScore, 0, maxIndexes)       // Store with coverage info for sorting
+	tablePaths := make([]*util.AccessPath, 0, 1)                    // Usually just one table path
 
 	// Build ID-based lookup maps for column matching (more reliable than names)
 	whereColIDs := make(map[int64]struct{}, len(whereColumns))
@@ -817,10 +830,11 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, orderin
 		}
 
 		// Count how many WHERE and ordering columns are covered by this index
+		// Also track consecutive matches from the start (most valuable for index usage)
 		coveredWhereCount := 0
 		coveredOrderingCount := 0
-		firstColMatchesWhere := false
-		firstColMatchesOrdering := false
+		consecutiveWhereCount := 0
+		consecutiveOrderingCount := 0
 
 		for i, idxCol := range path.FullIdxCols {
 			// Use the column ID
@@ -829,16 +843,18 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, orderin
 			// Check if this index column matches a WHERE column
 			if _, found := whereColIDs[idxColID]; found {
 				coveredWhereCount++
-				if i == 0 {
-					firstColMatchesWhere = true
+				// Track consecutive matches from start of index
+				if i == consecutiveWhereCount {
+					consecutiveWhereCount++
 				}
 			}
 
 			// Check if this index column matches an ordering column (ORDER BY or MIN/MAX)
 			if _, found := orderingColIDs[idxColID]; found {
 				coveredOrderingCount++
-				if i == 0 {
-					firstColMatchesOrdering = true
+				// Track consecutive matches from where column matches
+				if i == consecutiveOrderingCount+consecutiveWhereCount {
+					consecutiveOrderingCount++
 				}
 			}
 		}
@@ -847,26 +863,32 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, orderin
 		totalRequiredCols := len(whereColumns) + len(orderingColumns)
 		totalCovered := coveredWhereCount + coveredOrderingCount
 
-		// Perfect covering: covers ALL required columns AND first column matches
+		// Perfect covering: covers ALL required columns AND has consecutive matches from start
 		if totalCovered == totalRequiredCols && totalRequiredCols > 0 &&
-			(firstColMatchesWhere || firstColMatchesOrdering) {
-			perfectCoveringIndexes = append(perfectCoveringIndexes, path)
+			(consecutiveWhereCount > 0 || consecutiveOrderingCount > 0) {
+			perfectCoveringIndexes = append(perfectCoveringIndexes, indexWithScore{
+				path:                     path,
+				whereCount:               coveredWhereCount,
+				orderingCount:            coveredOrderingCount,
+				consecutiveWhereCount:    consecutiveWhereCount,
+				consecutiveOrderingCount: consecutiveOrderingCount,
+			})
 			continue
 		}
 
-		if threshold > 0 && len(perfectCoveringIndexes) >= threshold {
-			// If we have enough perfect covering indexes, stop pruning
+		if len(perfectCoveringIndexes) >= maxToKeep {
+			// If we have enough perfect covering indexes, don't add to preferred indexes
 			continue
 		}
 
-		// Preferred: has meaningful coverage (first column match OR covers multiple columns)
+		// Preferred: has meaningful coverage
 		hasGoodCoverage := false
 
-		// Case 1: First column matches - this is valuable
-		if firstColMatchesWhere || firstColMatchesOrdering {
+		// Case 1: Has consecutive matches from start (most valuable)
+		if consecutiveWhereCount > 0 || consecutiveOrderingCount > 0 {
 			hasGoodCoverage = true
 		}
-		// Case 2: Covers multiple WHERE columns (even if first doesn't match)
+		// Case 2: Covers multiple WHERE columns (even if not consecutive)
 		if coveredWhereCount >= 2 {
 			hasGoodCoverage = true
 		}
@@ -876,56 +898,72 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, orderin
 		}
 
 		if hasGoodCoverage {
-			preferredIndexes = append(preferredIndexes, path)
+			preferredIndexes = append(preferredIndexes, indexWithScore{
+				path:                     path,
+				whereCount:               coveredWhereCount,
+				orderingCount:            coveredOrderingCount,
+				consecutiveWhereCount:    consecutiveWhereCount,
+				consecutiveOrderingCount: consecutiveOrderingCount,
+			})
 		}
 	}
 
-	// Rank perfect covering indexes by shortest first (more efficient)
-	if len(perfectCoveringIndexes) > 1 {
-		slices.SortFunc(perfectCoveringIndexes, func(a, b *util.AccessPath) int {
-			return len(a.Index.Columns) - len(b.Index.Columns)
-		})
-	}
-
-	// Rank preferred indexes by coverage quality
-	if len(preferredIndexes) > 1 {
-		slices.SortFunc(preferredIndexes, func(a, b *util.AccessPath) int {
-			// Calculate coverage score for each index
-			scoreA := calculateIndexCoverageScore(a, whereColumns, orderingColumns)
-			scoreB := calculateIndexCoverageScore(b, whereColumns, orderingColumns)
-			// Higher score is better, so reverse the comparison
-			if scoreA != scoreB {
-				return scoreB - scoreA
-			}
-			// If same score, prefer shorter index
-			return len(a.Index.Columns) - len(b.Index.Columns)
-		})
-	}
-
 	// Build result with priority: table paths, forced indexes, perfect covering, then preferred
-	// Keep total to 10 indexes max
-	const maxIndexes = 10
 	result := make([]*util.AccessPath, 0, maxIndexes)
 
 	// CRITICAL: Always include table paths - this is mandatory for correctness
 	result = append(result, tablePaths...)
-	if len(tablePaths) == 0 {
-		// This should never happen, but if it does, return original paths to be safe
-		return paths
+
+	// Only sort perfect covering indexes if we have more than we can use
+	// If we'll keep all of them, no need to sort
+	if len(perfectCoveringIndexes) > maxToKeep {
+		// Sort by consecutive WHERE count DESC (more consecutive = better)
+		// Indexes with more consecutive WHERE columns from start are most valuable
+		slices.SortFunc(perfectCoveringIndexes, func(a, b indexWithScore) int {
+			// Higher consecutive count is better, so reverse comparison
+			if a.consecutiveWhereCount != b.consecutiveWhereCount {
+				return b.consecutiveWhereCount - a.consecutiveWhereCount
+			}
+			// If same, prefer more consecutive ordering columns
+			if a.consecutiveOrderingCount != b.consecutiveOrderingCount {
+				return b.consecutiveOrderingCount - a.consecutiveOrderingCount
+			}
+			// If still same, prefer shorter index
+			return len(a.path.Index.Columns) - len(b.path.Index.Columns)
+		})
 	}
 
 	// Add perfect covering indexes (prefer these over preferred)
-	remaining := maxIndexes - len(result)
+	remaining := maxToKeep - len(result)
 	if remaining > 0 && len(perfectCoveringIndexes) > 0 {
 		toAdd := min(remaining, len(perfectCoveringIndexes))
-		result = append(result, perfectCoveringIndexes[:toAdd]...)
+		for _, idxWithScore := range perfectCoveringIndexes[:toAdd] {
+			result = append(result, idxWithScore.path)
+		}
 		remaining -= toAdd
 	}
 
-	// Add preferred indexes if we still have room
+	// Add preferred indexes if we still have room (extract paths from indexWithScore)
 	if remaining > 0 && len(preferredIndexes) > 0 {
+		// Only sort if we have more preferred indexes than remaining slots
+		// If we'll keep all of them, no need to sort
+		if len(preferredIndexes) > remaining {
+			slices.SortFunc(preferredIndexes, func(a, b indexWithScore) int {
+				// Calculate scores using pre-computed coverage info
+				scoreA := calculateScoreFromCoverage(a, len(whereColIDs), len(orderingColIDs))
+				scoreB := calculateScoreFromCoverage(b, len(whereColIDs), len(orderingColIDs))
+				// Higher score is better, so reverse the comparison
+				if scoreA != scoreB {
+					return scoreB - scoreA
+				}
+				// If same score, prefer shorter index
+				return len(a.path.Index.Columns) - len(b.path.Index.Columns)
+			})
+		}
 		toAdd := min(remaining, len(preferredIndexes))
-		result = append(result, preferredIndexes[:toAdd]...)
+		for _, idxWithScore := range preferredIndexes[:toAdd] {
+			result = append(result, idxWithScore.path)
+		}
 	}
 
 	// Safety check: if we ended up with nothing, return the original paths
@@ -944,79 +982,36 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, orderin
 	return result
 }
 
-// calculateIndexCoverageScore calculates a score for how well an index covers the required columns.
-// Ordering columns include both ORDER BY and MIN/MAX since both benefit from ordered access.
-// Higher score means better coverage.
-func calculateIndexCoverageScore(path *util.AccessPath, whereColumns, orderingColumns []*expression.Column) int {
-	if path == nil || path.Index == nil {
-		return 0
-	}
-
-	// Build ID lookup maps (more reliable than names)
-	whereColIDs := make(map[int64]struct{}, len(whereColumns))
-	for _, col := range whereColumns {
-		whereColIDs[col.ID] = struct{}{}
-	}
-	orderingColIDs := make(map[int64]struct{}, len(orderingColumns))
-	for _, col := range orderingColumns {
-		orderingColIDs[col.ID] = struct{}{}
-	}
-
+// calculateScoreFromCoverage calculates a ranking score using already-computed coverage information.
+// This avoids re-iterating through index columns.
+func calculateScoreFromCoverage(info indexWithScore, totalWhereColumns, totalOrderingCols int) int {
 	score := 0
-	idxCols := path.FullIdxCols
-	if len(idxCols) == 0 {
-		// Fallback to Index.Columns if FullIdxCols is not available
-		return 0
+
+	// Score for WHERE column coverage
+	score += info.whereCount * 10
+
+	// Bonus for consecutive WHERE columns from start (critical for index usage)
+	// Consecutive columns are much more valuable than scattered matches
+	// Index on (a,b,c,d) with WHERE a=1 AND b=2 AND c=3 can use first 3 columns
+	// But with WHERE a=1 AND d=4, can only use first 1 column
+	score += info.consecutiveWhereCount * 10
+
+	// Bonus if the index is covering all WHERE columns
+	if info.whereCount == totalWhereColumns {
+		score += 10
 	}
 
-	// Score for WhereColumns coverage (higher weight)
-	whereMatches := 0
-	firstColMatchesWhere := false
-	for i, idxCol := range idxCols {
-		idxColID := idxCol.ID
-		if _, found := whereColIDs[idxColID]; found {
-			whereMatches++
-			if i == 0 {
-				firstColMatchesWhere = true
-			}
-		}
+	// NOTE: For ordering, we cannot guarantee that the presence of ordering
+	// columns will always lead to a plan that doesn't need sort.
+	// So we only give a bonus for ordering column coverage.
+	// Bonus for ordering column coverage - may eliminate sort completely
+	if info.orderingCount == totalOrderingCols {
+		score += 10
 	}
-	// Each WHERE column match is worth 10 points
-	score += whereMatches * 10
-	// Big bonus if first column is a WHERE column
-	if firstColMatchesWhere {
-		score += 20
+	// Bonus for consecutive ordering columns
+	if info.consecutiveOrderingCount == totalOrderingCols {
+		score += 10
 	}
-
-	// Score for ordering columns (ORDER BY, MIN/MAX) - important for avoiding sort or enabling optimizations
-	orderingMatches := 0
-	consecutiveOrderingMatches := 0
-	firstColMatchesOrdering := false
-	for i, idxCol := range idxCols {
-		idxColID := idxCol.ID
-		if _, found := orderingColIDs[idxColID]; found {
-			orderingMatches++
-			if i == 0 {
-				firstColMatchesOrdering = true
-			}
-			// Check for consecutive matching (preserves order for sorting or min/max)
-			if i < len(orderingColumns) {
-				// This is a simplified check - in reality you'd want to ensure the ORDER matches
-				consecutiveOrderingMatches++
-			}
-		}
-	}
-	// Each ordering column match is worth 5 points
-	score += orderingMatches * 5
-	// Consecutive ordering matches get bonus (very valuable for ORDER BY and MIN/MAX)
-	score += consecutiveOrderingMatches * 8
-	// Bonus if first column is an ordering column
-	if firstColMatchesOrdering {
-		score += 15
-	}
-
-	// Small penalty for longer indexes (all else equal, prefer shorter)
-	score -= len(idxCols) / 2
 
 	return score
 }

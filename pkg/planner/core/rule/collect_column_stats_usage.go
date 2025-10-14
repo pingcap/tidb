@@ -17,6 +17,7 @@ package rule
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/filter"
@@ -250,6 +251,15 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 			sortExprs = append(sortExprs, item.Expr)
 		}
 		c.orderingColumns = expression.ExtractColumnsFromExpressions(sortExprs, nil)
+	case *logicalop.LogicalWindow:
+		// Extract ordering columns from window ORDER BY clause
+		if len(x.OrderBy) > 0 {
+			orderExprs := make([]expression.Expression, 0, len(x.OrderBy))
+			for _, item := range x.OrderBy {
+				orderExprs = append(orderExprs, item.Col)
+			}
+			c.orderingColumns = expression.ExtractColumnsFromExpressions(orderExprs, nil)
+		}
 	}
 
 	for _, child := range lp.Children() {
@@ -282,9 +292,9 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		schema := x.Schema()
 		for i, aggFunc := range x.AggFuncs {
 			c.updateColMapFromExpressions(schema.Columns[i], aggFunc.Args)
-			// Extract columns from MIN/MAX aggregates - these can benefit from ordered indexes
-			// MIN(col) ≈ ORDER BY col ASC LIMIT 1, MAX(col) ≈ ORDER BY col DESC LIMIT 1
-			if aggFunc.Name == "min" || aggFunc.Name == "max" {
+			// Extract columns from MIN/MAX/FirstRow aggregates - these can benefit from ordered indexes
+			// MIN(col) ≈ ORDER BY col ASC LIMIT 1, MAX(col) ≈ ORDER BY col DESC LIMIT 1, FirstRow(col) ≈ ORDER BY col ASC LIMIT 1
+			if aggFunc.Name == ast.AggFuncMin || aggFunc.Name == ast.AggFuncMax || aggFunc.Name == ast.AggFuncFirstRow {
 				minMaxCols := expression.ExtractColumnsFromExpressions(aggFunc.Args, nil)
 				c.orderingColumns = append(c.orderingColumns, minMaxCols...)
 			}
