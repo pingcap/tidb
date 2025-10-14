@@ -85,5 +85,19 @@
       "select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
       "select /*+ leading(t3, t4, t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;"
     ]
+  },
+  {
+    "name": "TestJoinOrderHint4NestedLeading",
+    "cases": [
+      "select /*+ leading(a, (b, c)) */ * from a join b on a.id=b.id join c on b.id=c.id;",
+      "select /*+ leading(a, (b, (c, d))) */ * from a join b on a.id=b.id join c on b.id=c.id join d on c.id=d.id;",
+      "select /*+ leading(a, ((b, c), d)) */ * from a join b on a.id=b.id join c on b.id=c.id join d on c.id=d.id;",
+      "select /*+ leading(a@sel_1, (b@sel_2, c@sel_3)) */ * from (select * from t1) a, (select * from t2) b, (select * from t3) c where a.id=b.id and b.id=c.id;",
+      "select /*+ leading((a, b), (select * from c join d on c.id=d.id)) */ * from a join b on a.id=b.id join (select * from c join d on c.id=d.id) sub on b.id=sub.id;",
+      "select /*+ leading(a, (b left join (c, d))) */ * from a join b on a.id=b.id left join c on b.id=c.id join d on c.id=d.id;",
+      "select /*+ leading((a, (b, (c, (d, e))))) */ * from a join b on a.id=b.id join c on b.id=c.id join d on c.id=d.id join e on d.id=e.id;",
+      "select /*+ leading((a, (b, c)), (d, (e, f))) */ * from a join b on a.id=b.id join c on b.id=c.id join d on c.id=d.id join e on d.id=e.id join f on e.id=f.id;",
+      "select /*+ leading((a@sel_1, (b@sel_2, (c@sel_3, d@sel_4)))) */ * from (select * from t1) a join (select * from t2) b on a.id=b.id left join (select * from t3) c on b.id=c.id join (select * from t4) d on c.id=d.id;"
+    ]
   }
 ]

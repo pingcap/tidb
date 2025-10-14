@@ -1597,5 +1597,19 @@
         "Warning": null
       }
     ]
+  },
+  {
+    "name": "TestJoinOrderHint4NestedLeading",
+    "cases": [
+      {"SQL": "", "Plan": [], "Warning": []},
+      {"SQL": "", "Plan": [], "Warning": []},
+      {"SQL": "", "Plan": [], "Warning": []},
+      {"SQL": "", "Plan": [], "Warning": []},
+      {"SQL": "", "Plan": [], "Warning": []},
+      {"SQL": "", "Plan": [], "Warning": []},
+      {"SQL": "", "Plan": [], "Warning": []},
+      {"SQL": "", "Plan": [], "Warning": []},
+      {"SQL": "", "Plan": [], "Warning": []}
+    ]
   }
 ]

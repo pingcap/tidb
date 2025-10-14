@@ -1597,5 +1597,55 @@
         "Warning": null
       }
     ]
+  },
+  {
+    "Name": "TestJoinOrderHint4NestedLeading",
+    "Cases": [
+      {
+        "SQL": "select /*+ leading(a, (b, c)) */ * from a join b on a.id=b.id join c on b.id=c.id;",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warning": null
+      }
+    ]
   }
 ]
