@@ -130,6 +130,7 @@ func Selectivity(
 		id := col.UniqueID
 		colStats := coll.GetCol(id)
 		if col.IsHidden && col.VirtualExpr != nil {
+			// For expression index, consider stats of index instead of column.
 			continue
 		}
 		if colStats != nil {
