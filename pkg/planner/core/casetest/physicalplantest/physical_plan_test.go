@@ -41,6 +41,7 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1663,5 +1664,20 @@ func TestSemiJoinRewriter(t *testing.T) {
 			`└─Projection(Probe) root  test.t1.a, cast(test.t1.a, double BINARY)->Column#6`,
 			`  └─TableReader root  data:TableFullScan`,
 			`    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
+	})
+}
+
+func TestDisableReuseChunk(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1;")
+		tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
+		tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)
+		core.MaxMemoryLimitForOverlongType = 0
+		tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+		tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("1"))
+		core.MaxMemoryLimitForOverlongType = 500 * size.GB
+		tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+		tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("0"))
 	})
 }

@@ -345,6 +345,9 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	physical, cost, err := physicalOptimize(logic)
 	if err != nil {
 		return nil, nil, 0, err
@@ -469,6 +472,9 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	handleFineGrainedShuffle(ctx, sctx, plan)
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	disableReuseChunkIfNeeded(sctx, plan)
 	generateRuntimeFilter(sctx, plan)
 	return plan
@@ -1259,7 +1265,7 @@ var (
 	// TODO: We are also lacking test data for instances with less than 512 GB of memory, so we need to plan the rules here.
 	// TODO: internal sql can force to use chunk reuse if we ensure the memory usage is safe.
 	// TODO: We can consider the limit/Topn in the future.
-	maxMemoryLimitForOverlongType = 500 * size.GB
+	MaxMemoryLimitForOverlongType = 500 * size.GB
 	maxFlenForOverlongType        = mysql.MaxBlobWidth * 2
 )
 
@@ -1305,7 +1311,7 @@ func checkOverlongTypeForPointGet(totalFlen int) bool {
 	if err != nil || totalMemory <= 0 {
 		return true
 	}
-	if totalMemory >= maxMemoryLimitForOverlongType {
+	if totalMemory >= MaxMemoryLimitForOverlongType {
 		if totalFlen <= maxFlenForOverlongType {
 			return false
 		}
