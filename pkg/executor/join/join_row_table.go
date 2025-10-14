@@ -26,10 +26,10 @@ const sizeOfUnsafePointer = int(unsafe.Sizeof(unsafe.Pointer(nil)))
 const sizeOfUintptr = int(unsafe.Sizeof(uintptr(0)))
 
 var (
-	fakeAddrPlaceHolder = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+	fakeAddrPlaceHolder    = []byte{0, 0, 0, 0, 0, 0, 0, 0}
 	fakeAddrPlaceHolderLen = len(fakeAddrPlaceHolder)
-	usedFlagMask        uint32
-	bitMaskInUint32     [32]uint32
+	usedFlagMask           uint32
+	bitMaskInUint32        [32]uint32
 )
 
 func init() {
