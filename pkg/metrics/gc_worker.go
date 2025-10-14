@@ -33,16 +33,13 @@ var (
 
 // InitGCWorkerMetrics initializes GC worker metrics.
 func InitGCWorkerMetrics() {
-	// TiDB's metrics are already globally labeled with keyspace_name, but sometimes keyspace_id is also required
-	// for diagnosis, especially when TiKV or PD is involved. Add keyspace_id in addition for some metrics.
-
 	GCWorkerCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "gc_worker_actions_total",
 			Help:      "Counter of gc worker actions.",
-		}, []string{"type", "keyspace_id"})
+		}, []string{"type"})
 
 	GCHistogram = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -51,7 +48,7 @@ func InitGCWorkerMetrics() {
 			Name:      "gc_seconds",
 			Help:      "Bucketed histogram of gc duration.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 20), // 1s ~ 6days
-		}, []string{"stage", "keyspace_id"})
+		}, []string{"stage"})
 
 	GCConfigGauge = metricscommon.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -59,7 +56,7 @@ func InitGCWorkerMetrics() {
 			Subsystem: "tikvclient",
 			Name:      "gc_config",
 			Help:      "Gauge of GC configs.",
-		}, []string{"type", "keyspace_id"})
+		}, []string{"type"})
 
 	GCJobFailureCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
@@ -67,7 +64,7 @@ func InitGCWorkerMetrics() {
 			Subsystem: "tikvclient",
 			Name:      "gc_failure",
 			Help:      "Counter of gc job failure.",
-		}, []string{"type", "keyspace_id"})
+		}, []string{"type"})
 
 	GCActionRegionResultCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
