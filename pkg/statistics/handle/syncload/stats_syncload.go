@@ -374,9 +374,9 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		// If this column is not analyzed yet and we don't have it in memory.
 		// We create a fake one for the pseudo estimation.
 		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
-		if loadNeeded && !analyzed {
+		if !analyzed {
 			wrapper.col = statistics.EmptyColumn(item.TableID, isPkIsHandle, wrapper.colInfo)
-			s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+			s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 			return nil
 		}
 	}
@@ -401,7 +401,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
 	if needUpdate {
-		s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+		s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 	}
 	return nil
 }
@@ -552,7 +552,7 @@ func (*statsSyncLoad) writeToTimeoutChan(taskCh chan *statstypes.NeededItemTask,
 }
 
 // updateCachedItem updates the column/index hist to global statsCache.
-func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
+func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
 	s.StatsLoad.Lock()
 	defer s.StatsLoad.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
@@ -560,20 +560,6 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 	tbl, ok := s.statsHandle.Get(item.TableID)
 	if !ok {
 		return false
-	}
-	if !tbl.ColAndIdxExistenceMap.Checked() {
-		tbl = tbl.Copy()
-		for _, col := range tbl.HistColl.GetColSlice() {
-			if tblInfo.FindColumnByID(col.ID) == nil {
-				tbl.DelCol(col.ID)
-			}
-		}
-		for _, idx := range tbl.HistColl.GetIdxSlice() {
-			if tblInfo.FindIndexByID(idx.ID) == nil {
-				tbl.DelIdx(idx.ID)
-			}
-		}
-		tbl.ColAndIdxExistenceMap.SetChecked()
 	}
 	if !item.IsIndex && colHist != nil {
 		c := tbl.GetCol(item.ID)
