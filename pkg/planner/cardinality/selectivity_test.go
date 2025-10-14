@@ -2097,12 +2097,6 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 func TestUninitializedStats(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, index idx(a))")
-	tk.MustExec("set @@tidb_analyze_version=2")
-	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
-
 	tk.MustExec("set @@global.tidb_enable_auto_analyze = 'OFF';")
 	tk.MustExec("use test;")
 	tk.MustExec("drop database if exists business_db;")
@@ -2128,6 +2122,7 @@ func TestUninitializedStats(t *testing.T) {
         cast(json_unquote(json_extract(metadata, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
 	tk.MustExec(`insert into event_log(id, metadata) values(1, '{"foo": "bar"}'), (2, '{"foo": "bar"}');`)
+	tk.MustExec("analyze table event_log;")
 	tk.MustQuery(`explain analyze
 SELECT /*+ use_index(e, idx_metadata_location_id) */ SQL_NO_CACHE e.id, e.category, e.created_time, e.money_info
 FROM event_log e
@@ -2135,4 +2130,5 @@ WHERE
 (cast(json_unquote(json_extract(e.metadata, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) = "498"
 ORDER BY e.created_time DESC
 LIMIT 70000;`).CheckNotContain("unInitialized")
+	tk.MustExec("drop database business_db;")
 }
