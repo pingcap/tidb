@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
@@ -598,6 +597,19 @@ func getModifyColumnType(
 	return ModifyTypeIndexReorg
 }
 
+func needDoIndexReorg(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, sqlMode mysql.SQLMode) bool {
+	if !sqlMode.HasStrictMode() {
+		return true
+	}
+
+	if mysql.IsIntegerType(oldCol.GetType()) && mysql.IsIntegerType(changingCol.GetType()) {
+		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
+	}
+
+	// TODO(joechenrh): support CHAR to VARCHAR
+	return true
+}
+
 func needDoRowReorg(oldCol, changingCol *model.ColumnInfo, sqlMode mysql.SQLMode) bool {
 	if !sqlMode.HasStrictMode() {
 		return true
@@ -610,10 +622,6 @@ func needDoRowReorg(oldCol, changingCol *model.ColumnInfo, sqlMode mysql.SQLMode
 		return false
 	}
 
-	if !mysql.HasNotNullFlag(oldCol.GetFlag()) || !mysql.HasNotNullFlag(changingCol.GetFlag()) {
-		return true
-	}
-
 	// Currently, we only support change from CHAR
 	if oldTp != mysql.TypeString {
 		return true
@@ -624,7 +632,7 @@ func needDoRowReorg(oldCol, changingCol *model.ColumnInfo, sqlMode mysql.SQLMode
 	}
 
 	// Incompatible collation
-	if !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
+	if oldCol.GetCollate() != changingCol.GetCollate() {
 		return true
 	}
 
