@@ -1231,8 +1231,8 @@ func (w *GCWorker) resolveLocks(
 	}
 
 	runnerName := "resolve-locks-runner"
-	if w.keyspaceID != constants.NullKeyspaceID {
-		runnerName += "-" + strconv.FormatUint(uint64(w.keyspaceID), 10)
+	if w.keyspaceID != constants.NullKeyspaceID && w.store != nil {
+		runnerName += "-" + w.store.GetCodec().GetKeyspaceMeta().GetName()
 	}
 
 	runner := rangetask.NewRangeTaskRunner(runnerName, w.tikvStore, concurrency, handler)
