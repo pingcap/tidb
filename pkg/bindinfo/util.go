@@ -158,7 +158,7 @@ func saveBindingUsage(sctx sessionctx.Context, sqldigest, planDigest string, ts 
 	lastUsedTime := ts.UTC().Format(types.TimeFormat)
 	var sql = "UPDATE mysql.bind_info USE INDEX(digest_index) SET last_used_date = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE) WHERE sql_digest = %?"
 	if planDigest == "" {
-		sql += " AND plan_digest = ''"
+		sql += " AND plan_digest is null"
 	} else {
 		sql += fmt.Sprintf(" AND plan_digest = '%s'", planDigest)
 	}
