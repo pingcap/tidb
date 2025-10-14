@@ -18,6 +18,8 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -511,7 +513,19 @@ func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
 			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == tableAlias.DBName.L || astTbl.DBName.L == "*"
 			tableMatch := astTbl.TableName.L == tableAlias.TblName.L
 
-			if dbMatch && tableMatch {
+			// Match query block names
+			// Use SelectOffset to match query blocks
+			qbMatch := true
+			if astTbl.QBName.L != "" {
+				expectedOffset := extractSelectOffset(astTbl.QBName.L)
+				if expectedOffset > 0 {
+					qbMatch = tableAlias.SelectOffset == expectedOffset
+				} else {
+					// If QBName cannot be parsed, ignore the QB match.
+					qbMatch = true
+				}
+			}
+			if dbMatch && tableMatch && qbMatch {
 				newPlans := append(plans[:i], plans[i+1:]...)
 				return joinGroup, newPlans, true
 			}
@@ -548,6 +562,16 @@ func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
 	}
 
 	return nil, plans, false
+}
+
+// extract the number x from 'sel_x'
+func extractSelectOffset(qbName string) int {
+	if strings.HasPrefix(qbName, "sel_") {
+		if offset, err := strconv.Atoi(qbName[4:]); err == nil {
+			return offset
+		}
+	}
+	return -1
 }
 
 // generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
