@@ -348,6 +348,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		builder.FullTextInfo.TableID = e.table.Meta().ID
 		builder.FullTextInfo.IndexID = e.index.ID
 		builder.FullTextInfo.ExecutorID = e.plans[0].ExplainID().String()
+		builder.FullTextInfo.Parameter = e.index.FullTextInfo.Parameter
 
 		id := e.Table().Meta().ID
 		startKey := tablecodec.EncodeTablePrefix(id)
@@ -806,6 +807,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 				builder.FullTextInfo.TableID = e.table.Meta().ID
 				builder.FullTextInfo.IndexID = e.index.ID
 				builder.FullTextInfo.ExecutorID = e.idxPlans[0].ExplainID().String()
+				builder.FullTextInfo.Parameter = e.index.FullTextInfo.Parameter
 
 				id := e.Table().Meta().ID
 				startKey := tablecodec.EncodeTablePrefix(id)

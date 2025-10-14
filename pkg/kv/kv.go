@@ -624,6 +624,7 @@ type Request struct {
 		TableID    int64
 		IndexID    int64
 		ExecutorID string
+		Parameter  string
 	}
 }
 

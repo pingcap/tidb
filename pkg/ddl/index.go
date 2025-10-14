@@ -534,8 +534,13 @@ func buildFullTextInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecific
 			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext index must specify a valid parser")
 		}
 	}
+	parameter := ""
+	if indexOption != nil {
+		parameter = indexOption.Parameter
+	}
 	return &model.FullTextIndexInfo{
 		ParserType: parser,
+		Parameter:  parameter,
 	}, nil
 }
 

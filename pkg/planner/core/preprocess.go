@@ -1174,6 +1174,9 @@ func checkIndexOptions(isColumnar bool, indexOptions *ast.IndexOption) error {
 	if indexOptions == nil {
 		return nil
 	}
+	if indexOptions.Parameter != "" && indexOptions.Tp != ast.IndexTypeFulltext {
+		return dbterror.ErrUnsupportedIndexType.FastGen("PARAMETER is only supported for FULLTEXT INDEX")
+	}
 	if isColumnar {
 		switch indexOptions.Tp {
 		case ast.IndexTypeVector, ast.IndexTypeInverted:
