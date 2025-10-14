@@ -129,6 +129,9 @@ func Selectivity(
 	for _, col := range extractedCols {
 		id := col.UniqueID
 		colStats := coll.GetCol(id)
+		if col.IsHidden && col.VirtualExpr != nil {
+			continue
+		}
 		if colStats != nil {
 			maskCovered, ranges, _, _, err :=
 				getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
