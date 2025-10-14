@@ -296,22 +296,22 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64)
 	return spilledPartitions, releasedMemoryUsage
 }
 
-func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys *[]byte) []byte {
+func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
 	rowLen := len(seg.rowStartOffset)
-	if cap(*validJoinKeys) < rowLen {
-		(*validJoinKeys) = make([]byte, rowLen)
+	if cap(validJoinKeys) < rowLen {
+		validJoinKeys = make([]byte, rowLen)
 	} else {
-		(*validJoinKeys) = (*validJoinKeys)[:rowLen]
+		validJoinKeys = validJoinKeys[:rowLen]
 	}
 	for i := range rowLen {
-		(*validJoinKeys)[i] = byte(0)
+		validJoinKeys[i] = byte(0)
 	}
 	for _, pos := range seg.validJoinKeyPos {
-		(*validJoinKeys)[pos] = byte(1)
+		validJoinKeys[pos] = byte(1)
 	}
 
 	h.spilledValidRowNum.Add(uint64(len(seg.validJoinKeyPos)))
-	return (*validJoinKeys)
+	return validJoinKeys
 }
 
 func (h *hashJoinSpillHelper) spillBuildSegmentToDisk(workerID int, partID int, segments []*rowTableSegment) error {
@@ -339,7 +339,7 @@ func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.
 
 	// Get row bytes from segment and spill them
 	for _, seg := range segments {
-		h.validJoinKeysBuffer[workerID] = h.generateSpilledValidJoinKey(seg, &(h.validJoinKeysBuffer[workerID]))
+		h.validJoinKeysBuffer[workerID] = h.generateSpilledValidJoinKey(seg, h.validJoinKeysBuffer[workerID])
 
 		rowNum := seg.getRowNum()
 		for i := range rowNum {
