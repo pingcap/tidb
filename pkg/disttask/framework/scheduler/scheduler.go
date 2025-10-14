@@ -164,6 +164,7 @@ func (s *BaseScheduler) scheduleTask() {
 			s.logger.Info("schedule task exits")
 			return
 		case <-ticker.C:
+			failpoint.InjectCall("beforeRefreshTask", s.GetTask())
 			err := s.refreshTaskIfNeeded()
 			if err != nil {
 				if errors.Cause(err) == storage.ErrTaskNotFound {

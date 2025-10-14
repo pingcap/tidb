@@ -349,7 +349,7 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 
 // DivideMergeSortDataFiles divides the data files into multiple groups for
 // merge sort. Each group will be assigned to a node for sorting.
-// The number of files in each group is limited to MergeSortFileCountStep.
+// The number of files in each group is limited to MaxMergeSortFileCountStep.
 func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([][]string, error) {
 	if nodeCnt == 0 {
 		return nil, errors.Errorf("unsupported zero node count")
@@ -357,22 +357,23 @@ func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([
 	if len(dataFiles) == 0 {
 		return [][]string{}, nil
 	}
+	adjustedMergeSortFileCountStep := GetAdjustedMergeSortFileCountStep(mergeConc)
 	dataFilesCnt := len(dataFiles)
 	result := make([][]string, 0, nodeCnt)
-	batches := len(dataFiles) / MergeSortFileCountStep
+	batches := len(dataFiles) / adjustedMergeSortFileCountStep
 	rounds := batches / nodeCnt
 	for range rounds * nodeCnt {
-		result = append(result, dataFiles[:MergeSortFileCountStep])
-		dataFiles = dataFiles[MergeSortFileCountStep:]
+		result = append(result, dataFiles[:adjustedMergeSortFileCountStep])
+		dataFiles = dataFiles[adjustedMergeSortFileCountStep:]
 	}
-	remainder := dataFilesCnt - (nodeCnt * rounds * MergeSortFileCountStep)
+	remainder := dataFilesCnt - (nodeCnt * rounds * adjustedMergeSortFileCountStep)
 	if remainder == 0 {
 		return result, nil
 	}
 	// adjust node cnt for remainder files to avoid having too much target files.
 	adjustNodeCnt := nodeCnt
 	maxTargetFilesPerSubtask := max(MergeSortMaxSubtaskTargetFiles, mergeConc)
-	for (rounds*nodeCnt*maxTargetFilesPerSubtask)+(adjustNodeCnt*maxTargetFilesPerSubtask) > int(MergeSortOverlapThreshold) {
+	for (rounds*nodeCnt*maxTargetFilesPerSubtask)+(adjustNodeCnt*maxTargetFilesPerSubtask) > int(GetAdjustedMergeSortOverlapThreshold(mergeConc)) {
 		adjustNodeCnt--
 		if adjustNodeCnt == 0 {
 			return nil, errors.Errorf("unexpected zero node count, dataFiles=%d, nodeCnt=%d", dataFilesCnt, nodeCnt)

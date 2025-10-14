@@ -347,7 +347,7 @@ func TestDivideMergeSortDataFilesBasic(t *testing.T) {
 		name := fmt.Sprintf("distribute %d files to %d nodes", tc.fileCnt, tc.nodeCnt)
 		t.Run(name, func(t *testing.T) {
 			items := make([]string, tc.fileCnt)
-			result, err := DivideMergeSortDataFiles(items, tc.nodeCnt, 0)
+			result, err := DivideMergeSortDataFiles(items, tc.nodeCnt, 16)
 			require.NoError(t, err)
 			actualSizes := make([]int, len(result))
 			for i, batch := range result {

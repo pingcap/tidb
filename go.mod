@@ -90,7 +90,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20250908061600-97d984880071
-	github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e
+	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20241022082558-0607513e7fa4
@@ -104,6 +104,7 @@ require (
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
+	github.com/spf13/afero v1.11.0
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/pflag v1.0.5
 	github.com/spkg/bom v1.0.0
@@ -111,7 +112,7 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20250924090517-41d7dbe3ec13
+	github.com/tikv/client-go/v2 v2.0.8-0.20251009122557-471c5bd6ec4d
 	github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6

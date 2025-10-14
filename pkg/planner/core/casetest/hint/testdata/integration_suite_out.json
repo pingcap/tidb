@@ -1877,7 +1877,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ ignore_index(t, idx_v)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;",
+        "SQL": "explain format = 'brief' select /*+ ignore_index(t, idx_vec)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;",
         "Plan": [
           "Projection 1.00 root  test.t.a",
           "└─Projection 1.00 root  test.t.a, test.t.vec",

@@ -682,8 +682,8 @@ github.com/pingcap/kvproto v0.0.0-20250908061600-97d984880071 h1:w1C73NPjdEnVBX9
 github.com/pingcap/kvproto v0.0.0-20250908061600-97d984880071/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
 github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7/go.mod h1:8AanEdAHATuRurdGxZXBz0At+9avep+ub7U1AGYLIMM=
 github.com/pingcap/log v1.1.0/go.mod h1:DWQW5jICDR7UJh4HtxXSM20Churx4CQL0fwL/SoOSA4=
-github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e h1:8AZZRv1Ox9FVGATVZBBgr6y1MrNBQFABEdovNJt1QIc=
-github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e/go.mod h1:ORfBOFp1eteu2odzsyaxI+b8TzJwgjwyQcGhI+9SfEA=
+github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9 h1:qG9BSvlWFEE5otQGamuWedx9LRm0nrHvsQRQiW8SxEs=
+github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9/go.mod h1:ORfBOFp1eteu2odzsyaxI+b8TzJwgjwyQcGhI+9SfEA=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 h1:T4pXRhBflzDeAhmOQHNPRRogMYxP13V7BkYw3ZsoSfE=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5/go.mod h1:rlimy0GcTvjiJqvD5mXTRr8O2eNZPBrcUgiWVYp9530=
 github.com/pingcap/tipb v0.0.0-20241022082558-0607513e7fa4 h1:wvaUybJT0fUReCDcFtV3CEvMuI9iu+G7IW72tbSlil4=
@@ -786,6 +786,8 @@ github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67/go.mod h1
 github.com/spf13/afero v1.1.2/go.mod h1:j4pytiNVoe2o6bmDsKpLACNPDBIoEAkihy7loJ1B0CQ=
 github.com/spf13/afero v1.2.1/go.mod h1:9ZxEEn6pIJ8Rxe320qSDBk6AsU0r9pR7Q4OcevTdifk=
 github.com/spf13/afero v1.2.2/go.mod h1:9ZxEEn6pIJ8Rxe320qSDBk6AsU0r9pR7Q4OcevTdifk=
+github.com/spf13/afero v1.11.0 h1:WJQKhtpdm3v2IzqG8VMqrr6Rf3UYpEF239Jy9wNepM8=
+github.com/spf13/afero v1.11.0/go.mod h1:GH9Y3pIexgf1MTIWtNGyogA5MwRIDXGUr+hbWNoBjkY=
 github.com/spf13/cast v1.3.0/go.mod h1:Qx5cxh0v+4UWYiBimWS+eyWzqEqokIECu5etghLkUJE=
 github.com/spf13/cast v1.3.1/go.mod h1:Qx5cxh0v+4UWYiBimWS+eyWzqEqokIECu5etghLkUJE=
 github.com/spf13/cast v1.5.0 h1:rj3WzYc11XZaIZMPKmwP96zkFEnnAmV8s6XbB2aY32w=
@@ -832,8 +834,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20250924090517-41d7dbe3ec13 h1:famDPRgP+8te7CAQl1fjs2TJF1s0vUOI5Sx2aSPIdHs=
-github.com/tikv/client-go/v2 v2.0.8-0.20250924090517-41d7dbe3ec13/go.mod h1:DrneTzlX66kdfl59PMdaHpeJWzyXXNClNqzhi71AvXc=
+github.com/tikv/client-go/v2 v2.0.8-0.20251009122557-471c5bd6ec4d h1:jpXWJc3FkfxrSJ7U/XS1FxqiJviLZcOLlDOg/vLpX8U=
+github.com/tikv/client-go/v2 v2.0.8-0.20251009122557-471c5bd6ec4d/go.mod h1:DrneTzlX66kdfl59PMdaHpeJWzyXXNClNqzhi71AvXc=
 github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286 h1:TBrJ7eyjLfI6xc7rr348sTKPUa96ZUWmfSonqLP0vVM=
 github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286/go.mod h1:kuIEDRLck7LGHiqKYrQR3fNiK06trLmmK02s4r99iWU=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=

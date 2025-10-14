@@ -721,7 +721,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, error) {
 	p := &Set{}
 	for _, vars := range v.Variables {
-		if vars.IsGlobal || vars.IsInstance {
+		if vars.IsGlobal {
 			err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or SYSTEM_VARIABLES_ADMIN")
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"SYSTEM_VARIABLES_ADMIN"}, false, err)
 		}
@@ -732,7 +732,6 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 		assign := &expression.VarAssignment{
 			Name:          vars.Name,
 			IsGlobal:      vars.IsGlobal,
-			IsInstance:    vars.IsInstance,
 			IsSystem:      vars.IsSystem,
 			CanSPVariable: vars.CanSPVariable,
 		}
