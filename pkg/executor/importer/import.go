@@ -1346,7 +1346,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	}
 
 	e.dataFiles = dataFiles
-	e.TotalFileSize = totalSize.Load()
+	e.TotalFileSize = totalSize
 
 	return nil
 }
