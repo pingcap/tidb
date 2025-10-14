@@ -225,13 +225,13 @@ func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se sessionapi.Sess
 
 	// Populate WhereColumns on DataSource before stats derivation
 	var dsForPopulate *logicalop.DataSource
-	findDataSource(logicalPlan.(base.LogicalPlan), &dsForPopulate)
+	findDataSource(logicalPlan, &dsForPopulate)
 	if dsForPopulate != nil && len(dsForPopulate.WhereColumns) == 0 && len(dsForPopulate.PushedDownConds) > 0 {
 		dsForPopulate.WhereColumns = expression.ExtractColumnsFromExpressions(dsForPopulate.PushedDownConds, nil)
 	}
 
 	// Trigger stats derivation; pruning happens here
-	lp := logicalPlan.(base.LogicalPlan)
+	lp := logicalPlan
 	_, _, err = lp.RecursiveDeriveStats(nil)
 	require.NoError(t, err)
 
@@ -253,8 +253,6 @@ func findDataSource(plan base.LogicalPlan, result **logicalop.DataSource) {
 	}
 
 	for _, child := range plan.Children() {
-		if lp, ok := child.(base.LogicalPlan); ok {
-			findDataSource(lp, result)
-		}
+		findDataSource(child, result)
 	}
 }

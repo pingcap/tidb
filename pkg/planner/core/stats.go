@@ -797,7 +797,7 @@ type indexWithScore struct {
 // The real target of this pruning is for customers requiring a very large number of
 // of indexes (>100) on a table, which causes excessive planning time.
 // TO-DO: While isSingleScan is checked, the code can prioritize single-scan
-// over more filterirng indexes. And it doesn't check for ,index uniqueness and partial indexes.
+// over more filtering indexes. And it doesn't check for index uniqueness and partial indexes.
 // Further refinement will be necessary after customer feedback.
 func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessPath, whereColumns, orderingColumns []*expression.Column, threshold int) []*util.AccessPath {
 	if len(paths) <= 1 {

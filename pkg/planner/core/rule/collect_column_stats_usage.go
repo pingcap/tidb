@@ -292,8 +292,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		schema := x.Schema()
 		for i, aggFunc := range x.AggFuncs {
 			c.updateColMapFromExpressions(schema.Columns[i], aggFunc.Args)
-			// Extract columns from MIN/MAX/FirstRow aggregates - these can benefit from ordered indexes
-			// MIN(col) ≈ ORDER BY col ASC LIMIT 1, MAX(col) ≈ ORDER BY col DESC LIMIT 1, FirstRow(col) ≈ ORDER BY col ASC LIMIT 1
+			// Extract columns from MIN/MAX/FIRST_VALUE aggregates - these can benefit from ordered indexes
 			if aggFunc.Name == ast.AggFuncMin || aggFunc.Name == ast.AggFuncMax || aggFunc.Name == ast.AggFuncFirstRow {
 				minMaxCols := expression.ExtractColumnsFromExpressions(aggFunc.Args, nil)
 				c.orderingColumns = append(c.orderingColumns, minMaxCols...)
