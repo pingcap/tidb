@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/serialization"
 	"go.uber.org/zap"
 )
 
@@ -610,7 +609,11 @@ func (bj BinaryJSON) CalculateHashValueSize() int64 {
 			size += bj.ArrayGetElem(i).CalculateHashValueSize()
 		}
 	case JSONTypeCodeObject:
+		elemCount := int(jsonEndian.Uint32(bj.Value))
 		size := int64(unsafe.Sizeof(bj.TypeCode)) + dataSizeOff
+		for i := range elemCount {
+			size += CalculateBinaryJSONSize(string(bj.objectGetKey(i)))
+		}
 	}
 	return int64(len(bj.Value)) + int64(unsafe.Sizeof(bj.TypeCode))
 }
@@ -714,41 +717,48 @@ func CreateBinaryJSONWithCheck(in any) (BinaryJSON, error) {
 }
 
 // CalculateBinaryJSONSize calculates the size of binary JSON
-func CalculateBinaryJSONSize(in any) (int64, error) {
-	var err error
+func CalculateBinaryJSONSize(in any) int64 {
 	switch x := in.(type) {
 	case nil:
-		return int64(unsafe.Sizeof(JSONLiteralNil)), nil
+		return int64(unsafe.Sizeof(JSONLiteralNil))
 	case bool:
 		if x {
-			return int64(unsafe.Sizeof(JSONLiteralTrue)), nil
+			return int64(unsafe.Sizeof(JSONLiteralTrue))
 		} else {
-			return int64(unsafe.Sizeof(JSONLiteralFalse)), nil
+			return int64(unsafe.Sizeof(JSONLiteralFalse))
 		}
 	case int64, uint64, float64:
-		return 8, nil
+		return 8
 	case json.Number:
 		size, err := calculateBinaryNumberSize(x)
 		if err != nil {
-			return 0, errors.Trace(err)
+			panic(errors.Trace(err))
 		}
-		return size, nil
+		return size
 	case string:
-		return calculateBinaryStringSize(x), nil
+		return calculateBinaryStringSize(x)
 	case BinaryJSON:
-		return int64(len(x.Value)), nil
+		return int64(len(x.Value))
 	case []any:
 		size, err := calculateBinaryArraySize(x)
 		if err != nil {
-			return 0, errors.Trace(err)
+			panic(errors.Trace(err))
 		}
-		return size, nil
+		return size
 	case map[string]any:
+		size, err := calculateBinaryObjectSize(x)
+		if err != nil {
+			panic(errors.Trace(err))
+		}
+		return size
 	case Opaque:
+		return calculateBinaryOpaque(x)
 	case Time:
+		return 8
 	case Duration:
+		return 12
 	}
-	return 0, errors.New(fmt.Sprintf(unknownTypeErrorMsg, reflect.TypeOf(in)))
+	panic(errors.New(fmt.Sprintf(unknownTypeErrorMsg, reflect.TypeOf(in))))
 }
 
 func appendBinaryJSON(buf []byte, in any) (JSONTypeCode, []byte, error) {
@@ -865,61 +875,25 @@ func calculateBinaryArraySize(array []any) (int64, error) {
 	arrayLen := int64(len(array))
 	size := arrayLen + dataSizeOff + arrayLen*valEntrySize
 	for _, val := range array {
-		elemSize, err := calculateBinaryValElemSize(val)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		size += elemSize
+		size += calculateBinaryValElemSize(val)
 	}
 	return size, nil
 }
 
-func calculateBinaryValElemSize(val any) (int64, error) {
-	size, err := CalculateBinaryJSONSize(val)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return size, nil
+func calculateBinaryValElemSize(val any) int64 {
+	return CalculateBinaryJSONSize(val)
 }
 
-func calculateBinaryObjectSize(buf []byte, x map[string]any) ([]byte, error) {
-	docOff := len(buf)
-	size := serialization.Uint32Len + dataSizeOff + 
-	buf = appendUint32(buf, uint32(len(x)))
-	buf = appendZero(buf, dataSizeOff)
-	keyEntryBegin := len(buf)
-	buf = appendZero(buf, len(x)*keyEntrySize)
-	valEntryBegin := len(buf)
-	buf = appendZero(buf, len(x)*valEntrySize)
-
-	fields := make([]field, 0, len(x))
+func calculateBinaryObjectSize(x map[string]any) (int64, error) {
+	size := 4 + dataSizeOff + int64(len(x))*keyEntrySize + int64(len(x))*valEntrySize
 	for key, val := range x {
-		fields = append(fields, field{key: key, val: val})
+		size += int64(len(key)) + calculateBinaryValElemSize(val)
 	}
-	slices.SortFunc(fields, func(i, j field) int {
-		return cmp.Compare(i.key, j.key)
-	})
-	for i, field := range fields {
-		keyEntryOff := keyEntryBegin + i*keyEntrySize
-		keyOff := len(buf) - docOff
-		keyLen := uint32(len(field.key))
-		if keyLen > math.MaxUint16 {
-			return nil, ErrJSONObjectKeyTooLong
-		}
-		jsonEndian.PutUint32(buf[keyEntryOff:], uint32(keyOff))
-		jsonEndian.PutUint16(buf[keyEntryOff+keyLenOff:], uint16(keyLen))
-		buf = append(buf, field.key...)
-	}
-	for i, field := range fields {
-		var err error
-		buf, err = appendBinaryValElem(buf, docOff, valEntryBegin+i*valEntrySize, field.val)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	docSize := len(buf) - docOff
-	jsonEndian.PutUint32(buf[docOff+dataSizeOff:], uint32(docSize))
-	return buf, nil
+	return size, nil
+}
+
+func calculateBinaryOpaque(v Opaque) int64 {
+	return int64(unsafe.Sizeof(v.TypeCode)) + binary.MaxVarintLen64 + int64(len(v.Buf))
 }
 
 func appendBinaryNumber(buf []byte, x json.Number) (JSONTypeCode, []byte, error) {

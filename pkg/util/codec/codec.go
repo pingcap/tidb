@@ -564,7 +564,16 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 				(*memoryUsagePerRow)[j] += signFlagLen + int64(sizeUint64)
 			}
 		case mysql.TypeJSON:
+			for j, physicalRowindex := range usedRows {
+				if canSkip(physicalRowindex) {
+					continue
+				}
 
+				(*memoryUsagePerRow)[j] = column.GetJSON(physicalRowindex).CalculateHashValueSize()
+				if serializeModes[i] == KeepVarColumnLength {
+					(*memoryUsagePerRow)[j] += int64(sizeUint32)
+				}
+			}
 		case mysql.TypeNull:
 		default:
 			return errors.Errorf("unsupport column type for pre-alloc %d", tps[i].GetType())
