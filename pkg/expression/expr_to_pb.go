@@ -183,7 +183,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 		var err error
 		val, err = codec.EncodeValue(nil, nil, d)
 		if err != nil {
-			logutil.BgLogger().Error("encode json", zap.Error(err))
+			logutil.BgLogger().Error("failed to encode JSON datum for protobuf conversion", zap.Error(err))
 			return tp, nil, false
 		}
 	default:
