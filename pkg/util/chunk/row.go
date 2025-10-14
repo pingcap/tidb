@@ -221,6 +221,7 @@ func (r Row) DatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) {
 	}
 }
 
+// GetRawLen returns the byte length of a row
 func (r Row) GetRawLen(colIdx int) int {
 	return len(r.c.columns[colIdx].GetRaw(r.idx))
 }
