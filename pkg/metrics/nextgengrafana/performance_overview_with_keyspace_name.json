@@ -3241,7 +3241,7 @@
             },
             {
               "datasource": "${DS_TEST-CLUSTER}",
-              "expr": "(sum(rate(\n    tikv_raftstore_store_duration_secs_sum\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n)) / sum(rate(\n    tikv_raftstore_store_duration_secs_count\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n))",
+              "expr": "sum(rate(\n    tikv_raftstore_store_duration_secs_sum\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n)) / sum(rate(\n    tikv_raftstore_store_duration_secs_count\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n))",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -3249,7 +3249,7 @@
               "intervalFactor": 1,
               "legendFormat": "avg",
               "metric": "",
-              "query": "(sum(rate(\n    tikv_raftstore_store_duration_secs_sum\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n)) / sum(rate(\n    tikv_raftstore_store_duration_secs_count\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n))",
+              "query": "sum(rate(\n    tikv_raftstore_store_duration_secs_sum\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n)) / sum(rate(\n    tikv_raftstore_store_duration_secs_count\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n))",
               "refId": "",
               "step": 10,
               "target": ""
@@ -3442,7 +3442,7 @@
             },
             {
               "datasource": "${DS_TEST-CLUSTER}",
-              "expr": "(sum(rate(\n    tikv_raftstore_apply_duration_secs_sum\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n)) / sum(rate(\n    tikv_raftstore_apply_duration_secs_count\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n))",
+              "expr": "sum(rate(\n    tikv_raftstore_apply_duration_secs_sum\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n)) / sum(rate(\n    tikv_raftstore_apply_duration_secs_count\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n))",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -3450,7 +3450,7 @@
               "intervalFactor": 1,
               "legendFormat": "avg",
               "metric": "",
-              "query": "(sum(rate(\n    tikv_raftstore_apply_duration_secs_sum\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n)) / sum(rate(\n    tikv_raftstore_apply_duration_secs_count\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n))",
+              "query": "sum(rate(\n    tikv_raftstore_apply_duration_secs_sum\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n)) / sum(rate(\n    tikv_raftstore_apply_duration_secs_count\n    {k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}\n    [$__rate_interval]\n))",
               "refId": "",
               "step": 10,
               "target": ""
