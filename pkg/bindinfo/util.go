@@ -62,11 +62,11 @@ func (u *globalBindingHandle) updateBindingUsageInfoToStorage(bindings []Binding
 		}
 	}()
 	for _, binding := range bindings {
-		lastUsed := binding.UsageInfo.LastUsedAt
+		lastUsed := binding.LastUsedAt
 		if lastUsed == nil {
 			continue
 		}
-		lastSaved := binding.UsageInfo.LastSavedAt
+		lastSaved := binding.LastSavedAt
 		if shouldUpdateBinding(lastSaved, lastUsed) {
 			toWrite = append(toWrite, binding)
 			cnt++
@@ -100,7 +100,7 @@ func (u *globalBindingHandle) updateBindingUsageInfoToStorageInternal(bindings [
 			return errors.Trace(err)
 		}
 		for _, binding := range bindings {
-			lastUsed := binding.UsageInfo.LastUsedAt
+			lastUsed := binding.LastUsedAt
 			intest.Assert(lastUsed != nil)
 			err = saveBindingUsage(sctx, binding.SQLDigest, binding.PlanDigest, *lastUsed)
 			if err != nil {
@@ -113,8 +113,10 @@ func (u *globalBindingHandle) updateBindingUsageInfoToStorageInternal(bindings [
 		ts := time.Now()
 		for _, binding := range bindings {
 			binding.UpdateLastSavedAt(&ts)
+			u.getCache().SetBinding(binding.SQLDigest, []Binding{binding})
 		}
 	}
+
 	return err
 }
 
@@ -141,7 +143,7 @@ func addLockForBinds(sctx sessionctx.Context, bindings []Binding) error {
 		}
 		condition = append(condition, sql)
 	}
-	locksql := "select 1 from mysql.bind_info use index(digest_index) where (plan_digest, sql_digest) in (" +
+	locksql := "select 1 from mysql.bind_info where (plan_digest, sql_digest) in (" +
 		strings.Join(condition, " , ") + ") for update"
 	_, err := exec(sctx, locksql)
 	if err != nil {
@@ -152,9 +154,9 @@ func addLockForBinds(sctx sessionctx.Context, bindings []Binding) error {
 
 func saveBindingUsage(sctx sessionctx.Context, sqldigest, planDigest string, ts time.Time) error {
 	lastUsedTime := ts.UTC().Format(types.TimeFormat)
-	var sql = "UPDATE mysql.bind_info USE INDEX(digest_index) SET last_used_date = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE) WHERE sql_digest = %?"
+	var sql = "UPDATE mysql.bind_info SET last_used_date = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE) WHERE sql_digest = %?"
 	if planDigest == "" {
-		sql += " AND plan_digest IS NULL"
+		sql += " AND plan_digest = ''"
 	} else {
 		sql += fmt.Sprintf(" AND plan_digest = '%s'", planDigest)
 	}

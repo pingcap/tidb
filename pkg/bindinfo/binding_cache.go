@@ -130,18 +130,21 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 			}
 		}
 		if bindings != nil {
-			for _, binding := range bindings {
+			for idx, binding := range bindings {
 				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
 				if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
 					continue // fuzzy binding is disabled, skip this binding
 				}
 				if matched && numWildcards < leastWildcards {
 					matchedBinding = binding
+					binding.UpdateLastUsedAt()
+					bindings[idx] = binding
 					isMatched = true
 					leastWildcards = numWildcards
 					break
 				}
 			}
+			bindingCache.SetBinding(sqlDigest, bindings) // update the last used time
 		} else {
 			missingSQLDigest = append(missingSQLDigest, sqlDigest)
 		}

@@ -27,10 +27,10 @@ import (
 func TestBindUsageInfo(t *testing.T) {
 	bindinfo.UpdateBindingUsageInfoBatchSize = 2
 	bindinfo.MaxWriteInterval = 100 * time.Microsecond
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
-	bindingHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
+	bindingHandle := dom.BindHandle()
 	tk.MustExec(`use test`)
 	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
 	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b), key idx_c(c))")

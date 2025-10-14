@@ -74,10 +74,13 @@ type Binding struct {
 
 	// TableNames records all schema and table names in this binding statement, which are used for fuzzy matching.
 	TableNames []*ast.TableName `json:"-"`
-
-	// UsageInfo is to track the usage information `last_used_time` of this binding
-	// and it will be updated when this binding is used.
-	UsageInfo bindingInfoUsageInfo
+	// LastUsedAt records the last time when this binding is used.
+	// It is nil if this binding has never been used.
+	// It is updated when this binding is used.
+	// It is used to update the `last_used_time` field in mysql.bind_info table.
+	LastUsedAt *time.Time
+	// LastSavedAt records the last time when this binding is saved into storage.
+	LastSavedAt *time.Time
 }
 
 func (b *Binding) isSame(rb *Binding) bool {
@@ -243,20 +246,10 @@ func (b *Binding) size() float64 {
 // UpdateLastUsedAt is to update binding usage info when this binding is used.
 func (b *Binding) UpdateLastUsedAt() {
 	now := time.Now()
-	b.UsageInfo.LastUsedAt = &now
+	b.LastUsedAt = &now
 }
 
 // UpdateLastSavedAt is to update the last saved time
 func (b *Binding) UpdateLastSavedAt(ts *time.Time) {
-	b.UsageInfo.LastSavedAt = ts
-}
-
-type bindingInfoUsageInfo struct {
-	// LastUsedAt records the last time when this binding is used.
-	// It is nil if this binding has never been used.
-	// It is updated when this binding is used.
-	// It is used to update the `last_used_time` field in mysql.bind_info table.
-	LastUsedAt *time.Time
-	// LastSavedAt records the last time when this binding is saved into storage.
-	LastSavedAt *time.Time
+	b.LastSavedAt = ts
 }
