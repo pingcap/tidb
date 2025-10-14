@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -127,6 +128,7 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 		return 0, err
 	}
 	version := txn.StartTS()
+	failpoint.InjectCall("saveAnalyzeResultToStorage")
 	// 1. Save mysql.stats_meta.
 	var rs sqlexec.RecordSet
 	// Lock this row to prevent writing of concurrent analyze.

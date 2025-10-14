@@ -174,7 +174,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 
 	exprCols := expression.ExtractColumnsFromExpressions(ds.AllConds, nil)
 	exprUsed := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), exprCols, ds.Schema())
-	prunedColumns := make([]*expression.Column, 0)
 
 	originSchemaColumns := ds.Schema().Columns
 	originColumns := ds.Columns
@@ -194,7 +193,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 				expression.GcColumnExprIsTidbShard(ds.Schema().Columns[i].VirtualExpr) {
 				continue
 			}
-			prunedColumns = append(prunedColumns, ds.Schema().Columns[i])
 			// TODO: investigate why we cannot use slices.Delete for these two:
 			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
