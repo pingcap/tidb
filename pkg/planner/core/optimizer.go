@@ -345,9 +345,6 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
-	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	physical, cost, err := physicalOptimize(logic)
 	if err != nil {
 		return nil, nil, 0, err
@@ -472,9 +469,6 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	handleFineGrainedShuffle(ctx, sctx, plan)
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
-	if !sctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	disableReuseChunkIfNeeded(sctx, plan)
 	generateRuntimeFilter(sctx, plan)
 	return plan
@@ -1258,7 +1252,7 @@ func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) (skipRe
 }
 
 var (
-	// maxMemoryLimitForOverlongType is the memory limit for overlong type column check.
+	// MaxMemoryLimitForOverlongType is the memory limit for overlong type column check.
 	// Why is it not 512 ?
 	// Because many customers allocate a portion of memory to their management programs,
 	// the actual amount of usable memory does not align to 512GB.
