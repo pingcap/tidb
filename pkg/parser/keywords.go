@@ -482,6 +482,7 @@ var Keywords = []KeywordsType{
 	{"PACK_KEYS", false, "unreserved"},
 	{"PAGE", false, "unreserved"},
 	{"PARSER", false, "unreserved"},
+	{"PARAMETER", false, "unreserved"},
 	{"PARTIAL", false, "unreserved"},
 	{"PARTITIONING", false, "unreserved"},
 	{"PARTITIONS", false, "unreserved"},
