@@ -136,7 +136,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	// Prune indexes based on WHERE and ordering columns (ORDER BY, MIN/MAX) if we have too many
 	threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
 	if len(ds.AllPossibleAccessPaths) > threshold && (len(ds.WhereColumns) > 0 || len(ds.OrderingColumns) > 0) {
-		ds.AllPossibleAccessPaths = pruneIndexesByWhereAndOrder(ds.AllPossibleAccessPaths, ds.WhereColumns, ds.OrderingColumns, threshold)
+		ds.AllPossibleAccessPaths = pruneIndexesByWhereAndOrder(ds, ds.AllPossibleAccessPaths, ds.WhereColumns, ds.OrderingColumns, threshold)
 		// Make a copy for PossibleAccessPaths to avoid sharing the same slice
 		ds.PossibleAccessPaths = make([]*util.AccessPath, len(ds.AllPossibleAccessPaths))
 		copy(ds.PossibleAccessPaths, ds.AllPossibleAccessPaths)
@@ -789,7 +789,17 @@ type indexWithScore struct {
 
 // pruneIndexesByWhereAndOrder prunes indexes based on their coverage of WHERE and ordering columns.
 // Ordering columns include both ORDER BY and MIN/MAX aggregates since both benefit from ordered indexes.
-func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, orderingColumns []*expression.Column, threshold int) []*util.AccessPath {
+// This pruning is controlled by variable - tidb_opt_index_prune_threshold.
+// The lower the threshold, the more aggressive the pruning.
+// Pruning occurs before many of the index fields are populated - to avoid the cost of
+// of building predicate ranges. Therefore, pruning is an approximation based upon
+// column coverage only, not the actual predicate ranges.
+// The real target of this pruning is for customers requiring a very large number of
+// of indexes (>100) on a table, which causes excessive planning time.
+// TO-DO: While isSingleScan is checked, the code can prioritize single-scan
+// over more filterirng indexes. And it doesn't check for ,index uniqueness and partial indexes.
+// Further refinement will be necessary after customer feedback.
+func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessPath, whereColumns, orderingColumns []*expression.Column, threshold int) []*util.AccessPath {
 	if len(paths) <= 1 {
 		return paths
 	}
@@ -917,18 +927,21 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, orderin
 	// Only sort perfect covering indexes if we have more than we can use
 	// If we'll keep all of them, no need to sort
 	if len(perfectCoveringIndexes) > maxToKeep {
-		// Sort by consecutive WHERE count DESC (more consecutive = better)
-		// Indexes with more consecutive WHERE columns from start are most valuable
+		// Score perfectCoveringIndexes the same way as preferred, but include isSingleScan bonus
+		singleMap := make(map[*util.AccessPath]bool, len(perfectCoveringIndexes))
+		for i := range perfectCoveringIndexes {
+			p := perfectCoveringIndexes[i].path
+			if p != nil && p.Index != nil {
+				singleMap[p] = isSingleScan(ds, p.FullIdxCols, p.FullIdxColLens)
+			}
+		}
 		slices.SortFunc(perfectCoveringIndexes, func(a, b indexWithScore) int {
-			// Higher consecutive count is better, so reverse comparison
-			if a.consecutiveWhereCount != b.consecutiveWhereCount {
-				return b.consecutiveWhereCount - a.consecutiveWhereCount
+			scoreA := calculateScoreFromCoverage(a, len(whereColIDs), len(orderingColIDs), singleMap[a.path])
+			scoreB := calculateScoreFromCoverage(b, len(whereColIDs), len(orderingColIDs), singleMap[b.path])
+			if scoreA != scoreB {
+				return scoreB - scoreA
 			}
-			// If same, prefer more consecutive ordering columns
-			if a.consecutiveOrderingCount != b.consecutiveOrderingCount {
-				return b.consecutiveOrderingCount - a.consecutiveOrderingCount
-			}
-			// If still same, prefer shorter index
+			// Tie-breaker: shorter index first
 			return len(a.path.Index.Columns) - len(b.path.Index.Columns)
 		})
 	}
@@ -950,8 +963,8 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, orderin
 		if len(preferredIndexes) > remaining {
 			slices.SortFunc(preferredIndexes, func(a, b indexWithScore) int {
 				// Calculate scores using pre-computed coverage info
-				scoreA := calculateScoreFromCoverage(a, len(whereColIDs), len(orderingColIDs))
-				scoreB := calculateScoreFromCoverage(b, len(whereColIDs), len(orderingColIDs))
+				scoreA := calculateScoreFromCoverage(a, len(whereColIDs), len(orderingColIDs), false)
+				scoreB := calculateScoreFromCoverage(b, len(whereColIDs), len(orderingColIDs), false)
 				// Higher score is better, so reverse the comparison
 				if scoreA != scoreB {
 					return scoreB - scoreA
@@ -984,7 +997,7 @@ func pruneIndexesByWhereAndOrder(paths []*util.AccessPath, whereColumns, orderin
 
 // calculateScoreFromCoverage calculates a ranking score using already-computed coverage information.
 // This avoids re-iterating through index columns.
-func calculateScoreFromCoverage(info indexWithScore, totalWhereColumns, totalOrderingCols int) int {
+func calculateScoreFromCoverage(info indexWithScore, totalWhereColumns, totalOrderingCols int, isSingleScan bool) int {
 	score := 0
 
 	// Score for WHERE column coverage
@@ -1011,6 +1024,10 @@ func calculateScoreFromCoverage(info indexWithScore, totalWhereColumns, totalOrd
 	// Bonus for consecutive ordering columns
 	if info.consecutiveOrderingCount == totalOrderingCols {
 		score += 10
+	}
+	// Bonus for single-scan
+	if isSingleScan {
+		score += 20
 	}
 
 	return score

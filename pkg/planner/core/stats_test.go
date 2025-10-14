@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -60,7 +61,7 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	)`)
 
 	// Establish baseline without pruning (very large threshold)
-	tk.MustExec("set @@tidb_opt_index_prune_threshold=100000")
+	tk.MustExec("set @@tidb_opt_index_prune_threshold=10000")
 	dsBaseline := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
 	require.NotNil(t, dsBaseline)
 	require.Greater(t, len(dsBaseline.AllPossibleAccessPaths), 60, "Should have 60+ paths")
@@ -114,6 +115,96 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	})
 
 	// Unit-level empty/single path cases are omitted in E2E pipeline test
+}
+
+func TestIndexChoiceFromPruning(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+
+	// Reuse the same DDL as the other test
+	tk.MustExec(`CREATE TABLE t1 (
+		a int, b int, c int, d int, e int, f int,
+		KEY ia (a), KEY iab (a, b), KEY iac (a, c), KEY iad (a, d), KEY iae (a, e), KEY iaf (a, f),
+		KEY iabc (a, b, c), KEY iabd (a, b, d), KEY iabe (a, b, e), KEY iabf (a, b, f),
+		KEY iacb (a, c, b), KEY iacd (a, c, d), KEY iace (a, c, e), KEY iacf (a, c, f),
+		KEY iade (a, d, e), KEY iadf (a, d, f), KEY iaeb (a, e, b), KEY iaec (a, e, c),
+		KEY iaed (a, e, d), KEY iaef (a, e, f), KEY iafb (a, f, b), KEY iafc (a, f, c),
+		KEY iafd (a, f, d), KEY iafe (a, f, e),
+		KEY iabcd (a, b, c, d), KEY iabce (a, b, c, e), KEY iabcf (a, b, c, f), KEY iabdc (a, b, d, c),
+		KEY iabfc (a, b, f, c), KEY iabfd (a, b, f, d), KEY iabfe (a, b, f, e),
+		KEY iacbd (a, c, b, d), KEY iacbe (a, c, b, e), KEY iacbf (a, c, b, f),
+		KEY iacdb (a, c, d, b), KEY iacde (a, c, d, e), KEY iadbe (a, d, b, e),
+		KEY iadcb (a, d, c, b), KEY iadcf (a, d, c, f),
+		KEY ib (b), KEY iba (b, a), KEY ibc (b, c), KEY ibd (b, d), KEY ibe (b, e), KEY ibf (b, f),
+		KEY ibac (b, a, c), KEY ibad (b, a, d), KEY ibae (b, a, e), KEY ibaf (b, a, f),
+		KEY ibca (b, c, a), KEY ibcd (b, c, d), KEY ibce (b, c, e), KEY ibcf (b, c, f),
+		KEY ibda (b, d, a), KEY ibdc (b, d, c), KEY ibde (b, d, e), KEY ibdf (b, d, f),
+		KEY ibea (b, e, a), KEY ibec (b, e, c), KEY ibfa (b, f, a), KEY ibfc (b, f, c),
+		KEY ibfd (b, f, d), KEY ibfe (b, f, e)
+	)`)
+
+	queries := []string{
+		"select * from t1 where a = 1 and f = 1",
+		"select * from t1 where f = 1 and a = 1",
+		"select * from t1 where a in (1,2,3) and f = 5",
+		"select * from t1 where a = 9 and f in (1,2)",
+		"select d from t1 where a = 1 and (b = 5 or b = 7 or b in (1,2,3))",
+		"select c from t1 where (a = 1 and b = 1) or (a = 3 and b = 3) order by c",
+		"select first_value(c) over(order by b) from t1 where a = 1 and (b = 5 or b = 7 or b in (1,2,3))",
+		"select min(a) from t1",
+		"select a, d, c, b from t1 where a = 1",
+	}
+
+	// Capture chosen index with prune threshold 100
+	tk.MustExec("set @@tidb_opt_index_prune_threshold=100")
+	chosenAt100 := make([]string, len(queries))
+	for i, sql := range queries {
+		chosenAt100[i] = extractIndexNameFromExplain(tk, sql)
+	}
+
+	// Capture chosen index with prune threshold 10
+	tk.MustExec("set @@tidb_opt_index_prune_threshold=10")
+	chosenAt10 := make([]string, len(queries))
+	for i, sql := range queries {
+		chosenAt10[i] = extractIndexNameFromExplain(tk, sql)
+	}
+
+	for i := range queries {
+		// They should be the same regardless of pruning threshold
+		if chosenAt100[i] == "" && chosenAt10[i] == "" {
+			continue
+		}
+		require.Equalf(t, chosenAt100[i], chosenAt10[i], "query %d index differs between thresholds: 100=%s, 10=%s", i, chosenAt100[i], chosenAt10[i])
+	}
+}
+
+// extractIndexNameFromExplain runs EXPLAIN and extracts the index name from operator info.
+func extractIndexNameFromExplain(tk *testkit.TestKit, sql string) string {
+	rows := tk.MustQuery("explain format='brief' " + sql).Rows()
+	for _, row := range rows {
+		for _, col := range row {
+			s := col.(string)
+			if idx := strings.Index(s, "index:"); idx >= 0 {
+				name := s[idx+len("index:"):]
+				// Trim delimiters and details after name
+				name = strings.TrimSpace(name)
+				// Stop at first comma or space
+				for j, r := range name {
+					if r == ',' || r == ' ' || r == ')' { // common separators
+						name = name[:j]
+						break
+					}
+				}
+				name = strings.Trim(name, "`()")
+				if name != "" {
+					return name
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // getDataSourceFromQuery is a helper to extract DataSource from a query for testing
