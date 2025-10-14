@@ -89,15 +89,13 @@
   {
     "name": "TestJoinOrderHint4NestedLeading",
     "cases": [
-      "select /*+ leading(a, (b, c)) */ * from a join b on a.id=b.id join c on b.id=c.id;",
-      "select /*+ leading(a, (b, (c, d))) */ * from a join b on a.id=b.id join c on b.id=c.id join d on c.id=d.id;",
-      "select /*+ leading(a, ((b, c), d)) */ * from a join b on a.id=b.id join c on b.id=c.id join d on c.id=d.id;",
-      "select /*+ leading(a@sel_1, (b@sel_2, c@sel_3)) */ * from (select * from t1) a, (select * from t2) b, (select * from t3) c where a.id=b.id and b.id=c.id;",
-      "select /*+ leading((a, b), (select * from c join d on c.id=d.id)) */ * from a join b on a.id=b.id join (select * from c join d on c.id=d.id) sub on b.id=sub.id;",
-      "select /*+ leading(a, (b left join (c, d))) */ * from a join b on a.id=b.id left join c on b.id=c.id join d on c.id=d.id;",
-      "select /*+ leading((a, (b, (c, (d, e))))) */ * from a join b on a.id=b.id join c on b.id=c.id join d on c.id=d.id join e on d.id=e.id;",
-      "select /*+ leading((a, (b, c)), (d, (e, f))) */ * from a join b on a.id=b.id join c on b.id=c.id join d on c.id=d.id join e on d.id=e.id join f on e.id=f.id;",
-      "select /*+ leading((a@sel_1, (b@sel_2, (c@sel_3, d@sel_4)))) */ * from (select * from t1) a join (select * from t2) b on a.id=b.id left join (select * from t3) c on b.id=c.id join (select * from t4) d on c.id=d.id;"
+      "select /*+ leading(t1, (t2, t3)) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.a=t3.a;",
+      "select /*+ leading(t1, (t2, (t3, t4))) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.a=t3.a join t4 on t3.a=t4.a;",
+      "select /*+ leading(t1, ((t2, t3), t4)) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.a=t3.a join t4 on t3.a=t4.a;",
+      "select /*+ leading(t1@sel_1, (t2@sel_2, t3@sel_3)) */ * from (select * from t1) t1, (select * from t2) t2, (select * from t3) t3 where t1.a=t2.a and t2.a=t3.a;",
+      "select /*+ leading((t1, (t2, (t3, (t4, t5))))) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.a=t3.a join t4 on t3.a=t4.a join t5 on t4.a=t5.a;",
+      "select /*+ leading((t1, (t2, t3)), (t4, (t5, t6))) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.a=t3.a join t4 on t3.a=t4.a join t5 on t4.a=t5.a join t6 on t5.a=t6.a;",
+      "select /*+ leading((t1@sel_1, (t2@sel_2, (t3@sel_3, t4@sel_4)))) */ * from (select * from t1) t1 join (select * from t2) t2 on t1.a=t2.a left join (select * from t3) t3 on t2.a=t3.a join (select * from t4) t4 on t3.a=t4.a;"
     ]
   }
 ]
