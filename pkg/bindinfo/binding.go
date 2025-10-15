@@ -78,9 +78,9 @@ type Binding struct {
 	// It is nil if this binding has never been used.
 	// It is updated when this binding is used.
 	// It is used to update the `last_used_time` field in mysql.bind_info table.
-	LastUsedAt *time.Time
+	LastUsedAt *time.Time `json:"-"`
 	// LastSavedAt records the last time when this binding is saved into storage.
-	LastSavedAt *time.Time
+	LastSavedAt *time.Time `json:"-"`
 }
 
 func (b *Binding) isSame(rb *Binding) bool {
