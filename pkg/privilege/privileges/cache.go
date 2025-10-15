@@ -26,6 +26,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
@@ -884,6 +885,7 @@ func (p *MySQLPrivilege) LoadTablesPrivTable(exec sqlexec.SQLExecutor) error {
 
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadColumnsPrivTable(exec sqlexec.SQLExecutor) error {
+	logutil.BgLogger().Debug("begin to load mysql.columns_priv")
 	err := loadTable(exec, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow(nil))
 	if err != nil {
 		return err
@@ -1329,6 +1331,19 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(userList map[string]struct{})
 				value.assignUserOrHost(row, i, f)
 			}
 		}
+		// string fields' underlying array address should not repeat
+		logutil.BgLogger().Debug("columnsPrivRecord addr",
+			zap.String("user", value.User),
+			zap.String("user addr", fmt.Sprintf("%p", unsafe.StringData(value.User))),
+			zap.String("host", value.User),
+			zap.String("host addr", fmt.Sprintf("%p", unsafe.StringData(value.User))),
+			zap.String("db", value.User),
+			zap.String("db addr", fmt.Sprintf("%p", unsafe.StringData(value.User))),
+			zap.String("table_name", value.User),
+			zap.String("table_name addr", fmt.Sprintf("%p", unsafe.StringData(value.User))),
+			zap.String("column_name", value.User),
+			zap.String("column_name addr", fmt.Sprintf("%p", unsafe.StringData(value.User))),
+		)
 		if userList != nil {
 			if _, ok := userList[value.User]; !ok {
 				return nil
