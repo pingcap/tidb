@@ -181,12 +181,12 @@ func TestKeepingJoinKeys(t *testing.T) {
 			`      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
 		tk.MustQuery(`explain format='plan_tree' select 1 from t1 left join t2 on t1.a=t2.a where t2.a=1`).Check(testkit.Rows(
 			`Projection root  1->Column#9`,
-			`└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
+			`└─HashJoin root  inner join, equal:[eq(test.t2.a, test.t1.a)]`,
 			`  ├─TableReader(Build) root  data:Selection`,
 			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
 			`  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
 			`  └─TableReader(Probe) root  data:Selection`,
-			`    └─Selection cop[tikv]  eq(test.t1.a, 1)`,
+			`    └─Selection cop[tikv]  not(isnull(test.t1.a))`,
 			`      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
 		tk.MustQuery(`explain format='plan_tree' select 1 from t1, t2 where t1.a=1 and t1.a=t2.a`).Check(testkit.Rows(
 			`Projection root  1->Column#9`,
@@ -194,9 +194,11 @@ func TestKeepingJoinKeys(t *testing.T) {
 			`  ├─TableReader(Build) root  data:Selection`,
 			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
 			`  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`  │ └─Selection cop[tikv]  eq(test.t1.a, 1)`,
+			`  │   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`,
 			`  └─TableReader(Probe) root  data:Selection`,
-			`    └─Selection cop[tikv]  eq(test.t1.a, 1)`,
-			`      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
+			`    └─Selection cop[tikv]  not(isnull(test.t2.a))`,
+			`      └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`))
 	})
 }
 
