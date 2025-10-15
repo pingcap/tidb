@@ -610,12 +610,30 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 	if len(used) == 0 || len(j.offsetAndLengthArray) == 0 {
 		return
 	}
+
+	preAllocMemForCol := func(srcCol *chunk.Column, dstCol *chunk.Column) {
+		nullBitmapTotalLenDelta := int64(0)
+		dataMemTotalLenDelta := int64(0)
+		offsetTotalLenDelta := int64(0)
+		for _, offsetAndLength := range j.offsetAndLengthArray {
+			nullBitmapLenDelta, dataLenDelta, offsetLenDelta := dstCol.CalculateLenDeltaForAppendCellNTimes(srcCol, offsetAndLength.offset, offsetAndLength.length)
+			nullBitmapTotalLenDelta += nullBitmapLenDelta
+			dataMemTotalLenDelta += dataLenDelta
+			offsetTotalLenDelta += offsetLenDelta
+		}
+
+		dstCol.Reserve(nullBitmapTotalLenDelta, dataMemTotalLenDelta, offsetTotalLenDelta)
+	}
+
 	if forOtherCondition {
 		usedColumnMap := make(map[int]struct{})
 		for _, colIndex := range used {
 			if _, ok := usedColumnMap[colIndex]; !ok {
 				srcCol := probeChk.Column(colIndex)
 				dstCol := chk.Column(colIndex + collOffset)
+
+				preAllocMemForCol(srcCol, dstCol)
+
 				for _, offsetAndLength := range j.offsetAndLengthArray {
 					dstCol.AppendCellNTimes(srcCol, offsetAndLength.offset, offsetAndLength.length)
 				}
@@ -626,6 +644,9 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 		for index, colIndex := range used {
 			srcCol := probeChk.Column(colIndex)
 			dstCol := chk.Column(index + collOffset)
+
+			preAllocMemForCol(srcCol, dstCol)
+
 			for _, offsetAndLength := range j.offsetAndLengthArray {
 				dstCol.AppendCellNTimes(srcCol, offsetAndLength.offset, offsetAndLength.length)
 			}
