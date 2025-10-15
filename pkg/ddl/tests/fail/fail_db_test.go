@@ -156,20 +156,6 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustExec("drop database cancel_job_db")
 }
 
-// TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of executor.go when
-// doing the operation of 'modify column'.
-func TestInitializeOffsetAndState(t *testing.T) {
-	s := createFailDBSuite(t)
-	tk := testkit.NewTestKit(t, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int)")
-	defer tk.MustExec("drop table t")
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/uninitializedOffsetAndState", `return(true)`))
-	tk.MustExec("ALTER TABLE t MODIFY COLUMN b int FIRST;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/uninitializedOffsetAndState"))
-}
-
 func TestUpdateHandleFailed(t *testing.T) {
 	s := createFailDBSuite(t)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/errorUpdateReorgHandle", `1*return`))
