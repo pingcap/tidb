@@ -1853,7 +1853,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
 		logutil.BgLogger().Debug("show column privilege record in cache", zap.String("user", itm.username), zap.Int("len", len(itm.data)))
 		for _, record := range itm.data {
-			logutil.BgLogger().Debug("show column privilege record in cache",
+			logutil.BgLogger().Debug("column privilege record in cache",
 				zap.String("user", record.User),
 				zap.String("user addr", fmt.Sprintf("%p", unsafe.StringData(record.User))),
 				zap.String("host", record.Host),
