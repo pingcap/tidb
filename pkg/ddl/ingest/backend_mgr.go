@@ -154,7 +154,8 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, c
 		return nil, nil, err
 	}
 	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
-		job.Type == model.ActionAddIndex)
+		job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionModifyColumn)
 	intest.Assert(job.ReorgMeta != nil)
 
 	resGroupName := job.ReorgMeta.ResourceGroupName
