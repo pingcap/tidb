@@ -270,7 +270,7 @@ func rollbackModifyColumnJobWithData(
 	}
 	var changingIdxIDs []int64
 	if args.ChangingColumn != nil {
-		changingIdxIDs = buildRelatedIndexIDs(tblInfo, args.ChangingColumn.ID)
+		changingIdxIDs = buildRelatedIndexIDs(job, tblInfo, args.ChangingColumn.ID)
 		// The job is in the middle state. The appended changingCol and changingIndex should
 		// be removed from the tableInfo as well.
 		removeChangingColAndIdxs(tblInfo, args.ChangingColumn.ID)
@@ -486,7 +486,11 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		// none -> delete only
 		updateObjectState(changingCol, changingIdxs, model.StateDeleteOnly)
-		initForReorgIndexes(w, job, changingIdxs)
+		err := initForReorgIndexes(w, job, changingIdxs)
+		if err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var sctx sessionctx.Context

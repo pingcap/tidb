@@ -472,11 +472,15 @@ func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.Inde
 	return indexInfos
 }
 
-func buildRelatedIndexIDs(tblInfo *model.TableInfo, colID int64) []int64 {
+func buildRelatedIndexIDs(job *model.Job, tblInfo *model.TableInfo, colID int64) []int64 {
+	hasTempIndexes := job.ReorgMeta.ReorgTp.NeedMergeProcess()
 	var oldIdxIDs []int64
 	for _, idx := range tblInfo.Indices {
 		if idx.HasColumnInIndexColumns(tblInfo, colID) {
 			oldIdxIDs = append(oldIdxIDs, idx.ID)
+			if hasTempIndexes {
+				oldIdxIDs = append(oldIdxIDs, tablecodec.TempIndexPrefix|idx.ID)
+			}
 		}
 	}
 	return oldIdxIDs
