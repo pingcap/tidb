@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "mydump",
     srcs = [
-        "allocator.go",
         "bytes.go",
         "charset_convertor.go",
         "csv_parser.go",
@@ -27,7 +26,6 @@ go_library(
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
-        "//pkg/lightning/membuf",
         "//pkg/lightning/metric",
         "//pkg/lightning/worker",
         "//pkg/parser",

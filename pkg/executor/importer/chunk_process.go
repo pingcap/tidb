@@ -314,6 +314,8 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			totalKVBytes += sz
 		}
 
+		p.groupChecksum.Add(kvGroupBatch.groupChecksum)
+
 		if err := p.sendFn(ctx, kvGroupBatch); err != nil {
 			return err
 		}
@@ -322,15 +324,9 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			p.collector.Processed(totalKVBytes, int64(rowCount))
 		}
 
-		rowBatchSize := DefaultMinDeliverRowCnt
-		if delta > int64(rowCount) {
-			avgRowSize := delta / int64(rowCount)
-			rowBatchSize = min(DefaultMinDeliverRowCnt, int(DefaultMinDeliverBytes)*3/2/int(avgRowSize))
-		}
-
 		// the ownership of rowBatch is transferred to the receiver of sendFn, we should
 		// not touch it anymore.
-		rowBatch = make([]*kv.Pairs, 0, rowBatchSize)
+		rowBatch = make([]*kv.Pairs, 0, DefaultMinDeliverRowCnt)
 		rowBatchByteSize = 0
 		rowCount = 0
 		readDur = 0

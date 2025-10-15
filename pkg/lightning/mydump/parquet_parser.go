@@ -335,6 +335,8 @@ func (pp *ParquetParser) resetDumpers() error {
 }
 
 // ReadRows read several rows internally and store them in the row buffer.
+// The data read is shallow copied from the internal buffer of parquet reader,
+// so it's only valid before the next ReadRows call.
 func (pp *ParquetParser) readSingleRows(row []types.Datum) error {
 	// Move to next row group
 	if pp.curRowInGroup == pp.totalRowsInGroup {
@@ -598,11 +600,7 @@ func SampleStatisticsFromParquet(
 		return 0, 0, err
 	}
 
-	meta := ParquetFileMeta{
-		MemoryPool: GetPool(10 << 30), // use up to 4GiB memory for sampling
-	}
-
-	parser, err := NewParquetParser(ctx, store, r, fileMeta.Path, meta)
+	parser, err := NewParquetParser(ctx, store, r, fileMeta.Path, ParquetFileMeta{})
 	if err != nil {
 		return 0, 0, err
 	}

@@ -493,7 +493,7 @@ func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask
 	case *logicalop.DataSource:
 		return utilfuncp.FindBestTask4LogicalDataSource(e, prop)
 	case *logicalop.LogicalShowDDLJobs:
-		return utilfuncp.FindBestTask4LogicalShowDDLJobs(e, prop)
+		return findBestTask4LogicalShowDDLJobs(e, prop)
 	case *logicalop.MockDataSource:
 		return findBestTask4LogicalMockDatasource(lop, prop)
 	default:

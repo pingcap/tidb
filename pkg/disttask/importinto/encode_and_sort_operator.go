@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -53,7 +52,6 @@ type encodeAndSortOperator struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	collector execute.Collector
-	pool      *mydump.Pool
 
 	taskID, subtaskID int64
 	taskKeyspace      string
@@ -74,14 +72,12 @@ func newEncodeAndSortOperator(
 	collector execute.Collector,
 	subtaskID int64,
 	concurrency int,
-	memPool *mydump.Pool,
 ) *encodeAndSortOperator {
 	subCtx, cancel := context.WithCancel(ctx)
 	op := &encodeAndSortOperator{
 		ctx:           subCtx,
 		cancel:        cancel,
 		collector:     collector,
-		pool:          memPool,
 		taskID:        executor.taskID,
 		subtaskID:     subtaskID,
 		taskKeyspace:  executor.taskMeta.Plan.Keyspace,
@@ -211,7 +207,7 @@ func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.
 	// we don't use the input send function, it makes workflow more complex
 	// we send result to errCh and handle it here.
 	executor := newImportMinimalTaskExecutor(task)
-	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter, w.op.collector, w.op.pool); err != nil {
+	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter, w.op.collector); err != nil {
 		w.op.onError(err)
 	}
 }
@@ -246,7 +242,6 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) {
 	indexKVGroupCnt := importer.GetNumOfIndexGenKV(plan.DesiredTableInfo)
 	memPerCon := resource.Mem.Capacity() / int64(plan.ThreadCnt)
-
 	// we use half of the total available memory for data writer, and the other half
 	// for encoding and other stuffs, it's an experience value, might not optimal.
 	// Then we divide those memory into indexKVGroupCnt + 3 shares, data KV writer

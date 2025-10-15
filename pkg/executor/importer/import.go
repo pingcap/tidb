@@ -1341,12 +1341,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 
-	failpoint.Inject("skipReadFiles", func() {
-		failpoint.Goto("afterReadFiles")
-	})
-
-	failpoint.Label("afterReadFiles")
-
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 

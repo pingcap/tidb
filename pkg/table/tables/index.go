@@ -247,10 +247,8 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		c.initNeedRestoreData.Do(func() {
 			c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 		})
-		buf := writeBufs.RowValBuf
 		idxVal, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo,
-			c.needRestoredData, distinct, untouched, value, h, c.phyTblID, handleRestoreData, buf)
-		writeBufs.RowValBuf = idxVal
+			c.needRestoredData, distinct, untouched, value, h, c.phyTblID, handleRestoreData, nil)
 		err = ec.HandleError(err)
 		if err != nil {
 			return nil, err

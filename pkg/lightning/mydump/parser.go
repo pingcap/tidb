@@ -160,10 +160,7 @@ type Parser interface {
 	// ScannedPos always returns the current file reader pointer's location
 	ScannedPos() (int64, error)
 	Close() error
-
-	// ReadRow reads a row from the datafile.
 	ReadRow() error
-
 	LastRow() Row
 	RecycleRow(row Row)
 
