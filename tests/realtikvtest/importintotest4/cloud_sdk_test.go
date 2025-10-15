@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -30,6 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/xitongsys/parquet-go-source/local"
+	"github.com/xitongsys/parquet-go/parquet"
+	"github.com/xitongsys/parquet-go/writer"
 )
 
 func (s *mockGCSSuite) TestCSVSource() {
@@ -186,7 +191,7 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 		{name: "csv_as_sql.sql", buf: func() []byte { return []byte("15,p\n16,q\n") }, expectRows: nil},
 		{name: "f1.CSV", buf: func() []byte { return []byte("3,baz\n4,qux\n") }, expectRows: []string{"3 baz", "4 qux"}},
 		{name: "data.sql", buf: func() []byte { return []byte("INSERT INTO auto_detect.t VALUES (5,'e'),(6,'f');\n") }, expectRows: []string{"5 e", "6 f"}},
-		{name: "p.parquet", buf: func() []byte { return []byte{} }, expectRows: nil},
+		{name: "p.parquet", buf: func() []byte { return s.getParquetData() }, expectRows: nil},
 		{name: "f2.csv.gz", buf: func() []byte { return s.getCompressedData(mydump.CompressionGZ, []byte("7,seven\n8,eight\n")) }, expectRows: []string{"7 seven", "8 eight"}},
 		{name: "data.sql.zst", buf: func() []byte {
 			return s.getCompressedData(mydump.CompressionZStd, []byte("INSERT INTO `auto_detect`.`t` VALUES (9,'i'),(10,'j');"))
@@ -244,6 +249,7 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 		}
 		err := s.tk.QueryToErr(badImportSQL)
 		s.Require().ErrorContains(err, nc.wantSubstr)
+		s.tk.MustExec("TRUNCATE TABLE auto_detect.t;")
 	}
 }
 
@@ -268,4 +274,39 @@ func (s *mockGCSSuite) getCompressedData(compression mydump.Compression, data []
 	compressedData := buf.Bytes()
 	s.NotEqual(data, compressedData)
 	return compressedData
+}
+
+func (s *mockGCSSuite) getParquetData() []byte {
+	type ParquetRow struct {
+		A int32  `parquet:"name=a, type=INT32"`
+		B string `parquet:"name=b, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN"`
+	}
+	// create temp file inside the test's TempDir (managed by Go test)
+	dir := s.T().TempDir()
+	tmpPath := filepath.Join(dir, "test.parquet")
+
+	fw, err := local.NewLocalFileWriter(tmpPath)
+	s.Require().NoError(err)
+	pw, err := writer.NewParquetWriter(fw, new(ParquetRow), 4)
+	s.Require().NoError(err)
+
+	pw.RowGroupSize = 128 * 1024 * 1024
+	pw.CompressionType = parquet.CompressionCodec_SNAPPY
+
+	rows := []ParquetRow{{A: 1, B: "one"}, {A: 2, B: "two"}}
+	for _, r := range rows {
+		if err := pw.Write(r); err != nil {
+			_ = pw.WriteStop()
+			_ = fw.Close()
+			s.Require().NoError(err)
+		}
+	}
+
+	s.Require().NoError(pw.WriteStop())
+	s.Require().NoError(fw.Close())
+
+	data, err := os.ReadFile(tmpPath)
+	s.Require().NoError(err)
+	s.NotEmpty(data)
+	return data
 }
