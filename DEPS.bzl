@@ -5832,13 +5832,13 @@ def go_deps():
         name = "com_github_pingcap_log",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/log",
-        sha256 = "9b0ae182fcc611cc535eb18a6f332846f0744b905e48888c06c1f6aeda8036d5",
-        strip_prefix = "github.com/pingcap/log@v1.1.1-0.20230317032135-a0d097d16e22",
+        sha256 = "50df543d8d2d5f5f24f6ec5926855f074714a958f1f58e7fe50920c7e4d5fe5d",
+        strip_prefix = "github.com/pingcap/log@v1.1.1-0.20250917021125-19901e015dc9",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/log/com_github_pingcap_log-v1.1.1-0.20230317032135-a0d097d16e22.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/log/com_github_pingcap_log-v1.1.1-0.20230317032135-a0d097d16e22.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/log/com_github_pingcap_log-v1.1.1-0.20230317032135-a0d097d16e22.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/log/com_github_pingcap_log-v1.1.1-0.20230317032135-a0d097d16e22.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/log/com_github_pingcap_log-v1.1.1-0.20250917021125-19901e015dc9.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/log/com_github_pingcap_log-v1.1.1-0.20250917021125-19901e015dc9.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/log/com_github_pingcap_log-v1.1.1-0.20250917021125-19901e015dc9.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/log/com_github_pingcap_log-v1.1.1-0.20250917021125-19901e015dc9.zip",
         ],
     )
     go_repository(
