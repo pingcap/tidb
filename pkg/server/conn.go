@@ -2067,24 +2067,8 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
-<<<<<<< HEAD
-	cc.audit(plugin.Starting)
-=======
 	cc.audit(context.Background(), plugin.Starting)
 
-	// if stmt is load data stmt, store the channel that reads from the conn
-	// into the ctx for executor to use
-	if s, ok := stmt.(*ast.LoadDataStmt); ok {
-		if s.FileLocRef == ast.FileLocClient {
-			err := cc.preprocessLoadDataLocal(ctx)
-			defer cc.postprocessLoadDataLocal()
-			if err != nil {
-				return false, err
-			}
-		}
-	}
-
->>>>>>> bbd963f9cb0 (executor, plugin: add statement id info to the plugin (#63526))
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
 	// - If rs is not nil, the statement tracker detachment from session tracker
