@@ -176,7 +176,7 @@ func NewSstRestoreManager(
 			return nil, errors.Trace(err)
 		}
 	}
-	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
+	s.restorer = restore.NewBatchSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
 	return s, nil
 }
 
@@ -343,7 +343,11 @@ func (rc *LogClient) RestoreSSTFiles(
 		log.Info("[Compacted SST Restore] No SST files found for restoration.")
 		return nil
 	}
-	err := importModeSwitcher.GoSwitchToImportMode(ctx)
+	batchBackupFileSet, err := snapclient.GroupOverlappedBackupFileSets(backupFileSets)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = importModeSwitcher.GoSwitchToImportMode(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -367,7 +371,7 @@ func (rc *LogClient) RestoreSSTFiles(
 	// where batch processing may lead to increased complexity and potential inefficiencies.
 	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
 	// while maintaining optimal performance and resource utilization.
-	err = rc.sstRestoreManager.restorer.GoRestore(onProgress, backupFileSets)
+	err = rc.sstRestoreManager.restorer.GoRestore(onProgress, batchBackupFileSet...)
 	if err != nil {
 		return errors.Trace(err)
 	}
