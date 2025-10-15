@@ -199,9 +199,11 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
-	if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+	if args.ChangingColumn == nil {
+		if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
 	if args.ModifyColumnType == ModifyTypeNoReorgWithCheck {
