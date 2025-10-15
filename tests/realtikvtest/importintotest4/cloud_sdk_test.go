@@ -179,7 +179,7 @@ func (s *mockGCSSuite) TestDumplingSource() {
 func (s *mockGCSSuite) TestAutoDetectFileType() {
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "auto_detect"})
 
-	items := []struct {
+	files := []struct {
 		name       string
 		buf        func() []byte
 		expectRows []string
@@ -199,7 +199,7 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 		{name: "f3.csv.snappy", buf: func() []byte { return s.getCompressedData(mydump.CompressionSnappy, []byte("11,eleven\n12,twelve\n")) }, expectRows: []string{"11 eleven", "12 twelve"}},
 	}
 
-	for _, it := range items {
+	for _, it := range files {
 		s.server.CreateObject(fakestorage.Object{
 			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "auto_detect", Name: it.name},
 			Content:     it.buf(),
@@ -212,7 +212,7 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 	s.prepareAndUseDB("auto_detect")
 	s.tk.MustExec("CREATE TABLE IF NOT EXISTS auto_detect.t (a INT, b VARCHAR(10));")
 
-	for _, it := range items {
+	for _, it := range files {
 		if it.expectRows == nil {
 			// for negative cases
 			continue
