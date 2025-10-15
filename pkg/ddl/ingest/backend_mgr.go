@@ -99,8 +99,11 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	if err != nil {
 		return nil, err
 	}
-	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
-		job.Type == model.ActionAddIndex)
+	intest.Assert(
+		job.Type == model.ActionAddPrimaryKey ||
+			job.Type == model.ActionAddIndex ||
+			job.Type == model.ActionModifyColumn,
+	)
 	intest.Assert(job.ReorgMeta != nil)
 
 	failpoint.Inject("beforeCreateLocalBackend", func() {

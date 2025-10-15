@@ -330,7 +330,13 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 					checkErr = errors.New("assert the writable column number error")
 					return
 				}
-				if tbl.WritableCols()[2].OriginDefaultValue != tbl.WritableCols()[2].DefaultValue {
+				targetCol := tbl.WritableCols()[2]
+				expectedOriginDefault, err := ddl.GenerateOriginDefaultValue(targetCol.ColumnInfo, nil)
+				if err != nil {
+					checkErr = err
+					return
+				}
+				if targetCol.OriginDefaultValue != expectedOriginDefault {
 					checkErr = errors.New("assert the write only column origin default value error")
 					return
 				}

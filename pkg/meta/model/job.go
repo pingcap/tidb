@@ -601,6 +601,10 @@ func (job *Job) String() string {
 	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %s",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
 	if job.ReorgMeta != nil {
+		if job.Type == ActionModifyColumn {
+			ret += fmt.Sprintf(", analyze_state:%d", job.ReorgMeta.AnalyzeState)
+			ret += fmt.Sprintf(", stage:%d", job.ReorgMeta.Stage)
+		}
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
 	}
@@ -836,6 +840,7 @@ type SubJob struct {
 	CtxVars      []any           `json:"-"`
 	SchemaVer    int64           `json:"schema_version"`
 	ReorgTp      ReorgType       `json:"reorg_tp"`
+	ReorgStage   ReorgStage      `json:"reorg_stage"`
 	NeedAnalyze  bool            `json:"need_analyze"`
 	AnalyzeState int8            `json:"analyze_state"`
 }
@@ -876,6 +881,11 @@ func (sub *SubJob) CanEmbeddedAnalyze() bool {
 
 // ToProxyJob converts a sub-job to a proxy job.
 func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
+	reorgMeta := parentJob.ReorgMeta
+	if reorgMeta != nil {
+		reorgMeta.Stage = sub.ReorgStage
+		reorgMeta.AnalyzeState = sub.AnalyzeState
+	}
 	return Job{
 		Version:         parentJob.Version,
 		ID:              parentJob.ID,
@@ -899,7 +909,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		ReorgMeta:       parentJob.ReorgMeta,
+		ReorgMeta:       reorgMeta,
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq), NeedAnalyze: sub.NeedAnalyze},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
@@ -924,6 +934,8 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.SchemaVer = ver
 	if proxyJob.ReorgMeta != nil {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
+		sub.ReorgStage = proxyJob.ReorgMeta.Stage
+		sub.AnalyzeState = proxyJob.ReorgMeta.AnalyzeState
 	}
 }
 

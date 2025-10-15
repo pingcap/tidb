@@ -60,6 +60,21 @@ func (s BackfillState) String() string {
 	}
 }
 
+// ReorgStage is the stage of the reorganization process.
+// It is persisted to reorg meta to avoid repeat the work that has been done.
+// Modify column:
+//   - ReorgStageModifyColumnUpdateColumn
+//   - ReorgStageModifyColumnRecreateIndex
+//   - ReorgStageModifyColumnCompleted
+type ReorgStage byte
+
+const (
+	ReorgStageNone                      ReorgStage = 0
+	ReorgStageModifyColumnUpdateColumn  ReorgStage = 1
+	ReorgStageModifyColumnRecreateIndex ReorgStage = 2
+	ReorgStageModifyColumnCompleted     ReorgStage = 3
+)
+
 // DDLReorgMeta is meta info of DDL reorganization.
 type DDLReorgMeta struct {
 	SQLMode           mysql.SQLMode                    `json:"sql_mode"`
@@ -75,6 +90,7 @@ type DDLReorgMeta struct {
 	TargetScope       string                           `json:"target_scope"`
 	MaxNodeCount      int                              `json:"max_node_count"`
 	AnalyzeState      int8                             `json:"analyze_state"`
+	Stage             ReorgStage                       `json:"stage"`
 	// These two variables are used to control the concurrency and batch size of the reorganization process.
 	// They can be adjusted dynamically through `admin alter ddl jobs` command.
 	// Note: Don't get or set these two variables directly, use the functions instead.
@@ -154,11 +170,11 @@ const (
 	// All the index KVs are written through the transaction interface.
 	// This is the original backfill implementation.
 	ReorgTypeTxn
-	// ReorgTypeLitMerge means the index records are backfill with lightning.
+	// ReorgTypeIngest means the index records are backfill with lightning.
 	// The index KVs are encoded to SST files and imported to the storage directly.
 	// The incremental index KVs written by DML are redirected to a temporary index.
 	// After the backfill is finished, the temporary index records are merged back to the original index.
-	ReorgTypeLitMerge
+	ReorgTypeIngest
 	// ReorgTypeTxnMerge means backfill with transactions and merge incremental changes.
 	// The backfill index KVs are written through the transaction interface.
 	// The incremental index KVs written by DML are redirected to a temporary index.
@@ -168,7 +184,7 @@ const (
 
 // NeedMergeProcess means the incremental changes need to be merged.
 func (tp ReorgType) NeedMergeProcess() bool {
-	return tp == ReorgTypeLitMerge || tp == ReorgTypeTxnMerge
+	return tp == ReorgTypeIngest || tp == ReorgTypeTxnMerge
 }
 
 // String implements fmt.Stringer interface.
@@ -176,7 +192,7 @@ func (tp ReorgType) String() string {
 	switch tp {
 	case ReorgTypeTxn:
 		return "txn"
-	case ReorgTypeLitMerge:
+	case ReorgTypeIngest:
 		return "ingest"
 	case ReorgTypeTxnMerge:
 		return "txn-merge"

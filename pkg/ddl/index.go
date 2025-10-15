@@ -1440,15 +1440,15 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 	}
 	if ingest.LitInitialized {
 		if job.ReorgMeta.UseCloudStorage {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			return model.ReorgTypeLitMerge, nil
+			job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
+			return model.ReorgTypeIngest, nil
 		}
 		if err := ingest.LitDiskRoot.PreCheckUsage(); err != nil {
 			logutil.DDLIngestLogger().Info("ingest backfill is not available", zap.Error(err))
 			return model.ReorgTypeNone, err
 		}
-		job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-		return model.ReorgTypeLitMerge, nil
+		job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
+		return model.ReorgTypeIngest, nil
 	}
 	// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 	logutil.DDLLogger().Info("fallback to txn-merge backfill process",
@@ -1491,10 +1491,10 @@ func doReorgWorkForCreateIndex(
 		if !skipReorg {
 			logutil.DDLLogger().Info("index backfill state running",
 				zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
-				zap.Bool("ingest mode", reorgTp == model.ReorgTypeLitMerge),
+				zap.Bool("ingest mode", reorgTp == model.ReorgTypeIngest),
 				zap.String("index", allIndexInfos[0].Name.O))
 			switch reorgTp {
-			case model.ReorgTypeLitMerge:
+			case model.ReorgTypeIngest:
 				if job.ReorgMeta.IsDistReorg {
 					done, ver, err = runIngestReorgJobDist(w, jobCtx, job, tbl, allIndexInfos)
 				} else {
@@ -2010,20 +2010,13 @@ func newAddIndexTxnWorker(
 	}
 
 	allIndexes := make([]table.Index, 0, len(elements))
-	if job.Type == model.ActionModifyColumn {
-		// For modify column with indexes, we only need to add the index one by one.
-		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, currElement.ID)
+	for _, elem := range elements {
+		if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
+			continue
+		}
+		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
 		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 		allIndexes = append(allIndexes, index)
-	} else {
-		for _, elem := range elements {
-			if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
-				continue
-			}
-			indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
-			index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-			allIndexes = append(allIndexes, index)
-		}
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
@@ -2537,7 +2530,7 @@ func (w *worker) addTableIndex(
 	reorgInfo *reorgInfo,
 ) error {
 	ctx := jobCtx.stepCtx
-	if reorgInfo.ReorgMeta.IsDistReorg && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+	if reorgInfo.ReorgMeta.IsDistReorg && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
 		err := w.executeDistTask(jobCtx, t, reorgInfo)
 		if err != nil {
 			return err
