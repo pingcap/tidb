@@ -264,8 +264,6 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 	_, sqlDigest := parser.NormalizeDigestForBinding("select * from `test` . `t` where `a` > ?")
 	tk.MustExec("insert into mysql.bind_info (original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation,source, sql_digest, plan_digest)values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
-	tk.MustExec("insert into mysql.bind_info (original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation,source, sql_digest, plan_digest)values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
-		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	dom.BindHandle().Clear()
 	tk.MustExec("set binding disabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
