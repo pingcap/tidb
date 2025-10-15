@@ -191,7 +191,7 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 		{name: "csv_as_sql.sql", buf: func() []byte { return []byte("15,p\n16,q\n") }, expectRows: nil},
 		{name: "f1.CSV", buf: func() []byte { return []byte("3,baz\n4,qux\n") }, expectRows: []string{"3 baz", "4 qux"}},
 		{name: "data.sql", buf: func() []byte { return []byte("INSERT INTO auto_detect.t VALUES (5,'e'),(6,'f');\n") }, expectRows: []string{"5 e", "6 f"}},
-		{name: "p.parquet", buf: func() []byte { return s.getParquetData() }, expectRows: nil},
+		{name: "p.parquet", buf: func() []byte { return s.getParquetData() }, expectRows: []string{"1 one", "2 two"}},
 		{name: "f2.csv.gz", buf: func() []byte { return s.getCompressedData(mydump.CompressionGZ, []byte("7,seven\n8,eight\n")) }, expectRows: []string{"7 seven", "8 eight"}},
 		{name: "data.sql.zst", buf: func() []byte {
 			return s.getCompressedData(mydump.CompressionZStd, []byte("INSERT INTO `auto_detect`.`t` VALUES (9,'i'),(10,'j');"))
@@ -240,6 +240,7 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 	}
 
 	for _, nc := range negativeCases {
+		s.tk.MustExec("CREATE TABLE IF NOT EXISTS auto_detect.t (a INT, b VARCHAR(10));")
 		path := fmt.Sprintf("gs://auto_detect/%s?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", nc.objectName, gcsEndpoint)
 		var badImportSQL string
 		if nc.options == "" {
@@ -249,7 +250,7 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 		}
 		err := s.tk.QueryToErr(badImportSQL)
 		s.Require().ErrorContains(err, nc.wantSubstr)
-		s.tk.MustExec("TRUNCATE TABLE auto_detect.t;")
+		s.tk.MustExec("DROP TABLE auto_detect.t;")
 	}
 }
 
