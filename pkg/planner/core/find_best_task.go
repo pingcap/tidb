@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -1318,11 +1319,11 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	return candidate
 }
 
-func getIndexCandidateForIndexJoin(path *util.AccessPath, usedIndexCols int) *candidatePath {
+func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, usedIndexCols int) *candidatePath {
 	candidate := &candidatePath{path: path, forIndexJoin: true, usedIndexCols: usedIndexCols}
 	candidate.matchPropResult = property.PropNotMatched
-	candidate.accessCondsColMap = util.ExtractCol2Len(nil, path.AccessConds, path.IdxCols, path.IdxColLens)
-	candidate.indexCondsColMap = util.ExtractCol2Len(nil, append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+	candidate.indexCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
 	return candidate
 }
 

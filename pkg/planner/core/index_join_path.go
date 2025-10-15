@@ -343,7 +343,7 @@ func indexJoinPathConstructResult(
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
 	return &indexJoinPathResult{
 		chosenPath:     path,
-		candidate:      getIndexCandidateForIndexJoin(path, usedColsLen),
+		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen),
 		usedColsLen:    len(ranges.Range()[0].LowVal),
 		usedColsNDV:    innerNDV,
 		chosenRanges:   ranges,
