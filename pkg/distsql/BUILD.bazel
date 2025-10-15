@@ -14,7 +14,6 @@ go_library(
         "//pkg/ddl/placement",
         "//pkg/distsql/context",
         "//pkg/errctx",
-        "//pkg/errno",
         "//pkg/executor/join/joinversion",
         "//pkg/expression",
         "//pkg/infoschema/context",
