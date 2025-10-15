@@ -452,7 +452,7 @@ func PruneRanges(rs []ProcessedRange, low kv.Key) []ProcessedRange {
 		return rs
 	}
 	i := 0
-	for i < len(rs) && rs[i].EndKey.Cmp(low) <= 0 {
+	for i < len(rs) && rs[i].EndKey.Cmp(low) < 0 {
 		i++
 	}
 	if i == 0 {

@@ -284,6 +284,8 @@ func TestPruneRanges(t *testing.T) {
 		{name: "none_below_low", in: makeRanges("d", "e", "f", "g"), low: k("c"), want: makeRanges("d", "e", "f", "g")},
 		{name: "some_below_low", in: makeRanges("a", "b", "c", "d", "e", "f"), low: k("c"), want: makeRanges("c", "d", "e", "f")},
 		{name: "all_below_low", in: makeRanges("a", "b", "b", "c"), low: k("d"), want: nil},
+		{name: "end_eq_low", in: makeRanges("a", "b", "c", "d"), low: k("b"), want: makeRanges("a", "b", "c", "d")},
+		{name: "start_eq_low", in: makeRanges("a", "b", "c", "d"), low: k("a"), want: makeRanges("a", "b", "c", "d")},
 	}
 
 	for _, tt := range tests {
