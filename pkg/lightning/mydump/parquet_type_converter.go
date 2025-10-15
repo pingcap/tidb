@@ -62,7 +62,8 @@ func binaryToDecimalStr(rawBytes []byte, scale int) string {
 	return res.String()
 }
 
-func getBoolData(val bool, d *types.Datum) {
+//nolint:all_revive
+func getBoolDataSetter(val bool, d *types.Datum) {
 	if val {
 		d.SetUint64(1)
 	} else {
@@ -70,7 +71,7 @@ func getBoolData(val bool, d *types.Datum) {
 	}
 }
 
-func getDecimalFromIntImpl(val int64, d *types.Datum, converted *convertedType) {
+func setDecimalFromIntImpl(val int64, d *types.Datum, converted *convertedType) {
 	decimal := converted.decimalMeta
 	if !decimal.IsSet || decimal.Scale == 0 {
 		d.SetInt64(val)
@@ -85,11 +86,11 @@ func getDecimalFromIntImpl(val int64, d *types.Datum, converted *convertedType) 
 	d.SetString(v[:dotIndex]+"."+v[dotIndex:], "utf8mb4_bin")
 }
 
-func getInt32Getter(converted *convertedType, loc *time.Location) setter[int32] {
+func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] {
 	switch converted.converted {
 	case schema.ConvertedTypes.Decimal:
 		return func(val int32, d *types.Datum) {
-			getDecimalFromIntImpl(int64(val), d, converted)
+			setDecimalFromIntImpl(int64(val), d, converted)
 		}
 	case schema.ConvertedTypes.Date:
 		return func(val int32, d *types.Datum) {
@@ -117,7 +118,7 @@ func getInt32Getter(converted *convertedType, loc *time.Location) setter[int32] 
 	return nil
 }
 
-func getInt64Getter(converted *convertedType, loc *time.Location) setter[int64] {
+func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] {
 	switch converted.converted {
 	case schema.ConvertedTypes.Uint64,
 		schema.ConvertedTypes.Uint32, schema.ConvertedTypes.Int32,
@@ -128,7 +129,7 @@ func getInt64Getter(converted *convertedType, loc *time.Location) setter[int64] 
 		}
 	case schema.ConvertedTypes.None, schema.ConvertedTypes.Int64:
 		return func(val int64, d *types.Datum) {
-			d.SetInt64(int64(val))
+			d.SetInt64(val)
 		}
 	case schema.ConvertedTypes.TimeMicros:
 		return func(val int64, d *types.Datum) {
@@ -153,14 +154,14 @@ func getInt64Getter(converted *convertedType, loc *time.Location) setter[int64] 
 		}
 	case schema.ConvertedTypes.Decimal:
 		return func(val int64, d *types.Datum) {
-			getDecimalFromIntImpl(val, d, converted)
+			setDecimalFromIntImpl(val, d, converted)
 		}
 	}
 
 	return nil
 }
 
-func getInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location) {
+func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location) {
 	// FYI: https://github.com/apache/spark/blob/d66a4e82eceb89a274edeb22c2fb4384bed5078b/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/parquet/ParquetWriteSupport.scala#L171-L178
 	// INT96 timestamp layout
 	// --------------------------
@@ -180,21 +181,21 @@ func getInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location) {
 	d.SetMysqlTime(mysqlTime)
 }
 
-func getInt96Getter(_ *convertedType, loc *time.Location) setter[parquet.Int96] {
+func getInt96Setter(_ *convertedType, loc *time.Location) setter[parquet.Int96] {
 	return func(val parquet.Int96, d *types.Datum) {
-		getInt96Data(val, d, loc)
+		setInt96Data(val, d, loc)
 	}
 }
 
-func getFloat32Data(val float32, d *types.Datum) {
+func setFloat32Data(val float32, d *types.Datum) {
 	d.SetFloat32(val)
 }
 
-func getFloat64Data(val float64, d *types.Datum) {
+func setFloat64Data(val float64, d *types.Datum) {
 	d.SetFloat64(val)
 }
 
-func getByteArrayGetter(converted *convertedType) setter[parquet.ByteArray] {
+func getByteArraySetter(converted *convertedType) setter[parquet.ByteArray] {
 	switch converted.converted {
 	case schema.ConvertedTypes.None, schema.ConvertedTypes.BSON, schema.ConvertedTypes.JSON, schema.ConvertedTypes.UTF8, schema.ConvertedTypes.Enum:
 		return func(val parquet.ByteArray, d *types.Datum) {
@@ -210,7 +211,7 @@ func getByteArrayGetter(converted *convertedType) setter[parquet.ByteArray] {
 	return nil
 }
 
-func getFixedLenByteArrayGetter(converted *convertedType) setter[parquet.FixedLenByteArray] {
+func getFixedLenByteArraySetter(converted *convertedType) setter[parquet.FixedLenByteArray] {
 	switch converted.converted {
 	case schema.ConvertedTypes.None, schema.ConvertedTypes.BSON, schema.ConvertedTypes.JSON, schema.ConvertedTypes.UTF8, schema.ConvertedTypes.Enum:
 		return func(val parquet.FixedLenByteArray, d *types.Datum) {

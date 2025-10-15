@@ -172,21 +172,21 @@ func (dump *generalColumnDumper[T, R]) Next(d *types.Datum) bool {
 func createColumnDumper(tp parquet.Type, converted *convertedType, loc *time.Location, batchSize int) columnDumper {
 	switch tp {
 	case parquet.Types.Boolean:
-		return newGeneralColumnDumper[bool, *file.BooleanColumnChunkReader](batchSize, getBoolData)
+		return newGeneralColumnDumper[bool, *file.BooleanColumnChunkReader](batchSize, getBoolDataSetter)
 	case parquet.Types.Int32:
-		return newGeneralColumnDumper[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Getter(converted, loc))
+		return newGeneralColumnDumper[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Setter(converted, loc))
 	case parquet.Types.Int64:
-		return newGeneralColumnDumper[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Getter(converted, loc))
+		return newGeneralColumnDumper[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Setter(converted, loc))
 	case parquet.Types.Float:
-		return newGeneralColumnDumper[float32, *file.Float32ColumnChunkReader](batchSize, getFloat32Data)
+		return newGeneralColumnDumper[float32, *file.Float32ColumnChunkReader](batchSize, setFloat32Data)
 	case parquet.Types.Double:
-		return newGeneralColumnDumper[float64, *file.Float64ColumnChunkReader](batchSize, getFloat64Data)
+		return newGeneralColumnDumper[float64, *file.Float64ColumnChunkReader](batchSize, setFloat64Data)
 	case parquet.Types.Int96:
-		return newGeneralColumnDumper[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Getter(converted, loc))
+		return newGeneralColumnDumper[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Setter(converted, loc))
 	case parquet.Types.ByteArray:
-		return newGeneralColumnDumper[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getByteArrayGetter(converted))
+		return newGeneralColumnDumper[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getByteArraySetter(converted))
 	case parquet.Types.FixedLenByteArray:
-		return newGeneralColumnDumper[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](batchSize, getFixedLenByteArrayGetter(converted))
+		return newGeneralColumnDumper[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](batchSize, getFixedLenByteArraySetter(converted))
 	default:
 		return nil
 	}
@@ -376,7 +376,7 @@ func (pp *ParquetParser) readSingleRows(row []types.Datum) error {
 
 // Pos returns the currently row number of the parquet file
 func (pp *ParquetParser) Pos() (pos int64, rowID int64) {
-	return int64(pp.totalRowsRead), pp.lastRow.RowID
+	return pp.totalRowsRead, pp.lastRow.RowID
 }
 
 // SetPos implements the Parser interface.
