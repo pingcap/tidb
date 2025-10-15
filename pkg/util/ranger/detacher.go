@@ -853,6 +853,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(
 	int,
 	error,
 ) {
+	// BUG!!!!
 	firstColumnChecker := &conditionChecker{
 		checkerCol:               d.cols[0],
 		length:                   d.lengths[0],
