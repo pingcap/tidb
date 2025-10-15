@@ -442,7 +442,7 @@ func finishModifyColumnWithoutReorg(
 }
 
 // doModifyColumnWithCheck updates the column information and reorders all columns. It does not support modifying column data.
-func (w *worker) doModifyColumnNoCheck(
+func (*worker) doModifyColumnNoCheck(
 	jobCtx *jobContext,
 	job *model.Job,
 	tblInfo *model.TableInfo,
@@ -712,7 +712,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		case model.AnalyzeStateNone:
 			// reorg the data.
 			reorgElements := BuildElements(changingCol, changingIdxs)
-			done, ver, err := doReorgWorkForModifyColumnWrapper(jobCtx, w, job, tbl, oldCol, reorgElements)
+			done, ver, err := doReorgWorkForModifyColumn(jobCtx, w, job, tbl, oldCol, reorgElements)
 			if !done {
 				return ver, err
 			}
