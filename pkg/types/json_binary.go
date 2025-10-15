@@ -593,15 +593,13 @@ func (bj BinaryJSON) CalculateHashValueSize() int64 {
 	case JSONTypeCodeInt64:
 		if getInt64FractionLength(bj.GetInt64()) <= 52 {
 			return int64(unsafe.Sizeof(JSONTypeCodeFloat64)) + 8
-		} else {
-			return int64(len(bj.Value)) + int64(unsafe.Sizeof(bj.TypeCode))
 		}
+		return int64(len(bj.Value)) + int64(unsafe.Sizeof(bj.TypeCode))
 	case JSONTypeCodeUint64:
 		if getUint64FractionLength(bj.GetUint64()) <= 52 {
 			return int64(unsafe.Sizeof(JSONTypeCodeFloat64)) + 8
-		} else {
-			return int64(len(bj.Value)) + int64(unsafe.Sizeof(bj.TypeCode))
 		}
+		return int64(len(bj.Value)) + int64(unsafe.Sizeof(bj.TypeCode))
 	case JSONTypeCodeArray:
 		size := int64(unsafe.Sizeof(bj.TypeCode)) + dataSizeOff
 		elemCount := int(jsonEndian.Uint32(bj.Value))
@@ -724,9 +722,8 @@ func CalculateBinaryJSONSize(in any) int64 {
 	case bool:
 		if x {
 			return int64(unsafe.Sizeof(JSONLiteralTrue))
-		} else {
-			return int64(unsafe.Sizeof(JSONLiteralFalse))
 		}
+		return int64(unsafe.Sizeof(JSONLiteralFalse))
 	case int64, uint64, float64:
 		return 8
 	case json.Number:
@@ -758,7 +755,7 @@ func CalculateBinaryJSONSize(in any) int64 {
 	case Duration:
 		return 12
 	}
-	panic(errors.New(fmt.Sprintf(unknownTypeErrorMsg, reflect.TypeOf(in))))
+	panic(fmt.Errorf(unknownTypeErrorMsg, reflect.TypeOf(in)))
 }
 
 func appendBinaryJSON(buf []byte, in any) (JSONTypeCode, []byte, error) {
