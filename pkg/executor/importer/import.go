@@ -1399,7 +1399,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}()
 		size, err3 := fileReader.Seek(0, io.SeekEnd)
 		if err3 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "failed to read file size by seek")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err3), "failed to read file size by seek")
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
@@ -1428,31 +1428,34 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		allFiles := make([]mydump.RawFile, 0, 16)
 		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
-				// we have checked in LoadDataExec.Next
-				//nolint: errcheck
-				match, _ := filepath.Match(escapedPath, remotePath)
-				if !match {
-					return nil
-				}
-				// pick arbitrary one file to detect the format.
-				e.detectAndUpdateFormat(remotePath)
-				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
-				totalSize += size
 				return nil
 			}); err != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to walk dir")
 		}
 
 		var err error
+<<<<<<< HEAD
 		var once sync.Once
 
 		ce := newCompressionRecorder()
 
 		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
+=======
+		var processedFiles []*mydump.SourceFileMeta
+		var once sync.Once
+		if processedFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
+>>>>>>> 3dd656d7dae (importer: parallel init data source files (#63621))
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
+				// we have checked in LoadDataExec.Next
+				//nolint: errcheck
+				match, _ := filepath.Match(escapedPath, f.Path)
+				if !match {
+					return nil, nil
+				}
 				path, size := f.Path, f.Size
 				// pick arbitrary one file to detect the format.
+<<<<<<< HEAD
 				var err2 error
 				once.Do(func() {
 					e.detectAndUpdateFormat(path)
@@ -1462,6 +1465,12 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if err2 != nil {
 					return nil, err2
 				}
+=======
+				once.Do(func() {
+					e.detectAndUpdateFormat(path)
+					sourceType = e.getSourceType()
+				})
+>>>>>>> 3dd656d7dae (importer: parallel init data source files (#63621))
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
@@ -1474,6 +1483,13 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				return &fileMeta, nil
 			}); err != nil {
 			return err
+		}
+		// filter unmatch files
+		for _, f := range processedFiles {
+			if f != nil {
+				dataFiles = append(dataFiles, f)
+				totalSize += f.FileSize
+			}
 		}
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
