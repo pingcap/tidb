@@ -69,10 +69,14 @@ func (s BackfillState) String() string {
 type ReorgStage byte
 
 const (
-	ReorgStageNone                      ReorgStage = 0
-	ReorgStageModifyColumnUpdateColumn  ReorgStage = 1
+	// ReorgStageNone means the reorganization process is not started yet.
+	ReorgStageNone ReorgStage = 0
+	// ReorgStageModifyColumnUpdateColumn means the column is being updated.
+	ReorgStageModifyColumnUpdateColumn ReorgStage = 1
+	// ReorgStageModifyColumnRecreateIndex means the index is being recreated.
 	ReorgStageModifyColumnRecreateIndex ReorgStage = 2
-	ReorgStageModifyColumnCompleted     ReorgStage = 3
+	// ReorgStageModifyColumnCompleted means the reorganization process is completed.
+	ReorgStageModifyColumnCompleted ReorgStage = 3
 )
 
 // DDLReorgMeta is meta info of DDL reorganization.
