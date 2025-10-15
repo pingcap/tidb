@@ -214,7 +214,7 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 
 	for _, it := range items {
 		if it.expectRows == nil {
-			// skip items that we don't intend to import/check in this test
+			// for negative cases
 			continue
 		}
 		path := fmt.Sprintf("gs://auto_detect/%s?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", it.name, gcsEndpoint)
