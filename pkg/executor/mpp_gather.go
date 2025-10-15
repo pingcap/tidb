@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -45,7 +44,7 @@ func useMPPExecution(ctx sessionctx.Context, tr *physicalop.PhysicalTableReader)
 
 func getMPPQueryID(ctx sessionctx.Context) uint64 {
 	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
-	mppQueryInfo.QueryID.CompareAndSwap(0, plannercore.AllocMPPQueryID())
+	mppQueryInfo.QueryID.CompareAndSwap(0, physicalop.AllocMPPQueryID())
 	return mppQueryInfo.QueryID.Load()
 }
 
@@ -94,7 +93,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		if !ok {
 			return errors.Errorf("unexpected plan type, expect: PhysicalExchangeSender, got: %s", e.originalPlan.TP())
 		}
-		if _, e.kvRanges, _, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is); err != nil {
+		if _, e.kvRanges, _, err = physicalop.GenerateRootMPPTasks(e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is); err != nil {
 			return nil
 		}
 	}

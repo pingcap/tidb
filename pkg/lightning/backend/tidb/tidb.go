@@ -990,7 +990,7 @@ type Writer struct {
 }
 
 // Close implements the EngineWriter interface.
-func (*Writer) Close(_ context.Context) (backend.ChunkFlushStatus, error) {
+func (*Writer) Close(_ context.Context) (common.ChunkFlushStatus, error) {
 	return nil, nil
 }
 

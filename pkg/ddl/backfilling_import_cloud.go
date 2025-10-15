@@ -20,8 +20,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -48,6 +50,7 @@ type cloudImportExecutor struct {
 	backend         *local.Backend
 	taskConcurrency int
 	metric          *lightningmetric.Common
+	summary         *execute.SubtaskSummary
 }
 
 func newCloudImportExecutor(
@@ -65,6 +68,7 @@ func newCloudImportExecutor(
 		ptbl:            ptbl,
 		cloudStoreURI:   cloudStoreURI,
 		taskConcurrency: taskConcurrency,
+		summary:         &execute.SubtaskSummary{},
 	}, nil
 }
 
@@ -89,6 +93,7 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
+	e.summary.Reset()
 	sm, err := decodeBackfillSubTaskMeta(ctx, e.cloudStoreURI, subtask.Meta)
 	if err != nil {
 		return err
@@ -129,6 +134,11 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			CheckHotspot:  true,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
 			OnDup:         engineapi.OnDuplicateKeyError,
+			OnReaderClose: func(summary *external.ReaderSummary) {
+				e.summary.GetReqCnt.Add(summary.GetRequestCount)
+				metering.NewRecorder(e.store, metering.TaskTypeAddIndex, subtask.TaskID).
+					RecordGetRequestCount(summary.GetRequestCount)
+			},
 		},
 		TS: sm.TS,
 	}, engineUUID)
@@ -166,6 +176,11 @@ func (e *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	e.backend.Close()
 	metrics.UnregisterLightningCommonMetricsForDDL(e.job.ID, e.metric)
 	return nil
+}
+
+// RealtimeSummary returns the summary of the subtask execution.
+func (e *cloudImportExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return e.summary
 }
 
 // TaskMetaModified changes the max write speed for ingest
