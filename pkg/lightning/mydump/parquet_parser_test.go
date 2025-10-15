@@ -197,7 +197,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	require.NoError(t, err)
 	r, err := store.Open(context.TODO(), name, nil)
 	require.NoError(t, err)
-	reader, err := NewParquetParser(context.TODO(), store, r, name, ParquetFileMeta{})
+	reader, err := NewParquetParser(context.TODO(), store, r, name, ParquetFileMeta{Loc: time.UTC})
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -205,14 +205,15 @@ func TestParquetVariousTypes(t *testing.T) {
 
 	require.NoError(t, reader.ReadRow())
 	rowValue := []string{
-		"2020-10-29", "17:26:15.123Z", "17:26:15.123456Z", "2020-10-29 09:27:52.356Z", "2020-10-29 09:27:52.356956Z",
+		"2020-10-29", "1970-01-01 17:26:15", "1970-01-01 17:26:15", "2020-10-29 09:27:52", "2020-10-29 09:27:52",
 		"-123456.78", "0.0456", "1234567890123456.78", "-0.0001",
 	}
 	row := reader.lastRow.Row
 	require.Len(t, rowValue, len(row))
 	for i := range row {
-		assert.Equal(t, types.KindString, row[i].Kind())
-		assert.Equal(t, row[i].GetString(), rowValue[i])
+		s, err := row[i].ToString()
+		require.NoError(t, err)
+		assert.Equal(t, s, rowValue[i])
 	}
 
 	pc = []ParquetColumn{
