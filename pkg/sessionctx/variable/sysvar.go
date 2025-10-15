@@ -533,17 +533,13 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeInstance, Name: PluginDir, Value: "/data/deploy/plugin", ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.PluginDir, nil
 	}},
-<<<<<<< HEAD
-	{Scope: ScopeInstance, Name: MaxConnections, Value: strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 100000, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-=======
-	{Scope: vardef.ScopeInstance, Name: vardef.PluginAuditLogBufferSize, Value: strconv.Itoa(config.GetGlobalConfig().Instance.PluginAuditLogFlushInterval), ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+	{Scope: ScopeInstance, Name: PluginAuditLogBufferSize, Value: strconv.Itoa(config.GetGlobalConfig().Instance.PluginAuditLogFlushInterval), ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.Itoa(config.GetGlobalConfig().Instance.PluginAuditLogBufferSize), nil
 	}},
-	{Scope: vardef.ScopeInstance, Name: vardef.PluginAuditLogFlushInterval, Value: strconv.Itoa(config.GetGlobalConfig().Instance.PluginAuditLogFlushInterval), ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+	{Scope: ScopeInstance, Name: PluginAuditLogFlushInterval, Value: strconv.Itoa(config.GetGlobalConfig().Instance.PluginAuditLogFlushInterval), ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.Itoa(config.GetGlobalConfig().Instance.PluginAuditLogFlushInterval), nil
 	}},
-	{Scope: vardef.ScopeInstance, Name: vardef.MaxConnections, Value: strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 100000, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
->>>>>>> eb6cdbbc8a1 (pkg/config: add buffer config for plugin audit log (#63651))
+	{Scope: ScopeInstance, Name: MaxConnections, Value: strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 100000, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		config.GetGlobalConfig().Instance.MaxConnections = uint32(TidbOptInt64(val, 0))
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
@@ -3101,6 +3097,10 @@ const (
 	PluginDir = "plugin_dir"
 	// PluginLoad is the name of 'plugin_load' system variable.
 	PluginLoad = "plugin_load"
+	// PluginAuditLogBufferSize is the name of 'plugin_audit_log_buffer_size' system variable.
+	PluginAuditLogBufferSize = "plugin_audit_log_buffer_size"
+	// PluginAuditLogFlushInterval is the name of 'plugin_audit_log_flush_interval' system variable.
+	PluginAuditLogFlushInterval = "plugin_audit_log_flush_interval"
 	// TiDBEnableDDL indicates whether the tidb-server campaigns the DDL owner,
 	TiDBEnableDDL = "tidb_enable_ddl"
 	// Port is the name for 'port' system variable.
