@@ -608,7 +608,8 @@ func (p *PhysicalProperty) MemoryUsage() (sum int64) {
 }
 
 // NeedEnforceExchanger checks if we need to enforce an exchange operator on the top of the mpp task.
-func NeedEnforceExchanger(mtp MPPPartitionType, mHashCols []*MPPPartitionColumn, prop *PhysicalProperty, fd *funcdep.FDSet) bool {
+func NeedEnforceExchanger(mtp MPPPartitionType, mHashCols []*MPPPartitionColumn,
+	prop *PhysicalProperty, fd *funcdep.FDSet) bool {
 	switch prop.MPPPartitionTp {
 	case AnyType:
 		return false
