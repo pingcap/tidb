@@ -1855,11 +1855,17 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		for _, record := range itm.data {
 			logutil.BgLogger().Debug("show column privilege record in cache",
 				zap.String("user", record.User),
+				zap.String("user addr", fmt.Sprintf("%p", unsafe.StringData(record.User))),
 				zap.String("host", record.Host),
-				zap.String("DB", record.DB),
-				zap.String("table", record.TableName),
-				zap.String("column", record.ColumnName),
+				zap.String("host addr", fmt.Sprintf("%p", unsafe.StringData(record.Host))),
+				zap.String("db", record.DB),
+				zap.String("db addr", fmt.Sprintf("%p", unsafe.StringData(record.DB))),
+				zap.String("table_name", record.TableName),
+				zap.String("table_name addr", fmt.Sprintf("%p", unsafe.StringData(record.TableName))),
+				zap.String("column_name", record.ColumnName),
+				zap.String("column_name addr", fmt.Sprintf("%p", unsafe.StringData(record.ColumnName))),
 				zap.String("privileges", record.ColumnPriv.String()),
+				zap.Time("timestamp", record.Timestamp),
 				zap.Int("len(allRoles)", len(allRoles)),
 			)
 			if !collectColumnGrant(&record, user, host, columnPrivTable, sqlMode) {
