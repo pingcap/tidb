@@ -126,13 +126,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
-	// two preprocess here.
-	// 1: PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
-	// 2: EliminateNoPrecisionCast here can convert query 'cast(c<int> as bigint) = 1' to 'c = 1' to leverage access range.
-	exprCtx := ds.SCtx().GetExprCtx()
-	for i, expr := range ds.PushedDownConds {
-		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
-	}
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
