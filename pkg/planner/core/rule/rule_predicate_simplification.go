@@ -218,7 +218,7 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 		}
 	}
 	if isSameTable {
-		simplifiedPredicate = mergeOrPredicateAndEqual(sctx, simplifiedPredicate)
+		//simplifiedPredicate = mergeOrPredicateAndEqual(sctx, simplifiedPredicate)
 	}
 	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
