@@ -133,7 +133,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
-	// Prune indexes based on WHERE and ordering columns (ORDER BY, MIN/MAX) if we have too many
+	// Prune indexes based on WHERE and ordering columns (ORDER BY, MIN/MAX/FIRST_VALUE) if we have too many
 	threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
 	if len(ds.AllPossibleAccessPaths) > threshold && (len(ds.WhereColumns) > 0 || len(ds.OrderingColumns) > 0) {
 		ds.AllPossibleAccessPaths = pruneIndexesByWhereAndOrder(ds, ds.AllPossibleAccessPaths, ds.WhereColumns, ds.OrderingColumns, threshold)
@@ -788,12 +788,13 @@ type indexWithScore struct {
 }
 
 // pruneIndexesByWhereAndOrder prunes indexes based on their coverage of WHERE and ordering columns.
-// Ordering columns include both ORDER BY and MIN/MAX aggregates since both benefit from ordered indexes.
+// NOTE: This is an APPROXIMATE pruning - to find "interesting" indexes, not the "best" index.
+// Ordering columns include both ORDER BY and MIN/MAX/FIRST_VALUE aggregates which can benefit from ordered indexes.
 // This pruning is controlled by variable - tidb_opt_index_prune_threshold.
 // The lower the threshold, the more aggressive the pruning.
 // Pruning occurs before many of the index fields are populated - to avoid the cost of
 // of building predicate ranges. Therefore, pruning is an approximation based upon
-// column coverage only, not the actual predicate ranges.
+// column coverage only, not the actual predicate ranges or ordering requirements.
 // The real target of this pruning is for customers requiring a very large number of
 // of indexes (>100) on a table, which causes excessive planning time.
 // TO-DO: While isSingleScan is checked, the code can prioritize single-scan
@@ -809,11 +810,15 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		return paths
 	}
 
-	// Keep total to 10 indexes max
+	// maxIndexes allows a minimum number of indexes to be kept regardless of threshold
+	// This avoids extreme pruning when threshold is very low (or even zero).
 	const maxIndexes = 10
 	maxToKeep := max(maxIndexes, threshold)
-	perfectCoveringIndexes := make([]indexWithScore, 0, maxIndexes) // Store with coverage info for sorting
-	preferredIndexes := make([]indexWithScore, 0, maxIndexes)       // Store with coverage info for sorting
+	// Calculate total coverage
+	totalRequiredCols := len(whereColumns) + len(orderingColumns)
+	// Prepare lists to hold indexes with different levels of coverage
+	perfectCoveringIndexes := make([]indexWithScore, 0, maxIndexes) // Indexes covering all required columns
+	preferredIndexes := make([]indexWithScore, 0, maxIndexes)       // "Next" best indexes with preferable coveraage"
 	tablePaths := make([]*util.AccessPath, 0, 1)                    // Usually just one table path
 
 	// Build ID-based lookup maps for column matching (more reliable than names)
@@ -869,8 +874,7 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			}
 		}
 
-		// Calculate total coverage
-		totalRequiredCols := len(whereColumns) + len(orderingColumns)
+		// Calculate this plans totals
 		totalCovered := coveredWhereCount + coveredOrderingCount
 
 		// Perfect covering: covers ALL required columns AND has consecutive matches from start
@@ -1017,7 +1021,6 @@ func calculateScoreFromCoverage(info indexWithScore, totalWhereColumns, totalOrd
 	// NOTE: For ordering, we cannot guarantee that the presence of ordering
 	// columns will always lead to a plan that doesn't need sort.
 	// So we only give a bonus for ordering column coverage.
-	// Bonus for ordering column coverage - may eliminate sort completely
 	if info.orderingCount == totalOrderingCols {
 		score += 10
 	}
