@@ -256,6 +256,13 @@ type Plan struct {
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
 
+	// Location is used to convert time type for parquet, as we assume that time stored
+	// in parquet is always adjusted to UTC, see
+	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
+	Location *time.Location
+	// ParquetFileMemoryUsage is the estimated memory usage of each parquet parser.
+	ParquetFileMemoryUsage int
+
 	SQLMode mysql.SQLMode
 	// Charset is the charset of the data file when file is CSV or TSV.
 	// it might be nil when using LOAD DATA and no charset is specified.
@@ -485,6 +492,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		FieldNullDef:   defaultFieldNullDef,
 		LineFieldsInfo: lineFieldsInfo,
 
+		Location:         userSctx.GetSessionVars().Location(),
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		ImportantSysVars: getImportantSysVars(userSctx),
 
@@ -1335,6 +1343,21 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 
+	failpoint.Inject("skipReadFiles", func() {
+		failpoint.Goto("afterReadFiles")
+	})
+
+	// Fill memory usage info
+	if sourceType == mydump.SourceTypeParquet && len(dataFiles) > 0 {
+		_, _, memoryUsage, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
+		e.Plan.ParquetFileMemoryUsage = memoryUsage
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	failpoint.Label("afterReadFiles")
+
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 
@@ -1492,6 +1515,7 @@ func (e *LoadDataController) GetParser(
 			e.dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.ParquetMeta,
 		)
 	}
 	if err != nil {
