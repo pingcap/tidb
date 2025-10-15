@@ -138,3 +138,32 @@ func TestWriteSlowLogHint(t *testing.T) {
 		checkWriteSlowLog(true)
 	})
 }
+
+func TestIndexHintAliasForIndex(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("USE test")
+		testKit.MustExec("DROP TABLE IF EXISTS t_alias")
+		testKit.MustExec(`
+		CREATE TABLE t_alias (
+			a INT PRIMARY KEY,
+			b INT,
+			c INT,
+			UNIQUE KEY idx_b (b),
+			KEY idx_c (c)
+		);`)
+		// The optimizer would normally choose idx_c for this query.
+		// We use the INDEX hint to force it to use idx_b.
+		rows := testKit.MustQuery("EXPLAIN SELECT /*+ INDEX(t_alias, idx_b) */ * FROM t_alias WHERE c > 10;").Rows()
+		// Check that the plan indeed uses the index specified in the hint.
+		var planUsesCorrectIndex bool
+		for _, row := range rows {
+			// The EXPLAIN format for an index scan will contain a string like "index:idx_b(c)".
+			// We just need to check for the presence of the index name.
+			if strings.Contains(row[3].(string), "index:idx_b") {
+				planUsesCorrectIndex = true
+				break
+			}
+		}
+		require.True(t, planUsesCorrectIndex, "The execution plan should use the index 'idx_b' specified in the INDEX hint")
+	})
+}
