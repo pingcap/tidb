@@ -672,9 +672,9 @@ func TestModifyColumnWithIndexWithDefaultValue(t *testing.T) {
 		enableDistTask  string
 		enableFastReorg string
 	}{
-		// {"txn", "off", "off"},
+		{"txn", "off", "off"},
 		{"local ingest", "off", "on"},
-		// {"dxf ingest", "on", "on"},
+		{"dxf ingest", "on", "on"},
 	}
 	for _, tc := range testcases {
 		t.Run(tc.caseName, func(t *testing.T) {

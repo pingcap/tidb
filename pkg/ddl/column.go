@@ -128,7 +128,7 @@ func checkDropColumnForStatePublic(colInfo *model.ColumnInfo) (err error) {
 		// But currently will be ok, because we can't cancel the drop column job when the job is running,
 		// so the column will be dropped succeed and client will never see the wrong default value of the dropped column.
 		// More info about this problem, see PR#9115.
-		originDefVal, err := GenerateOriginDefaultValue(colInfo, nil)
+		originDefVal, err := generateOriginDefaultValue(colInfo, nil)
 		if err != nil {
 			return err
 		}
@@ -1252,8 +1252,7 @@ func modifyColsFromNull2NotNull(
 	return nil
 }
 
-// GenerateOriginDefaultValue is exported for test.
-func GenerateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (any, error) {
+func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (any, error) {
 	var err error
 	odValue := col.GetDefaultValue()
 	if odValue == nil && mysql.HasNotNullFlag(col.GetFlag()) ||
