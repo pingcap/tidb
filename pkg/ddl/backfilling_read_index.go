@@ -105,11 +105,19 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
 	cfg := config.GetGlobalConfig()
 	if cfg.Store == config.StoreTypeTiKV {
-		if !r.isGlobalSort() {
+		globalSort := r.isGlobalSort()
+		if !globalSort {
 			r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
 			ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
 		}
-		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.store, r.job, false, 0)
+		unique := false
+		for _, index := range r.indexes {
+			if index.Unique {
+				unique = true
+				break
+			}
+		}
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.store, r.job, unique && !globalSort, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}

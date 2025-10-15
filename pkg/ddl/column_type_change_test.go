@@ -408,8 +408,11 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 					checkErr = errors.New("assert the writable column number error")
 					return
 				}
-				if tbl.WritableCols()[3].OriginDefaultValue != tbl.WritableCols()[3].DefaultValue {
-					checkErr = errors.New("assert the write only column origin default value error")
+				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
+				expectVal := "0000-00-00"
+				if originalDV != expectVal {
+					errMsg := fmt.Sprintf("expect: %v, got: %v", expectVal, originalDV)
+					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
 					return
 				}
 			}
@@ -490,8 +493,11 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 			}
 			// modify column x
 			if job.ID == firstJobID {
-				if tbl.WritableCols()[3].OriginDefaultValue != tbl.WritableCols()[3].DefaultValue {
-					checkErr = errors.New("assert the write only column origin default value error")
+				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
+				expectVal := "0000-00-00 00:00:00"
+				if originalDV != expectVal {
+					errMsg := fmt.Sprintf("job ID:%d, expect: %v, got: %v", job.ID, expectVal, originalDV)
+					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
 					return
 				}
 				// The cast value will be inserted into changing column too.
@@ -503,8 +509,11 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 			}
 			// modify column b
 			if job.ID == firstJobID+1 {
-				if tbl.WritableCols()[3].OriginDefaultValue != tbl.WritableCols()[3].DefaultValue {
-					checkErr = errors.New("assert the write only column origin default value error")
+				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
+				expectVal := ""
+				if originalDV != expectVal {
+					errMsg := fmt.Sprintf("job ID:%d, expect: %v, got: %v", job.ID, expectVal, originalDV)
+					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
 					return
 				}
 				// The cast value will be inserted into changing column too.
