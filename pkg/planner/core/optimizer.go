@@ -1253,13 +1253,13 @@ func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) (skipRe
 
 var (
 	// MaxMemoryLimitForOverlongType is the memory limit for overlong type column check.
-	// Why is it not 512 ?
+	// Why is it not 128 ?
 	// Because many customers allocate a portion of memory to their management programs,
-	// the actual amount of usable memory does not align to 512GB.
-	// TODO: We are also lacking test data for instances with less than 512 GB of memory, so we need to plan the rules here.
+	// the actual amount of usable memory does not align to 128GB.
+	// TODO: We are also lacking test data for instances with less than 128GB of memory, so we need to plan the rules here.
 	// TODO: internal sql can force to use chunk reuse if we ensure the memory usage is safe.
 	// TODO: We can consider the limit/Topn in the future.
-	MaxMemoryLimitForOverlongType = 500 * size.GB
+	MaxMemoryLimitForOverlongType = 120 * size.GB
 	maxFlenForOverlongType        = mysql.MaxBlobWidth * 2
 )
 
