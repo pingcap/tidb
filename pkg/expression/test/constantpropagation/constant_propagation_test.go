@@ -51,13 +51,13 @@ func TestConstantPropagation(t *testing.T) {
 	tk.MustQuery(`explain format='plan_tree' select /*+ NO_HASH_JOIN( t373b8b5b , tafab9ab4 */ tafab9ab4.col_32 as r0 , substring_index( tafab9ab4.col_36 , ',' , 2 ) as r1 , tafab9ab4.col_32 as r2 from t373b8b5b join tafab9ab4 on t373b8b5b.col_53 = tafab9ab4.col_35 where tafab9ab4.col_35 in ( 78 ,177 ) and t373b8b5b.col_53 between 0 and 1 order by r0,r1,r2`).Check(testkit.Rows(
 		`Sort root  test.tafab9ab4.col_32, Column#7`,
 		`└─Projection root  test.tafab9ab4.col_32, substring_index(test.tafab9ab4.col_36, ,, 2)->Column#7, test.tafab9ab4.col_32`,
-		`  └─HashJoin root  inner join, equal:[eq(test.t373b8b5b.col_53, test.tafab9ab4.col_35)]`,
+		`  └─HashJoin root  inner join, equal:[eq(test.tafab9ab4.col_35, test.t373b8b5b.col_53)]`,
 		`    ├─TableReader(Build) root  data:Selection`,
-		`    │ └─Selection cop[tikv]  ge(test.t373b8b5b.col_53, 0), in(test.t373b8b5b.col_53, 78, 177), le(test.t373b8b5b.col_53, 1)`,
-		`    │   └─TableFullScan cop[tikv] table:t373b8b5b keep order:false, stats:pseudo`,
+		`    │ └─Selection cop[tikv]  in(test.tafab9ab4.col_35, 78, 177)`,
+		`    │   └─TableFullScan cop[tikv] table:tafab9ab4 keep order:false, stats:pseudo`,
 		`    └─TableReader(Probe) root  data:Selection`,
-		`      └─Selection cop[tikv]  in(test.tafab9ab4.col_35, 78, 177), le(test.tafab9ab4.col_35, 1)`,
-		`        └─TableFullScan cop[tikv] table:tafab9ab4 keep order:false, stats:pseudo`))
+		`      └─Selection cop[tikv]  ge(test.t373b8b5b.col_53, 0), le(test.t373b8b5b.col_53, 1)`,
+		`        └─TableFullScan cop[tikv] table:t373b8b5b keep order:false, stats:pseudo`))
 	tk.MustExec(`CREATE TABLE a1 (a int PRIMARY KEY, b int);`)
 	tk.MustExec(`CREATE TABLE a2 (a int PRIMARY KEY, b int);`)
 	for range 20 {

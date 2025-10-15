@@ -386,10 +386,10 @@
         "    └─HashJoin 10.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
         "      ├─IndexReader(Build) 10.00 root  index:Selection",
         "      │ └─Selection 10.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "      │   └─IndexFullScan 100.00 cop[tikv] table:t1, index:idx(c, b, a) keep order:false",
-        "      └─IndexReader(Probe) 10.00 root  index:Selection",
-        "        └─Selection 10.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "          └─IndexFullScan 100.00 cop[tikv] table:s, index:idx(c, b, a) keep order:false"
+        "      │   └─IndexFullScan 100.00 cop[tikv] table:s, index:idx(c, b, a) keep order:false",
+        "      └─IndexReader(Probe) 100.00 root  index:Selection",
+        "        └─Selection 100.00 cop[tikv]  not(isnull(test.t.a))",
+        "          └─IndexFullScan 100.00 cop[tikv] table:t1, index:idx(c, b, a) keep order:false"
       ],
       [
         "Projection 10.00 root  Column#13",

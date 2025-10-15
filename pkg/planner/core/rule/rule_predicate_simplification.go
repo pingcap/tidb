@@ -183,17 +183,17 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 func applyPredicateSimplificationForJoin(sctx base.PlanContext, predicates []expression.Expression,
 	schema1, schema2 *expression.Schema,
 	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
-	return applyPredicateSimplificationHelper(sctx, predicates, schema1, schema2, true, propagateConstant, filter)
+	return applyPredicateSimplificationHelper(sctx, predicates, schema1, schema2, true, false, propagateConstant, filter)
 }
 
-func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool,
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant, isDataSourcePushedDownConds bool,
 	vaildConstantPropagationExpressionFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
 	return applyPredicateSimplificationHelper(sctx, predicates, nil, nil,
-		false, propagateConstant, vaildConstantPropagationExpressionFunc)
+		false, propagateConstant, isDataSourcePushedDownConds, vaildConstantPropagationExpressionFunc)
 }
 
 func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expression.Expression,
-	schema1, schema2 *expression.Schema, forJoin, propagateConstant bool,
+	schema1, schema2 *expression.Schema, forJoin, propagateConstant, isDataSourcePushedDownConds bool,
 	vaildConstantPropagationExpressionFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
 	if len(predicates) == 0 {
 		return predicates
@@ -217,7 +217,7 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 			simplifiedPredicate = exprs
 		}
 	}
-	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
+	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate, isDataSourcePushedDownConds)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
@@ -485,18 +485,21 @@ func processCondition(sctx base.PlanContext, condition expression.Expression) (e
 
 // shortCircuitLogicalConstants evaluates a list of predicates, applying short-circuit logic
 // to simplify the list and eliminate redundant or trivially true/false predicates.
-func shortCircuitLogicalConstants(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+func shortCircuitLogicalConstants(sctx base.PlanContext, predicates []expression.Expression, isDataSourcePushedDownConds bool) []expression.Expression {
 	finalResult := make([]expression.Expression, 0, len(predicates))
-
+	exprCtx := sctx.GetExprCtx()
 	for _, predicate := range predicates {
 		predicate, predicateType := processCondition(sctx, predicate)
-
 		if predicateType == falsePredicate {
 			return []expression.Expression{predicate}
 		}
-
 		if predicateType != TruePredicate {
-			finalResult = append(finalResult, predicate)
+			if isDataSourcePushedDownConds {
+				// EliminateNoPrecisionCast here can convert query 'cast(c<int> as bigint) = 1' to 'c = 1' to leverage access range.
+				finalResult = append(finalResult, expression.EliminateNoPrecisionLossCast(exprCtx, predicate))
+			} else {
+				finalResult = append(finalResult, predicate)
+			}
 		}
 	}
 

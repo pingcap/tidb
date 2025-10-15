@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -142,7 +143,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	if err != nil {
 		return nil, false, err
 	}
-
 	// index merge path is generated from all conditions from ds based on ds.PossibleAccessPath.
 	// we should renew ds.PossibleAccessPath to AllPossibleAccessPath once a new DS is generated.
 	if err := generateIndexMergePath(ds); err != nil {
@@ -154,7 +154,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	if indexForce {
 		ds.SCtx().GetSessionVars().StmtCtx.SetIndexForce()
 	}
-
+	ds.PushedDownConds = ruleutil.ApplyPredicateSimplification(ds.SCtx(), ds.PushedDownConds, true, false, nil)
 	return ds.StatsInfo(), true, nil
 }
 
