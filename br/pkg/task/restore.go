@@ -2255,16 +2255,16 @@ func PreCheckTableTiFlashReplica(
 func checkTablesClusterIndex(tables []*metautil.Table, dom *domain.Domain) error {
 	// maybe we need to make it configurable?
 	const maxConcurrency = 10
-	
+
 	type result struct {
 		table *metautil.Table
 		err   error
 	}
-	
+
 	// Create work channel and result channel
 	workCh := make(chan *metautil.Table, len(tables))
 	resultCh := make(chan result, len(tables))
-	
+
 	// Start workers
 	var wg sync.WaitGroup
 	for i := 0; i < maxConcurrency && i < len(tables); i++ {
@@ -2276,8 +2276,8 @@ func checkTablesClusterIndex(tables []*metautil.Table, dom *domain.Domain) error
 				// table exists in database
 				if err == nil {
 					if table.Info.IsCommonHandle != oldTableInfo.IsCommonHandle {
-						log.Error("Clustered index option mismatch", 
-							zap.String("schemaName", table.DB.Name.O), 
+						log.Error("Clustered index option mismatch",
+							zap.String("schemaName", table.DB.Name.O),
 							zap.String("tableName", table.Info.Name.O))
 						resultCh <- result{
 							table: table,
@@ -2294,23 +2294,23 @@ func checkTablesClusterIndex(tables []*metautil.Table, dom *domain.Domain) error
 			}
 		}()
 	}
-	
+
 	for _, table := range tables {
 		workCh <- table
 	}
 	close(workCh)
-	
+
 	go func() {
 		wg.Wait()
 		close(resultCh)
 	}()
-	
+
 	for res := range resultCh {
 		if res.err != nil {
 			return res.err
 		}
 	}
-	
+
 	return nil
 }
 
@@ -2320,10 +2320,14 @@ func PreCheckTableClusterIndex(
 	ddlJobs []*model.Job,
 	dom *domain.Domain,
 ) error {
-	// Check tables in parallel
+	start := time.Now()
 	if err := checkTablesClusterIndex(tables, dom); err != nil {
 		return err
 	}
+	tableCheckDuration := time.Since(start)
+	log.Info("check cluster index option for tables", zap.Duration("duration", tableCheckDuration))
+
+	// Check DDL jobs
 	for _, job := range ddlJobs {
 		if job.Type == model.ActionCreateTable {
 			tableInfo := job.BinlogInfo.TableInfo
