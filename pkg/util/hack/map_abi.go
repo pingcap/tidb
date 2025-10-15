@@ -237,7 +237,6 @@ type abiTFlag uint8
 type abiKind uint8
 type abiNameOff int32
 type abiTypeOff int32
-type abiTextOff int32
 
 // src/internal/abi/type.go:Type
 type abiType struct {
