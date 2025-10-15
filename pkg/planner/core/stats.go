@@ -405,6 +405,9 @@ func detachCondAndBuildRangeForPath(
 	conds []expression.Expression,
 	histColl *statistics.HistColl,
 ) error {
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	if len(path.IdxCols) == 0 {
 		path.TableFilters = conds
 		return nil
