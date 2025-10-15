@@ -89,7 +89,6 @@
   {
     "name": "TestJoinOrderHint4NestedLeading",
     "cases": [
-      //normal nested join order
       "select /*+ leading(t1, (t2, t3)) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.a=t3.a;",
       "select /*+ leading(t1, (t2, (t3, t4))) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.a=t3.a join t4 on t3.a=t4.a;",
       "select /*+ leading(t1, ((t2, t3), t4)) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.a=t3.a join t4 on t3.a=t4.a;",
