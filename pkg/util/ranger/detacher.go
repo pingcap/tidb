@@ -15,6 +15,7 @@
 package ranger
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -729,6 +730,9 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 // bool: indicate whether there's nil range when merging eq and in conditions.
 func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) (accesses, filters, newConditions []expression.Expression, columnValues []*valueInfo, _ bool) {
+	if sctx.ExprCtx.ConnectionID() != 0 {
+		fmt.Println("wwz")
+	}
 	rb := builder{sctx: sctx}
 	accesses = make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
