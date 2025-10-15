@@ -558,7 +558,7 @@ type PlanHints struct {
 	TiFlashTables      []HintedTable    // isolation_read_engines(xx=tiflash)
 	TiKVTables         []HintedTable    // isolation_read_engines(xx=tikv)
 	LeadingJoinOrder   []HintedTable    // leading
-	LeadingList        *ast.LeadingList //leading recursive
+	LeadingList        *ast.LeadingList // leading recursive
 	HJBuild            []HintedTable    // hash_join_build
 	HJProbe            []HintedTable    // hash_join_probe
 

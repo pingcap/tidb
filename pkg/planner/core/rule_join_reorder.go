@@ -429,7 +429,35 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 	return true, remainingGroup
 }
 
-// buildLeadingTreeFromList recursively constructs a LEADING tree, with items coming from ast.LeadingList.Items (*ast.HintTable | *ast.LeadingList)
+// buildLeadingTreeFromList recursively constructs a LEADING join order tree.
+// the `leadingList` argument is derived from a LEADING hint in SQL, e.g.:
+//
+//	/*+ LEADING(t1, (t2, t3), (t4, (t5, t6, t7))) */
+//
+// and it is parsed into a nested structure of *ast.LeadingList and *ast.HintTable:
+// leadingList.Items = [
+//
+//	*ast.HintTable{name: "t1"},
+//	*ast.LeadingList{ // corresponds to (t2, t3)
+//	    Items: [
+//	        *ast.HintTable{name: "t2"},
+//	        *ast.HintTable{name: "t3"},
+//	    ],
+//	},
+//	*ast.LeadingList{ // corresponds to (t4, (t5, t6, t7))
+//	    Items: [
+//	        *ast.HintTable{name: "t4"},
+//	        *ast.LeadingList{
+//	            Items: [
+//	                *ast.HintTable{name: "t5"},
+//	                *ast.HintTable{name: "t6"},
+//	                *ast.HintTable{name: "t7"},
+//	            ],
+//	        },
+//	    ],
+//	},
+//
+// ]
 func (s *baseSingleGroupJoinOrderSolver) buildLeadingTreeFromList(
 	leadingList *ast.LeadingList, availableGroups []base.LogicalPlan, hasOuterJoin bool,
 ) (base.LogicalPlan, []base.LogicalPlan, bool) {
@@ -437,51 +465,45 @@ func (s *baseSingleGroupJoinOrderSolver) buildLeadingTreeFromList(
 		return nil, availableGroups, false
 	}
 
-	var currentJoin base.LogicalPlan
-	remainingGroups := availableGroups
+	var (
+		currentJoin     base.LogicalPlan
+		remainingGroups = availableGroups
+		ok              bool
+	)
 
 	for i, item := range leadingList.Items {
 		switch element := item.(type) {
 		case *ast.HintTable:
 			// find and remove the plan node that matches ast.HintTable from remainingGroups
-			tablePlan, newRemaining, ok := s.findAndRemovePlanByAstHint(remainingGroups, element)
+			var tablePlan base.LogicalPlan
+			tablePlan, remainingGroups, ok = s.findAndRemovePlanByAstHint(remainingGroups, element)
 			if !ok {
 				return nil, availableGroups, false
 			}
-			remainingGroups = newRemaining
 
 			if i == 0 {
 				currentJoin = tablePlan
 			} else {
-				// connect the current table to the existing join tree
-				lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, tablePlan)
-				if hasOuterJoin && usedEdges == nil {
-					// If the joinGroups contain the outer join, we disable the cartesian product.
+				currentJoin, availableGroups, ok = s.connectJoinNodes(currentJoin, tablePlan, hasOuterJoin, availableGroups)
+				if !ok {
 					return nil, availableGroups, false
 				}
-				var rem []expression.Expression
-				currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType)
-				s.otherConds = rem
 			}
 		case *ast.LeadingList:
 			// recursively handle nested lists
-			nestedJoin, newRemaining, ok := s.buildLeadingTreeFromList(element, remainingGroups, hasOuterJoin)
+			var nestedJoin base.LogicalPlan
+			nestedJoin, remainingGroups, ok = s.buildLeadingTreeFromList(element, remainingGroups, hasOuterJoin)
 			if !ok {
 				return nil, availableGroups, false
 			}
-			remainingGroups = newRemaining
 
 			if i == 0 {
 				currentJoin = nestedJoin
 			} else {
-				lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, nestedJoin)
-				if hasOuterJoin && usedEdges == nil {
-					// If the joinGroups contain the outer join, we disable the cartesian product.
+				currentJoin, availableGroups, ok = s.connectJoinNodes(currentJoin, nestedJoin, hasOuterJoin, availableGroups)
+				if !ok {
 					return nil, availableGroups, false
 				}
-				var rem []expression.Expression
-				currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType)
-				s.otherConds = rem
 			}
 		default:
 			s.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
@@ -490,6 +512,23 @@ func (s *baseSingleGroupJoinOrderSolver) buildLeadingTreeFromList(
 	}
 
 	return currentJoin, remainingGroups, true
+}
+
+// connectJoinNodes handles joining two subplans, performing connection checks
+// and enforcing the outer join constraint.
+func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
+	currentJoin, nextNode base.LogicalPlan,
+	hasOuterJoin bool, availableGroups []base.LogicalPlan,
+) (base.LogicalPlan, []base.LogicalPlan, bool) {
+	lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, nextNode)
+	if hasOuterJoin && usedEdges == nil {
+		// If the joinGroups contain an outer join, we disable cartesian product.
+		return nil, availableGroups, false
+	}
+	var rem []expression.Expression
+	currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType)
+	s.otherConds = rem
+	return currentJoin, availableGroups, true
 }
 
 // findAndRemovePlanByAstHint: Find the plan in `plans` that matches `ast.HintTable` and remove that plan, returning the new slice.
