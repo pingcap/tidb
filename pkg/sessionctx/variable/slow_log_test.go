@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -395,11 +396,21 @@ func TestSlowLogMaxPerSec(t *testing.T) {
 
 	// normal
 	tk.MustExec(`set global tidb_slow_log_max_per_sec="2"`)
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	require.False(t, vardef.GlobalSlowLogRateLimiter.Allow())
 	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
 		testkit.Rows("tidb_slow_log_max_per_sec 2"),
 	)
 	tk.MustQuery(`select @@Global.tidb_slow_log_max_per_sec`).Check(
 		testkit.Rows("2"),
 	)
-
+	// no limit
+	tk.MustExec(`set global tidb_slow_log_max_per_sec="0"`)
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
+		testkit.Rows("tidb_slow_log_max_per_sec 0"),
+	)
 }

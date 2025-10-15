@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/time/rate"
 )
 
 func TestIsMDLEnabledInNextGen(t *testing.T) {
@@ -44,13 +45,14 @@ func runConcurrentTest(b *testing.B, limiter interface {
 	var wg sync.WaitGroup
 	startCh := make(chan struct{})
 
+	cnt := b.N / goroutines
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 
 			<-startCh
-			for i := 0; i < b.N; i++ {
+			for i := 0; i < cnt; i++ {
 				limiter.Allow()
 			}
 		}()
@@ -62,26 +64,22 @@ func runConcurrentTest(b *testing.B, limiter interface {
 	b.StopTimer()
 }
 
-const limit = int64(10000)
-const goroutines = 100
+const limit = 10000
 
 func BenchmarkRateLimiterSimple(b *testing.B) {
 	b.ReportAllocs()
-	rl := NewRateLimiter(int(limit))
+	rl := rate.NewLimiter(rate.Limit(limit), limit)
 	runConcurrentTest(b, rl, 1)
 }
 
-func BenchmarkRateLimiterCurrency(b *testing.B) {
+func BenchmarkRateLimiterCurrency100(b *testing.B) {
 	b.ReportAllocs()
-	rl := NewRateLimiter(int(limit))
-	runConcurrentTest(b, rl, goroutines)
+	rl := rate.NewLimiter(rate.Limit(limit), limit)
+	runConcurrentTest(b, rl, 100)
+}
 
-	lim := NewRateLimiter(int(limit))
+func BenchmarkRateLimiterCurrency1000(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			lim.Allow()
-		}
-	})
+	rl := rate.NewLimiter(rate.Limit(limit), limit)
+	runConcurrentTest(b, rl, 100)
 }

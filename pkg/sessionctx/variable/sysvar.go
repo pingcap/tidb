@@ -3673,16 +3673,9 @@ var defaultSysVars = []*SysVar{
 	{
 		Scope:    vardef.ScopeGlobal,
 		Name:     vardef.TiDBSlowLogMaxPerSec,
-		Value:    "",
+		Value:    "0",
 		Type:     vardef.TypeInt,
 		MinValue: 0, MaxValue: 1000000,
-		Validation: func(_ *SessionVars, val string, _ string, _ vardef.ScopeFlag) (string, error) {
-			_, err := strconv.Atoi(val)
-			if err != nil {
-				return "", errors.Errorf("invalid tidb_slow_log_max_per_sec value %s", val)
-			}
-			return val, nil
-		},
 		SetGlobal: func(_ context.Context, sv *SessionVars, s string) error {
 			d := TidbOptInt(s, 0)
 			if d == int(vardef.GlobalSlowLogRateLimiter.Limit()) {
@@ -3694,6 +3687,7 @@ var defaultSysVars = []*SysVar{
 				return nil
 			}
 			vardef.GlobalSlowLogRateLimiter.SetLimit(rate.Limit(d))
+			vardef.GlobalSlowLogRateLimiter.SetBurst(d)
 			return nil
 		},
 		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
