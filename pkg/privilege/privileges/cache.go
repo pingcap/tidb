@@ -1851,7 +1851,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	sortFromIdx = len(gs)
 	columnPrivTable := make(map[string]privOnColumns)
 	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
-		logutil.BgLogger().Debug("show column privilege record in cache", zap.String("user", itm.username), zap.Int("len", len(itm.data)))
+		logutil.BgLogger().Debug("show column privilege record in btree node", zap.String("user", itm.username), zap.Int("len", len(itm.data)))
 		for _, record := range itm.data {
 			logutil.BgLogger().Debug("column privilege record in cache",
 				zap.String("user", record.User),
