@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -161,4 +163,43 @@ func TestShowSessionStates(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk1.MustQuery("show session_states").CheckAt([]int{1}, testkit.Rows("<nil>"))
+}
+
+func TestShowIndexNDVFetchFromStorageWithoutCachePollution(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// disable auto analyze to prevent race conditions
+	originalAutoAnalyze := tk.MustQuery("select @@global.tidb_enable_auto_analyze").Rows()[0][0].(string)
+	tk.MustExec("set global tidb_enable_auto_analyze = 0")
+	defer tk.MustExec("set global tidb_enable_auto_analyze = " + originalAutoAnalyze)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, c int, index ib(b, c))")
+	tk.MustExec("insert into t values (1,10,100),(2,20,200),(3,30,300),(4,40,400),(5,50,500)")
+	tk.MustExec("analyze table t")
+
+	dom.StatsHandle().Clear()
+
+	// show index fetches all NDVs from storage for consistency
+	rows := tk.MustQuery("show index from t").Rows()
+	require.GreaterOrEqual(t, len(rows), 3)
+	ndvs := map[string]string{}
+	for _, r := range rows {
+		keyName := r[2].(string)
+		colName := r[4].(string)
+		card := r[6].(string)
+		ndvs[keyName+":"+colName] = card
+	}
+	require.NotEqual(t, "0", ndvs["PRIMARY:a"])
+	require.NotEqual(t, "0", ndvs["ib:b"])
+	require.NotEqual(t, "0", ndvs["ib:c"])
+
+	// verify cache remains unpolluted after show index
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.True(t, statsTbl.Pseudo)
 }
