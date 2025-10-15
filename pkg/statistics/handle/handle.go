@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	pkgutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -127,7 +127,7 @@ func NewHandle(
 	ctx context.Context,
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
-	pool pkgutil.DestroyableSessionPool,
+	pool syssession.Pool,
 	tracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
 	autoAnalyzeProcIDGetter func() uint64,

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -393,20 +394,16 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.S
 }
 
 func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
-	se, err := h.Pool.SPool().Get()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err == nil { // only recycle when no error
-			h.Pool.SPool().Put(se)
-		} else {
-			// Note: Otherwise, the session will be leaked.
-			h.Pool.SPool().Destroy(se)
-		}
-	}()
+	return h.Pool.SPool().WithSession(func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			return h.initStatsHistogramsByPagingWithSCtx(sctx, is, cache, task, totalMemory)
+		})
+	})
+}
 
-	sctx := se.(sessionctx.Context)
+// initStatsHistogramsByPagingWithSCtx contains the core business logic for initStatsHistogramsByPaging.
+// This method preserves git blame history by keeping the original logic intact.
+func (h *Handle) initStatsHistogramsByPagingWithSCtx(sctx sessionctx.Context, is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
 	sql := genInitStatsHistogramsSQL(newGenHistSQLOptionsForPaging([2]int64{task.StartTid, task.EndTid}))
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
@@ -573,19 +570,16 @@ func genInitStatsTopNSQLForIndexes(isPaging bool, tableRange [2]int64) string {
 }
 
 func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
-	se, err := h.Pool.SPool().Get()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err == nil { // only recycle when no error
-			h.Pool.SPool().Put(se)
-		} else {
-			// Note: Otherwise, the session will be leaked.
-			h.Pool.SPool().Destroy(se)
-		}
-	}()
-	sctx := se.(sessionctx.Context)
+	return h.Pool.SPool().WithSession(func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			return h.initStatsTopNByPagingWithSCtx(sctx, cache, task, totalMemory)
+		})
+	})
+}
+
+// initStatsTopNByPagingWithSCtx contains the core business logic for initStatsTopNByPaging.
+// This method preserves git blame history by keeping the original logic intact.
+func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
 	sql := genInitStatsTopNSQLForIndexes(true, [2]int64{task.StartTid, task.EndTid})
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
@@ -711,19 +705,16 @@ func (h *Handle) initStatsBucketsAndCalcPreScalar(cache statstypes.StatsCache, t
 }
 
 func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task initstats.Task) error {
-	se, err := h.Pool.SPool().Get()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err == nil { // only recycle when no error
-			h.Pool.SPool().Put(se)
-		} else {
-			// Note: Otherwise, the session will be leaked.
-			h.Pool.SPool().Destroy(se)
-		}
-	}()
-	sctx := se.(sessionctx.Context)
+	return h.Pool.SPool().WithSession(func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			return h.initStatsBucketsByPagingWithSCtx(sctx, cache, task)
+		})
+	})
+}
+
+// initStatsBucketsByPagingWithSCtx contains the core business logic for initStatsBucketsByPaging.
+// This method preserves git blame history by keeping the original logic intact.
+func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache statstypes.StatsCache, task initstats.Task) error {
 	sql := genInitStatsBucketsSQLForIndexes(true, [2]int64{task.StartTid, task.EndTid})
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
