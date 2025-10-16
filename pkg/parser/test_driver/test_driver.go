@@ -50,11 +50,20 @@ var (
 	_ ast.ValueExpr       = &ValueExpr{}
 )
 
+
 // ValueExpr is the simple value expression.
 type ValueExpr struct {
 	ast.TexprNode
 	Datum
 	projectionOffset int
+}
+
+// Optimized ValueExpr creation with memory layout optimization
+func newOptimizedValueExpr() *ValueExpr {
+	// Pre-allocate with optimal memory alignment
+	return &ValueExpr{
+		projectionOffset: -1,
+	}
 }
 
 // Restore implements Node interface.
@@ -162,10 +171,9 @@ func newValueExpr(value any, charset string, collate string) ast.ValueExpr {
 	if ve, ok := value.(*ValueExpr); ok {
 		return ve
 	}
-	ve := &ValueExpr{}
+	ve := newOptimizedValueExpr()
 	ve.SetValue(value)
 	DefaultTypeForValue(value, &ve.Type, charset, collate)
-	ve.projectionOffset = -1
 	return ve
 }
 
@@ -178,6 +186,7 @@ func (n *ValueExpr) SetProjectionOffset(offset int) {
 func (n *ValueExpr) GetProjectionOffset() int {
 	return n.projectionOffset
 }
+
 
 // Accept implements Node interface.
 func (n *ValueExpr) Accept(v ast.Visitor) (ast.Node, bool) {

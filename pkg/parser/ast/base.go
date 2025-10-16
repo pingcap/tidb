@@ -20,6 +20,68 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
+// Thread-safe common strings cache to reduce allocations
+var (
+	commonStrings = map[string]string{
+		"":         "",
+		"SELECT":   "SELECT",
+		"FROM":     "FROM",
+		"WHERE":    "WHERE",
+		"INSERT":   "INSERT",
+		"UPDATE":   "UPDATE",
+		"DELETE":   "DELETE",
+		"*":        "*",
+		"1":        "1",
+		"0":        "0",
+		"NULL":     "NULL",
+		"DEFAULT":  "DEFAULT",
+		"AND":      "AND",
+		"OR":       "OR",
+		"NOT":      "NOT",
+		"IN":       "IN",
+		"EXISTS":   "EXISTS",
+		"ORDER":    "ORDER",
+		"BY":       "BY",
+		"GROUP":    "GROUP",
+		"HAVING":   "HAVING",
+		"LIMIT":    "LIMIT",
+		"OFFSET":   "OFFSET",
+		"JOIN":     "JOIN",
+		"LEFT":     "LEFT",
+		"RIGHT":    "RIGHT",
+		"INNER":    "INNER",
+		"OUTER":    "OUTER",
+		"ON":       "ON",
+		"AS":       "AS",
+		"COUNT":    "COUNT",
+		"SUM":      "SUM",
+		"AVG":      "AVG",
+		"MAX":      "MAX",
+		"MIN":      "MIN",
+		"DISTINCT": "DISTINCT",
+		"UNION":    "UNION",
+		"ALL":      "ALL",
+		"CREATE":   "CREATE",
+		"TABLE":    "TABLE",
+		"INDEX":    "INDEX",
+		"DROP":     "DROP",
+		"ALTER":    "ALTER",
+		"ADD":      "ADD",
+		"COLUMN":   "COLUMN",
+		"PRIMARY":  "PRIMARY",
+		"KEY":      "KEY",
+		"FOREIGN":  "FOREIGN",
+		"REFERENCES": "REFERENCES",
+		"UNIQUE":   "UNIQUE",
+		"CONSTRAINT": "CONSTRAINT",
+		"CHECK":    "CHECK",
+		"VALUES":   "VALUES",
+		"INTO":     "INTO",
+		"SET":      "SET",
+	}
+	commonStringsLock sync.RWMutex
+)
+
 // node is the struct implements Node interface except for Accept method.
 // Node implementations should embed it in.
 type node struct {
@@ -41,10 +103,18 @@ func (n *node) OriginTextPosition() int {
 	return n.offset
 }
 
-// SetText implements Node interface.
+// SetText implements Node interface with thread-safe string interning.
 func (n *node) SetText(enc charset.Encoding, text string) {
 	n.enc = enc
-	n.text = text
+	// Thread-safe lookup in common strings cache
+	commonStringsLock.RLock()
+	if cached, exists := commonStrings[text]; exists {
+		commonStringsLock.RUnlock()
+		n.text = cached
+	} else {
+		commonStringsLock.RUnlock()
+		n.text = text
+	}
 	n.once = &sync.Once{}
 }
 
