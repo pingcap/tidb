@@ -126,7 +126,8 @@ func NewMergeOperator(
 				partSize:      partSize,
 				newFilePrefix: newFilePrefix,
 				blockSize:     blockSize,
-				onClose:       onClose,
+				onWriterClose: onWriterClose,
+				onReaderClose: onReaderClose,
 				collector:     collector,
 				checkHotspot:  checkHotspot,
 				onDup:         onDup,
@@ -151,7 +152,8 @@ type mergeWorker struct {
 	partSize      int64
 	newFilePrefix string
 	blockSize     int
-	onClose       OnCloseFunc
+	onWriterClose OnWriterCloseFunc
+	onReaderClose OnReaderCloseFunc
 	collector     execute.Collector
 	checkHotspot  bool
 	onDup         engineapi.OnDuplicateKey
@@ -166,7 +168,8 @@ func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)
 		w.newFilePrefix,
 		uuid.New().String(),
 		w.blockSize,
-		w.onClose,
+		w.onWriterClose,
+		w.onReaderClose,
 		w.collector,
 		w.checkHotspot,
 		w.onDup,

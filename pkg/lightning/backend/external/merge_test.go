@@ -177,6 +177,7 @@ func TestMergeOperator(t *testing.T) {
 			0,
 			nil,
 			nil,
+			nil,
 			1,
 			false,
 			engineapi.OnDuplicateKeyIgnore,

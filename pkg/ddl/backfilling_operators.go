@@ -921,14 +921,12 @@ type tempIndexScanTask struct {
 	Start kv.Key
 	End   kv.Key
 
-	ctx *OperatorCtx
+	ctx *workerpool.Context
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (t tempIndexScanTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return metrics.LblAddIndex, "RecoverArgs", func() {
-		t.ctx.onError(dbterror.ErrReorgPanic)
-	}, false
+func (tempIndexScanTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
+	return metrics.LblAddIndex, "RecoverArgs", false, dbterror.ErrReorgPanic
 }
 
 // String implement fmt.Stringer interface.
@@ -939,7 +937,7 @@ func (t tempIndexScanTask) String() string {
 
 // TempIndexScanTaskSource produces TempIndexScanTask by splitting regions of a temp index range.
 type TempIndexScanTaskSource struct {
-	ctx *OperatorCtx
+	ctx *workerpool.Context
 
 	errGroup errgroup.Group
 	sink     operator.DataChannel[tempIndexScanTask]
@@ -952,7 +950,7 @@ type TempIndexScanTaskSource struct {
 
 // NewTempIndexScanTaskSource creates a new TempIndexScanTaskSource.
 func NewTempIndexScanTaskSource(
-	ctx *OperatorCtx,
+	ctx *workerpool.Context,
 	store kv.Storage,
 	physicalTable table.PhysicalTable,
 	startKey kv.Key,
@@ -1066,7 +1064,7 @@ type MergeTempIndexOperator struct {
 
 // NewMergeTempIndexOperator creates a new MergeTempIndexOperator.
 func NewMergeTempIndexOperator(
-	ctx *OperatorCtx,
+	ctx *workerpool.Context,
 	store kv.Storage,
 	ptbl table.PhysicalTable,
 	idxInfo *model.IndexInfo,
@@ -1109,7 +1107,7 @@ func (o *MergeTempIndexOperator) Close() error {
 }
 
 type mergeTempIndexWorker struct {
-	ctx       *OperatorCtx
+	ctx       *workerpool.Context
 	store     kv.Storage
 	ptbl      table.PhysicalTable
 	idxInfo   *model.IndexInfo
@@ -1121,7 +1119,7 @@ type mergeTempIndexWorker struct {
 	totalCount *atomic.Int64
 }
 
-func (w *mergeTempIndexWorker) HandleTask(task tempIndexScanTask, sender func(tempIdxResult)) {
+func (w *mergeTempIndexWorker) HandleTask(task tempIndexScanTask, sender func(tempIdxResult)) error {
 	failpoint.Inject("injectPanicForTableScan", func() {
 		panic("mock panic")
 	})
@@ -1131,16 +1129,19 @@ func (w *mergeTempIndexWorker) HandleTask(task tempIndexScanTask, sender func(te
 		task.Start = start
 		rs, err := w.handleOneRange(task)
 		if err != nil {
-			w.ctx.onError(err)
-			return
+			return err
 		}
 		sender(rs)
 		done = rs.done
 		start = rs.nextKey
 	}
+
+	return nil
 }
 
-func (*mergeTempIndexWorker) Close() {}
+func (*mergeTempIndexWorker) Close() error {
+	return nil
+}
 
 func (w *mergeTempIndexWorker) handleOneRange(
 	task tempIndexScanTask,
@@ -1219,7 +1220,7 @@ func (w *mergeTempIndexWorker) handleOneRange(
 					zap.Error(err))
 				continue
 			}
-			w.ctx.onError(err)
+			w.ctx.OnError(err)
 			return result, err
 		}
 		break
@@ -1238,7 +1239,7 @@ func (w *mergeTempIndexWorker) handleOneRange(
 }
 
 type tempIndexResultSink struct {
-	ctx       *OperatorCtx
+	ctx       *workerpool.Context
 	tbl       table.PhysicalTable
 	collector execute.Collector
 	errGroup  errgroup.Group
@@ -1246,7 +1247,7 @@ type tempIndexResultSink struct {
 }
 
 func newTempIndexResultSink(
-	ctx *OperatorCtx,
+	ctx *workerpool.Context,
 	tbl table.PhysicalTable,
 	collector execute.Collector,
 ) *tempIndexResultSink {
