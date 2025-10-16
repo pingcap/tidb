@@ -1324,6 +1324,10 @@ func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPa
 	candidate.matchPropResult = property.PropNotMatched
 	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 	candidate.indexCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	for i := 0; i < usedIndexCols; i++ {
+		candidate.accessCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
+		candidate.indexCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
+	}
 	return candidate
 }
 
