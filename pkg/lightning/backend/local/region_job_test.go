@@ -398,7 +398,7 @@ func mockWorkerReadJob(
 		// wait runSendToWorker goroutine is blocked at sending
 		return b.jobLen() == 0
 	}, time.Second, 10*time.Millisecond)
-
+	time.Sleep(10 * time.Millisecond)
 	for _, job := range jobs[1:] {
 		jobToWorkerCh <- job
 	}
