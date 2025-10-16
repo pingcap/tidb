@@ -163,7 +163,7 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 	// But this problem has affected tiflash CI.
 	// Simplify predicates from the LogicalSelection
 	simplifiedPredicates := ruleutil.ApplyPredicateSimplification(p.SCtx(), logicalSelection.Conditions,
-		true, false, nil)
+		true, nil)
 
 	// Determine if this is a "true selection"
 	trueSelection := false
