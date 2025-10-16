@@ -139,7 +139,7 @@ func TestWriteSlowLogHint(t *testing.T) {
 	})
 }
 
-func TestIndexHintForIndex(t *testing.T) {
+func TestIndexHint(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("USE test")
 		testKit.MustExec("DROP TABLE IF EXISTS t_alias")
@@ -193,5 +193,36 @@ func TestNoIndexHint(t *testing.T) {
 		// Check that the query result is still correct.
 		result := testKit.MustQuery(query)
 		result.Check(testkit.Rows("10 10", "20 20"))
+	})
+}
+
+func TestIndexCombineHint(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("USE test")
+		testKit.MustExec("DROP TABLE IF EXISTS t_index_combine")
+		testKit.MustExec(`
+		CREATE TABLE t_index_combine (
+			a INT,
+			b INT,
+			KEY idx_a (a),
+			KEY idx_b (b)
+		);`)
+
+		// Insert more data to make index merge a viable option for the optimizer.
+		testKit.MustExec("INSERT INTO t_index_combine VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (10, 10), (15, 15), (20, 20), (25, 25), (30, 30), (35, 35), (40, 40), (45, 45), (50, 50);")
+		testKit.MustExec("ANALYZE TABLE t_index_combine;")
+		query := "SELECT /*+ INDEX_COMBINE(t_index_combine, idx_a, idx_b) */ * FROM t_index_combine WHERE a < 5 OR b > 40;"
+		testKit.MustHavePlan(query, "IndexMerge")
+
+		// Verify the correctness of the query results.
+		result := testKit.MustQuery(query)
+		result.Sort().Check(testkit.Rows(
+			"1 1",
+			"2 2",
+			"3 3",
+			"4 4",
+			"45 45",
+			"50 50",
+		))
 	})
 }

@@ -110,6 +110,8 @@ const (
 	HintTiKV = "tikv"
 	// HintIndexMerge is a hint to enforce using some indexes at the same time.
 	HintIndexMerge = "use_index_merge"
+	// HintIndexCombine is functionally the same as HintIndexMerge.
+	HintIndexCombine = "index_combine"
 	// HintTimeRange is a hint to specify the time range for metrics summary tables
 	HintTimeRange = "time_range"
 	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
@@ -784,7 +786,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIndex, HintIgnoreIndex, HintNoIndex,
-			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintLeading:
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintIndexCombine, HintLeading:
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
@@ -890,7 +892,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			case HintTiKV:
 				tikvTables = append(tikvTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 			}
-		case HintIndexMerge:
+		case HintIndexMerge, HintIndexCombine:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
 				dbName = ast.NewCIStr(currentDB)

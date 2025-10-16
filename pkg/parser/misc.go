@@ -1083,6 +1083,7 @@ var hintTokenMap = map[string]int{
 	"STREAM_AGG":              hintStreamAgg,
 	"SWAP_JOIN_INPUTS":        hintSwapJoinInputs,
 	"USE_INDEX_MERGE":         hintUseIndexMerge,
+	"INDEX_COMBINE":           hintUseIndexMerge,
 	"USE_INDEX":               hintUseIndex,
 	"INDEX":                   hintUseIndex,
 	"ORDER_INDEX":             hintOrderIndex,
