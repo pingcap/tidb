@@ -254,7 +254,11 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 
-	codec.PreAllocForSerializedKeyBuffer(j.keyIndex, chk, j.keyTypes, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes, j.serializedKeys, j.isFirstPreAllocForSerializedKeyBuffer, &(j.memoryUsagePerRowBuffer))
+	err = codec.PreAllocForSerializedKeyBuffer(j.keyIndex, chk, j.keyTypes, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes, j.serializedKeys, j.isFirstPreAllocForSerializedKeyBuffer, &(j.memoryUsagePerRowBuffer))
+	if err != nil {
+		return err
+	}
+
 	j.isFirstPreAllocForSerializedKeyBuffer = false
 
 	// generate serialized key
