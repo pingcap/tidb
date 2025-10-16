@@ -17,7 +17,6 @@ package ranger
 import (
 	"fmt"
 	"math"
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
