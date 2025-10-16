@@ -43,6 +43,7 @@ type CopContextBase struct {
 	DistSQLCtx     *distsqlctx.DistSQLContext
 	PushDownFlags  uint64
 	RequestSource  string
+	PhysicalID     int64
 
 	ColumnInfos []*model.ColumnInfo
 	FieldTypes  []*types.FieldType
@@ -75,6 +76,7 @@ func NewCopContextBase(
 	distSQLCtx *distsqlctx.DistSQLContext,
 	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
+	physicalID int64,
 	idxCols []*model.IndexColumn,
 	requestSource string,
 ) (*CopContextBase, error) {
@@ -132,6 +134,7 @@ func NewCopContextBase(
 
 	return &CopContextBase{
 		TableInfo:                   tblInfo,
+		PhysicalID:                  physicalID,
 		PrimaryKeyInfo:              primaryIdx,
 		ExprCtx:                     exprCtx,
 		DistSQLCtx:                  distSQLCtx,
@@ -152,13 +155,14 @@ func NewCopContext(
 	distSQLCtx *distsqlctx.DistSQLContext,
 	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
+	physicalID int64,
 	allIdxInfo []*model.IndexInfo,
 	requestSource string,
 ) (CopContext, error) {
 	if len(allIdxInfo) == 1 {
-		return NewCopContextSingleIndex(exprCtx, distSQLCtx, pushDownFlags, tblInfo, allIdxInfo[0], requestSource)
+		return NewCopContextSingleIndex(exprCtx, distSQLCtx, pushDownFlags, tblInfo, physicalID, allIdxInfo[0], requestSource)
 	}
-	return NewCopContextMultiIndex(exprCtx, distSQLCtx, pushDownFlags, tblInfo, allIdxInfo, requestSource)
+	return NewCopContextMultiIndex(exprCtx, distSQLCtx, pushDownFlags, tblInfo, physicalID, allIdxInfo, requestSource)
 }
 
 // NewCopContextSingleIndex creates a CopContextSingleIndex.
@@ -167,10 +171,11 @@ func NewCopContextSingleIndex(
 	distSQLCtx *distsqlctx.DistSQLContext,
 	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
+	physicalID int64,
 	idxInfo *model.IndexInfo,
 	requestSource string,
 ) (*CopContextSingleIndex, error) {
-	base, err := NewCopContextBase(exprCtx, distSQLCtx, pushDownFlags, tblInfo, idxInfo.Columns, requestSource)
+	base, err := NewCopContextBase(exprCtx, distSQLCtx, pushDownFlags, tblInfo, physicalID, idxInfo.Columns, requestSource)
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +208,7 @@ func NewCopContextMultiIndex(
 	distSQLCtx *distsqlctx.DistSQLContext,
 	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
+	physicalID int64,
 	allIdxInfo []*model.IndexInfo,
 	requestSource string,
 ) (*CopContextMultiIndex, error) {
@@ -221,7 +227,7 @@ func NewCopContextMultiIndex(
 		}
 	}
 
-	base, err := NewCopContextBase(exprCtx, distSQLCtx, pushDownFlags, tblInfo, allIdxCols, requestSource)
+	base, err := NewCopContextBase(exprCtx, distSQLCtx, pushDownFlags, tblInfo, physicalID, allIdxCols, requestSource)
 	if err != nil {
 		return nil, err
 	}
