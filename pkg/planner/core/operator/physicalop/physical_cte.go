@@ -16,11 +16,11 @@ package physicalop
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/kv"
 	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
