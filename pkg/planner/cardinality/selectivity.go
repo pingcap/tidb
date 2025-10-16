@@ -859,6 +859,7 @@ func getMaskAndRanges(ctx planctx.PlanContext, exprs []expression.Expression, ra
 		remainedConds = res.RemainedConds
 		isDNF = res.IsDNFCond
 		minAccessCondsForDNFCond = res.MinAccessCondsForDNFCond
+		// we can we not store the range in cachedPath?
 	default:
 		panic("should never be here")
 	}
