@@ -140,12 +140,13 @@ func getChangingCol(
 			}
 		}
 		args.RedundantIdxs = redundantIdxs
-	} else {
-		changingCol = model.FindColumnInfoByID(tblInfo.Columns, args.ChangingColumn.ID)
-		if changingCol == nil {
-			logutil.DDLLogger().Error("the changing column has been removed")
-			return nil, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
-		}
+		return changingCol, nil
+	}
+
+	changingCol = model.FindColumnInfoByID(tblInfo.Columns, args.ChangingColumn.ID)
+	if changingCol == nil {
+		logutil.DDLLogger().Error("the changing column has been removed")
+		return nil, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
 	}
 
 	return changingCol, nil
@@ -183,7 +184,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 			return rollbackModifyColumnJobWithReorg(jobCtx, tblInfo, job, oldCol, args)
 		case ModifyTypeIndexReorg:
 			// We will add this case later
-			panic("not implemented yet")
+			return ver, errors.Errorf("ModifyTypeIndexReorg is not supported yet")
 		}
 	}
 
@@ -441,7 +442,7 @@ func finishModifyColumnWithoutReorg(
 	return ver, nil
 }
 
-// doModifyColumnWithCheck updates the column information and reorders all columns. It does not support modifying column data.
+// doModifyColumnNoCheck updates the column information and reorders all columns. It does not support modifying column data.
 func (*worker) doModifyColumnNoCheck(
 	jobCtx *jobContext,
 	job *model.Job,
@@ -463,7 +464,7 @@ func (*worker) doModifyColumnNoCheck(
 	return finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
 }
 
-// doModifyColumnWithCheck updates the column information and reorders all columns. It does not support modifying column data.
+// doModifyColumnWithCheck updates the column information and reorders all columns with data check.
 func (w *worker) doModifyColumnWithCheck(
 	jobCtx *jobContext,
 	job *model.Job,
