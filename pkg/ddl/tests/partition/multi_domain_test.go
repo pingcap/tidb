@@ -447,7 +447,6 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 // 3 unique non-global - to stay non-global
 // 4 unique global - to stay global
 func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
-	t.Skip("skip this test till we fix issue #63870")
 	createSQL := `create table t (a int primary key nonclustered global, b varchar(255), c bigint, unique index idx_b_global (b) global, unique key idx_ba (b,a), unique key idx_ab (a,b) global, unique key idx_c_global (c) global, unique key idx_cab (c,a,b)) partition by key (a,b) partitions 3`
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (1,1,1),(2,2,2),(101,101,101),(102,102,102)`)
@@ -556,7 +555,6 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 	}
 	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
 		tkO.MustQuery(`select * from t where b = 5`).Check(testkit.Rows("5 5 5"))
-		tkO.MustExec(`admin check table t`)
 		tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
 			"1 1 1",
 			"10 10 10",
@@ -996,6 +994,8 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	}
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep")
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
+	tkO.MustExec("set session tidb_enable_fast_table_check = off")
+	tkO.MustExec(`admin check table t`)
 	if !tbl.Meta().HasClusteredIndex() {
 		// Debug prints, so it is possible to verify possible newly generated _tidb_rowid's
 		res := tkO.MustQuery(`select *, _tidb_rowid from t`)
@@ -1055,7 +1055,7 @@ PartitionLoop:
 	// When the following issues are fixed:
 	// TestMultiSchemaModifyColumn - https://github.com/pingcap/tidb/issues/60264
 	// TestMultiSchemaPartitionByGlobalIndex -https://github.com/pingcap/tidb/issues/60263
-	//checkTableAndIndexEntries(t, tkO, originalIDs)
+	//checkTableAndIndexEntries(t, tkO, originalPartitions)
 
 	if postFn != nil {
 		postFn(tkO, store)
