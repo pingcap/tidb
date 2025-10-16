@@ -182,7 +182,7 @@ func TestShowIndexNDVFetchFromStorageWithoutCachePollution(t *testing.T) {
 
 	dom.StatsHandle().Clear()
 
-	// show index fetches all NDVs from storage for consistency
+	// when cache is empty, show index fetches all NDVs from storage
 	rows := tk.MustQuery("show index from t").Rows()
 	require.GreaterOrEqual(t, len(rows), 3)
 	ndvs := map[string]string{}

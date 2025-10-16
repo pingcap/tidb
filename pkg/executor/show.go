@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/statistics"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -782,10 +783,15 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowIndex() error {
+	do := domain.GetDomain(e.Ctx())
+	h := do.StatsHandle()
+
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	statsTbl := h.GetPhysicalTableStats(tb.Meta().ID, tb.Meta())
 
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
@@ -804,8 +810,8 @@ func (e *ShowExec) fetchShowIndex() error {
 		}
 	}
 
-	// prefetch all NDVs from storage for consistency
-	ndvByColID := e.prefetchColumnNDVs(tb, pkCol)
+	// check cache first; if all exist use cache, otherwise fetch all from storage for consistency
+	ndvByColID := e.prefetchColumnNDVs(tb, statsTbl, pkCol)
 
 	if pkCol != nil {
 		pkColInfo := tb.Meta().GetColumnByID(pkCol.ID)
@@ -900,13 +906,13 @@ func (e *ShowExec) fetchShowIndex() error {
 	return nil
 }
 
-// prefetchColumnNDVs fetches all column NDVs from storage for consistency
-func (e *ShowExec) prefetchColumnNDVs(tb table.Table, pkCol *table.Column) map[int64]int64 {
-	var colIDs []string
+// prefetchColumnNDVs checks cache first; if all exist uses cache, otherwise fetches all from storage for consistency
+func (e *ShowExec) prefetchColumnNDVs(tb table.Table, statsTbl *statistics.Table, pkCol *table.Column) map[int64]int64 {
+	var colIDs []int64
 
 	// collect pk column
 	if pkCol != nil {
-		colIDs = append(colIDs, strconv.FormatInt(pkCol.ID, 10))
+		colIDs = append(colIDs, pkCol.ID)
 	}
 
 	// collect index columns
@@ -920,11 +926,36 @@ func (e *ShowExec) prefetchColumnNDVs(tb table.Table, pkCol *table.Column) map[i
 			if tblCol.Hidden {
 				continue
 			}
-			colIDs = append(colIDs, strconv.FormatInt(tblCol.ID, 10))
+			colIDs = append(colIDs, tblCol.ID)
 		}
 	}
 
-	ndvByColID, _ := fetchColumnNDVs(e.Ctx(), tb.Meta().ID, colIDs)
+	// check if all columns exist in cache
+	allInCache := !statsTbl.Pseudo
+	if allInCache {
+		for _, colID := range colIDs {
+			if statsTbl.GetCol(colID) == nil {
+				allInCache = false
+				break
+			}
+		}
+	}
+
+	ndvByColID := make(map[int64]int64)
+	if allInCache {
+		// fast path: all in cache, use cache
+		for _, colID := range colIDs {
+			ndvByColID[colID] = statsTbl.GetCol(colID).NDV
+		}
+	} else {
+		// fetch all from storage for consistency
+		colIDStrs := make([]string, len(colIDs))
+		for i, colID := range colIDs {
+			colIDStrs[i] = strconv.FormatInt(colID, 10)
+		}
+		ndvByColID, _ = fetchColumnNDVs(e.Ctx(), tb.Meta().ID, colIDStrs)
+	}
+
 	return ndvByColID
 }
 
