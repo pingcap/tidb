@@ -647,9 +647,9 @@ func TestProcessStmtStatsData(t *testing.T) {
 		},
 	})
 	r.CollectStmtStatsMap(nil)
-	// S1/P1 and S7/P7 will be picked, and added
-	// Also S2/P2 is not picked, while it is not evicted in cputime data, so it won't be added to others.
-	// S4/P4 is not picked, and evicted in cputime data, so it will be added to others.
+	// S1/P1 and S7/P7 will be picked from network dimension, and added
+	// Also S2/P2 is not picked from network dimension, while it is not evicted in cputime data, so it won't be added to others.
+	// S4/P4 is not picked from network dimension, and evicted in cputime data, so it will be added to others.
 	r.CollectStmtStatsMap(stmtstats.StatementStatsMap{
 		stmtstats.SQLPlanDigest{
 			SQLDigest:  "S1",
