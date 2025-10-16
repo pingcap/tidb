@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "traceevent",
+    srcs = ["traceevent.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/traceevent",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/logutil",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "traceevent_test",
+    timeout = "short",
+    srcs = ["traceevent_test.go"],
+    embed = [":traceevent"],
+    deps = [
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+    ],
+)
