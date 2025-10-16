@@ -493,7 +493,11 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 	if cc.getCtx() != nil {
 		cc.pkt.SetMaxAllowedPacket(cc.ctx.GetSessionVars().MaxAllowedPacket)
 	}
-	return cc.pkt.ReadPacket()
+	data, err := cc.pkt.ReadPacket()
+	if err == nil && cc.getCtx() != nil {
+		cc.ctx.GetSessionVars().InPacketBytes.Add(uint64(len(data)))
+	}
+	return data, err
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
@@ -1317,7 +1321,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.mu.Unlock()
 
 	cc.lastPacket = data
-	cc.ctx.GetSessionVars().InPacketBytes.Store(uint64(len(data)))
 	cmd := data[0]
 	data = data[1:]
 	if topsqlstate.TopSQLEnabled() {
