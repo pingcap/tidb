@@ -28,7 +28,6 @@ go_library(
         "//pkg/disttask/operator",
         "//pkg/ingestor/engineapi",
         "//pkg/kv",
-        "//pkg/lightning/backend",
         "//pkg/lightning/backend/encode",
         "//pkg/lightning/backend/kv",
         "//pkg/lightning/common",

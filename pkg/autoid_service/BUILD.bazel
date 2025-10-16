@@ -35,6 +35,7 @@ go_test(
     shard_count = 3,
     deps = [
         "//pkg/config/kerneltype",
+        "//pkg/keyspace",
         "//pkg/parser/ast",
         "//pkg/store/mockstore",
         "//pkg/testkit",

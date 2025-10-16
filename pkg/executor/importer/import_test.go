@@ -299,6 +299,9 @@ func TestGetLocalBackendCfg(t *testing.T) {
 }
 
 func TestSupportedSuffixForServerDisk(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("nextgen doesn't support import from server disk")
+	}
 	username, err := user.Current()
 	require.NoError(t, err)
 	if username.Name == "root" {

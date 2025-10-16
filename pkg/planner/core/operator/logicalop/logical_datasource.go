@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -31,8 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -63,6 +60,9 @@ type DataSource struct {
 	// in predicate push down and used in partition pruning/index merge.
 	AllConds []expression.Expression `hash64-equals:"true"`
 
+	// The following property is used to cache the original statistic information of the table.
+	// It will be initialized by the function initStats(ds *logicalop.DataSource) in stats.go and never modified after that.
+	// The TableStats.RowCount is the original row count of the table, which is equal to the StatisticTable.RealtimeCount.
 	StatisticTable *statistics.Table
 	TableStats     *property.StatsInfo
 
@@ -154,7 +154,7 @@ func (ds *DataSource) ExplainInfo() string {
 // HashCode inherits BaseLogicalPlan.<0th> interface.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	predicates = ruleutil.ApplyPredicateSimplification(ds.SCtx(), predicates, true, nil)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
@@ -162,21 +162,18 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	ds.AllConds = predicates
 	dual := Conds2TableDual(ds, ds.AllConds)
 	if dual != nil {
-		AppendTableDualTraceStep(ds, dual, predicates, opt)
 		return nil, dual, nil
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
-	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	used := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, ds.Schema())
 
 	exprCols := expression.ExtractColumnsFromExpressions(ds.AllConds, nil)
 	exprUsed := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), exprCols, ds.Schema())
-	prunedColumns := make([]*expression.Column, 0)
 
 	originSchemaColumns := ds.Schema().Columns
 	originColumns := ds.Columns
@@ -196,13 +193,11 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 				expression.GcColumnExprIsTidbShard(ds.Schema().Columns[i].VirtualExpr) {
 				continue
 			}
-			prunedColumns = append(prunedColumns, ds.Schema().Columns[i])
 			// TODO: investigate why we cannot use slices.Delete for these two:
 			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
 		}
 	}
-	logicaltrace.AppendColumnPruneTraceStep(ds, prunedColumns, opt)
 	addOneHandle := false
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
@@ -236,13 +231,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 		return proj, nil
 	}
 	return ds, nil
-}
-
-// FindBestTask implements the base.LogicalPlan.<3rd> interface.
-// It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
-	opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask4LogicalDataSource(ds, prop, planCounter, opt)
 }
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
@@ -290,7 +278,7 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 // DeriveTopN inherits BaseLogicalPlan.LogicalPlan.<6th> implementation.
 
 // PredicateSimplification implements the base.LogicalPlan.<7th> interface.
-func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (ds *DataSource) PredicateSimplification() base.LogicalPlan {
 	p := ds.Self().(*DataSource)
 	p.PushedDownConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true, nil)
 	p.AllConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.AllConds, true, nil)
@@ -572,28 +560,6 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 		ID:       model.ExtraHandleID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraHandleName),
 	}
-}
-
-func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *optimizetrace.LogicalOptimizeOp) {
-	if len(ds.PushedDownConds) < 1 {
-		return
-	}
-	ectx := ds.SCtx().GetExprCtx().GetEvalCtx()
-	reason := func() string {
-		return ""
-	}
-	action := func() string {
-		buffer := bytes.NewBufferString("The conditions[")
-		for i, cond := range ds.PushedDownConds {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(cond.StringWithCtx(ectx, errors.RedactLogDisable))
-		}
-		fmt.Fprintf(buffer, "] are pushed down across %v_%v", ds.TP(), ds.ID())
-		return buffer.String()
-	}
-	opt.AppendStepToCurrent(ds.ID(), ds.TP(), reason, action)
 }
 
 func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expression.Column,

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -52,6 +53,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/pd/client/opt"
 )
 
 func init() {
@@ -122,8 +124,12 @@ func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
 	tk.MustExec("admin check table t;")
 	rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rs, 1)
-	require.Contains(t, rs[0][12], "ingest")
-	require.Contains(t, rs[0][12], "cloud")
+	if kerneltype.IsClassic() {
+		require.Contains(t, rs[0][12], "ingest")
+		require.Contains(t, rs[0][12], "cloud")
+	} else {
+		require.Equal(t, rs[0][12], "")
+	}
 	require.Equal(t, rs[0][7], strconv.Itoa(count))
 }
 
@@ -141,7 +147,8 @@ func getTaskID(t *testing.T, jobID int64) int64 {
 	mgr, err := diststorage.GetTaskManager()
 	require.NoError(t, err)
 	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
-	task, err := mgr.GetTaskByKeyWithHistory(ctx, ddl.TaskKey(jobID))
+	tkBuilder := ddl.NewTaskKeyBuilder()
+	task, err := mgr.GetTaskByKeyWithHistory(ctx, tkBuilder.Build(jobID))
 	require.NoError(t, err)
 	return task.ID
 }
@@ -163,11 +170,9 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
-	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	cloudStorageURI = handle.GetCloudStorageURI(context.Background(), store) // path with cluster id
 	defer func() {
-		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		vardef.CloudStorageURI.Store("")
 	}()
 
@@ -290,7 +295,7 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 		})
 	}
 
-	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 }
 
@@ -305,6 +310,10 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+	})
 
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("alter table t add index idx(a);")
@@ -318,8 +327,12 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
 	jobType, rowCnt := rows[0][12].(string), rows[0][7].(string)
-	require.True(t, strings.Contains(jobType, "ingest"), jobType)
-	require.False(t, strings.Contains(jobType, "cloud"), jobType)
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(jobType, "ingest"), jobType)
+		require.False(t, strings.Contains(jobType, "cloud"), jobType)
+	} else {
+		require.Equal(t, jobType, "")
+	}
 	require.Equal(t, rowCnt, "3")
 }
 
@@ -334,12 +347,10 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
-	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
 	t.Cleanup(func() {
-		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		vardef.CloudStorageURI.Store("")
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 		tk.MustExec("set @@session.tidb_scatter_region = ''")
@@ -472,11 +483,9 @@ func TestGlobalSortAddIndexRecoverFromRetryableError(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
-	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	defer func() {
-		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 	}()
 	failpoints := []string{
@@ -517,10 +526,6 @@ func TestIngestUseGivenTS(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec("set global tidb_enable_dist_task = on;")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_enable_dist_task = off;")
-	})
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	t.Cleanup(func() {
@@ -554,7 +559,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
 }
 
-func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
+func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	testutil.ReduceCheckInterval(t)
 
@@ -564,10 +569,6 @@ func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec("set global tidb_enable_dist_task = on;")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_enable_dist_task = off;")
-	})
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	t.Cleanup(func() {
@@ -585,10 +586,12 @@ func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
 
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 32")
-	tk.MustExec("set global tidb_ddl_reorg_max_write_speed = '256MiB'")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
-	})
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = '256MiB'")
+		t.Cleanup(func() {
+			tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
+		})
+	}
 
 	var (
 		modifiedReadIndex atomic.Bool
@@ -647,4 +650,196 @@ func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
 	require.True(t, modifiedReadIndex.Load())
 	require.True(t, modifiedMerge.Load())
 	tk.MustExec("admin check index gsort idx")
+}
+
+func TestDXFAddIndexRealtimeSummary(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
+	testutil.ReduceCheckInterval(t)
+
+	server, cloudStorageURI := genServerWithStorage(t)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+	})
+
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (id varchar(255), b int, c int, primary key(id) clustered);")
+	tk.MustExec("insert into t values ('a',1,1),('b',2,2),('c',3,3);")
+
+	var jobID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionAddIndex {
+			jobID = job.ID
+		}
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
+	tk.MustExec("alter table t add index idx(c);")
+	sql := `with global_tasks as (table mysql.tidb_global_task union table mysql.tidb_global_task_history)
+		select id from global_tasks where task_key like concat('%%/', '%d');`
+	taskIDRows := tk.MustQuery(fmt.Sprintf(sql, jobID)).Rows()
+	taskID := taskIDRows[0][0].(string)
+
+	getSummary := func(taskID string, step int64) (getReqCnt, putReqCnt, readBytes, bytes int) {
+		sql = `with subtasks as (table mysql.tidb_background_subtask union table mysql.tidb_background_subtask_history)
+		select
+			json_extract(summary, '$.get_request_count'),
+			json_extract(summary, '$.put_request_count'),
+			json_extract(summary, '$.read_bytes'),
+			json_extract(summary, '$.bytes')
+		from subtasks where task_key = '%s' and step = %d;`
+		fmtSQL := fmt.Sprintf(sql, taskID, step)
+		rs := tk.MustQuery(fmtSQL).Rows()
+		require.Len(t, rs, 1)
+		var err error
+		getReqCnt, err = strconv.Atoi(rs[0][0].(string))
+		require.NoError(t, err)
+		putReqCnt, err = strconv.Atoi(rs[0][1].(string))
+		require.NoError(t, err)
+		readBytes, err = strconv.Atoi(rs[0][2].(string))
+		require.NoError(t, err)
+		bytes, err = strconv.Atoi(rs[0][3].(string))
+		require.NoError(t, err)
+		return
+	}
+	getReqCnt, putReqCnt, readBytes, bytes := getSummary(taskID, 1)
+	require.Equal(t, getReqCnt, 0)   // 0, because step 1 doesn't read s3
+	require.Equal(t, putReqCnt, 2)   // 2 times (data + stats)
+	require.Greater(t, readBytes, 0) // 143 bytes for reading table records
+	require.Greater(t, bytes, 0)     // 153 bytes for writing index records
+
+	getReqCnt, putReqCnt, readBytes, bytes = getSummary(taskID, 2)
+	require.Equal(t, getReqCnt, 1) // 1, read s3
+	require.Equal(t, putReqCnt, 2) // 2 times (data + stats)
+	require.Equal(t, readBytes, 0) // 0, not suitable for merge sort
+	require.Equal(t, bytes, 0)     // 0, not suitable for merge sort
+
+	getReqCnt, putReqCnt, readBytes, bytes = getSummary(taskID, 3)
+	require.Equal(t, getReqCnt, 1) // 2, read s3
+	require.Equal(t, putReqCnt, 0) // 0, because step 3 doesn't write s3
+	require.Equal(t, readBytes, 0) // 0
+	require.Equal(t, bytes, 0)     // 0
+}
+
+func TestSplitRangeForTable(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("In next-gen scenario we don't need 'force_partition_range' to import data")
+	}
+	server, cloudStorageURI := genServerWithStorage(t)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
+	require.NoError(t, err)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	tk.MustExec("CREATE TABLE t (c int)")
+	for i := range 1024 {
+		tk.MustExec(fmt.Sprintf("INSERT INTO t VALUES (%d)", i))
+	}
+
+	testcases := []struct {
+		caseName       string
+		enableDistTask string
+		globalSort     string
+	}{
+		{"local ingest", "off", ""},
+		{"dxf ingest", "on", ""},
+		{"dxf global-sort", "on", cloudStorageURI},
+	}
+	var addCnt, removeCnt int
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+		addCnt += 1
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+		removeCnt += 1
+	})
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = on;")
+		tk.MustExec("set global tidb_cloud_storage_uri = '';")
+	})
+	for _, tc := range testcases {
+		t.Run(tc.caseName, func(t *testing.T) {
+			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
+			tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s';", tc.globalSort))
+
+			addCnt = 0
+			removeCnt = 0
+			tk.MustExec("alter table t add index i(c)")
+			require.Equal(t, addCnt, len(stores))
+			require.Equal(t, removeCnt, addCnt)
+			tk.MustExec("alter table t drop index i")
+		})
+	}
+}
+
+func TestSplitRangeForPartitionTable(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("In next-gen scenario we don't need 'force_partition_range' to import data")
+	}
+	server, cloudStorageURI := genServerWithStorage(t)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	tk.MustExec("CREATE TABLE tp (id int primary key, c int) PARTITION BY HASH (id) PARTITIONS 2")
+	for i := range 1024 {
+		tk.MustExec(fmt.Sprintf("INSERT INTO tp VALUES (%d, %d)", i, i))
+	}
+
+	testcases := []struct {
+		caseName       string
+		enableDistTask string
+		globalSort     string
+	}{
+		{"local ingest", "off", ""},
+		{"dxf ingest", "on", ""},
+		{"dxf global-sort", "on", cloudStorageURI},
+	}
+	var addCnt, removeCnt int
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+		addCnt += 1
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+		removeCnt += 1
+	})
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = on;")
+		tk.MustExec("set global tidb_cloud_storage_uri = '';")
+	})
+	for _, tc := range testcases {
+		t.Run(tc.caseName, func(t *testing.T) {
+			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
+			tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s';", tc.globalSort))
+
+			addCnt = 0
+			removeCnt = 0
+			tk.MustExec("alter table tp add index i(c)")
+			require.Greater(t, addCnt, 0)
+			require.Equal(t, removeCnt, addCnt)
+			tk.MustExec("alter table tp drop index i")
+
+			addCnt = 0
+			removeCnt = 0
+			tk.MustExec("alter table tp add index gi(c) global")
+			require.Greater(t, addCnt, 0)
+			require.Equal(t, removeCnt, addCnt)
+			tk.MustExec("alter table tp drop index gi")
+		})
+	}
 }

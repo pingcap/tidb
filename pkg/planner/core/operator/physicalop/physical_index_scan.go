@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -103,6 +103,11 @@ type PhysicalIndexScan struct {
 	// UsedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
 	UsedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
+
+	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
+
+	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
+	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
 }
 
 // FullRange represent used all partitions.
@@ -128,8 +133,8 @@ func (p *PhysicalIndexScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.IdxCols = util.CloneCols(p.IdxCols)
 	cloned.IdxColLens = make([]int, len(p.IdxColLens))
 	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.Ranges = util.CloneRanges(p.Ranges)
-	cloned.Columns = util.CloneColInfos(p.Columns)
+	cloned.Ranges = sliceutil.DeepClone(p.Ranges)
+	cloned.Columns = sliceutil.DeepClone(p.Columns)
 	if p.DataSourceSchema != nil {
 		cloned.DataSourceSchema = p.DataSourceSchema.Clone()
 	}
@@ -533,35 +538,6 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 		p.Ranges[0].IsPointNonNullable(tc)
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexScan)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(p.AccessCondition, nil)
-	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(p.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	if p.GenExprs != nil {
-		return nil, false
-	}
-	cloned.ByItems = util.CloneByItemss(p.ByItems)
-	if p.PkIsHandleCol != nil {
-		if p.PkIsHandleCol.SafeToShareAcrossSession() {
-			cloned.PkIsHandleCol = p.PkIsHandleCol
-		} else {
-			cloned.PkIsHandleCol = p.PkIsHandleCol.Clone().(*expression.Column)
-		}
-	}
-	cloned.ConstColsByCond = make([]bool, len(p.ConstColsByCond))
-	copy(cloned.ConstColsByCond, p.ConstColsByCond)
-	return cloned, true
-}
-
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.Schema().Len())
@@ -623,7 +599,7 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalIndexScan) GetPlanCostVer1(taskType property.TaskType,
-	option *optimizetrace.PlanCostOption) (float64, error) {
+	option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalIndexScan(p, taskType, option)
 }
 
@@ -631,7 +607,7 @@ func (p *PhysicalIndexScan) GetPlanCostVer1(taskType property.TaskType,
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
 func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
+	option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalIndexScan(p, taskType, option, args...)
 }
 
@@ -666,7 +642,7 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		Table:            ds.TableInfo,
 		TableAsName:      ds.TableAsName,
 		DBName:           ds.DBName,
-		Columns:          util.CloneColInfos(ds.Columns),
+		Columns:          sliceutil.DeepClone(ds.Columns),
 		Index:            idx,
 		IdxCols:          path.IdxCols,
 		IdxColLens:       path.IdxColLens,
@@ -701,9 +677,9 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	// But for MV index, it's possible that the IndexRangeScan row count is larger than the table total row count.
 	// Please see the Case 2 in CalcTotalSelectivityForMVIdxPath for an example.
 	if idx.MVIndex && rowCount > ds.TableStats.RowCount {
-		is.SetStats(ds.TableStats.Scale(rowCount / ds.TableStats.RowCount))
+		is.SetStats(ds.TableStats.Scale(ds.SCtx().GetSessionVars(), rowCount/ds.TableStats.RowCount))
 	} else {
-		is.SetStats(ds.TableStats.ScaleByExpectCnt(rowCount))
+		is.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount))
 	}
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats.GetUsedInfo(is.PhysicalTableID) != nil {
@@ -714,4 +690,47 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		is.KeepOrder = true
 	}
 	return is
+}
+
+// ConvertToPartialIndexScan converts a DataSource to a PhysicalIndexScan for IndexMerge.
+func ConvertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
+	intest.Assert(matchProp != property.PropMatchedNeedMergeSort,
+		"partial paths of index merge path should not match property using merge sort")
+	is := GetOriginalPhysicalIndexScan(ds, prop, path, matchProp.Matched(), false)
+	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
+	indexConds := path.IndexFilters
+	if matchProp.Matched() {
+		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
+			is.Columns = tmpColumns
+			is.SetSchema(tmpSchema)
+		}
+		// Add sort items for index scan for merge-sort operation between partitions.
+		is.ByItems = byItems
+	}
+
+	// Add a `Selection` for `IndexScan` with global index.
+	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
+	indexConds, err := is.AddSelectionConditionForGlobalIndex(ds, physPlanPartInfo, indexConds)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(indexConds) > 0 {
+		pushedFilters, remainingFilter := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), indexConds)
+		var selectivity float64
+		if path.CountAfterAccess > 0 {
+			selectivity = path.CountAfterIndex / path.CountAfterAccess
+		}
+		rowCount := is.StatsInfo().RowCount * selectivity
+		stats := &property.StatsInfo{RowCount: rowCount}
+		stats.StatsVersion = ds.StatisticTable.Version
+		if ds.StatisticTable.Pseudo {
+			stats.StatsVersion = statistics.PseudoVersion
+		}
+		indexPlan := PhysicalSelection{Conditions: pushedFilters}.Init(is.SCtx(), stats, ds.QueryBlockOffset())
+		indexPlan.SetChildren(is)
+		return indexPlan, remainingFilter, nil
+	}
+	return is, nil, nil
 }

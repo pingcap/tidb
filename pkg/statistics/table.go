@@ -41,6 +41,29 @@ const (
 	PseudoRowCount = 10000
 )
 
+// CopyIntent specifies what data structures are safe to modify in the copied table.
+type CopyIntent uint8
+
+const (
+	// MetaOnly shares all maps - only table metadata is safe to modify
+	MetaOnly CopyIntent = iota
+
+	// ColumnMapWritable clones columns map - safe to add/remove columns
+	ColumnMapWritable
+
+	// IndexMapWritable clones indices map - safe to add/remove indices
+	IndexMapWritable
+
+	// BothMapsWritable clones both maps - safe to add/remove columns and indices
+	BothMapsWritable
+
+	// ExtendedStatsWritable shares all maps - safe to modify ExtendedStats field
+	ExtendedStatsWritable
+
+	// AllDataWritable deep copies everything - safe to modify all data including histograms
+	AllDataWritable
+)
+
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
 // Exported for testing.
 var AutoAnalyzeMinCnt int64 = 1000
@@ -53,10 +76,10 @@ var (
 	GetRowCountByIndexRanges func(sctx planctx.PlanContext, coll *HistColl, idxID int64, indexRanges []*ranger.Range, idxCol []*expression.Column) (result RowEstimate, err error)
 
 	// GetRowCountByIntColumnRanges is a function type to get row count by int column ranges.
-	GetRowCountByIntColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, intRanges []*ranger.Range) (result float64, err error)
+	GetRowCountByIntColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, intRanges []*ranger.Range) (result RowEstimate, err error)
 
 	// GetRowCountByColumnRanges is a function type to get row count by column ranges.
-	GetRowCountByColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, colRanges []*ranger.Range) (result float64, err error)
+	GetRowCountByColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, colRanges []*ranger.Range) (result RowEstimate, err error)
 )
 
 // Table represents statistics for a table.
@@ -95,9 +118,7 @@ type Table struct {
 
 // ColAndIdxExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
-// We use this map to decide the stats status of a column/index. So it should be fully initialized before we check whether a column/index is analyzed or not.
 type ColAndIdxExistenceMap struct {
-	checked     bool
 	colAnalyzed map[int64]bool
 	idxAnalyzed map[int64]bool
 }
@@ -110,16 +131,6 @@ func (m *ColAndIdxExistenceMap) DeleteColNotFound(id int64) {
 // DeleteIdxNotFound deletes the index with the given id.
 func (m *ColAndIdxExistenceMap) DeleteIdxNotFound(id int64) {
 	delete(m.idxAnalyzed, id)
-}
-
-// Checked returns whether the map has been checked.
-func (m *ColAndIdxExistenceMap) Checked() bool {
-	return m.checked
-}
-
-// SetChecked set the map as checked.
-func (m *ColAndIdxExistenceMap) SetChecked() {
-	m.checked = true
 }
 
 // HasAnalyzed checks whether a column/index stats exists and it has stats.
@@ -174,7 +185,6 @@ func (m *ColAndIdxExistenceMap) ColNum() int {
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colAnalyzed), len(m.idxAnalyzed))
-	mm.checked = m.checked
 	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
 	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
 	return mm
@@ -599,53 +609,70 @@ func (t *Table) MemoryUsage() *TableMemoryUsage {
 	return tMemUsage
 }
 
-// Copy copies the current table.
-func (t *Table) Copy() *Table {
-	newHistColl := HistColl{
-		PhysicalID:    t.PhysicalID,
-		RealtimeCount: t.RealtimeCount,
-		columns:       make(map[int64]*Column, len(t.columns)),
-		indices:       make(map[int64]*Index, len(t.indices)),
-		Pseudo:        t.Pseudo,
-		ModifyCount:   t.ModifyCount,
-		StatsVer:      t.StatsVer,
-	}
-	for id, col := range t.columns {
-		newHistColl.columns[id] = col.Copy()
-	}
-	for id, idx := range t.indices {
-		newHistColl.indices[id] = idx.Copy()
-	}
-	nt := &Table{
-		HistColl:             newHistColl,
-		Version:              t.Version,
-		TblInfoUpdateTS:      t.TblInfoUpdateTS,
-		LastAnalyzeVersion:   t.LastAnalyzeVersion,
-		LastStatsHistVersion: t.LastStatsHistVersion,
-	}
-	if t.ExtendedStats != nil {
-		newExtStatsColl := &ExtendedStatsColl{
-			Stats:             make(map[string]*ExtendedStatsItem),
-			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
-		}
-		maps.Copy(newExtStatsColl.Stats, t.ExtendedStats.Stats)
-		nt.ExtendedStats = newExtStatsColl
-	}
-	if t.ColAndIdxExistenceMap != nil {
-		nt.ColAndIdxExistenceMap = t.ColAndIdxExistenceMap.Clone()
-	}
-	return nt
-}
+// CopyAs creates a copy of the table with the specified writability intent.
+//
+// PERFORMANCE NOTE: Choose the most minimal intent for your use case. Copying is heavily
+// used at scale and unnecessary cloning causes significant memory pressure. Only use
+// AllDataWritable when you truly need to modify histogram data.
+//
+// MetaOnly: Shares all maps, only metadata modifications are safe
+// ColumnMapWritable: Clones columns map, safe to add/remove columns
+// IndexMapWritable: Clones indices map, safe to add/remove indices
+// BothMapsWritable: Clones both maps - safe to add/remove columns and indices
+// ExtendedStatsWritable: Shares all maps, safe to modify ExtendedStats field
+// AllDataWritable: Deep copies everything, safe to modify all data including histograms
+func (t *Table) CopyAs(intent CopyIntent) *Table {
+	var columns map[int64]*Column
+	var indices map[int64]*Index
+	var existenceMap *ColAndIdxExistenceMap
 
-// ShallowCopy copies the current table.
-// It's different from Copy(). Only the struct Table (and also the embedded HistColl) is copied here.
-// The internal containers, like t.Columns and t.Indices, and the stats, like TopN and Histogram are not copied.
-func (t *Table) ShallowCopy() *Table {
+	switch intent {
+	case MetaOnly:
+		columns = t.columns
+		indices = t.indices
+		existenceMap = t.ColAndIdxExistenceMap
+	case ColumnMapWritable:
+		columns = maps.Clone(t.columns)
+		indices = t.indices
+		if t.ColAndIdxExistenceMap != nil {
+			existenceMap = t.ColAndIdxExistenceMap.Clone()
+		}
+	case IndexMapWritable:
+		columns = t.columns
+		indices = maps.Clone(t.indices)
+		if t.ColAndIdxExistenceMap != nil {
+			existenceMap = t.ColAndIdxExistenceMap.Clone()
+		}
+	case BothMapsWritable:
+		columns = maps.Clone(t.columns)
+		indices = maps.Clone(t.indices)
+		if t.ColAndIdxExistenceMap != nil {
+			existenceMap = t.ColAndIdxExistenceMap.Clone()
+		}
+	case ExtendedStatsWritable:
+		columns = t.columns
+		indices = t.indices
+		existenceMap = t.ColAndIdxExistenceMap
+	case AllDataWritable:
+		// For deep copy, create new maps and deep copy all content
+		columns = make(map[int64]*Column, len(t.columns))
+		for id, col := range t.columns {
+			columns[id] = col.Copy()
+		}
+		indices = make(map[int64]*Index, len(t.indices))
+		for id, idx := range t.indices {
+			indices[id] = idx.Copy()
+		}
+		if t.ColAndIdxExistenceMap != nil {
+			existenceMap = t.ColAndIdxExistenceMap.Clone()
+		}
+	}
+
 	newHistColl := HistColl{
 		PhysicalID:    t.PhysicalID,
 		RealtimeCount: t.RealtimeCount,
-		columns:       t.columns,
-		indices:       t.indices,
+		columns:       columns,
+		indices:       indices,
 		Pseudo:        t.Pseudo,
 		ModifyCount:   t.ModifyCount,
 		StatsVer:      t.StatsVer,
@@ -654,11 +681,23 @@ func (t *Table) ShallowCopy() *Table {
 		HistColl:              newHistColl,
 		Version:               t.Version,
 		TblInfoUpdateTS:       t.TblInfoUpdateTS,
-		ExtendedStats:         t.ExtendedStats,
-		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
+		ColAndIdxExistenceMap: existenceMap,
 		LastAnalyzeVersion:    t.LastAnalyzeVersion,
 		LastStatsHistVersion:  t.LastStatsHistVersion,
 	}
+
+	// Handle ExtendedStats for deep copy vs shallow copy
+	if (intent == AllDataWritable || intent == ExtendedStatsWritable) && t.ExtendedStats != nil {
+		newExtStatsColl := &ExtendedStatsColl{
+			Stats:             make(map[string]*ExtendedStatsItem),
+			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
+		}
+		maps.Copy(newExtStatsColl.Stats, t.ExtendedStats.Stats)
+		nt.ExtendedStats = newExtStatsColl
+	} else {
+		nt.ExtendedStats = t.ExtendedStats
+	}
+
 	return nt
 }
 
@@ -870,13 +909,13 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (col *Column, loadNe
 }
 
 // IndexIsLoadNeeded checks whether the index needs trigger the async/sync load.
-// The Index should be visible in the table and really has analyzed statistics in the stroage.
+// The Index should be visible in the table and really has analyzed statistics in the storage.
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Index together with the checking result, to avoid accessing the map multiple times.
 func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 	idx, ok := t.indices[id]
 	// If the index is not in the memory, and we have its stats in the storage. We need to trigger the load.
-	if !ok && (t.ColAndIdxExistenceMap.HasAnalyzed(id, true) || !t.ColAndIdxExistenceMap.Checked()) {
+	if !ok && t.ColAndIdxExistenceMap.HasAnalyzed(id, true) {
 		return nil, true
 	}
 	// If the index is in the memory, we check its embedded func.
@@ -1017,23 +1056,39 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 	return newColl
 }
 
+// PseudoHistColl creates a lightweight pseudo HistColl for cost calculation.
+// This is optimized for cases where only HistColl is needed, avoiding the overhead
+// of creating a full pseudo table with ColAndIdxExistenceMap and other structures.
+func PseudoHistColl(physicalID int64, allowTriggerLoading bool) HistColl {
+	return HistColl{
+		RealtimeCount:     PseudoRowCount,
+		PhysicalID:        physicalID,
+		columns:           nil,
+		indices:           nil,
+		Pseudo:            true,
+		CanNotTriggerLoad: !allowTriggerLoading,
+		ModifyCount:       0,
+		StatsVer:          0,
+	}
+}
+
 // PseudoTable creates a pseudo table statistics.
 // Usually, we don't want to trigger stats loading for pseudo table.
 // But there are exceptional cases. In such cases, we should pass allowTriggerLoading as true.
 // Such case could possibly happen in getStatsTable().
 func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHistMeta bool) *Table {
-	pseudoHistColl := HistColl{
-		RealtimeCount:     PseudoRowCount,
-		PhysicalID:        tblInfo.ID,
-		columns:           make(map[int64]*Column, 2),
-		indices:           make(map[int64]*Index, 2),
-		Pseudo:            true,
-		CanNotTriggerLoad: !allowTriggerLoading,
-	}
 	t := &Table{
-		HistColl:              pseudoHistColl,
+		HistColl:              PseudoHistColl(tblInfo.ID, allowTriggerLoading),
+		Version:               PseudoVersion,
 		ColAndIdxExistenceMap: NewColAndIndexExistenceMap(len(tblInfo.Columns), len(tblInfo.Indices)),
 	}
+
+	// Initialize columns and indices maps only when allowFillHistMeta is true
+	if allowFillHistMeta {
+		t.columns = make(map[int64]*Column, len(tblInfo.Columns))
+		t.indices = make(map[int64]*Index, len(tblInfo.Indices))
+	}
+
 	for _, col := range tblInfo.Columns {
 		// The column is public to use. Also we should check the column is not hidden since hidden means that it's used by expression index.
 		// We would not collect stats for the hidden column and we won't use the hidden column to estimate.
@@ -1045,7 +1100,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 					PhysicalID: tblInfo.ID,
 					Info:       col,
 					IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
-					Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
+					Histogram:  *NewPseudoHistogram(col.ID, &col.FieldType),
 				}
 			}
 		}
@@ -1057,7 +1112,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 				t.indices[idx.ID] = &Index{
 					PhysicalID: tblInfo.ID,
 					Info:       idx,
-					Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
+					Histogram:  *NewPseudoHistogram(idx.ID, types.NewFieldType(mysql.TypeBlob)),
 				}
 			}
 		}

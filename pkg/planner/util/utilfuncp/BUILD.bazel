@@ -14,7 +14,6 @@ go_library(
         "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/planner/util/costusage",
-        "//pkg/planner/util/optimizetrace",
         "//pkg/sessionctx",
         "//pkg/table",
         "//pkg/util/execdetails",

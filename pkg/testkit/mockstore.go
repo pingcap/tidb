@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
@@ -299,7 +300,7 @@ func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext 
 
 // NewDistExecutionContextWithLease create DistExecutionContext for testing.
 func NewDistExecutionContextWithLease(t testing.TB, serverNum int, lease time.Duration) *DistExecutionContext {
-	store, err := mockstore.NewMockStore()
+	store, err := teststore.NewMockStoreWithoutBootstrap()
 	require.NoError(t, err)
 	gctuner.GlobalMemoryLimitTuner.Stop()
 	domains := make([]*domain.Domain, 0, serverNum)
@@ -338,7 +339,7 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	})
 	store = schematracker.UnwrapStorage(store)
 	_ = store.(helper.Storage)
-	if kerneltype.IsNextGen() {
+	if kerneltype.IsNextGen() && store.GetKeyspace() == keyspace.System {
 		kvstore.SetSystemStorage(store)
 	}
 	return store, dom
@@ -361,13 +362,13 @@ func CreateMockStoreAndDomainForKS(t testing.TB, ks string, opts ...mockstore.Mo
 		conf.KeyspaceName = ks
 	})
 
-	sysKSOpt := mockstore.WithKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+	sysKSOpt := mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
 		Id:   uint32(0xFFFFFF) - 1,
 		Name: keyspace.System,
 	})
 	ksOpt := sysKSOpt
 	if ks != keyspace.System {
-		ksOpt = mockstore.WithKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+		ksOpt = mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
 			Id:   uint32(keyspaceIDAlloc.Add(1)),
 			Name: ks,
 		})

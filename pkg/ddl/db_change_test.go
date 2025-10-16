@@ -347,7 +347,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		compiler := executor.Compiler{Ctx: c.session}
 		se := c.session
 		ctx := context.TODO()
-		if err = se.PrepareTxnCtx(ctx); err != nil {
+		if err = se.PrepareTxnCtx(ctx, nil); err != nil {
 			return err
 		}
 		sctx := se.(sessionctx.Context)

@@ -116,7 +116,7 @@ func TestBackfillOperators(t *testing.T) {
 		ctx := context.Background()
 		wctx := workerpool.NewContext(ctx)
 		src := testutil.NewOperatorTestSource(opTasks...)
-		scanOp := ddl.NewTableScanOperator(wctx, sessPool, copCtx, srcChkPool, 3, 0, nil, nil)
+		scanOp := ddl.NewTableScanOperator(wctx, sessPool, copCtx, srcChkPool, 3, 0, nil, nil, &execute.TestCollector{})
 		sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
 		operator.Compose[ddl.TableScanTask](src, scanOp)
@@ -189,7 +189,7 @@ func TestBackfillOperators(t *testing.T) {
 		results := sink.Collect()
 		cnt := 0
 		for _, rs := range results {
-			cnt += rs.Added
+			cnt += rs.RowCnt
 		}
 		require.Len(t, keys, 10)
 		require.Len(t, values, 10)
@@ -419,7 +419,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 	{
 		ctx := context.Background()
 		wctx := workerpool.NewContext(ctx)
-		scanOp := ddl.NewTableScanOperator(wctx, sessPool, copCtx, nil, 2, 0, nil, nil)
+		scanOp := ddl.NewTableScanOperator(wctx, sessPool, copCtx, nil, 2, 0, nil, nil, &execute.TestCollector{})
 
 		scanOp.Open()
 		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(2))

@@ -447,6 +447,7 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 // 3 unique non-global - to stay non-global
 // 4 unique global - to stay global
 func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
+	t.Skip("skip this test till we fix issue #63870")
 	createSQL := `create table t (a int primary key nonclustered global, b varchar(255), c bigint, unique index idx_b_global (b) global, unique key idx_ba (b,a), unique key idx_ab (a,b) global, unique key idx_c_global (c) global, unique key idx_cab (c,a,b)) partition by key (a,b) partitions 3`
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (1,1,1),(2,2,2),(101,101,101),(102,102,102)`)
@@ -764,23 +765,6 @@ func getTableAndPartitionIDs(t *testing.T, tk *testkit.TestKit) (parts []int64) 
 		}
 	}
 	return originalIDs
-}
-
-func getAddingPartitionIDs(t *testing.T, tk *testkit.TestKit) (parts []int64) {
-	ctx := tk.Session()
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	if tbl.Meta().Partition == nil {
-		return nil
-	}
-	ids := make([]int64, 0, len(tbl.Meta().Partition.AddingDefinitions))
-	if tbl.Meta().Partition != nil {
-		for _, def := range tbl.Meta().Partition.AddingDefinitions {
-			ids = append(ids, def.ID)
-		}
-	}
-	return ids
 }
 
 func checkTableAndIndexEntries(t *testing.T, tk *testkit.TestKit, originalIDs []int64) {

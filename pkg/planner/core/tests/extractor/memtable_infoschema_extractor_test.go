@@ -317,27 +317,6 @@ func cleanDataSequences(tk *testkit.TestKit) {
 	tk.MustExec("drop database schema_sequences2")
 }
 
-func prepareDataColumns(tk *testkit.TestKit) (names []colPredicates) {
-	schemaNames := []string{"schema_columns1", "schema_columns2"}
-	tableNames := []string{"t1", "t2"}
-	columnNames := []string{"c1", "c2"}
-	for _, schemaName := range schemaNames {
-		tk.MustExec(fmt.Sprintf("create database %s", schemaName))
-		for _, tableName := range tableNames {
-			tk.MustExec(fmt.Sprintf("create table %s.%s (c1 int, c2 int)", schemaName, tableName))
-		}
-	}
-	names = append(names, colPredicates{colName: core.TableSchema, values: schemaNames})
-	names = append(names, colPredicates{colName: core.TableName, values: tableNames})
-	names = append(names, colPredicates{colName: core.ColumnName, values: columnNames})
-	return
-}
-
-func cleanDataColumns(tk *testkit.TestKit) {
-	tk.MustExec("drop database schema_columns1")
-	tk.MustExec("drop database schema_columns2")
-}
-
 func testMemtableInfoschemaExtractor(t *testing.T, tcs []testCase) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

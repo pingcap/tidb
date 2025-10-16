@@ -29,6 +29,7 @@ import (
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -80,6 +81,7 @@ func Selectivity(
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if len(exprs) > 63 || (coll.ColNum() == 0 && coll.IdxNum() == 0) {
 		ret = pseudoSelectivity(ctx, coll, exprs)
+		ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptSelectivityFactor)
 		if sc.EnableOptimizerCETrace {
 			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
 				expression.ComposeCNFCondition(ctx.GetExprCtx(), exprs...), ret*float64(coll.RealtimeCount))
@@ -134,20 +136,23 @@ func Selectivity(
 				return 0, nil, errors.Trace(err)
 			}
 			nodes = append(nodes, &StatsNode{Tp: ColType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
+			var cnt float64
+			var cntEst statistics.RowEstimate
 			if colStats.IsHandle {
 				nodes[len(nodes)-1].Tp = PkType
-				var cnt float64
-				cnt, err = GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
+				cntEst, err = GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}
+				cnt = cntEst.Est
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 				continue
 			}
-			cnt, err := GetRowCountByColumnRanges(ctx, coll, id, ranges)
+			cntEst, err = GetRowCountByColumnRanges(ctx, coll, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
+			cnt = cntEst.Est
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 		} else if !col.IsHidden {
 			// TODO: We are able to remove this path if we remove the async stats load.
@@ -237,7 +242,7 @@ func Selectivity(
 		// of the extracted access conditions, we multiply another selectionFactor for the residual
 		// conditions.
 		if set.partCover {
-			ret *= selectionFactor
+			ret *= ctx.GetSessionVars().SelectivityFactor
 		}
 		if sc.EnableOptimizerCETrace {
 			// Tracing for the expression estimation results after applying this StatsNode.
@@ -363,7 +368,7 @@ OUTER:
 			curSelectivity, _, err := Selectivity(ctx, coll, cnfItems, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-				curSelectivity = selectionFactor
+				curSelectivity = ctx.GetSessionVars().SelectivityFactor
 			}
 
 			selectivity = selectivity + curSelectivity - selectivity*curSelectivity
@@ -429,7 +434,7 @@ OUTER:
 	if mask > 0 {
 		minSelectivity := 1.0
 		if len(notCoveredConstants) > 0 || len(notCoveredDNF) > 0 || len(notCoveredOtherExpr) > 0 {
-			minSelectivity = math.Min(minSelectivity, selectionFactor)
+			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().SelectivityFactor)
 		}
 		if len(notCoveredStrMatch) > 0 {
 			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().GetStrMatchDefaultSelectivity())
@@ -441,6 +446,7 @@ OUTER:
 		if sc.EnableOptimizerDebugTrace {
 			debugtrace.RecordAnyValuesWithNames(ctx, "Default Selectivity", minSelectivity)
 		}
+		ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptSelectivityFactor)
 	}
 
 	if sc.EnableOptimizerCETrace {
@@ -1240,10 +1246,11 @@ func crossValidationSelectivity(
 			Collators:   []collate.Collator{idxPointRange.Collators[i]},
 		}
 
-		rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
+		rowCountEst, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
 		if err != nil {
 			return 0, 0, err
 		}
+		rowCount := rowCountEst.Est
 		crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
 
 		if rowCount < minRowCount {

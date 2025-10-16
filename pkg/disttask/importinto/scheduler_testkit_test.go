@@ -24,6 +24,7 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -191,6 +192,8 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	// we test import task management in this case.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t)
+	keyspace := store.GetKeyspace()
+	scope := handle.GetTargetScope()
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
 		return tk.Session(), nil
@@ -201,7 +204,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), store, mgr, "host:port", proto.NodeResourceForTest)
-	require.NoError(t, mgr.InitMeta(ctx, ":4000", ""))
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", scope))
 
 	// create job
 	conn := tk.Session().GetSQLExecutor()
@@ -248,13 +251,12 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, keyspace, 1, scope, 1, proto.ExtraParams{}, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
 	// to encode-sort stage, job should be running
 	d := sch.MockScheduler(task)
-	store = &importinto.StoreWithoutKS{}
 	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(manager, store), store)
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)

@@ -59,7 +59,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 	lastStepStats := make([]string, 0, 10)
 	var startKey, endKey dbkv.Key
 
-	closeFn := func(s *WriterSummary) {
+	onWriterClose := func(s *WriterSummary) {
 		for _, stat := range s.MultipleFilesStats {
 			for i := range stat.Filenames {
 				lastStepDatas = append(lastStepDatas, stat.Filenames[i][0])
@@ -79,7 +79,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(uint64(memSizeLimit)).
 		SetBlockSize(memSizeLimit).
-		SetOnCloseFunc(closeFn).
+		SetOnCloseFunc(onWriterClose).
 		Build(memStore, "/test", "0")
 
 	writer := NewEngineWriter(w)
@@ -152,7 +152,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 
 	collector := &execute.TestCollector{}
 
-	closeFn := func(s *WriterSummary) {
+	onWriterClose := func(s *WriterSummary) {
 		for _, stat := range s.MultipleFilesStats {
 			for i := range stat.Filenames {
 				lastStepDatas = append(lastStepDatas, stat.Filenames[i][0])
@@ -187,7 +187,8 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			int64(5*size.MB),
 			"/test2",
 			mergeMemSize,
-			closeFn,
+			onWriterClose,
+			dummyOnReaderCloseFunc,
 			collector,
 			1,
 			true,
@@ -300,6 +301,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 			100,
 			2,
 			closeFn1,
+			dummyOnReaderCloseFunc,
 			1,
 			true))
 	}

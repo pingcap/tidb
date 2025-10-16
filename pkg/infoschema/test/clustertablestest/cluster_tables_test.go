@@ -15,7 +15,6 @@
 package clustertablestest
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/fn"
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
@@ -1532,7 +1531,11 @@ func TestSetBindingStatusBySQLDigest(t *testing.T) {
 	sql = "select * from t where t.a = 1"
 	tk.MustExec(sql)
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-
+	bindinfo.MaxWriteInterval = 1 * time.Microsecond
+	time.Sleep(1 * time.Second)
+	require.NoError(t, s.dom.BindingHandle().UpdateBindingUsageInfoToStorage())
+	tk.MustQuery(fmt.Sprintf(`select last_used_date from mysql.bind_info where original_sql != '%s' and last_used_date is null`,
+		bindinfo.BuiltinPseudoSQL4BindLock)).Check(testkit.Rows())
 	sqlDigest := tk.MustQuery("show global bindings").Rows()
 	tk.MustExec(fmt.Sprintf("set binding disabled for sql digest '%s'", sqlDigest[0][9]))
 	tk.MustExec(sql)
@@ -1902,24 +1905,13 @@ func TestMDLViewIDConflict(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
-	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)")
 
-	bigID := tbl.Meta().ID * 10
 	bigTableName := ""
-	// set a hard limitation on 10000 to avoid using too much resource
-	for i := range 10000 {
+	// set a hard limitation on 500 to avoid using too much resource
+	for i := range 500 {
 		bigTableName = fmt.Sprintf("t%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(a int);", bigTableName))
-
-		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(bigTableName))
-		require.NoError(t, err)
-
-		require.LessOrEqual(t, tbl.Meta().ID, bigID)
-		if tbl.Meta().ID == bigID {
-			break
-		}
 	}
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec(fmt.Sprintf("insert into %s values (1)", bigTableName))

@@ -49,7 +49,7 @@ type writeTestSuite struct {
 	afterWriterClose   func()
 
 	optionalFilePath string
-	onClose          OnCloseFunc
+	onClose          OnWriterCloseFunc
 }
 
 func writePlainFile(s *writeTestSuite) {
@@ -530,6 +530,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		mergeOutput,
 		DefaultBlockSize,
 		onClose,
+		dummyOnReaderCloseFunc,
 		nil,
 		s.concurrency,
 		s.mergeIterHotspot,
@@ -586,6 +587,7 @@ func newMergeStep(t *testing.T, s *mergeTestSuite) {
 		1*size.MB,
 		8*1024,
 		onClose,
+		dummyOnReaderCloseFunc,
 		s.concurrency,
 		s.mergeIterHotspot,
 	)
@@ -699,7 +701,7 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	output := &memKVsAndBuffers{}
 	now := time.Now()
 
-	err = readAllData(ctx, store, dataFiles, statFiles, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
+	err = readAllData(ctx, store, dataFiles, statFiles, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output, dummyOnReaderCloseFunc)
 	t.Logf("read all data cost: %s", time.Since(now))
 	intest.AssertNoError(err)
 }
@@ -848,7 +850,7 @@ finishCreateFiles:
 	output := &memKVsAndBuffers{}
 	p.beforeTest()
 	now := time.Now()
-	err = readAllData(ctx, store, dataFiles, statFiles, readRangeStart, readRangeEnd, smallBlockBufPool, largeBlockBufPool, output)
+	err = readAllData(ctx, store, dataFiles, statFiles, readRangeStart, readRangeEnd, smallBlockBufPool, largeBlockBufPool, output, dummyOnReaderCloseFunc)
 	require.NoError(t, err)
 	output.build(ctx)
 	elapsed := time.Since(now)
