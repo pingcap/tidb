@@ -325,7 +325,7 @@ func rollbackModifyColumnJobWithReorg(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
 	// If the not-null change is included, we should clean the flag info in oldCol.
-	if args.ModifyColumnType == mysql.TypeNull {
+	if mysql.HasPreventNullInsertFlag(oldCol.GetFlag()) {
 		// Reset NotNullFlag flag.
 		tblInfo.Columns[oldCol.Offset].SetFlag(oldCol.GetFlag() &^ mysql.NotNullFlag)
 		// Reset PreventNullInsertFlag flag.
