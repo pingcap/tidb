@@ -67,6 +67,9 @@ type SysVar struct {
 	// Deprecated: Hidden previously meant that the variable still responds to SET but doesn't show up in SHOW VARIABLES
 	// However, this feature is no longer used. All variables are visible.
 	Hidden bool
+	// Some variables are semantically global or instance vars. But we need to set it as session scope to pass the value down
+	// to executor and planner. However, we don't want these variables visible or setable for users.
+	InternalSessionVariable bool
 	// Aliases is a list of sysvars that should also be updated when this sysvar is updated.
 	// Updating aliases calls the SET function of the aliases, but does not update their aliases (preventing SET recursion)
 	Aliases []string
@@ -264,8 +267,13 @@ func (sv *SysVar) validateScope(scope vardef.ScopeFlag) error {
 	if scope == vardef.ScopeGlobal && !(sv.HasGlobalScope() || sv.HasInstanceScope()) {
 		return errLocalVariable.FastGenByArgs(sv.Name)
 	}
-	if scope == vardef.ScopeSession && !sv.HasSessionScope() {
-		return errGlobalVariable.FastGenByArgs(sv.Name)
+	if scope == vardef.ScopeSession {
+		if !sv.HasSessionScope() {
+			return errGlobalVariable.FastGenByArgs(sv.Name)
+		}
+		if sv.InternalSessionVariable {
+			return errUnknownSystemVariable.GenWithStackByArgs(sv.Name)
+		}
 	}
 	return nil
 }

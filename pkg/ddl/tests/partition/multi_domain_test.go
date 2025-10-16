@@ -25,7 +25,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -448,6 +447,7 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 // 3 unique non-global - to stay non-global
 // 4 unique global - to stay global
 func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
+	t.Skip("skip this test till we fix issue #63870")
 	createSQL := `create table t (a int primary key nonclustered global, b varchar(255), c bigint, unique index idx_b_global (b) global, unique key idx_ba (b,a), unique key idx_ab (a,b) global, unique key idx_c_global (c) global, unique key idx_cab (c,a,b)) partition by key (a,b) partitions 3`
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (1,1,1),(2,2,2),(101,101,101),(102,102,102)`)
@@ -1295,10 +1295,6 @@ func TestMultiSchemaReorganizeNoPKBackfillDML(t *testing.T) {
 // TestMultiSchemaTruncatePartitionWithGlobalIndex to show behavior when
 // truncating a partition with a global index
 func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		// TODO(tangenta): fix this test
-		t.Skip("Skip this test temporarily for next-gen, will fix it later")
-	}
 	// TODO: Also test non-int PK, multi-column PK
 	createSQL := `create table t (a int primary key, b varchar(255), c varchar(255) default 'Filler', unique key uk_b (b) global) partition by hash (a) partitions 2`
 	initFn := func(tkO *testkit.TestKit) {

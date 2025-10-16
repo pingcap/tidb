@@ -60,27 +60,6 @@ import (
 	"go.uber.org/zap"
 )
 
-func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
-	if prop.IndexJoinProp != nil {
-		// even enforce hint can not work with this.
-		return base.InvalidTask, nil
-	}
-	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalTableDual](super)
-	// If the required property is not empty and the row count > 1,
-	// we cannot ensure this required property.
-	// But if the row count is 0 or 1, we don't need to care about the property.
-	if !prop.IsSortItemEmpty() && p.RowCount > 1 {
-		return base.InvalidTask, nil
-	}
-	dual := physicalop.PhysicalTableDual{
-		RowCount: p.RowCount,
-	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
-	dual.SetSchema(p.Schema())
-	rt := &physicalop.RootTask{}
-	rt.SetPlan(dual)
-	return rt, nil
-}
-
 func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
@@ -91,22 +70,6 @@ func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalPro
 		return base.InvalidTask, nil
 	}
 	pShow := physicalop.PhysicalShow{ShowContents: p.ShowContents, Extractor: p.Extractor}.Init(p.SCtx())
-	pShow.SetSchema(p.Schema())
-	rt := &physicalop.RootTask{}
-	rt.SetPlan(pShow)
-	return rt, nil
-}
-
-func findBestTask4LogicalShowDDLJobs(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
-	if prop.IndexJoinProp != nil {
-		// even enforce hint can not work with this.
-		return base.InvalidTask, nil
-	}
-	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalShowDDLJobs](super)
-	if !prop.IsSortItemEmpty() {
-		return base.InvalidTask, nil
-	}
-	pShow := physicalop.PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.SCtx())
 	pShow.SetSchema(p.Schema())
 	rt := &physicalop.RootTask{}
 	rt.SetPlan(pShow)
@@ -193,7 +156,7 @@ func enumeratePhysicalPlans4Task(
 
 		// Enforce curTask property
 		if addEnforcer {
-			curTask = enforceProperty(prop, curTask, baseLP.Plan.SCtx(), fd)
+			curTask = physicalop.EnforceProperty(prop, curTask, baseLP.Plan.SCtx(), fd)
 		}
 
 		// Optimize by shuffle executor to running in parallel manner.
@@ -310,7 +273,7 @@ func iteratePhysicalPlan4BaseLogical(
 	childTasks = childTasks[:0]
 	for j, child := range p.Children() {
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, err := child.FindBestTask(childProp)
+		childTask, err := physicalop.FindBestTask(child, childProp)
 		if err != nil {
 			return nil, err
 		}
@@ -402,7 +365,7 @@ func iterateChildPlan4LogicalSequence(
 	for j := range lastIdx {
 		child := p.Children()[j]
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, err := child.FindBestTask(childProp)
+		childTask, err := physicalop.FindBestTask(child, childProp)
 		if err != nil {
 			return nil, err
 		}
@@ -428,7 +391,7 @@ func iterateChildPlan4LogicalSequence(
 	if lastChildProp.IsFlashProp() {
 		lastChildProp.CTEProducerStatus = property.AllCTECanMpp
 	}
-	lastChildTask, err := p.Children()[lastIdx].FindBestTask(lastChildProp)
+	lastChildTask, err := physicalop.FindBestTask(p.Children()[lastIdx], lastChildProp)
 	if err != nil {
 		return nil, err
 	}
@@ -711,61 +674,6 @@ END:
 		p.StoreTask(prop, bestTask)
 	}
 	return bestTask, nil
-}
-
-func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
-	if prop.IndexJoinProp != nil {
-		// even enforce hint can not work with this.
-		return base.InvalidTask, nil
-	}
-	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalMemTable](super)
-	if prop.MPPPartitionTp != property.AnyType {
-		return base.InvalidTask, nil
-	}
-
-	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for p.findBestTask.
-	// Before function return, reset it for enforcing task prop.
-	oldProp := prop.CloneEssentialFields()
-	if prop.CanAddEnforcer {
-		// First, get the bestTask without enforced prop
-		prop.CanAddEnforcer = false
-		// still use the super.
-		t, err = super.FindBestTask(prop)
-		if err != nil {
-			return nil, err
-		}
-		prop.CanAddEnforcer = true
-		if t != base.InvalidTask {
-			return
-		}
-		// Next, get the bestTask with enforced prop
-		prop.SortItems = []property.SortItem{}
-	}
-	defer func() {
-		if err != nil {
-			return
-		}
-		if prop.CanAddEnforcer {
-			*prop = *oldProp
-			t = enforceProperty(prop, t, p.Plan.SCtx(), nil)
-			prop.CanAddEnforcer = true
-		}
-	}()
-
-	if !prop.IsSortItemEmpty() {
-		return base.InvalidTask, nil
-	}
-	memTable := physicalop.PhysicalMemTable{
-		DBName:         p.DBName,
-		Table:          p.TableInfo,
-		Columns:        p.Columns,
-		Extractor:      p.Extractor,
-		QueryTimeRange: p.QueryTimeRange,
-	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
-	memTable.SetSchema(p.Schema())
-	rt := &physicalop.RootTask{}
-	rt.SetPlan(memTable)
-	return rt, nil
 }
 
 // tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
@@ -1711,7 +1619,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	if prop.CanAddEnforcer {
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
-		unenforcedTask, err = ds.FindBestTask(prop)
+		unenforcedTask, err = physicalop.FindBestTask(ds, prop)
 		if err != nil {
 			return nil, err
 		}
@@ -1736,7 +1644,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 		if prop.CanAddEnforcer {
 			*prop = *oldProp
-			t = enforceProperty(prop, t, ds.Plan.SCtx(), nil)
+			t = physicalop.EnforceProperty(prop, t, ds.Plan.SCtx(), nil)
 			prop.CanAddEnforcer = true
 		}
 
@@ -2912,7 +2820,7 @@ func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProp
 		t = rt
 	}
 	if prop.CanAddEnforcer {
-		t = enforceProperty(prop, t, p.Plan.SCtx(), nil)
+		t = physicalop.EnforceProperty(prop, t, p.Plan.SCtx(), nil)
 	}
 	return t, nil
 }

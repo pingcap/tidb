@@ -26,7 +26,6 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -150,11 +149,6 @@ func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) (bas
 		return nil, err
 	}
 	return p.self, nil
-}
-
-// FindBestTask implements LogicalPlan.<3rd> interface.
-func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty) (bestTask base.Task, err error) {
-	return utilfuncp.FindBestTask4BaseLogicalPlan(p, prop)
 }
 
 // BuildKeyInfo implements LogicalPlan.<4th> interface.

@@ -528,6 +528,13 @@ func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 	return rawArgs, errors.Trace(err)
 }
 
+// UpdateJobArgsForTest updates job.args with the given update function.
+func UpdateJobArgsForTest(job *Job, update func(args []any) []any) {
+	if intest.InTest {
+		job.args = update(job.args)
+	}
+}
+
 // Encode encodes job with json format.
 // updateRawArgs is used to determine whether to update the raw args.
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
@@ -832,6 +839,7 @@ type SubJob struct {
 	CtxVars      []any           `json:"-"`
 	SchemaVer    int64           `json:"schema_version"`
 	ReorgTp      ReorgType       `json:"reorg_tp"`
+	NeedAnalyze  bool            `json:"need_analyze"`
 	AnalyzeState int8            `json:"analyze_state"`
 }
 
@@ -851,6 +859,22 @@ func (sub *SubJob) IsFinished() bool {
 	return sub.State == JobStateDone ||
 		sub.State == JobStateRollbackDone ||
 		sub.State == JobStateCancelled
+}
+
+// CanEmbeddedAnalyze indicates that this sub-job can do embedded analyze right after the schema change.
+func (sub *SubJob) CanEmbeddedAnalyze() bool {
+	switch sub.Type {
+	case ActionAddIndex, ActionAddPrimaryKey:
+		return true
+	case ActionModifyColumn:
+		if len(sub.CtxVars) > 0 {
+			needReorg, ok := sub.CtxVars[0].(bool)
+			return ok && needReorg
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 // ToProxyJob converts a sub-job to a proxy job.
@@ -880,7 +904,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
 		ReorgMeta:       parentJob.ReorgMeta,
-		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
+		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq), NeedAnalyze: sub.NeedAnalyze},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
 		Charset:         parentJob.Charset,
@@ -934,6 +958,8 @@ type MultiSchemaInfo struct {
 
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
+	// NeedAnalyze is used to indicate whether we need to analyze the table after the sub-job is done.
+	NeedAnalyze bool `json:"-"`
 
 	AddColumns    []ast.CIStr `json:"-"`
 	DropColumns   []ast.CIStr `json:"-"`

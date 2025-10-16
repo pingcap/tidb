@@ -81,6 +81,7 @@ go_test(
     deps = [
         ":ingest",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/ingest/testutil",
         "//pkg/ddl/session",
         "//pkg/ddl/testutil",

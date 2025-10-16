@@ -174,7 +174,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 
 	exprCols := expression.ExtractColumnsFromExpressions(ds.AllConds, nil)
 	exprUsed := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), exprCols, ds.Schema())
-	prunedColumns := make([]*expression.Column, 0)
 
 	originSchemaColumns := ds.Schema().Columns
 	originColumns := ds.Columns
@@ -194,7 +193,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 				expression.GcColumnExprIsTidbShard(ds.Schema().Columns[i].VirtualExpr) {
 				continue
 			}
-			prunedColumns = append(prunedColumns, ds.Schema().Columns[i])
 			// TODO: investigate why we cannot use slices.Delete for these two:
 			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
@@ -233,12 +231,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 		return proj, nil
 	}
 	return ds, nil
-}
-
-// FindBestTask implements the base.LogicalPlan.<3rd> interface.
-// It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty) (t base.Task, err error) {
-	return utilfuncp.FindBestTask4LogicalDataSource(ds, prop)
 }
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
