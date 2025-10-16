@@ -160,3 +160,38 @@ func TestIndexHintForIndex(t *testing.T) {
 		require.Len(t, rows, 4, "The query should return 4 rows")
 	})
 }
+
+// TestNoIndexHint tests the NO_INDEX hint, which is an alias for IGNORE_INDEX.
+func TestNoIndexHint(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("USE test")
+		testKit.MustExec("DROP TABLE IF EXISTS t_no_index")
+		testKit.MustExec(`
+		CREATE TABLE t_no_index (
+			a INT,
+			b INT,
+			KEY idx_a (a),
+			KEY idx_b (b)
+		);`)
+		testKit.MustExec("INSERT INTO t_no_index VALUES (1,1), (5,5), (10,10), (20,20);")
+
+		// The optimizer would normally choose idx_a. The NO_INDEX hint should prevent this.
+		query := "SELECT /*+ NO_INDEX(t_no_index, idx_a) */ * FROM t_no_index WHERE a > 5;"
+
+		// Check that the plan does not use the ignored index 'idx_a' and falls back to a table scan.
+		rows := testKit.MustQuery("EXPLAIN " + query).Rows()
+		var planUsesIgnoredIndex bool
+		for _, row := range rows {
+			if strings.Contains(row[3].(string), "index:idx_a") {
+				planUsesIgnoredIndex = true
+				break
+			}
+		}
+		require.False(t, planUsesIgnoredIndex, "The plan should not use the ignored index 'idx_a'")
+		testKit.MustHavePlan(query, "TableFullScan")
+
+		// Check that the query result is still correct.
+		result := testKit.MustQuery(query)
+		result.Check(testkit.Rows("10 10", "20 20"))
+	})
+}
