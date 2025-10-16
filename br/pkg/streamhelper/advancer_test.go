@@ -624,6 +624,7 @@ func TestCheckPointLagged(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	c.advanceClusterTimeBy(3 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
+	time.Sleep(100 * time.Millisecond)
 	// after some times, the isPaused will be set and ticks are skipped
 	require.Eventually(t, func() bool {
 		return assert.NoError(t, adv.OnTick(ctx))
