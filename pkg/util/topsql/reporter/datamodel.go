@@ -199,23 +199,25 @@ func (r *record) appendCPUTime(timestamp uint64, cpuTimeMs uint32) {
 		// Before:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp:    [10000]
-		//             cpuTimeMs:    [0]
-		//   stmtStats.ExecCount:    [?]
-		// stmtStats.KvExecCount:    [map{"?": ?}]
-		// stmtStats.DurationSum:    [?]
-		// stmtStats.NetworkInBytes: [?]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [0]
+		//   stmtStats.ExecCount:     [?]
+		// stmtStats.KvExecCount:     [map{"?": ?}]
+		// stmtStats.DurationSum:     [?]
+		// stmtStats.NetworkInBytes:  [?]
+		// stmtStats.NetworkOutBytes: [?]
 		//
 		// After:
 		//     tsIndex: [10000 => 0]
 		//     tsItems:
-		//             timestamp:    [10000]
-		//             cpuTimeMs:    [123]
-		//   stmtStats.ExecCount:    [?]
-		// stmtStats.KvExecCount:    [map{"?": ?}]
-		// stmtStats.DurationSum:    [?]
-		// stmtStats.DurationSum:    [?]
-		// stmtStats.NetworkInBytes: [?]
+		//             timestamp:     [10000]
+		//             cpuTimeMs:     [123]
+		//   stmtStats.ExecCount:     [?]
+		// stmtStats.KvExecCount:     [map{"?": ?}]
+		// stmtStats.DurationSum:     [?]
+		// stmtStats.DurationSum:     [?]
+		// stmtStats.NetworkInBytes:  [?]
+		// stmtStats.NetworkOutBytes: [?]
 		//
 		r.tsItems[index].cpuTimeMs += cpuTimeMs
 	} else {
