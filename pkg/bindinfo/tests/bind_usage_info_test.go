@@ -108,7 +108,7 @@ func TestBindUsageInfo(t *testing.T) {
 	require.Len(t, rows, 3)
 	// Set all last_used_date to null to simulate that the bindinfo in storage is not updated.
 	resetAllLastUsedData(tk)
-	tk.MustExec(`set @@tidb_enable_binding_usage=0;`)
+	tk.MustExec(`set @@global.tidb_enable_binding_usage=0;`)
 	for range 5 {
 		tk.MustExec("execute stmt1;")
 		tk.MustExec("execute stmt2;")
