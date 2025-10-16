@@ -406,6 +406,7 @@ func mockWorkerReadJob(
 		// rest are waiting to be picked
 		return b.jobLen() == len(jobs)-1
 	}, time.Second, 10*time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 	for i := range ret {
 		got := <-b.innerJobToWorkerCh
 		ret[i] = got
