@@ -1305,6 +1305,9 @@ func (w *GCWorker) resolveLocks(
 			if keyspace.GetState() != keyspacepb.KeyspaceState_ENABLED {
 				continue
 			}
+			if pd.IsKeyspaceUsingKeyspaceLevelGC(keyspace) {
+				continue
+			}
 			codecOfKeyspace, err := tikv.NewCodecV2(tikv.ModeTxn, keyspace)
 			if err != nil {
 				err = errors.Annotatef(err, "failed to find codec for keyspace when trying to resolve locks for it, keyspaceID: %v, keyspaceName: %v", keyspace.GetId(), keyspace.GetName())

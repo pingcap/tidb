@@ -19,16 +19,19 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"slices"
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
@@ -51,6 +54,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/gc"
+	"github.com/tikv/pd/client/constants"
 )
 
 type mockGCWorkerLockResolver struct {
@@ -60,8 +64,8 @@ type mockGCWorkerLockResolver struct {
 	batchResolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 }
 
-func (l *mockGCWorkerLockResolver) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
-	locks, loc, err := l.RegionLockResolver.ScanLocksInOneRegion(bo, key, maxVersion, limit)
+func (l *mockGCWorkerLockResolver) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, endKey []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+	locks, loc, err := l.RegionLockResolver.ScanLocksInOneRegion(bo, key, endKey, maxVersion, limit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -94,6 +98,7 @@ type mockGCWorkerClient struct {
 	tikv.Client
 	unsafeDestroyRangeHandler handler
 	deleteRangeHandler        handler
+	scanLockRequestHandler    handler
 }
 
 type handler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
@@ -104,13 +109,23 @@ func gcContext() context.Context {
 }
 
 func (c *mockGCWorkerClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	var resp *tikvrpc.Response
+	var err error
 	if req.Type == tikvrpc.CmdUnsafeDestroyRange && c.unsafeDestroyRangeHandler != nil {
-		return c.unsafeDestroyRangeHandler(addr, req)
+		resp, err = c.unsafeDestroyRangeHandler(addr, req)
 	}
 	if req.Type == tikvrpc.CmdDeleteRange && c.deleteRangeHandler != nil {
-		return c.deleteRangeHandler(addr, req)
+		resp, err = c.deleteRangeHandler(addr, req)
+	}
+	if req.Type == tikvrpc.CmdScanLock && c.scanLockRequestHandler != nil {
+		resp, err = c.scanLockRequestHandler(addr, req)
 	}
 
+	if resp != nil || err != nil {
+		return resp, err
+	}
+
+	// If there's no mock handler, or the mock handler returns both nil, continue executing the inner implementation.
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
@@ -130,19 +145,50 @@ type mockGCWorkerSuite struct {
 	}
 }
 
-func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite) {
-	return createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, config.DefSchemaLease)
+type mockGCWorkerSuiteOptions struct {
+	storeType        mockstore.StoreType
+	schemaLease      time.Duration
+	mockStoreOptions []mockstore.MockTiKVStoreOption
 }
 
-func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType, schemaLease time.Duration) (s *mockGCWorkerSuite) {
-	s = new(mockGCWorkerSuite)
+type mockGCWorkerSuiteOption func(*mockGCWorkerSuiteOptions)
+
+func withStoreType(storeType mockstore.StoreType) mockGCWorkerSuiteOption {
+	return func(opts *mockGCWorkerSuiteOptions) {
+		opts.storeType = storeType
+	}
+}
+
+func withSchemaLease(schemaLease time.Duration) mockGCWorkerSuiteOption {
+	return func(opts *mockGCWorkerSuiteOptions) {
+		opts.schemaLease = schemaLease
+	}
+}
+
+func withMockStoreOptions(opt ...mockstore.MockTiKVStoreOption) mockGCWorkerSuiteOption {
+	return func(opts *mockGCWorkerSuiteOptions) {
+		opts.mockStoreOptions = append(opts.mockStoreOptions, opt...)
+	}
+}
+
+func createGCWorkerSuite(t *testing.T, opts ...mockGCWorkerSuiteOption) *mockGCWorkerSuite {
+	options := &mockGCWorkerSuiteOptions{
+		storeType:        mockstore.EmbedUnistore,
+		schemaLease:      config.DefSchemaLease,
+		mockStoreOptions: nil,
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	s := new(mockGCWorkerSuite)
 	hijackClient := func(client tikv.Client) tikv.Client {
 		s.client = &mockGCWorkerClient{Client: client}
 		client = s.client
 		return client
 	}
-	opts := []mockstore.MockTiKVStoreOption{
-		mockstore.WithStoreType(storeType),
+	storeOpts := []mockstore.MockTiKVStoreOption{
+		mockstore.WithStoreType(options.storeType),
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mockstore.BootstrapWithMultiStores(c, 3)
 			s.cluster = c
@@ -153,13 +199,14 @@ func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreTyp
 			return c
 		}),
 	}
+	storeOpts = append(storeOpts, options.mockStoreOptions...)
 
 	s.oracle = &oracles.MockOracle{}
-	store, err := mockstore.NewMockStore(opts...)
+	store, err := mockstore.NewMockStore(storeOpts...)
 	require.NoError(t, err)
 	store.GetOracle().Close()
 	store.(tikv.Storage).SetOracle(s.oracle)
-	dom := bootstrap(t, store, schemaLease)
+	dom := bootstrap(t, store, options.schemaLease)
 	s.store, s.dom = store, dom
 
 	s.tikvStore = s.store.(tikv.Storage)
@@ -170,7 +217,7 @@ func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreTyp
 	gcWorker.Close()
 	s.gcWorker = gcWorker
 
-	return
+	return s
 }
 
 func (s *mockGCWorkerSuite) mustPut(t *testing.T, key, value string) {
@@ -239,6 +286,20 @@ func (s *mockGCWorkerSuite) mustSetTiDBServiceSafePoint(t *testing.T, safePoint,
 	require.Equal(t, expectedMinSafePoint, minSafePoint)
 }
 
+func (s *mockGCWorkerSuite) splitAtKeys(t *testing.T, keys ...string) {
+	for _, keyStr := range keys {
+		key := []byte(keyStr)
+		bo := tikv.NewBackoffer(context.Background(), 10000)
+		loc, err := s.tikvStore.GetRegionCache().LocateKey(bo, key)
+		require.NoError(t, err)
+		newRegionID := s.cluster.AllocID()
+		peerIDs := []uint64{s.cluster.AllocID(), s.cluster.AllocID(), s.cluster.AllocID()}
+		leaderPeerID := peerIDs[rand.IntN(len(peerIDs))]
+		s.cluster.Split(loc.Region.GetID(), newRegionID, key, peerIDs, leaderPeerID)
+		s.tikvStore.GetRegionCache().InvalidateCachedRegion(loc.Region)
+	}
+}
+
 // gcProbe represents a key that contains multiple versions, one of which should be collected. Execution of GC with
 // greater ts will be detected, but it may not work properly if there are newer versions of the key.
 // This is not used to check the correctness of GC algorithm, but only for checking whether GC has been executed on the
@@ -299,7 +360,7 @@ func TestPrepareGC(t *testing.T) {
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error. as we keep adding offset to time oracle,
 	// so we need set a very large lease.
-	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 220*time.Minute)
+	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore), withSchemaLease(220*time.Minute))
 
 	now, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
@@ -953,7 +1014,7 @@ Loop:
 func TestLeaderTick(t *testing.T) {
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error.
-	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, time.Hour)
+	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore), withSchemaLease(time.Hour))
 
 	txnSafePointSyncWaitTime = 0
 
@@ -1144,7 +1205,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/DisablePaging"))
 	}()
-	s := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV, config.DefSchemaLease)
+	s := createGCWorkerSuite(t, withStoreType(mockstore.MockTiKV), withSchemaLease(config.DefSchemaLease))
 
 	var (
 		firstAccess    = true
@@ -1236,6 +1297,211 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 	for i, l := range resolvedLock {
 		require.Equal(t, expects[i], l)
 	}
+}
+
+func TestResolveLocksWithKeyspaces(t *testing.T) {
+	// Note: this test is expected not to respect to whether compiled as NextGen, but tests the logic designed to work
+	// on both classic and NextGen, and even mixed keyspaced & un-keyspaced usages in the same cluster.
+	// The unified GC, which is not used and won't be used in next gen, is also covered here.
+	// However, as the NextGen flag is currently overused, causing some keyspace-specific code unable to run on
+	// non-next-gen compilation or vice versa, the sub-tests must be filtered by the compilation flag for now.
+	type reqRange struct {
+		StartKey     []byte
+		EndKey       []byte
+		TxnSafePoint uint64
+	}
+
+	createSuiteForTestResolveLocks := func(t *testing.T, storeOpt ...mockstore.MockTiKVStoreOption) (suite *mockGCWorkerSuite, scanLockCounter *atomic.Int64, scanLockRangeCh chan reqRange) {
+		suite = createGCWorkerSuite(t, withMockStoreOptions(storeOpt...))
+		scanLockRangeCh = make(chan reqRange, 1000)
+		scanLockCounter = &atomic.Int64{}
+		suite.client.scanLockRequestHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+			scanLockCounter.Add(1)
+			scanLockReq := req.ScanLock()
+			scanLockRangeCh <- reqRange{
+				StartKey:     scanLockReq.GetStartKey(),
+				EndKey:       scanLockReq.GetEndKey(),
+				TxnSafePoint: scanLockReq.GetMaxVersion(),
+			}
+			// Only collect the request, without generating the result. Return nil to continue calling the inner client.
+			return nil, nil
+		}
+		return
+	}
+
+	collectAndMergeRanges := func(t *testing.T, ch <-chan reqRange) []reqRange {
+		ranges := make([]reqRange, 0, len(ch))
+		for r := range ch {
+			ranges = append(ranges, r)
+		}
+		slices.SortFunc(ranges, func(lhs, rhs reqRange) int {
+			return bytes.Compare(lhs.StartKey, rhs.StartKey)
+		})
+		if len(ranges) == 0 {
+			return ranges
+		}
+		mergedRanges := make([]reqRange, 0, len(ranges))
+		mergedRanges = append(mergedRanges, ranges[0])
+		for _, r := range ranges[1:] {
+			previousMerged := &mergedRanges[len(mergedRanges)-1]
+			if bytes.Compare(r.StartKey, previousMerged.EndKey) <= 0 {
+				if len(r.EndKey) == 0 || bytes.Compare(r.EndKey, previousMerged.EndKey) > 0 {
+					previousMerged.EndKey = r.EndKey
+				}
+			} else {
+				mergedRanges = append(mergedRanges, r)
+			}
+		}
+
+		// Force empty key be represented as nil (instead of an empty slice) for the convenience of asserting.
+		if len(mergedRanges[0].StartKey) == 0 {
+			mergedRanges[0].StartKey = nil
+		}
+		if len(mergedRanges[len(mergedRanges)-1].EndKey) == 0 {
+			mergedRanges[len(mergedRanges)-1].EndKey = nil
+		}
+
+		return mergedRanges
+	}
+
+	t.Run("NullKeyspaceOnly", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip()
+		}
+		s, counter, ch := createSuiteForTestResolveLocks(t, mockstore.WithCurrentKeyspaceMeta(nil))
+		err := s.gcWorker.resolveLocks(context.Background(), 100, 1)
+		require.NoError(t, err)
+		close(ch)
+		ranges := collectAndMergeRanges(t, ch)
+		// In case there's totally no keyspace in the cluster, it skips the step to exclude the ranges used by
+		// keyspaces.
+		require.Equal(t, []reqRange{{
+			StartKey:     nil,
+			EndKey:       nil,
+			TxnSafePoint: 100,
+		}}, ranges)
+		require.Equal(t, int64(1), counter.Load())
+	})
+
+	t.Run("NullKeyspaceOnlyMultiRegion", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip()
+		}
+		s, counter, ch := createSuiteForTestResolveLocks(t, mockstore.WithCurrentKeyspaceMeta(nil))
+		s.splitAtKeys(t, "a", "b", "c")
+		err := s.gcWorker.resolveLocks(context.Background(), 100, 1)
+		require.NoError(t, err)
+		close(ch)
+		ranges := collectAndMergeRanges(t, ch)
+		require.Equal(t, []reqRange{{
+			StartKey:     nil,
+			EndKey:       nil,
+			TxnSafePoint: 100,
+		}}, ranges)
+		require.Equal(t, int64(4), counter.Load())
+	})
+
+	makeKeyspace := func(id uint32, name string, enableKeyspaceLevelGC bool) *keyspacepb.KeyspaceMeta {
+		gcManagementType := pd.KeyspaceConfigGCManagementTypeKeyspaceLevel
+		if !enableKeyspaceLevelGC {
+			gcManagementType = pd.KeyspaceConfigGCManagementTypeUnified
+		}
+		return &keyspacepb.KeyspaceMeta{
+			Id:     id,
+			Name:   name,
+			Config: map[string]string{pd.KeyspaceConfigGCManagementType: gcManagementType},
+		}
+	}
+
+	mkKey := func(id uint32, key string) string {
+		c, err := tikv.NewCodecV2(tikv.ModeTxn, makeKeyspace(id, "dummyks", true))
+		require.NoError(t, err)
+		return string(c.EncodeKey([]byte(key)))
+	}
+
+	t.Run("NullKeyspaceInMultiKeyspaceEnvironment", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip()
+		}
+		s, counter, ch := createSuiteForTestResolveLocks(t, mockstore.WithKeyspacesAndCurrentKeyspaceID([]*keyspacepb.KeyspaceMeta{
+			makeKeyspace(1, "ks1", true),
+			makeKeyspace(3, "ks3", true),
+		}, constants.NullKeyspaceID))
+		s.splitAtKeys(t,
+			mkKey(1, ""), mkKey(1, "a"),
+			mkKey(2, ""), mkKey(2, "a"),
+			mkKey(3, ""), mkKey(3, "a"),
+			mkKey(4, ""), mkKey(4, "a"),
+			"t1", "t2", "m")
+		err := s.gcWorker.resolveLocks(context.Background(), 100, 2)
+		require.NoError(t, err)
+		close(ch)
+		ranges := collectAndMergeRanges(t, ch)
+		// Handles ranges that are out of any keyspaces.
+		require.Equal(t, []reqRange{
+			{StartKey: nil, EndKey: []byte("r"), TxnSafePoint: 100},         // 2 regions (split at "m")
+			{StartKey: []byte("s"), EndKey: []byte("x"), TxnSafePoint: 100}, // 3 regions (split at "t1", "t2")
+			{StartKey: []byte("y"), EndKey: nil, TxnSafePoint: 100},         // 1 region
+		}, ranges)
+		require.Equal(t, int64(6), counter.Load())
+	})
+
+	t.Run("NonNullKeyspaceInMultiKeyspaceEnvironment", func(t *testing.T) {
+		if !kerneltype.IsNextGen() {
+			t.Skip()
+		}
+		s, counter, ch := createSuiteForTestResolveLocks(t, mockstore.WithKeyspacesAndCurrentKeyspaceID([]*keyspacepb.KeyspaceMeta{
+			makeKeyspace(1, "ks1", true),
+			makeKeyspace(3, "ks3", true),
+		}, 1))
+		s.splitAtKeys(t,
+			mkKey(1, ""), mkKey(1, "a"),
+			mkKey(2, ""), mkKey(2, "a"),
+			mkKey(3, ""), mkKey(3, "a"),
+			mkKey(4, ""), mkKey(4, "a"),
+			"t1", "t2", "m")
+		err := s.gcWorker.resolveLocks(context.Background(), 100, 2)
+		require.NoError(t, err)
+		close(ch)
+		ranges := collectAndMergeRanges(t, ch)
+		// Handles ranges that are out of any keyspaces.
+		require.Equal(t, []reqRange{
+			{StartKey: []byte("x\x00\x00\x01"), EndKey: []byte("x\x00\x00\x02"), TxnSafePoint: 100}, // 2 regions split at "x\x00\x00\x00a"
+		}, ranges)
+		require.Equal(t, int64(2), counter.Load())
+	})
+
+	t.Run("UnifiedGCInMixedUsage", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip()
+		}
+		s, counter, ch := createSuiteForTestResolveLocks(t, mockstore.WithKeyspacesAndCurrentKeyspaceID([]*keyspacepb.KeyspaceMeta{
+			makeKeyspace(0, "DEFAULT", false),
+			makeKeyspace(1, "ks1", true),
+			makeKeyspace(2, "ks2", false),
+			makeKeyspace(3, "ks3", true),
+			makeKeyspace(5, "ks5", false),
+			makeKeyspace(8, "ks8", true),
+		}, constants.NullKeyspaceID))
+		splitKeys := []string{"t1", "t2", "m"}
+		for i := 0; i < 8; i++ {
+			splitKeys = append(splitKeys, mkKey(uint32(i), ""), mkKey(uint32(i), "a"))
+		}
+		s.splitAtKeys(t, splitKeys...)
+		err := s.gcWorker.resolveLocks(context.Background(), 100, 2)
+		require.NoError(t, err)
+		close(ch)
+		ranges := collectAndMergeRanges(t, ch)
+		require.Equal(t, []reqRange{
+			{StartKey: nil, EndKey: []byte("r"), TxnSafePoint: 100},                                 // Non-keyspace range, 2 regions (split at "m")
+			{StartKey: []byte("s"), EndKey: []byte("x"), TxnSafePoint: 100},                         // Non-keyspace range, 3 regions (split at "t1", "t2")
+			{StartKey: []byte("x\x00\x00\x00"), EndKey: []byte("x\x00\x00\x01"), TxnSafePoint: 100}, // Keyspace 0 (DEFAULT), 2 regions
+			{StartKey: []byte("x\x00\x00\x02"), EndKey: []byte("x\x00\x00\x03"), TxnSafePoint: 100}, // Keyspace 2, 2 regions
+			{StartKey: []byte("x\x00\x00\x05"), EndKey: []byte("x\x00\x00\x06"), TxnSafePoint: 100}, // Keyspace 5, 2 regions
+			{StartKey: []byte("y"), EndKey: nil, TxnSafePoint: 100},                                 // 1 region
+		}, ranges)
+		require.Equal(t, int64(12), counter.Load())
+	})
 }
 
 func TestRunGCJob(t *testing.T) {
@@ -1488,7 +1754,7 @@ func TestGCWithPendingTxn(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("skip TestGCWithPendingTxn when kernel type is NextGen - test not yet adjusted to support next-gen")
 	}
-	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 30*time.Minute)
+	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore), withSchemaLease(30*time.Minute))
 
 	ctx := gcContext()
 	txnSafePointSyncWaitTime = 0
@@ -1544,7 +1810,7 @@ func TestGCWithPendingTxn(t *testing.T) {
 func TestGCWithPendingTxn2(t *testing.T) {
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error.
-	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 10*time.Minute)
+	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore), withSchemaLease(10*time.Minute))
 
 	ctx := gcContext()
 	txnSafePointSyncWaitTime = 0
@@ -1616,7 +1882,7 @@ func TestGCWithPendingTxn2(t *testing.T) {
 func TestSkipGCAndOnlyResolveLock(t *testing.T) {
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error.
-	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 10*time.Minute)
+	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore), withSchemaLease(10*time.Minute))
 
 	ctx := gcContext()
 	txnSafePointSyncWaitTime = 0

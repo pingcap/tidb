@@ -82,8 +82,8 @@ github.com/Masterminds/semver/v3 v3.3.1 h1:QtNSWtVZ3nBfk8mAOu/B6v7FMJ+NHTIgUPi7r
 github.com/Masterminds/semver/v3 v3.3.1/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/Masterminds/sprig/v3 v3.2.2 h1:17jRggJu518dr3QaafizSXOjKYp94wKfABxUmyxvxX8=
 github.com/Masterminds/sprig/v3 v3.2.2/go.mod h1:UoaO7Yp8KlPnJIYWTFkMaqPUYKTfGFPhxNuwnnxkKlk=
-github.com/MyonKeminta/client-go/v2 v2.0.0-20251013071606-e05be7b296a8 h1:pijVGE58P7wDmsssE0V4Cz10BDwpsMAg8DvAnU2NKLE=
-github.com/MyonKeminta/client-go/v2 v2.0.0-20251013071606-e05be7b296a8/go.mod h1:CFbSXg9mw7Ld1qLhHYR0pPsWtVlaW5Im9vQUbfH9sEI=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20251016124430-10ba295599fe h1:GI0pHWyehVV5rX3py4nuSrhCdyIk7CG/1a4YFki98jI=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20251016124430-10ba295599fe/go.mod h1:CFbSXg9mw7Ld1qLhHYR0pPsWtVlaW5Im9vQUbfH9sEI=
 github.com/VividCortex/ewma v1.1.1/go.mod h1:2Tkkvm3sRDVXaiyucHiACn4cqf7DpdyLvmxzcbUokwA=
 github.com/VividCortex/ewma v1.2.0 h1:f58SaIzcDXrSy3kWaHNvuJgJ3Nmz59Zji6XoJR/q1ow=
 github.com/VividCortex/ewma v1.2.0/go.mod h1:nz4BbCtbLyFDeC9SUHbtcT5644juEuWfUAUnGx7j5l4=
