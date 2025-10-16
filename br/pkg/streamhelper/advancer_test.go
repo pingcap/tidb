@@ -650,6 +650,7 @@ func TestCheckPointResume(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	c.advanceClusterTimeBy(2 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
+	time.Sleep(100 * time.Millisecond)
 	require.Eventually(t, func() bool {
 		return assert.NoError(t, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)
