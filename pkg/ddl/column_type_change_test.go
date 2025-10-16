@@ -494,12 +494,8 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 			// modify column x
 			if job.ID == firstJobID {
 				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-				expectVal := "0000-00-00 00:00:00"
-				if originalDV != expectVal {
-					errMsg := fmt.Sprintf("job ID:%d, expect: %v, got: %v", job.ID, expectVal, originalDV)
-					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
-					return
-				}
+				expectVal := "3771-02-28 13:00:11"
+				require.Equal(t, expectVal, originalDV)
 				// The cast value will be inserted into changing column too.
 				_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE x = '' AND a = 'mul'")
 				if err != nil {
@@ -510,12 +506,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 			// modify column b
 			if job.ID == firstJobID+1 {
 				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-				expectVal := ""
-				if originalDV != expectVal {
-					errMsg := fmt.Sprintf("job ID:%d, expect: %v, got: %v", job.ID, expectVal, originalDV)
-					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
-					return
-				}
+				require.Len(t, originalDV, 32)
 				// The cast value will be inserted into changing column too.
 				_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE a = '1'")
 				if err != nil {

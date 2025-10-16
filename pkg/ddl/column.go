@@ -128,7 +128,7 @@ func checkDropColumnForStatePublic(colInfo *model.ColumnInfo) (err error) {
 		// But currently will be ok, because we can't cancel the drop column job when the job is running,
 		// so the column will be dropped succeed and client will never see the wrong default value of the dropped column.
 		// More info about this problem, see PR#9115.
-		originDefVal, err := generateOriginDefaultValue(colInfo, nil)
+		originDefVal, err := generateOriginDefaultValue(colInfo, nil, true)
 		if err != nil {
 			return err
 		}
@@ -1256,7 +1256,7 @@ func modifyColsFromNull2NotNull(
 	return nil
 }
 
-func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (any, error) {
+func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context, checkUnsafeFunc bool) (any, error) {
 	var err error
 	odValue := col.GetDefaultValue()
 	if odValue == nil && mysql.HasNotNullFlag(col.GetFlag()) ||
@@ -1303,7 +1303,7 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 		oldValue := strings.ToLower(valStr)
 		// It's checked in getFuncCallDefaultValue.
 		if !strings.Contains(oldValue, fmt.Sprintf("%s(%s(),", ast.DateFormat, ast.Now)) &&
-			!strings.Contains(oldValue, ast.StrToDate) {
+			!strings.Contains(oldValue, ast.StrToDate) && checkUnsafeFunc {
 			return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction)
 		}
 
