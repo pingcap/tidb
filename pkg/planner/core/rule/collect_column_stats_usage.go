@@ -63,6 +63,9 @@ type columnStatsUsageCollector struct {
 
 	// orderingColumns tracks columns that require ordered access (sorts and MIN/MAX) to propagate to DataSource
 	orderingColumns []*expression.Column
+
+	// joinColumns tracks columns used in join conditions that should be propagated down to DataSource
+	joinColumns []*expression.Column
 }
 
 func newColumnStatsUsageCollector(enabledPlanCapture bool) *columnStatsUsageCollector {
@@ -179,7 +182,21 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 		}
 	}
 
-	// Store ordering columns (sort + MIN/MAX) in the DataSource if they belong to this DataSource
+	// Store join columns in the DataSource if they belong to this DataSource
+	// Join columns come from EqualConditions and OtherConditions of joins
+	if len(c.joinColumns) > 0 {
+		joinColSet := make(map[int64]struct{})
+		for _, joinCol := range c.joinColumns {
+			if ds.Schema().Contains(joinCol) {
+				if _, exists := joinColSet[joinCol.UniqueID]; !exists {
+					ds.JoinColumns = append(ds.JoinColumns, joinCol)
+					joinColSet[joinCol.UniqueID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	// Store ordering columns (sort + MIN/MAX/FIRST_VALUE) in the DataSource if they belong to this DataSource
 	if len(c.orderingColumns) > 0 {
 		orderingColSet := make(map[int64]struct{})
 		for _, orderingCol := range c.orderingColumns {
@@ -260,6 +277,28 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 			}
 			c.orderingColumns = expression.ExtractColumnsFromExpressions(orderExprs, nil)
 		}
+	case *logicalop.LogicalJoin:
+		// Extract and store join columns to propagate to DataSource
+		// Note: LeftConditions and RightConditions are not join conditions between tables,
+		// they are filters on individual tables, so we only extract from EqualConditions and OtherConditions
+		joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
+		for _, cond := range x.EqualConditions {
+			joinExprs = append(joinExprs, cond)
+		}
+		for _, cond := range x.OtherConditions {
+			joinExprs = append(joinExprs, cond)
+		}
+		c.joinColumns = expression.ExtractColumnsFromExpressions(joinExprs, nil)
+	case *logicalop.LogicalApply:
+		// Extract and store join columns to propagate to DataSource
+		joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
+		for _, cond := range x.EqualConditions {
+			joinExprs = append(joinExprs, cond)
+		}
+		for _, cond := range x.OtherConditions {
+			joinExprs = append(joinExprs, cond)
+		}
+		c.joinColumns = expression.ExtractColumnsFromExpressions(joinExprs, nil)
 	}
 
 	for _, child := range lp.Children() {

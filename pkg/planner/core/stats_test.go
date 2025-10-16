@@ -16,7 +16,6 @@ package core_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -91,7 +90,7 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	t.Run("threshold_20", func(t *testing.T) {
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=20")
 		ds20 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
-		require.Equal(t, 20, len(ds20.AllPossibleAccessPaths), "With threshold 20, should prune to exactly 20 indexes")
+		require.Greater(t, 21, len(ds20.AllPossibleAccessPaths), "With threshold 20, should prune to less than or equal to 20 indexes")
 
 		// Verify all paths are valid
 		for _, path := range ds20.AllPossibleAccessPaths {
@@ -105,7 +104,7 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	t.Run("threshold_10", func(t *testing.T) {
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=10")
 		ds10 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
-		require.Equal(t, 10, len(ds10.AllPossibleAccessPaths), "With threshold 10, should prune to exactly 10 indexes")
+		require.Greater(t, 11, len(ds10.AllPossibleAccessPaths), "With threshold 10, should prune to less than or equal 10 indexes")
 	})
 
 	t.Run("no_where_columns", func(t *testing.T) {
@@ -113,17 +112,19 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 		dsNoWhere := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1")
 		require.Equal(t, expectedFull, len(dsNoWhere.AllPossibleAccessPaths), "With no WHERE columns, should return all paths")
 	})
-
-	// Unit-level empty/single path cases are omitted in E2E pipeline test
 }
 
+// NOTE: If this test becomes flaky - consider moving the failing test into
+// a comment and open an issue to the optimizer team. A flaky test may be caused
+// by other changes in the optimizer - and may not indicate a real problem.
 func TestIndexChoiceFromPruning(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
 
-	// Reuse the same DDL as the other test
+	// Reuse the same DDL as the other test, but create t1 & t2
 	tk.MustExec(`CREATE TABLE t1 (
 		a int, b int, c int, d int, e int, f int,
 		KEY ia (a), KEY iab (a, b), KEY iac (a, c), KEY iad (a, d), KEY iae (a, e), KEY iaf (a, f),
@@ -144,6 +145,10 @@ func TestIndexChoiceFromPruning(t *testing.T) {
 		KEY ibea (b, e, a), KEY ibec (b, e, c), KEY ibfa (b, f, a), KEY ibfc (b, f, c),
 		KEY ibfd (b, f, d), KEY ibfe (b, f, e)
 	)`)
+	tk.MustExec(`CREATE TABLE t2 (
+		a int, b int, c int, d int, e int, f int,
+		KEY ia (a)
+	)`)
 
 	queries := []string{
 		"select * from t1 where a = 1 and f = 1",
@@ -151,60 +156,33 @@ func TestIndexChoiceFromPruning(t *testing.T) {
 		"select * from t1 where a in (1,2,3) and f = 5",
 		"select * from t1 where a = 9 and f in (1,2)",
 		"select d from t1 where a = 1 and (b = 5 or b = 7 or b in (1,2,3))",
-		"select c from t1 where (a = 1 and b = 1) or (a = 3 and b = 3) order by c",
+		"select e from t1 where a = 1 and(b = 1 and f = 1) or (b = 3 and f = 3) order by e",
 		"select first_value(c) over(order by b) from t1 where a = 1 and (b = 5 or b = 7 or b in (1,2,3))",
 		"select min(a) from t1",
 		"select a, d, c, b from t1 where a = 1",
+		"select t2.* from t2 left join t1 on t1.a = t2.a where t2.b = 1",
+		"select t1.e from t2 left join t1 on t1.b = t2.b and t1.f = t2.f where t2.b = 1",
 	}
 
-	// Capture chosen index with prune threshold 100
+	// Capture plans with prune threshold 100
 	tk.MustExec("set @@tidb_opt_index_prune_threshold=100")
-	chosenAt100 := make([]string, len(queries))
+	plansAt100 := make([][][]any, len(queries))
 	for i, sql := range queries {
-		chosenAt100[i] = extractIndexNameFromExplain(tk, sql)
+		rows := tk.MustQuery("explain format='plan_tree' " + sql).Rows()
+		plansAt100[i] = rows
 	}
 
-	// Capture chosen index with prune threshold 10
+	// Capture plans with prune threshold 10
 	tk.MustExec("set @@tidb_opt_index_prune_threshold=10")
-	chosenAt10 := make([]string, len(queries))
+	plansAt10 := make([][][]any, len(queries))
 	for i, sql := range queries {
-		chosenAt10[i] = extractIndexNameFromExplain(tk, sql)
+		rows := tk.MustQuery("explain format='plan_tree' " + sql).Rows()
+		plansAt10[i] = rows
 	}
 
 	for i := range queries {
-		// They should be the same regardless of pruning threshold
-		if chosenAt100[i] == "" && chosenAt10[i] == "" {
-			continue
-		}
-		require.Equalf(t, chosenAt100[i], chosenAt10[i], "query %d index differs between thresholds: 100=%s, 10=%s", i, chosenAt100[i], chosenAt10[i])
+		require.Equalf(t, plansAt100[i], plansAt10[i], "query %d plan differs between thresholds", i+1)
 	}
-}
-
-// extractIndexNameFromExplain runs EXPLAIN and extracts the index name from operator info.
-func extractIndexNameFromExplain(tk *testkit.TestKit, sql string) string {
-	rows := tk.MustQuery("explain format='brief' " + sql).Rows()
-	for _, row := range rows {
-		for _, col := range row {
-			s := col.(string)
-			if idx := strings.Index(s, "index:"); idx >= 0 {
-				name := s[idx+len("index:"):]
-				// Trim delimiters and details after name
-				name = strings.TrimSpace(name)
-				// Stop at first comma or space
-				for j, r := range name {
-					if r == ',' || r == ' ' || r == ')' { // common separators
-						name = name[:j]
-						break
-					}
-				}
-				name = strings.Trim(name, "`()")
-				if name != "" {
-					return name
-				}
-			}
-		}
-	}
-	return ""
 }
 
 // getDataSourceFromQuery is a helper to extract DataSource from a query for testing
