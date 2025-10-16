@@ -53,33 +53,35 @@ import (
 	"go.uber.org/zap"
 )
 
-// ModifyColumnType is used to indicate what type of modify column job it is.
+// modifyColumnType is used to indicate what type of modify column job it is.
+// Note: to maintain compatibility, value 6(mysql.TypeNull) should not be used here which may be used by older version of TiDB.
+// https://github.com/pingcap/tidb/blob/cf587d3793d7d147132d90eb1850981d3ec41780/pkg/ddl/modify_column.go#L998-L1004
 const (
-	ModifyTypeNone byte = iota
+	modifyTypeNone byte = iota
 	// modify column that guarantees no reorganization or check is needed.
-	ModifyTypeNoReorg
+	modifyTypeNoReorg
 
 	// modify column that don't need to reorg the data, but need to check the existing data.
-	ModifyTypeNoReorgWithCheck
+	modifyTypeNoReorgWithCheck
 
 	// modify column that only needs to reorg the index
-	ModifyTypeIndexReorg
+	modifyTypeIndexReorg
 
 	// modify column that needs to reorg both the row and index data.
-	ModifyTypeReorg
+	modifyTypeReorg
 )
 
 func typeToString(tp byte) string {
 	switch tp {
-	case ModifyTypeNone:
+	case modifyTypeNone:
 		return "none"
-	case ModifyTypeNoReorg:
+	case modifyTypeNoReorg:
 		return "modify meta only"
-	case ModifyTypeNoReorgWithCheck:
+	case modifyTypeNoReorgWithCheck:
 		return "modify meta only with range check"
-	case ModifyTypeIndexReorg:
+	case modifyTypeIndexReorg:
 		return "reorg index only"
-	case ModifyTypeReorg:
+	case modifyTypeReorg:
 		return "reorg row and index"
 	}
 
@@ -87,8 +89,7 @@ func typeToString(tp byte) string {
 }
 
 // getModifyColumnType gets the modify column type.
-//  1. ModifyTypeNoReorg: The range of new type is a superset of the old type
-//  2. ModifyTypeReorg: other
+// We need to ensure it's compatible with job submitted from older version of TiDB.
 func getModifyColumnType(
 	args *model.ModifyColumnArgs,
 	_ *model.TableInfo,
@@ -98,12 +99,12 @@ func getModifyColumnType(
 	if !needChangeColumnData(oldCol, newCol) {
 		// It's not NULL->NOTNULL change
 		if mysql.HasNotNullFlag(oldCol.GetFlag()) || !mysql.HasNotNullFlag(newCol.GetFlag()) {
-			return ModifyTypeNoReorg
+			return modifyTypeNoReorg
 		}
-		return ModifyTypeNoReorgWithCheck
+		return modifyTypeNoReorgWithCheck
 	}
 
-	return ModifyTypeReorg
+	return modifyTypeReorg
 }
 
 func getChangingCol(
@@ -164,8 +165,10 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
-	// For first time running this job, we need to fill the ModifyColumnType.
-	if args.ModifyColumnType == ModifyTypeNone {
+	// For first time running this job, or the job from older version,
+	// we need to fill the ModifyColumnType.
+	if args.ModifyColumnType == modifyTypeNone ||
+		args.ModifyColumnType == mysql.TypeNull {
 		args.ModifyColumnType = getModifyColumnType(args, tblInfo, oldCol, job.SQLMode)
 		logutil.DDLLogger().Info("run modify column job",
 			zap.String("oldColumnName", args.OldColumnName.L),
@@ -176,13 +179,13 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 
 	if job.IsRollingback() {
 		switch args.ModifyColumnType {
-		case ModifyTypeNoReorg, ModifyTypeNoReorgWithCheck:
+		case modifyTypeNoReorg, modifyTypeNoReorgWithCheck:
 			// For those column-type-change jobs which don't need reorg.
 			return rollbackModifyColumnJob(jobCtx, tblInfo, job, args.Column, oldCol)
-		case ModifyTypeReorg:
+		case modifyTypeReorg:
 			// For those column-type-change jobs which need reorg.
 			return rollbackModifyColumnJobWithReorg(jobCtx, tblInfo, job, oldCol, args)
-		case ModifyTypeIndexReorg:
+		case modifyTypeIndexReorg:
 			// We will add this case later
 			return ver, errors.Errorf("ModifyTypeIndexReorg is not supported yet")
 		}
@@ -207,11 +210,11 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		}
 	}
 
-	if args.ModifyColumnType == ModifyTypeNoReorgWithCheck {
+	if args.ModifyColumnType == modifyTypeNoReorgWithCheck {
 		return w.doModifyColumnWithCheck(jobCtx, job, dbInfo, tblInfo, args.Column, oldCol, args.Position)
 	}
 
-	if args.ModifyColumnType == ModifyTypeNoReorg {
+	if args.ModifyColumnType == modifyTypeNoReorg {
 		return w.doModifyColumnNoCheck(jobCtx, job, tblInfo, args.Column, oldCol, args.Position)
 	}
 
