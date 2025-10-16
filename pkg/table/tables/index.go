@@ -245,7 +245,6 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		// save the key buffer to reuse.
 		writeBufs.IndexKeyBuf = key
 		idxVal, err := c.GenIndexValue(ec, loc, distinct, untouched, value, h, handleRestoreData, nil)
-		err = ec.HandleError(err)
 		if err != nil {
 			return nil, err
 		}
