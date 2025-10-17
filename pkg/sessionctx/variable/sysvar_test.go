@@ -240,6 +240,25 @@ func TestDefaultCollationForUTF8MB4(t *testing.T) {
 	require.EqualError(t, err, ErrInvalidDefaultUTF8MB4Collation.GenWithStackByArgs("latin1_bin").Error())
 }
 
+func TestDefaultCollationForUTF8(t *testing.T) {
+	sv := GetSysVar(vardef.DefaultCollationForUTF8)
+	vars := NewSessionVars(nil)
+
+	// test normalization
+	val, err := sv.Validate(vars, "utf8_BIN", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "utf8_bin", val)
+	val, err = sv.Validate(vars, "utf8_GENeral_CI", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "utf8_general_ci", val)
+	val, err = sv.Validate(vars, "utf8_UNIcode_CI", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "utf8_unicode_ci", val)
+	// test set variable failed
+	_, err = sv.Validate(vars, "LATIN1_bin", vardef.ScopeSession)
+	require.EqualError(t, err, ErrInvalidDefaultUTF8Collation.GenWithStackByArgs("latin1_bin").Error())
+}
+
 func TestTimeZone(t *testing.T) {
 	sv := GetSysVar(vardef.TimeZone)
 	vars := NewSessionVars(nil)
