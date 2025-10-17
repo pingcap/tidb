@@ -1131,7 +1131,6 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 	for i, expr := range p.Exprs {
 		cols = expression.ExtractAllColumnsFromExpressionsInUsedSlices(cols, expr)
 		p.stats.ColNDVs[selfSchema.Columns[i].UniqueID], _ = getColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
-		cols = cols[:0]
 	}
 	p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
 	return p.stats, nil

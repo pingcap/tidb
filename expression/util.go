@@ -129,6 +129,7 @@ func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, exprs ...Expr
 	if len(exprs) == 0 {
 		return nil
 	}
+	reuse = reuse[:0]
 	for _, expr := range exprs {
 		reuse = extractColumnsSlices(reuse, expr)
 	}
