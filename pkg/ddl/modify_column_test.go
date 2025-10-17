@@ -652,12 +652,31 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	tk.MustExec("admin check table t")
 }
 
-func TestXxx(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+func TestGetModifyColumnType(t *testing.T) {
+	type testCase struct {
+		tableSQL  string
+		modifySQL string
+		tp        byte
+	}
 
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, c1 bigint, c2 varchar(16), index i1(c1), index i2(c2), index i3(c1, c2))")
-	tk.MustExec("insert into t values (1, 1, '1'), (2, 2, '2'), (3, 3, '3')")
-	tk.MustExec("alter table t modify column c1 int UNSIGNED")
+
+	tcs := []testCase{
+		{
+			tableSQL:  "create table t(a bigint)",
+			modifySQL: "alter table t modify column a int",
+			tp:        ddl.ModifyTypeNoReorgWithCheck,
+		},
+	}
+
+	for _, tc := range tcs {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+			require.Equal(t, tc.tp, tp)
+		})
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(tc.tableSQL)
+		tk.MustExec(tc.modifySQL)
+	}
 }

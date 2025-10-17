@@ -53,35 +53,35 @@ import (
 	"go.uber.org/zap"
 )
 
-// modifyColumnType is used to indicate what type of modify column job it is.
+// ModifyColumnType is used to indicate what type of modify column job it is.
 // Note: to maintain compatibility, value 6(mysql.TypeNull) should not be used here which may be used by older version of TiDB.
 // https://github.com/pingcap/tidb/blob/cf587d3793d7d147132d90eb1850981d3ec41780/pkg/ddl/modify_column.go#L998-L1004
 const (
-	modifyTypeNone byte = iota
+	ModifyTypeNone byte = iota
 	// modify column that guarantees no reorganization or check is needed.
-	modifyTypeNoReorg
+	ModifyTypeNoReorg
 
 	// modify column that don't need to reorg the data, but need to check the existing data.
-	modifyTypeNoReorgWithCheck
+	ModifyTypeNoReorgWithCheck
 
 	// modify column that only needs to reorg the index
-	modifyTypeIndexReorg
+	ModifyTypeIndexReorg
 
 	// modify column that needs to reorg both the row and index data.
-	modifyTypeReorg
+	ModifyTypeReorg
 )
 
 func typeToString(tp byte) string {
 	switch tp {
-	case modifyTypeNone:
+	case ModifyTypeNone:
 		return "none"
-	case modifyTypeNoReorg:
+	case ModifyTypeNoReorg:
 		return "modify meta only"
-	case modifyTypeNoReorgWithCheck:
+	case ModifyTypeNoReorgWithCheck:
 		return "modify meta only with range check"
-	case modifyTypeIndexReorg:
+	case ModifyTypeIndexReorg:
 		return "reorg index only"
-	case modifyTypeReorg:
+	case ModifyTypeReorg:
 		return "reorg row and index"
 	}
 
@@ -106,25 +106,25 @@ func getModifyColumnType(
 	if !needChangeColumnData(oldCol, args.Column) {
 		// It's not NULL->NOTNULL change
 		if mysql.HasNotNullFlag(oldCol.GetFlag()) || !mysql.HasNotNullFlag(newCol.GetFlag()) {
-			return modifyTypeNoReorg
+			return ModifyTypeNoReorg
 		}
-		return modifyTypeNoReorgWithCheck
+		return ModifyTypeNoReorgWithCheck
 	}
 
 	// For backward compatibility
 	if args.ModifyColumnType == mysql.TypeNull {
-		return modifyTypeReorg
+		return ModifyTypeReorg
 	}
 
 	if needDoRowReorg(oldCol, args.Column, sqlMode) {
-		return modifyTypeReorg
+		return ModifyTypeReorg
 	}
 
 	relatedIndexes := buildRelatedIndexIDs(tblInfo, oldCol.ID)
 	if len(relatedIndexes) == 0 || !needDoIndexReorg(tblInfo, oldCol, args.Column, sqlMode) {
-		return modifyTypeNoReorgWithCheck
+		return ModifyTypeNoReorgWithCheck
 	}
-	return modifyTypeIndexReorg
+	return ModifyTypeIndexReorg
 }
 
 func getChangingCol(
@@ -233,7 +233,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 
 	// For first time running this job, or the job from older version,
 	// we need to fill the ModifyColumnType.
-	if args.ModifyColumnType == modifyTypeNone ||
+	if args.ModifyColumnType == ModifyTypeNone ||
 		args.ModifyColumnType == mysql.TypeNull {
 		args.ModifyColumnType = getModifyColumnType(args, tblInfo, oldCol, job.SQLMode)
 		logutil.DDLLogger().Info("run modify column job",
@@ -241,17 +241,18 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 			zap.Int64("oldColumnID", oldCol.ID),
 			zap.String("type", typeToString(args.ModifyColumnType)),
 		)
+		failpoint.InjectCall("getModifyColumnType", args.ModifyColumnType)
 	}
 
 	if job.IsRollingback() {
 		switch args.ModifyColumnType {
-		case modifyTypeNoReorg, modifyTypeNoReorgWithCheck:
+		case ModifyTypeNoReorg, ModifyTypeNoReorgWithCheck:
 			// For those column-type-change jobs which don't need reorg.
 			return rollbackModifyColumnJob(jobCtx, tblInfo, job, args.Column, oldCol)
-		case modifyTypeReorg:
+		case ModifyTypeReorg:
 			// For those column-type-change jobs which need reorg.
 			return rollbackModifyColumnJobWithReorg(jobCtx, tblInfo, job, oldCol, args)
-		case modifyTypeIndexReorg:
+		case ModifyTypeIndexReorg:
 			// For those column-type-change jobs which reorg the index only.
 			return rollbackModifyColumnJobWithIndexReorg(jobCtx, tblInfo, job, oldCol, args)
 		}
@@ -276,11 +277,11 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		}
 	}
 
-	if args.ModifyColumnType == modifyTypeNoReorgWithCheck {
+	if args.ModifyColumnType == ModifyTypeNoReorgWithCheck {
 		return w.doModifyColumnWithCheck(jobCtx, job, dbInfo, tblInfo, args.Column, oldCol, args.Position)
 	}
 
-	if args.ModifyColumnType == modifyTypeNoReorg {
+	if args.ModifyColumnType == ModifyTypeNoReorg {
 		return w.doModifyColumnNoCheck(jobCtx, job, tblInfo, args.Column, oldCol, args.Position)
 	}
 
@@ -304,7 +305,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 
 	defer checkColumnOrderByStates(tblInfo)
 
-	if args.ModifyColumnType == modifyTypeIndexReorg {
+	if args.ModifyColumnType == ModifyTypeIndexReorg {
 		if err := initializeChangingIndexes(args, tblInfo, oldCol); err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -651,6 +652,14 @@ func needDoIndexReorg(tblInfo *model.TableInfo, oldCol, changingCol *model.Colum
 	}
 
 	if tblInfo.HasClusteredIndex() {
+		return true
+	}
+
+	if oldCol.GetCollate() != changingCol.GetCollate() {
+		return true
+	}
+
+	if mysql.HasBinaryFlag(oldCol.GetFlag()) || mysql.HasBinaryFlag(changingCol.GetFlag()) {
 		return true
 	}
 
