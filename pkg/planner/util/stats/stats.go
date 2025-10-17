@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -39,10 +38,7 @@ func GetTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
 	is := sctx.GetLatestISWithoutSessExt()
-	var tbl table.Table
-	var partDef *model.PartitionDefinition
-
-	tbl, partDef = infoschema.FindTableByTblOrPartID(is.(infoschema.InfoSchema), id)
+	tbl, partDef := infoschema.FindTableByTblOrPartID(is.(infoschema.InfoSchema), id)
 	if tbl == nil || tbl.Meta() == nil {
 		return
 	}
