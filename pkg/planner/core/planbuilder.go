@@ -1431,7 +1431,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	// so that the table paths are still added here to avoid failing to find any physical plan.
 	allMVIIndexPath := true
 	for _, availablePath := range available {
-		if !isMVIndexPath(availablePath) {
+		if !availablePath.IsMVIndexPath() {
 			allMVIIndexPath = false
 			break
 		}

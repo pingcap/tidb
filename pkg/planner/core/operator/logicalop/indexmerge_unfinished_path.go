@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"cmp"
@@ -21,40 +21,14 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
-
-// generateORIndexMerge handles all (MV and non-MV index) OR type IndexMerge path generation.
-// The input filters are implicitly connected by AND.
-func generateORIndexMerge(ds *logicalop.DataSource, filters []expression.Expression) error {
-	usedIndexCount := len(ds.PossibleAccessPaths)
-	// 1. Iterate the input filters and try to find an OR list.
-	for k, cond := range filters {
-		sf, ok := cond.(*expression.ScalarFunction)
-		if !ok || sf.FuncName.L != ast.LogicOr {
-			continue
-		}
-
-		dnfFilters := expression.SplitDNFItems(sf)
-		candidatesAccessPaths := ds.PossibleAccessPaths[:usedIndexCount]
-
-		// 2. Try to collect usable filters for each candidate access path using the OR list.
-		unfinishedIndexMergePath := genUnfinishedPathFromORList(ds, dnfFilters, candidatesAccessPaths)
-		// 3. Try to collect more usable filters from the top level AND list and build it into a valid AccessPath.
-		indexMergePath := handleTopLevelANDList(ds, filters, k, candidatesAccessPaths, unfinishedIndexMergePath)
-		if indexMergePath != nil {
-			ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, indexMergePath)
-		}
-	}
-	return nil
-}
 
 // unfinishedAccessPath collects usable filters in preparation for building an OR type IndexMerge access path.
 // It maintains the information during iterating all filters. Importantly, it maintains incomplete access filters, which
@@ -114,7 +88,7 @@ Example:
   }
 */
 func genUnfinishedPathFromORList(
-	ds *logicalop.DataSource,
+	ds *DataSource,
 	orList []expression.Expression,
 	candidateAccessPaths []*util.AccessPath,
 ) *unfinishedAccessPath {
@@ -155,7 +129,7 @@ Example2:
     [unfinishedAccessPath{idx1,a=3}, unfinishedAccessPath{idx2,a=3}]
 */
 func initUnfinishedPathsFromExpr(
-	ds *logicalop.DataSource,
+	ds *DataSource,
 	candidateAccessPaths []*util.AccessPath,
 	expr expression.Expression,
 ) unfinishedAccessPathList {
@@ -167,9 +141,8 @@ func initUnfinishedPathsFromExpr(
 	for i, path := range candidateAccessPaths {
 		ret[i].index = path.Index
 		// case 1: try to use the previous logic to handle non-mv index
-		if !isMVIndexPath(path) {
-			partialPath, needSelection := generateNormalIndexPartialPath(
-				ds,
+		if !path.IsMVIndexPath(path) {
+			partialPath, needSelection := ds.generateNormalIndexPartialPath(
 				expr,
 				path,
 			)
@@ -183,7 +156,7 @@ func initUnfinishedPathsFromExpr(
 		if path.IsTablePath() {
 			continue
 		}
-		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(ds.Table.Meta(), path.Index, ds.TblCols, false)
+		idxCols, ok := core.PrepareIdxColsAndUnwrapArrayType(ds.Table.Meta(), path.Index, ds.TblCols, false)
 		if !ok {
 			continue
 		}
@@ -196,9 +169,9 @@ func initUnfinishedPathsFromExpr(
 		}
 
 		// case 2: try to use the previous logic to handle mv index
-		if isMVIndexPath(path) {
-			accessFilters, remainingFilters, tp := collectFilters4MVIndex(ds.SCtx(), cnfItems, idxCols)
-			if len(accessFilters) > 0 && (tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
+		if core.isMVIndexPath(path) {
+			accessFilters, remainingFilters, tp := core.collectFilters4MVIndex(ds.SCtx(), cnfItems, idxCols)
+			if len(accessFilters) > 0 && (tp == core.multiValuesOROnMVColTp || tp == core.singleValueOnMVColTp) {
 				ret[i].initedWithValidRange = true
 				ret[i].usableFilters = accessFilters
 				ret[i].needKeepFilter = len(remainingFilters) > 0
@@ -212,10 +185,10 @@ func initUnfinishedPathsFromExpr(
 		ret[i].needKeepFilter = true
 		for j, col := range idxCols {
 			for _, cnfItem := range cnfItems {
-				if ok, tp := checkAccessFilter4IdxCol(ds.SCtx(), cnfItem, col); ok &&
+				if ok, tp := core.checkAccessFilter4IdxCol(ds.SCtx(), cnfItem, col); ok &&
 					// Since we only handle the OR list nested in the AND list, and only generate IndexMerge OR path,
 					// we disable the multiValuesANDOnMVColTp case here.
-					(tp == eqOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
+					(tp == core.eqOnNonMVColTp || tp == core.multiValuesOROnMVColTp || tp == core.singleValueOnMVColTp) {
 					ret[i].usableFilters = append(ret[i].usableFilters, cnfItem)
 					ret[i].idxColHasUsableFilter[j] = true
 					// Once we find one valid access filter for this column, we directly go to the next column without
@@ -249,7 +222,7 @@ func initUnfinishedPathsFromExpr(
 // util.AccessPath.
 // The input candidateAccessPaths argument should be the same with genUnfinishedPathFromORList().
 func handleTopLevelANDList(
-	ds *logicalop.DataSource,
+	ds *DataSource,
 	allConds []expression.Expression,
 	orListIdxInAllConds int,
 	candidateAccessPaths []*util.AccessPath,
@@ -331,7 +304,7 @@ func mergeANDItemIntoUnfinishedIndexMergePath(
 }
 
 func buildIntoAccessPath(
-	ds *logicalop.DataSource,
+	ds *DataSource,
 	originalPaths []*util.AccessPath,
 	indexMergePath *unfinishedAccessPath,
 	allConds []expression.Expression,
@@ -356,7 +329,7 @@ func buildIntoAccessPath(
 			var needSelection bool
 			if unfinishedPath.index != nil && unfinishedPath.index.MVIndex {
 				// case 1: mv index
-				idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
+				idxCols, ok := core.PrepareIdxColsAndUnwrapArrayType(
 					ds.Table.Meta(),
 					unfinishedPath.index,
 					ds.TblCols,
@@ -365,7 +338,7 @@ func buildIntoAccessPath(
 				if !ok {
 					continue
 				}
-				accessFilters, remainingFilters, _ := collectFilters4MVIndex(
+				accessFilters, remainingFilters, _ := core.collectFilters4MVIndex(
 					ds.SCtx(),
 					unfinishedPath.usableFilters,
 					idxCols,
@@ -375,7 +348,7 @@ func buildIntoAccessPath(
 				}
 				var isIntersection bool
 				var err error
-				oneAlternative, isIntersection, ok, err = buildPartialPaths4MVIndex(
+				oneAlternative, isIntersection, ok, err = core.buildPartialPaths4MVIndex(
 					ds.SCtx(),
 					accessFilters,
 					idxCols,
@@ -390,7 +363,7 @@ func buildIntoAccessPath(
 				// case 2: non-mv index
 				var path *util.AccessPath
 				// Reuse the previous implementation. The same usage as in initUnfinishedPathsFromExpr().
-				path, needSelection = generateNormalIndexPartialPath(
+				path, needSelection = core.generateNormalIndexPartialPath(
 					ds,
 					expression.ComposeCNFCondition(
 						ds.SCtx().GetExprCtx(),
@@ -450,7 +423,7 @@ func buildIntoAccessPath(
 		} else {
 			possibleIdxIDs[p.Index.ID] = struct{}{}
 		}
-		if isMVIndexPath(p) {
+		if core.isMVIndexPath(p) {
 			containMVPath = true
 		}
 	}
@@ -527,11 +500,11 @@ func cmpAlternatives(sessionVars *variable.SessionVars) func(lhs, rhs []*util.Ac
 	}
 }
 
-func estimateCountAfterAccessForIndexMergeOR(ds *logicalop.DataSource, decidedPartialPaths []*util.AccessPath) float64 {
+func estimateCountAfterAccessForIndexMergeOR(ds *DataSource, decidedPartialPaths []*util.AccessPath) float64 {
 	accessConds := make([]expression.Expression, 0, len(decidedPartialPaths))
 	containMVPath := false
 	for _, p := range decidedPartialPaths {
-		if isMVIndexPath(p) {
+		if core.isMVIndexPath(p) {
 			containMVPath = true
 		}
 		indexCondsForP := p.AccessConds[:]

@@ -1506,7 +1506,7 @@ func constructDS2IndexScanTask(
 		cop.CommonHandleCols = ds.CommonHandleCols
 	}
 	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.TablePlan != nil)
-	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
+	indexConds, tblConds := ds.SplitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens)
 
 	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.
 	//
