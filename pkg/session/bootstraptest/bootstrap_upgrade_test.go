@@ -875,3 +875,44 @@ func TestUpgradeWithCrossJoinDisabled(t *testing.T) {
 		require.NoError(t, store.Close())
 	}()
 }
+
+func TestBindInfoUniqueIndex(t *testing.T) {
+	ctx := context.Background()
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	// bootstrap as version220
+	ver220 := 220
+	seV220 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver220))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV220, ver220)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	session.MustExec(t, seV220, "ADMIN RELOAD BINDINGS;")
+	session.UnsetStoreBootstrapped(store.UUID())
+	// remove the unique index on mysql.bind_info for testing
+	session.MustExec(t, seV220, "alter table mysql.bind_info drop index digest_index")
+	// insert duplicated values into mysql.bind_info
+	for _, sqlDigest := range []string{"null", "'x'", "'y'"} {
+		for _, planDigest := range []string{"null", "'x'", "'y'"} {
+			insertStmt := fmt.Sprintf(`insert into mysql.bind_info values (
+             "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s, null)`,
+				sqlDigest, planDigest)
+			session.MustExec(t, seV220, insertStmt)
+			session.MustExec(t, seV220, insertStmt)
+		}
+	}
+	// upgrade to current version
+	dom.Close()
+	domCurVer, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := session.CreateSessionAndSetID(t, store)
+	ver, err := session.GetBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+	session.MustExec(t, seCurVer, "ADMIN RELOAD BINDINGS;")
+}

@@ -699,7 +699,6 @@
       "pkg/planner/cascades": "planner/cascades code",
       "pkg/store/": "store code",
       "pkg/ttl/": "ttl code",
-      "pkg/bindinfo/": "bindinfo code",
       "pkg/domain/": "domain code"
     }
   },
