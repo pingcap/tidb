@@ -454,8 +454,11 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 		return nil, err
 	}
 	if hg == nil {
-		statslogutil.StatsLogger().Warn("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
-			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex),
+		statslogutil.StatsSampleLogger().Warn(
+			"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
+			zap.Int64("tableID", item.TableID),
+			zap.Int64("histID", item.ID),
+			zap.Bool("isIndex", item.IsIndex),
 		)
 		return nil, errGetHistMeta
 	}
