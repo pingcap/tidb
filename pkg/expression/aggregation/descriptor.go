@@ -362,7 +362,7 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
 	if removeNotNull {
-		a.RetTp = a.RetTp.Clone()
+		a.RetTp = a.RetTp.DeepClone()
 		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
 	return nil
