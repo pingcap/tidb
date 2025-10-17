@@ -297,7 +297,7 @@ func checkDataWithModifyColumn(data types.Datum, changingType *types.FieldType) 
 	}
 
 	// It's for the case from VARCHAR -> CHAR, but not used currently.
-	if value.GetString() != data.GetString() {
+	if changingType.GetType() == mysql.TypeVarString && value.GetString() != data.GetString() {
 		return errors.New("data truncation error during modify column")
 	}
 	return nil

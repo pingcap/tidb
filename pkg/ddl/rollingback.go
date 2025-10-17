@@ -152,10 +152,15 @@ func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
 	case ModifyTypeNoReorg, ModifyTypeNoReorgWithCheck:
-		// Normal-type rolling back
-		col := tblInfo.Columns[oldCol.Offset]
-		if mysql.HasPreventNullInsertFlag(col.GetFlag()) || col.ChangingFieldType == nil {
-			job.State = model.JobStateRollingback
+		if job.SchemaState == model.StateNone {
+			// Normal-type rolling back
+			col := tblInfo.Columns[oldCol.Offset]
+			if mysql.HasPreventNullInsertFlag(col.GetFlag()) || col.ChangingFieldType != nil {
+				job.State = model.JobStateRollingback
+				return ver, dbterror.ErrCancelledDDLJob
+			}
+			// Normal job with stateNone can be cancelled directly.
+			job.State = model.JobStateCancelled
 			return ver, dbterror.ErrCancelledDDLJob
 		}
 		// StatePublic couldn't be cancelled.

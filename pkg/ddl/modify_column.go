@@ -77,17 +77,6 @@ func typeToString(tp byte) string {
 	return ""
 }
 
-// getVirtualExpr returns the expression string for the virtual generated column with new type.
-func getVirtualExpr(changingCol *model.ColumnInfo, colName ast.CIStr) string {
-	if !mysql.IsIntegerType(changingCol.GetType()) {
-		s := fmt.Sprintf("CAST(`%s` AS %s)", colName.O, changingCol.GetTypeDesc())
-		return strings.ReplaceAll(s, "varchar", "char")
-	} else if mysql.HasUnsignedFlag(changingCol.GetFlag()) {
-		return fmt.Sprintf("CAST(`%s` AS UNSIGNED)", colName.O)
-	}
-	return fmt.Sprintf("CAST(`%s` AS SIGNED)", colName.O)
-}
-
 func getChangingCol(
 	args *model.ModifyColumnArgs,
 	tblInfo *model.TableInfo,
@@ -591,7 +580,7 @@ func getModifyColumnType(
 	}
 
 	relatedIndexes := buildRelatedIndexIDs(tblInfo, oldCol.ID)
-	if len(relatedIndexes) == 0 && !needDoIndexReorg(tblInfo, oldCol, args.Column, sqlMode) {
+	if len(relatedIndexes) == 0 {
 		return ModifyTypeNoReorgWithCheck
 	}
 	return ModifyTypeIndexReorg
@@ -622,12 +611,12 @@ func needDoRowReorg(oldCol, changingCol *model.ColumnInfo, sqlMode mysql.SQLMode
 		return false
 	}
 
-	// Currently, we only support change from CHAR
-	if oldTp != mysql.TypeString {
+	// bin collation has padding, it must need reorg.
+	if types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType) {
 		return true
 	}
 
-	if types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType) {
+	if mysql.HasBinaryFlag(oldCol.GetFlag()) || mysql.HasBinaryFlag(changingCol.GetFlag()) {
 		return true
 	}
 
@@ -636,15 +625,7 @@ func needDoRowReorg(oldCol, changingCol *model.ColumnInfo, sqlMode mysql.SQLMode
 		return true
 	}
 
-	switch changingTp {
-	case mysql.TypeString:
-		// binary has padding, it must need reorg.
-		return mysql.HasBinaryFlag(changingCol.GetFlag())
-	case mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		// TODO(joechenrh): there are some different behaviours for skip-row-reorg and reorg.
-		// For example, considering changing from CHAR to VARCHAR, and user insert 'a ' to the column during DDL.
-		// For reorg path, user will see 'a' if succeed and 'a ' if rollback.
-		// But for this path, user will always see 'a'.
+	if (oldTp == mysql.TypeString || oldTp == mysql.TypeVarchar) && (changingTp == mysql.TypeString || changingTp == mysql.TypeVarchar) {
 		return false
 	}
 
@@ -710,9 +691,11 @@ func buildCheckSQLFromModifyColumn(
 		if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
 			// Integer conversion
 			conditions = append(conditions, buildCheckRangeForIntegerTypes(oldCol, changingCol))
-		} else if oldTp == mysql.TypeString && (changingTp == mysql.TypeVarchar || changingTp == mysql.TypeString) {
-			// CHAR to VARCHAR/CHAR
+		} else {
 			conditions = append(conditions, fmt.Sprintf("LENGTH(%s) > %d", checkColName, changingCol.FieldType.GetFlen()))
+			if oldTp == mysql.TypeVarchar && changingTp == mysql.TypeString {
+				conditions = append(conditions, fmt.Sprintf("%s LIKE '%% '", checkColName))
+			}
 		}
 		oldCol.ChangingFieldType = &changingCol.FieldType
 	}
@@ -1049,9 +1032,6 @@ func (w *worker) doModifyColumnIndexReorg(
 			return ver, errors.Trace(err)
 		}
 
-		tmpCol := args.Column.Clone()
-		tmpCol.GeneratedExprString = getVirtualExpr(args.Column, oldCol.Name)
-		tmpCol.GeneratedStored = false
 		reorgElements := BuildElements(nil, changingIdxInfos)
 		done, ver, err := doReorgWorkForModifyColumnWrapper(jobCtx, w, job, tbl, oldCol, reorgElements)
 		if !done {
@@ -1061,9 +1041,12 @@ func (w *worker) doModifyColumnIndexReorg(
 
 		oldTp := oldCol.FieldType
 		oldName := oldCol.Name
+		oldID := oldCol.ID
 		tblInfo.Columns[oldCol.Offset] = args.Column.Clone()
 		tblInfo.Columns[oldCol.Offset].ChangingFieldType = &oldTp
 		tblInfo.Columns[oldCol.Offset].Offset = oldCol.Offset
+		tblInfo.Columns[oldCol.Offset].ID = oldID
+		tblInfo.Columns[oldCol.Offset].State = model.StatePublic
 		oldCol = tblInfo.Columns[oldCol.Offset]
 
 		updateObjectState(nil, oldIdxInfos, model.StateWriteOnly)
