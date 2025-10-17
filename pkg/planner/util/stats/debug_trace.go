@@ -2,10 +2,8 @@ package stats
 
 import (
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/statistics"
 )
@@ -74,47 +72,4 @@ func stabilizeGetStatsTblInfo(info *getStatsTblInfo) {
 	for _, idx := range tbl.Indexes {
 		idx.LastUpdateVersion = 440930000000000000
 	}
-}
-
-/*
- Below is debug trace for AccessPath.
-*/
-
-type accessPathForDebugTrace struct {
-	IndexName           string `json:",omitempty"`
-	AccessConditions    []string
-	IndexFilters        []string
-	TableFilters        []string
-	PartialPaths        []accessPathForDebugTrace `json:",omitempty"`
-	CountAfterAccess    float64
-	MinCountAfterAccess float64
-	MaxCountAfterAccess float64
-	CountAfterIndex     float64
-}
-
-func convertAccessPathForDebugTrace(ctx expression.EvalContext, path *util.AccessPath, out *accessPathForDebugTrace) {
-	if path.Index != nil {
-		out.IndexName = path.Index.Name.O
-	}
-	out.AccessConditions = expression.ExprsToStringsForDisplay(ctx, path.AccessConds)
-	out.IndexFilters = expression.ExprsToStringsForDisplay(ctx, path.IndexFilters)
-	out.TableFilters = expression.ExprsToStringsForDisplay(ctx, path.TableFilters)
-	out.CountAfterAccess = path.CountAfterAccess
-	out.MaxCountAfterAccess = path.MaxCountAfterAccess
-	out.MinCountAfterAccess = path.MinCountAfterAccess
-	out.CountAfterIndex = path.CountAfterIndex
-	out.PartialPaths = make([]accessPathForDebugTrace, len(path.PartialIndexPaths))
-	for i, partialPath := range path.PartialIndexPaths {
-		convertAccessPathForDebugTrace(ctx, partialPath, &out.PartialPaths[i])
-	}
-}
-
-// DebugTraceAccessPaths records the access paths to the debug trace.
-func DebugTraceAccessPaths(s base.PlanContext, paths []*util.AccessPath) {
-	root := debugtrace.GetOrInitDebugTraceRoot(s)
-	traceInfo := make([]accessPathForDebugTrace, len(paths))
-	for i, partialPath := range paths {
-		convertAccessPathForDebugTrace(s.GetExprCtx().GetEvalCtx(), partialPath, &traceInfo[i])
-	}
-	root.AppendStepWithNameToCurrentContext(traceInfo, "Access paths")
 }
