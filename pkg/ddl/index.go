@@ -3364,13 +3364,52 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
+		lockCtx := new(kv.LockCtx)
+		evalCtx := w.exprCtx.GetEvalCtx()
+		loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 		n := len(w.indexes)
+		globalIndexKeys := make([]kv.Key, 0, len(idxRecords))
+		allKeys := make([]kv.Key, 0, len(idxRecords))
+		for i, idxRecord := range idxRecords {
+			key, distinct, err := w.indexes[i%n].GenIndexKey(ec, loc, idxRecord.vals, idxRecord.handle, nil)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if distinct {
+				globalIndexKeys = append(globalIndexKeys, key)
+			}
+			allKeys = append(allKeys, key)
+		}
+
+		var found map[string][]byte
+		found, err = txn.BatchGet(ctx, globalIndexKeys)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++
+			if val, ok := found[string(allKeys[i])]; ok {
+				// Only delete if it is from the partition it was read from.
+				handle, errPart := tablecodec.DecodeHandleInIndexValue(val)
+				if errPart != nil {
+					return errors.Trace(errPart)
+				}
+				if partHandle, ok := handle.(kv.PartitionHandle); ok {
+					if partHandle.PartitionID != handleRange.physicalTable.GetPhysicalID() {
+						continue
+					}
+				}
+				// Lock the global index entry, to prevent deleting something that is concurrently added.
+				err = txn.LockKeys(ctx, lockCtx, allKeys[i])
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
 			// we fetch records row by row, so records will belong to
 			// index[0], index[1] ... index[n-1], index[0], index[1] ...
 			// respectively. So indexes[i%n] is the index of idxRecords[i].
-			err := w.indexes[i%n].Delete(w.tblCtx, txn, idxRecord.vals, idxRecord.handle)
+			err = w.indexes[i%n].Delete(w.tblCtx, txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				return errors.Trace(err)
 			}
