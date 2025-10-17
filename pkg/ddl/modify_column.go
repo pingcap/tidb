@@ -580,7 +580,7 @@ func getModifyColumnType(
 	}
 
 	relatedIndexes := buildRelatedIndexIDs(tblInfo, oldCol.ID)
-	if len(relatedIndexes) == 0 {
+	if len(relatedIndexes) == 0 || !needDoIndexReorg(tblInfo, oldCol, args.Column, sqlMode) {
 		return ModifyTypeNoReorgWithCheck
 	}
 	return ModifyTypeIndexReorg
@@ -595,8 +595,11 @@ func needDoIndexReorg(tblInfo *model.TableInfo, oldCol, changingCol *model.Colum
 		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
 	}
 
-	// FIXME(joechenrh)!!!: seems like there are some problems with CHAR to VARCHAR now
-	return true
+	if tblInfo.HasClusteredIndex() {
+		return true
+	}
+
+	return types.NeedRestoredData(&oldCol.FieldType) != types.NeedRestoredData(&changingCol.FieldType)
 }
 
 func needDoRowReorg(oldCol, changingCol *model.ColumnInfo, sqlMode mysql.SQLMode) bool {
@@ -616,20 +619,16 @@ func needDoRowReorg(oldCol, changingCol *model.ColumnInfo, sqlMode mysql.SQLMode
 		return true
 	}
 
-	if mysql.HasBinaryFlag(oldCol.GetFlag()) || mysql.HasBinaryFlag(changingCol.GetFlag()) {
-		return true
-	}
+	// if mysql.HasBinaryFlag(oldCol.GetFlag()) || mysql.HasBinaryFlag(changingCol.GetFlag()) {
+	// 	return true
+	// }
 
 	// Incompatible collation
-	if oldCol.GetCollate() != changingCol.GetCollate() {
-		return true
-	}
+	// if oldCol.GetCollate() != changingCol.GetCollate() {
+	// 	return true
+	// }
 
-	if (oldTp == mysql.TypeString || oldTp == mysql.TypeVarchar) && (changingTp == mysql.TypeString || changingTp == mysql.TypeVarchar) {
-		return false
-	}
-
-	return true
+	return !types.IsTypeChar(oldTp) || !types.IsTypeChar(changingTp)
 }
 
 // checkModifyColumnData checks the values of the old column data
