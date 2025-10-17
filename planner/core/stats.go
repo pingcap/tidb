@@ -1127,8 +1127,9 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 		RowCount: childProfile.RowCount,
 		ColNDVs:  make(map[int64]float64, len(p.Exprs)),
 	}
+	cols := make([]*expression.Column, 0, 8)
 	for i, expr := range p.Exprs {
-		cols := expression.ExtractColumns(expr)
+		cols = expression.ExtractAllColumnsFromExpressionsInUsedSlices(cols, expr)
 		p.stats.ColNDVs[selfSchema.Columns[i].UniqueID], _ = getColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
 	}
 	p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
