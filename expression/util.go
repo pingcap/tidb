@@ -35,10 +35,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // cowExprRef is a copy-on-write slice ref util using in `ColumnSubstitute`
@@ -122,6 +124,35 @@ func ExtractColumns(expr Expression) []*Column {
 	return extractColumns(result, expr, nil)
 }
 
+// ExtractAllColumnsFromExpressionsInUsedSlices is the same as ExtractColumns. but it can reuse the memory.
+func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, exprs ...Expression) []*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	for _, expr := range exprs {
+		reuse = extractColumnsSlices(reuse, expr)
+	}
+	slices.SortFunc(reuse, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
+	reuse = slices.CompactFunc(reuse, func(a, b *Column) bool {
+		return a.UniqueID == b.UniqueID
+	})
+	return reuse
+}
+
+func extractColumnsSlices(result []*Column, expr Expression) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		result = append(result, v)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = extractColumnsSlices(result, arg)
+		}
+	}
+	return result
+}
+
 // ExtractCorColumns extracts correlated column from given expression.
 func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 	switch v := expr.(type) {
@@ -149,70 +180,7 @@ func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 // To avoid allocation for cols that not need.
 func ExtractColumnsFromExpressions(result []*Column, exprs []Expression, filter func(*Column) bool) []*Column {
 	for _, expr := range exprs {
-<<<<<<< HEAD:expression/util.go
 		result = extractColumns(result, expr, filter)
-=======
-		extractColumns(m, expr, filter)
-	}
-	result := slices.Collect(maps.Values(m))
-	// The keys in a map are unordered, so to ensure stability, we need to sort them here.
-	slices.SortFunc(result, func(a, b *Column) int {
-		return cmp.Compare(a.UniqueID, b.UniqueID)
-	})
-	return result
-}
-
-// ExtractColumnsMapFromExpressions it the same as ExtractColumnsFromExpressions, but return a map
-func ExtractColumnsMapFromExpressions(filter func(*Column) bool, exprs ...Expression) map[int64]*Column {
-	if len(exprs) == 0 {
-		return nil
-	}
-	m := make(map[int64]*Column, len(exprs))
-	for _, expr := range exprs {
-		extractColumns(m, expr, filter)
-	}
-	return m
-}
-
-// ExtractColumnsMapFromExpressionsWithReusedMap is the same as ExtractColumnsFromExpressions, but map can be reused.
-func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter func(*Column) bool, exprs ...Expression) {
-	if len(exprs) == 0 {
-		return
-	}
-	if m == nil {
-		m = make(map[int64]*Column, len(exprs))
-	}
-	for _, expr := range exprs {
-		extractColumns(m, expr, filter)
-	}
-}
-
-// ExtractAllColumnsFromExpressionsInUsedSlices is the same as ExtractColumns. but it can reuse the memory.
-func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, filter func(*Column) bool, exprs ...Expression) []*Column {
-	if len(exprs) == 0 {
-		return nil
-	}
-	for _, expr := range exprs {
-		reuse = extractColumnsSlices(reuse, expr, filter)
-	}
-	slices.SortFunc(reuse, func(a, b *Column) int {
-		return cmp.Compare(a.UniqueID, b.UniqueID)
-	})
-	reuse = slices.CompactFunc(reuse, func(a, b *Column) bool {
-		return a.UniqueID == b.UniqueID
-	})
-	return reuse
-}
-
-// ExtractAllColumnsFromExpressions is the same as ExtractColumnsFromExpressions. But this will not remove duplicates.
-func ExtractAllColumnsFromExpressions(exprs []Expression, filter func(*Column) bool) []*Column {
-	if len(exprs) == 0 {
-		return nil
-	}
-	result := make([]*Column, 0, 8)
-	for _, expr := range exprs {
-		result = extractColumnsSlices(result, expr, filter)
->>>>>>> 3a54eaa3ffb (planner: fix LogicalProjection.DeriveStats allocate too many memories (#63829)):pkg/expression/util.go
 	}
 	return result
 }
