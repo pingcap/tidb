@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/traceevent",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/util/logutil",
         "@org_uber_go_zap//:zap",
     ],
@@ -16,10 +17,10 @@ go_test(
     timeout = "short",
     srcs = ["traceevent_test.go"],
     embed = [":traceevent"],
+    flaky = True,
     deps = [
-        "//pkg/testkit/testsetup",
+        "//pkg/config/kerneltype",
         "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
     ],
 )

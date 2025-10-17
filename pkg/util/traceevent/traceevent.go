@@ -199,7 +199,7 @@ func FlightRecorder() *RingBufferSink {
 //	traceevent.TraceEvent(traceevent.CoprRegionCache, ctx, "region split detected",
 //		zap.Uint64("regionID", regionID),
 //		zap.String("key", formatKey(key)))
-func TraceEvent(category TraceCategory, ctx context.Context, name string, fields ...zap.Field) {
+func TraceEvent(ctx context.Context, category TraceCategory, name string, fields ...zap.Field) {
 	if !IsEnabled(category) {
 		return
 	}
@@ -223,7 +223,7 @@ func TraceEvent(category TraceCategory, ctx context.Context, name string, fields
 }
 
 // extractTraceID returns the trace identifier encoded in ctx if present.
-func extractTraceID(ctx context.Context) string {
+func extractTraceID(_ context.Context) string {
 	// TODO(trace-id): populate once tracing context propagation is implemented.
 	return ""
 }
@@ -234,7 +234,7 @@ func extractTraceID(ctx context.Context) string {
 type LogSink struct{}
 
 // Record implements the Sink interface.
-func (s *LogSink) Record(ctx context.Context, event Event) {
+func (_ *LogSink) Record(ctx context.Context, event Event) {
 	if !loggingEnabled.Load() {
 		return
 	}
@@ -349,7 +349,7 @@ func (r *RingBufferSink) Snapshot() []Event {
 		result[idx] = cloneEvent(r.buf[i])
 		idx++
 	}
-	for i := 0; i < r.next; i++ {
+	for i := range r.next {
 		result[idx] = cloneEvent(r.buf[i])
 		idx++
 	}
