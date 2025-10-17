@@ -233,14 +233,14 @@ func convertToIncorrectStringErr(err error, colName string) error {
 //	value (possibly adjusted)
 //	boolean; true if break error/warning handling in CastValue and return what was returned from this
 //	error
-func handleZeroDatetime(ec errctx.Context, mode mysql.SQLMode, col *model.ColumnInfo, casted types.Datum, str string, tmIsInvalid bool) (types.Datum, bool, error) {
+func handleZeroDatetime(ec errctx.Context, mode mysql.SQLMode, ft *types.FieldType, casted types.Datum, str string, tmIsInvalid bool) (types.Datum, bool, error) {
 	tm := casted.GetMysqlTime()
 
 	var (
 		zeroV types.Time
 		zeroT string
 	)
-	switch col.GetType() {
+	switch ft.GetType() {
 	case mysql.TypeDate:
 		zeroV, zeroT = types.ZeroDate, types.DateStr
 	case mysql.TypeDatetime:
@@ -271,7 +271,7 @@ func handleZeroDatetime(ec errctx.Context, mode mysql.SQLMode, col *model.Column
 	// * **NZD**: NO_ZERO_DATE_MODE
 	// * **ST**: STRICT_TRANS_TABLES
 	// * **ELSE**: empty or NO_ZERO_IN_DATE_MODE
-	if tm.IsZero() && col.GetType() == mysql.TypeTimestamp {
+	if tm.IsZero() && ft.GetType() == mysql.TypeTimestamp {
 		innerErr := types.ErrWrongValue.FastGenByArgs(zeroT, str)
 		if mode.HasStrictMode() && !ignoreErr && (tmIsInvalid || mode.HasNoZeroDateMode()) {
 			return types.NewDatum(zeroV), true, errors.Trace(innerErr)
@@ -281,7 +281,7 @@ func handleZeroDatetime(ec errctx.Context, mode mysql.SQLMode, col *model.Column
 			ec.AppendWarning(innerErr)
 		}
 		return types.NewDatum(zeroV), true, nil
-	} else if tmIsInvalid && col.GetType() == mysql.TypeTimestamp {
+	} else if tmIsInvalid && ft.GetType() == mysql.TypeTimestamp {
 		// Prevent from being stored! Invalid timestamp!
 		warn := types.ErrWrongValue.FastGenByArgs(zeroT, str)
 		if mode.HasStrictMode() {
@@ -356,7 +356,7 @@ func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode,
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
 			str = val.GetString()
 		}
-		if innCasted, exit, innErr := handleZeroDatetime(ec, sqlMode, col, casted, str, types.ErrWrongValue.Equal(err)); exit {
+		if innCasted, exit, innErr := handleZeroDatetime(ec, sqlMode, &col.FieldType, casted, str, types.ErrWrongValue.Equal(err)); exit {
 			return innCasted, innErr
 		}
 	} else if err != nil && charset.ErrInvalidCharacterString.Equal(err) {

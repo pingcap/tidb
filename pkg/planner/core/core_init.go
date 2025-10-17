@@ -29,9 +29,6 @@ import (
 func init() {
 	// For code refactor init.
 	utilfuncp.FindBestTask4BaseLogicalPlan = findBestTask
-	utilfuncp.FindBestTask4LogicalCTE = findBestTask4LogicalCTE
-	utilfuncp.FindBestTask4LogicalShow = findBestTask4LogicalShow
-	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
 	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
 	utilfuncp.ExhaustPhysicalPlans4LogicalJoin = exhaustPhysicalPlans4LogicalJoin
 	utilfuncp.ExhaustPhysicalPlans4LogicalApply = exhaustPhysicalPlans4LogicalApply

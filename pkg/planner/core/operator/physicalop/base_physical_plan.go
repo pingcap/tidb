@@ -477,11 +477,11 @@ func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask
 	// And since base.LogicalPlan is a common parent pointer of GE and LogicalPlan, we can use same portal.
 	switch lop := e.GetWrappedLogicalPlan().(type) {
 	case *logicalop.LogicalCTE:
-		return utilfuncp.FindBestTask4LogicalCTE(e, prop)
+		return findBestTask4LogicalCTE(e, prop)
 	case *logicalop.LogicalShow:
-		return utilfuncp.FindBestTask4LogicalShow(e, prop)
+		return findBestTask4LogicalShow(e, prop)
 	case *logicalop.LogicalCTETable:
-		return utilfuncp.FindBestTask4LogicalCTETable(e, prop)
+		return findBestTask4LogicalCTETable(e, prop)
 	case *logicalop.LogicalMemTable:
 		return findBestTask4LogicalMemTable(lop, prop)
 	case *logicalop.LogicalTableDual:
