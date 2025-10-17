@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
 )
 
@@ -165,7 +165,7 @@ func resolveIndicesForSort(pp base.PhysicalPlan) (err error) {
 		return err
 	}
 
-	var byItems []*util.ByItems
+	var byItems []*stats.util.ByItems
 	switch x := p.Self.(type) {
 	case *physicalop.PhysicalSort:
 		byItems = x.ByItems

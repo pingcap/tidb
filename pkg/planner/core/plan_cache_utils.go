@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -715,7 +715,7 @@ func checkTypesCompatibility4PC(expected, actual any) bool {
 	return true
 }
 
-func isSafePointGetPath4PlanCache(sctx base.PlanContext, path *util.AccessPath) bool {
+func isSafePointGetPath4PlanCache(sctx base.PlanContext, path *stats.util.AccessPath) bool {
 	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
 	// these assumptions may be broken after parameters change.
 
@@ -734,7 +734,7 @@ func isSafePointGetPath4PlanCache(sctx base.PlanContext, path *util.AccessPath) 
 	return false
 }
 
-func isSafePointGetPath4PlanCacheScenario1(path *util.AccessPath) bool {
+func isSafePointGetPath4PlanCacheScenario1(path *stats.util.AccessPath) bool {
 	// safe scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
 	if len(path.Ranges) <= 0 || path.Ranges[0].Width() != len(path.AccessConds) {
 		return false
@@ -748,7 +748,7 @@ func isSafePointGetPath4PlanCacheScenario1(path *util.AccessPath) bool {
 	return true
 }
 
-func isSafePointGetPath4PlanCacheScenario2(path *util.AccessPath) bool {
+func isSafePointGetPath4PlanCacheScenario2(path *stats.util.AccessPath) bool {
 	// safe scenario 2: this Batch or PointGet is simply from a single IN predicate, `key in (...)`
 	if len(path.Ranges) <= 0 || len(path.AccessConds) != 1 {
 		return false
@@ -760,7 +760,7 @@ func isSafePointGetPath4PlanCacheScenario2(path *util.AccessPath) bool {
 	return len(path.Ranges) == len(f.GetArgs())-1 // no duplicated values in this in-list for safety.
 }
 
-func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
+func isSafePointGetPath4PlanCacheScenario3(path *stats.util.AccessPath) bool {
 	// safe scenario 3: this Batch or PointGet is simply from a simple DNF like `key=? or key=? or key=?`
 	if len(path.Ranges) <= 0 || len(path.AccessConds) != 1 {
 		return false

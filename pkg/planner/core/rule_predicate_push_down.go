@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
@@ -87,7 +87,7 @@ func addPrefix4ShardIndexes(lp base.LogicalPlan, sc base.PlanContext, conds []ex
 	return newConds
 }
 
-func addExprPrefixCond(ds *logicalop.DataSource, sc base.PlanContext, path *util.AccessPath,
+func addExprPrefixCond(ds *logicalop.DataSource, sc base.PlanContext, path *stats.util.AccessPath,
 	conds []expression.Expression) ([]expression.Expression, error) {
 	idxCols, idxColLens :=
 		expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
@@ -1390,7 +1391,7 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
-func buildHandleCols(dbName string, tbl *model.TableInfo, pointget base.PhysicalPlan) util.HandleCols {
+func buildHandleCols(dbName string, tbl *model.TableInfo, pointget base.PhysicalPlan) stats.util.HandleCols {
 	schema := pointget.Schema()
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {

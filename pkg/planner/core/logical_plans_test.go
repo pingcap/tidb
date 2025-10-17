@@ -37,8 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -1840,7 +1840,7 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 	return p.(base.PhysicalPlan), stmt, err
 }
 
-func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
+func byItemsToProperty(byItems []*stats.util.ByItems) *property.PhysicalProperty {
 	pp := &property.PhysicalProperty{}
 	for _, item := range byItems {
 		pp.SortItems = append(pp.SortItems, property.SortItem{Col: item.Expr.(*expression.Column), Desc: item.Desc})
@@ -1848,7 +1848,7 @@ func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
 	return pp
 }
 
-func getIndexPathName(path *util.AccessPath) string {
+func getIndexPathName(path *stats.util.AccessPath) string {
 	if path.IsTablePath() {
 		return "PRIMARY_KEY"
 	}
@@ -2055,7 +2055,7 @@ func TestSkylinePruning(t *testing.T) {
 		_, _, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err, comment)
 		var ds *logicalop.DataSource
-		var byItems []*util.ByItems
+		var byItems []*stats.util.ByItems
 		for ds == nil {
 			switch v := lp.(type) {
 			case *logicalop.DataSource:
@@ -2064,12 +2064,12 @@ func TestSkylinePruning(t *testing.T) {
 				byItems = v.ByItems
 				lp = lp.Children()[0]
 			case *logicalop.LogicalProjection:
-				newItems := make([]*util.ByItems, 0, len(byItems))
+				newItems := make([]*stats.util.ByItems, 0, len(byItems))
 				for _, col := range byItems {
 					idx := v.Schema().ColumnIndex(col.Expr.(*expression.Column))
 					switch expr := v.Exprs[idx].(type) {
 					case *expression.Column:
-						newItems = append(newItems, &util.ByItems{Expr: expr, Desc: col.Desc})
+						newItems = append(newItems, &stats.util.ByItems{Expr: expr, Desc: col.Desc})
 					}
 				}
 				byItems = newItems

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -572,8 +573,8 @@ func (a *AggregationPushDownSolver) aggPushDown(p base.LogicalPlan) (_ base.Logi
 				}
 				oldAggFuncsArgs := make([][]expression.Expression, 0, len(agg.AggFuncs))
 				newAggFuncsArgs := make([][]expression.Expression, 0, len(agg.AggFuncs))
-				oldAggOrderItems := make([][]*util.ByItems, 0, len(agg.AggFuncs))
-				newAggOrderItems := make([][]*util.ByItems, 0, len(agg.AggFuncs))
+				oldAggOrderItems := make([][]*stats.util.ByItems, 0, len(agg.AggFuncs))
+				newAggOrderItems := make([][]*stats.util.ByItems, 0, len(agg.AggFuncs))
 				if noSideEffects {
 					for _, aggFunc := range agg.AggFuncs {
 						oldAggFuncsArgs = append(oldAggFuncsArgs, aggFunc.Args)
@@ -607,9 +608,9 @@ func (a *AggregationPushDownSolver) aggPushDown(p base.LogicalPlan) (_ base.Logi
 								noSideEffects = false
 								break
 							}
-							oneAggOrderByItems := make([]*util.ByItems, 0, len(aggFunc.OrderByItems))
+							oneAggOrderByItems := make([]*stats.util.ByItems, 0, len(aggFunc.OrderByItems))
 							for i, obyExpr := range newOrderByItems {
-								oneAggOrderByItems = append(oneAggOrderByItems, &util.ByItems{Expr: obyExpr, Desc: aggFunc.OrderByItems[i].Desc})
+								oneAggOrderByItems = append(oneAggOrderByItems, &stats.util.ByItems{Expr: obyExpr, Desc: aggFunc.OrderByItems[i].Desc})
 							}
 							newAggOrderItems = append(newAggOrderItems, oneAggOrderByItems)
 						} else {

@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -1035,7 +1035,7 @@ func numFunctions(exprs []expression.Expression) float64 {
 	return num
 }
 
-func orderCostVer2(option *costusage.PlanCostOption, rows, n float64, byItems []*util.ByItems, cpuFactor costusage.CostVer2Factor) costusage.CostVer2 {
+func orderCostVer2(option *costusage.PlanCostOption, rows, n float64, byItems []*stats.util.ByItems, cpuFactor costusage.CostVer2Factor) costusage.CostVer2 {
 	numFuncs := 0
 	for _, byItem := range byItems {
 		if _, ok := byItem.Expr.(*expression.ScalarFunction); ok {

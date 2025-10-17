@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -391,7 +391,7 @@ type V2AnalyzeOptions struct {
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	HandleCols       util.HandleCols
+	HandleCols       plannerutil.HandleCols
 	CommonHandleInfo *model.IndexInfo
 	ColsInfo         []*model.ColumnInfo
 	SkipColsInfo     []*model.ColumnInfo

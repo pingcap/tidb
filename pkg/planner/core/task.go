@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	stats2 "github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -901,7 +902,7 @@ func getPushedDownTopN(p *physicalop.PhysicalTopN, childPlan base.PhysicalPlan, 
 			newGlobalTopN = nil
 		}
 	}
-	newByItems := make([]*util.ByItems, 0, len(p.ByItems))
+	newByItems := make([]*stats2.util.ByItems, 0, len(p.ByItems))
 	for _, expr := range p.ByItems {
 		newByItems = append(newByItems, expr.Clone())
 	}

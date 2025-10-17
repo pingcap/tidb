@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -451,7 +452,7 @@ func constructIndexJoin(
 	innerTask base.Task,
 	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
-	path *util.AccessPath,
+	path *stats.util.AccessPath,
 	compareFilters *physicalop.ColWithCmpFuncManager,
 	extractOtherEQ bool,
 ) []base.PhysicalPlan {
@@ -570,7 +571,7 @@ func constructIndexMergeJoin(
 	innerTask base.Task,
 	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
-	path *util.AccessPath,
+	path *stats.util.AccessPath,
 	compareFilters *physicalop.ColWithCmpFuncManager,
 ) []base.PhysicalPlan {
 	hintExists := false
@@ -678,7 +679,7 @@ func constructIndexHashJoin(
 	innerTask base.Task,
 	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
-	path *util.AccessPath,
+	path *stats.util.AccessPath,
 	compareFilters *physicalop.ColWithCmpFuncManager,
 ) []base.PhysicalPlan {
 	indexJoins := constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters, true)
@@ -889,7 +890,7 @@ childLoop:
 func buildDataSource2IndexScanByIndexJoinProp(
 	ds *logicalop.DataSource,
 	prop *property.PhysicalProperty) base.Task {
-	indexValid := func(path *util.AccessPath) bool {
+	indexValid := func(path *stats.util.AccessPath) bool {
 		if path.IsTablePath() {
 			return false
 		}
@@ -898,7 +899,7 @@ func buildDataSource2IndexScanByIndexJoinProp(
 		// on mvi, it will return many index rows which breaks handle-unique attribute here.
 		//
 		// the basic rule is that: mv index can be and can only be accessed by indexMerge operator. (embedded handle duplication)
-		if !isMVIndexPath(path) {
+		if !util.IsMVIndexPath(path) {
 			return true // not a MVIndex path, it can successfully be index join probe side.
 		}
 		return false
@@ -944,7 +945,7 @@ func buildDataSource2IndexScanByIndexJoinProp(
 func buildDataSource2TableScanByIndexJoinProp(
 	ds *logicalop.DataSource,
 	prop *property.PhysicalProperty) base.Task {
-	var tblPath *util.AccessPath
+	var tblPath *stats.util.AccessPath
 	for _, path := range ds.PossibleAccessPaths {
 		if path.IsTablePath() && path.StoreType == kv.TiKV { // old logic
 			tblPath = path
@@ -960,7 +961,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 	var indexJoinResult *indexJoinPathResult
 	if ds.TableInfo.IsCommonHandle {
 		// for the leaf datasource, we use old logic to get the indexJoinResult, which contain the chosen path and ranges.
-		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResultByProp(ds, prop.IndexJoinProp, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
+		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResultByProp(ds, prop.IndexJoinProp, func(path *stats.util.AccessPath) bool { return path.IsCommonHandlePath })
 		// if there is no chosen info, it means the leaf datasource couldn't even leverage this indexJoinProp, return InvalidTask.
 		if indexJoinResult == nil {
 			return base.InvalidTask
@@ -978,12 +979,12 @@ func buildDataSource2TableScanByIndexJoinProp(
 	} else {
 		var (
 			ok               bool
-			chosenPath       *util.AccessPath
+			chosenPath       *stats.util.AccessPath
 			newOuterJoinKeys []*expression.Column
 			// note: pk col doesn't have mutableRanges, the global var(ranges) which will be handled as empty range in constructIndexJoin.
 			localRanges ranger.Ranges
 		)
-		keyOff2IdxOff, newOuterJoinKeys, localRanges, chosenPath, ok = getIndexJoinIntPKPathInfo(ds, prop.IndexJoinProp.InnerJoinKeys, prop.IndexJoinProp.OuterJoinKeys, func(path *util.AccessPath) bool { return path.IsIntHandlePath })
+		keyOff2IdxOff, newOuterJoinKeys, localRanges, chosenPath, ok = getIndexJoinIntPKPathInfo(ds, prop.IndexJoinProp.InnerJoinKeys, prop.IndexJoinProp.OuterJoinKeys, func(path *stats.util.AccessPath) bool { return path.IsIntHandlePath })
 		if !ok {
 			return base.InvalidTask
 		}
@@ -1048,7 +1049,7 @@ func buildIndexJoinInner2TableScan(
 	innerJoinKeys, outerJoinKeys []*expression.Column,
 	outerIdx int, avgInnerRowCnt float64) (joins []base.PhysicalPlan) {
 	ds := wrapper.ds
-	var tblPath *util.AccessPath
+	var tblPath *stats.util.AccessPath
 	for _, path := range ds.PossibleAccessPaths {
 		if path.IsTablePath() && path.StoreType == kv.TiKV {
 			tblPath = path
@@ -1063,7 +1064,7 @@ func buildIndexJoinInner2TableScan(
 	var innerTask, innerTask2 base.Task
 	var indexJoinResult *indexJoinPathResult
 	if ds.TableInfo.IsCommonHandle {
-		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResult(p, ds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
+		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResult(p, ds, innerJoinKeys, outerJoinKeys, func(path *stats.util.AccessPath) bool { return path.IsCommonHandlePath })
 		if indexJoinResult == nil {
 			return nil
 		}
@@ -1083,7 +1084,7 @@ func buildIndexJoinInner2TableScan(
 			// note: pk col doesn't have mutableRanges, the global var(ranges) which will be handled as empty range in constructIndexJoin.
 			localRanges ranger.Ranges
 		)
-		keyOff2IdxOff, outerJoinKeys, localRanges, _, ok = getIndexJoinIntPKPathInfo(ds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsIntHandlePath })
+		keyOff2IdxOff, outerJoinKeys, localRanges, _, ok = getIndexJoinIntPKPathInfo(ds, innerJoinKeys, outerJoinKeys, func(path *stats.util.AccessPath) bool { return path.IsIntHandlePath })
 		if !ok {
 			return nil
 		}
@@ -1098,7 +1099,7 @@ func buildIndexJoinInner2TableScan(
 		}
 	}
 	var (
-		path       *util.AccessPath
+		path       *stats.util.AccessPath
 		lastColMng *physicalop.ColWithCmpFuncManager
 	)
 	if indexJoinResult != nil {
@@ -1126,7 +1127,7 @@ func buildIndexJoinInner2IndexScan(
 	prop *property.PhysicalProperty, wrapper *indexJoinInnerChildWrapper, innerJoinKeys, outerJoinKeys []*expression.Column,
 	outerIdx int, avgInnerRowCnt float64) (joins []base.PhysicalPlan) {
 	ds := wrapper.ds
-	indexValid := func(path *util.AccessPath) bool {
+	indexValid := func(path *stats.util.AccessPath) bool {
 		if path.IsTablePath() {
 			return false
 		}
@@ -1135,7 +1136,7 @@ func buildIndexJoinInner2IndexScan(
 		// on mvi, it will return many index rows which breaks handle-unique attribute here.
 		//
 		// the basic rule is that: mv index can be and can only be accessed by indexMerge operator. (embedded handle duplication)
-		if !isMVIndexPath(path) {
+		if !util.IsMVIndexPath(path) {
 			return true // not a MVIndex path, it can successfully be index join probe side.
 		}
 		return false
@@ -1394,7 +1395,7 @@ func constructInnerIndexScanTask(
 	p *logicalop.LogicalJoin,
 	prop *property.PhysicalProperty,
 	wrapper *indexJoinInnerChildWrapper,
-	path *util.AccessPath,
+	path *stats.util.AccessPath,
 	ranges ranger.Ranges,
 	filterConds []expression.Expression,
 	idxOffset2joinKeyOffset []int,
@@ -1414,7 +1415,7 @@ func constructInnerIndexScanTask(
 // constructDS2IndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
 func constructDS2IndexScanTask(
 	ds *logicalop.DataSource,
-	path *util.AccessPath,
+	path *stats.util.AccessPath,
 	ranges ranger.Ranges,
 	filterConds []expression.Expression,
 	idxOffset2joinKeyOffset []int,
@@ -1474,7 +1475,7 @@ func constructDS2IndexScanTask(
 		ts.SetSchema(is.DataSourceSchema.Clone())
 		ts.SetIsPartition(ds.PartitionDefIdx != nil)
 		if ds.TableInfo.IsCommonHandle {
-			commonHandle := ds.HandleCols.(*util.CommonHandleCols)
+			commonHandle := ds.HandleCols.(*stats.util.CommonHandleCols)
 			for _, col := range commonHandle.GetColumns() {
 				if ts.Schema().ColumnIndex(col) == -1 {
 					ts.Schema().Append(col)
@@ -1543,7 +1544,7 @@ func constructDS2IndexScanTask(
 		// unique constraint in NDV.
 		rowCount = math.Min(rowCount, 1.0)
 	}
-	tmpPath := &util.AccessPath{
+	tmpPath := &stats.util.AccessPath{
 		IndexFilters:        indexConds,
 		TableFilters:        tblConds,
 		CountAfterIndex:     rowCount,
@@ -1606,7 +1607,7 @@ func constructDS2IndexScanTask(
 //	There are two kinds of agg: stream agg and hash agg. Stream agg depends on some conditions, such as the group by cols
 //
 // Step2: build other inner plan node to task
-func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, dsCopTask *physicalop.CopTask, ds *logicalop.DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) base.Task {
+func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, dsCopTask *physicalop.CopTask, ds *logicalop.DataSource, path *stats.util.AccessPath, wrapper *indexJoinInnerChildWrapper) base.Task {
 	var la *logicalop.LogicalAggregation
 	var canPushAggToCop bool
 	if len(wrapper.zippedChildren) > 0 {

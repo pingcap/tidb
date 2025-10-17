@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -168,13 +169,11 @@ func init() {
 	utilfuncp.AddPrefix4ShardIndexes = addPrefix4ShardIndexes
 	utilfuncp.DeriveStats4DataSource = deriveStats4DataSource
 	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
-	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
 
 	// For mv index init.
-	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
-	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
-	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
-	statistics.PrepareCols4MVIndex = PrepareIdxColsAndUnwrapArrayType
+	cardinality.CollectFilters4MVIndex = stats.collectFilters4MVIndex
+	cardinality.BuildPartialPaths4MVIndex = stats.buildPartialPaths4MVIndex
+	statistics.PrepareCols4MVIndex = stats.PrepareIdxColsAndUnwrapArrayType
 
 	// For basic optimizer init.
 	base.InvalidTask = &physicalop.RootTask{} // invalid if p is nil

@@ -28,14 +28,14 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
 
-func getIndexMergePathDigest(ctx expression.EvalContext, paths []*util.AccessPath, startIndex int) string {
+func getIndexMergePathDigest(ctx expression.EvalContext, paths []*stats.util.AccessPath, startIndex int) string {
 	if len(paths) == startIndex {
 		return "[]"
 	}

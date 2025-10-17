@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -80,14 +81,14 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	cnfs := ds.AllConds
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	idxCols, ok := core.PrepareIdxColsAndUnwrapArrayType(
+	idxCols, ok := stats.PrepareIdxColsAndUnwrapArrayType(
 		tbl.Meta(),
 		tbl.Meta().FindIndexByName("a_domains_b"),
 		ds.TblCols,
 		true,
 	)
 	require.True(t, ok)
-	accessFilters, _, mvColOffset, mvFilterMutations := core.CollectFilters4MVIndexMutations(tk.Session().GetPlanCtx(), cnfs, idxCols)
+	accessFilters, _, mvColOffset, mvFilterMutations := stats.CollectFilters4MVIndexMutations(tk.Session().GetPlanCtx(), cnfs, idxCols)
 
 	// assert mv col access filters.
 	require.Equal(t, len(accessFilters), 3)
