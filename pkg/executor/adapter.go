@@ -15,7 +15,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -1664,101 +1663,38 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
-	var costTime, threshold time.Duration
+	cfg := config.GetGlobalConfig()
+	var slowItems *variable.SlowQueryLogItems
+	var matchRules bool
 	if !stmtCtx.WriteSlowLog {
-		cfg := config.GetGlobalConfig()
-		level := log.GetLevel()
-		costTime = sessVars.GetTotalCostDuration()
-		threshold = time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
-		enable := cfg.Instance.EnableSlowLog.Load()
-		// if the level is Debug, or trace is enabled, print slow logs anyway
-		force := level <= zapcore.DebugLevel || trace.IsEnabled()
-		if (!enable || costTime < threshold) && !force {
+		// If the level is Debug, or trace is enabled, print slow logs anyway.
+		force := log.GetLevel() <= zapcore.DebugLevel || trace.IsEnabled()
+		if !cfg.Instance.EnableSlowLog.Load() && !force {
+			return
+		}
+
+		sessVars.StmtCtx.ExecSuccess = succ
+		sessVars.StmtCtx.ExecRetryCount = uint64(a.retryCount)
+		globalRules := vardef.GlobalSlowLogRules.Load()
+		slowItems = PrepareSlowLogItemsForRules(a.GoCtx, globalRules, sessVars)
+		// EffectiveFields is not empty (unique fields for this session including global rules),
+		// so we use these rules to decide whether to write the slow log.
+		if len(sessVars.SlowLogRules.EffectiveFields) != 0 {
+			matchRules = ShouldWriteSlowLog(globalRules, sessVars, slowItems)
+			defer putSlowLogItems(slowItems)
+		} else {
+			threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
+			matchRules = sessVars.GetTotalCostDuration() >= threshold
+		}
+		if !matchRules && !force {
 			return
 		}
 	}
 
-	var indexNames string
-	if len(stmtCtx.IndexNames) > 0 {
-		// remove duplicate index.
-		idxMap := make(map[string]struct{})
-		buf := bytes.NewBuffer(make([]byte, 0, 4))
-		buf.WriteByte('[')
-		for _, idx := range stmtCtx.IndexNames {
-			_, ok := idxMap[idx]
-			if ok {
-				continue
-			}
-			idxMap[idx] = struct{}{}
-			if buf.Len() > 1 {
-				buf.WriteByte(',')
-			}
-			buf.WriteString(idx)
-		}
-		buf.WriteByte(']')
-		indexNames = buf.String()
+	if slowItems == nil {
+		slowItems = &variable.SlowQueryLogItems{}
 	}
-
-	stmtDetail, tikvExecDetail, ruDetails := execdetails.GetExecDetailsFromContext(a.GoCtx)
-	execDetail := stmtCtx.GetExecDetails()
-	sql := FormatSQL(a.GetTextToLog(true))
-	_, digest := stmtCtx.SQLDigest()
-	_, planDigest := GetPlanDigest(stmtCtx)
-
-	binaryPlan := ""
-	if variable.GenerateBinaryPlan.Load() {
-		binaryPlan = getBinaryPlan(a.Ctx)
-		if len(binaryPlan) > 0 {
-			binaryPlan = variable.SlowLogBinaryPlanPrefix + binaryPlan + variable.SlowLogPlanSuffix
-		}
-	}
-
-	var keyspaceID uint32
-	keyspaceName := keyspace.GetKeyspaceNameBySettings()
-	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
-	}
-	if txnTS == 0 {
-		// TODO: txnTS maybe ambiguous, consider logging stale-read-ts with a new field in the slow log.
-		txnTS = sessVars.TxnCtx.StaleReadTs
-	}
-
-	slowItems := &variable.SlowQueryLogItems{
-		TxnTS:             txnTS,
-		KeyspaceName:      keyspaceName,
-		KeyspaceID:        keyspaceID,
-		SQL:               sql.String(),
-		Digest:            digest.String(),
-		TimeTotal:         costTime,
-		IndexNames:        indexNames,
-		CopTasks:          stmtCtx.CopTasksDetails(),
-		ExecDetail:        &execDetail,
-		MemMax:            sessVars.MemTracker.MaxConsumed(),
-		DiskMax:           sessVars.DiskTracker.MaxConsumed(),
-		Succ:              succ,
-		Plan:              getPlanTree(stmtCtx),
-		PlanDigest:        planDigest.String(),
-		BinaryPlan:        binaryPlan,
-		Prepared:          a.isPreparedStmt,
-		HasMoreResults:    hasMoreResults,
-		PlanFromCache:     sessVars.FoundInPlanCache,
-		PlanFromBinding:   sessVars.FoundInBinding,
-		RewriteInfo:       sessVars.RewritePhaseInfo,
-		KVExecDetail:      &tikvExecDetail,
-		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
-		ResultRows:        stmtCtx.GetResultRowsCount(),
-		ExecRetryCount:    uint64(a.retryCount),
-		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
-		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
-		UsedStats:         stmtCtx.GetUsedStatsInfo(false),
-		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
-		Warnings:          variable.CollectWarningsForSlowLog(stmtCtx),
-		ResourceGroupName: sessVars.StmtCtx.ResourceGroupName,
-		RUDetails:         ruDetails,
-		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
-		StorageKV:         stmtCtx.IsTiKV.Load(),
-		StorageMPP:        stmtCtx.IsTiFlash.Load(),
-	}
+	SetSlowLogItems(a, txnTS, hasMoreResults, slowItems)
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			if !slowItems.IsSyncStatsFailed {
@@ -1766,58 +1702,57 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			}
 		}
 	})
-	if a.retryCount > 0 {
-		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
-	}
-	if _, ok := a.StmtNode.(*ast.CommitStmt); ok && sessVars.PrevStmt != nil {
-		slowItems.PrevStmt = sessVars.PrevStmt.String()
-	}
 	slowLog := sessVars.SlowLogFormat(slowItems)
+	logutil.SlowQueryLogger.Warn(slowLog)
+
 	if trace.IsEnabled() {
 		trace.Log(a.GoCtx, "details", slowLog)
 	}
-	logutil.SlowQueryLogger.Warn(slowLog)
-	if costTime >= threshold {
-		if sessVars.InRestrictedSQL {
-			executor_metrics.TotalQueryProcHistogramInternal.Observe(costTime.Seconds())
-			executor_metrics.TotalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
-			executor_metrics.TotalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
-		} else {
-			executor_metrics.TotalQueryProcHistogramGeneral.Observe(costTime.Seconds())
-			executor_metrics.TotalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
-			executor_metrics.TotalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
-			if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys != 0 {
-				executor_metrics.CopMVCCRatioHistogramGeneral.Observe(float64(execDetail.ScanDetail.TotalKeys) / float64(execDetail.ScanDetail.ProcessedKeys))
-			}
+
+	if !matchRules {
+		return
+	}
+	costTime := slowItems.TimeTotal
+	execDetail := slowItems.ExecDetail
+	if sessVars.InRestrictedSQL {
+		executor_metrics.TotalQueryProcHistogramInternal.Observe(costTime.Seconds())
+		executor_metrics.TotalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+		executor_metrics.TotalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+	} else {
+		executor_metrics.TotalQueryProcHistogramGeneral.Observe(costTime.Seconds())
+		executor_metrics.TotalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+		executor_metrics.TotalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+		if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys != 0 {
+			executor_metrics.CopMVCCRatioHistogramGeneral.Observe(float64(execDetail.ScanDetail.TotalKeys) / float64(execDetail.ScanDetail.ProcessedKeys))
 		}
-		var userString string
-		if sessVars.User != nil {
-			userString = sessVars.User.String()
-		}
-		var tableIDs string
-		if len(stmtCtx.TableIDs) > 0 {
-			tableIDs = strings.ReplaceAll(fmt.Sprintf("%v", stmtCtx.TableIDs), " ", ",")
-		}
-		// TODO log slow query for cross keyspace query?
-		dom := domain.GetDomain(a.Ctx)
-		if dom != nil {
-			dom.LogSlowQuery(&domain.SlowQueryInfo{
-				SQL:        sql.String(),
-				Digest:     digest.String(),
-				Start:      sessVars.StartTime,
-				Duration:   costTime,
-				Detail:     execDetail,
-				Succ:       succ,
-				ConnID:     sessVars.ConnectionID,
-				SessAlias:  sessVars.SessionAlias,
-				TxnTS:      txnTS,
-				User:       userString,
-				DB:         sessVars.CurrentDB,
-				TableIDs:   tableIDs,
-				IndexNames: indexNames,
-				Internal:   sessVars.InRestrictedSQL,
-			})
-		}
+	}
+	var userString string
+	if sessVars.User != nil {
+		userString = sessVars.User.String()
+	}
+	var tableIDs string
+	if len(sessVars.StmtCtx.TableIDs) > 0 {
+		tableIDs = strings.ReplaceAll(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",")
+	}
+	// TODO log slow query for cross keyspace query?
+	dom := domain.GetDomain(a.Ctx)
+	if dom != nil {
+		dom.LogSlowQuery(&domain.SlowQueryInfo{
+			SQL:        slowItems.SQL,
+			Digest:     slowItems.Digest,
+			Start:      sessVars.StartTime,
+			Duration:   costTime,
+			Detail:     *execDetail,
+			Succ:       succ,
+			ConnID:     sessVars.ConnectionID,
+			SessAlias:  sessVars.SessionAlias,
+			TxnTS:      txnTS,
+			User:       userString,
+			DB:         sessVars.CurrentDB,
+			TableIDs:   tableIDs,
+			IndexNames: slowItems.IndexNames,
+			Internal:   sessVars.InRestrictedSQL,
+		})
 	}
 }
 
