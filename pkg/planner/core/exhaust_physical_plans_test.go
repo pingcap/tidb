@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -53,7 +53,7 @@ func rewriteSimpleExpr(ctx expression.BuildContext, str string, schema *expressi
 type indexJoinContext struct {
 	dataSourceNode *logicalop.DataSource
 	dsNames        types.NameSlice
-	path           *util.AccessPath
+	path           *stats.util.AccessPath
 	joinNode       *logicalop.LogicalJoin
 	joinColNames   types.NameSlice
 }
@@ -116,7 +116,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	})
 	dataSourceNode.SetSchema(dsSchema)
 	dataSourceNode.SetStats(&property.StatsInfo{StatsVersion: statistics.PseudoVersion})
-	path := &util.AccessPath{
+	path := &stats.util.AccessPath{
 		IdxCols:    append(make([]*expression.Column, 0, 5), dsSchema.Columns...),
 		IdxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength, 2, types.UnspecifiedLength, 2},
 	}

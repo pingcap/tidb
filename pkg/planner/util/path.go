@@ -22,7 +22,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -463,4 +465,52 @@ func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
 		return true
 	}
 	return false
+}
+
+// IsMVIndexPath checks whether the access path is a MV index path.
+func IsMVIndexPath(path *AccessPath) bool {
+	return !path.IsTablePath() && path.Index != nil && path.Index.MVIndex
+}
+
+/*
+ Below is debug trace for AccessPath.
+*/
+
+type accessPathForDebugTrace struct {
+	IndexName           string `json:",omitempty"`
+	AccessConditions    []string
+	IndexFilters        []string
+	TableFilters        []string
+	PartialPaths        []accessPathForDebugTrace `json:",omitempty"`
+	CountAfterAccess    float64
+	MinCountAfterAccess float64
+	MaxCountAfterAccess float64
+	CountAfterIndex     float64
+}
+
+func convertAccessPathForDebugTrace(ctx expression.EvalContext, path *AccessPath, out *accessPathForDebugTrace) {
+	if path.Index != nil {
+		out.IndexName = path.Index.Name.O
+	}
+	out.AccessConditions = expression.ExprsToStringsForDisplay(ctx, path.AccessConds)
+	out.IndexFilters = expression.ExprsToStringsForDisplay(ctx, path.IndexFilters)
+	out.TableFilters = expression.ExprsToStringsForDisplay(ctx, path.TableFilters)
+	out.CountAfterAccess = path.CountAfterAccess
+	out.MaxCountAfterAccess = path.MaxCountAfterAccess
+	out.MinCountAfterAccess = path.MinCountAfterAccess
+	out.CountAfterIndex = path.CountAfterIndex
+	out.PartialPaths = make([]accessPathForDebugTrace, len(path.PartialIndexPaths))
+	for i, partialPath := range path.PartialIndexPaths {
+		convertAccessPathForDebugTrace(ctx, partialPath, &out.PartialPaths[i])
+	}
+}
+
+// DebugTraceAccessPaths records the access paths to the debug trace.
+func DebugTraceAccessPaths(s base.PlanContext, paths []*AccessPath) {
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
+	traceInfo := make([]accessPathForDebugTrace, len(paths))
+	for i, partialPath := range paths {
+		convertAccessPathForDebugTrace(s.GetExprCtx().GetEvalCtx(), partialPath, &traceInfo[i])
+	}
+	root.AppendStepWithNameToCurrentContext(traceInfo, "Access paths")
 }

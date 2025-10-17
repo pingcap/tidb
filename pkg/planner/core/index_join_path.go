@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -46,8 +46,8 @@ type mutableIndexJoinRange struct {
 	ranges    ranger.Ranges
 	rangeInfo string
 
-	indexJoinInfo *indexJoinPathInfo // read-only
-	path          *util.AccessPath   // read-only
+	indexJoinInfo *indexJoinPathInfo     // read-only
+	path          *stats.util.AccessPath // read-only
 }
 
 func (mr *mutableIndexJoinRange) CloneForPlanCache() ranger.MutableRanges {
@@ -85,7 +85,7 @@ func (mr *mutableIndexJoinRange) Rebuild(sctx planctx.PlanContext) error {
 
 // indexJoinPathResult records necessary information if we build IndexJoin on this chosen access path (or index).
 type indexJoinPathResult struct {
-	chosenPath     *util.AccessPath        // the chosen access path (or index)
+	chosenPath     *stats.util.AccessPath  // the chosen access path (or index)
 	chosenAccess   []expression.Expression // expressions used to access this index
 	chosenRemained []expression.Expression // remaining expressions after accessing this index
 	chosenRanges   ranger.MutableRanges    // the ranges used to access this index
@@ -131,7 +131,7 @@ func indexJoinPathNewMutableRange(
 	indexJoinInfo *indexJoinPathInfo,
 	relatedExprs []expression.Expression,
 	ranges []*ranger.Range,
-	path *util.AccessPath) ranger.MutableRanges {
+	path *stats.util.AccessPath) ranger.MutableRanges {
 	// if the plan-cache is enabled and these ranges depend on some parameters, we have to rebuild these ranges after changing parameters
 	if expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), relatedExprs...) {
 		// assume that path, innerKeys and outerKeys will not be modified in the follow-up process
@@ -163,7 +163,7 @@ func indexJoinPathUpdateTmpRange(
 // indexJoinPathBuild tries to build an index join on this specified access path.
 // The result is recorded in the *indexJoinPathResult, see more info in that structure.
 func indexJoinPathBuild(sctx planctx.PlanContext,
-	path *util.AccessPath,
+	path *stats.util.AccessPath,
 	indexJoinInfo *indexJoinPathInfo,
 	rebuildMode bool) (result *indexJoinPathResult, emptyRange bool, err error) {
 	if len(path.IdxCols) == 0 {
@@ -311,7 +311,7 @@ func indexJoinPathConstructResult(
 	indexJoinInfo *indexJoinPathInfo,
 	buildTmp *indexJoinPathTmp,
 	ranges ranger.MutableRanges,
-	path *util.AccessPath, accesses,
+	path *stats.util.AccessPath, accesses,
 	remained []expression.Expression,
 	lastColManager *physicalop.ColWithCmpFuncManager,
 	usedColsLen int) *indexJoinPathResult {
@@ -601,8 +601,8 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 }
 
 func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoinKeys []*expression.Column,
-	checkPathValid func(path *util.AccessPath) bool) (
-	keyOff2IdxOff []int, newOuterJoinKeys []*expression.Column, ranges ranger.Ranges, chosenPath *util.AccessPath, ok bool) {
+	checkPathValid func(path *stats.util.AccessPath) bool) (
+	keyOff2IdxOff []int, newOuterJoinKeys []*expression.Column, ranges ranger.Ranges, chosenPath *stats.util.AccessPath, ok bool) {
 	pkMatched := false
 	pkCol := ds.GetPKIsHandleCol()
 	if pkCol == nil {
@@ -665,7 +665,7 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 func getBestIndexJoinPathResultByProp(
 	innerDS *logicalop.DataSource,
 	indexJoinProp *property.IndexJoinRuntimeProp,
-	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
+	checkPathValid func(path *stats.util.AccessPath) bool) (*indexJoinPathResult, []int) {
 	indexJoinInfo := &indexJoinPathInfo{
 		joinOtherConditions:   indexJoinProp.OtherConditions, // other conditions is for complete last col non-eq range
 		outerJoinKeys:         indexJoinProp.OuterJoinKeys,
@@ -713,7 +713,7 @@ func getBestIndexJoinPathResult(
 	join *logicalop.LogicalJoin,
 	innerChild *logicalop.DataSource,
 	innerJoinKeys, outerJoinKeys []*expression.Column,
-	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
+	checkPathValid func(path *stats.util.AccessPath) bool) (*indexJoinPathResult, []int) {
 	indexJoinInfo := &indexJoinPathInfo{
 		joinOtherConditions:   join.OtherConditions,
 		outerJoinKeys:         outerJoinKeys,

@@ -40,8 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -100,7 +100,7 @@ func TestGetPathByIndexName(t *testing.T) {
 		PKIsHandle: true,
 	}
 
-	accessPath := []*util.AccessPath{
+	accessPath := []*stats.util.AccessPath{
 		{IsIntHandlePath: true},
 		{Index: &model.IndexInfo{Name: ast.NewCIStr("idx")}},
 		genTiFlashPath(tblInfo),
@@ -214,7 +214,7 @@ func TestDisableFold(t *testing.T) {
 func TestDeepClone(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	expr := &expression.Column{RetType: tp}
-	byItems := []*util.ByItems{{Expr: expr}}
+	byItems := []*stats.util.ByItems{{Expr: expr}}
 	sort1 := &physicalop.PhysicalSort{ByItems: byItems}
 	sort2 := &physicalop.PhysicalSort{ByItems: byItems}
 	checkDeepClone := func(p1, p2 base.PhysicalPlan) error {
@@ -225,7 +225,7 @@ func TestDeepClone(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "same slice pointers, path *PhysicalSort.ByItems", err.Error())
 
-	byItems2 := []*util.ByItems{{Expr: expr}}
+	byItems2 := []*stats.util.ByItems{{Expr: expr}}
 	sort2.ByItems = byItems2
 	err = checkDeepClone(sort1, sort2)
 	require.Error(t, err)
@@ -358,7 +358,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(lim))
 
 	// sort
-	byItems := []*util.ByItems{{Expr: col}, {Expr: cst}}
+	byItems := []*stats.util.ByItems{{Expr: col}, {Expr: cst}}
 	sort := &physicalop.PhysicalSort{ByItems: byItems}
 	sort = sort.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sort))

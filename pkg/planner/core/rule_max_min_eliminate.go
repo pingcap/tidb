@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
@@ -120,9 +120,9 @@ func (a *MaxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan
 		newDs.SetSchema(p.Schema().Clone())
 		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
 		copy(newDs.Columns, p.Columns)
-		allAccessPaths := make([]*util.AccessPath, 0, len(p.AllPossibleAccessPaths))
+		allAccessPaths := make([]*stats.util.AccessPath, 0, len(p.AllPossibleAccessPaths))
 		// alloc len for copy func.
-		newDs.PossibleAccessPaths = make([]*util.AccessPath, len(p.AllPossibleAccessPaths))
+		newDs.PossibleAccessPaths = make([]*stats.util.AccessPath, len(p.AllPossibleAccessPaths))
 		for _, path := range p.AllPossibleAccessPaths {
 			newPath := *path
 			allAccessPaths = append(allAccessPaths, &newPath)
@@ -196,7 +196,7 @@ func (*MaxMinEliminator) eliminateSingleMaxMin(agg *logicalop.LogicalAggregation
 		desc := f.Name == ast.AggFuncMax
 		// Compose Sort operator.
 		sort = logicalop.LogicalSort{}.Init(ctx, agg.QueryBlockOffset())
-		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: f.Args[0], Desc: desc})
+		sort.ByItems = append(sort.ByItems, &stats.util.ByItems{Expr: f.Args[0], Desc: desc})
 		sort.SetChildren(child)
 		child = sort
 	}

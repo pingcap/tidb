@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package stats
 
 import (
 	"cmp"
@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -59,7 +59,7 @@ func generateORIndexMerge(ds *logicalop.DataSource, filters []expression.Express
 // unfinishedAccessPath collects usable filters in preparation for building an OR type IndexMerge access path.
 // It maintains the information during iterating all filters. Importantly, it maintains incomplete access filters, which
 // means they may not be able to build a valid range, but could build a valid range after collecting more access filters.
-// After iterating all filters, we can check and build it into a valid util.AccessPath.
+// After iterating all filters, we can check and build it into a valid plannerutil.AccessPath.
 // Similar to AccessPath, unfinishedAccessPath has 2 meanings:
 // 1. When orBranches is nil, it collects usable filters for a single candidate access path.
 // 2. When orBranches is not nil, it's a container of partial paths, and each element in the slice corresponds to one
@@ -116,7 +116,7 @@ Example:
 func genUnfinishedPathFromORList(
 	ds *logicalop.DataSource,
 	orList []expression.Expression,
-	candidateAccessPaths []*util.AccessPath,
+	candidateAccessPaths []*plannerutil.AccessPath,
 ) *unfinishedAccessPath {
 	if len(orList) < 2 {
 		return nil
@@ -156,7 +156,7 @@ Example2:
 */
 func initUnfinishedPathsFromExpr(
 	ds *logicalop.DataSource,
-	candidateAccessPaths []*util.AccessPath,
+	candidateAccessPaths []*plannerutil.AccessPath,
 	expr expression.Expression,
 ) unfinishedAccessPathList {
 	retValues := make([]unfinishedAccessPath, len(candidateAccessPaths))
@@ -167,7 +167,7 @@ func initUnfinishedPathsFromExpr(
 	for i, path := range candidateAccessPaths {
 		ret[i].index = path.Index
 		// case 1: try to use the previous logic to handle non-mv index
-		if !isMVIndexPath(path) {
+		if !plannerutil.IsMVIndexPath(path) {
 			partialPath, needSelection := generateNormalIndexPartialPath(
 				ds,
 				expr,
@@ -188,7 +188,7 @@ func initUnfinishedPathsFromExpr(
 			continue
 		}
 		cnfItems := expression.SplitCNFItems(expr)
-		pushDownCtx := util.GetPushDownCtx(ds.SCtx())
+		pushDownCtx := plannerutil.GetPushDownCtx(ds.SCtx())
 		for _, cnfItem := range cnfItems {
 			if !expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cnfItem}, kv.TiKV) {
 				ret[i].needKeepFilter = true
@@ -196,7 +196,7 @@ func initUnfinishedPathsFromExpr(
 		}
 
 		// case 2: try to use the previous logic to handle mv index
-		if isMVIndexPath(path) {
+		if plannerutil.IsMVIndexPath(path) {
 			accessFilters, remainingFilters, tp := collectFilters4MVIndex(ds.SCtx(), cnfItems, idxCols)
 			if len(accessFilters) > 0 && (tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 				ret[i].initedWithValidRange = true
@@ -246,15 +246,15 @@ func initUnfinishedPathsFromExpr(
 // like ... AND (... OR ... OR ...) AND ... for mv index.
 // It will try to collect possible access filters from other items in the top level AND list and try to merge them into
 // the unfinishedAccessPath from genUnfinishedPathFromORList(), and try to build it into a valid
-// util.AccessPath.
+// plannerutil.AccessPath.
 // The input candidateAccessPaths argument should be the same with genUnfinishedPathFromORList().
 func handleTopLevelANDList(
 	ds *logicalop.DataSource,
 	allConds []expression.Expression,
 	orListIdxInAllConds int,
-	candidateAccessPaths []*util.AccessPath,
+	candidateAccessPaths []*plannerutil.AccessPath,
 	unfinishedIndexMergePath *unfinishedAccessPath,
-) *util.AccessPath {
+) *plannerutil.AccessPath {
 	for i, cnfItem := range allConds {
 		// Skip the (... OR ... OR ...) in the list.
 		if i == orListIdxInAllConds {
@@ -332,27 +332,27 @@ func mergeANDItemIntoUnfinishedIndexMergePath(
 
 func buildIntoAccessPath(
 	ds *logicalop.DataSource,
-	originalPaths []*util.AccessPath,
+	originalPaths []*plannerutil.AccessPath,
 	indexMergePath *unfinishedAccessPath,
 	allConds []expression.Expression,
 	orListIdxInAllConds int,
-) *util.AccessPath {
+) *plannerutil.AccessPath {
 	if indexMergePath == nil || len(indexMergePath.orBranches) == 0 {
 		return nil
 	}
 	// 1. Use the collected usable filters to build partial paths for each alternative of each OR branch.
-	allAlternativePaths := make([][][]*util.AccessPath, 0, len(indexMergePath.orBranches))
+	allAlternativePaths := make([][][]*plannerutil.AccessPath, 0, len(indexMergePath.orBranches))
 
 	// for each OR branch
 	for _, orBranch := range indexMergePath.orBranches {
-		var alternativesForORBranch [][]*util.AccessPath
+		var alternativesForORBranch [][]*plannerutil.AccessPath
 
 		// for each alternative of this OR branch
 		for i, unfinishedPath := range orBranch {
 			if unfinishedPath == nil {
 				continue
 			}
-			var oneAlternative []*util.AccessPath
+			var oneAlternative []*plannerutil.AccessPath
 			var needSelection bool
 			if unfinishedPath.index != nil && unfinishedPath.index.MVIndex {
 				// case 1: mv index
@@ -388,7 +388,7 @@ func buildIntoAccessPath(
 				needSelection = len(remainingFilters) > 0
 			} else {
 				// case 2: non-mv index
-				var path *util.AccessPath
+				var path *plannerutil.AccessPath
 				// Reuse the previous implementation. The same usage as in initUnfinishedPathsFromExpr().
 				path, needSelection = generateNormalIndexPartialPath(
 					ds,
@@ -401,7 +401,7 @@ func buildIntoAccessPath(
 				if path == nil {
 					continue
 				}
-				oneAlternative = []*util.AccessPath{path}
+				oneAlternative = []*plannerutil.AccessPath{path}
 			}
 			needSelection = needSelection || unfinishedPath.needKeepFilter
 
@@ -419,13 +419,13 @@ func buildIntoAccessPath(
 
 	// 2. Some extra setup and checks.
 
-	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
+	pushDownCtx := plannerutil.GetPushDownCtx(ds.SCtx())
 	possibleIdxIDs := make(map[int64]struct{}, len(allAlternativePaths))
 	var containMVPath bool
 	// We do two things in this loop:
 	// 1. Clean/Set KeepIndexMergeORSourceFilter, InexFilters and TableFilters for each partial path.
 	// 2. Collect all index IDs and check if there is any MV index.
-	for _, p := range util.SliceRecursiveFlattenIter[*util.AccessPath](allAlternativePaths) {
+	for _, p := range plannerutil.SliceRecursiveFlattenIter[*plannerutil.AccessPath](allAlternativePaths) {
 		// A partial path can handle TableFilters only if it's a table path, and the filters can be pushed to TiKV.
 		// Otherwise, we should clear TableFilters and set KeepIndexMergeORSourceFilter to true.
 		if len(p.TableFilters) > 0 {
@@ -450,7 +450,7 @@ func buildIntoAccessPath(
 		} else {
 			possibleIdxIDs[p.Index.ID] = struct{}{}
 		}
-		if isMVIndexPath(p) {
+		if plannerutil.IsMVIndexPath(p) {
 			containMVPath = true
 		}
 	}
@@ -463,7 +463,7 @@ func buildIntoAccessPath(
 	needKeepORSourceFilter := expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), allConds[orListIdxInAllConds])
 
 	// 3. Build the final access path.
-	possiblePath := &util.AccessPath{
+	possiblePath := &plannerutil.AccessPath{
 		PartialAlternativeIndexPaths: allAlternativePaths,
 		TableFilters:                 slices.Delete(slices.Clone(allConds), orListIdxInAllConds, orListIdxInAllConds+1),
 		IndexMergeORSourceFilter:     allConds[orListIdxInAllConds],
@@ -472,7 +472,7 @@ func buildIntoAccessPath(
 
 	// For estimation, we need the decided partial paths. So we use a simple heuristic to choose the partial paths by
 	// comparing the row count just for estimation here.
-	pathsForEstimate := make([]*util.AccessPath, 0, len(allAlternativePaths))
+	pathsForEstimate := make([]*plannerutil.AccessPath, 0, len(allAlternativePaths))
 	for _, oneORBranch := range allAlternativePaths {
 		pathsWithMinRowCount := slices.MinFunc(oneORBranch, cmpAlternatives(ds.SCtx().GetSessionVars()))
 		pathsForEstimate = append(pathsForEstimate, pathsWithMinRowCount...)
@@ -482,8 +482,8 @@ func buildIntoAccessPath(
 	return possiblePath
 }
 
-func cmpAlternatives(sessionVars *variable.SessionVars) func(lhs, rhs []*util.AccessPath) int {
-	allPointOrEmptyRange := func(paths []*util.AccessPath) bool {
+func cmpAlternatives(sessionVars *variable.SessionVars) func(lhs, rhs []*plannerutil.AccessPath) int {
+	allPointOrEmptyRange := func(paths []*plannerutil.AccessPath) bool {
 		// Prefer the path with empty range or all point ranges.
 		for _, path := range paths {
 			// 1. It's not empty range.
@@ -501,7 +501,7 @@ func cmpAlternatives(sessionVars *variable.SessionVars) func(lhs, rhs []*util.Ac
 		return true
 	}
 	// If one alternative consists of multiple AccessPath, we use the maximum row count of them to compare.
-	getMaxRowCountFromPaths := func(paths []*util.AccessPath) float64 {
+	getMaxRowCountFromPaths := func(paths []*plannerutil.AccessPath) float64 {
 		maxRowCount := 0.0
 		for _, path := range paths {
 			rowCount := path.CountAfterAccess
@@ -512,7 +512,7 @@ func cmpAlternatives(sessionVars *variable.SessionVars) func(lhs, rhs []*util.Ac
 		}
 		return maxRowCount
 	}
-	return func(a, b []*util.AccessPath) int {
+	return func(a, b []*plannerutil.AccessPath) int {
 		lhsBetterRange := allPointOrEmptyRange(a)
 		rhsBetterRange := allPointOrEmptyRange(b)
 		if lhsBetterRange != rhsBetterRange {
@@ -527,11 +527,11 @@ func cmpAlternatives(sessionVars *variable.SessionVars) func(lhs, rhs []*util.Ac
 	}
 }
 
-func estimateCountAfterAccessForIndexMergeOR(ds *logicalop.DataSource, decidedPartialPaths []*util.AccessPath) float64 {
+func estimateCountAfterAccessForIndexMergeOR(ds *logicalop.DataSource, decidedPartialPaths []*plannerutil.AccessPath) float64 {
 	accessConds := make([]expression.Expression, 0, len(decidedPartialPaths))
 	containMVPath := false
 	for _, p := range decidedPartialPaths {
-		if isMVIndexPath(p) {
+		if plannerutil.IsMVIndexPath(p) {
 			containMVPath = true
 		}
 		indexCondsForP := p.AccessConds[:]

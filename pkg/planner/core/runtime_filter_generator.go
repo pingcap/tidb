@@ -22,15 +22,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 // RuntimeFilterGenerator One plan one generator
 type RuntimeFilterGenerator struct {
-	rfIDGenerator                 *util.IDGenerator
+	rfIDGenerator                 *stats.util.IDGenerator
 	columnUniqueIDToRF            map[int64][]*physicalop.RuntimeFilter
 	parentPhysicalPlan            base.PhysicalPlan
 	childIdxForParentPhysicalPlan int

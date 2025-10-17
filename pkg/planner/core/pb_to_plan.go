@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -187,14 +187,14 @@ func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (base.PhysicalPlan, erro
 
 func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (base.PhysicalPlan, error) {
 	topN := e.TopN
-	byItems := make([]*util.ByItems, 0, len(topN.OrderBy))
+	byItems := make([]*stats.util.ByItems, 0, len(topN.OrderBy))
 	exprCtx := b.sctx.GetExprCtx()
 	for _, item := range topN.OrderBy {
 		expr, err := expression.PBToExpr(exprCtx, item.Expr, b.tps)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		byItems = append(byItems, &util.ByItems{Expr: expr, Desc: item.Desc})
+		byItems = append(byItems, &stats.util.ByItems{Expr: expr, Desc: item.Desc})
 	}
 	p := physicalop.PhysicalTopN{
 		ByItems: byItems,

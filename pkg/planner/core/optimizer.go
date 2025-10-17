@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -52,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
@@ -480,7 +480,7 @@ func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 	}
 	logutil.BgLogger().Debug("Start runtime filter generator")
 	rfGenerator := &RuntimeFilterGenerator{
-		rfIDGenerator:      &util.IDGenerator{},
+		rfIDGenerator:      &stats.util.IDGenerator{},
 		columnUniqueIDToRF: map[int64][]*physicalop.RuntimeFilter{},
 		parentPhysicalPlan: plan,
 	}

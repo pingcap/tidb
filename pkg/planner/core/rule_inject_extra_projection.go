@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
 
@@ -224,7 +224,7 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 // PhysicalTopN, some extra columns will be added into the schema of the
 // Projection, thus we need to add another Projection upon them to prune the
 // redundant columns.
-func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base.PhysicalPlan {
+func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*stats.util.ByItems) base.PhysicalPlan {
 	hasScalarFunc, numOrderByItems := false, len(orderByItems)
 	for i := 0; !hasScalarFunc && i < numOrderByItems; i++ {
 		_, isScalarFunc := orderByItems[i].Expr.(*expression.ScalarFunction)
@@ -289,7 +289,7 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 
 // TurnNominalSortIntoProj will turn nominal sort into two projections. This is to check if the scalar functions will
 // overflow.
-func TurnNominalSortIntoProj(p base.PhysicalPlan, onlyColumn bool, orderByItems []*util.ByItems) base.PhysicalPlan {
+func TurnNominalSortIntoProj(p base.PhysicalPlan, onlyColumn bool, orderByItems []*stats.util.ByItems) base.PhysicalPlan {
 	if onlyColumn {
 		return p.Children()[0]
 	}

@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 )
 
 /*
@@ -71,7 +71,7 @@ func (rs *ResultReorder) completeSort(lp base.LogicalPlan) bool {
 				}
 			}
 			if !exist {
-				sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col})
+				sort.ByItems = append(sort.ByItems, &stats.util.ByItems{Expr: col})
 			}
 		}
 		return true
@@ -85,13 +85,13 @@ func (rs *ResultReorder) injectSort(lp base.LogicalPlan) base.LogicalPlan {
 		return lp
 	}
 
-	byItems := make([]*util.ByItems, 0, len(lp.Schema().Columns))
+	byItems := make([]*stats.util.ByItems, 0, len(lp.Schema().Columns))
 	cols := lp.Schema().Columns
 	if handleCol := rs.extractHandleCol(lp); handleCol != nil {
 		cols = []*expression.Column{handleCol}
 	}
 	for _, col := range cols {
-		byItems = append(byItems, &util.ByItems{Expr: col})
+		byItems = append(byItems, &stats.util.ByItems{Expr: col})
 	}
 	sort := logicalop.LogicalSort{
 		ByItems: byItems,
