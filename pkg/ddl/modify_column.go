@@ -674,15 +674,6 @@ func needDoRowReorg(oldCol, changingCol *model.ColumnInfo, sqlMode mysql.SQLMode
 		return true
 	}
 
-	// if mysql.HasBinaryFlag(oldCol.GetFlag()) || mysql.HasBinaryFlag(changingCol.GetFlag()) {
-	// 	return true
-	// }
-
-	// Incompatible collation
-	// if oldCol.GetCollate() != changingCol.GetCollate() {
-	// 	return true
-	// }
-
 	return !types.IsTypeChar(oldTp) || !types.IsTypeChar(changingTp)
 }
 
@@ -749,14 +740,12 @@ func buildCheckSQLFromModifyColumn(
 				conditions = append(conditions, fmt.Sprintf("%s LIKE '%% '", checkColName))
 			}
 		}
-		oldCol.ChangingFieldType = &changingCol.FieldType
 	}
 
 	if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
 		if !(oldTp != mysql.TypeTimestamp && changingTp == mysql.TypeTimestamp) {
 			conditions = append(conditions, fmt.Sprintf("`%s` IS NULL", oldCol.Name.O))
 		}
-		oldCol.AddFlag(mysql.PreventNullInsertFlag)
 	}
 
 	if len(conditions) == 0 {
@@ -1041,17 +1030,8 @@ func (w *worker) doModifyColumnIndexReorg(
 
 	switch state {
 	case model.StateNone:
-		checked, err := checkModifyColumnData(
-			jobCtx.stepCtx, w,
-			dbInfo.Name, tblInfo.Name,
-			oldCol, args.Column, true)
-		if err != nil {
-			if checked {
-				job.State = model.JobStateRollingback
-			}
-			return ver, errors.Trace(err)
-		}
-
+		oldCol.AddFlag(mysql.PreventNullInsertFlag)
+		oldCol.ChangingFieldType = &args.Column.FieldType
 		// none -> delete only
 		updateObjectState(nil, changingIdxInfos, model.StateDeleteOnly)
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
