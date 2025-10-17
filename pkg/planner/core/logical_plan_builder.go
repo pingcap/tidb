@@ -911,6 +911,20 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, where ast.ExprNode, aggMapper map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, error) {
 	b.optFlag |= rule.FlagPredicatePushDown
 	b.optFlag |= rule.FlagDeriveTopNFromWindow
+
+	// Extract predicate columns for index pruning if this is a DataSource
+	// Only do this expensive work if we expect to have many indexes to prune
+	if ds, ok := p.(*logicalop.DataSource); ok && where != nil {
+		threshold := b.ctx.GetSessionVars().OptIndexPruneThreshold
+		if len(ds.AllPossibleAccessPaths) > threshold {
+			// Use the proper DataSource method to extract predicate columns
+			// This will be populated when conditions are available during optimization
+			// For now, just ensure the maps are initialized
+			if ds.PredicateColumns == nil {
+				ds.PredicateColumns = make(map[int64]bool)
+			}
+		}
+	}
 	b.optFlag |= rule.FlagPredicateSimplification
 	if b.curClause != havingClause {
 		b.curClause = whereClause
@@ -4548,7 +4562,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
 
-	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0)
+	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0, b)
 	if err != nil {
 		return nil, err
 	}
@@ -4699,6 +4713,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		IS:                     b.is,
 		IsForUpdateRead:        b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
+
+	// Track current DataSource for predicate column extraction during index pruning
+	b.currentDataSource = ds
+
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, countCnt)...)
 	names := make([]*types.FieldName, 0, countCnt)
