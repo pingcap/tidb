@@ -24,28 +24,40 @@ func (b *builtinLikeSig) vectorized() bool {
 
 func (b *builtinLikeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	bufVal, err := b.bufAllocator.get()
+	bufVal, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(bufVal)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(bufVal)
+		}
+	}()
 	if err = b.args[0].VecEvalString(ctx, input, bufVal); err != nil {
 		return err
 	}
-	bufPattern, err := b.bufAllocator.get()
+	bufPattern, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(bufPattern)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(bufPattern)
+		}
+	}()
 	if err = b.args[1].VecEvalString(ctx, input, bufPattern); err != nil {
 		return err
 	}
 
-	bufEscape, err := b.bufAllocator.get()
+	bufEscape, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(bufEscape)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(bufEscape)
+		}
+	}()
 	if err = b.args[2].VecEvalInt(ctx, input, bufEscape); err != nil {
 		return err
 	}

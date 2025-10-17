@@ -86,7 +86,7 @@ func buildStringParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chun
 		return &pa, false, nil
 	}
 
-	pa.col, err = bf.bufAllocator.get()
+	pa.col, err = globalColumnAllocator.get()
 	if err != nil {
 		return nil, false, err
 	}
@@ -119,7 +119,7 @@ func buildIntParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chunk.C
 		return &pa, false, nil
 	}
 
-	pa.col, err = bf.bufAllocator.get()
+	pa.col, err = globalColumnAllocator.get()
 	if err != nil {
 		return nil, false, err
 	}
