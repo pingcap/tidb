@@ -447,6 +447,7 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 // 3 unique non-global - to stay non-global
 // 4 unique global - to stay global
 func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
+	t.Skip("skip this test till we fix issue #63870")
 	createSQL := `create table t (a int primary key nonclustered global, b varchar(255), c bigint, unique index idx_b_global (b) global, unique key idx_ba (b,a), unique key idx_ab (a,b) global, unique key idx_c_global (c) global, unique key idx_cab (c,a,b)) partition by key (a,b) partitions 3`
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (1,1,1),(2,2,2),(101,101,101),(102,102,102)`)

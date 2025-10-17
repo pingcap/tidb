@@ -272,3 +272,8 @@ select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
 
 set @@session.default_collation_for_utf8mb4=default;
 
+# TestInExprRewriteBug: https://github.com/pingcap/tidb/issues/63565
+drop table if exists tb0;
+create table tb0 (c0 bigint unsigned not null);
+select 1 as col from tb0 where ((true not in (select 1)) not in (tb0.c0));
+explain format='plan_tree' select 1 from tb0 where ((true not in (select 1)) not in (tb0.c0));

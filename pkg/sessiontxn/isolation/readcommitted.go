@@ -286,11 +286,11 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan base.Plan, inLockOrWrite
 			}
 		}
 		return true
-	case *plannercore.Update:
+	case *physicalop.Update:
 		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
-	case *plannercore.Delete:
+	case *physicalop.Delete:
 		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
-	case *plannercore.Insert:
+	case *physicalop.Insert:
 		return v.SelectPlan == nil && len(v.OnDuplicate) == 0 && !v.IsReplace
 	}
 	return false

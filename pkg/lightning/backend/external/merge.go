@@ -40,6 +40,8 @@ var (
 	MinUploadPartSize int64 = 5 * units.MiB
 )
 
+var _ execute.Collector = &mergeCollector{}
+
 // mergeCollector collects the bytes and row count in merge step.
 type mergeCollector struct {
 	summary *execute.SubtaskSummary
@@ -58,7 +60,9 @@ func NewMergeCollector(ctx context.Context, summary *execute.SubtaskSummary) *me
 	}
 }
 
-func (c *mergeCollector) Add(bytes, rowCnt int64) {
+func (*mergeCollector) Accepted(_ int64) {}
+
+func (c *mergeCollector) Processed(bytes, rowCnt int64) {
 	if c.summary != nil {
 		c.summary.Bytes.Add(bytes)
 		c.summary.RowCnt.Add(rowCnt)
@@ -77,7 +81,8 @@ func MergeOverlappingFiles(
 	partSize int64,
 	newFilePrefix string,
 	blockSize int,
-	onClose OnCloseFunc,
+	onWriterClose OnWriterCloseFunc,
+	onReaderClose OnReaderCloseFunc,
 	collector execute.Collector,
 	concurrency int,
 	checkHotspot bool,
@@ -107,7 +112,8 @@ func MergeOverlappingFiles(
 				newFilePrefix,
 				uuid.New().String(),
 				blockSize,
-				onClose,
+				onWriterClose,
+				onReaderClose,
 				collector,
 				checkHotspot,
 				onDup,
@@ -174,7 +180,8 @@ func mergeOverlappingFilesInternal(
 	newFilePrefix string,
 	writerID string,
 	blockSize int,
-	onClose OnCloseFunc,
+	onWriterClose OnWriterCloseFunc,
+	onReaderClose OnReaderCloseFunc,
 	collector execute.Collector,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
@@ -198,12 +205,15 @@ func mergeOverlappingFilesInternal(
 		if err != nil {
 			logutil.Logger(ctx).Warn("close iterator failed", zap.Error(err))
 		}
+		onReaderClose(&ReaderSummary{
+			GetRequestCount: uint64(iter.ReloadCount()),
+		})
 	}()
 
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(defaultOneWriterMemSizeLimit).
 		SetBlockSize(blockSize).
-		SetOnCloseFunc(onClose).
+		SetOnCloseFunc(onWriterClose).
 		SetOnDup(onDup).
 		BuildOneFile(store, newFilePrefix, writerID)
 	writer.InitPartSizeAndLogger(ctx, partSize)
@@ -230,7 +240,7 @@ func mergeOverlappingFilesInternal(
 		}
 
 		if collector != nil {
-			collector.Add(int64(len(key)+len(value)), 1)
+			collector.Processed(int64(len(key)+len(value)), 1)
 		}
 	}
 	return iter.Error()

@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,6 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package statistics
 
-//go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
+// exported defaults used across statistics building and planner defaults
+const (
+	// DefaultTopNValue is the default value for number of TopN entries
+	DefaultTopNValue = 100
+	// DefaultHistogramBuckets is the default number of histogram buckets
+	DefaultHistogramBuckets = 256
+)

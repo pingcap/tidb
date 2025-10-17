@@ -158,15 +158,15 @@ func needLowerPriority(p base.Plan) bool {
 		return isPhysicalPlanNeedLowerPriority(x)
 	case *plannercore.Execute:
 		return needLowerPriority(x.Plan)
-	case *plannercore.Insert:
+	case *physicalop.Insert:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanNeedLowerPriority(x.SelectPlan)
 		}
-	case *plannercore.Delete:
+	case *physicalop.Delete:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanNeedLowerPriority(x.SelectPlan)
 		}
-	case *plannercore.Update:
+	case *physicalop.Update:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanNeedLowerPriority(x.SelectPlan)
 		}

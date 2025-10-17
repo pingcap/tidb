@@ -301,7 +301,7 @@ func onSetDefaultValue(jobCtx *jobContext, job *model.Job) (ver int64, _ error) 
 	return updateColumnDefaultValue(jobCtx, job, newCol, &newCol.Name)
 }
 
-// UpdateIndexCol update index column's name and offset with changing ColumnInfo.
+// UpdateIndexCol sets index column name and offset from changing ColumnInfo.
 func UpdateIndexCol(idxCol *model.IndexColumn, changingCol *model.ColumnInfo) {
 	idxCol.Name = changingCol.Name
 	idxCol.Offset = changingCol.Offset
@@ -951,7 +951,7 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
-
+	failpoint.InjectCall("mockUpdateColumnWorkerStuck")
 	return
 }
 
@@ -1401,7 +1401,6 @@ func genChangingColumnUniqueName(tblInfo *model.TableInfo, oldCol *model.ColumnI
 	for _, col := range tblInfo.Columns {
 		columnNameMap[col.Name.L] = true
 	}
-
 	suffix := 0
 	newColumnName := fmt.Sprintf("%s%s_%d", changingColumnPrefix, oldCol.Name.O, suffix)
 	for columnNameMap[strings.ToLower(newColumnName)] {
@@ -1417,7 +1416,6 @@ func genChangingIndexUniqueName(tblInfo *model.TableInfo, idxInfo *model.IndexIn
 	for _, idx := range tblInfo.Indices {
 		indexNameMap[idx.Name.L] = true
 	}
-
 	suffix := 0
 	newIndexName := fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
 	for indexNameMap[strings.ToLower(newIndexName)] {
