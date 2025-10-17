@@ -53,6 +53,10 @@ func convertAddIdxJob2RollbackJob(
 			failpoint.Return(0, errors.New("mock convert add index job to rollback job error"))
 		}
 	})
+	if job.Type == model.ActionModifyColumn {
+		job.State = model.JobStateRollingback
+		return 0, err
+	}
 
 	dropArgs := &model.ModifyIndexArgs{
 		PartitionIDs: getPartitionIDs(tblInfo),

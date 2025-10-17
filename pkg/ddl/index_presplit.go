@@ -54,7 +54,7 @@ func preSplitIndexRegions(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	splitOnTempIdx := reorgMeta.ReorgTp == model.ReorgTypeLitMerge ||
+	splitOnTempIdx := reorgMeta.ReorgTp == model.ReorgTypeIngest ||
 		reorgMeta.ReorgTp == model.ReorgTypeTxnMerge
 	for i, idxInfo := range allIndexInfos {
 		idxArg := args.IndexArgs[i]

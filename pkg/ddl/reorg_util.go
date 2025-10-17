@@ -53,10 +53,14 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		setReorgParam = true
 		setDistTaskParam = true
+	case model.ActionModifyColumn:
+		setReorgParam = true
+		if modifyColumnNeedReorg(job.CtxVars) {
+			setDistTaskParam = true
+		}
 	case model.ActionReorganizePartition,
 		model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning,
-		model.ActionModifyColumn:
+		model.ActionAlterTablePartitioning:
 		setReorgParam = true
 	case model.ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
@@ -66,9 +70,13 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 				setDistTaskParam = true
 			case model.ActionReorganizePartition,
 				model.ActionRemovePartitioning,
-				model.ActionAlterTablePartitioning,
-				model.ActionModifyColumn:
+				model.ActionAlterTablePartitioning:
 				setReorgParam = true
+			case model.ActionModifyColumn:
+				setReorgParam = true
+				if modifyColumnNeedReorg(sub.CtxVars) {
+					setDistTaskParam = true
+				}
 			}
 		}
 	default:
@@ -170,6 +178,15 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		factorField,
 	)
 	return nil
+}
+
+func modifyColumnNeedReorg(jobCtxVars []any) bool {
+	if len(jobCtxVars) > 0 {
+		if v, ok := jobCtxVars[0].(bool); ok {
+			return v
+		}
+	}
+	return false
 }
 
 func getTableSizeByID(ctx context.Context, store kv.Storage, tbl table.Table) int64 {

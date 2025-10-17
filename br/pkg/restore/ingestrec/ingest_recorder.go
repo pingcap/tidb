@@ -58,7 +58,7 @@ func New() *IngestRecorder {
 
 func notIngestJob(job *model.Job) bool {
 	return job.ReorgMeta == nil ||
-		job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge
+		job.ReorgMeta.ReorgTp != model.ReorgTypeIngest
 }
 
 func notAddIndexJob(job *model.Job) bool {
