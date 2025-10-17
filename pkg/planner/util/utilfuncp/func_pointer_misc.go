@@ -19,13 +19,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -93,9 +91,6 @@ var DeriveStats4LogicalTableScan func(lp base.LogicalPlan) (_ *property.StatsInf
 // AddPrefix4ShardIndexes will be called by LogicalSelection in logicalOp pkg.
 var AddPrefix4ShardIndexes func(lp base.LogicalPlan, sc base.PlanContext,
 	conds []expression.Expression) []expression.Expression
-
-// IsSingleScan check whether the data source is a single scan.
-var IsSingleScan func(ds base.LogicalPlan, indexColumns []*expression.Column, idxColLens []int) bool
 
 // *************************************** physical op related *******************************************
 
@@ -428,9 +423,6 @@ var GetPlanCostVer14BatchPointGetPlan func(pp base.PhysicalPlan, _ property.Task
 // GetPlanCostVer24BatchPointGetPlan returns the plan-cost of this sub-plan, which is:
 var GetPlanCostVer24BatchPointGetPlan func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *costusage.PlanCostOption) (costusage.CostVer2, error)
-
-// LoadTableStats will be called in physicalOp pkg.
-var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 
 // GetCost4PhysicalIndexMergeJoin computes the cost of index merge join operator and its children.
 var GetCost4PhysicalIndexMergeJoin func(pp base.PhysicalPlan,
