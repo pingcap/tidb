@@ -239,6 +239,11 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
 
+	require.Equal(t, vardef.DefTIDBOptIndexPruneThreshold, v.OptIndexPruneThreshold)
+	err = v.SetSystemVar(vardef.TIDBOptIndexPruneThreshold, "1")
+	require.NoError(t, err)
+	require.Equal(t, 1, v.OptIndexPruneThreshold)
+
 	require.Equal(t, vardef.DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
 	err = v.SetSystemVar(vardef.TiDBOptimizerEnableOuterJoinReorder, "OFF")
 	require.NoError(t, err)
