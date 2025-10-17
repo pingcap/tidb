@@ -104,7 +104,7 @@ func (htc *hashTableContext) getPartitionMemoryUsage(partID int) int64 {
 	totalMemoryUsage := int64(0)
 	for _, tables := range htc.rowTables {
 		if tables != nil && tables[partID] != nil {
-			totalMemoryUsage += tables[partID].getTotalUsedBytesInSegments()
+			totalMemoryUsage += tables[partID].getTotalMemoryUsage()
 		}
 	}
 
@@ -155,36 +155,17 @@ func (htc *hashTableContext) lookup(partitionIndex int, hashValue uint64) tagged
 	return htc.hashTable.tables[partitionIndex].lookup(hashValue, htc.tagHelper)
 }
 
-func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, allowCreate bool, firstSegSizeHint uint) *rowTableSegment {
+func (htc *hashTableContext) appendRowSegment(workerID, partitionID int, seg *rowTableSegment) {
+	if len(seg.hashValues) == 0 {
+		return
+	}
+
 	if htc.rowTables[workerID][partitionID] == nil {
 		htc.rowTables[workerID][partitionID] = newRowTable()
 	}
-	segNum := len(htc.rowTables[workerID][partitionID].segments)
-	if segNum == 0 || htc.rowTables[workerID][partitionID].segments[segNum-1].finalized {
-		if !allowCreate {
-			panic("logical error, should not reach here")
-		}
-		// do not pre-allocate too many memory for the first seg because for query that only has a few rows, it may waste memory and may hurt the performance in high concurrency scenarios
-		rowSizeHint := maxRowTableSegmentSize
-		if segNum == 0 {
-			rowSizeHint = int64(firstSegSizeHint)
-		}
-		seg := newRowTableSegment(uint(rowSizeHint))
-		htc.rowTables[workerID][partitionID].segments = append(htc.rowTables[workerID][partitionID].segments, seg)
-		segNum++
-	}
-	return htc.rowTables[workerID][partitionID].segments[segNum-1]
-}
 
-func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder, needConsume bool) {
-	seg := htc.getCurrentRowSegment(workerID, partitionID, false, 0)
-	builder.rowNumberInCurrentRowTableSeg[partitionID] = 0
-	failpoint.Inject("finalizeCurrentSegPanic", nil)
 	seg.initTaggedBits()
-	seg.finalized = true
-	if needConsume {
-		htc.memoryTracker.Consume(seg.totalUsedBytes())
-	}
+	htc.rowTables[workerID][partitionID].segments = append(htc.rowTables[workerID][partitionID].segments, seg)
 }
 
 func (*hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable) (int64, []int64) {
@@ -304,8 +285,9 @@ type HashJoinCtxV2 struct {
 
 func (hCtx *HashJoinCtxV2) resetHashTableContextForRestore() {
 	memoryUsage := hCtx.hashTableContext.getAllSegmentsMemoryUsageInRowTable()
-	hCtx.hashTableContext.clearAllSegmentsInRowTable()
-	hCtx.hashTableContext.memoryTracker.Consume(-memoryUsage)
+	if intest.InTest && memoryUsage != 0 {
+		panic("All rowTables in hashTableContext should be cleared")
+	}
 
 	memoryUsage = hCtx.hashTableContext.getAllMemoryUsageInHashTable()
 	hCtx.hashTableContext.clearHashTable()
@@ -522,14 +504,6 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 
 	// Wait for command from the controller so that we can avoid data race with the spill executed in controller
 	<-waitForController
-
-	if hasErr {
-		return
-	}
-
-	start := time.Now()
-	b.builder.appendRemainingRowLocations(int(b.WorkerID), b.HashJoinCtx.hashTableContext)
-	cost += int64(time.Since(start))
 }
 
 func (b *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, fetcherAndWorkerSyncer *sync.WaitGroup, srcChkCh chan *chunk.Chunk, errCh chan error, doneCh chan struct{}) {
@@ -548,14 +522,6 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 			handleErr(err, errCh, doneCh)
 		}
 	}
-
-	if hasErr {
-		return
-	}
-
-	start := time.Now()
-	b.builder.appendRemainingRowLocations(int(b.WorkerID), b.HashJoinCtx.hashTableContext)
-	cost += int64(time.Since(start))
 }
 
 func (b *BuildWorkerV2) processOneChunk(typeCtx types.Context, chk *chunk.Chunk, cost *int64) error {
@@ -1323,7 +1289,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 	// init builder, todo maybe the builder can be reused during the whole life cycle of the executor
 	hashJoinCtx := e.HashJoinCtxV2
 	for _, worker := range e.BuildWorkers {
-		worker.builder = createRowTableBuilder(worker.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, hashJoinCtx.partitionNumber, worker.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
+		worker.builder = createRowTableBuilder(worker.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, hashJoinCtx.partitionNumber, worker.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone, hashJoinCtx.hashTableMeta.nullMapLength)
 	}
 	srcChkCh, waitForController := e.fetchBuildSideRows(ctx, fetcherAndWorkerSyncer, wg, errCh, doneCh)
 	e.splitAndAppendToRowTable(srcChkCh, waitForController, fetcherAndWorkerSyncer, wg, errCh, doneCh)
@@ -1409,7 +1375,6 @@ func (e *HashJoinV2Exec) controlWorkersForRestore(chunkNum int, syncCh chan *chu
 			}
 		}
 
-		// Tell workers that they can execute `appendRemainingRowLocations` function
 		close(waitForController)
 	}()
 
