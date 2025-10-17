@@ -799,3 +799,8 @@ DELETE FROM test_62458 PARTITION (p1) WHERE c1 = 15;
 CREATE TABLE test_62457 (c INT) PARTITION BY RANGE (c) (PARTITION p VALUES LESS THAN (10));
 -- error 3146 
 ALTER TABLE test_62457 ADD COLUMN c2 INT AS (JSON_EXTRACT(c, '$.number')) VIRTUAL;
+
+# TestIssue63823
+drop table if exists test_63823;
+create table test_63823 (a datetime(6) default (current_date));
+
