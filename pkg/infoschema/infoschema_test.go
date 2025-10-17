@@ -1384,3 +1384,79 @@ func TestFix62253(t *testing.T) {
 	require.Equal(t, "p1", dbInfo2.PlacementPolicyRef.Name.L)
 	tk1.MustExec("commit")
 }
+
+func TestGetDatabaseCount(t *testing.T) {
+	re := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		err := re.Store().Close()
+		require.NoError(t, err)
+	}()
+
+	tc := &infoschemaTestContext{
+		t:    t,
+		re:   re,
+		ctx:  kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
+		data: infoschema.NewData(),
+	}
+	tc.runRecoverSchema()
+
+	// Initially should have system databases
+	dbCount := tc.is.GetDatabaseCount()
+	require.GreaterOrEqual(t, dbCount, int64(3)) // information_schema, mysql, performance_schema
+
+	// Create a new database
+	tc.runCreateSchema()
+	dbCount = tc.is.GetDatabaseCount()
+	require.GreaterOrEqual(t, dbCount, int64(4)) // Should have at least one more database
+
+	tc.clear()
+}
+
+func TestGetTableCount(t *testing.T) {
+	re := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		err := re.Store().Close()
+		require.NoError(t, err)
+	}()
+
+	tc := &infoschemaTestContext{
+		t:    t,
+		re:   re,
+		ctx:  kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
+		data: infoschema.NewData(),
+	}
+	tc.runRecoverSchema()
+
+	// Initially should have system tables
+	tableCount := tc.is.GetTableCount()
+	require.GreaterOrEqual(t, tableCount, int64(0))
+
+	// Create a new table
+	tc.runCreateTable("test")
+	tableCount = tc.is.GetTableCount()
+	require.GreaterOrEqual(t, tableCount, int64(1))
+
+	tc.clear()
+}
+
+func TestGetSchemaVersion(t *testing.T) {
+	re := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		err := re.Store().Close()
+		require.NoError(t, err)
+	}()
+
+	tc := &infoschemaTestContext{
+		t:    t,
+		re:   re,
+		ctx:  kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
+		data: infoschema.NewData(),
+	}
+	tc.runRecoverSchema()
+
+	// Should have a valid schema version
+	schemaVersion := tc.is.GetSchemaVersion()
+	require.GreaterOrEqual(t, schemaVersion, int64(0))
+
+	tc.clear()
+}

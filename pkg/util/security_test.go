@@ -264,8 +264,9 @@ func handler(w http.ResponseWriter, req *http.Request) {
 }
 
 func runServer(tlsCfg *tls.Config, t *testing.T) (*http.Server, int) {
-	http.HandleFunc("/", handler)
-	server := &http.Server{Addr: ":0", Handler: nil}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", handler)
+	server := &http.Server{Addr: ":0", Handler: mux}
 
 	conn, err := net.Listen("tcp", server.Addr)
 	if err != nil {

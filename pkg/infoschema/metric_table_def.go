@@ -3152,4 +3152,19 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "name"},
 		Comment: "TiKV rocksdb config value",
 	},
+	"database_count": {
+		PromQL:  "tidb_server_database_count{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance"},
+		Comment: "Number of databases in the TiDB instance",
+	},
+	"table_count": {
+		PromQL:  "tidb_server_table_count{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance"},
+		Comment: "Total number of tables in the TiDB instance",
+	},
+	"schema_version": {
+		PromQL:  "tidb_server_schema_version{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance"},
+		Comment: "Current schema version of the TiDB instance",
+	},
 }
