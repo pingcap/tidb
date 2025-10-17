@@ -588,6 +588,7 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 	return resultColumn, resultColumnInfo
 }
 
+// IsSingleScan checks whether all the needed columns and conditions can be covered by the index.
 func (ds *DataSource) IsSingleScan(indexColumns []*expression.Column, idxColLens []int) bool {
 	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || ds.ColsRequiringFullLen == nil {
 		// ds.ColsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
@@ -605,6 +606,7 @@ func (ds *DataSource) IsSingleScan(indexColumns []*expression.Column, idxColLens
 	return true
 }
 
+// IsIndexCoveringColumns checks whether all the needed columns can be covered by the index.
 func (ds *DataSource) IsIndexCoveringColumns(columns, indexColumns []*expression.Column, idxColLens []int) bool {
 	for _, col := range columns {
 		if !ds.indexCoveringColumn(col, indexColumns, idxColLens, false) {
@@ -614,15 +616,7 @@ func (ds *DataSource) IsIndexCoveringColumns(columns, indexColumns []*expression
 	return true
 }
 
-func (ds *DataSource) isHandleCoveringColumns(columns []*expression.Column) bool {
-	for _, col := range columns {
-		if pkCoveringState := ds.handleCoveringColumn(col, false); pkCoveringState == stateNotCoveredByHandle {
-			return false
-		}
-	}
-	return true
-}
-
+// IsIndexCoveringCondition checks whether all the needed columns in the condition can be covered by the index.
 func (ds *DataSource) IsIndexCoveringCondition(condition expression.Expression, indexColumns []*expression.Column, idxColLens []int) bool {
 	switch v := condition.(type) {
 	case *expression.Column:
