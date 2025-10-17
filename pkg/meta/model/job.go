@@ -387,16 +387,9 @@ type Job struct {
 
 	// SessionVars store session variables
 	SessionVars map[string]string `json:"session_vars,omitempty"`
-<<<<<<< HEAD
-=======
-
-	// LastSchemaVersion records the latest schema version returned by runOneJobStep.
-	// If it is zero, for non-MDL scenario, scheduler can skip waitVersionSyncedWithoutMDL.
-	LastSchemaVersion int64 `json:"last_schema_version"`
 
 	// AnalyzeState indicate current whether current ddl job is in analyze state
 	AnalyzeState int8 `json:"analyze_state"`
->>>>>>> 007861065ee (planner: create index with embedded analyze (#63143))
 }
 
 // FinishTableJob is called when a job is finished.
@@ -797,15 +790,8 @@ func (job *Job) InFinalState() bool {
 	return job.State == JobStateSynced || job.State == JobStateCancelled || job.State == JobStatePaused
 }
 
-<<<<<<< HEAD
 // AddSessionVars add a session variable in DDL job.
 func (job *Job) AddSessionVars(name, value string) {
-=======
-// AddSystemVars adds a system variable to the DDL job.
-// These variables are passed from the front-end DDL session to the back-end worker that executes the job.
-// Retrieve them using job.GetSystemVars(xxx).
-func (job *Job) AddSystemVars(name string, value string) {
->>>>>>> 007861065ee (planner: create index with embedded analyze (#63143))
 	job.SessionVars[name] = value
 }
 

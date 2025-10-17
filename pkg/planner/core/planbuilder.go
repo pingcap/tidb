@@ -2092,16 +2092,11 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 		err := b.addColumnsWithVirtualExprs(tbl, cols, func(columns []*expression.Column) []expression.Expression {
 			virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 			for _, idx := range tblInfo.Indices {
-<<<<<<< HEAD
-				if idx.State != model.StatePublic || idx.MVIndex || idx.VectorInfo != nil {
-=======
 				// for an index in state public, we can always analyze it for internal analyze session.
 				// for an index in state WriteReorg, we can only analyze it under variable EnableDDLAnalyze is on.
 				indexStateAnalyzable := idx.State == model.StatePublic ||
 					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().EnableDDLAnalyzeExecOpt)
-				// for mv index and ci index fail it first, then analyze those analyzable indexes.
-				if idx.MVIndex || idx.IsColumnarIndex() || !indexStateAnalyzable {
->>>>>>> 007861065ee (planner: create index with embedded analyze (#63143))
+				if idx.State != model.StatePublic || idx.MVIndex || idx.VectorInfo != nil || !indexStateAnalyzable {
 					continue
 				}
 				for _, idxCol := range idx.Columns {
@@ -2395,13 +2390,8 @@ func getModifiedIndexesInfoForAnalyze(
 			independentIdxsInfo = append(independentIdxsInfo, originIdx)
 			continue
 		}
-<<<<<<< HEAD
 		if originIdx.VectorInfo != nil {
-			stmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", originIdx.Name.L))
-=======
-		if originIdx.IsColumnarIndex() {
-			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", originIdx.Name.L))
->>>>>>> 007861065ee (planner: create index with embedded analyze (#63143))
+			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {

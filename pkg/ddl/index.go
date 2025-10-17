@@ -1126,22 +1126,13 @@ SwitchIndexState:
 
 			// Finish this job.
 			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+				ingest.LitBackCtxMgr.Unregister(job.ID)
+			}
 			logutil.DDLLogger().Info("run add index job done",
 				zap.String("charset", job.Charset),
 				zap.String("collation", job.Collate))
 		}
-
-<<<<<<< HEAD
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			ingest.LitBackCtxMgr.Unregister(job.ID)
-		}
-		logutil.DDLLogger().Info("run add index job done",
-			zap.String("charset", job.Charset),
-			zap.String("collation", job.Collate))
-=======
->>>>>>> 007861065ee (planner: create index with embedded analyze (#63143))
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", allIndexInfos[0].State)
 	}

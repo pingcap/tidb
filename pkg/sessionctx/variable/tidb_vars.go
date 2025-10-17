@@ -861,6 +861,9 @@ const (
 	// functions instead of the selectionFactor (0.8).
 	TiDBDefaultStrMatchSelectivity = "tidb_default_string_match_selectivity"
 
+	// TiDBEnableStatsUpdateDuringDDL indicate the embedded analyze behavior inside ddl.
+	TiDBEnableStatsUpdateDuringDDL = "tidb_stats_update_during_ddl"
+
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
 	// TiDBPrepPlanCacheSize indicates the number of cached statements.
@@ -1501,6 +1504,7 @@ const (
 	DefTiDBGenerateBinaryPlan                         = true
 	DefEnableTiDBGCAwareMemoryTrack                   = false
 	DefTiDBDefaultStrMatchSelectivity                 = 0.8
+	DefTiDBEnableStatsUpdateDuringDDL                 = false
 	DefTiDBEnableTmpStorageOnOOM                      = true
 	DefTiDBEnableMDL                                  = true
 	DefTiFlashFastScan                                = false

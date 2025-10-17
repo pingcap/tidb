@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"strings"
 	"time"
 
@@ -43,13 +44,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
->>>>>>> 007861065ee (planner: create index with embedded analyze (#63143))
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -434,25 +429,6 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
-func (w *worker) doAnalyzeRunning(job *model.Job, tblInfo *model.TableInfo) {
-	// after all old index data are reorged. re-analyze it.
-	done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-	if done {
-		job.AnalyzeState = model.AnalyzeStateDone
-	}
-	// previously, when reorg is done, and before we set the state to public, we need all other sub-task to
-	// be ready as well which is via setting this job as NornRevertible, then we can continue skip current
-	// sub and process the others.
-	// And when all sub-task are ready, which means each of them could be public in one more ddl round. And
-	// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
-	// use the schema version generated once.
-	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible && job.AnalyzeState == model.AnalyzeStateDone {
-		// This is the final revertible state before public.
-		job.MarkNonRevertible()
-	}
-	// not done yet
-}
-
 func (w *worker) doModifyColumnTypeWithData(
 	jobCtx *jobContext,
 	job *model.Job,
@@ -653,12 +629,12 @@ func (w *worker) doModifyColumnTypeWithData(
 }
 
 func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
-	analyzeVer := vardef.DefTiDBAnalyzeVersion
-	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
+	analyzeVer := variable.DefTiDBAnalyzeVersion
+	if val, ok := job.GetSessionVars(variable.TiDBAnalyzeVersion); ok {
 		analyzeVer = variable.TidbOptInt(val, analyzeVer)
 	}
-	enableDDLAnalyze := vardef.DefTiDBEnableDDLAnalyze
-	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok {
+	enableDDLAnalyze := variable.DefTiDBEnableStatsUpdateDuringDDL
+	if val, ok := job.GetSessionVars(variable.TiDBEnableStatsUpdateDuringDDL); ok {
 		enableDDLAnalyze = variable.TiDBOptOn(val)
 	}
 	isPartitionedTable := tbl.GetPartitionInfo() == nil
