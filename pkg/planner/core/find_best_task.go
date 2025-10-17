@@ -1327,7 +1327,7 @@ func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPa
 	// AccessConds could miss some predicates since the DataSource can't see join predicates.
 	// For example, `where t1.a=t2.a and t2.b=1`, `t1=a=t2.a` is not pushed down to t2's accessConds since it's a join
 	// predicate. We need to set columns used as join keys to accessCondsColMap/indexCondsColMap manually.
-	for i := 0; i < usedIndexCols; i++ {
+	for i := range usedIndexCols {
 		candidate.accessCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
 		candidate.indexCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
 	}
