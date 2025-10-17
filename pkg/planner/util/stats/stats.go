@@ -32,8 +32,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-// GetTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable that will be used to record used stats.
-func GetTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
+// GetTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable
+// that will be used to record used stats.
+func GetTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (
+	fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
 	is := sctx.GetLatestISWithoutSessExt()
