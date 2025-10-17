@@ -33,6 +33,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const asyncMergeWarn = "Warning 1105 The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future release; changing it is discouraged."
+
 func TestShowGlobalStatsWithAsyncMergeGlobal(t *testing.T) {
 	testShowGlobalStats(t, true)
 }
@@ -51,6 +53,7 @@ func testShowGlobalStats(t *testing.T, isAsync bool) {
 	} else {
 		tk.MustExec("set @@global.tidb_enable_async_merge_global_stats = 1")
 	}
+	tk.MustQuery("show warnings").Check(testkit.Rows(asyncMergeWarn))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
@@ -988,8 +991,10 @@ partitions 12;`)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tk.MustExec("set @@tidb_enable_async_merge_global_stats=ON;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(asyncMergeWarn))
 	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
 	tk.MustExec("set @@tidb_enable_async_merge_global_stats=OFF;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(asyncMergeWarn))
 	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
 }
 

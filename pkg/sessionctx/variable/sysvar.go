@@ -2975,7 +2975,18 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
+<<<<<<< HEAD
 		Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAsyncMergeGlobalStats, Value: BoolToOnOff(DefTiDBEnableAsyncMergeGlobalStats), Type: TypeBool,
+=======
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:  vardef.TiDBEnableAsyncMergeGlobalStats,
+		Value: BoolToOnOff(vardef.DefTiDBEnableAsyncMergeGlobalStats),
+		Type:  vardef.TypeBool,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(errors.NewNoStackError("The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future release; changing it is discouraged."))
+			return normalizedValue, nil
+		},
+>>>>>>> f272a258f94 (variable: mark tidb_enable_async_merge_global_stats as deprecated soon (#63911))
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnableAsyncMergeGlobalStats = TiDBOptOn(val)
 			return nil
