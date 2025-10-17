@@ -1022,47 +1022,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	if tableID != newTableID {
 		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, 0), "Old table id %d has still entries!", tableID)
 	}
-GlobalLoop:
-	for _, globIdx := range originalGlobalIndexIDs {
-		for _, idx := range tbl.Meta().Indices {
-			if idx.ID == globIdx {
-				continue GlobalLoop
-			}
-		}
-		// Global index removed
-		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, globIdx), "Global index id %d for table id %d has still entries!", globIdx, tableID)
-	}
-LocalLoop:
-	for _, locIdx := range originalIndexIDs {
-		for _, idx := range tbl.Meta().Indices {
-			if idx.ID == locIdx {
-				continue LocalLoop
-			}
-		}
-		// local index removed
-		if tbl.Meta().Partition != nil {
-			for _, part := range tbl.Meta().Partition.Definitions {
-				require.False(t, HaveEntriesForTableIndex(t, tkO, part.ID, locIdx), "Local index id %d for partition id %d has still entries!", locIdx, tableID)
-			}
-		}
-	}
-PartitionLoop:
-	for _, partID := range originalPartitions {
-		if tbl.Meta().Partition != nil {
-			for _, def := range tbl.Meta().Partition.Definitions {
-				if def.ID == partID {
-					continue PartitionLoop
-				}
-			}
-		}
-		// old partitions removed
-		require.False(t, HaveEntriesForTableIndex(t, tkO, partID, 0), "Reorganized partition id %d for table id %d has still entries!", partID, tableID)
-	}
-	// TODO: Use this instead of the above, which check for any row that should not exists
-	// When the following issues are fixed:
-	// TestMultiSchemaModifyColumn - https://github.com/pingcap/tidb/issues/60264
-	// TestMultiSchemaPartitionByGlobalIndex -https://github.com/pingcap/tidb/issues/60263
-	//checkTableAndIndexEntries(t, tkO, originalPartitions)
+	checkTableAndIndexEntries(t, tkO, originalPartitions)
 
 	if postFn != nil {
 		postFn(tkO, store)
