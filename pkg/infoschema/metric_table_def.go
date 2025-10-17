@@ -536,6 +536,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "sum(rate(tidb_statistics_auto_analyze_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
 		Labels:  []string{"instance", "type"},
 	},
+	"tidb_statistics_manual_analyze_ops": {
+		Comment: "TiDB manual analyze query per second",
+		PromQL:  "sum(rate(tidb_statistics_manual_analyze_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
+		Labels:  []string{"instance", "type"},
+	},
 	"tidb_statistics_stats_inaccuracy_rate": {
 		Comment:  "The quantile of TiDB statistics inaccurate rate",
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_statistics_stats_inaccuracy_rate_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
