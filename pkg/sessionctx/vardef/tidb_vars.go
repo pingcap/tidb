@@ -1506,7 +1506,7 @@ const (
 	DefTiDBShardAllocateStep                = math.MaxInt64
 	DefTiDBPointGetCache                    = false
 	DefTiDBEnableTelemetry                  = true
-	DefTiDBEnableParallelApply              = false
+	DefTiDBEnableParallelApply              = true
 	DefTiDBPartitionPruneMode               = "dynamic"
 	DefTiDBEnableRateLimitAction            = false
 	DefTiDBEnableAsyncCommit                = false
