@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"slices"
@@ -60,6 +61,9 @@ var (
 	engineMetaKey      = []byte{0, 'm', 'e', 't', 'a'}
 	normalIterStartKey = []byte{1}
 )
+
+// tombStoneFileSuffix is the suffix of the tombstone file.
+const tombStoneFileSuffix = ".tombstone"
 
 type importMutexState uint32
 
@@ -168,21 +172,84 @@ func (e *Engine) Close() error {
 	return err
 }
 
-// Cleanup remove meta, db and duplicate detection files
-func (e *Engine) Cleanup(dataDir string) error {
-	if err := os.RemoveAll(e.sstDir); err != nil {
-		return errors.Trace(err)
+// CleanupPartialFolders cleans up the partial delete folders in the directory.
+func CleanupPartialFolders(dataDir, tableName string, indexIDs []int64) error {
+	for _, indexID := range indexIDs {
+		_, engineUUID := backend.MakeUUID(tableName, indexID)
+
+		tombstoneFile := filepath.Join(dataDir, engineUUID.String()+tombStoneFileSuffix)
+		if _, err := os.Stat(tombstoneFile); err == nil {
+			if err := cleanupDBFolder(dataDir, engineUUID.String()); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
-	uuid := e.UUID.String()
-	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupDetectDirSuffix)); err != nil {
-		return errors.Trace(err)
+
+	return nil
+}
+
+// partialCleanupDirectory is used in test to simulate partial cleanup of a directory.
+func partialCleanupDirectory(dir string) {
+	var allFiles []string
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			allFiles = append(allFiles, path)
+		}
+		return nil
+	})
+
+	if os.IsNotExist(err) {
+		return
 	}
-	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupResultDirSuffix)); err != nil {
+
+	// Remove one file to simulate partial cleanup is enough
+	toDelete := allFiles[rand.Intn(len(allFiles))]
+	//nolint: errcheck
+	os.Remove(toDelete)
+}
+
+// cleanupDBFolder cleans up the data folder for the given UUID.
+func cleanupDBFolder(dataDir string, uuid string) error {
+	// Mark the folder is being cleaned up.
+	tombstoneFile := filepath.Join(dataDir, uuid+tombStoneFileSuffix)
+	if _, err := os.Create(tombstoneFile); err != nil {
 		return errors.Trace(err)
 	}
 
-	dbPath := filepath.Join(dataDir, uuid)
-	return errors.Trace(os.RemoveAll(dbPath))
+	failpoint.Inject("mockCleanupDBFolderError", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			// Partially cleanup the pebble directory, so we can't recover from it.
+			partialCleanupDirectory(filepath.Join(dataDir, uuid))
+			failpoint.Return(errors.New("mock cleanup db folder error"))
+		}
+	})
+
+	for _, dir := range []string{
+		engineSSTDir(dataDir, uuid),
+		filepath.Join(dataDir, uuid+DupDetectDirSuffix),
+		filepath.Join(dataDir, uuid+DupResultDirSuffix),
+		filepath.Join(dataDir, uuid),
+	} {
+		if err := os.RemoveAll(dir); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	failpoint.Inject("mockRemoveTombstoneError", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(errors.New("mock cleanup tombstone error"))
+		}
+	})
+
+	return errors.Trace(os.Remove(tombstoneFile))
+}
+
+// Cleanup remove meta, db and duplicate detection files
+func (e *Engine) Cleanup(dataDir string) error {
+	return cleanupDBFolder(dataDir, e.UUID.String())
 }
 
 // Exist checks if db folder existing (meta sometimes won't flush before lightning exit)
