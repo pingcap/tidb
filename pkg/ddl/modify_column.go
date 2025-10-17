@@ -1088,45 +1088,62 @@ func (w *worker) doModifyColumnIndexReorg(
 			return ver, errors.Trace(err)
 		}
 
-		reorgElements := BuildElements(nil, changingIdxInfos)
-		done, ver, err := doReorgWorkForModifyColumnWrapper(jobCtx, w, job, tbl, oldCol, reorgElements)
-		if !done {
-			return ver, err
-		}
-		failpoint.InjectCall("afterReorgWorkForModifyColumn")
+		switch job.AnalyzeState {
+		case model.AnalyzeStateNone:
+			// reorg the data.
+			reorgElements := BuildElements(nil, changingIdxInfos)
+			done, ver, err := doReorgWorkForModifyColumn(jobCtx, w, job, tbl, oldCol, reorgElements)
+			if !done {
+				return ver, err
+			}
 
-		oldTp := oldCol.FieldType
-		oldName := oldCol.Name
-		oldID := oldCol.ID
-		tblInfo.Columns[oldCol.Offset] = args.Column.Clone()
-		tblInfo.Columns[oldCol.Offset].ChangingFieldType = &oldTp
-		tblInfo.Columns[oldCol.Offset].Offset = oldCol.Offset
-		tblInfo.Columns[oldCol.Offset].ID = oldID
-		tblInfo.Columns[oldCol.Offset].State = model.StatePublic
-		oldCol = tblInfo.Columns[oldCol.Offset]
+			if checkAnalyzeNecessary(job, changingIdxInfos, tblInfo) {
+				job.AnalyzeState = model.AnalyzeStateRunning
+			} else {
+				job.AnalyzeState = model.AnalyzeStateSkipped
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateRunning:
+			// after all old index data are reorged. re-analyze it.
+			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done {
+				job.AnalyzeState = model.AnalyzeStateDone
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+			failpoint.InjectCall("afterReorgWorkForModifyColumn")
+			oldTp := oldCol.FieldType
+			oldName := oldCol.Name
+			oldID := oldCol.ID
+			tblInfo.Columns[oldCol.Offset] = args.Column.Clone()
+			tblInfo.Columns[oldCol.Offset].ChangingFieldType = &oldTp
+			tblInfo.Columns[oldCol.Offset].Offset = oldCol.Offset
+			tblInfo.Columns[oldCol.Offset].ID = oldID
+			tblInfo.Columns[oldCol.Offset].State = model.StatePublic
+			oldCol = tblInfo.Columns[oldCol.Offset]
 
-		updateObjectState(nil, oldIdxInfos, model.StateWriteOnly)
-		updateObjectState(nil, changingIdxInfos, model.StatePublic)
-		moveChangingColumnToDest(tblInfo, oldCol, oldCol, pos)
-		moveIndexInfoToDest(tblInfo, oldCol, oldIdxInfos, changingIdxInfos)
-		markOldIndexesRemoving(oldIdxInfos, changingIdxInfos)
-		for i, idx := range changingIdxInfos {
-			for j, idxCol := range idx.Columns {
-				if idxCol.Name.L == oldName.L {
-					oldIdxInfos[i].Columns[j].Name = colName
-					oldIdxInfos[i].Columns[j].Offset = oldCol.Offset
-					oldIdxInfos[i].Columns[j].UsingChangingType = true
-					changingIdxInfos[i].Columns[j].Name = colName
-					changingIdxInfos[i].Columns[j].Offset = oldCol.Offset
-					changingIdxInfos[i].Columns[j].UsingChangingType = false
+			updateObjectState(nil, oldIdxInfos, model.StateWriteOnly)
+			updateObjectState(nil, changingIdxInfos, model.StatePublic)
+			moveChangingColumnToDest(tblInfo, oldCol, oldCol, pos)
+			moveIndexInfoToDest(tblInfo, oldCol, oldIdxInfos, changingIdxInfos)
+			markOldIndexesRemoving(oldIdxInfos, changingIdxInfos)
+			for i, idx := range changingIdxInfos {
+				for j, idxCol := range idx.Columns {
+					if idxCol.Name.L == oldName.L {
+						oldIdxInfos[i].Columns[j].Name = colName
+						oldIdxInfos[i].Columns[j].Offset = oldCol.Offset
+						oldIdxInfos[i].Columns[j].UsingChangingType = true
+						changingIdxInfos[i].Columns[j].Name = colName
+						changingIdxInfos[i].Columns[j].Offset = oldCol.Offset
+						changingIdxInfos[i].Columns[j].UsingChangingType = false
+					}
 				}
 			}
-		}
-
-		job.SchemaState = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
+			job.SchemaState = model.StatePublic
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		}
 	case model.StatePublic:
 		if len(oldIdxInfos) == 0 {
