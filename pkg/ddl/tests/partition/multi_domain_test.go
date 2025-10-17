@@ -899,6 +899,9 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 
 	initFn(tkO)
 
+	tkO.MustExec("set session tidb_enable_fast_table_check = off")
+	tkO.MustExec(`admin check table t`)
+
 	domOwner.Reload()
 	domNonOwner.Reload()
 
@@ -981,6 +984,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 			state = job.SchemaState
 		}
 		states = append(states, state)
+		tkO.MustExec(fmt.Sprintf(`admin check table t /* state: %s */`, state.String()))
 		loopFn(tkO, tkNO)
 		domNonOwner.Reload()
 		if !releaseHook {
@@ -994,7 +998,6 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	}
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep")
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
-	tkO.MustExec("set session tidb_enable_fast_table_check = off")
 	tkO.MustExec(`admin check table t`)
 	if !tbl.Meta().HasClusteredIndex() {
 		// Debug prints, so it is possible to verify possible newly generated _tidb_rowid's
