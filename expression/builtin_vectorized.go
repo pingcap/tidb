@@ -45,13 +45,8 @@ var columnTempl = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.
 func newLocalColumnPool() *localColumnPool {
 	return &localColumnPool{
 		sync.Pool{
-<<<<<<< HEAD:expression/builtin_vectorized.go
 			New: func() interface{} {
-				return newColumn.CopyConstruct(nil)
-=======
-			New: func() any {
 				return columnTempl.CopyConstruct(nil)
->>>>>>> f8a207ce906 (expression: don't allocate column every time when to newLocalColumnPool (#63864)):pkg/expression/builtin_vectorized.go
 			},
 		},
 	}
