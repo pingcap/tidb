@@ -627,7 +627,9 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			path.IsSingleScan = true
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
-			path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)
+			if !path.IsSingleScan {
+				path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)
+			}
 		}
 		// step: 3
 		// Try some heuristic rules to select access path.
@@ -807,19 +809,42 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		return paths
 	}
 
-	totalWhereColumns := len(whereColumns)
-	totalOrderingColumns := len(orderingColumns)
-	totalJoinColumns := len(joinColumns)
-	// Calculate total coverage as a single table index
-	totalLocalRequiredCols := len(whereColumns) + len(orderingColumns)
-	// Calculate total coverage as a join table index
-	totalJoinRequiredCols := len(joinColumns) + len(whereColumns)
-	maxConsecutive := 0
-
 	// If there are no required columns, don't prune - just return all paths
-	if totalLocalRequiredCols == 0 && totalJoinRequiredCols == 0 {
+	if len(whereColumns) == 0 && len(orderingColumns) == 0 && len(joinColumns) == 0 {
 		return paths
 	}
+
+	totalWhereColumns := 0
+	totalOrderingColumns := 0
+	totalJoinColumns := 0
+
+	// Build ID-based lookup maps for column matching
+	whereColIDs := make(map[int64]struct{}, len(whereColumns))
+	for _, col := range whereColumns {
+		whereColIDs[col.ID] = struct{}{}
+		totalWhereColumns++
+	}
+	orderingColIDs := make(map[int64]struct{}, len(orderingColumns))
+	for _, col := range orderingColumns {
+		// Skip if already in whereColIDs to avoid double-counting
+		if _, exists := whereColIDs[col.ID]; !exists {
+			orderingColIDs[col.ID] = struct{}{}
+			totalOrderingColumns++
+		}
+	}
+	joinColIDs := make(map[int64]struct{}, len(joinColumns))
+	for _, col := range joinColumns {
+		// Skip if already in whereColIDs to avoid double-counting
+		if _, exists := whereColIDs[col.ID]; !exists {
+			joinColIDs[col.ID] = struct{}{}
+			totalJoinColumns++
+		}
+	}
+	// Calculate total coverage as a single table index
+	totalLocalRequiredCols := totalWhereColumns + totalOrderingColumns
+	// Calculate total coverage as a join table index
+	totalJoinRequiredCols := totalJoinColumns + totalWhereColumns
+	maxConsecutiveWhere, maxConsecutiveJoin := 0, 0
 
 	// maxIndexes allows a minimum number of indexes to be kept regardless of threshold
 	// This avoids extreme pruning when threshold is very low (or even zero).
@@ -830,20 +855,6 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	perfectCoveringIndexes := make([]indexWithScore, 0, maxIndexes) // Indexes covering all required columns
 	preferredIndexes := make([]indexWithScore, 0, maxIndexes)       // "Next" best indexes with preferable coveraage"
 	tablePaths := make([]*util.AccessPath, 0, 1)                    // Usually just one table path
-
-	// Build ID-based lookup maps for column matching (more reliable than names)
-	whereColIDs := make(map[int64]struct{}, totalWhereColumns)
-	for _, col := range whereColumns {
-		whereColIDs[col.ID] = struct{}{}
-	}
-	orderingColIDs := make(map[int64]struct{}, totalOrderingColumns)
-	for _, col := range orderingColumns {
-		orderingColIDs[col.ID] = struct{}{}
-	}
-	whereJoinColIDs := make(map[int64]struct{}, totalJoinColumns)
-	for _, col := range joinColumns {
-		whereJoinColIDs[col.ID] = struct{}{}
-	}
 
 	for _, path := range paths {
 		if path.IsTablePath() {
@@ -887,7 +898,7 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			}
 			// Check if this index column matches a join column
 			if totalJoinColumns > 0 {
-				if _, found := whereJoinColIDs[idxColID]; found {
+				if _, found := joinColIDs[idxColID]; found {
 					coveredJoinCount++
 					// Track consecutive matches from start of index
 					if i == consecutiveJoinCount+consecutiveWhereCount {
@@ -926,14 +937,17 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 				consecutiveJoinCount:     consecutiveJoinCount,
 				consecutiveOrderingCount: consecutiveOrderingCount,
 			})
-			maxConsecutive = max(maxConsecutive, totalConsecutive)
+			maxConsecutiveWhere = max(maxConsecutiveWhere, consecutiveWhereCount)
+			maxConsecutiveJoin = max(maxConsecutiveJoin, consecutiveJoinCount)
 			continue
 		}
 
 		lenPerfectCoveringIndexes := len(perfectCoveringIndexes)
 		// If we have enough perfect covering indexes, don't add to preferred indexes
 		// unless the current index has more consecutive matches than the max consecutive found so far.
-		if lenPerfectCoveringIndexes >= maxToKeep && totalConsecutive <= maxConsecutive {
+		if lenPerfectCoveringIndexes >= maxToKeep &&
+			consecutiveWhereCount <= maxConsecutiveWhere &&
+			consecutiveJoinCount <= maxConsecutiveJoin {
 			continue
 		}
 
@@ -941,12 +955,15 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		hasGoodCoverage := false
 
 		if lenPerfectCoveringIndexes >= minToKeep {
-			if totalConsecutive > maxConsecutive {
+			if consecutiveWhereCount > maxConsecutiveWhere || consecutiveJoinCount > maxConsecutiveJoin {
 				hasGoodCoverage = true
 			}
 			if consecutiveWhereCount == totalWhereColumns && totalWhereColumns > 1 {
 				hasGoodCoverage = true
 			}
+			// consecutiveJoinCount can be greater than totalJoinColumns because
+			// we include consecutive where and join columns - since both are available
+			// for index join matching.
 			if consecutiveJoinCount >= totalJoinColumns && totalJoinColumns > 0 {
 				hasGoodCoverage = true
 			}
@@ -973,6 +990,8 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 				consecutiveOrderingCount: consecutiveOrderingCount,
 			})
 		}
+		maxConsecutiveWhere = max(maxConsecutiveWhere, consecutiveWhereCount)
+		maxConsecutiveJoin = max(maxConsecutiveJoin, consecutiveJoinCount)
 	}
 
 	// Build result with priority: table paths, forced indexes, perfect covering, then preferred
@@ -1001,10 +1020,19 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			// Tie-breaker: shorter index first
 			return len(a.path.Index.Columns) - len(b.path.Index.Columns)
 		})
+		// Set IsSingleScan on the paths since we already calculated it
+		for path, isSingle := range singleMap {
+			path.IsSingleScan = isSingle
+		}
 	}
 
 	// Add perfect covering indexes (prefer these over preferred)
+	// Calculate how many index paths (not table paths) we can still add
 	remaining := maxToKeep - len(result)
+	if remaining <= 0 {
+		// Already at or over the limit with just table paths, can't add more
+		remaining = 0
+	}
 	if remaining > 0 && len(perfectCoveringIndexes) > 0 {
 		toAdd := min(remaining, len(perfectCoveringIndexes))
 		for _, idxWithScore := range perfectCoveringIndexes[:toAdd] {
