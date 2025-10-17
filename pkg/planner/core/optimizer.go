@@ -116,6 +116,7 @@ var optRuleList = []base.LogicalOptRule{
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},
 	&ResolveExpand{},
+	&LimitOptimization{},
 }
 
 // Interaction Rule List
