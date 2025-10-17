@@ -6,6 +6,10 @@ go_test(
     srcs = ["planner_issue_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 8,
-    deps = ["//testkit"],
+    shard_count = 9,
+    deps = [
+        "//planner/core",
+        "//testkit",
+        "//util/size",
+    ],
 )

@@ -17,11 +17,14 @@ package simpletest
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/stretchr/testify/require"
 )
 
 func TestLongBlobReuse(t *testing.T) {
+	core.MaxMemoryLimitForOverlongType = 500 * size.GB
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
