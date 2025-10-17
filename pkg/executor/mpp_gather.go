@@ -129,6 +129,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (e *MPPGather) Close() error {
 	if e.dummy {
 		if e.respIter != nil {
+			_ = e.respIter.Close()
 			return errors.Trace(errors.New("e.respIter != nil when e.dummy is set"))
 		}
 		return nil
