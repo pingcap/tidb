@@ -171,6 +171,8 @@ const (
 	SlowLogNumCopTasksStr = "Num_cop_tasks"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
+	// SlowLogMemArbitration is the total wait time(ns) of mem arbitration
+	SlowLogMemArbitration = "Mem_arbitration"
 	// SlowLogDiskMax is the max number bytes of disk used in this statement.
 	SlowLogDiskMax = "Disk_max"
 	// SlowLogKVTotal is the total time waiting for kv.
@@ -284,6 +286,7 @@ type SlowQueryLogItems struct {
 	CPUUsages         ppcpuusage.CPUUsages
 	StorageKV         bool // query read from TiKV
 	StorageMPP        bool // query read from TiFlash
+	MemArbitration    float64
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -433,6 +436,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if logItems.MemMax > 0 {
 		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
+	}
+	if logItems.MemArbitration > 0 {
+		writeSlowLogItem(&buf, SlowLogMemArbitration, strconv.FormatFloat(logItems.MemArbitration, 'f', -1, 64))
 	}
 	if logItems.DiskMax > 0 {
 		writeSlowLogItem(&buf, SlowLogDiskMax, strconv.FormatInt(logItems.DiskMax, 10))
@@ -713,6 +719,15 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 		},
 		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
 			return matchGE(threshold, items.MemMax)
+		},
+	},
+	strings.ToLower(SlowLogMemArbitration): {
+		Parse: parseFloat64,
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			items.MemArbitration = seVars.StmtCtx.MemTracker.MemArbitration().Seconds()
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, items.MemArbitration)
 		},
 	},
 	strings.ToLower(SlowLogDiskMax): {
