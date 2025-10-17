@@ -47,7 +47,7 @@ func TestModifyColumnTypeArgs(t *testing.T) {
 	tk.MustExec("drop table if exists t_modify_column_args")
 	tk.MustExec("create table t_modify_column_args(a int, unique(a))")
 
-	err := tk.ExecToErr("alter table t_modify_column_args modify column a tinyint")
+	err := tk.ExecToErr("alter table t_modify_column_args modify column a varchar(16)")
 	require.Error(t, err)
 	// error goes like `mock update version and tableInfo error,jobID=xx`
 	strs := strings.Split(err.Error(), ",")

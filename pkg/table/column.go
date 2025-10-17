@@ -327,40 +327,46 @@ func handleZeroDatetime(ec errctx.Context, mode mysql.SQLMode, ft *types.FieldTy
 func CastValue(sctx variable.SessionVarsProvider, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	vars := sctx.GetSessionVars()
 	sc := vars.StmtCtx
-	return castColumnValue(sc.TypeCtx(), sc.ErrCtx(), vars.SQLMode, val, col, vars.ConnectionID, returnErr, forceIgnoreTruncate)
+	return castColumnValue(sc.TypeCtx(), sc.ErrCtx(), vars.SQLMode, val, &col.FieldType, col.Name.O, vars.ConnectionID, returnErr, forceIgnoreTruncate)
+}
+
+// CastColumnValueToType casts a value based on column type with expression BuildContext
+func CastColumnValueToType(ctx expression.BuildContext, val types.Datum, tp *types.FieldType, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+	evalCtx := ctx.GetEvalCtx()
+	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, tp, "", ctx.ConnectionID(), returnErr, forceIgnoreTruncate)
 }
 
 // CastColumnValue casts a value based on column type with expression BuildContext
 func CastColumnValue(ctx expression.BuildContext, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	evalCtx := ctx.GetEvalCtx()
-	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, col, ctx.ConnectionID(), returnErr, forceIgnoreTruncate)
+	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, &col.FieldType, col.Name.O, ctx.ConnectionID(), returnErr, forceIgnoreTruncate)
 }
 
 // castColumnValue casts a value based on column type.
-func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, col *model.ColumnInfo, connID uint64, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
-	casted, err = val.ConvertTo(tc, &col.FieldType)
+func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, ft *types.FieldType, colName string, connID uint64, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+	casted, err = val.ConvertTo(tc, ft)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
 		return casted, err
 	}
-	if err != nil && types.ErrTruncated.Equal(err) && col.GetType() != mysql.TypeSet && col.GetType() != mysql.TypeEnum {
+	if err != nil && types.ErrTruncated.Equal(err) && ft.GetType() != mysql.TypeSet && ft.GetType() != mysql.TypeEnum {
 		str, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
 		}
-		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str)
+		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(ft.CompactStr(), str)
 	} else if !casted.IsNull() &&
-		(col.GetType() == mysql.TypeDate || col.GetType() == mysql.TypeDatetime || col.GetType() == mysql.TypeTimestamp) {
+		(ft.GetType() == mysql.TypeDate || ft.GetType() == mysql.TypeDatetime || ft.GetType() == mysql.TypeTimestamp) {
 		str, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
 			str = val.GetString()
 		}
-		if innCasted, exit, innErr := handleZeroDatetime(ec, sqlMode, &col.FieldType, casted, str, types.ErrWrongValue.Equal(err)); exit {
+		if innCasted, exit, innErr := handleZeroDatetime(ec, sqlMode, ft, casted, str, types.ErrWrongValue.Equal(err)); exit {
 			return innCasted, innErr
 		}
 	} else if err != nil && charset.ErrInvalidCharacterString.Equal(err) {
-		err = convertToIncorrectStringErr(err, col.Name.O)
+		err = convertToIncorrectStringErr(err, colName)
 		logutil.BgLogger().Debug("incorrect string value", zap.Uint64("conn", connID), zap.Error(err))
 	}
 
@@ -372,7 +378,7 @@ func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode,
 		return casted, err
 	}
 
-	if col.GetType() == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
+	if ft.GetType() == mysql.TypeString && !types.IsBinaryStr(ft) {
 		truncateTrailingSpaces(&casted)
 	}
 	return casted, err

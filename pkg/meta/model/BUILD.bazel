@@ -28,6 +28,7 @@ go_library(
         "//pkg/parser/types",
         "//pkg/planner/cascades/base",
         "//pkg/sessionctx/vardef",
+        "//pkg/types",
         "//pkg/util/intest",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",

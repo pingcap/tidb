@@ -60,7 +60,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, index idx(c2), index idx1(c1, c2));")
 
-	sql := "alter table t1 change c2 c2 mediumint;"
+	sql := "alter table t1 change c2 c2 varchar(16);"
 	// defaultBatchSize is equal to ddl.defaultBatchSize
 	base := defaultBatchSize * 8
 	// add some rows
@@ -168,16 +168,17 @@ func TestModifyColumnNullToNotNullWithChangingVal2(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockInsertValueAfterCheckNull", `return("insert into test.tt values (NULL, NULL)")`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockInsertValueAfterCheckNull"))
-	}()
+	// insert null value before modifying column
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterModifyColumnCheckValue", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("insert into test.tt values (NULL, NULL)")
+	})
 
 	tk.MustExec("drop table if exists tt;")
-	tk.MustExec(`create table tt (a bigint, b int, unique index idx(a));`)
+	tk.MustExec(`create table tt (a bigint, b int);`)
 	tk.MustExec("insert into tt values (1,1),(2,2),(3,3);")
 	err := tk.ExecToErr("alter table tt modify a int not null;")
-	require.EqualError(t, err, "[ddl:1265]Data truncated for column 'a' at row 1")
+	require.EqualError(t, err, "[ddl:1138]Invalid use of NULL value")
 	tk.MustExec("drop table tt")
 }
 
@@ -254,32 +255,22 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 			return
 		}
 		once.Do(func() {
-			checkErr = tk2.ExecToErr("insert into t1 values ()")
+			// Insert null value to make modify column fail.
+			require.NoError(t, tk2.ExecToErr("insert into t1 values ()"))
 		})
 	})
 	err := tk1.ExecToErr("alter table t1 change c2 c2 tinyint not null")
 	require.NoError(t, checkErr)
-	require.EqualError(t, err, "[ddl:1265]Data truncated for column 'c2' at row 1")
+	require.EqualError(t, err, "[ddl:1138]Invalid use of NULL value")
 	tk1.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
 
 	// Check insert error when column has PreventNullInsertFlag.
 	tk1.MustExec("delete from t1")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if tbl.Meta().ID != job.TableID {
-			return
-		}
-
-		if job.State != model.JobStateRunning {
-			return
-		}
-		if job.SchemaState == model.StatePublic {
-			return
-		}
-		// now c2 has PreventNullInsertFlag, an error is expected.
-		checkErr = tk2.ExecToErr("insert into t1 values ()")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterModifyColumnStateDeleteOnly", func(_ int64) {
+		err = tk2.ExecToErr("insert into t1 values ()")
+		require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
 	})
 	tk1.MustExec("alter table t1 change c2 c2 tinyint not null")
-	require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
 
 	c2 := external.GetModifyColumn(t, tk1, "test", "t1", "c2", false)
 	require.True(t, mysql.HasNotNullFlag(c2.GetFlag()))
@@ -559,14 +550,14 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 	tk.MustExec(`
 		CREATE TABLE t (
 			id int NOT NULL AUTO_INCREMENT,
-			val0 bigint NOT NULL,
+			val0 varchar(16) NOT NULL,
 			val1 int NOT NULL,
 			padding varchar(256) NOT NULL DEFAULT '',
 			PRIMARY KEY (id)
 		);
 	`)
 	tk.MustExec("CREATE INDEX val0_idx ON t (val0)")
-	tk.MustExec("insert into t (val0, val1, padding) values (1, 1, 'a'), (2, 2, 'b'), (3, 3, 'c');")
+	tk.MustExec("insert into t (val0, val1, padding) values ('1', 1, 'a'), ('2', 2, 'b'), ('3', 3, 'c')")
 
 	conflictOnce := sync.Once{}
 	conflictCh := make(chan struct{})
@@ -576,7 +567,7 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 			conflictOnce.Do(func() {
 				tk1.MustExec("use test")
 				// inject a write conflict for the delete DML.
-				tk1.MustExec("update t set val0 = 100 where id = 1;")
+				tk1.MustExec("update t set val0 = '100' where id = 1;")
 				close(conflictCh)
 			})
 		}
@@ -594,16 +585,98 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/afterLoadSchemaDiffs", func(int64) {
 				insertOnce.Do(func() {
 					tk3.MustExec("use test")
-					tk3.MustExec("insert into t (val0, val1, padding) values (4, 4, 'd');")
+					tk3.MustExec("insert into t (val0, val1, padding) values ('4', 4, 'd');")
 				})
 			})
 			<-conflictCh
 		})
 	})
-	tk.MustExec("alter table t modify column val0 int not null;")
+	tk.MustExec("alter table t modify column val0 varchar(8) not null;")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t order by id;").Check(testkit.Rows(
 		"2 2 2 b",
 		"3 3 3 c",
 		"4 4 4 d"))
+}
+
+func TestMultiSchemaModifyColumnWithSkipReorg(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(16), b bigint, c bigint, index i1(a), index i2(b), index i3(c), index i4(a, b))")
+	tk.MustExec("insert into t values ('a  ', 1, 1), ('b  ', 2, 2), ('c ', 3, 3)")
+	oldMeta := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	tk.MustExec("alter table t modify column a char(8) after b, modify column b int after a")
+	tk.MustExec("admin check table t")
+	newMeta := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	// the offset and ID of b should be unchanged
+	require.Equal(t, oldMeta.Columns[1].ID, newMeta.Columns[1].ID)
+}
+
+func TestModifyColumnWithSkipReorg(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+
+	oldMeta := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	// insert should fail by new column type check
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterFirstModifyColumnCheck", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		_, err := tk2.Exec("insert into t values (2147483648, 2147483648)")
+		require.Error(t, err)
+	})
+
+	tk.MustExec("alter table t modify column b mediumint not null")
+	newMeta := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	// ID should be the same.
+	require.Equal(t, oldMeta.Columns[1].ID, newMeta.Columns[1].ID)
+	require.Nil(t, newMeta.Columns[1].ChangingFieldType)
+	tk.MustExec("admin check table t")
+
+	// insert should succeed before adding flag, and this will make modify column fail.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterModifyColumnCheckValue", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("insert into t values (512, 512)")
+	})
+	tk.MustExecToErr("alter table t modify column b tinyint not null")
+	tk.MustExec("admin check table t")
+}
+
+func TestGetModifyColumnType(t *testing.T) {
+	type testCase struct {
+		tableSQL  string
+		modifySQL string
+		tp        byte
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tcs := []testCase{
+		{
+			tableSQL:  "create table t(a bigint)",
+			modifySQL: "alter table t modify column a int",
+			tp:        ddl.ModifyTypeNoReorgWithCheck,
+		},
+	}
+
+	for _, tc := range tcs {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+			require.Equal(t, tc.tp, tp)
+		})
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(tc.tableSQL)
+		tk.MustExec(tc.modifySQL)
+	}
 }

@@ -421,7 +421,7 @@ func indexContainsOtherReorg(
 		if tblCol.ID == currentChangingCol.ID {
 			continue // ignore current changing column.
 		}
-		if tblCol.ChangeStateInfo != nil {
+		if idxCol.UsingChangingType || tblCol.ChangeStateInfo != nil {
 			return true
 		}
 	}
@@ -514,7 +514,9 @@ func LocateOffsetToMove(currentOffset int, pos *ast.ColumnPosition, tblInfo *mod
 // BuildElements is exported for testing.
 func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
 	elements := make([]*meta.Element, 0, len(changingIdxs)+1)
-	elements = append(elements, &meta.Element{ID: changingCol.ID, TypeKey: meta.ColumnElementKey})
+	if changingCol != nil {
+		elements = append(elements, &meta.Element{ID: changingCol.ID, TypeKey: meta.ColumnElementKey})
+	}
 	for _, idx := range changingIdxs {
 		elements = append(elements, &meta.Element{ID: idx.ID, TypeKey: meta.IndexElementKey})
 	}
@@ -579,7 +581,13 @@ func (w *worker) updateCurrentElement(
 		// Job is cancelled. So it can't be done.
 		failpoint.Return(dbterror.ErrCancelledDDLJob)
 	})
+
 	// TODO: Support partition tables.
+	indexEleOffset := 0
+	if len(reorgInfo.elements) > 0 && bytes.Equal(reorgInfo.elements[0].TypeKey, meta.ColumnElementKey) {
+		indexEleOffset = 1
+	}
+
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		//nolint:forcetypeassert
 		err := w.updatePhysicalTableRow(ctx, t.(table.PhysicalTable), reorgInfo)
@@ -608,7 +616,7 @@ func (w *worker) updateCurrentElement(
 	startElementOffsetToResetHandle := -1
 	// This backfill job starts with backfilling index data, whose index ID is currElement.ID.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
-		for i, element := range reorgInfo.elements[1:] {
+		for i, element := range reorgInfo.elements[indexEleOffset:] {
 			if reorgInfo.currElement.ID == element.ID {
 				startElementOffset = i
 				startElementOffsetToResetHandle = i
@@ -617,7 +625,7 @@ func (w *worker) updateCurrentElement(
 		}
 	}
 
-	for i := startElementOffset; i < len(reorgInfo.elements[1:]); i++ {
+	for i := startElementOffset; i < len(reorgInfo.elements[indexEleOffset:]); i++ {
 		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
 		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
 		if i == startElementOffsetToResetHandle+1 {
@@ -625,7 +633,7 @@ func (w *worker) updateCurrentElement(
 		}
 
 		// Update the element in the reorgInfo for updating the reorg meta below.
-		reorgInfo.currElement = reorgInfo.elements[i+1]
+		reorgInfo.currElement = reorgInfo.elements[indexEleOffset+i]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
 		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
 		logutil.DDLLogger().Info("update column and indexes",
@@ -970,11 +978,14 @@ func markOldIndexesRemoving(oldIdxs []*model.IndexInfo, changingIdxs []*model.In
 	}
 }
 
+// markOldObjectRemoving changes the names of the old and new indexes/columns to mark them as removing and public respectively.
 func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
-	publicName := newColName
-	removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
-	renameColumnTo(oldCol, oldIdxs, removingName)
-	renameColumnTo(changingCol, changingIdxs, publicName)
+	if oldCol.ID != changingCol.ID {
+		publicName := newColName
+		removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
+		renameColumnTo(oldCol, oldIdxs, removingName)
+		renameColumnTo(changingCol, changingIdxs, publicName)
+	}
 
 	markOldIndexesRemoving(oldIdxs, changingIdxs)
 }
@@ -1005,7 +1016,9 @@ func renameColumnTo(col *model.ColumnInfo, idxInfos []*model.IndexInfo, newName 
 }
 
 func updateObjectState(col *model.ColumnInfo, idxs []*model.IndexInfo, state model.SchemaState) {
-	col.State = state
+	if col != nil {
+		col.State = state
+	}
 	for _, idx := range idxs {
 		idx.State = state
 	}
@@ -1287,12 +1300,6 @@ func modifyColsFromNull2NotNull(
 	defer w.sessPool.Put(sctx)
 
 	skipCheck := false
-	failpoint.Inject("skipMockContextDoExec", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) {
-			skipCheck = true
-		}
-	})
 	if !skipCheck {
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
 		err = checkForNullValue(ctx, sctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newCol, cols...)

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -279,6 +280,29 @@ func initTableIndices(t *TableCommon) error {
 	return nil
 }
 
+// checkDataWithModifyColumn checks if the data can be stored in the column with changingType.
+// It's used to prevent illegal data being inserted if we want to skip reorg.
+func checkDataWithModifyColumn(data types.Datum, changingType *types.FieldType) error {
+	strictCtx := exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(
+			exprstatic.NewEvalContext(
+				exprstatic.WithSQLMode(
+					mysql.ModeStrictAllTables | mysql.ModeStrictTransTables))))
+	dummyCol := &model.ColumnInfo{
+		FieldType: *changingType,
+	}
+	value, err := table.CastColumnValue(strictCtx, data, dummyCol, false, false)
+	if err != nil {
+		return err
+	}
+
+	// It's for the case from VARCHAR -> CHAR, but not used currently.
+	if changingType.GetType() == mysql.TypeVarString && value.GetString() != data.GetString() {
+		return errors.New("data truncation error during modify column")
+	}
+	return nil
+}
+
 // asIndex casts a table.Index to *index which is the actual type of index in TableCommon.
 func asIndex(idx table.Index) *index {
 	return idx.(*index)
@@ -439,8 +463,17 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	checkRowBuffer := mutateBuffers.GetCheckRowBufferWithCap(numColsCap)
 
 	for _, col := range t.Columns {
-		var value types.Datum
-		var err error
+		var (
+			value types.Datum
+			err   error
+		)
+
+		if col.ChangingFieldType != nil {
+			if err := checkDataWithModifyColumn(newData[col.Offset], col.ChangingFieldType); err != nil {
+				return err
+			}
+		}
+
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
@@ -766,6 +799,13 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	defer memBuffer.Cleanup(sh)
 
 	for _, col := range t.Columns {
+		if col.ChangingFieldType != nil {
+			intest.Assert(col.State == model.StatePublic, "ChangingFieldType should only be set for public columns")
+			if err := checkDataWithModifyColumn(r[col.Offset], col.ChangingFieldType); err != nil {
+				return nil, err
+			}
+		}
+
 		var value types.Datum
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			continue
