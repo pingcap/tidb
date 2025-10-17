@@ -148,7 +148,7 @@ func TestModifyColumnOldColumnIDNotFound(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
 	model.SetJobVerInUse(model.JobVersion1)
 	mockOwnerChange := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		if job.Type == model.ActionModifyColumn &&
 			job.SchemaState == model.StateWriteReorganization &&
 			!mockOwnerChange {
