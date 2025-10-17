@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -259,4 +260,59 @@ func (p *PhysicalCTEStorage) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 // Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalCTEStorage) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalCTEStorage(p, tasks...)
+}
+
+func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
+	if prop.IndexJoinProp != nil {
+		// even enforce hint can not work with this.
+		return base.InvalidTask, nil
+	}
+	var childLen int
+	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalCTE](super)
+	if ge != nil {
+		childLen = ge.InputsLen()
+	} else {
+		childLen = p.ChildLen()
+	}
+	if childLen > 0 {
+		// pass the super here to iterate among ge or logical plan both.
+		return utilfuncp.FindBestTask4BaseLogicalPlan(super, prop)
+	}
+	if !checkOpSelfSatisfyPropTaskTypeRequirement(p, prop) {
+		// Currently all plan cannot totally push down to TiKV.
+		return base.InvalidTask, nil
+	}
+	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
+		return base.InvalidTask, nil
+	}
+	// The physical plan has been build when derive stats.
+	pcte := PhysicalCTE{SeedPlan: p.Cte.SeedPartPhysicalPlan, RecurPlan: p.Cte.RecursivePartPhysicalPlan, CTE: p.Cte, CteAsName: p.CteAsName, CteName: p.CteName}.Init(p.SCtx(), p.StatsInfo())
+	pcte.SetSchema(p.Schema())
+	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
+		pcte.ReaderReceiver = PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.SCtx(), p.StatsInfo())
+		if prop.MPPPartitionTp != property.AnyType {
+			return base.InvalidTask, nil
+		}
+		t = NewMppTask(pcte, prop.MPPPartitionTp, prop.MPPPartitionCols, p.StatsInfo().HistColl, nil)
+	} else {
+		rt := &RootTask{}
+		rt.SetPlan(pcte)
+		t = rt
+	}
+	if prop.CanAddEnforcer {
+		t = EnforceProperty(prop, t, p.Plan.SCtx(), nil)
+	}
+	return t, nil
+}
+
+func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *property.PhysicalProperty) bool {
+	switch prop.TaskTp {
+	case property.MppTaskType:
+		// when parent operator ask current op to be mppTaskType, check operator itself here.
+		return logicalop.CanSelfBeingPushedToCopImpl(p, kv.TiFlash)
+	case property.CopSingleReadTaskType, property.CopMultiReadTaskType:
+		return logicalop.CanSelfBeingPushedToCopImpl(p, kv.TiKV)
+	default:
+		return true
+	}
 }
