@@ -6885,12 +6885,9 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 }
 
 func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
-	var scatterScope string
-	val, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegion)
-	if !ok {
-		logutil.DDLLogger().Info("won't scatter region since system variable didn't set")
-	} else {
-		scatterScope = val
+	if val, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegion); ok {
+		return val
 	}
-	return scatterScope
+	logutil.DDLLogger().Info("system variable tidb_scatter_region not found, use default value")
+	return variable.DefTiDBScatterRegion
 }
