@@ -88,6 +88,45 @@ func typeToString(tp byte) string {
 	return ""
 }
 
+// getModifyColumnType gets the modify column type.
+//  1. ModifyTypeNoReorg: The range of new type is a superset of the old type
+//  2. ModifyTypeNoReorgWithCheck: The range of new type is a subset of the old type, but we are running in strict SQL mode.
+//     And there is no index on this column.
+//     The difference between ModifyTypeNoReorgWithCheck and ModifyTypeNoReorg is that we need some additional checks.
+//  3. ModifyTypeIndexReorg: The range of new type is a subset of the old type, and there are indexes on this column.
+//  4. ModifyTypeReorg: other
+//
+// We need to ensure it's compatible with job submitted from older version of TiDB.
+func getModifyColumnType(
+	args *model.ModifyColumnArgs,
+	tblInfo *model.TableInfo,
+	oldCol *model.ColumnInfo,
+	sqlMode mysql.SQLMode) byte {
+	newCol := args.Column
+	if !needChangeColumnData(oldCol, args.Column) {
+		// It's not NULL->NOTNULL change
+		if mysql.HasNotNullFlag(oldCol.GetFlag()) || !mysql.HasNotNullFlag(newCol.GetFlag()) {
+			return modifyTypeNoReorg
+		}
+		return modifyTypeNoReorgWithCheck
+	}
+
+	// For backward compatibility
+	if args.ModifyColumnType == mysql.TypeNull {
+		return modifyTypeReorg
+	}
+
+	if needDoRowReorg(oldCol, args.Column, sqlMode) {
+		return modifyTypeReorg
+	}
+
+	relatedIndexes := buildRelatedIndexIDs(tblInfo, oldCol.ID)
+	if len(relatedIndexes) == 0 || !needDoIndexReorg(tblInfo, oldCol, args.Column, sqlMode) {
+		return modifyTypeNoReorgWithCheck
+	}
+	return modifyTypeIndexReorg
+}
+
 func getChangingCol(
 	args *model.ModifyColumnArgs,
 	tblInfo *model.TableInfo,
@@ -204,15 +243,13 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		)
 	}
 
-	intest.Assert(args.ModifyColumnType != modifyTypeNone, "invalid modify column type")
-
 	if job.IsRollingback() {
 		switch args.ModifyColumnType {
 		case modifyTypeNoReorg, modifyTypeNoReorgWithCheck:
-			// For those column-type-change jobs which don't reorg the data
+			// For those column-type-change jobs which don't need reorg.
 			return rollbackModifyColumnJob(jobCtx, tblInfo, job, args.Column, oldCol)
 		case modifyTypeReorg:
-			// For those column-type-change jobs which reorg the data.
+			// For those column-type-change jobs which need reorg.
 			return rollbackModifyColumnJobWithReorg(jobCtx, tblInfo, job, oldCol, args)
 		case modifyTypeIndexReorg:
 			// For those column-type-change jobs which reorg the index only.
@@ -221,16 +258,18 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	// Do some checks for all modify column types.
-	if err = checkAndApplyAutoRandomBits(jobCtx, dbInfo, tblInfo, oldCol, args.Column, args.NewShardBits); err != nil {
+	err = checkAndApplyAutoRandomBits(jobCtx, dbInfo, tblInfo, oldCol, args.Column, args.NewShardBits)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
 	if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	if args.ModifyColumnType == modifyTypeNoReorg {
+	if args.ChangingColumn == nil {
 		if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -258,22 +297,12 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("columnar indexes on the column"))
 	}
-	// Forbid reorg modify column in primary key.
 	if mysql.HasPriKeyFlag(oldCol.GetFlag()) {
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify column in primary key")
 	}
 
 	defer checkColumnOrderByStates(tblInfo)
-
-	// Check if we can only do index reorg
-	if args.ModifyColumnType == modifyTypeNoReorgWithCheck {
-		if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		return w.doModifyColumnWithCheck(jobCtx, job, dbInfo, tblInfo, args.Column, oldCol, args.Position)
-	}
 
 	if args.ModifyColumnType == modifyTypeIndexReorg {
 		if err := initializeChangingIndexes(args, tblInfo, oldCol); err != nil {
@@ -610,45 +639,6 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 		infoList = append(infoList, info)
 	}
 	return infoList, nil
-}
-
-// getModifyColumnType gets the modify column type.
-//  1. ModifyTypeNoReorg: The range of new type is a superset of the old type
-//  2. ModifyTypeNoReorgWithCheck: The range of new type is a subset of the old type, but we are running in strict SQL mode.
-//     And there is no index on this column.
-//     The difference between ModifyTypeNoReorgWithCheck and ModifyTypeNoReorg is that we need some additional checks.
-//  3. ModifyTypeIndexReorg: The range of new type is a subset of the old type, and there are indexes on this column.
-//  4. ModifyTypeReorg: other
-//
-// We need to ensure it's compatible with job submitted from older version of TiDB.
-func getModifyColumnType(
-	args *model.ModifyColumnArgs,
-	tblInfo *model.TableInfo,
-	oldCol *model.ColumnInfo,
-	sqlMode mysql.SQLMode) byte {
-	newCol := args.Column
-	if !needChangeColumnData(oldCol, args.Column) {
-		// It's not NULL->NOTNULL change
-		if mysql.HasNotNullFlag(oldCol.GetFlag()) || !mysql.HasNotNullFlag(newCol.GetFlag()) {
-			return modifyTypeNoReorg
-		}
-		return modifyTypeNoReorgWithCheck
-	}
-
-	// For backward compatibility
-	if args.ModifyColumnType == mysql.TypeNull {
-		return modifyTypeReorg
-	}
-
-	if needDoRowReorg(oldCol, args.Column, sqlMode) {
-		return modifyTypeReorg
-	}
-
-	relatedIndexes := buildRelatedIndexIDs(tblInfo, oldCol.ID)
-	if len(relatedIndexes) == 0 || !needDoIndexReorg(tblInfo, oldCol, args.Column, sqlMode) {
-		return modifyTypeNoReorgWithCheck
-	}
-	return modifyTypeIndexReorg
 }
 
 func needDoIndexReorg(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, sqlMode mysql.SQLMode) bool {
