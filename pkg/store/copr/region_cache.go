@@ -286,7 +286,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 
 func (c *RegionCache) splitKeyRangesByLocation(ctx context.Context, loc *tikv.KeyLocation, ranges *KeyRanges, res []*LocationKeyRanges) ([]*LocationKeyRanges, *KeyRanges, bool) {
 	// Known anomaly: invalid input range (defensive check)
-	for i := 0; i < ranges.Len(); i++ {
+	for i := range ranges.Len() {
 		r := ranges.At(i)
 		if bytes.Equal(r.StartKey, r.EndKey) {
 			logutil.Logger(ctx).Error("invalid input range: start == end",
