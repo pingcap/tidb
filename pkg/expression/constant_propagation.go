@@ -103,9 +103,9 @@ func ValidCompareConstantPredicate(ctx EvalContext, candidatePredicate Expressio
 	if !ok {
 		return false
 	}
-	if scalarFunction.FuncName.L != ast.GT && scalarFunction.FuncName.L != ast.GE &&
-		scalarFunction.FuncName.L != ast.LT && scalarFunction.FuncName.L != ast.LE &&
-		scalarFunction.FuncName.L != ast.EQ {
+	switch scalarFunction.FuncName.L {
+	case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ, ast.NullEQ:
+	default:
 		return false
 	}
 	column, _ := ValidCompareConstantPredicateHelper(ctx, scalarFunction, true)
@@ -149,7 +149,9 @@ func ValidCompareConstantPredicateHelper(ctx EvalContext, eq *ScalarFunction, co
 // validEqualCond checks if the cond is an expression like [column eq constant].
 func validEqualCond(ctx EvalContext, cond Expression) (*Column, *Constant) {
 	if eq, ok := cond.(*ScalarFunction); ok {
-		if eq.FuncName.L != ast.EQ {
+		switch eq.FuncName.L {
+		case ast.EQ, ast.NullEQ:
+		default:
 			return nil, nil
 		}
 		col, con := ValidCompareConstantPredicateHelper(ctx, eq, true)
