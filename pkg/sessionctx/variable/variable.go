@@ -93,6 +93,8 @@ type SysVar struct {
 	skipInit bool
 	// IsNoop defines if the sysvar is a noop included for MySQL compatibility
 	IsNoop bool
+	// IsInitedFromConfig defines if the sysvar is inited from the config file.
+	IsInitedFromConfig bool
 	// GlobalConfigName is the global config name of this global variable.
 	// If the global variable has the global config name,
 	// it should store the global config into PD(etcd) too when set global variable.
@@ -265,6 +267,9 @@ func (sv *SysVar) validateScope(scope vardef.ScopeFlag) error {
 		return ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")
 	}
 	if scope == vardef.ScopeGlobal && !(sv.HasGlobalScope() || sv.HasInstanceScope()) {
+		return errLocalVariable.FastGenByArgs(sv.Name)
+	}
+	if scope == vardef.ScopeInstance && !sv.HasInstanceScope() {
 		return errLocalVariable.FastGenByArgs(sv.Name)
 	}
 	if scope == vardef.ScopeSession {
@@ -578,6 +583,8 @@ type GlobalVarAccessor interface {
 	GetGlobalSysVar(name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.
 	SetGlobalSysVar(ctx context.Context, name string, value string) error
+	// SetInstanceSysVar sets the instance system variable name to value.
+	SetInstanceSysVar(ctx context.Context, name string, value string) error
 	// SetGlobalSysVarOnly sets the global system variable without calling the validation function or updating aliases.
 	SetGlobalSysVarOnly(ctx context.Context, name string, value string, updateLocal bool) error
 	// GetTiDBTableValue gets a value from mysql.tidb for the key 'name'

@@ -6,6 +6,7 @@ go_library(
         "base_physical_agg.go",
         "base_physical_join.go",
         "base_physical_plan.go",
+        "enforce.go",
         "foreign_key.go",
         "fragment.go",
         "nominal_sort.go",
