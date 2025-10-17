@@ -464,3 +464,7 @@ func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
 	}
 	return false
 }
+
+func (path *AccessPath) IsMVIndexPath() bool {
+	return !path.IsTablePath() && path.Index != nil && path.Index.MVIndex
+}

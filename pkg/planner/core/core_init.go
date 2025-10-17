@@ -157,21 +157,14 @@ func init() {
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost
-	utilfuncp.IsSingleScan = isSingleScan
 	utilfuncp.WindowIsTopN = windowIsTopN
-	utilfuncp.LoadTableStats = loadTableStats
 	utilfuncp.AttachPlan2Task = attachPlan2Task
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CompareTaskCost = compareTaskCost
 	utilfuncp.GetPossibleAccessPaths = getPossibleAccessPaths
 
 	utilfuncp.AddPrefix4ShardIndexes = addPrefix4ShardIndexes
-	utilfuncp.DeriveStats4DataSource = deriveStats4DataSource
-	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
-	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
 
-	// For mv index init.
-	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
 	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
 	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
 	statistics.PrepareCols4MVIndex = PrepareIdxColsAndUnwrapArrayType

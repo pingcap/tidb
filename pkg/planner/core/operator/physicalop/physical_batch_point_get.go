@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	statsutil "github.com/pingcap/tidb/pkg/planner/util/stats"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -342,7 +343,7 @@ func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 			tableID = pi.Definitions[*idx].ID
 		}
 	}
-	utilfuncp.LoadTableStats(ctx, p.TblInfo, tableID)
+	statsutil.LoadTableStats(ctx, p.TblInfo, tableID)
 }
 
 // PrunePartitions will check which partition to use
@@ -758,7 +759,7 @@ func (p *BatchPointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 	// as a `BatchPointGet` can access multiple partitions, and we cannot distinguish how many rows come from each
 	// partitions in the existing statistics information, we treat all index usage through a `BatchPointGet` just
 	// like a normal global index.
-	utilfuncp.LoadTableStats(ctx, p.TblInfo, p.TblInfo.ID)
+	statsutil.LoadTableStats(ctx, p.TblInfo, p.TblInfo.ID)
 }
 
 func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []ast.CIStr) bool {

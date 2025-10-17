@@ -17,6 +17,8 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -24,20 +26,27 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ranger"
+	"go.uber.org/zap"
 )
 
 // DataSource represents a tableScan without condition push down.
@@ -518,7 +527,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []base.LogicalPlan) {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 			// If index columns can cover all the needed columns, we can use a IndexGather + IndexScan.
-			if utilfuncp.IsSingleScan(ds, path.FullIdxCols, path.FullIdxColLens) {
+			if ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens) {
 				gathers = append(gathers, ds.buildIndexGather(path))
 			}
 			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
@@ -585,4 +594,403 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		}
 	}
 	return resultColumn, resultColumnInfo
+}
+
+type handleCoverState uint8
+
+const (
+	stateNotCoveredByHandle handleCoverState = iota
+	stateCoveredByIntHandle
+	stateCoveredByCommonHandle
+)
+
+func (ds *DataSource) IsSingleScan(indexColumns []*expression.Column, idxColLens []int) bool {
+	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || ds.ColsRequiringFullLen == nil {
+		// ds.ColsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
+		// and ds.ColsRequiringFullLen is nil, so we fall back to ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
+		return ds.IsIndexCoveringColumns(ds.Schema().Columns, indexColumns, idxColLens)
+	}
+	if !ds.IsIndexCoveringColumns(ds.ColsRequiringFullLen, indexColumns, idxColLens) {
+		return false
+	}
+	for _, cond := range ds.AllConds {
+		if !ds.IsIndexCoveringCondition(cond, indexColumns, idxColLens) {
+			return false
+		}
+	}
+	return true
+}
+
+func (ds *DataSource) IsIndexCoveringColumns(columns, indexColumns []*expression.Column, idxColLens []int) bool {
+	for _, col := range columns {
+		if !ds.indexCoveringColumn(col, indexColumns, idxColLens, false) {
+			return false
+		}
+	}
+	return true
+}
+
+func (ds *DataSource) isHandleCoveringColumns(columns []*expression.Column) bool {
+	for _, col := range columns {
+		if pkCoveringState := ds.handleCoveringColumn(col, false); pkCoveringState == stateNotCoveredByHandle {
+			return false
+		}
+	}
+	return true
+}
+
+func (ds *DataSource) IsIndexCoveringCondition(condition expression.Expression, indexColumns []*expression.Column, idxColLens []int) bool {
+	switch v := condition.(type) {
+	case *expression.Column:
+		return ds.indexCoveringColumn(v, indexColumns, idxColLens, false)
+	case *expression.ScalarFunction:
+		// Even if the index only contains prefix `col`, the index can cover `col is null`.
+		if v.FuncName.L == ast.IsNull {
+			if col, ok := v.GetArgs()[0].(*expression.Column); ok {
+				return ds.indexCoveringColumn(col, indexColumns, idxColLens, true)
+			}
+		}
+		for _, arg := range v.GetArgs() {
+			if !ds.IsIndexCoveringCondition(arg, indexColumns, idxColLens) {
+				return false
+			}
+		}
+		return true
+	}
+	return true
+}
+
+func (ds *DataSource) indexCoveringColumn(column *expression.Column, indexColumns []*expression.Column, idxColLens []int, ignoreLen bool) bool {
+	handleCoveringState := ds.handleCoveringColumn(column, ignoreLen)
+	// Original int pk can always cover the column.
+	if handleCoveringState == stateCoveredByIntHandle {
+		return true
+	}
+	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
+	coveredByPlainIndex := isIndexColsCoveringCol(evalCtx, column, indexColumns, idxColLens, ignoreLen)
+	if !coveredByPlainIndex && handleCoveringState != stateCoveredByCommonHandle {
+		return false
+	}
+	isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
+		column.GetType(evalCtx).EvalType() == types.ETString &&
+		!mysql.HasBinaryFlag(column.GetType(evalCtx).GetFlag())
+	if !coveredByPlainIndex && handleCoveringState == stateCoveredByCommonHandle && isClusteredNewCollationIdx && ds.Table.Meta().CommonHandleVersion == 0 {
+		return false
+	}
+	return true
+}
+
+// handleCoveringColumn checks if the column is covered by the primary key or extra handle columns.
+func (ds *DataSource) handleCoveringColumn(column *expression.Column, ignoreLen bool) handleCoverState {
+	if ds.TableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
+		return stateCoveredByIntHandle
+	}
+	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
+		return stateCoveredByIntHandle
+	}
+	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
+	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
+	if coveredByClusteredIndex {
+		return stateCoveredByCommonHandle
+	}
+	return stateNotCoveredByHandle
+}
+
+func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
+	for i, indexCol := range indexCols {
+		if indexCol == nil || !col.EqualByExprAndID(sctx, indexCol) {
+			continue
+		}
+		if ignoreLen || idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen() {
+			return true
+		}
+	}
+	return false
+}
+
+func (ds *DataSource) SplitIndexFilterConditions(conditions []expression.Expression, indexColumns []*expression.Column,
+	idxColLens []int) (indexConds, tableConds []expression.Expression) {
+	var indexConditions, tableConditions []expression.Expression
+	for _, cond := range conditions {
+		var covered bool
+		if ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan {
+			covered = ds.IsIndexCoveringCondition(cond, indexColumns, idxColLens)
+		} else {
+			covered = ds.IsIndexCoveringColumns(expression.ExtractColumns(cond), indexColumns, idxColLens)
+		}
+		if covered {
+			indexConditions = append(indexConditions, cond)
+		} else {
+			tableConditions = append(tableConditions, cond)
+		}
+	}
+	return indexConditions, tableConditions
+}
+
+// generateOtherIndexMerge is the entry point for generateORIndexMerge() and generateANDIndexMerge4NormalIndex(), plus
+// some extra logic to keep some specific behaviors the same as before.
+func (ds *DataSource) generateOtherIndexMerge(regularPathCount int, indexMergeConds []expression.Expression) (string, error) {
+	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
+		len(ds.PossibleAccessPaths) > 1 // have multiple index paths
+	if !isPossibleIdxMerge {
+		return "IndexMerge is inapplicable or disabled. No available filter or available index.", nil
+	}
+
+	// We current do not consider `IndexMergePath`:
+	// 1. If there is an index path.
+	// 2. TODO: If there exists exprs that cannot be pushed down. This is to avoid wrongly estRow of Selection added by rule_predicate_push_down.
+	stmtCtx := ds.SCtx().GetSessionVars().StmtCtx
+	needConsiderIndexMerge := true
+	// if current index merge hint is nil, once there is a no-access-cond in one of possible access path.
+	if len(ds.IndexMergeHints) == 0 {
+		skipRangeScanCheck := fixcontrol.GetBoolWithDefault(
+			ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
+			fixcontrol.Fix52869,
+			false,
+		)
+		ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
+		if !skipRangeScanCheck {
+			for i := 1; i < len(ds.PossibleAccessPaths); i++ {
+				if len(ds.PossibleAccessPaths[i].AccessConds) != 0 {
+					needConsiderIndexMerge = false
+					break
+				}
+			}
+		}
+		if needConsiderIndexMerge {
+			// PushDownExprs() will append extra warnings, which is annoying. So we reset warnings here.
+			warnings := stmtCtx.GetWarnings()
+			extraWarnings := stmtCtx.GetExtraWarnings()
+			_, remaining := expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), indexMergeConds, kv.UnSpecified)
+			stmtCtx.SetWarnings(warnings)
+			stmtCtx.SetExtraWarnings(extraWarnings)
+			if len(remaining) > 0 {
+				needConsiderIndexMerge = false
+			}
+		}
+	}
+
+	// 1. Generate possible IndexMerge paths for `OR`.
+	err := generateORIndexMerge(ds, indexMergeConds)
+	if err != nil {
+		return "", err
+	}
+	// 2. Generate possible IndexMerge paths for `AND`.
+	indexMergeAndPath := generateANDIndexMerge4NormalIndex(ds, regularPathCount, nil)
+	if indexMergeAndPath != nil {
+		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, indexMergeAndPath)
+	}
+
+	if needConsiderIndexMerge {
+		return "", nil
+	}
+
+	var containMVPath bool
+	for i := regularPathCount; i < len(ds.PossibleAccessPaths); i++ {
+		path := ds.PossibleAccessPaths[i]
+		for _, p := range util.SliceRecursiveFlattenIter[*util.AccessPath](path.PartialAlternativeIndexPaths) {
+			if p.IsMVIndexPath() {
+				containMVPath = true
+				break
+			}
+		}
+
+		if !containMVPath {
+			ds.PossibleAccessPaths = slices.Delete(ds.PossibleAccessPaths, i, i+1)
+		}
+	}
+	if len(ds.PossibleAccessPaths) == regularPathCount {
+		return "IndexMerge is inapplicable or disabled. ", nil
+	}
+	return "", nil
+}
+
+// generateANDIndexMerge4NormalIndex generates IndexMerge paths for `AND` (a.k.a. intersection type IndexMerge)
+func generateANDIndexMerge4NormalIndex(ds *DataSource, normalPathCnt int, usedAccessMap map[string]expression.Expression) *util.AccessPath {
+	// For now, we only consider intersection type IndexMerge when the index names are specified in the hints.
+	if !indexMergeHintsHasSpecifiedIdx(ds) {
+		return nil
+	}
+	composedWithMvIndex := len(usedAccessMap) != 0
+
+	// 1. Collect partial paths from normal paths.
+	partialPaths := make([]*util.AccessPath, 0, normalPathCnt)
+	for i := range normalPathCnt {
+		originalPath := ds.PossibleAccessPaths[i]
+		// No need to consider table path as a partial path.
+		if ds.PossibleAccessPaths[i].IsTablePath() {
+			continue
+		}
+		// since this code path is only for normal index, skip mv index here.
+		if ds.PossibleAccessPaths[i].Index.MVIndex {
+			continue
+		}
+		if !isSpecifiedInIndexMergeHints(ds, originalPath.Index.Name.L) {
+			continue
+		}
+		// If the path contains a full range, ignore it.
+		if ranger.HasFullRange(originalPath.Ranges, false) {
+			continue
+		}
+		if composedWithMvIndex {
+			// case:
+			// idx1: mv(c, cast(`a` as signed array))
+			// idx2: idx(c)
+			// idx3: idx(c, d)
+			// for condition: (1 member of a) AND (c = 1) AND (d = 2), we should pick idx1 and idx3,
+			// since idx2's access cond has already been covered by idx1.
+			containRelation := true
+			for _, access := range originalPath.AccessConds {
+				if _, ok := usedAccessMap[string(access.HashCode())]; !ok {
+					// some condition is not covered in previous mv index partial path, use it!
+					containRelation = false
+					break
+				}
+			}
+			if containRelation {
+				continue
+			}
+			// for this picked normal index, mark its access conds.
+			for _, access := range originalPath.AccessConds {
+				if _, ok := usedAccessMap[string(access.HashCode())]; !ok {
+					usedAccessMap[string(access.HashCode())] = access
+				}
+			}
+		}
+		newPath := originalPath.Clone()
+		partialPaths = append(partialPaths, newPath)
+	}
+	if len(partialPaths) < 1 {
+		return nil
+	}
+	if len(partialPaths) == 1 && !composedWithMvIndex {
+		// even single normal index path here, it can be composed with other mv index partial paths.
+		return nil
+	}
+
+	// 2. Collect filters that can't be covered by the partial paths and deduplicate them.
+	finalFilters := make([]expression.Expression, 0)
+	partialFilters := make([]expression.Expression, 0, len(partialPaths))
+	hashCodeSet := make(map[string]struct{})
+	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
+	for _, path := range partialPaths {
+		// Classify filters into coveredConds and notCoveredConds.
+		coveredConds := make([]expression.Expression, 0, len(path.AccessConds)+len(path.IndexFilters))
+		notCoveredConds := make([]expression.Expression, 0, len(path.IndexFilters)+len(path.TableFilters))
+		// AccessConds can be covered by partial path.
+		coveredConds = append(coveredConds, path.AccessConds...)
+		path.IndexFilters = slices.DeleteFunc(path.IndexFilters, func(cond expression.Expression) bool {
+			// IndexFilters can be covered by partial path if it can be pushed down to TiKV.
+			if !expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cond}, kv.TiKV) {
+				notCoveredConds = append(notCoveredConds, cond)
+				return true
+			}
+			coveredConds = append(coveredConds, cond)
+			return false
+		})
+		// TableFilters can't be covered by partial path.
+		notCoveredConds = append(notCoveredConds, path.TableFilters...)
+
+		// Record covered filters in hashCodeSet.
+		// Note that we only record filters that not appear in the notCoveredConds. It's possible that a filter appear
+		// in both coveredConds and notCoveredConds (e.g. because of prefix index). So we need this extra check to
+		// avoid wrong deduplication.
+		notCoveredHashCodeSet := make(map[string]struct{})
+		for _, cond := range notCoveredConds {
+			hashCode := string(cond.HashCode())
+			notCoveredHashCodeSet[hashCode] = struct{}{}
+		}
+		for _, cond := range coveredConds {
+			hashCode := string(cond.HashCode())
+			if _, ok := notCoveredHashCodeSet[hashCode]; !ok {
+				hashCodeSet[hashCode] = struct{}{}
+			}
+		}
+
+		finalFilters = append(finalFilters, notCoveredConds...)
+		partialFilters = append(partialFilters, coveredConds...)
+	}
+
+	// Remove covered filters from finalFilters and deduplicate finalFilters.
+	dedupedFinalFilters := make([]expression.Expression, 0, len(finalFilters))
+	for _, cond := range finalFilters {
+		hashCode := string(cond.HashCode())
+		if _, ok := hashCodeSet[hashCode]; !ok {
+			dedupedFinalFilters = append(dedupedFinalFilters, cond)
+			hashCodeSet[hashCode] = struct{}{}
+		}
+	}
+
+	// Keep these partial filters as a part of table filters for safety if there is any parameter.
+	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), partialFilters...) {
+		dedupedFinalFilters = append(dedupedFinalFilters, partialFilters...)
+	}
+
+	// 3. Estimate the row count after partial paths.
+	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, partialFilters, nil)
+	if err != nil {
+		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+		sel = cost.SelectionFactor
+	}
+
+	indexMergePath := &util.AccessPath{
+		PartialIndexPaths:        partialPaths,
+		IndexMergeIsIntersection: true,
+		TableFilters:             dedupedFinalFilters,
+		CountAfterAccess:         sel * ds.TableStats.RowCount,
+	}
+	return indexMergePath
+}
+
+// indexMergeHintsHasSpecifiedIdx return true if the input index name is specified in the IndexMerge hint.
+func isSpecifiedInIndexMergeHints(ds *DataSource, name string) bool {
+	for _, hint := range ds.IndexMergeHints {
+		if hint.IndexHint == nil || len(hint.IndexHint.IndexNames) == 0 {
+			continue
+		}
+		for _, hintName := range hint.IndexHint.IndexNames {
+			if strings.EqualFold(name, hintName.String()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// generateORIndexMerge handles all (MV and non-MV index) OR type IndexMerge path generation.
+// The input filters are implicitly connected by AND.
+func generateORIndexMerge(ds *DataSource, filters []expression.Expression) error {
+	usedIndexCount := len(ds.PossibleAccessPaths)
+	// 1. Iterate the input filters and try to find an OR list.
+	for k, cond := range filters {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.LogicOr {
+			continue
+		}
+
+		dnfFilters := expression.SplitDNFItems(sf)
+		candidatesAccessPaths := ds.PossibleAccessPaths[:usedIndexCount]
+
+		// 2. Try to collect usable filters for each candidate access path using the OR list.
+		unfinishedIndexMergePath := genUnfinishedPathFromORList(ds, dnfFilters, candidatesAccessPaths)
+		// 3. Try to collect more usable filters from the top level AND list and build it into a valid AccessPath.
+		indexMergePath := handleTopLevelANDList(ds, filters, k, candidatesAccessPaths, unfinishedIndexMergePath)
+		if indexMergePath != nil {
+			ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, indexMergePath)
+		}
+	}
+	return nil
+}
+
+// indexMergeHintsHasSpecifiedIdx returns true if there's IndexMerge hint, and it has specified index names.
+func indexMergeHintsHasSpecifiedIdx(ds *DataSource) bool {
+	for _, hint := range ds.IndexMergeHints {
+		if hint.IndexHint == nil || len(hint.IndexHint.IndexNames) == 0 {
+			continue
+		}
+		if len(hint.IndexHint.IndexNames) > 0 {
+			return true
+		}
+	}
+	return false
 }
