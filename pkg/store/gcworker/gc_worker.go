@@ -67,6 +67,7 @@ import (
 type GCWorker struct {
 	uuid                 string
 	desc                 string
+	keyspaceID           uint32
 	store                kv.Storage
 	tikvStore            tikv.Storage
 	pdClient             pd.Client
@@ -94,13 +95,15 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 	}
 	uuid := strconv.FormatUint(ver.Ver, 16)
 	resolverIdentifier := fmt.Sprintf("gc-worker-%s", uuid)
+	keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
 	worker := &GCWorker{
 		uuid:                 uuid,
 		desc:                 fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
+		keyspaceID:           keyspaceID,
 		store:                store,
 		tikvStore:            tikvStore,
 		pdClient:             pdClient,
-		pdGCControllerClient: pdClient.GetGCInternalController(uint32(store.GetCodec().GetKeyspaceID())),
+		pdGCControllerClient: pdClient.GetGCInternalController(keyspaceID),
 		gcIsRunning:          false,
 		lastFinish:           time.Now(),
 		regionLockResolver:   tikv.NewRegionLockResolver(resolverIdentifier, tikvStore),
@@ -738,6 +741,8 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency g
 	// For details of the terms and concepts, refer to:
 	// https://github.com/tikv/pd/blob/53805884a0162f4186d1a933eb28479a269c7d2c/pkg/gc/gc_state_manager.go#L39
 
+	startTime := time.Now()
+
 	failpoint.Inject("mockRunGCJobFail", func() {
 		failpoint.Return(errors.New("mock failure of runGCJoB"))
 	})
@@ -815,6 +820,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency g
 		return errors.Trace(err)
 	}
 
+	metrics.GCHistogram.WithLabelValues(metrics.StageTotal).Observe(time.Since(startTime).Seconds())
 	return nil
 }
 
@@ -1224,7 +1230,12 @@ func (w *GCWorker) resolveLocks(
 		return tikv.ResolveLocksForRange(ctx, w.regionLockResolver, safePoint, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, scanLimit)
 	}
 
-	runner := rangetask.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)
+	runnerName := "resolve-locks-runner"
+	if w.keyspaceID != constants.NullKeyspaceID && w.store != nil {
+		runnerName += "-" + w.store.GetCodec().GetKeyspaceMeta().GetName()
+	}
+
+	runner := rangetask.NewRangeTaskRunner(runnerName, w.tikvStore, concurrency, handler)
 	// Run resolve lock on the whole TiKV cluster. Empty keys means the range is unbounded.
 	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
 	if err != nil {
@@ -1341,45 +1352,6 @@ func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region ti
 	}
 
 	return nil, nil
-}
-
-func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) error {
-	metrics.GCWorkerCounter.WithLabelValues("do_gc").Inc()
-	logutil.Logger(ctx).Info("start doing gc for all keys", zap.String("category", "gc worker"),
-		zap.String("uuid", w.uuid),
-		zap.Int("concurrency", concurrency),
-		zap.Uint64("safePoint", safePoint))
-	startTime := time.Now()
-
-	runner := rangetask.NewRangeTaskRunner(
-		"gc-runner",
-		w.tikvStore,
-		concurrency,
-		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-			return w.doGCForRange(ctx, r.StartKey, r.EndKey, safePoint)
-		})
-
-	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
-	if err != nil {
-		logutil.Logger(ctx).Warn("failed to do gc for all keys", zap.String("category", "gc worker"),
-			zap.String("uuid", w.uuid),
-			zap.Int("concurrency", concurrency),
-			zap.Error(err))
-		return errors.Trace(err)
-	}
-
-	successRegions := runner.CompletedRegions()
-	failedRegions := runner.FailedRegions()
-
-	logutil.Logger(ctx).Info("finished doing gc for all keys", zap.String("category", "gc worker"),
-		zap.String("uuid", w.uuid),
-		zap.Uint64("safePoint", safePoint),
-		zap.Int("successful regions", successRegions),
-		zap.Int("failed regions", failedRegions),
-		zap.Duration("total cost time", time.Since(startTime)))
-	metrics.GCHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
-
-	return nil
 }
 
 func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
@@ -1757,6 +1729,7 @@ func RunDistributedGCJob(ctx context.Context, regionLockResolver tikv.RegionLock
 	gcWorker := &GCWorker{
 		tikvStore:            s,
 		uuid:                 identifier,
+		keyspaceID:           constants.NullKeyspaceID,
 		pdClient:             pd,
 		pdGCControllerClient: pd.GetGCInternalController(constants.NullKeyspaceID),
 		regionLockResolver:   regionLockResolver,
@@ -1790,6 +1763,7 @@ func RunResolveLocks(ctx context.Context, s tikv.Storage, pd pd.Client, safePoin
 	gcWorker := &GCWorker{
 		tikvStore:          s,
 		uuid:               identifier,
+		keyspaceID:         constants.NullKeyspaceID,
 		pdClient:           pd,
 		regionLockResolver: tikv.NewRegionLockResolver("test-resolver", s),
 	}
@@ -1814,6 +1788,7 @@ func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
 	worker := &GCWorker{
 		uuid:        strconv.FormatUint(ver.Ver, 16),
 		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
+		keyspaceID:  constants.NullKeyspaceID,
 		store:       store,
 		tikvStore:   store.(tikv.Storage),
 		gcIsRunning: false,
