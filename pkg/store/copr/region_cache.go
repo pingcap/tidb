@@ -16,7 +16,9 @@ package copr
 
 import (
 	"bytes"
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/clients/router"
 	"go.uber.org/zap"
 )
 
@@ -71,7 +74,7 @@ func (l *LocationKeyRanges) getBucketVersion() uint64 {
 }
 
 // splitKeyRangeByBuckets splits ranges in the same location by buckets and returns a LocationKeyRanges array.
-func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
+func (l *LocationKeyRanges) splitKeyRangesByBuckets(bo *Backoffer, c *RegionCache) []*LocationKeyRanges {
 	if l.Location.Buckets == nil || len(l.Location.Buckets.Keys) == 0 {
 		return []*LocationKeyRanges{l}
 	}
@@ -82,6 +85,18 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 	for ranges.Len() > 0 {
 		// ranges must be in loc.region, so the bucket returned by loc.LocateBucket is guaranteed to be not nil
 		bucket := loc.LocateBucket(ranges.At(0).StartKey)
+		if bucket == nil {
+			bucketKeys := make([]kv.Key, 0, len(loc.Buckets.Keys))
+			for _, k := range loc.Buckets.Keys {
+				bucketKeys = append(bucketKeys, kv.Key(k))
+			}
+			logutil.BgLogger().Warn("[RegionBoundaryDebug] Unexpected bucket is nil",
+				zap.Stringer("region", &loc.Region),
+				zap.Stringer("startKey", ranges.At(0).StartKey),
+				zap.Stringer("endKey", ranges.At(0).EndKey),
+				zap.Stringers("buckets", bucketKeys),
+				zap.String("reload info", c.RelocateFromPD(bo, loc)))
+		}
 
 		// Iterate to the first range that is not complete in the bucket.
 		var r kv.KeyRange
@@ -221,6 +236,43 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 			break
 		}
 	}
+	for i, loc := range res {
+		locRanges := loc.Ranges
+		isSorted := true
+		var lastRg *kv.KeyRange
+		locRanges.Do(func(rg *kv.KeyRange) {
+			defer func() {
+				lastRg = rg
+			}()
+			if lastRg == nil {
+				return
+			}
+			if bytes.Compare(lastRg.EndKey, rg.StartKey) > 0 {
+				isSorted = false
+			}
+		})
+
+		if !isSorted {
+			logutil.BgLogger().Warn("[RegionBoundaryDebug] ranges are not sorted in LocationKeyRanges",
+				zap.Int("index", i),
+				zap.Int("len", locRanges.Len()),
+				zap.Stringer("ranges", locRanges))
+		}
+		for j := 0; j < locRanges.Len(); j++ {
+			if !loc.Location.Contains(locRanges.At(j).StartKey) ||
+				(!loc.Location.Contains(locRanges.At(j).EndKey) && !bytes.Equal(loc.Location.EndKey, locRanges.At(j).EndKey)) {
+				logutil.BgLogger().Warn("[RegionBoundaryDebug] Unexpected range is not contained in location",
+					zap.Int("index", i),
+					zap.Int("len", locRanges.Len()),
+					zap.Int("notContainedRangeIndex", j),
+					zap.Stringer("region", &loc.Location.Region),
+					zap.Stringer("startKey", kv.Key(loc.Location.StartKey)),
+					zap.Stringer("endKey", kv.Key(loc.Location.EndKey)),
+					zap.Stringer("ranges", locRanges),
+					zap.String("reload info", c.RelocateFromPD(bo, loc.Location)))
+			}
+		}
+	}
 	return res, nil
 }
 
@@ -235,7 +287,7 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 	}
 	res := make([]*LocationKeyRanges, 0, len(locs))
 	for _, loc := range locs {
-		res = append(res, loc.splitKeyRangesByBuckets()...)
+		res = append(res, loc.splitKeyRangesByBuckets(bo, c)...)
 	}
 	return res, nil
 }
@@ -291,4 +343,36 @@ func (c *RegionCache) BuildBatchTask(bo *Backoffer, req *kv.Request, task *copTa
 		peer:                  rpcContext.Peer,
 		loadBasedReplicaRetry: replicaRead != kv.ReplicaReadLeader,
 	}, nil
+}
+
+func (c *RegionCache) RelocateFromPD(bo *Backoffer, loc *tikv.KeyLocation) string {
+	// BatchLoadRegionsWithKeyRanges will load from PD bypass the region cache.
+	regions, err := c.BatchLoadRegionsWithKeyRanges(bo.TiKVBackoffer(), []router.KeyRange{{
+		StartKey: loc.StartKey,
+		EndKey:   loc.EndKey,
+	}}, 1024, tikv.WithNeedBuckets())
+	if err != nil {
+		return fmt.Sprintf("fail to load regions from pd: %v", err)
+	}
+	var sb strings.Builder
+	var cachedBuckets []string
+	if loc.Buckets != nil {
+		cachedBuckets = make([]string, 0, len(loc.Buckets.Keys))
+		for _, k := range loc.Buckets.Keys {
+			cachedBuckets = append(cachedBuckets, kv.Key(k).String())
+		}
+		sb.WriteString(fmt.Sprintf("cached loc meta %s, bucket version %d, buckets: %v\n", loc.Region.String(), loc.GetBucketVersion(), cachedBuckets))
+	}
+	for _, r := range regions {
+		buckets := c.TryLocateKey(r.StartKey()).Buckets
+		var bucketKeys []string
+		if buckets != nil {
+			bucketKeys = make([]string, 0, len(buckets.Keys))
+		}
+		for _, k := range buckets.Keys {
+			bucketKeys = append(bucketKeys, kv.Key(k).String())
+		}
+		sb.WriteString(fmt.Sprintf(", PD region meta %s, bucket version %d, buckets: %v", r.GetMeta(), buckets.Version, bucketKeys))
+	}
+	return sb.String()
 }
