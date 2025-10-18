@@ -46,21 +46,6 @@ var FindBestTask4BaseLogicalPlan func(p base.LogicalPlan,
 var ExhaustPhysicalPlans4LogicalMaxOneRow func(p base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
-// FindBestTask4LogicalCTETable will be called by LogicalCTETable in logicalOp pkg.
-var FindBestTask4LogicalCTETable func(lp base.LogicalPlan,
-	prop *property.PhysicalProperty) (t base.Task, err error)
-
-// FindBestTask4LogicalShow will be called by LogicalShow in logicalOp pkg.
-var FindBestTask4LogicalShow func(lp base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error)
-
-// FindBestTask4LogicalShowDDLJobs will be called by LogicalShowDDLJobs in logicalOp pkg.
-var FindBestTask4LogicalShowDDLJobs func(lp base.LogicalPlan,
-	prop *property.PhysicalProperty) (base.Task, error)
-
-// FindBestTask4LogicalCTE will be called by LogicalCTE in logicalOp pkg.
-var FindBestTask4LogicalCTE func(lp base.LogicalPlan,
-	prop *property.PhysicalProperty) (t base.Task, err error)
-
 // FindBestTask4LogicalDataSource will be called by LogicalDataSource in logicalOp pkg.
 var FindBestTask4LogicalDataSource func(lp base.LogicalPlan,
 	prop *property.PhysicalProperty) (t base.Task, err error)

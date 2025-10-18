@@ -447,7 +447,10 @@ func TestSetVar(t *testing.T) {
 	// test for instance
 	tk.MustExec("set @@instance.ddl_slow_threshold=1234")
 	tk.MustQuery("select @@instance.ddl_slow_threshold").Check(testkit.Rows("1234"))
-	tk.MustGetErrCode("set @@instance.tidb_redact_log=1", errno.ErrIncorrectGlobalLocalVar)
+	tk.MustGetErrCode("set @@instance.tidb_redact_log=1", errno.ErrLocalVariable)
+	// set instance variable, but global variable is still the old value
+	tk.MustExec("set @@instance.tidb_stmt_summary_max_stmt_count=1234")
+	tk.MustQuery("select @@global.tidb_stmt_summary_max_stmt_count").Check(testkit.Rows("3000"))
 
 	// test for tidb_redact_log
 	tk.MustGetErrCode(`set @@session.tidb_redact_log=1;`, errno.ErrUnknownSystemVariable)

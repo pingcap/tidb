@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -59,38 +58,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
-
-func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
-	if prop.IndexJoinProp != nil {
-		// even enforce hint can not work with this.
-		return base.InvalidTask, nil
-	}
-	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalShow](super)
-	if !prop.IsSortItemEmpty() {
-		return base.InvalidTask, nil
-	}
-	pShow := physicalop.PhysicalShow{ShowContents: p.ShowContents, Extractor: p.Extractor}.Init(p.SCtx())
-	pShow.SetSchema(p.Schema())
-	rt := &physicalop.RootTask{}
-	rt.SetPlan(pShow)
-	return rt, nil
-}
-
-func findBestTask4LogicalShowDDLJobs(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
-	if prop.IndexJoinProp != nil {
-		// even enforce hint can not work with this.
-		return base.InvalidTask, nil
-	}
-	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalShowDDLJobs](super)
-	if !prop.IsSortItemEmpty() {
-		return base.InvalidTask, nil
-	}
-	pShow := physicalop.PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.SCtx())
-	pShow.SetSchema(p.Schema())
-	rt := &physicalop.RootTask{}
-	rt.SetPlan(pShow)
-	return rt, nil
-}
 
 func prepareIterationDownElems(super base.LogicalPlan) (*memo.GroupExpression, *logicalop.BaseLogicalPlan, int, iterFunc, base.LogicalPlan) {
 	// get the possible group expression and logical operator from common lp pointer.
@@ -2796,67 +2763,6 @@ func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, 
 		sel.SetChildren(ts)
 		copTask.TablePlan = sel
 	}
-}
-
-func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
-	if prop.IndexJoinProp != nil {
-		// even enforce hint can not work with this.
-		return base.InvalidTask, nil
-	}
-	var childLen int
-	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalCTE](super)
-	if ge != nil {
-		childLen = ge.InputsLen()
-	} else {
-		childLen = p.ChildLen()
-	}
-	if childLen > 0 {
-		// pass the super here to iterate among ge or logical plan both.
-		return utilfuncp.FindBestTask4BaseLogicalPlan(super, prop)
-	}
-	if !checkOpSelfSatisfyPropTaskTypeRequirement(p, prop) {
-		// Currently all plan cannot totally push down to TiKV.
-		return base.InvalidTask, nil
-	}
-	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
-		return base.InvalidTask, nil
-	}
-	// The physical plan has been build when derive stats.
-	pcte := physicalop.PhysicalCTE{SeedPlan: p.Cte.SeedPartPhysicalPlan, RecurPlan: p.Cte.RecursivePartPhysicalPlan, CTE: p.Cte, CteAsName: p.CteAsName, CteName: p.CteName}.Init(p.SCtx(), p.StatsInfo())
-	pcte.SetSchema(p.Schema())
-	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
-		pcte.ReaderReceiver = physicalop.PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.SCtx(), p.StatsInfo())
-		if prop.MPPPartitionTp != property.AnyType {
-			return base.InvalidTask, nil
-		}
-		t = physicalop.NewMppTask(pcte, prop.MPPPartitionTp, prop.MPPPartitionCols, p.StatsInfo().HistColl, nil)
-	} else {
-		rt := &physicalop.RootTask{}
-		rt.SetPlan(pcte)
-		t = rt
-	}
-	if prop.CanAddEnforcer {
-		t = physicalop.EnforceProperty(prop, t, p.Plan.SCtx(), nil)
-	}
-	return t, nil
-}
-
-func findBestTask4LogicalCTETable(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
-	if prop.IndexJoinProp != nil {
-		// even enforce hint can not work with this.
-		return base.InvalidTask, nil
-	}
-	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalCTETable](super)
-	if !prop.IsSortItemEmpty() {
-		return base.InvalidTask, nil
-	}
-
-	pcteTable := physicalop.PhysicalCTETable{IDForStorage: p.IDForStorage}.Init(p.SCtx(), p.StatsInfo())
-	pcteTable.SetSchema(p.Schema())
-	rt := &physicalop.RootTask{}
-	rt.SetPlan(pcteTable)
-	t = rt
-	return t, nil
 }
 
 func validateTableSamplePlan(ds *logicalop.DataSource, t base.Task, err error) error {

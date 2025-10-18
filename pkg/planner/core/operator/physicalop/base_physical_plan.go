@@ -15,8 +15,6 @@
 package physicalop
 
 import (
-	"math"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -25,9 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
@@ -481,11 +477,11 @@ func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask
 	// And since base.LogicalPlan is a common parent pointer of GE and LogicalPlan, we can use same portal.
 	switch lop := e.GetWrappedLogicalPlan().(type) {
 	case *logicalop.LogicalCTE:
-		return utilfuncp.FindBestTask4LogicalCTE(e, prop)
+		return findBestTask4LogicalCTE(e, prop)
 	case *logicalop.LogicalShow:
-		return utilfuncp.FindBestTask4LogicalShow(e, prop)
+		return findBestTask4LogicalShow(e, prop)
 	case *logicalop.LogicalCTETable:
-		return utilfuncp.FindBestTask4LogicalCTETable(e, prop)
+		return findBestTask4LogicalCTETable(e, prop)
 	case *logicalop.LogicalMemTable:
 		return findBestTask4LogicalMemTable(lop, prop)
 	case *logicalop.LogicalTableDual:
@@ -493,43 +489,10 @@ func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask
 	case *logicalop.DataSource:
 		return utilfuncp.FindBestTask4LogicalDataSource(e, prop)
 	case *logicalop.LogicalShowDDLJobs:
-		return utilfuncp.FindBestTask4LogicalShowDDLJobs(e, prop)
+		return findBestTask4LogicalShowDDLJobs(e, prop)
 	case *logicalop.MockDataSource:
 		return findBestTask4LogicalMockDatasource(lop, prop)
 	default:
 		return utilfuncp.FindBestTask4BaseLogicalPlan(e, prop)
 	}
-}
-
-// EnforceProperty enforces a physical property to a task.
-// TODO: we can move it into property package.
-func EnforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanContext, fd *funcdep.FDSet) base.Task {
-	if p.TaskTp == property.MppTaskType {
-		mpp, ok := tsk.(*MppTask)
-		if !ok || mpp.Invalid() {
-			return base.InvalidTask
-		}
-		if !p.IsSortItemAllForPartition() {
-			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
-			return base.InvalidTask
-		}
-		tsk = mpp.EnforceExchanger(p, fd)
-	}
-	// when task is double cop task warping a index merge reader, tsk.plan() may be nil when indexPlanFinished is marked
-	// as false, while the real plan is in idxMergePartPlans. tsk.plan()==nil is not right here.
-	if p.IsSortItemEmpty() || tsk.Invalid() {
-		return tsk
-	}
-	if p.TaskTp != property.MppTaskType {
-		tsk = tsk.ConvertToRootTask(ctx)
-	}
-	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{
-		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
-		IsPartialSort: p.IsSortItemAllForPartition(),
-	}.Init(ctx, tsk.Plan().StatsInfo(), tsk.Plan().QueryBlockOffset(), sortReqProp)
-	for _, col := range p.SortItems {
-		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
-	}
-	return sort.Attach2Task(tsk)
 }
