@@ -88,9 +88,9 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 	case *logicalop.LogicalPartitionUnionAll:
 		return exhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
 	case *memo.GroupExpression:
-		return x.ExhaustPhysicalPlans(prop)
+		return memo.ExhaustPhysicalPlans4GroupExpression(x, prop)
 	case *mockLogicalPlan4Test:
-		return x.ExhaustPhysicalPlans(prop)
+		return ExhaustPhysicalPlans4MockLogicalPlan(x, prop)
 	default:
 		panic("unreachable")
 	}

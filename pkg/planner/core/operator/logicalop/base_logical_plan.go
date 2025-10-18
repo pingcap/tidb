@@ -258,11 +258,6 @@ func (*BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, _ ...[][
 	return nil
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan.<14th> interface.
-func (*BaseLogicalPlan) ExhaustPhysicalPlans(*property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	panic("baseLogicalPlan.ExhaustPhysicalPlans() should never be called.")
-}
-
 // ExtractCorrelatedCols implements LogicalPlan.<15th> interface.
 func (*BaseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil

@@ -705,15 +705,6 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 	return resultProperties
 }
 
-// ExhaustPhysicalPlans implements the base.LogicalPlan.<14th> interface.
-// it can generates hash join, index join and sort merge join.
-// Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
-// If the hint is not matched, it will get other candidates.
-// If the hint is not figured, we will pick all candidates.
-func (p *LogicalJoin) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalJoin(p, prop)
-}
-
 // ExtractCorrelatedCols implements the base.LogicalPlan.<15th> interface.
 func (p *LogicalJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))

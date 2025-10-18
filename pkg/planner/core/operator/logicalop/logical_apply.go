@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -172,11 +171,6 @@ func (la *LogicalApply) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 }
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalApply(la, prop)
-}
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
 func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {

@@ -425,11 +425,6 @@ func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][
 	return [][]*expression.Column{result}
 }
 
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalWindow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalWindow(p, prop)
-}
-
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
 func (p *LogicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.WindowFuncDescs))

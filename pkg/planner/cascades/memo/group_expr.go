@@ -256,26 +256,8 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	return nil
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan.<3rd> interface, it's used to override the wrapped logicalPlans.
-func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) (physicalPlans []base.PhysicalPlan, hintCanWork bool, err error) {
-	// since different logical operator may have different ExhaustPhysicalPlans before like:
-	// utilfuncp.ExhaustPhysicalPlans4LogicalCTE = exhaustPhysicalPlans4LogicalCTE
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalSort = exhaustPhysicalPlans4LogicalSort
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalTopN = exhaustPhysicalPlans4LogicalTopN
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalLock = exhaustPhysicalPlans4LogicalLock
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalJoin = exhaustPhysicalPlans4LogicalJoin
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalApply = exhaustPhysicalPlans4LogicalApply
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalLimit = exhaustPhysicalPlans4LogicalLimit
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalWindow = exhaustPhysicalPlans4LogicalWindow
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalExpand = exhaustPhysicalPlans4LogicalExpand
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll = exhaustPhysicalPlans4LogicalUnionAll
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalSequence = exhaustPhysicalPlans4LogicalSequence
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalSelection = exhaustPhysicalPlans4LogicalSelection
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow = exhaustPhysicalPlans4LogicalMaxOneRow
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan = exhaustPhysicalPlans4LogicalUnionScan
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalProjection = exhaustPhysicalPlans4LogicalProjection
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalAggregation = exhaustPhysicalPlans4LogicalAggregation
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll = exhaustPhysicalPlans4LogicalPartitionUnionAll
+// ExhaustPhysicalPlans4GroupExpression enumerate the physical implementation for concrete ops.
+func ExhaustPhysicalPlans4GroupExpression(e *GroupExpression, prop *property.PhysicalProperty) (physicalPlans []base.PhysicalPlan, hintCanWork bool, err error) {
 	// once we call GE's ExhaustPhysicalPlans from group expression level, we should judge from here, and get the
 	// wrapped logical plan and then call their specific function pointer to handle logic inside. Why not we just
 	// remove GE's level implementation, and call wrapped logical plan's implementing? Cuz sometimes, the wrapped
