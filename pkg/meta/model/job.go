@@ -387,6 +387,9 @@ type Job struct {
 
 	// SessionVars store session variables
 	SessionVars map[string]string `json:"session_vars,omitempty"`
+
+	// AnalyzeState indicate current whether current ddl job is in analyze state
+	AnalyzeState int8 `json:"analyze_state"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -903,20 +906,21 @@ func (job *Job) ClearDecodedArgs() {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type        ActionType `json:"type"`
-	JobArgs     JobArgs    `json:"-"`
-	args        []any
-	RawArgs     json.RawMessage `json:"raw_args"`
-	SchemaState SchemaState     `json:"schema_state"`
-	SnapshotVer uint64          `json:"snapshot_ver"`
-	RealStartTS uint64          `json:"real_start_ts"`
-	Revertible  bool            `json:"revertible"`
-	State       JobState        `json:"state"`
-	RowCount    int64           `json:"row_count"`
-	Warning     *terror.Error   `json:"warning"`
-	CtxVars     []any           `json:"-"`
-	SchemaVer   int64           `json:"schema_version"`
-	ReorgTp     ReorgType       `json:"reorg_tp"`
+	Type         ActionType `json:"type"`
+	JobArgs      JobArgs    `json:"-"`
+	args         []any
+	RawArgs      json.RawMessage `json:"raw_args"`
+	SchemaState  SchemaState     `json:"schema_state"`
+	SnapshotVer  uint64          `json:"snapshot_ver"`
+	RealStartTS  uint64          `json:"real_start_ts"`
+	Revertible   bool            `json:"revertible"`
+	State        JobState        `json:"state"`
+	RowCount     int64           `json:"row_count"`
+	Warning      *terror.Error   `json:"warning"`
+	CtxVars      []any           `json:"-"`
+	SchemaVer    int64           `json:"schema_version"`
+	ReorgTp      ReorgType       `json:"reorg_tp"`
+	AnalyzeState int8            `json:"analyze_state"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -958,6 +962,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		SchemaState:     sub.SchemaState,
 		SnapshotVer:     sub.SnapshotVer,
 		RealStartTS:     sub.RealStartTS,
+		AnalyzeState:    sub.AnalyzeState,
 		StartTS:         parentJob.StartTS,
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
@@ -970,6 +975,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
 		TraceInfo:       parentJob.TraceInfo,
+		SessionVars:     parentJob.SessionVars,
 	}
 }
 
@@ -987,6 +993,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	if proxyJob.ReorgMeta != nil {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
 	}
+	sub.AnalyzeState = proxyJob.AnalyzeState
 }
 
 // FillArgs fills args.
