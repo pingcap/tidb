@@ -1505,7 +1505,7 @@ func TestSetConcurrency(t *testing.T) {
 	require.Equal(t, 1, vars.DistSQLScanConcurrency())
 
 	tk.MustExec("set @@tidb_index_serial_scan_concurrency=4")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1287 The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'."))
 	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows("4"))
 
 	// test setting deprecated value unset
