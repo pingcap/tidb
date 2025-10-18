@@ -1467,8 +1467,6 @@ func TestSetConcurrency(t *testing.T) {
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.ProjectionConcurrency())
 	require.Equal(t, vardef.DefDistSQLScanConcurrency, vars.DistSQLScanConcurrency())
 
-	require.Equal(t, vardef.DefIndexSerialScanConcurrency, vars.IndexSerialScanConcurrency())
-
 	// test setting deprecated variables
 	warnTpl := "Warning 1287 '%s' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead"
 
@@ -1509,7 +1507,6 @@ func TestSetConcurrency(t *testing.T) {
 	tk.MustExec("set @@tidb_index_serial_scan_concurrency=4")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows("4"))
-	require.Equal(t, 4, vars.IndexSerialScanConcurrency())
 
 	// test setting deprecated value unset
 	tk.MustExec("set @@tidb_index_lookup_concurrency=-1;")
