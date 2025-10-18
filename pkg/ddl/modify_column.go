@@ -596,6 +596,22 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
+// reorderChangingIdx reorders the changing index infos to match the order of old index infos.
+func reorderChangingIdx(oldIdxInfos []*model.IndexInfo, changingIdxInfos []*model.IndexInfo) {
+	nameToChanging := make(map[string]*model.IndexInfo, len(changingIdxInfos))
+	for _, cIdx := range changingIdxInfos {
+		origName := cIdx.Name.O
+		if cIdx.State != model.StatePublic {
+			origName = getChangingIndexOriginName(cIdx)
+		}
+		nameToChanging[origName] = cIdx
+	}
+
+	for i, oldIdx := range oldIdxInfos {
+		changingIdxInfos[i] = nameToChanging[getRemovingObjOriginName(oldIdx.Name.O)]
+	}
+}
+
 func (w *worker) doModifyColumnTypeWithData(
 	jobCtx *jobContext,
 	job *model.Job,
@@ -741,6 +757,11 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 			changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
 			intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
+
+			// In multi-schema change, the order of changingIdxInfos may not be the same as oldIdxInfos,
+			// because we will allocate new indexID for previous temp index.
+			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
+
 			updateObjectState(oldCol, oldIdxInfos, model.StateWriteOnly)
 			updateObjectState(changingCol, changingIdxInfos, model.StatePublic)
 			markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, colName)
