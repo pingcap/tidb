@@ -127,6 +127,7 @@ type lookUpJoinTask struct {
 	encodedLookUpKeys []*chunk.Chunk
 	lookupMap         *mvmap.MVMap
 	matchedInners     []chunk.Row
+	innerExec         exec.Executor
 
 	doneCh   chan error
 	cursor   chunk.RowPtr
@@ -165,6 +166,7 @@ type innerWorker struct {
 	indexRanges           []*ranger.Range
 	nextColCompareFilters *physicalop.ColWithCmpFuncManager
 	keyOff2IdxOff         []int
+	maxFetchSize          int
 	stats                 *innerWorkerRuntimeStats
 	memTracker            *memory.Tracker
 }
@@ -717,33 +719,55 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			atomic.AddInt64(&iw.stats.fetch, int64(time.Since(start)))
 		}()
 	}
-	innerExec, err := iw.ReaderBuilder.BuildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true, iw.memTracker, iw.lookup.Finished)
-	if innerExec != nil {
-		defer func() { terror.Log(exec.Close(innerExec)) }()
-	}
-	if err != nil {
-		return err
+
+	// Fetch for the task first time, need to build the innerExec.
+	if task.innerExec == nil {
+		innerExec, err := iw.ReaderBuilder.BuildExecutorForIndexJoin(ctx, lookUpContent,
+			iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters,
+			true, iw.memTracker, iw.lookup.Finished)
+		if err != nil {
+			return err
+		}
+		task.innerExec = innerExec
+	} else if task.innerResult != nil {
+		task.innerResult.GetMemTracker().Reset()
 	}
 
-	innerResult := chunk.NewList(exec.RetTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
+	// If don't need to use innerExec any more, close it.
+	var needClose bool
+	defer func() {
+		if needClose && task.innerExec != nil {
+			terror.Log(exec.Close(task.innerExec))
+			task.innerExec = nil
+		}
+	}()
+
+	innerResult := chunk.NewList(exec.RetTypes(task.innerExec), iw.ctx.GetSessionVars().InitChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
 		select {
 		case <-ctx.Done():
+			needClose = true
 			return ctx.Err()
 		default:
 		}
-		err := exec.Next(ctx, innerExec, iw.executorChk)
+		err := exec.Next(ctx, task.innerExec, iw.executorChk)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
+			needClose = true
 			return err
 		}
 		if iw.executorChk.NumRows() == 0 {
+			needClose = true
 			break
 		}
 		innerResult.Add(iw.executorChk)
-		iw.executorChk = exec.TryNewCacheChunk(innerExec)
+		// If maxFetchSize is set, we need to break the loop when the fetched rows reach the max.
+		if iw.maxFetchSize > 0 && innerResult.Len() >= iw.maxFetchSize {
+			break
+		}
+		iw.executorChk = exec.TryNewCacheChunk(task.innerExec)
 	}
 	task.innerResult = innerResult
 	return nil
