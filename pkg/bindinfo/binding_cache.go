@@ -106,6 +106,9 @@ func (u *bindingCacheUpdater) UpdateBindingUsageInfoToStorage() error {
 			bindingLogger().Warn("panic when update usage info for binding", zap.Any("recover", r))
 		}
 	}()
+	if !vardef.EnableBindingUsage.Load() {
+		return nil
+	}
 	bindings := u.GetAllBindings()
 	return updateBindingUsageInfoToStorage(u.sPool, bindings)
 }
