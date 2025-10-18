@@ -1137,7 +1137,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	// add index
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_ddl_analyze = 1")
+	tk.MustExec("set @@tidb_stats_update_during_ddl = 1")
 	tk.MustExec("create table t(a int NOT NULL DEFAULT 10, b int, index idx_b(b))")
 	for i := range 50 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
@@ -1146,7 +1146,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	tk.MustQuery("select * from t use index(idx) where a >1")
 	tk.MustQuery("select * from t use index(idx_b) where b >1")
 	// get meta elements
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	aInfo := tbl.Meta().FindPublicColumnByName("a")
 	require.NotNil(t, aInfo)
@@ -1182,7 +1182,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	tk.MustQuery("select * from t use index(idx) where a >1")
 	tk.MustQuery("select * from t use index(idx_b) where b >1")
 	// reload the schema info
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	aInfo = tbl.Meta().FindPublicColumnByName("a")
 	require.NotNil(t, aInfo)
@@ -1221,7 +1221,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	}
 	tk.MustExec("analyze table pt all columns")
 	// reload the schema info
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pt"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("pt"))
 	require.NoError(t, err)
 	idInfo := tbl.Meta().FindPublicColumnByName("id")
 	require.NotNil(t, idInfo)
@@ -1236,7 +1236,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	tk.MustExec("ALTER TABLE pt ADD index idx(id)")
 	tk.MustQuery("select * from pt use index(idx) where id >1")
 	// reload the schema info
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pt"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("pt"))
 	require.NoError(t, err)
 	idInfo = tbl.Meta().FindPublicColumnByName("id")
 	require.NotNil(t, idInfo)

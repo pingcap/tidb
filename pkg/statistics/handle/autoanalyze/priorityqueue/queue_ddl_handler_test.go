@@ -1070,7 +1070,7 @@ func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
 	require.True(t, isEmpty)
 
 	// enable ddl analyze.
-	testKit.MustExec("set @@tidb_enable_ddl_analyze = 1")
+	testKit.MustExec("set @@tidb_stats_update_during_ddl = 1")
 	// create index.
 	testKit.MustExec("alter table t add index idx(c1, c2)")
 

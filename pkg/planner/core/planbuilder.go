@@ -2096,7 +2096,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 				// for an index in state WriteReorg, we can only analyze it under variable EnableDDLAnalyze is on.
 				indexStateAnalyzable := idx.State == model.StatePublic ||
 					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().EnableDDLAnalyzeExecOpt)
-				if idx.State != model.StatePublic || idx.MVIndex || idx.VectorInfo != nil || !indexStateAnalyzable {
+				if idx.MVIndex || idx.VectorInfo != nil || !indexStateAnalyzable {
 					continue
 				}
 				for _, idxCol := range idx.Columns {
