@@ -1051,7 +1051,7 @@ func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
