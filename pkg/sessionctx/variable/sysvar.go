@@ -2218,8 +2218,7 @@ var defaultSysVars = []*SysVar{
 		// NOTE: do nothing here because this variable is deprecated.
 		return nil
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		// TODO: better warning message
-		appendDeprecationWarning(vars, vardef.TiDBIndexSerialScanConcurrency, vardef.TiDBExecutorConcurrency)
+		vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'."))
 		return normalizedValue, nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBSkipUTF8Check, Value: BoolToOnOff(vardef.DefSkipUTF8Check), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
