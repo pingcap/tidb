@@ -175,9 +175,10 @@ func commonPrefixLength(strs ...[]byte) int {
 func convertBytesToScalar(value []byte) float64 {
 	// Bytes type is viewed as a base-256 value, so we only consider at most 8 bytes.
 	n := len(value)
-	if n == 1 {
-		return float64(value[0])
-	} else if n < 8 {
+	if n < 8 {
+		if n == 1 {
+			return float64(value[0])
+		}
 		var buf [8]byte
 		copy(buf[:], value)
 		return float64(binary.BigEndian.Uint64(buf[:]))
