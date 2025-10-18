@@ -56,11 +56,9 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
 	require.Equal(t, vardef.DefIndexLookupSize, vars.IndexLookupSize)
 	require.Equal(t, vardef.ConcurrencyUnset, vars.indexLookupConcurrency)
-	require.Equal(t, vardef.DefIndexSerialScanConcurrency, vars.indexSerialScanConcurrency)
 	require.Equal(t, vardef.ConcurrencyUnset, vars.indexLookupJoinConcurrency)
 	require.Equal(t, vardef.DefTiDBHashJoinConcurrency, vars.hashJoinConcurrency)
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.IndexLookupConcurrency())
-	require.Equal(t, vardef.DefIndexSerialScanConcurrency, vars.IndexSerialScanConcurrency())
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.IndexLookupJoinConcurrency())
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.HashJoinConcurrency())
 	require.Equal(t, vardef.DefTiDBAllowBatchCop, vars.AllowBatchCop)
@@ -205,12 +203,6 @@ func TestVarsutil(t *testing.T) {
 	err = v.SetSystemVar("sql_mode", "REAL_AS_FLOAT,ANSI_QUOTES")
 	require.NoError(t, err)
 	require.Equal(t, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes, v.SQLMode)
-
-	// Test case for tidb_index_serial_scan_concurrency.
-	require.Equal(t, vardef.DefIndexSerialScanConcurrency, v.IndexSerialScanConcurrency())
-	err = v.SetSystemVar(vardef.TiDBIndexSerialScanConcurrency, "4")
-	require.NoError(t, err)
-	require.Equal(t, 4, v.IndexSerialScanConcurrency())
 
 	// Test case for tidb_batch_insert.
 	require.False(t, v.BatchInsert)

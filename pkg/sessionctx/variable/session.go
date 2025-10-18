@@ -2352,7 +2352,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            vardef.DefIndexLookupConcurrency,
-		indexSerialScanConcurrency:        vardef.DefIndexSerialScanConcurrency,
 		indexLookupJoinConcurrency:        vardef.DefIndexLookupJoinConcurrency,
 		hashJoinConcurrency:               vardef.DefTiDBHashJoinConcurrency,
 		projectionConcurrency:             vardef.DefTiDBProjectionConcurrency,
@@ -3137,9 +3136,6 @@ type Concurrency struct {
 	// Only meaningful for dynamic pruned partition table.
 	indexMergeIntersectionConcurrency int
 
-	// indexSerialScanConcurrency is the number of concurrent index serial scan worker.
-	indexSerialScanConcurrency int
-
 	// ExecutorConcurrency is the number of concurrent worker for all executors.
 	ExecutorConcurrency int
 
@@ -3208,11 +3204,6 @@ func (c *Concurrency) SetStreamAggConcurrency(n int) {
 // SetIndexMergeIntersectionConcurrency set the number of concurrent intersection process worker.
 func (c *Concurrency) SetIndexMergeIntersectionConcurrency(n int) {
 	c.indexMergeIntersectionConcurrency = n
-}
-
-// SetIndexSerialScanConcurrency set the number of concurrent index serial scan worker.
-func (c *Concurrency) SetIndexSerialScanConcurrency(n int) {
-	c.indexSerialScanConcurrency = n
 }
 
 // IndexLookupConcurrency return the number of concurrent index lookup worker.
@@ -3303,12 +3294,6 @@ func (c *Concurrency) IndexMergeIntersectionConcurrency() int {
 		return c.indexMergeIntersectionConcurrency
 	}
 	return c.ExecutorConcurrency
-}
-
-// IndexSerialScanConcurrency return the number of concurrent index serial scan worker.
-// This option is not sync with ExecutorConcurrency since it's used by Analyze table.
-func (c *Concurrency) IndexSerialScanConcurrency() int {
-	return c.indexSerialScanConcurrency
 }
 
 // UnionConcurrency return the num of concurrent union worker.
