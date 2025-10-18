@@ -236,7 +236,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify column in primary key")
 	}
 
-	defer checkColumnOrderByStates(tblInfo)
+	defer checkTableInfo(tblInfo)
 	changingCol, err := getChangingCol(args, tblInfo, oldCol)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -961,29 +961,40 @@ var colStateOrd = map[model.SchemaState]int{
 	model.StatePublic:               5,
 }
 
-func checkColumnOrderByStates(tblInfo *model.TableInfo) {
-	if intest.InTest {
-		minState := model.StatePublic
-		for _, col := range tblInfo.Columns {
-			if colStateOrd[col.State] < colStateOrd[minState] {
-				minState = col.State
-			} else if colStateOrd[col.State] > colStateOrd[minState] {
-				intest.Assert(false, fmt.Sprintf("column %s state %s is not in order, expect at least %s", col.Name, col.State, minState))
-			}
-			if col.ChangeStateInfo != nil {
-				offset := col.ChangeStateInfo.DependencyColumnOffset
-				intest.Assert(offset >= 0 && offset < len(tblInfo.Columns))
-				depCol := tblInfo.Columns[offset]
-				switch {
-				case strings.HasPrefix(col.Name.O, changingColumnPrefix):
-					name := getChangingColumnOriginName(col)
-					intest.Assert(name == depCol.Name.O, "%s != %s", name, depCol.Name.O)
-				case strings.HasPrefix(depCol.Name.O, removingObjPrefix):
-					name := getRemovingObjOriginName(depCol.Name.O)
-					intest.Assert(name == col.Name.O, "%s != %s", name, col.Name.O)
-				}
+func checkTableInfo(tblInfo *model.TableInfo) {
+	if !intest.InTest {
+		return
+	}
+
+	// Check columns' order by state.
+	minState := model.StatePublic
+	for _, col := range tblInfo.Columns {
+		if colStateOrd[col.State] < colStateOrd[minState] {
+			minState = col.State
+		} else if colStateOrd[col.State] > colStateOrd[minState] {
+			intest.Assert(false, fmt.Sprintf("column %s state %s is not in order, expect at least %s", col.Name, col.State, minState))
+		}
+		if col.ChangeStateInfo != nil {
+			offset := col.ChangeStateInfo.DependencyColumnOffset
+			intest.Assert(offset >= 0 && offset < len(tblInfo.Columns))
+			depCol := tblInfo.Columns[offset]
+			switch {
+			case strings.HasPrefix(col.Name.O, changingColumnPrefix):
+				name := getChangingColumnOriginName(col)
+				intest.Assert(name == depCol.Name.O, "%s != %s", name, depCol.Name.O)
+			case strings.HasPrefix(depCol.Name.O, removingObjPrefix):
+				name := getRemovingObjOriginName(depCol.Name.O)
+				intest.Assert(name == col.Name.O, "%s != %s", name, col.Name.O)
 			}
 		}
+	}
+
+	// Check index names' uniqueness.
+	allNames := make(map[string]struct{})
+	for _, idx := range tblInfo.Indices {
+		_, exists := allNames[idx.Name.O]
+		intest.Assert(!exists, "duplicate index name %s", idx.Name.O)
+		allNames[idx.Name.O] = struct{}{}
 	}
 }
 
