@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -271,17 +270,15 @@ type Expression interface {
 	StringerWithCtx
 }
 
-var expressionSlices = sync.Pool{
-	New: func() any {
+var expressionSlices = zeropool.New[[]Expression](
+	func() []Expression {
 		return make([]Expression, 0, 4)
-	},
-}
+	})
 
 // GetExpressionSlices gets a slice of Expression from pool.
 func GetExpressionSlices(size int) []Expression {
-	result := expressionSlices.Get().([]Expression)
-	slices.Grow(result, size)
-	return result
+	result := expressionSlices.Get()
+	return slices.Grow(result, size)
 }
 
 // PutExpressionSlices puts a slice of Expression back to pool.
