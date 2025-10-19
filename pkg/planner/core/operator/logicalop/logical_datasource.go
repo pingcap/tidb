@@ -124,6 +124,8 @@ type DataSource struct {
 
 	// JoinColumns stores columns from this DataSource that are used in join conditions.
 	// These are columns that participate in join predicates with other tables.
+	// NOTE: This list does not distinguish between the type of predicate. It is used in
+	// index pruning early in the planning phase - which is an approximate heuristic.
 	JoinColumns []*expression.Column
 
 	// WhereColumns stores columns from this DataSource that are used in WHERE/selection conditions.
