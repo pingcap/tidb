@@ -272,8 +272,8 @@ type Expression interface {
 }
 
 var expressionSlices = sync.Pool{
-	New: func() interface{} {
-		return make([]Expression, 0, 8)
+	New: func() any {
+		return make([]Expression, 0, 4)
 	},
 }
 
