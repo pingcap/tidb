@@ -592,8 +592,7 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 		for i := idxColPos + 1; i < len(idxCols); i++ {
 			buildTmp.curIdxOff2KeyOff[i] = -1
 		}
-		remained := make([]expression.Expression, 0, len(notKeyEqAndIn)-notKeyColPos)
-		remained = append(remained, notKeyEqAndIn[notKeyColPos:]...)
+		remained := notKeyEqAndIn[notKeyColPos:]
 		notKeyEqAndIn = notKeyEqAndIn[:notKeyColPos]
 		return notKeyEqAndIn, remained
 	}
