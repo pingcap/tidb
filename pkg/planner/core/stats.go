@@ -791,14 +791,15 @@ type indexWithScore struct {
 	consecutiveOrderingCount int // Consecutive ordering columns from start of index
 }
 
-// pruneIndexesByWhereAndOrder prunes indexes based on their coverage of WHERE and ordering columns.
+// pruneIndexesByWhereAndOrder prunes indexes based on their coverage of WHERE, join and ordering columns.
+//
 // NOTE: This is an APPROXIMATE pruning - to find "interesting" indexes, not the "best" index.
+//
 // This pruning is controlled by variable - tidb_opt_index_prune_threshold.
-// The lower the threshold, the more aggressive the pruning.
-// Pruning occurs before many of the index fields are populated - to avoid the cost of
+// Pruning occurs before many of the index fields are populated - to avoid the cost
 // of building predicate ranges. Therefore, pruning is an approximation based upon
 // column coverage only, not the actual predicate ranges or ordering requirements.
-// The real target of this pruning is for customers requiring a very large number of
+// The target of this pruning is for customers requiring a very large number of
 // of indexes (>100) on a table, which causes excessive planning time.
 func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessPath, whereColumns, orderingColumns, joinColumns []*expression.Column, threshold int) []*util.AccessPath {
 	if len(paths) <= 1 {
@@ -849,7 +850,7 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	minToKeep := max(1, min(maxIndexes, threshold))
 	// Prepare lists to hold indexes with different levels of coverage
 	perfectCoveringIndexes := make([]indexWithScore, 0, maxIndexes) // Indexes covering all required columns
-	preferredIndexes := make([]indexWithScore, 0, maxIndexes)       // "Next" best indexes with preferable coveraage"
+	preferredIndexes := make([]indexWithScore, 0, maxIndexes)       // "Next" best indexes with preferable coveraage
 	tablePaths := make([]*util.AccessPath, 0, 1)                    // Usually just one table path
 
 	for _, path := range paths {
@@ -860,7 +861,7 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 
 		// If we have forced paths, we shouldn't prune any paths.
 		// Hints processing should have already done the pruning.
-		// And it means we have entered this function due to a low threshold.
+		// It means we may have entered this function due to a low threshold.
 		if path.Forced {
 			return paths
 		}
@@ -875,7 +876,6 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		consecutiveJoinCount := 0
 
 		for i, idxCol := range path.FullIdxCols {
-			// Use the column ID
 			idxColID := idxCol.ID
 
 			// Check if this index column matches a WHERE column
@@ -886,10 +886,13 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 					if i == consecutiveWhereCount {
 						consecutiveWhereCount++
 					}
-					// Also increment consecutive join count if
+					// Also increment consecutive join count if there has already been at least one
+					// consecutive join match, and the current index column position matches the
+					// sum of consecutive join and where matches.
 					if consecutiveJoinCount > 0 && i == consecutiveJoinCount+consecutiveWhereCount {
 						consecutiveJoinCount++
 					}
+					continue // Move to next index column - since a column can only appear once
 				}
 			}
 			// Check if this index column matches a join column
@@ -900,6 +903,7 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 					if i == consecutiveJoinCount+consecutiveWhereCount {
 						consecutiveJoinCount++
 					}
+					continue // Move to next index column - since a column can only appear once
 				}
 			}
 
