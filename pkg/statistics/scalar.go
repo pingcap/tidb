@@ -15,6 +15,7 @@
 package statistics
 
 import (
+	"encoding/binary"
 	"math"
 	"time"
 
@@ -193,8 +194,7 @@ func convertBytesToScalar(value []byte) float64 {
 		return float64(uint64(value[6])<<8 | uint64(value[5])<<16 | uint64(value[4])<<24 |
 			uint64(value[3])<<32 | uint64(value[2])<<40 | uint64(value[1])<<48 | uint64(value[0])<<56)
 	default:
-		return float64(uint64(value[7]) | uint64(value[6])<<8 | uint64(value[5])<<16 | uint64(value[4])<<24 |
-			uint64(value[3])<<32 | uint64(value[2])<<40 | uint64(value[1])<<48 | uint64(value[0])<<56)
+		return float64(binary.BigEndian.Uint64(value))
 	}
 }
 
