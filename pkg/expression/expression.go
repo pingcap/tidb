@@ -16,7 +16,9 @@ package expression
 
 import (
 	"fmt"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -267,6 +269,25 @@ type Expression interface {
 	MemoryUsage() int64
 
 	StringerWithCtx
+}
+
+var expressionSlices = sync.Pool{
+	New: func() interface{} {
+		return make([]Expression, 0, 8)
+	},
+}
+
+// GetExpressionSlices gets a slice of Expression from pool.
+func GetExpressionSlices(size int) []Expression {
+	result := expressionSlices.Get().([]Expression)
+	slices.Grow(result, size)
+	return result
+}
+
+// PutExpressionSlices puts a slice of Expression back to pool.
+func PutExpressionSlices(exprs []Expression) {
+	exprs = exprs[:0]
+	expressionSlices.Put(exprs)
 }
 
 // CNFExprs stands for a CNF expression.
