@@ -135,7 +135,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	}
 	// Prune indexes based on WHERE and ordering columns (ORDER BY, MIN/MAX/FIRST_VALUE) if we have too many
 	threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
-	if len(ds.AllPossibleAccessPaths) > threshold && (len(ds.WhereColumns) > 0 || len(ds.OrderingColumns) > 0) {
+	if len(ds.AllPossibleAccessPaths) > threshold && (len(ds.WhereColumns) > 0 || len(ds.OrderingColumns) > 0 || len(ds.JoinColumns) > 0) {
 		ds.AllPossibleAccessPaths = pruneIndexesByWhereAndOrder(ds, ds.AllPossibleAccessPaths, ds.WhereColumns, ds.OrderingColumns, ds.JoinColumns, threshold)
 		// Make a copy for PossibleAccessPaths to avoid sharing the same slice
 		ds.PossibleAccessPaths = make([]*util.AccessPath, len(ds.AllPossibleAccessPaths))
@@ -793,7 +793,6 @@ type indexWithScore struct {
 
 // pruneIndexesByWhereAndOrder prunes indexes based on their coverage of WHERE and ordering columns.
 // NOTE: This is an APPROXIMATE pruning - to find "interesting" indexes, not the "best" index.
-// Ordering columns include both ORDER BY and MIN/MAX/FIRST_VALUE aggregates which can benefit from ordered indexes.
 // This pruning is controlled by variable - tidb_opt_index_prune_threshold.
 // The lower the threshold, the more aggressive the pruning.
 // Pruning occurs before many of the index fields are populated - to avoid the cost of
@@ -801,9 +800,6 @@ type indexWithScore struct {
 // column coverage only, not the actual predicate ranges or ordering requirements.
 // The real target of this pruning is for customers requiring a very large number of
 // of indexes (>100) on a table, which causes excessive planning time.
-// TO-DO: While isSingleScan is checked, the code can prioritize single-scan
-// over more filtering indexes. And it doesn't check for index uniqueness and partial indexes.
-// Further refinement will be necessary after customer feedback.
 func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessPath, whereColumns, orderingColumns, joinColumns []*expression.Column, threshold int) []*util.AccessPath {
 	if len(paths) <= 1 {
 		return paths
