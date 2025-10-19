@@ -733,7 +733,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 	accesses = make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
 	mergedAccesses := expression.GetExpressionSlices(len(cols))
-	for range len(cols) {
+	for range cols {
 		mergedAccesses = append(mergedAccesses, nil)
 	}
 	newConditions = make([]expression.Expression, 0, len(conditions))
