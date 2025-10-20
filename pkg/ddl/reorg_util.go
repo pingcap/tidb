@@ -162,6 +162,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 			return dbterror.ErrUnsupportedDistTask
 		}
 	}
+	failpoint.InjectCall("beforeInitReorgMeta", m)
 	job.ReorgMeta = m
 	logutil.DDLLogger().Info("initialize reorg meta",
 		zap.Int64("jobID", job.ID),
