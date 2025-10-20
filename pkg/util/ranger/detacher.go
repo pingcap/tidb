@@ -736,6 +736,9 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 	for range cols {
 		mergedAccesses = append(mergedAccesses, nil)
 	}
+	defer func() {
+		expression.PutExpressionSlices(mergedAccesses)
+	}()
 	newConditions = make([]expression.Expression, 0, len(conditions))
 	columnValues = make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
@@ -811,7 +814,6 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			}
 		}
 	}
-	expression.PutExpressionSlices(mergedAccesses)
 	for i, offset := range offsets {
 		if offset == -1 || accesses[offset] == nil {
 			newConditions = append(newConditions, conditions[i])
