@@ -259,11 +259,14 @@ Projection	root		generated_columns.tu.a, generated_columns.tu.c
 └─Point_Get	root	table:tu, index:uk(c)	
 EXPLAIN format = 'plan_tree' SELECT * FROM tu WHERE c in(1, 2, 3);
 id	task	access object	operator info
-Batch_Point_Get	root	table:tu, index:uk(c)	keep order:false, desc:false
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:tu, index:uk(c)	range:[1,3], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:tu	keep order:false, stats:pseudo
 EXPLAIN format = 'plan_tree' SELECT c, a FROM tu WHERE c in(1, 2, 3);
 id	task	access object	operator info
 Projection	root		generated_columns.tu.c, generated_columns.tu.a
-└─Batch_Point_Get	root	table:tu, index:uk(c)	keep order:false, desc:false
+└─IndexReader	root		index:IndexRangeScan
+  └─IndexRangeScan	cop[tikv]	table:tu, index:uk(c)	range:[1,3], keep order:false, stats:pseudo
 set @@sql_mode=default;
 drop table if exists t1;
 create table t1(a int);
