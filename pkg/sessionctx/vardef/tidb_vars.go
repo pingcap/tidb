@@ -1372,7 +1372,7 @@ const (
 	DefOptCorrelationExpFactor              = 1
 	DefOptRiskEqSkewRatio                   = 0.0
 	DefOptRiskRangeSkewRatio                = 0.0
-	DefOptRiskScaleNDVSkewRatio             = 1.0
+	DefOptRiskScaleNDVSkewRatio             = 0.0
 	DefOptRiskGroupNDVSkewRatio             = 0.0
 	DefOptAlwaysKeepJoinKey                 = true
 	DefOptCartesianJoinOrderThreshold       = 0.0
