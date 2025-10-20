@@ -125,6 +125,11 @@ func getModifyColumnType(
 		return ModifyTypeReorg
 	}
 
+	// FIXME(joechenrh): handle partition table case
+	if tblInfo.Partition != nil {
+		return ModifyTypeReorg
+	}
+
 	if needDoRowReorg(oldCol, args.Column, sqlMode) {
 		return ModifyTypeReorg
 	}
@@ -350,7 +355,7 @@ func checkColumnAlreadyExists(tblInfo *model.TableInfo, args *model.ModifyColumn
 	return nil
 }
 
-// rollbackModifyColumnJob rollbacks the job when an error occurs.
+// rollbackModifyColumnJob rollbacks the job who doesn't need to reorg the data.
 func rollbackModifyColumnJob(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	newCol, oldCol *model.ColumnInfo) (ver int64, err error) {
@@ -372,7 +377,8 @@ func rollbackModifyColumnJob(
 	return ver, nil
 }
 
-// rollbackModifyColumnJobWithReorg is used to rollback modify-column job which need to reorg the data.
+// rollbackModifyColumnJobWithReorg is used to rollback modify-column job which need to
+// reorg both the row and index data.
 func rollbackModifyColumnJobWithReorg(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
@@ -401,7 +407,8 @@ func rollbackModifyColumnJobWithReorg(
 	return ver, nil
 }
 
-// rollbackModifyColumnJobWithReorg is used to rollback modify-column job which need to reorg the data.
+// rollbackModifyColumnJobWithIndexReorg is used to rollback modify-column job which
+// only need to reorg the index.
 func rollbackModifyColumnJobWithIndexReorg(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
@@ -925,7 +932,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			checked, err := checkModifyColumnData(
 				jobCtx.stepCtx, w,
 				dbInfo.Name, tblInfo.Name,
-				oldCol, args.Column, true)
+				oldCol, args.Column, false)
 			if err != nil {
 				if checked {
 					job.State = model.JobStateRollingback

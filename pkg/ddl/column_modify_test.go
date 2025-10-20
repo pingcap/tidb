@@ -644,7 +644,7 @@ func TestModifyColumnReorgCheckpoint(t *testing.T) {
 		rangeCnts = append(rangeCnts, rangeCnt)
 	})
 
-	tk.MustExec("alter table t modify column b char(16);")
+	tk.MustExec("alter table t modify column b int;")
 	require.Len(t, rangeCnts, 2)                // It should have two rounds for loading table ranges.
 	require.Less(t, rangeCnts[1], rangeCnts[0]) // Verify if the checkpoint is progressing.
 }
