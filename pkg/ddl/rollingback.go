@@ -155,8 +155,7 @@ func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		if job.SchemaState == model.StateNone {
 			// When change null to not null, although state is unchanged with none, the oldCol flag's has been changed to preNullInsertFlag.
 			// To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
-			col := tblInfo.Columns[oldCol.Offset]
-			if mysql.HasPreventNullInsertFlag(col.GetFlag()) || col.ChangingFieldType != nil {
+			if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
 				job.State = model.JobStateRollingback
 				return ver, dbterror.ErrCancelledDDLJob
 			}

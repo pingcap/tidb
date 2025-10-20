@@ -654,12 +654,11 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 
 func TestGetModifyColumnType(t *testing.T) {
 	type testCase struct {
-		tableSQL   string
-		modifySQL  string
-		dataSQL    string
-		strictMode bool
-		success    bool
-		tp         byte
+		tableSQL  string
+		modifySQL string
+		dataSQL   string
+		success   bool
+		tp        byte
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -669,77 +668,72 @@ func TestGetModifyColumnType(t *testing.T) {
 	tcs := []testCase{
 		// integer
 		{
-			tableSQL:   "create table t(a bigint)",
-			modifySQL:  "alter table t modify column a int",
-			dataSQL:    "insert into t values (1), (2), (3)",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
-			strictMode: true,
-			success:    true,
+			tableSQL:  "create table t(a bigint)",
+			modifySQL: "alter table t modify column a int",
+			dataSQL:   "insert into t values (1), (2), (3)",
+			tp:        ddl.ModifyTypeNoReorgWithCheck,
+			success:   true,
 		},
 		{
-			tableSQL:   "create table t(a bigint)",
-			modifySQL:  "alter table t modify column a int",
-			dataSQL:    "insert into t values (100000000000)",
-			tp:         ddl.ModifyTypeReorg,
-			strictMode: false,
-			success:    true,
+			tableSQL:  "create table t(a bigint)",
+			modifySQL: "alter table t modify column a int",
+			dataSQL:   "insert into t values (100000000000)",
+			tp:        ddl.ModifyTypeNoReorgWithCheck,
+			success:   false,
 		},
 		{
-			tableSQL:   "create table t(a bigint)",
-			modifySQL:  "alter table t modify column a int",
-			dataSQL:    "insert into t values (100000000000)",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
-			strictMode: true,
-			success:    false,
+			tableSQL:  "create table t(a int)",
+			modifySQL: "alter table t modify column a bigint",
+			tp:        ddl.ModifyTypeNoReorg,
+			success:   true,
 		},
 		{
-			tableSQL:   "create table t(a int)",
-			modifySQL:  "alter table t modify column a bigint",
-			tp:         ddl.ModifyTypeNoReorg,
-			strictMode: true,
-			success:    true,
+			tableSQL:  "create table t(a int)",
+			modifySQL: "alter table t modify column a bigint",
+			tp:        ddl.ModifyTypeNoReorg,
+			success:   true,
 		},
 		{
-			tableSQL:   "create table t(a int)",
-			modifySQL:  "alter table t modify column a bigint",
-			tp:         ddl.ModifyTypeNoReorg,
-			strictMode: false,
-			success:    true,
+			tableSQL:  "create table t(a bigint, index idx_a(a))",
+			modifySQL: "alter table t modify column a int",
+			tp:        ddl.ModifyTypeNoReorgWithCheck,
+			success:   true,
 		},
 		{
-			tableSQL:   "create table t(a bigint, index idx_a(a))",
-			modifySQL:  "alter table t modify column a int",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
-			strictMode: true,
-			success:    true,
-		},
-		{
-			tableSQL:   "create table t(a bigint, index idx_a(a))",
-			modifySQL:  "alter table t modify column a int unsigned",
-			tp:         ddl.ModifyTypeIndexReorg,
-			strictMode: true,
-			success:    true,
+			tableSQL:  "create table t(a bigint, index idx_a(a))",
+			modifySQL: "alter table t modify column a int unsigned",
+			tp:        ddl.ModifyTypeIndexReorg,
+			success:   true,
 		},
 		// string
 		{
-			tableSQL:   "create table t(a char(10))",
-			modifySQL:  "alter table t modify column a char(5)",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
-			strictMode: true,
-			success:    true,
+			tableSQL:  "create table t(a char(10))",
+			modifySQL: "alter table t modify column a char(5)",
+			tp:        ddl.ModifyTypeNoReorgWithCheck,
+			success:   true,
+		},
+		{
+			tableSQL:  "create table t(a char(10) collate utf8mb4_general_ci)",
+			modifySQL: "alter table t modify column a varchar(5) collate utf8mb4_general_ci",
+			tp:        ddl.ModifyTypeNoReorgWithCheck,
+			success:   true,
+		},
+		{
+			tableSQL:  "create table t(a varchar(10))",
+			modifySQL: "alter table t modify column a char(5)",
+			tp:        ddl.ModifyTypePrecheck,
+			success:   true,
 		},
 	}
 
+	var gotTp byte
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+		gotTp = tp
+	})
+
+	tk.MustExec("set sql_mode='STRICT_ALL_TABLES'")
 	for _, tc := range tcs {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
-			require.Equal(t, tc.tp, tp)
-		})
 		tk.MustExec("drop table if exists t")
-		if tc.strictMode {
-			tk.MustExec("set sql_mode='STRICT_ALL_TABLES'")
-		} else {
-			tk.MustExec("set sql_mode=''")
-		}
 		tk.MustExec(tc.tableSQL)
 		if len(tc.dataSQL) > 0 {
 			tk.MustExec(tc.dataSQL)
@@ -749,5 +743,6 @@ func TestGetModifyColumnType(t *testing.T) {
 		} else {
 			tk.MustExecToErr(tc.modifySQL)
 		}
+		require.Equal(t, tc.tp, gotTp)
 	}
 }

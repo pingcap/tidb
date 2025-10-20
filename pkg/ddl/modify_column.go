@@ -93,6 +93,10 @@ func typeToString(tp byte) string {
 	return ""
 }
 
+func hasModifyFlag(col *model.ColumnInfo) bool {
+	return col.ChangingFieldType != nil || mysql.HasPreventNullInsertFlag(col.GetFlag())
+}
+
 func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
 	return !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag())
 }
@@ -256,13 +260,13 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 			zap.Int64("oldColumnID", oldCol.ID),
 			zap.String("type", typeToString(args.ModifyColumnType)),
 		)
-		failpoint.InjectCall("getModifyColumnType", args.ModifyColumnType)
 		if oldCol.GetType() == mysql.TypeVarchar && args.Column.GetType() == mysql.TypeString &&
-			args.ModifyColumnType == ModifyTypeNoReorgWithCheck ||
-			args.ModifyColumnType == ModifyTypeIndexReorg {
+			(args.ModifyColumnType == ModifyTypeNoReorgWithCheck ||
+				args.ModifyColumnType == ModifyTypeIndexReorg) {
 			logutil.DDLLogger().Info("meet varchar to char modify column, change type to precheck")
 			args.ModifyColumnType = ModifyTypePrecheck
 		}
+		failpoint.InjectCall("getModifyColumnType", args.ModifyColumnType)
 	}
 
 	if job.IsRollingback() {
@@ -360,11 +364,11 @@ func rollbackModifyColumnJob(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	newCol, oldCol *model.ColumnInfo) (ver int64, err error) {
 	if oldCol.ID == newCol.ID {
-		// If the not-null change is included, we should clean the flag info in oldCol.
-		tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
-		if mysql.HasPreventNullInsertFlag(oldCol.GetFlag()) {
+		// Clean the flag info in oldCol.
+		if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
 			tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
 			tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
+			tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
 		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
@@ -382,11 +386,11 @@ func rollbackModifyColumnJob(
 func rollbackModifyColumnJobWithReorg(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
-	// If the not-null change is included, we should clean the flag info in oldCol.
-	tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
-	if mysql.HasPreventNullInsertFlag(oldCol.GetFlag()) {
+	// Clean the flag info in oldCol.
+	if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
 		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
 		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
+		tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
 	}
 
 	var changingIdxIDs []int64
@@ -412,11 +416,11 @@ func rollbackModifyColumnJobWithReorg(
 func rollbackModifyColumnJobWithIndexReorg(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
-	// If the not-null change is included, we should clean the flag info in oldCol.
-	tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
-	if mysql.HasPreventNullInsertFlag(oldCol.GetFlag()) {
+	// Clean the flag info in oldCol.
+	if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
 		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
 		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
+		tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
 	}
 
 	allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
@@ -552,10 +556,15 @@ func (w *worker) precheckForVarcharToChar(
 		return ver, dbterror.ErrColumnInChange.GenWithStackByArgs(oldCol.Name, newCol.ID)
 	}
 
-	// First time we get here, just add flag and type
-	if !mysql.HasPreventNullInsertFlag(oldCol.GetFlag()) {
-		oldCol.AddFlag(mysql.PreventNullInsertFlag)
-		oldCol.ChangingFieldType = &newCol.FieldType
+	// For the first time we get here, just add the flag
+	// and check the existing data in the next round.
+	if !hasModifyFlag(oldCol) {
+		if isNullToNotNullChange(oldCol, newCol) {
+			oldCol.AddFlag(mysql.PreventNullInsertFlag)
+		}
+		if !noReorgDataStrict(oldCol, newCol) {
+			oldCol.ChangingFieldType = &newCol.FieldType
+		}
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	}
 
@@ -613,11 +622,15 @@ func (w *worker) doModifyColumnWithCheck(
 		return ver, dbterror.ErrColumnInChange.GenWithStackByArgs(oldCol.Name, newCol.ID)
 	}
 
-	firstTimeCheck := !mysql.HasPreventNullInsertFlag(oldCol.GetFlag())
-	// For the first time we get here, just add a PreventNullInsertFlag flag
+	// For the first time we get here, just add the flag
 	// and check the existing data in the next round.
-	if firstTimeCheck {
-		oldCol.AddFlag(mysql.PreventNullInsertFlag)
+	if !hasModifyFlag(oldCol) {
+		if isNullToNotNullChange(oldCol, newCol) {
+			oldCol.AddFlag(mysql.PreventNullInsertFlag)
+		}
+		if !noReorgDataStrict(oldCol, newCol) {
+			oldCol.ChangingFieldType = &newCol.FieldType
+		}
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	}
 

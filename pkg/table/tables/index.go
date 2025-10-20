@@ -46,7 +46,6 @@ type index struct {
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
 	ectx                *exprstatic.ExprContext
-	castIndexCols       []int
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
@@ -65,21 +64,11 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
-	}
-
-	for i, col := range index.idxInfo.Columns {
-		tblCol := index.tblInfo.Columns[col.Offset]
-		if col.UsingChangingType && tblCol.ChangingFieldType != nil {
-			index.castIndexCols = append(index.castIndexCols, i)
-		}
-	}
-
-	if len(index.castIndexCols) > 0 {
-		index.ectx = exprstatic.NewExprContext(
+		ectx: exprstatic.NewExprContext(
 			exprstatic.WithEvalCtx(
 				exprstatic.NewEvalContext(
 					exprstatic.WithSQLMode(
-						mysql.ModeStrictAllTables | mysql.ModeStrictTransTables))))
+						mysql.ModeStrictAllTables | mysql.ModeStrictTransTables)))),
 	}
 	return index
 }
@@ -92,6 +81,21 @@ func (c *index) Meta() *model.IndexInfo {
 // TableMeta returns table info.
 func (c *index) TableMeta() *model.TableInfo {
 	return c.tblInfo
+}
+
+func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) error {
+	var err error
+	for i, idxCol := range c.idxInfo.Columns {
+		tblCol := c.tblInfo.Columns[idxCol.Offset]
+		if !idxCol.UsingChangingType || tblCol.ChangingFieldType == nil {
+			continue
+		}
+		indexedValues[i], err = table.CastColumnValueToType(c.ectx, indexedValues[i], tblCol.ChangingFieldType, true, false)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the
@@ -107,13 +111,8 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 		}
 	}
 
-	for _, i := range c.castIndexCols {
-		col := c.idxInfo.Columns[i]
-		tblCol := c.tblInfo.Columns[col.Offset]
-		indexedValues[i], err = table.CastColumnValueToType(c.ectx, indexedValues[i], tblCol.ChangingFieldType, true, false)
-		if err != nil {
-			return
-		}
+	if err = c.castIndexValuesToChangingTypes(indexedValues); err != nil {
+		return
 	}
 
 	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
@@ -128,14 +127,8 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, u
 		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 	})
 
-	var err error
-	for _, i := range c.castIndexCols {
-		col := c.idxInfo.Columns[i]
-		tblCol := c.tblInfo.Columns[col.Offset]
-		indexedValues[i], err = table.CastColumnValueToType(c.ectx, indexedValues[i], tblCol.ChangingFieldType, true, false)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	if err := c.castIndexValuesToChangingTypes(indexedValues); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
