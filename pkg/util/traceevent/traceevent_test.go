@@ -77,7 +77,7 @@ func TestTraceEventCategoryFiltering(t *testing.T) {
 	recorder := installRecorderSink(t, 8)
 
 	ctx := context.Background()
-	TraceEvent(CoprRegionCache, ctx, "should-not-record", zap.Int("value", 1))
+	TraceEvent(ctx, CoprRegionCache, "should-not-record", zap.Int("value", 1))
 	require.Empty(t, FlightRecorder().Snapshot())
 	require.Empty(t, recorder.Snapshot())
 }
@@ -126,7 +126,7 @@ func TestTraceEventRecordsEvent(t *testing.T) {
 	recorder := installRecorderSink(t, 8)
 	ctx := context.Background()
 
-	TraceEvent(CoprRegionCache, ctx, "test-event",
+	TraceEvent(ctx, CoprRegionCache, "test-event",
 		zap.Int("count", 42),
 		zap.String("scope", "unit-test"))
 
@@ -166,12 +166,12 @@ func TestTraceEventLoggingSwitch(t *testing.T) {
 	flightBefore := len(FlightRecorder().Snapshot())
 
 	require.Equal(t, ModeOff, CurrentMode())
-	TraceEvent(CoprRegionCache, ctx, "disabled-log", zap.Int("value", 1))
+	TraceEvent(ctx, CoprRegionCache, "disabled-log", zap.Int("value", 1))
 	require.Equal(t, flightBefore+1, len(FlightRecorder().Snapshot()))
 	disabledLogged := len(recorder.Snapshot())
 
 	_, _ = SetMode(ModeLogging)
-	TraceEvent(CoprRegionCache, ctx, "enabled-log", zap.Int("value", 2))
+	TraceEvent(ctx, CoprRegionCache, "enabled-log", zap.Int("value", 2))
 	fr := FlightRecorder().Snapshot()
 	require.Len(t, fr, flightBefore+2)
 	recorded := recorder.Snapshot()
@@ -242,7 +242,7 @@ func BenchmarkTraceEventDisabled(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		TraceEvent(CoprRegionCache, ctx, "benchmark-disabled",
+		TraceEvent(ctx, CoprRegionCache, "benchmark-disabled",
 			zap.String("key", "value"),
 			zap.Int("iteration", i))
 	}
@@ -262,7 +262,7 @@ func BenchmarkTraceEventEnabled(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		TraceEvent(CoprRegionCache, ctx, "benchmark-enabled",
+		TraceEvent(ctx, CoprRegionCache, "benchmark-enabled",
 			zap.String("key", "value"),
 			zap.Int("iteration", i))
 	}

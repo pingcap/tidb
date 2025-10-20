@@ -78,7 +78,7 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 		if len(currentRange.StartKey) > 0 && !loc.Contains(currentRange.StartKey) && !bytes.Equal(currentRange.StartKey, loc.StartKey) {
 			mismatch = true
 			if traceevent.IsEnabled(traceevent.CoprRegionCache) {
-				traceevent.TraceEvent(traceevent.CoprRegionCache, ctx, "BatchLocateKeyRanges location does not cover range start",
+				traceevent.TraceEvent(ctx, traceevent.CoprRegionCache, "BatchLocateKeyRanges location does not cover range start",
 					formatLocation(loc),
 					keyField("rangeStart", currentRange.StartKey),
 					keyField("rangeEnd", currentRange.EndKey),
@@ -99,7 +99,7 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 		mismatch = true
 		if traceevent.IsEnabled(traceevent.CoprRegionCache) {
 			remaining := kvRanges[rangeIdx]
-			traceevent.TraceEvent(traceevent.CoprRegionCache, ctx, "BatchLocateKeyRanges returned locations that do not cover all ranges",
+			traceevent.TraceEvent(ctx, traceevent.CoprRegionCache, "BatchLocateKeyRanges returned locations that do not cover all ranges",
 				keyField("nextRangeStart", remaining.StartKey),
 				keyField("nextRangeEnd", remaining.EndKey),
 				zap.Int("remainingRangeCount", len(kvRanges)-rangeIdx),
@@ -166,7 +166,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 
 	// Trace: entering bucket split with state
 	if traceevent.IsEnabled(traceevent.CoprRegionCache) {
-		traceevent.TraceEvent(traceevent.CoprRegionCache, ctx, "splitKeyRangesByBuckets begin",
+		traceevent.TraceEvent(ctx, traceevent.CoprRegionCache, "splitKeyRangesByBuckets begin",
 			zap.Uint64("regionID", loc.Region.GetID()),
 			zap.Int("rangeCount", ranges.Len()),
 			zap.Int("bucketCount", len(loc.Buckets.Keys)),
@@ -190,7 +190,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 		// Trace: bucket located for this startKey
 		if traceevent.IsEnabled(traceevent.CoprRegionCache) {
 			if bucket != nil {
-				traceevent.TraceEvent(traceevent.CoprRegionCache, ctx, "bucket located",
+				traceevent.TraceEvent(ctx, traceevent.CoprRegionCache, "bucket located",
 					keyField("startKey", startKey),
 					keyField("bucketStart", bucket.StartKey),
 					keyField("bucketEnd", bucket.EndKey))
@@ -268,7 +268,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 		} else {
 			// Anomaly: range not in bucket - boundary issue
 			if traceevent.IsEnabled(traceevent.CoprRegionCache) {
-				traceevent.TraceEvent(traceevent.CoprRegionCache, ctx, "range outside bucket",
+				traceevent.TraceEvent(ctx, traceevent.CoprRegionCache, "range outside bucket",
 					formatLocation(loc),
 					zap.Int("rangeIndex", i),
 					keyField("rangeStart", r.StartKey),
@@ -313,7 +313,7 @@ func (c *RegionCache) splitKeyRangesByLocation(ctx context.Context, loc *tikv.Ke
 
 	// Anomaly: range exceeds location boundaries
 	if traceevent.IsEnabled(traceevent.CoprRegionCache) {
-		traceevent.TraceEvent(traceevent.CoprRegionCache, ctx, "range exceeds location boundaries",
+		traceevent.TraceEvent(ctx, traceevent.CoprRegionCache, "range exceeds location boundaries",
 			formatLocation(loc),
 			formatRanges(ranges),
 			zap.Int("rangeIndex", i),
@@ -342,7 +342,7 @@ func (c *RegionCache) splitKeyRangesByLocation(ctx context.Context, loc *tikv.Ke
 	} else {
 		// Anomaly: range start is outside location
 		if traceevent.IsEnabled(traceevent.CoprRegionCache) {
-			traceevent.TraceEvent(traceevent.CoprRegionCache, ctx, "range start outside location",
+			traceevent.TraceEvent(ctx, traceevent.CoprRegionCache, "range start outside location",
 				formatLocation(loc),
 				formatRanges(ranges),
 				zap.Int("rangeIndex", i),
@@ -397,7 +397,7 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 
 	// Trace: batch locate completed
 	if traceevent.IsEnabled(traceevent.CoprRegionCache) {
-		traceevent.TraceEvent(traceevent.CoprRegionCache, ctx, "BatchLocateKeyRanges completed",
+		traceevent.TraceEvent(ctx, traceevent.CoprRegionCache, "BatchLocateKeyRanges completed",
 			zap.Int("requestedRanges", len(kvRanges)),
 			zap.Int("returnedLocations", len(locs)),
 			zap.Bool("needBuckets", buckets))
@@ -415,7 +415,7 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 		// Anomaly: index overflow - should not happen
 		if nextLocIndex >= len(locs) {
 			if traceevent.IsEnabled(traceevent.CoprRegionCache) {
-				traceevent.TraceEvent(traceevent.CoprRegionCache, ctx, "batch locate index overflow",
+				traceevent.TraceEvent(ctx, traceevent.CoprRegionCache, "batch locate index overflow",
 					zap.Int("nextLocIndex", nextLocIndex),
 					zap.Int("locations", len(locs)),
 					formatRanges(ranges))
