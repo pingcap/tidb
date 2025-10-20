@@ -16,7 +16,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/session/syssession",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/types",

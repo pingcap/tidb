@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -725,10 +724,19 @@ func (s *session) HasDirtyContent(tid int64) bool {
 	if s.txn.Transaction == nil || s.txn.Transaction.IsPipelined() {
 		return false
 	}
-	seekKey := tablecodec.EncodeTablePrefix(tid)
-	it, err := s.txn.GetMemBuffer().Iter(seekKey, nil)
-	terror.Log(err)
-	return it.Valid() && bytes.HasPrefix(it.Key(), seekKey)
+	if txnCtx := s.sessionVars.TxnCtx; txnCtx != nil && txnCtx.TableDeltaMap != nil {
+		item := txnCtx.TableDeltaMap[tid]
+		if item.Count > 0 {
+			return true
+		}
+	}
+	if stmtCtx := s.sessionVars.StmtCtx; stmtCtx != nil && stmtCtx.TableDeltaMap != nil {
+		item := stmtCtx.TableDeltaMap[tid]
+		if item.Count > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // StmtCommit implements the sessionctx.Context interface.
@@ -742,6 +750,9 @@ func (s *session) StmtCommit(ctx context.Context) {
 	if err != nil {
 		logutil.Logger(ctx).Error("txnManager failed to handle OnStmtCommit", zap.Error(err))
 	}
+	if s.sessionVars.TxnCtx != nil && s.sessionVars.StmtCtx != nil {
+		s.sessionVars.TxnCtx.FlushStmtTableDelta(s.sessionVars.StmtCtx)
+	}
 
 	st := &s.txn
 	st.flushStmtBuf()
@@ -753,6 +764,9 @@ func (s *session) StmtRollback(ctx context.Context, isForPessimisticRetry bool) 
 	err := txnManager.OnStmtRollback(ctx, isForPessimisticRetry)
 	if err != nil {
 		logutil.Logger(ctx).Error("txnManager failed to handle OnStmtRollback", zap.Error(err))
+	}
+	if s.sessionVars.StmtCtx != nil {
+		s.sessionVars.StmtCtx.ResetTableDelta()
 	}
 	s.txn.cleanup()
 }
