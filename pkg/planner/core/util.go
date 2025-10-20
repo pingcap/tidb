@@ -34,7 +34,7 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	return IsReadOnlyInternal(node, vars, true)
 }
 
-// If checkGlobalVars is true, false will be returned when there are updates to global variables.
+// IsReadOnlyInternal is that If checkGlobalVars is true, false will be returned when there are updates to global variables.
 func IsReadOnlyInternal(node ast.Node, vars *variable.SessionVars, checkGlobalVars bool) bool {
 	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
 		prepareStmt, err := GetPreparedStmt(execStmt, vars)
