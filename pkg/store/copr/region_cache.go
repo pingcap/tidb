@@ -286,6 +286,9 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 	ranges := l.Ranges
 	loc := l.Location
 	res := []*LocationKeyRanges{}
+	processedRangeCount := 0
+	var prevBucketEnd []byte
+
 	for ranges.Len() > 0 {
 		startKey := ranges.At(0).StartKey
 		bucket := loc.LocateBucket(startKey)
@@ -297,22 +300,11 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 		// - Bucket structure issues (gaps, sorting, etc.) cannot cause nil
 		//   because fallback logic creates synthetic buckets
 		if bucket == nil {
-			currentRange := ranges.At(0)
-
-			// Diagnostic checks to identify root cause:
-			// 1. Is startKey from the current range we're processing?
-			isFromCurrentRange := bytes.Equal(startKey, currentRange.StartKey)
-
-			// 2. Does location contain the range boundaries?
-			locContainsRangeStart := loc.Contains(currentRange.StartKey)
-			locContainsRangeEnd := loc.Contains(currentRange.EndKey) ||
-				bytes.Equal(loc.EndKey, currentRange.EndKey)
-
-			// 3. Which direction is startKey outside the location?
+			// Prepare comprehensive diagnostics
 			beforeLocation := bytes.Compare(startKey, loc.StartKey) < 0
 			afterLocation := len(loc.EndKey) > 0 && bytes.Compare(startKey, loc.EndKey) >= 0
 
-			// 4. Bucket structure info
+			// Bucket structure info
 			bucketKeys := func() []string {
 				if loc.Buckets == nil {
 					return []string{"<nil buckets>"}
@@ -324,53 +316,75 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 				return keys
 			}()
 
-			// Log ERROR with comprehensive diagnostics
-			// Decision tree:
-			// - If keyInRegion=false (expected):
-			//   - If isFromCurrentRange=false → Bug: wrong startKey (iteration/variable bug)
-			//   - If isFromCurrentRange=true:
-			//     - If locContains* =false → Bug: LocationKeyRanges construction
-			//     - If beforeLocation=true → Bug: startKey < loc.StartKey (range slicing)
-			//     - If afterLocation=true → Bug: startKey >= loc.EndKey (range slicing)
-			//     - Else → PD bug: location boundaries wrong
-			// - If keyInRegion=true (impossible) → LocateBucket bug or memory corruption
-			logutil.Logger(ctx).Error("LocateBucket returned nil",
+			// Queue state - log remaining ranges to see if upstream already wrong
+			queueSummary := formatRanges(ranges)
+
+			// Check if this is a gap from previous bucket split
+			var gapDetected bool
+			var expectedStart []byte
+			if prevBucketEnd != nil {
+				expectedStart = prevBucketEnd
+				gapDetected = !bytes.Equal(startKey, expectedStart)
+			}
+
+			// PD metadata - needed to correlate with PD logs and prove/disprove PD bug
+			regionVer := loc.Region.GetVer()
+			regionConfVer := loc.Region.GetConfVer()
+
+			// Log comprehensive diagnostics
+			fields := []zap.Field{
 				// Basic identification
-				keyField("key", startKey),
+				keyField("startKey", startKey),
 				zap.Uint64("regionID", loc.Region.GetID()),
 				zap.Bool("keyInRegion", loc.Contains(startKey)),
 
-				// Root cause diagnostics
-				zap.Bool("isFromCurrentRange", isFromCurrentRange),
-				zap.Bool("locContainsRangeStart", locContainsRangeStart),
-				zap.Bool("locContainsRangeEnd", locContainsRangeEnd),
+				// Direction diagnostics
 				zap.Bool("beforeLocation", beforeLocation),
 				zap.Bool("afterLocation", afterLocation),
 
-				// Current range context
-				keyField("currentRangeStart", currentRange.StartKey),
-				keyField("currentRangeEnd", currentRange.EndKey),
-				zap.Int("remainingRanges", ranges.Len()),
+				// Loop state - shows where we are in processing
+				zap.Int("processedRangeCount", processedRangeCount),
+				zap.Int("remainingRangeCount", ranges.Len()),
+				queueSummary, // All remaining ranges, not just first
 
+				// Gap detection from bucket slicing
+				zap.Bool("gapDetected", gapDetected),
+			}
+
+			if gapDetected {
+				fields = append(fields,
+					keyField("prevBucketEnd", prevBucketEnd),
+					keyField("expectedStart", expectedStart))
+			}
+
+			fields = append(fields,
 				// Location boundaries
 				keyField("locationStart", loc.StartKey),
 				keyField("locationEnd", loc.EndKey),
 
-				// Bucket information
-				zap.Bool("hasValidBuckets", loc.Buckets != nil && len(loc.Buckets.Keys) > 0),
-				zap.Int("bucketCount", func() int {
-					if loc.Buckets != nil {
-						return len(loc.Buckets.Keys)
-					}
-					return 0
-				}()),
-				zap.Uint64("bucketVersion", loc.GetBucketVersion()),
-				zap.Strings("bucketKeys", bucketKeys))
+				// PD metadata - to correlate with PD logs
+				zap.Uint64("regionVer", regionVer),
+				zap.Uint64("regionConfVer", regionConfVer),
 
-			// Cannot continue - would panic on bucket.Contains() below
-			// Return what we've successfully processed so far
-			break
+				// Bucket information
+				zap.Int("bucketCount", len(loc.Buckets.Keys)),
+				zap.Uint64("bucketVersion", loc.GetBucketVersion()),
+				zap.Strings("bucketKeys", bucketKeys),
+			)
+
+			logutil.Logger(ctx).Error("LocateBucket returned nil - invariant violated", fields...)
+
+			// Panic with informative message to get stack trace
+			// Don't continue with corrupt data
+			panic("LocateBucket returned nil: startKey outside location boundaries. " +
+				"This indicates either: (1) PD returned inconsistent metadata, " +
+				"(2) our range splitting logic has a bug, or " +
+				"(3) upstream LocationKeyRanges was constructed incorrectly. " +
+				"See error log above for full diagnostics.")
 		}
+
+		processedRangeCount++
+		prevBucketEnd = bucket.EndKey
 
 		// Iterate to the first range that is not complete in the bucket.
 		var r kv.KeyRange
