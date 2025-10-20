@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	statsutil "github.com/pingcap/tidb/pkg/planner/core/stats"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -501,7 +501,7 @@ func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
 
 func initStats(ds *logicalop.DataSource) {
 	if ds.StatisticTable == nil {
-		ds.StatisticTable = statsutil.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)
+		ds.StatisticTable = stats.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)
 	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.StatisticTable.RealtimeCount),
@@ -514,7 +514,7 @@ func initStats(ds *logicalop.DataSource) {
 	}
 
 	statsRecord := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
-	name, tblInfo := statsutil.GetTblInfoForUsedStatsByPhysicalID(ds.SCtx(), ds.PhysicalTableID)
+	name, tblInfo := stats.GetTblInfoForUsedStatsByPhysicalID(ds.SCtx(), ds.PhysicalTableID)
 	statsRecord.RecordUsedInfo(ds.PhysicalTableID, &stmtctx.UsedStatsInfoForTable{
 		Name:            name,
 		TblInfo:         tblInfo,

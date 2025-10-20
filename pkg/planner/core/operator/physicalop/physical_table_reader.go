@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	statsutil "github.com/pingcap/tidb/pkg/planner/core/stats"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -102,7 +102,7 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 // LoadTableStats loads the stats of the table read by this plan.
 func (p *PhysicalTableReader) LoadTableStats(ctx sessionctx.Context) {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
-	statsutil.LoadTableStats(ctx, ts.Table, ts.PhysicalTableID)
+	stats.LoadTableStats(ctx, ts.Table, ts.PhysicalTableID)
 }
 
 // SetTablePlanForTest sets TablePlan field for test usage only
