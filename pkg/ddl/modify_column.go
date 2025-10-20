@@ -873,17 +873,14 @@ func buildCheckRangeForIntegerTypes(oldCol, changingCol *model.ColumnInfo) strin
 
 	columnName := fmt.Sprintf("`%s`", oldCol.Name.O)
 
-	var conditions []string
 	if changingUnsigned {
 		upperBound := types.IntegerUnsignedUpperBound(changingTp)
-		conditions = append(conditions, fmt.Sprintf("NOT (%s >= 0 AND %s <= %d)", columnName, columnName, upperBound))
-	} else {
-		lowerBound := types.IntegerSignedLowerBound(changingTp)
-		upperBound := types.IntegerSignedUpperBound(changingTp)
-		conditions = append(conditions, fmt.Sprintf("NOT (%s >= %d AND %s <= %d)", columnName, lowerBound, columnName, upperBound))
+		return fmt.Sprintf("(%s < 0 OR %s > %d)", columnName, columnName, upperBound)
 	}
 
-	return strings.Join(conditions, " OR ")
+	lowerBound := types.IntegerSignedLowerBound(changingTp)
+	upperBound := types.IntegerSignedUpperBound(changingTp)
+	return fmt.Sprintf("(%s < %d OR %s > %d)", columnName, lowerBound, columnName, upperBound)
 }
 
 func (w *worker) doModifyColumnTypeWithData(
