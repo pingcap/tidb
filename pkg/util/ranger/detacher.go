@@ -348,7 +348,9 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 		curRes := getCNFItemRangeResult(sctx, res, i)
 		bestRes = mergeTwoCNFRanges(sctx, cond, bestRes, curRes)
 	}
-
+	if sctx.ExprCtx.ConnectionID() != 0 {
+		fmt.Println("wwz")
+	}
 	if bestRes != nil && bestRes.rangeResult != nil {
 		bestRes.rangeResult.IsDNFCond = false
 	}

@@ -343,5 +343,5 @@ func TestABC(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, d int, index(a,b));")
-	//tk.MustQuery("explain select * from t where  (a, b, c) in ((1, 1, 1),(2, 2, 2)) and d=1;").Check(testkit.Rows())
+	tk.MustQuery("explain select * from t where  (a, b, c) in ((1, 1, 1),(2, 2, 2)) and d=1;").Check(testkit.Rows())
 }
