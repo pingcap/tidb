@@ -755,6 +755,7 @@ func needDoIndexReorg(tblInfo *model.TableInfo, oldCol, changingCol *model.Colum
 		return true
 	}
 
+	// index value is encoded with column collation.
 	if oldCol.GetCollate() != changingCol.GetCollate() {
 		return true
 	}
@@ -774,8 +775,12 @@ func needDoRowReorg(oldCol, changingCol *model.ColumnInfo, sqlMode mysql.SQLMode
 		return false
 	}
 
-	// bin collation has padding, it must need reorg.
+	// _bin collation has padding, it must need reorg.
 	if types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType) {
+		return true
+	}
+
+	if oldCol.GetCharset() != changingCol.GetCharset() {
 		return true
 	}
 
@@ -1075,9 +1080,7 @@ func (w *worker) doModifyColumnIndexReorg(
 	oldIdxInfos := make([]*model.IndexInfo, 0, len(allIdxs)/2)
 	changingIdxInfos := make([]*model.IndexInfo, 0, len(allIdxs)/2)
 
-	var state model.SchemaState
 	if job.SchemaState == model.StatePublic {
-		state = model.StatePublic
 		// The constraint that the first half of allIdxs is oldIdxInfos and
 		// the second half is changingIdxInfos isn't true now, so we need to
 		// find the oldIdxInfos again.
@@ -1089,7 +1092,6 @@ func (w *worker) doModifyColumnIndexReorg(
 	} else {
 		changingIdxInfos = allIdxs[len(allIdxs)/2:]
 		oldIdxInfos = allIdxs[:len(allIdxs)/2]
-		state = changingIdxInfos[0].State
 	}
 
 	finishFunc := func() (ver int64, err error) {
@@ -1115,7 +1117,7 @@ func (w *worker) doModifyColumnIndexReorg(
 		return ver, nil
 	}
 
-	switch state {
+	switch job.SchemaState {
 	case model.StateNone:
 		oldCol.AddFlag(mysql.PreventNullInsertFlag)
 		oldCol.ChangingFieldType = &args.Column.FieldType
@@ -1165,7 +1167,6 @@ func (w *worker) doModifyColumnIndexReorg(
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-
 		switch job.AnalyzeState {
 		case model.AnalyzeStateNone:
 			// reorg the data.
@@ -1174,7 +1175,6 @@ func (w *worker) doModifyColumnIndexReorg(
 			if !done {
 				return ver, err
 			}
-
 			if checkAnalyzeNecessary(job, changingIdxInfos, tblInfo) {
 				job.AnalyzeState = model.AnalyzeStateRunning
 			} else {

@@ -241,6 +241,7 @@ func TestRowFormatWithChecksums(t *testing.T) {
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set sql_mode=''") // disable lossy ddl optimization
 	tk.MustExec("create table t (id int primary key, v varchar(10))")
 	tk.MustExec("insert into t values (1, \"123\");")
 	tk.MustExec("alter table t modify column v varchar(5);")
