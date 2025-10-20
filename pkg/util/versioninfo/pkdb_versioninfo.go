@@ -7,8 +7,8 @@ import (
 
 // Version information for TiDBX.
 var (
-	TiDBXMode = false
-
+	TiDBXMode      = false
+	LocalTiKVAddr  = ""
 	ReleaseVersion = "None"
 	Profile        = "debug"
 	RaceEnabled    bool

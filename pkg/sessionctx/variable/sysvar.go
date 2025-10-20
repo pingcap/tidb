@@ -3655,7 +3655,7 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	case TiDBEnableMutationChecker:
 		varVal = On
 	case TiDBPessimisticTransactionFairLocking:
-		varVal = On
+		varVal = Off
 	}
 	return varVal
 }

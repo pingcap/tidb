@@ -186,6 +186,9 @@ type StaticServerInfo struct {
 
 	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
 	JSONServerID uint64 `json:"server_id"`
+
+	// LocalTiKVAddr is the local tikv address, only used in tidbx mode.
+	LocalTiKVAddr string `json:"local_tikv_addr"`
 }
 
 // DynamicServerInfo represents the dynamic information of the server.
@@ -1089,6 +1092,7 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 			Lease:          cfg.Lease,
 			StartTimestamp: time.Now().Unix(),
 			ServerIDGetter: serverIDGetter,
+			LocalTiKVAddr:  versioninfo.LocalTiKVAddr,
 		},
 		DynamicServerInfo: DynamicServerInfo{
 			Labels: maps.Clone(cfg.Labels),
