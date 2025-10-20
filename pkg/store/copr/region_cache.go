@@ -287,7 +287,8 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 	loc := l.Location
 	res := []*LocationKeyRanges{}
 	processedRangeCount := 0
-	var prevBucketEnd []byte
+	var continueSplit bool
+	var expectedNextStart []byte
 
 	for ranges.Len() > 0 {
 		startKey := ranges.At(0).StartKey
@@ -320,11 +321,10 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 			queueSummary := formatRanges(ranges)
 
 			// Check if this is a gap from previous bucket split
+			// Only flag gap if we actually split a range in previous iteration
 			var gapDetected bool
-			var expectedStart []byte
-			if prevBucketEnd != nil {
-				expectedStart = prevBucketEnd
-				gapDetected = !bytes.Equal(startKey, expectedStart)
+			if continueSplit && !bytes.Equal(startKey, expectedNextStart) {
+				gapDetected = true
 			}
 
 			// PD metadata - needed to correlate with PD logs and prove/disprove PD bug
@@ -353,8 +353,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 
 			if gapDetected {
 				fields = append(fields,
-					keyField("prevBucketEnd", prevBucketEnd),
-					keyField("expectedStart", expectedStart))
+					keyField("expectedNextStart", expectedNextStart))
 			}
 
 			fields = append(fields,
@@ -384,7 +383,6 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 		}
 
 		processedRangeCount++
-		prevBucketEnd = bucket.EndKey
 
 		// Iterate to the first range that is not complete in the bucket.
 		var r kv.KeyRange
@@ -415,17 +413,21 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 				StartKey: bucket.EndKey,
 				EndKey:   r.EndKey,
 			}
+			// We split a range - track expected next start
+			continueSplit = true
+			expectedNextStart = bucket.EndKey
 		} else {
-			// ranges[i] is not in the bucket.
+			// Range start is not in this bucket, move to next bucket
 			taskRanges := ranges.Slice(0, i)
 			res = append(res, &LocationKeyRanges{l.Location, taskRanges})
 			ranges = ranges.Slice(i, ranges.Len())
+			continueSplit = false
 		}
 	}
 	return res
 }
 
-func (c *RegionCache) splitKeyRangesByLocation(loc *tikv.KeyLocation, ranges *KeyRanges, res []*LocationKeyRanges) ([]*LocationKeyRanges, *KeyRanges, bool) {
+func (c *RegionCache) splitKeyRangesByLocation(ctx context.Context, loc *tikv.KeyLocation, ranges *KeyRanges, res []*LocationKeyRanges) ([]*LocationKeyRanges, *KeyRanges, bool) {
 	// Iterate to the first range that is not complete in the region.
 	var r kv.KeyRange
 	var i int
@@ -454,7 +456,20 @@ func (c *RegionCache) splitKeyRangesByLocation(loc *tikv.KeyLocation, ranges *Ke
 			EndKey:   r.EndKey,
 		}
 	} else {
-		// rs[i] is not in the region.
+		// Invariant violated: location can't cover the next range
+		// This means upstream (PD or previous split) gave us inconsistent data
+		logutil.Logger(ctx).Error("LocationKeyRanges invariant violated - range start not in location",
+			zap.Uint64("regionID", loc.Region.GetID()),
+			zap.Uint64("regionVer", loc.Region.GetVer()),
+			zap.Uint64("regionConfVer", loc.Region.GetConfVer()),
+			keyField("locationStart", loc.StartKey),
+			keyField("locationEnd", loc.EndKey),
+			keyField("rangeStart", r.StartKey),
+			keyField("rangeEnd", r.EndKey),
+			zap.Int("rangeIndex", i),
+			formatRanges(ranges))
+
+		// Continue processing remaining ranges
 		if i > 0 {
 			taskRanges := ranges.Slice(0, i)
 			res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
@@ -525,7 +540,7 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 		nextLocIndex++
 
 		isBreak := false
-		res, ranges, isBreak = c.splitKeyRangesByLocation(loc, ranges, res)
+		res, ranges, isBreak = c.splitKeyRangesByLocation(ctx, loc, ranges, res)
 		if isBreak {
 			break
 		}
