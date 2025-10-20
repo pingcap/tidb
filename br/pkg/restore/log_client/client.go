@@ -1526,6 +1526,10 @@ func (rc *LogClient) ResetTiflashReplicas(ctx context.Context, sqls []string, g 
 					break
 				}
 				log.Warn("Failed to restore tiflash replica config", zap.Uint64("task id", id), zap.Error(resetErr))
+				if ectx.Err() != nil {
+					log.Warn("Stop retrying because context cancelled", zap.Error(ectx.Err()))
+					break
+				}
 			}
 			if resetErr != nil {
 				logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
