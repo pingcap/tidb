@@ -440,7 +440,7 @@ const (
 
 	// TiDBIndexSerialScanConcurrency is used for controlling the concurrency of index scan operation
 	// when we need to keep the data output order the same as the order of index data.
-	// Deprecated: This variable is deprecated, please do not use this variable.
+	// Deprecated: Use tidb_executor_concurrency for sequential scans and tidb_analyze_distsql_scan_concurrency for ANALYZE.
 	// Before v5.0.0, this variable was used to control the concurrency of index scan operations for both regular queries and ANALYZE statements. See: https://github.com/pingcap/tidb/pull/16999
 	// From version v5.0.0 up to (and including) v8.0.0, this variable was used only to control the concurrency of index scan operations for ANALYZE statements. See: https://github.com/pingcap/tidb/pull/50639
 	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
