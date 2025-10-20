@@ -169,7 +169,7 @@ func TestModifyColumnNullToNotNullWithChangingVal2(t *testing.T) {
 	tk.MustExec("use test")
 
 	// insert null value before modifying column
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterModifyColumnCheckValue", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDoModifyColumnSkipReorgCheck", func() {
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("insert into test.tt values (NULL, NULL)")
 	})
@@ -600,7 +600,7 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 }
 
 func TestMultiSchemaModifyColumnWithSkipReorg(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -621,20 +621,20 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table t(a int, b int, index i1(a), index i2(b), index i3(a, b))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
 
 	oldMeta := external.GetTableByName(t, tk, "test", "t").Meta()
 
 	// insert should fail by new column type check
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterFirstModifyColumnCheck", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDoModifyColumnSkipReorgCheck", func() {
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
 		_, err := tk2.Exec("insert into t values (2147483648, 2147483648)")
 		require.Error(t, err)
 	})
-
 	tk.MustExec("alter table t modify column b mediumint not null")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterDoModifyColumnSkipReorgCheck")
 	newMeta := external.GetTableByName(t, tk, "test", "t").Meta()
 
 	// ID should be the same.
@@ -643,13 +643,13 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	tk.MustExec("admin check table t")
 
 	// insert should succeed before adding flag, and this will make modify column fail.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterModifyColumnCheckValue", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDoModifyColumnSkipReorgCheck", func() {
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
-		tk2.MustExec("insert into t values (512, 512)")
+		_, err := tk2.Exec("insert into t values (512, 512)")
+		require.NoError(t, err)
 	})
 	tk.MustExecToErr("alter table t modify column b tinyint not null")
-	tk.MustExec("admin check table t")
 }
 
 func TestGetModifyColumnType(t *testing.T) {

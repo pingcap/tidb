@@ -263,6 +263,7 @@ func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set sql_mode=''") // disable lossy ddl optimization
 	tk.MustExec("create table t (id int primary key, v varchar(10))")
 	tk.MustExec("insert into t values (1, \"123\")")
 

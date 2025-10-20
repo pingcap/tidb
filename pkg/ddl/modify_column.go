@@ -625,6 +625,7 @@ func (w *worker) doModifyColumnWithCheck(
 	// For the first time we get here, just add the flag
 	// and check the existing data in the next round.
 	if !hasModifyFlag(oldCol) {
+		failpoint.InjectCall("beforeDoModifyColumnSkipReorgCheck")
 		if isNullToNotNullChange(oldCol, newCol) {
 			oldCol.AddFlag(mysql.PreventNullInsertFlag)
 		}
@@ -648,6 +649,8 @@ func (w *worker) doModifyColumnWithCheck(
 		}
 		return ver, errors.Trace(err)
 	}
+
+	failpoint.InjectCall("afterDoModifyColumnSkipReorgCheck")
 
 	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
