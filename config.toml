@@ -1,0 +1,13 @@
+[server]
+host = "0.0.0.0"
+port = 4000
+status-host = "0.0.0.0"
+status-port = 10080
+report-status = true
+
+[log]
+level = "info"
+
+[performance]
+max-procs = 0
+max-memory = 0

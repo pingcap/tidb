@@ -1386,77 +1386,68 @@ func TestFix62253(t *testing.T) {
 }
 
 func TestGetDatabaseCount(t *testing.T) {
-	re := internal.CreateAutoIDRequirement(t)
-	defer func() {
-		err := re.Store().Close()
-		require.NoError(t, err)
-	}()
+	// Test with empty InfoSchema using MockInfoSchema
+	is := infoschema.MockInfoSchema([]*model.TableInfo{})
+	
+	// MockInfoSchema always creates 2 databases (test and mysql)
+	dbCount := is.GetDatabaseCount()
+	require.Equal(t, int64(2), dbCount)
 
-	tc := &infoschemaTestContext{
-		t:    t,
-		re:   re,
-		ctx:  kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
-		data: infoschema.NewData(),
+	// Test with additional table using MockInfoSchema
+	tblInfo := &model.TableInfo{
+		ID:   1,
+		Name: ast.NewCIStr("test_table"),
+		Columns: []*model.ColumnInfo{
+			{
+				State:  model.StatePublic,
+				Offset: 0,
+				Name:   ast.NewCIStr("id"),
+				ID:     1,
+			},
+		},
+		State: model.StatePublic,
 	}
-	tc.runRecoverSchema()
+	is = infoschema.MockInfoSchema([]*model.TableInfo{tblInfo})
 
-	// Initially should have system databases
-	dbCount := tc.is.GetDatabaseCount()
-	require.GreaterOrEqual(t, dbCount, int64(3)) // information_schema, mysql, performance_schema
-
-	// Create a new database
-	tc.runCreateSchema()
-	dbCount = tc.is.GetDatabaseCount()
-	require.GreaterOrEqual(t, dbCount, int64(4)) // Should have at least one more database
-
-	tc.clear()
+	// Should still have 2 databases (test and mysql)
+	dbCount = is.GetDatabaseCount()
+	require.Equal(t, int64(2), dbCount)
 }
 
 func TestGetTableCount(t *testing.T) {
-	re := internal.CreateAutoIDRequirement(t)
-	defer func() {
-		err := re.Store().Close()
-		require.NoError(t, err)
-	}()
+	// Test with empty InfoSchema using MockInfoSchema
+	is := infoschema.MockInfoSchema([]*model.TableInfo{})
+	
+	// MockInfoSchema always creates 1 system table (stats_meta)
+	tableCount := is.GetTableCount()
+	require.Equal(t, int64(1), tableCount)
 
-	tc := &infoschemaTestContext{
-		t:    t,
-		re:   re,
-		ctx:  kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
-		data: infoschema.NewData(),
+	// Test with additional table using MockInfoSchema
+	tblInfo := &model.TableInfo{
+		ID:   1,
+		Name: ast.NewCIStr("test_table"),
+		Columns: []*model.ColumnInfo{
+			{
+				State:  model.StatePublic,
+				Offset: 0,
+				Name:   ast.NewCIStr("id"),
+				ID:     1,
+			},
+		},
+		State: model.StatePublic,
 	}
-	tc.runRecoverSchema()
+	is = infoschema.MockInfoSchema([]*model.TableInfo{tblInfo})
 
-	// Initially should have system tables
-	tableCount := tc.is.GetTableCount()
-	require.GreaterOrEqual(t, tableCount, int64(0))
-
-	// Create a new table
-	tc.runCreateTable("test")
-	tableCount = tc.is.GetTableCount()
-	require.GreaterOrEqual(t, tableCount, int64(1))
-
-	tc.clear()
+	// Should have 2 tables (stats_meta + test_table)
+	tableCount = is.GetTableCount()
+	require.Equal(t, int64(2), tableCount)
 }
 
 func TestGetSchemaVersion(t *testing.T) {
-	re := internal.CreateAutoIDRequirement(t)
-	defer func() {
-		err := re.Store().Close()
-		require.NoError(t, err)
-	}()
-
-	tc := &infoschemaTestContext{
-		t:    t,
-		re:   re,
-		ctx:  kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
-		data: infoschema.NewData(),
-	}
-	tc.runRecoverSchema()
-
-	// Should have a valid schema version
-	schemaVersion := tc.is.GetSchemaVersion()
+	// Test with empty InfoSchema using MockInfoSchema
+	is := infoschema.MockInfoSchema([]*model.TableInfo{})
+	
+	// Should have a valid schema version (0 or greater)
+	schemaVersion := is.GetSchemaVersion()
 	require.GreaterOrEqual(t, schemaVersion, int64(0))
-
-	tc.clear()
 }

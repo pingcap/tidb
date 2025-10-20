@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TiDB Metrics Test Page</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f0f0; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .url { background: #f8f9fa; padding: 10px; margin: 5px 0; border-radius: 3px; font-family: monospace; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px; }
+        button:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 TiDB Metrics Access Test</h1>
+        
+        <div class="test-section">
+            <h2>📋 Available URLs to Test</h2>
+            <p><strong>Try these URLs in Chrome:</strong></p>
+            
+            <div class="url">http://localhost:10080/metrics</div>
+            <div class="url">http://127.0.0.1:10080/metrics</div>
+            <div class="url">http://localhost:8080/metrics_dashboard.html</div>
+            <div class="url">http://127.0.0.1:8080/metrics_dashboard.html</div>
+        </div>
+        
+        <div class="test-section">
+            <h2>🧪 Browser Test</h2>
+            <button onclick="testMetrics()">Test Metrics Endpoint</button>
+            <button onclick="testDashboard()">Test Dashboard</button>
+            <div id="test-result" class="status" style="display:none;"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>📊 Current Metrics Data</h2>
+            <div id="metrics-data">Loading...</div>
+        </div>
+        
+        <div class="test-section">
+            <h2>🔍 Troubleshooting Tips</h2>
+            <ul>
+                <li><strong>If URLs don't work:</strong> Try using <code>127.0.0.1</code> instead of <code>localhost</code></li>
+                <li><strong>If Chrome blocks:</strong> Try Firefox or Edge browser</li>
+                <li><strong>If still blocked:</strong> Check Chrome's security settings or try incognito mode</li>
+                <li><strong>Alternative:</strong> Use <code>curl</code> command line tool</li>
+            </ul>
+        </div>
+        
+        <div class="test-section">
+            <h2>💻 Command Line Access</h2>
+            <p>If browser doesn't work, you can view metrics using command line:</p>
+            <div class="url">curl http://localhost:10080/metrics | grep tidb_server_database_count</div>
+            <div class="url">curl http://localhost:10080/metrics | grep tidb_server_table_count</div>
+            <div class="url">curl http://localhost:10080/metrics | grep tidb_server_schema_version</div>
+        </div>
+    </div>
+
+    <script>
+        async function testMetrics() {
+            const resultDiv = document.getElementById('test-result');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = 'Testing metrics endpoint...';
+            
+            try {
+                const response = await fetch('http://localhost:10080/metrics');
+                if (response.ok) {
+                    resultDiv.className = 'status success';
+                    resultDiv.textContent = '✅ Metrics endpoint is accessible!';
+                } else {
+                    resultDiv.className = 'status error';
+                    resultDiv.textContent = '❌ Metrics endpoint returned error: ' + response.status;
+                }
+            } catch (error) {
+                resultDiv.className = 'status error';
+                resultDiv.textContent = '❌ Cannot access metrics endpoint: ' + error.message;
+            }
+        }
+        
+        async function testDashboard() {
+            const resultDiv = document.getElementById('test-result');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = 'Testing dashboard...';
+            
+            try {
+                const response = await fetch('http://localhost:8080/metrics_dashboard.html');
+                if (response.ok) {
+                    resultDiv.className = 'status success';
+                    resultDiv.textContent = '✅ Dashboard is accessible!';
+                } else {
+                    resultDiv.className = 'status error';
+                    resultDiv.textContent = '❌ Dashboard returned error: ' + response.status;
+                }
+            } catch (error) {
+                resultDiv.className = 'status error';
+                resultDiv.textContent = '❌ Cannot access dashboard: ' + error.message;
+            }
+        }
+        
+        // Load metrics data on page load
+        async function loadMetrics() {
+            try {
+                const response = await fetch('http://localhost:10080/metrics');
+                const text = await response.text();
+                
+                const lines = text.split('\n');
+                let databaseCount = 'N/A';
+                let tableCount = 'N/A';
+                let schemaVersion = 'N/A';
+                
+                for (let line of lines) {
+                    if (line.includes('tidb_server_database_count') && !line.startsWith('#')) {
+                        databaseCount = line.split(' ')[1] || '0';
+                    }
+                    if (line.includes('tidb_server_table_count') && !line.startsWith('#')) {
+                        tableCount = line.split(' ')[1] || '0';
+                    }
+                    if (line.includes('tidb_server_schema_version') && !line.startsWith('#')) {
+                        schemaVersion = line.split(' ')[1] || '0';
+                    }
+                }
+                
+                document.getElementById('metrics-data').innerHTML = `
+                    <strong>Database Count:</strong> ${databaseCount}<br>
+                    <strong>Table Count:</strong> ${tableCount}<br>
+                    <strong>Schema Version:</strong> ${schemaVersion}
+                `;
+            } catch (error) {
+                document.getElementById('metrics-data').innerHTML = '❌ Error loading metrics: ' + error.message;
+            }
+        }
+        
+        loadMetrics();
+    </script>
+</body>
+</html>
