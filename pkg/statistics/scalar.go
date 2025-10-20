@@ -175,6 +175,8 @@ func commonPrefixLength(strs ...[]byte) int {
 func convertBytesToScalar(value []byte) float64 {
 	// Bytes type is viewed as a base-256 value, so we only consider at most 8 bytes.
 	switch len(value) {
+	case 0:
+		return 0
 	case 1:
 		return float64(uint64(value[0]) << 56)
 	case 2:
