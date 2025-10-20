@@ -234,7 +234,7 @@ func extractTraceID(_ context.Context) string {
 type LogSink struct{}
 
 // Record implements the Sink interface.
-func (_ *LogSink) Record(ctx context.Context, event Event) {
+func (*LogSink) Record(ctx context.Context, event Event) {
 	if !loggingEnabled.Load() {
 		return
 	}

@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -1484,6 +1485,8 @@ func execTableTask(e *IndexLookUpExecutor, task *lookupTableTask) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Warn("TableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
+			// Dump flight recorder for post-mortem analysis
+			traceevent.DumpFlightRecorderToLogger("table worker panic in IndexLookUpExecutor")
 			err := util.GetRecoverError(r)
 			task.doneCh <- err
 		}

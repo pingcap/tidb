@@ -88,11 +88,10 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 		}
 		for rangeIdx < len(kvRanges) {
 			endKey := kvRanges[rangeIdx].EndKey
-			if len(endKey) == 0 || len(loc.EndKey) == 0 || loc.Contains(endKey) || bytes.Equal(loc.EndKey, endKey) {
-				rangeIdx++
-			} else {
+			if len(endKey) != 0 && len(loc.EndKey) != 0 && !loc.Contains(endKey) && !bytes.Equal(loc.EndKey, endKey) {
 				break
 			}
+			rangeIdx++
 		}
 	}
 	if rangeIdx < len(kvRanges) {
