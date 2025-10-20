@@ -157,6 +157,23 @@ use db2;
 create table t1(id int primary key, a int);
 create table t2(id int, a int);
 create table t3(a int);
+create table parent_0(id int, key(id));
+create table parent_1(id int, key(id));
+create table parent_2(id int, key(id));
+create table parent_3(id int, key(id));
+insert into parent_0 values (0);
+insert into parent_1 values (1);
+insert into parent_2 values (2);
+insert into parent_3 values (3);
+create table db1.child_0(pid int, key(pid), foreign key (pid) references db2.parent_0(id) on delete cascade);
+create table db1.child_1(pid int, key(pid), foreign key (pid) references db2.parent_1(id) on update cascade);
+create table db1.child_2(pid int, key(pid), foreign key (pid) references db2.parent_2(id) on delete set null);
+create table db1.child_3(pid int, key(pid), foreign key (pid) references db2.parent_3(id) on update set null);
+insert into db1.child_0 values (0);
+insert into db1.child_1 values (1);
+insert into db1.child_2 values (2);
+insert into db1.child_3 values (3);
+
 
 alter schema db1 read only 1;
 use db1;
@@ -261,6 +278,16 @@ table t1 for share;
 select * from t1;
 select * from t1 join t2 on t1.a= t2.a;
 table t1;
+
+# fk, schema of child table is read only
+-- error 3809
+delete from db2.parent_0;
+-- error 3809
+update db2.parent_1 set id_0 = 10;
+-- error 3809
+delete from db2.parent_2;
+-- error 3809
+update db2.parent_3 set id_3 = 10;
 
 # finish test
 alter schema db1 read only 0;
