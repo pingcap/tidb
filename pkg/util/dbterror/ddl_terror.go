@@ -207,6 +207,8 @@ var (
 	ErrWrongColumnName = ClassDDL.NewStd(mysql.ErrWrongColumnName)
 	// ErrWrongPartitionName returns for wrong partition name.
 	ErrWrongPartitionName = ClassDDL.NewStd(mysql.ErrWrongPartitionName)
+	// ErrPartitionWrongNoSubpart returns for wrong subpartition definition.
+	ErrPartitionWrongNoSubpart = ClassDDL.NewStd(mysql.ErrPartitionWrongNoSubpart)
 	// ErrWrongUsage returns for wrong ddl syntax usage.
 	ErrWrongUsage = ClassDDL.NewStd(mysql.ErrWrongUsage)
 	// ErrInvalidGroupFuncUse returns for using invalid group functions.
