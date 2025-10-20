@@ -3093,7 +3093,7 @@ func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.Ph
 
 func exhaustPhysicalPlans4LogicalPartitionUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalPartitionUnionAll)
-	uas, flagHint, err := p.LogicalUnionAll.ExhaustPhysicalPlans(prop)
+	uas, flagHint, err := exhaustPhysicalPlans4LogicalUnionAll(&p.LogicalUnionAll, prop)
 	if err != nil {
 		return nil, false, err
 	}
