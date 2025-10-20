@@ -105,9 +105,9 @@ func SetCategories(categories TraceCategory) {
 // NormalizeMode converts a user-supplied tracing mode string into its canonical representation.
 func NormalizeMode(mode string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "", ModeOff:
+	case ModeOff:
 		return ModeOff, nil
-	case "on", ModeLogging:
+	case ModeLogging:
 		return ModeLogging, nil
 	default:
 		return "", fmt.Errorf("unsupported trace event mode %q", mode)

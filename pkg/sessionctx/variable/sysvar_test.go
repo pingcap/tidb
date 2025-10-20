@@ -111,7 +111,7 @@ func TestTiDBTraceEventSysVar(t *testing.T) {
 		return
 	}
 
-	require.NoError(t, sv.SetGlobal(context.Background(), vars, vardef.On))
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, "logging"))
 	require.Equal(t, traceevent.ModeLogging, traceevent.CurrentMode())
 
 	require.NoError(t, sv.SetGlobal(context.Background(), vars, vardef.Off))
