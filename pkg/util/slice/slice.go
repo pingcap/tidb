@@ -17,6 +17,7 @@ package slice
 import (
 	"slices"
 	"strconv"
+	"unsafe"
 )
 
 // AllOf returns true if all elements in the slice match the predict func.
@@ -48,4 +49,16 @@ func DeepClone[T interface{ Clone() T }](s []T) []T {
 		cloned = append(cloned, item.Clone())
 	}
 	return cloned
+}
+
+// Split splits a slice into two parts at the given index.
+// The first part contains elements from index 0 to idx-1,
+// and the second part contains elements from idx to the end of the slice.
+// If idx is greater than the length of the slice, the first part will be the entire slice,
+// and the second part will be nil.
+func Split[T any](s []T, idx int) ([]T, []T) {
+	if idx > len(s) {
+		return s, nil
+	}
+	return unsafe.Slice(unsafe.SliceData(s), idx), s[idx:]
 }

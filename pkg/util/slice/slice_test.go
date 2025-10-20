@@ -39,3 +39,13 @@ func TestSlice(t *testing.T) {
 		})
 	}
 }
+
+func TestSplit(t *testing.T) {
+	a := []int{1, 2, 3, 4, 5}
+	first, second := Split(a, 3)
+	require.Equal(t, []int{1, 2, 3}, first)
+	require.Equal(t, []int{4, 5}, second)
+	first = append(first, 1)
+	require.Equal(t, []int{1, 2, 3, 1}, first)
+	require.Equal(t, []int{4, 5}, second)
+}

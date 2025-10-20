@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/slice"
 	"go.uber.org/zap"
 )
 
@@ -592,8 +593,8 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 		for i := idxColPos + 1; i < len(idxCols); i++ {
 			buildTmp.curIdxOff2KeyOff[i] = -1
 		}
-		remained := notKeyEqAndIn[notKeyColPos:]
-		notKeyEqAndIn = notKeyEqAndIn[:notKeyColPos]
+		var remained []expression.Expression
+		notKeyEqAndIn, remained = slice.Split(notKeyEqAndIn, notKeyColPos)
 		return notKeyEqAndIn, remained
 	}
 	return notKeyEqAndIn, nil
