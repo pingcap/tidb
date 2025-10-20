@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -668,7 +669,7 @@ func onAlterIndexVisibility(jobCtx *jobContext, job *model.Job) (ver int64, _ er
 
 func setIndexVisibility(tblInfo *model.TableInfo, name ast.CIStr, invisible bool) {
 	for _, idx := range tblInfo.Indices {
-		if idx.Name.L == name.L || (isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == name.O) {
+		if idx.Name.L == name.L || (isTempIndex(idx, tblInfo) && getChangingIndexOriginName(idx) == name.O) {
 			idx.Invisible = invisible
 		}
 	}
@@ -1248,6 +1249,64 @@ SwitchIndexState:
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) bool {
+	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
+	if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.NeedAnalyze {
+		// If the job is a multi-schema-change job,
+		// we only analyze the table once after all schema changes are done.
+		return true
+	}
+	if doneCh == nil {
+		doneCh = make(chan struct{})
+		eg := util.NewErrorGroupWithRecover()
+		eg.Go(func() error {
+			sessCtx, err := w.sessPool.Get()
+			if err != nil {
+				return err
+			}
+			defer func() {
+				w.sessPool.Put(sessCtx)
+				close(doneCh)
+			}()
+			dbTable := fmt.Sprintf("`%s`.`%s`", dbName, tblName)
+
+			exec, ok := sessCtx.(sqlexec.RestrictedSQLExecutor)
+			if !ok {
+				return errors.Errorf("not restricted SQL executor: %T", sessCtx)
+			}
+			// internal sql may not init the analysis related variable correctly.
+			err = statsutil.UpdateSCtxVarsForStats(sessCtx)
+			if err != nil {
+				return err
+			}
+			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
+			if err != nil {
+				logutil.DDLLogger().Warn("analyze table failed",
+					zap.Int64("jobID", job.ID),
+					zap.String("db", dbName),
+					zap.String("table", tblName),
+					zap.Error(err),
+					zap.Stack("stack"))
+				// We can continue to finish the job even if analyze table failed.
+			}
+			return nil
+		})
+		w.ddlCtx.setAnalyzeDoneCh(job.ID, doneCh)
+	}
+	select {
+	case <-doneCh:
+		logutil.DDLLogger().Info("analyze table after create index done", zap.Int64("jobID", job.ID))
+		return true
+	case <-w.ctx.Done():
+		logutil.DDLLogger().Info("analyze table after create index context done",
+			zap.Int64("jobID", job.ID), zap.Error(w.ctx.Err()))
+		return true
+	case <-time.After(10 * time.Second):
+		logutil.DDLLogger().Info("analyze table after create index timeout check", zap.Int64("jobID", job.ID))
+		return false
+	}
 }
 
 func checkIfTableReorgWorkCanSkip(
@@ -3409,7 +3468,7 @@ func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName ast.CIStr) []c
 	var normalIdxInfos, tempIdxInfos []changingIndex
 	for _, idxInfo := range tblInfo.Indices {
 		if pos := findIdxCol(idxInfo, colName); pos != -1 {
-			isTemp := isTempIdxInfo(idxInfo, tblInfo)
+			isTemp := isTempIndex(idxInfo, tblInfo)
 			r := changingIndex{IndexInfo: idxInfo, Offset: pos, isTemp: isTemp}
 			if isTemp {
 				tempIdxInfos = append(tempIdxInfos, r)
@@ -3434,7 +3493,18 @@ func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName ast.CIStr) []c
 	return result
 }
 
-func isTempIdxInfo(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
+// isColumnarIndexColumn checks if any index contains the given column is a columnar index.
+func isColumnarIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool {
+	indexesToChange := FindRelatedIndexesToChange(tblInfo, col.Name)
+	for _, idx := range indexesToChange {
+		if idx.IndexInfo.IsColumnarIndex() {
+			return true
+		}
+	}
+	return false
+}
+
+func isTempIndex(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
 	for _, idxCol := range idxInfo.Columns {
 		if tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil {
 			return true
@@ -3456,7 +3526,7 @@ func renameIndexes(tblInfo *model.TableInfo, from, to ast.CIStr) {
 	for _, idx := range tblInfo.Indices {
 		if idx.Name.L == from.L {
 			idx.Name = to
-		} else if isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == from.O {
+		} else if isTempIndex(idx, tblInfo) && getChangingIndexOriginName(idx) == from.O {
 			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
 			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
 		}
