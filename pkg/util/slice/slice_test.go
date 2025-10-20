@@ -48,4 +48,10 @@ func TestSplit(t *testing.T) {
 	first = append(first, 1)
 	require.Equal(t, []int{1, 2, 3, 1}, first)
 	require.Equal(t, []int{4, 5}, second)
+	first, second = Split(a, 1)
+	require.Equal(t, []int{1}, first)
+	require.Equal(t, []int{2, 3, 4, 5}, second)
+	first, second = Split(a, 0)
+	require.Equal(t, []int{}, first)
+	require.Equal(t, []int{1, 2, 3, 4, 5}, second)
 }

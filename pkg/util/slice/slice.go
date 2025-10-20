@@ -56,9 +56,9 @@ func DeepClone[T interface{ Clone() T }](s []T) []T {
 // and the second part contains elements from idx to the end of the slice.
 // If idx is greater than the length of the slice, the first part will be the entire slice,
 // and the second part will be nil.
-func Split[T any](s []T, idx int) ([]T, []T) {
-	if idx > len(s) {
+func Split[T any](s []T, firstlen int) ([]T, []T) {
+	if firstlen > len(s) {
 		return s, nil
 	}
-	return unsafe.Slice(unsafe.SliceData(s), idx), s[idx:]
+	return unsafe.Slice(unsafe.SliceData(s), firstlen), s[firstlen:]
 }
