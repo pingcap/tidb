@@ -112,7 +112,7 @@ func getModifyColumnType(
 	oldCol *model.ColumnInfo,
 	sqlMode mysql.SQLMode) byte {
 	newCol := args.Column
-	if !needChangeColumnData(oldCol, args.Column) {
+	if noReorgDataStrict(oldCol, args.Column) {
 		// It's not NULL->NOTNULL change
 		if !isNullToNotNullChange(oldCol, newCol) {
 			return ModifyTypeNoReorg
@@ -618,7 +618,7 @@ func (w *worker) doModifyColumnWithCheck(
 		jobCtx.stepCtx, w,
 		dbInfo.Name, tblInfo.Name,
 		oldCol, newCol,
-		needChangeColumnData(oldCol, newCol),
+		!noReorgDataStrict(oldCol, newCol),
 	)
 	if err != nil {
 		// If checked is true, it means we have done the check and found invalid data.
@@ -1484,8 +1484,8 @@ func GetModifiableColumnJob(
 	if err = checkModifyTypes(col.ColumnInfo, newCol.ColumnInfo, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		return nil, errors.Trace(err)
 	}
-	needChangeColData := needChangeColumnData(col.ColumnInfo, newCol.ColumnInfo)
-	if needChangeColData {
+	mayNeedChangeColData := !noReorgDataStrict(col.ColumnInfo, newCol.ColumnInfo)
+	if mayNeedChangeColData {
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1656,7 +1656,7 @@ func GetModifiableColumnJob(
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionModifyColumn,
 		BinlogInfo:     &model.HistoryInfo{},
-		CtxVars:        []any{needChangeColData},
+		CtxVars:        []any{mayNeedChangeColData},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
@@ -1675,9 +1675,9 @@ func GetModifiableColumnJob(
 	return NewJobWrapperWithArgs(job, args, false), nil
 }
 
-// needChangeColumnData is a strong check to decide whether we need to change the column data.
+// noReorgDataStrict is a strong check to decide whether we need to change the column data.
 // If it returns true, it means we don't need the reorg no matter what the data is.
-func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
+func noReorgDataStrict(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.GetFlag())
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.GetFlag())
 	needTruncationOrToggleSign := func() bool {
@@ -1697,25 +1697,25 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		case mysql.TypeNewDecimal:
 			// Since type decimal will encode the precision, frac, negative(signed) and wordBuf into storage together, there is no short
 			// cut to eliminate data reorg change for column type change between decimal.
-			return oldCol.GetFlen() != newCol.GetFlen() || oldCol.GetDecimal() != newCol.GetDecimal() || toUnsigned != originUnsigned
+			return oldCol.GetFlen() == newCol.GetFlen() && oldCol.GetDecimal() == newCol.GetDecimal() && toUnsigned == originUnsigned
 		case mysql.TypeEnum, mysql.TypeSet:
-			return IsElemsChangedToModifyColumn(oldCol.GetElems(), newCol.GetElems())
+			return !IsElemsChangedToModifyColumn(oldCol.GetElems(), newCol.GetElems())
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return toUnsigned != originUnsigned
+			return toUnsigned == originUnsigned
 		case mysql.TypeString:
 			// Due to the behavior of padding \x00 at binary type, always change column data when binary length changed
 			if types.IsBinaryStr(&oldCol.FieldType) {
-				return newCol.GetFlen() != oldCol.GetFlen()
+				return newCol.GetFlen() == oldCol.GetFlen()
 			}
 		case mysql.TypeTiDBVectorFloat32:
-			return newCol.GetFlen() != types.UnspecifiedLength && oldCol.GetFlen() != newCol.GetFlen()
+			return !(newCol.GetFlen() != types.UnspecifiedLength && oldCol.GetFlen() != newCol.GetFlen())
 		}
 
-		return needTruncationOrToggleSign()
+		return !needTruncationOrToggleSign()
 	}
 
 	if ConvertBetweenCharAndVarchar(oldCol.GetType(), newCol.GetType()) {
-		return true
+		return false
 	}
 
 	// Deal with the different type.
@@ -1723,17 +1723,17 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		switch newCol.GetType() {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			return needTruncationOrToggleSign()
+			return !needTruncationOrToggleSign()
 		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch newCol.GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return needTruncationOrToggleSignForInteger()
+			return !needTruncationOrToggleSignForInteger()
 		}
 		// conversion between float and double needs reorganization, see issue #31372
 	}
 
-	return true
+	return false
 }
 
 // ConvertBetweenCharAndVarchar check whether column converted between char and varchar
