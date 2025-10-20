@@ -287,13 +287,13 @@ const (
 const (
 	// TiDBBuildStatsConcurrency specifies the number of concurrent workers used for analyzing tables or partitions.
 	// When multiple tables or partitions are specified in the analyze statement, TiDB will process them concurrently.
-	// Additionally, this setting controls the concurrency for building NDV (Number of Distinct Values) for special indexes,
-	// such as generated columns composed indexes.
 	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
 
 	// TiDBBuildSamplingStatsConcurrency is used to control the concurrency of building stats using sampling.
 	// 1. The number of concurrent workers to merge FMSketches and Sample Data from different regions.
 	// 2. The number of concurrent workers to build TopN and Histogram concurrently.
+	// Additionally, this setting controls the concurrency for building NDV (Number of Distinct Values) for special indexes,
+	// such as generated columns composed indexes.
 	TiDBBuildSamplingStatsConcurrency = "tidb_build_sampling_stats_concurrency"
 
 	// TiDBDistSQLScanConcurrency is used to set the concurrency of a distsql scan task.
