@@ -6,7 +6,7 @@ go_library(
         "debug_trace.go",
         "stats.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/planner/util/stats",
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/stats",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/domain",
