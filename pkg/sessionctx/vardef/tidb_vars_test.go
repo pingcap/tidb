@@ -81,5 +81,5 @@ func BenchmarkRateLimiterCurrency100(b *testing.B) {
 func BenchmarkRateLimiterCurrency1000(b *testing.B) {
 	b.ReportAllocs()
 	rl := rate.NewLimiter(rate.Limit(limit), limit)
-	runConcurrentTest(b, rl, 100)
+	runConcurrentTest(b, rl, 1000)
 }
