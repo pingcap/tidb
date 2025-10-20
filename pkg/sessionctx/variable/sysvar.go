@@ -775,7 +775,7 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAutoAnalyzeStartTime, Value: vardef.DefAutoAnalyzeStartTime, Type: vardef.TypeTime},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAutoAnalyzeEndTime, Value: vardef.DefAutoAnalyzeEndTime, Type: vardef.TypeTime},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMemQuotaBindingCache, Value: strconv.FormatInt(vardef.DefTiDBMemQuotaBindingCache, 10), Type: vardef.TypeUnsigned, MaxValue: math.MaxInt32, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeInstance, Name: vardef.TiDBMemQuotaBindingCache, Value: strconv.FormatInt(vardef.DefTiDBMemQuotaBindingCache, 10), Type: vardef.TypeUnsigned, MaxValue: math.MaxInt32, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return strconv.FormatInt(vardef.MemQuotaBindingCache.Load(), 10), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.MemQuotaBindingCache.Store(TidbOptInt64(val, vardef.DefTiDBMemQuotaBindingCache))
@@ -856,7 +856,7 @@ var defaultSysVars = []*SysVar{
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetHistorySize(TidbOptInt(val, vardef.DefTiDBStmtSummaryHistorySize))
 		}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBStmtSummaryMaxStmtCount, Value: strconv.Itoa(vardef.DefTiDBStmtSummaryMaxStmtCount), Type: vardef.TypeInt, MinValue: 1, MaxValue: math.MaxInt16, AllowEmpty: true,
+	{Scope: vardef.ScopeGlobal | vardef.ScopeInstance, Name: vardef.TiDBStmtSummaryMaxStmtCount, Value: strconv.Itoa(vardef.DefTiDBStmtSummaryMaxStmtCount), Type: vardef.TypeInt, MinValue: 1, MaxValue: math.MaxInt16, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetMaxStmtCount(TidbOptInt(val, vardef.DefTiDBStmtSummaryMaxStmtCount))
 		}},
@@ -1162,7 +1162,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBServerMemoryLimit, Value: vardef.DefTiDBServerMemoryLimit, Type: vardef.TypeStr,
+	{Scope: vardef.ScopeGlobal | vardef.ScopeInstance, Name: vardef.TiDBServerMemoryLimit, Value: vardef.DefTiDBServerMemoryLimit, Type: vardef.TypeStr,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return memory.ServerMemoryLimitOriginText.Load(), nil
 		},
@@ -1214,7 +1214,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBServerMemoryLimitGCTrigger, Value: strconv.FormatFloat(vardef.DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64), Type: vardef.TypeStr,
+	{Scope: vardef.ScopeGlobal | vardef.ScopeInstance, Name: vardef.TiDBServerMemoryLimitGCTrigger, Value: strconv.FormatFloat(vardef.DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64), Type: vardef.TypeStr,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatFloat(gctuner.GlobalMemoryLimitTuner.GetPercentage(), 'f', -1, 64), nil
 		},
@@ -1304,7 +1304,7 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableBatchDML.Load()), nil
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBStatsCacheMemQuota, Value: strconv.Itoa(vardef.DefTiDBStatsCacheMemQuota),
+	{Scope: vardef.ScopeGlobal | vardef.ScopeInstance, Name: vardef.TiDBStatsCacheMemQuota, Value: strconv.Itoa(vardef.DefTiDBStatsCacheMemQuota),
 		MinValue: 0, MaxValue: vardef.MaxTiDBStatsCacheMemQuota, Type: vardef.TypeInt,
 		GetGlobal: func(_ context.Context, vars *SessionVars) (string, error) {
 			return strconv.FormatInt(vardef.StatsCacheMemQuota.Load(), 10), nil
@@ -2921,7 +2921,14 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
-		Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableAsyncMergeGlobalStats, Value: BoolToOnOff(vardef.DefTiDBEnableAsyncMergeGlobalStats), Type: vardef.TypeBool,
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:  vardef.TiDBEnableAsyncMergeGlobalStats,
+		Value: BoolToOnOff(vardef.DefTiDBEnableAsyncMergeGlobalStats),
+		Type:  vardef.TypeBool,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(errors.NewNoStackError("The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future release; changing it is discouraged."))
+			return normalizedValue, nil
+		},
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnableAsyncMergeGlobalStats = TiDBOptOn(val)
 			return nil
@@ -3466,7 +3473,7 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableCheckConstraint.Load()), nil
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBSchemaCacheSize, Value: strconv.Itoa(vardef.DefTiDBSchemaCacheSize), Type: vardef.TypeStr,
+	{Scope: vardef.ScopeGlobal | vardef.ScopeInstance, Name: vardef.TiDBSchemaCacheSize, Value: strconv.Itoa(vardef.DefTiDBSchemaCacheSize), Type: vardef.TypeStr,
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 			_, str, err := parseSchemaCacheSize(s, normalizedValue, originalValue)
 			if err != nil {

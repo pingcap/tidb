@@ -125,7 +125,7 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	for _, sv := range variable.GetSysVars() {
 		sVal := sv.Value
 		// NOTE: instance variable use values stored in this instance
-		if _, ok := tableContents[sv.Name]; ok && !sv.HasInstanceScope() {
+		if _, ok := tableContents[sv.Name]; ok && !sv.IsInitedFromConfig {
 			sVal = tableContents[sv.Name]
 		}
 		// session cache stores non-skippable variables, which essentially means session scope.
