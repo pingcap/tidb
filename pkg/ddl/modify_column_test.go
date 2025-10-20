@@ -654,9 +654,12 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 
 func TestGetModifyColumnType(t *testing.T) {
 	type testCase struct {
-		tableSQL  string
-		modifySQL string
-		tp        byte
+		tableSQL   string
+		modifySQL  string
+		dataSQL    string
+		strictMode bool
+		success    bool
+		tp         byte
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -664,10 +667,66 @@ func TestGetModifyColumnType(t *testing.T) {
 	tk.MustExec("use test")
 
 	tcs := []testCase{
+		// integer
 		{
-			tableSQL:  "create table t(a bigint)",
-			modifySQL: "alter table t modify column a int",
-			tp:        ddl.ModifyTypeNoReorgWithCheck,
+			tableSQL:   "create table t(a bigint)",
+			modifySQL:  "alter table t modify column a int",
+			dataSQL:    "insert into t values (1), (2), (3)",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			strictMode: true,
+			success:    true,
+		},
+		{
+			tableSQL:   "create table t(a bigint)",
+			modifySQL:  "alter table t modify column a int",
+			dataSQL:    "insert into t values (100000000000)",
+			tp:         ddl.ModifyTypeReorg,
+			strictMode: false,
+			success:    true,
+		},
+		{
+			tableSQL:   "create table t(a bigint)",
+			modifySQL:  "alter table t modify column a int",
+			dataSQL:    "insert into t values (100000000000)",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			strictMode: true,
+			success:    false,
+		},
+		{
+			tableSQL:   "create table t(a int)",
+			modifySQL:  "alter table t modify column a bigint",
+			tp:         ddl.ModifyTypeNoReorg,
+			strictMode: true,
+			success:    true,
+		},
+		{
+			tableSQL:   "create table t(a int)",
+			modifySQL:  "alter table t modify column a bigint",
+			tp:         ddl.ModifyTypeNoReorg,
+			strictMode: false,
+			success:    true,
+		},
+		{
+			tableSQL:   "create table t(a bigint, index idx_a(a))",
+			modifySQL:  "alter table t modify column a int",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			strictMode: true,
+			success:    true,
+		},
+		{
+			tableSQL:   "create table t(a bigint, index idx_a(a))",
+			modifySQL:  "alter table t modify column a int unsigned",
+			tp:         ddl.ModifyTypeIndexReorg,
+			strictMode: true,
+			success:    true,
+		},
+		// string
+		{
+			tableSQL:   "create table t(a char(10))",
+			modifySQL:  "alter table t modify column a char(5)",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			strictMode: true,
+			success:    true,
 		},
 	}
 
@@ -676,7 +735,19 @@ func TestGetModifyColumnType(t *testing.T) {
 			require.Equal(t, tc.tp, tp)
 		})
 		tk.MustExec("drop table if exists t")
+		if tc.strictMode {
+			tk.MustExec("set sql_mode='STRICT_ALL_TABLES'")
+		} else {
+			tk.MustExec("set sql_mode=''")
+		}
 		tk.MustExec(tc.tableSQL)
-		tk.MustExec(tc.modifySQL)
+		if len(tc.dataSQL) > 0 {
+			tk.MustExec(tc.dataSQL)
+		}
+		if tc.success {
+			tk.MustExec(tc.modifySQL)
+		} else {
+			tk.MustExecToErr(tc.modifySQL)
+		}
 	}
 }
