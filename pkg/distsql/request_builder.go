@@ -46,7 +46,7 @@ import (
 
 // RequestBuilder is used to build a "kv.Request".
 // It is called before we issue a kv request by "Select".
-// Notice a build can only be used once unless it returns an error in test.
+// Notice a builder can only be used once unless it returns an error in test.
 type RequestBuilder struct {
 	kv.Request
 	is   infoschema.MetaOnlyInfoSchema
