@@ -526,24 +526,6 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 
 	ctx := bo.GetCtx()
 
-	defer func() {
-		if r := recover(); r != nil {
-			// Panic occurred - add diagnostics by validating coverage
-			valid := validateLocationCoverage(ctx, kvRanges, locs)
-			if !valid {
-				// PD or client-go issue: locations don't properly cover ranges
-				logutil.Logger(ctx).Error("Panic during range splitting - PD returned invalid locations",
-					zap.Any("panicValue", r))
-			} else {
-				// PD locations are valid, so panic is from our splitting logic bug
-				logutil.Logger(ctx).Error("Panic during range splitting - internal bug in splitting logic",
-					zap.Any("panicValue", r))
-			}
-			// Re-panic with original error
-			panic(r)
-		}
-	}()
-
 	resCap := len(locs)
 	if limit != UnspecifiedLimit {
 		resCap = min(resCap, limit)
@@ -597,12 +579,49 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 //
 // TODO(youjiali1995): Try to do it in one round and reduce allocations if bucket is not enabled.
 func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
+	// Convert to tikv.KeyRange for validateLocationCoverage
+	kvRanges := make([]tikv.KeyRange, 0, ranges.Len())
+	for i := range ranges.Len() {
+		kvRanges = append(kvRanges, tikv.KeyRange{
+			StartKey: ranges.At(i).StartKey,
+			EndKey:   ranges.At(i).EndKey,
+		})
+	}
+
 	locs, err := c.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit, false, true)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
-	res := make([]*LocationKeyRanges, 0, len(locs))
+
 	ctx := bo.GetCtx()
+
+	// Extract tikv.KeyLocations for validation
+	tikvLocs := make([]*tikv.KeyLocation, 0, len(locs))
+	for _, loc := range locs {
+		tikvLocs = append(tikvLocs, loc.Location)
+	}
+
+	// Defensive: if bucket split panics, call validateLocationCoverage to add PD-level diagnostics
+	// This adds zero overhead in the normal case, only runs on panic
+	defer func() {
+		if r := recover(); r != nil {
+			// Panic occurred - add PD-level diagnostics by validating coverage
+			valid := validateLocationCoverage(ctx, kvRanges, tikvLocs)
+			if !valid {
+				// PD bug: locations don't properly cover ranges (see ERROR logs above)
+				logutil.Logger(ctx).Error("Panic during bucket splitting - PD returned invalid locations",
+					zap.Any("panicValue", r))
+			} else {
+				// PD locations are valid, so panic is from our splitting logic bug
+				logutil.Logger(ctx).Error("Panic during bucket splitting - internal bug in splitting logic",
+					zap.Any("panicValue", r))
+			}
+			// Re-panic with original error
+			panic(r)
+		}
+	}()
+
+	res := make([]*LocationKeyRanges, 0, len(locs))
 	for _, loc := range locs {
 		res = append(res, loc.splitKeyRangesByBuckets(ctx)...)
 	}
