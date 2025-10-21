@@ -818,7 +818,8 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	totalJoinRequiredCols := totalJoinColumns + totalWhereColumns
 	maxConsecutiveWhere, maxConsecutiveJoin := 0, 0
 
-	// maxIndexes allows a minimum number of indexes to be kept regardless of threshold
+	// maxIndexes allows a minimum number of indexes to be kept regardless of threshold.
+	// max/minToKeep only calculate index plans to keep in addition to table plans.
 	// This avoids extreme pruning when threshold is very low (or even zero).
 	const maxIndexes = 10
 	maxToKeep := max(maxIndexes, threshold)
@@ -828,6 +829,8 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	preferredIndexes := make([]indexWithScore, 0, maxIndexes)       // "Next" best indexes with preferable coveraage
 	tablePaths := make([]*util.AccessPath, 0, 1)                    // Usually just one table path
 
+	lenPerfectCoveringIndexes := 0
+	hasSingleScan := false
 	for _, path := range paths {
 		if path.IsTablePath() {
 			tablePaths = append(tablePaths, path)
@@ -849,6 +852,8 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		consecutiveWhereCount := 0
 		consecutiveOrderingCount := 0
 		consecutiveJoinCount := 0
+
+		skipThisIndex := false
 
 		for i, idxCol := range path.FullIdxCols {
 			idxColID := idxCol.ID
@@ -890,15 +895,30 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 					if i == consecutiveOrderingCount+consecutiveWhereCount {
 						consecutiveOrderingCount++
 					}
+					continue
 				}
+			}
+			// If we have enough perfect covering indexes, and we've reached here then
+			// the index columns are not a match. Don't continue with this index.
+			if (i == 0 && lenPerfectCoveringIndexes >= minToKeep) ||
+				((lenPerfectCoveringIndexes > maxToKeep || hasSingleScan) &&
+					i < maxConsecutiveWhere && i < maxConsecutiveJoin) {
+				skipThisIndex = true
+				break
 			}
 		}
 
+		if skipThisIndex {
+			continue
+		}
 		// Calculate this plans totals
 		totalLocalCovered := coveredWhereCount + coveredOrderingCount
 		totalJoinCovered := coveredWhereCount + coveredJoinCount
 		totalConsecutive := consecutiveWhereCount + consecutiveOrderingCount + consecutiveJoinCount
 
+		if totalLocalCovered == totalLocalRequiredCols && totalJoinCovered == totalJoinRequiredCols {
+			path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)
+		}
 		// Perfect covering: covers ALL required columns AND has consecutive matches from start
 		if ((totalLocalCovered == totalLocalRequiredCols && totalLocalRequiredCols > 0) ||
 			(totalJoinCovered == totalJoinRequiredCols && totalJoinRequiredCols > 0)) &&
@@ -914,15 +934,10 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			})
 			maxConsecutiveWhere = max(maxConsecutiveWhere, consecutiveWhereCount)
 			maxConsecutiveJoin = max(maxConsecutiveJoin, consecutiveJoinCount)
-			continue
-		}
-
-		lenPerfectCoveringIndexes := len(perfectCoveringIndexes)
-		// If we have enough perfect covering indexes, don't add to preferred indexes
-		// unless the current index has more consecutive matches than the max consecutive found so far.
-		if lenPerfectCoveringIndexes >= maxToKeep &&
-			consecutiveWhereCount <= maxConsecutiveWhere &&
-			consecutiveJoinCount <= maxConsecutiveJoin {
+			lenPerfectCoveringIndexes = len(perfectCoveringIndexes)
+			if path.IsSingleScan {
+				hasSingleScan = true
+			}
 			continue
 		}
 
@@ -965,11 +980,9 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 				consecutiveOrderingCount: consecutiveOrderingCount,
 			})
 		}
-		maxConsecutiveWhere = max(maxConsecutiveWhere, consecutiveWhereCount)
-		maxConsecutiveJoin = max(maxConsecutiveJoin, consecutiveJoinCount)
 	}
 
-	// Build result with priority: table paths, forced indexes, perfect covering, then preferred
+	// Build result with priority: table paths, perfect covering, then preferred
 	result := make([]*util.AccessPath, 0, maxIndexes)
 
 	// CRITICAL: Always include table paths - this is mandatory for correctness
@@ -979,35 +992,20 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	// If we'll keep all of them, no need to sort
 	if len(perfectCoveringIndexes) > maxToKeep {
 		// Score perfectCoveringIndexes the same way as preferred, but include isSingleScan bonus
-		singleMap := make(map[*util.AccessPath]bool, len(perfectCoveringIndexes))
-		for i := range perfectCoveringIndexes {
-			p := perfectCoveringIndexes[i].path
-			if p != nil && p.Index != nil {
-				singleMap[p] = isSingleScan(ds, p.FullIdxCols, p.FullIdxColLens)
-			}
-		}
 		slices.SortFunc(perfectCoveringIndexes, func(a, b indexWithScore) int {
-			scoreA := calculateScoreFromCoverage(a, totalWhereColumns, totalJoinColumns, totalOrderingColumns, singleMap[a.path])
-			scoreB := calculateScoreFromCoverage(b, totalWhereColumns, totalJoinColumns, totalOrderingColumns, singleMap[b.path])
+			scoreA := calculateScoreFromCoverage(a, totalWhereColumns, totalJoinColumns, totalOrderingColumns, a.path.IsSingleScan)
+			scoreB := calculateScoreFromCoverage(b, totalWhereColumns, totalJoinColumns, totalOrderingColumns, b.path.IsSingleScan)
 			if scoreA != scoreB {
 				return scoreB - scoreA
 			}
 			// Tie-breaker: shorter index first
 			return len(a.path.Index.Columns) - len(b.path.Index.Columns)
 		})
-		// Set IsSingleScan on the paths since we already calculated it
-		for path, isSingle := range singleMap {
-			path.IsSingleScan = isSingle
-		}
 	}
 
 	// Add perfect covering indexes (prefer these over preferred)
-	// Calculate how many index paths (not table paths) we can still add
-	remaining := maxToKeep - len(result)
-	if remaining <= 0 {
-		// Already at or over the limit with just table paths, can't add more
-		remaining = 0
-	}
+	// Add as many index paths (to the result containing table paths) as per maxToKeep.
+	remaining := maxToKeep
 	if remaining > 0 && len(perfectCoveringIndexes) > 0 {
 		toAdd := min(remaining, len(perfectCoveringIndexes))
 		for _, idxWithScore := range perfectCoveringIndexes[:toAdd] {

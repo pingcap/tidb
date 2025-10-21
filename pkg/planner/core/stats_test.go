@@ -90,8 +90,7 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	t.Run("threshold_20", func(t *testing.T) {
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=20")
 		ds20 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
-		require.Greater(t, 21, len(ds20.AllPossibleAccessPaths), "With threshold 20, should prune to less than or equal to 20 indexes")
-
+		require.Greater(t, 22, len(ds20.AllPossibleAccessPaths), "With threshold 20, should prune to less than or equal to 20 indexes + 1 table path == 21")
 		// Verify all paths are valid
 		for _, path := range ds20.AllPossibleAccessPaths {
 			require.NotNil(t, path)
@@ -104,7 +103,14 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	t.Run("threshold_10", func(t *testing.T) {
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=10")
 		ds10 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
-		require.Greater(t, 11, len(ds10.AllPossibleAccessPaths), "With threshold 10, should prune to less than or equal 10 indexes")
+		require.Greater(t, 13, len(ds10.AllPossibleAccessPaths), "With threshold 10, should prune to less than or equal 10 indexes + 1 table path == 11")
+		// Verify all paths are valid
+		for _, path := range ds10.AllPossibleAccessPaths {
+			require.NotNil(t, path)
+			if !path.IsTablePath() {
+				require.NotNil(t, path.Index)
+			}
+		}
 	})
 
 	t.Run("no_where_columns", func(t *testing.T) {
