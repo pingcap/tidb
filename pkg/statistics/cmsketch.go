@@ -682,7 +682,7 @@ func (c *TopN) FindTopN(d []byte) int {
 	return idx
 }
 
-// LowerBound searches on the sorted top-n items,
+// GetRangeBound searches on the sorted top-n items,
 // returns the smallest index i such that the value at element i is not less than `d`.
 func (c *TopN) GetRangeBound(r, l []byte) (ridx, ldx int) {
 	if c == nil {
