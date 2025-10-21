@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
 )
@@ -72,13 +71,13 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 	case *logicalop.LogicalExpand:
 		return exhaustPhysicalPlans4LogicalExpand(x, prop)
 	case *logicalop.LogicalUnionAll:
-		return exhaustPhysicalPlans4LogicalUnionAll(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalUnionAll(x, prop)
 	case *logicalop.LogicalSequence:
 		return exhaustPhysicalPlans4LogicalSequence(x, prop)
 	case *logicalop.LogicalSelection:
 		return physicalop.ExhaustPhysicalPlans4LogicalSelection(x, prop)
 	case *logicalop.LogicalMaxOneRow:
-		return exhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
 	case *logicalop.LogicalUnionScan:
 		return physicalop.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
 	case *logicalop.LogicalProjection:
@@ -86,7 +85,7 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 	case *logicalop.LogicalAggregation:
 		return physicalop.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
 	case *logicalop.LogicalPartitionUnionAll:
-		return exhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
 	case *memo.GroupExpression:
 		return memo.ExhaustPhysicalPlans4GroupExpression(x, prop)
 	case *mockLogicalPlan4Test:
@@ -3042,75 +3041,6 @@ func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 
 	windows = append(windows, window)
 	return windows, true, nil
-}
-
-func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	p := lp.(*logicalop.LogicalUnionAll)
-	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
-	if !prop.IsSortItemEmpty() || (prop.IsFlashProp() && prop.TaskTp != property.MppTaskType) {
-		return nil, true, nil
-	}
-	// TODO: UnionAll can pass partition info, but for briefness, we prevent it from pushing down.
-	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
-		return nil, true, nil
-	}
-	// when arrived here, operator itself has already checked checkOpSelfSatisfyPropTaskTypeRequirement, we only need to feel allowMPP here.
-	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed()
-	chReqProps := make([]*property.PhysicalProperty, 0, p.ChildLen())
-	for range p.Children() {
-		if canUseMpp && prop.TaskTp == property.MppTaskType {
-			chReqProps = append(chReqProps, &property.PhysicalProperty{
-				ExpectedCnt:       prop.ExpectedCnt,
-				TaskTp:            property.MppTaskType,
-				CTEProducerStatus: prop.CTEProducerStatus,
-				NoCopPushDown:     prop.NoCopPushDown,
-			})
-		} else {
-			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt,
-				CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown})
-		}
-	}
-	ua := physicalop.PhysicalUnionAll{
-		Mpp: canUseMpp && prop.TaskTp == property.MppTaskType,
-	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
-	ua.SetSchema(p.Schema())
-	if canUseMpp && prop.TaskTp == property.RootTaskType {
-		chReqProps = make([]*property.PhysicalProperty, 0, p.ChildLen())
-		for range p.Children() {
-			chReqProps = append(chReqProps, &property.PhysicalProperty{
-				ExpectedCnt:       prop.ExpectedCnt,
-				TaskTp:            property.MppTaskType,
-				CTEProducerStatus: prop.CTEProducerStatus,
-				NoCopPushDown:     prop.NoCopPushDown,
-			})
-		}
-		mppUA := physicalop.PhysicalUnionAll{Mpp: true}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
-		mppUA.SetSchema(p.Schema())
-		return []base.PhysicalPlan{ua, mppUA}, true, nil
-	}
-	return []base.PhysicalPlan{ua}, true, nil
-}
-
-func exhaustPhysicalPlans4LogicalPartitionUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	p := lp.(*logicalop.LogicalPartitionUnionAll)
-	uas, flagHint, err := exhaustPhysicalPlans4LogicalUnionAll(&p.LogicalUnionAll, prop)
-	if err != nil {
-		return nil, false, err
-	}
-	for _, ua := range uas {
-		ua.(*physicalop.PhysicalUnionAll).SetTP(plancodec.TypePartitionUnion)
-	}
-	return uas, flagHint, nil
-}
-
-func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	p := lp.(*logicalop.LogicalMaxOneRow)
-	if !prop.IsSortItemEmpty() || prop.IsFlashProp() {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
-		return nil, true, nil
-	}
-	mor := physicalop.PhysicalMaxOneRow{}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), &property.PhysicalProperty{ExpectedCnt: 2, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown})
-	return []base.PhysicalPlan{mor}, true, nil
 }
 
 func exhaustPhysicalPlans4LogicalSequence(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
