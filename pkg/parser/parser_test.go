@@ -529,11 +529,11 @@ func TestAdminStmt(t *testing.T) {
 		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
 		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
 		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
-		// Test for 'admin flush plan_cache'
-		{"admin flush instance plan_cache", true, "ADMIN FLUSH INSTANCE PLAN_CACHE"},
-		{"admin flush session plan_cache", true, "ADMIN FLUSH SESSION PLAN_CACHE"},
+		// Test for 'admin flush plancache'
+		{"admin flush instance plancache", true, "ADMIN FLUSH INSTANCE PLAN_CACHE"},
+		{"admin flush session plancache", true, "ADMIN FLUSH SESSION PLAN_CACHE"},
 		// We do not support the global level. We will check it in the later.
-		{"admin flush global plan_cache", true, "ADMIN FLUSH GLOBAL PLAN_CACHE"},
+		{"admin flush global plancache", true, "ADMIN FLUSH GLOBAL PLAN_CACHE"},
 		// for BDR
 		{"admin set bdr role primary", true, "ADMIN SET BDR ROLE PRIMARY"},
 		{"admin set bdr role secondary", true, "ADMIN SET BDR ROLE SECONDARY"},

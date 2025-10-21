@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/plancache"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -93,7 +94,7 @@ func (ts *TiDBStatement) Execute(ctx context.Context, args []expression.Expressi
 	if tidbRecordset == nil {
 		return
 	}
-	rs = resultset.New(tidbRecordset, ts.ctx.GetSessionVars().PreparedStmts[ts.id].(*core.PlanCacheStmt))
+	rs = resultset.New(tidbRecordset, ts.ctx.GetSessionVars().PreparedStmts[ts.id].(*plancache.PlanCacheStmt))
 	return
 }
 
@@ -196,7 +197,7 @@ func (ts *TiDBStatement) Close() error {
 	} else {
 		if ts.ctx.GetSessionVars().EnablePreparedPlanCache {
 			preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
-			preparedObj, ok := preparedPointer.(*core.PlanCacheStmt)
+			preparedObj, ok := preparedPointer.(*plancache.PlanCacheStmt)
 			if !ok {
 				return errors.Errorf("invalid PlanCacheStmt type")
 			}
@@ -371,7 +372,7 @@ func (tc *TiDBContext) EncodeSessionStates(_ context.Context, _ sessionctx.Conte
 	sessionVars := tc.Session.GetSessionVars()
 	sessionStates.PreparedStmts = make(map[uint32]*sessionstates.PreparedStmtInfo, len(sessionVars.PreparedStmts))
 	for preparedID, preparedObj := range sessionVars.PreparedStmts {
-		preparedStmt, ok := preparedObj.(*core.PlanCacheStmt)
+		preparedStmt, ok := preparedObj.(*plancache.PlanCacheStmt)
 		if !ok {
 			return errors.Errorf("invalid PlanCacheStmt type")
 		}

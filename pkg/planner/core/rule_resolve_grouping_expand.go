@@ -41,7 +41,7 @@ import (
 //
 // From the tree structure construction from bottom up, we maintained the current
 // select block's expand OP when we step into a new subq. for each grouping function
-// rewriting, we pull grouping meta directly out of current Expand OP from builder.
+// rewriting, we pull grouping meta directly out of current Expand OP from build.
 // Notice that, grouping function can exist in select-list/order-by/having clause.
 //
 // 3: Expand can be seen as a kind of leveled projection, this projection will project

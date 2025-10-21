@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/plancache"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -221,7 +222,7 @@ func (e *DeallocateExec) Next(context.Context, *chunk.Chunk) error {
 		return errors.Trace(plannererrors.ErrStmtNotFound)
 	}
 	preparedPointer := vars.PreparedStmts[id]
-	preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
+	preparedObj, ok := preparedPointer.(*plancache.PlanCacheStmt)
 	if !ok {
 		return errors.Errorf("invalid PlanCacheStmt type")
 	}

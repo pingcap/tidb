@@ -173,6 +173,7 @@ go_library(
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/operator/physicalop",
+        "//pkg/planner/core/plancache",
         "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule",
         "//pkg/planner/indexadvisor",

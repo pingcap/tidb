@@ -16,6 +16,8 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/core/build"
+	"github.com/pingcap/tidb/pkg/planner/core/plancache"
 	"math"
 	"time"
 
@@ -99,7 +101,7 @@ func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers [
 	return nil
 }
 
-func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
+func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *plancache.PlanCacheStmt, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
 	stmtAst := stmt.PreparedAst
 	vars.StmtCtx.StmtType = stmtAst.StmtType
@@ -116,19 +118,19 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
-	for i := range stmt.dbName {
-		tbl, ok := is.TableByID(ctx, stmt.tbls[i].Meta().ID)
+	for i := range stmt.DBName {
+		tbl, ok := is.TableByID(ctx, stmt.Tbls[i].Meta().ID)
 		if !ok {
-			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
+			tblByName, err := is.TableByName(context.Background(), stmt.DBName[i], stmt.Tbls[i].Meta().Name)
 			if err != nil {
 				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 			}
 			// Table ID is changed, for example, drop & create table, truncate table.
-			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
+			delete(stmt.RelateVersion, stmt.Tbls[i].Meta().ID)
 			tbl = tblByName
 		}
 		// newTbl is the 'should be used' table info for this execution.
-		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], tbl, is)
+		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.DBName[i], tbl, is)
 		if err != nil {
 			logutil.BgLogger().Warn("meet error during tryLockMDLAndUpdateSchemaIfNecessary", zap.String("table name", tbl.Meta().Name.String()), zap.Error(err))
 			// Invalid the cache key related fields to avoid using plan cache.
@@ -136,11 +138,11 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			schemaNotMatch = true
 			continue
 		}
-		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
+		if stmt.Tbls[i].Meta().Revision != newTbl.Meta().Revision {
 			schemaNotMatch = true
 		}
 		// Update the cache key related fields.
-		stmt.tbls[i] = newTbl
+		stmt.Tbls[i] = newTbl
 		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
 	}
 
@@ -170,7 +172,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 5: handle expiration
 	// If the lastUpdateTime less than expiredTimeStamp4PC,
-	// it means other sessions have executed 'admin flush instance plan_cache'.
+	// it means other sessions have executed 'admin flush instance plancache'.
 	// So we need to clear the current session's plan cache.
 	// And update lastUpdateTime to the newest one.
 	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
@@ -180,7 +182,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 
 	// step 6: initialize the tableInfo2UnionScan, which indicates which tables are dirty.
-	for _, tbl := range stmt.tbls {
+	for _, tbl := range stmt.Tbls {
 		tblInfo := tbl.Meta()
 		if tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
 			sctx.GetSessionVars().StmtCtx.TblInfo2UnionScan[tblInfo] = true
@@ -195,7 +197,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 // If there is no such a plan, it'll call the optimizer to generate a new one.
 // isNonPrepared indicates whether to use the non-prepared plan cache or the prepared plan cache.
 func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
-	isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
+	isNonPrepared bool, is infoschema.InfoSchema, stmt *plancache.PlanCacheStmt,
 	params []expression.Expression) (plan base.Plan, names []*types.FieldName, err error) {
 	if err := planCachePreprocess(ctx, sctx, isNonPrepared, is, stmt, params); err != nil {
 		return nil, nil, err
@@ -248,7 +250,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 }
 
 func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionctx.Context,
-	stmt *PlanCacheStmt, plan base.Plan) (clonedPlan base.Plan, ok bool) {
+	stmt *plancache.PlanCacheStmt, plan base.Plan) (clonedPlan base.Plan, ok bool) {
 	defer func(begin time.Time) {
 		if ok {
 			core_metrics.GetPlanCacheCloneDuration().Observe(time.Since(begin).Seconds())
@@ -306,7 +308,7 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 
 func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 	plan base.Plan, stmtHints *hint.StmtHints, isNonPrepared, skipPrivCheck bool,
-	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (
+	bindSQL string, is infoschema.InfoSchema, stmt *plancache.PlanCacheStmt) (
 	base.Plan, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -335,7 +337,7 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
-	stmt *PlanCacheStmt, cacheKey, binding string, paramTypes []*types.FieldType) (base.Plan, []*types.FieldName, error) {
+	stmt *plancache.PlanCacheStmt, cacheKey, binding string, paramTypes []*types.FieldType) (base.Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -349,7 +351,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache() {
-		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(paramTypes), len(stmt.limits), stmt.hasSubquery); !cacheable {
+		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(paramTypes), len(stmt.Limits), stmt.HasSubquery); !cacheable {
 			stmtCtx.SetSkipPlanCache(reason)
 		}
 	}
@@ -380,19 +382,19 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 }
 
 // checkPreparedPriv checks the privilege of the prepared statement
-func checkPreparedPriv(ctx context.Context, sctx sessionctx.Context, stmt *PlanCacheStmt, is infoschema.InfoSchema) error {
+func checkPreparedPriv(ctx context.Context, sctx sessionctx.Context, stmt *plancache.PlanCacheStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		visitInfo := VisitInfo4PrivCheck(ctx, is, stmt.PreparedAst.Stmt, stmt.VisitInfos)
-		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
+		visitInfo := build.VisitInfo4PrivCheck(ctx, is, stmt.PreparedAst.Stmt, stmt.VisitInfos)
+		if err := build.CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
 			return err
 		}
 	}
-	err := CheckTableLock(sctx, is, stmt.VisitInfos)
+	err := build.CheckTableLock(sctx, is, stmt.VisitInfos)
 	return err
 }
 
 // IsSafeToReusePointGetExecutor checks whether this is a PointGet Plan and safe to reuse its executor.
-func IsSafeToReusePointGetExecutor(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt) bool {
+func IsSafeToReusePointGetExecutor(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *plancache.PlanCacheStmt) bool {
 	if staleread.IsStmtStaleness(sctx) {
 		return false
 	}

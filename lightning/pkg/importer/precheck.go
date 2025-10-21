@@ -169,7 +169,7 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID precheck.CheckItemID) (p
 	}
 }
 
-// GetPreInfoGetter gets the pre restore info getter from the builder.
+// GetPreInfoGetter gets the pre restore info getter from the build.
 func (b *PrecheckItemBuilder) GetPreInfoGetter() PreImportInfoGetter {
 	return b.preInfoGetter
 }

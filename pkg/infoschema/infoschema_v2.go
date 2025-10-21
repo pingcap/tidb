@@ -470,7 +470,7 @@ func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
 	return len(dels), int64(isd.byName.Load().Len())
 }
 
-// resetBeforeFullLoad is called before a full recreate operation within builder.InitWithDBInfos().
+// resetBeforeFullLoad is called before a full recreate operation within build.InitWithDBInfos().
 // TODO: write a generics version to avoid repeated code.
 func (isd *Data) resetBeforeFullLoad(schemaVersion int64) {
 	resetTableInfoResidentBeforeFullLoad(&isd.tableInfoResident, schemaVersion)
@@ -784,7 +784,7 @@ func compareReferredForeignKeyItem(a, b *referredForeignKeyItem) bool {
 var _ InfoSchema = &infoschemaV2{}
 
 type infoschemaV2 struct {
-	*infoSchema // in fact, we only need the infoSchemaMisc inside it, but the builder rely on it.
+	*infoSchema // in fact, we only need the infoSchemaMisc inside it, but the build rely on it.
 	factory     func() (pools.Resource, error)
 	ts          uint64
 	*Data

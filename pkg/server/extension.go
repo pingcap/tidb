@@ -16,6 +16,7 @@ package server
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/plancache"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -136,7 +137,7 @@ type stmtEventInfo struct {
 	executeStmtID         uint32
 	executeStmt           *ast.ExecuteStmt
 	executePreparedCached bool
-	executePreparedCache  *core.PlanCacheStmt
+	executePreparedCache  *plancache.PlanCacheStmt
 	// error will only be valid when the stmt is failed
 	err error
 	// failedParseText will only present on parse failed
@@ -241,7 +242,7 @@ func (e *stmtEventInfo) GetError() error {
 	return e.err
 }
 
-func (e *stmtEventInfo) ensureExecutePreparedCache() *core.PlanCacheStmt {
+func (e *stmtEventInfo) ensureExecutePreparedCache() *plancache.PlanCacheStmt {
 	if e.executeStmt == nil {
 		return nil
 	}

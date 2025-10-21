@@ -169,7 +169,7 @@ func newValueExpr(value any, charset string, collate string) ast.ValueExpr {
 	return ve
 }
 
-// SetProjectionOffset sets ValueExpr.projectionOffset for logical plan builder.
+// SetProjectionOffset sets ValueExpr.projectionOffset for logical plan build.
 func (n *ValueExpr) SetProjectionOffset(offset int) {
 	n.projectionOffset = offset
 }

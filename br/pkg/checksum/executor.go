@@ -40,7 +40,7 @@ type ExecutorBuilder struct {
 	requestSource     util.RequestSource
 }
 
-// NewExecutorBuilder returns a new executor builder.
+// NewExecutorBuilder returns a new executor build.
 func NewExecutorBuilder(table *model.TableInfo, ts uint64) *ExecutorBuilder {
 	return &ExecutorBuilder{
 		table: table,
@@ -50,7 +50,7 @@ func NewExecutorBuilder(table *model.TableInfo, ts uint64) *ExecutorBuilder {
 	}
 }
 
-// SetOldTable set a old table info to the builder.
+// SetOldTable set a old table info to the build.
 func (builder *ExecutorBuilder) SetOldTable(oldTable *metautil.Table) *ExecutorBuilder {
 	builder.oldTable = oldTable
 	return builder

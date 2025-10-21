@@ -202,7 +202,7 @@ func (c *checksumTableCtx) genRequests(ctx context.Context, bkup []*metautil.Tab
 		rb.SetExplicitRequestSourceType(kvutil.ExplicitTypeBR)
 		req, err := rb.Build()
 		if err != nil {
-			return nil, errors.Annotatef(err, "failed to build checksum builder for table %s.%s", t.dbName, t.info.Name.L)
+			return nil, errors.Annotatef(err, "failed to build checksum build for table %s.%s", t.dbName, t.info.Name.L)
 		}
 		reqs = append(reqs, request{
 			copReq:    req,

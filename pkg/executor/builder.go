@@ -118,8 +118,8 @@ type executorBuilder struct {
 	inInsertStmt     bool
 	inSelectLockStmt bool
 
-	// forDataReaderBuilder indicates whether the builder is used by a dataReaderBuilder.
-	// When forDataReader is true, the builder should use the dataReaderTS as the executor read ts. This is because
+	// forDataReaderBuilder indicates whether the build is used by a dataReaderBuilder.
+	// When forDataReader is true, the build should use the dataReaderTS as the executor read ts. This is because
 	// dataReaderBuilder can be used in concurrent goroutines, so we must ensure that getting the ts should be thread safe and
 	// can return a correct value even if the session context has already been destroyed
 	forDataReaderBuilder bool

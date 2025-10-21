@@ -46,21 +46,21 @@ import (
 
 // RequestBuilder is used to build a "kv.Request".
 // It is called before we issue a kv request by "Select".
-// Notice a builder can only be used once unless it returns an error in test.
+// Notice a build can only be used once unless it returns an error in test.
 type RequestBuilder struct {
 	kv.Request
 	is   infoschema.MetaOnlyInfoSchema
 	err  error
 	used bool
 
-	// When SetDAGRequest is called, builder will also this field.
+	// When SetDAGRequest is called, build will also this field.
 	dag *tipb.DAGRequest
 }
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	if builder.used && intest.InTest {
-		return nil, errors.Errorf("request builder is already used")
+		return nil, errors.Errorf("request build is already used")
 	}
 	builder.used = true
 	if builder.ReadReplicaScope == "" {
@@ -77,7 +77,7 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	failpoint.Inject("assertRequestBuilderReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
 		if builder.ReplicaRead.IsClosestRead() && assertScope != builder.ReadReplicaScope {
-			panic("request builder get staleness option fail")
+			panic("request build get staleness option fail")
 		}
 	})
 	err := builder.verifyTxnScope()
@@ -491,7 +491,7 @@ func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprReques
 	return builder
 }
 
-// SetConnIDAndConnAlias sets connection id for the builder.
+// SetConnIDAndConnAlias sets connection id for the build.
 func (builder *RequestBuilder) SetConnIDAndConnAlias(connID uint64, connAlias string) *RequestBuilder {
 	builder.ConnID = connID
 	builder.ConnAlias = connAlias

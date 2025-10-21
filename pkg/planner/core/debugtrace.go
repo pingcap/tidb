@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/core/plancache"
 	"strconv"
 	"strings"
 
@@ -81,10 +82,10 @@ func DebugTraceReceivedCommand(s base.PlanContext, cmd byte, stmtNode ast.StmtNo
 
 	// Collect information for execute stmt, and record it in executeInfo.
 	var binaryParams []expression.Expression
-	var planCacheStmt *PlanCacheStmt
+	var planCacheStmt *plancache.PlanCacheStmt
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if execStmt.PrepStmt != nil {
-			planCacheStmt, _ = execStmt.PrepStmt.(*PlanCacheStmt)
+			planCacheStmt, _ = execStmt.PrepStmt.(*plancache.PlanCacheStmt)
 		}
 		if execStmt.BinaryArgs != nil {
 			binaryParams, _ = execStmt.BinaryArgs.([]expression.Expression)

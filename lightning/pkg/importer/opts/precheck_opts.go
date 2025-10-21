@@ -21,18 +21,18 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 )
 
-// PrecheckItemBuilderConfig defines the config used in a precheck builder,
+// PrecheckItemBuilderConfig defines the config used in a precheck build,
 // which affects the behavior for executing precheck items.
 type PrecheckItemBuilderConfig struct {
 	PreInfoGetterOptions []GetPreInfoOption
 	MDLoaderSetupOptions []mydump.MDLoaderSetupOption
 }
 
-// PrecheckItemBuilderOption defines the options when constructing a precheck builder,
+// PrecheckItemBuilderOption defines the options when constructing a precheck build,
 // which affects the behavior for executing precheck items.
 type PrecheckItemBuilderOption func(c *PrecheckItemBuilderConfig)
 
-// WithPreInfoGetterOptions generates a precheck item builder option
+// WithPreInfoGetterOptions generates a precheck item build option
 // to control the get pre info behaviors.
 func WithPreInfoGetterOptions(opts ...GetPreInfoOption) PrecheckItemBuilderOption {
 	return func(c *PrecheckItemBuilderConfig) {
@@ -40,7 +40,7 @@ func WithPreInfoGetterOptions(opts ...GetPreInfoOption) PrecheckItemBuilderOptio
 	}
 }
 
-// WithMDLoaderSetupOptions generates a precheck item builder option
+// WithMDLoaderSetupOptions generates a precheck item build option
 // to control the mydumper loader setup behaviors.
 func WithMDLoaderSetupOptions(opts ...mydump.MDLoaderSetupOption) PrecheckItemBuilderOption {
 	return func(c *PrecheckItemBuilderConfig) {

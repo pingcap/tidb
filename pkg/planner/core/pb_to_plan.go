@@ -43,7 +43,7 @@ type PBPlanBuilder struct {
 	ranges []*coprocessor.KeyRange
 }
 
-// NewPBPlanBuilder creates a new pb plan builder.
+// NewPBPlanBuilder creates a new pb plan build.
 func NewPBPlanBuilder(sctx base.PlanContext, is infoschema.InfoSchema, ranges []*coprocessor.KeyRange) *PBPlanBuilder {
 	return &PBPlanBuilder{sctx: sctx, is: is, ranges: ranges}
 }

@@ -211,7 +211,7 @@ type SampleBuilder struct {
 // CollectColumnStats collects sample from the result set using Reservoir Sampling algorithm,
 // and estimates NDVs using FM Sketch during the collecting process.
 // It returns the sample collectors which contain total count, null count, distinct values count and CM Sketch.
-// It also returns the statistic builder for PK which contains the histogram.
+// It also returns the statistic build for PK which contains the histogram.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
 func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder, error) {
 	collectors := make([]*SampleCollector, s.ColLen)

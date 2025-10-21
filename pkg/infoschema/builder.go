@@ -965,7 +965,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	// If we want to build infoschema v2, but the old infoschema is v1, just return error to trigger a full load.
 	isV2, _ := IsV2(oldSchema)
 	if b.enableV2 != isV2 {
-		return errors.Errorf("builder's (v2=%v) infoschema mismatch, return error to trigger full reload", b.enableV2)
+		return errors.Errorf("build's (v2=%v) infoschema mismatch, return error to trigger full reload", b.enableV2)
 	}
 
 	if schemaV2, ok := oldSchema.(*infoschemaV2); ok {
@@ -1175,7 +1175,7 @@ type virtualTableDriver struct {
 
 var drivers []*virtualTableDriver
 
-// RegisterVirtualTable register virtual tables to the builder.
+// RegisterVirtualTable register virtual tables to the build.
 func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc) {
 	drivers = append(drivers, &virtualTableDriver{dbInfo, tableFromMeta})
 }
@@ -1194,13 +1194,13 @@ func NewBuilder(r autoid.Requirement, schemaCacheSize uint64, factory func() (po
 	return builder
 }
 
-// WithStore attaches the given store to builder.
+// WithStore attaches the given store to build.
 func (b *Builder) WithStore(s kv.Storage) *Builder {
 	b.store = s
 	return b
 }
 
-// WithCrossKS marks whether this builder is used to build I_S for cross keyspace.
+// WithCrossKS marks whether this build is used to build I_S for cross keyspace.
 func (b *Builder) WithCrossKS(crossKS bool) *Builder {
 	b.crossKS = crossKS
 	return b
