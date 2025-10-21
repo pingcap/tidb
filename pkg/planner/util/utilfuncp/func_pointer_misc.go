@@ -40,17 +40,9 @@ import (
 var FindBestTask4BaseLogicalPlan func(p base.LogicalPlan,
 	prop *property.PhysicalProperty) (bestTask base.Task, err error)
 
-// ExhaustPhysicalPlans4LogicalMaxOneRow will be called by LogicalMaxOneRow in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalMaxOneRow func(p base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
 // FindBestTask4LogicalDataSource will be called by LogicalDataSource in logicalOp pkg.
 var FindBestTask4LogicalDataSource func(lp base.LogicalPlan,
 	prop *property.PhysicalProperty) (t base.Task, err error)
-
-// ExhaustPhysicalPlans4LogicalSequence will be called by LogicalSequence in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalSequence func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
 
 // ExhaustPhysicalPlans4LogicalWindow will be called by LogicalWindow in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalWindow func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
@@ -62,14 +54,6 @@ var ExhaustPhysicalPlans4LogicalJoin func(lp base.LogicalPlan, prop *property.Ph
 
 // ExhaustPhysicalPlans4LogicalApply will be called by LogicalApply in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalApply func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
-// ExhaustPhysicalPlans4LogicalPartitionUnionAll will be called by LogicalPartitionUnionAll in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalPartitionUnionAll func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
-// ExhaustPhysicalPlans4LogicalUnionAll will be called by LogicalUnionAll in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalUnionAll func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
 // ExhaustPhysicalPlans4LogicalExpand will be called by LogicalExpand in logicalOp pkg.

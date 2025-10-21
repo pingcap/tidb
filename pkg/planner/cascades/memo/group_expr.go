@@ -208,6 +208,11 @@ func (e *GroupExpression) InputsLen() int {
 	return len(e.Inputs)
 }
 
+// GetInputSchema returns the logical schema of the idx-th child group.
+func (e *GroupExpression) GetInputSchema(idx int) *expression.Schema {
+	return e.Inputs[idx].GetLogicalProperty().Schema
+}
+
 // DeriveLogicalProp derive the new group's logical property from a specific GE.
 // DeriveLogicalProp is not called with recursive, because we only examine and
 // init new group from bottom-up, so we can sure that this new group's children
@@ -286,13 +291,13 @@ func ExhaustPhysicalPlans4GroupExpression(e *GroupExpression, prop *property.Phy
 	case *logicalop.LogicalExpand:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalExpand(x, prop)
 	case *logicalop.LogicalUnionAll:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalUnionAll(x, prop)
 	case *logicalop.LogicalSequence:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalSequence(e, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalSequence(e, prop)
 	case *logicalop.LogicalSelection:
 		return physicalop.ExhaustPhysicalPlans4LogicalSelection(x, prop)
 	case *logicalop.LogicalMaxOneRow:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
 	case *logicalop.LogicalUnionScan:
 		return physicalop.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
 	case *logicalop.LogicalProjection:
@@ -300,7 +305,7 @@ func ExhaustPhysicalPlans4GroupExpression(e *GroupExpression, prop *property.Phy
 	case *logicalop.LogicalAggregation:
 		return physicalop.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
 	case *logicalop.LogicalPartitionUnionAll:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
 	default:
 		panic("unreachable")
 	}
