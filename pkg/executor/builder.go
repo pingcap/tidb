@@ -5269,9 +5269,6 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*join.IndexJoinLookUpContent,
 	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager,
 ) ([]*ranger.Range, error) {
-	if rctx.ExprCtx.ConnectionID() != 0 {
-		fmt.Println("wwz")
-	}
 	retRanges := make([]*ranger.Range, 0, len(ranges)*len(lookUpContents))
 	lastPos := len(ranges[0].LowVal) - 1
 	tmpDatumRanges := make([]*ranger.Range, 0, len(lookUpContents))
