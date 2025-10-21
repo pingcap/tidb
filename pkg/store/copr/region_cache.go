@@ -601,21 +601,48 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 		tikvLocs = append(tikvLocs, loc.Location)
 	}
 
-	// Defensive: if bucket split panics, call validateLocationCoverage to add PD-level diagnostics
+	// Defensive: if bucket split panics, query PD directly to compare with cached data
 	// This adds zero overhead in the normal case, only runs on panic
 	defer func() {
 		if r := recover(); r != nil {
-			// Panic occurred - add PD-level diagnostics by validating coverage
-			valid := validateLocationCoverage(ctx, kvRanges, tikvLocs)
-			if !valid {
-				// PD bug: locations don't properly cover ranges (see ERROR logs above)
-				logutil.Logger(ctx).Error("Panic during bucket splitting - PD returned invalid locations",
-					zap.Any("panicValue", r))
-			} else {
-				// PD locations are valid, so panic is from our splitting logic bug
-				logutil.Logger(ctx).Error("Panic during bucket splitting - internal bug in splitting logic",
-					zap.Any("panicValue", r))
+			// Panic occurred - query PD for all regions to compare with cache
+			logutil.Logger(ctx).Error("Panic during bucket splitting - querying PD for fresh region data",
+				zap.Any("panicValue", r),
+				zap.Int("cachedLocationCount", len(locs)))
+
+			// Query PD directly for each region to see current state
+			for i, loc := range locs {
+				logutil.Logger(ctx).Error("Cached region info",
+					zap.Int("index", i),
+					zap.Uint64("regionID", loc.Location.Region.GetID()),
+					zap.Uint64("regionVer", loc.Location.Region.GetVer()),
+					zap.Uint64("regionConfVer", loc.Location.Region.GetConfVer()),
+					formatLocation(loc.Location))
+
+				// Query PD for current state
+				pdLoc, err := c.RegionCache.LocateRegionByIDFromPD(bo.TiKVBackoffer(), loc.Location.Region.GetID())
+				if err != nil {
+					logutil.Logger(ctx).Error("Failed to query PD for region",
+						zap.Uint64("regionID", loc.Location.Region.GetID()),
+						zap.Error(err))
+					continue
+				}
+
+				logutil.Logger(ctx).Error("PD region info",
+					zap.Int("index", i),
+					zap.Uint64("regionID", pdLoc.Region.GetID()),
+					zap.Uint64("regionVer", pdLoc.Region.GetVer()),
+					zap.Uint64("regionConfVer", pdLoc.Region.GetConfVer()),
+					formatLocation(pdLoc),
+					zap.Bool("versionChanged", loc.Location.Region.GetVer() != pdLoc.Region.GetVer()),
+					zap.Bool("boundaryChanged", !bytes.Equal(loc.Location.StartKey, pdLoc.StartKey) || !bytes.Equal(loc.Location.EndKey, pdLoc.EndKey)))
 			}
+
+			// Also validate if locations cover ranges
+			valid := validateLocationCoverage(ctx, kvRanges, tikvLocs)
+			logutil.Logger(ctx).Error("Location coverage validation result",
+				zap.Bool("valid", valid))
+
 			// Re-panic with original error
 			panic(r)
 		}
