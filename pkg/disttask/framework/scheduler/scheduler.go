@@ -17,6 +17,7 @@ package scheduler
 import (
 	"context"
 	goerrors "errors"
+	"fmt"
 	"math/rand"
 	"strings"
 	"sync/atomic"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -351,6 +353,7 @@ func (s *BaseScheduler) onReverting() error {
 		}
 		task.State = proto.TaskStateReverted
 		s.task.Store(task)
+		onTaskFinished(task.State, task.Error)
 		return nil
 	}
 	// Wait all subtasks in this step finishes.
@@ -469,6 +472,7 @@ func (s *BaseScheduler) switch2NextStep() error {
 		task.Step = nextStep
 		task.State = proto.TaskStateSucceed
 		s.task.Store(task)
+		onTaskFinished(task.State, task.Error)
 		return nil
 	}
 
@@ -579,6 +583,7 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 	task := s.getTaskClone()
 	s.logger.Warn("generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
 	if s.IsRetryableErr(err) {
+		dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventRetry).Inc()
 		return err
 	}
 	return s.revertTask(err)
@@ -697,6 +702,9 @@ func (s *BaseScheduler) GetLogger() *zap.Logger {
 
 // IsCancelledErr checks if the error is a cancelled error.
 func IsCancelledErr(err error) bool {
+	if err == nil {
+		return false
+	}
 	return strings.Contains(err.Error(), taskCancelMsg)
 }
 
@@ -714,4 +722,22 @@ func getEligibleNodes(ctx context.Context, sch Scheduler, managedNodes []string)
 	}
 
 	return serverNodes, nil
+}
+
+func onTaskFinished(state proto.TaskState, taskErr error) {
+	// when task finishes, we classify the finished tasks into succeed/failed/cancelled
+	var metricState string
+
+	if state == proto.TaskStateSucceed || state == proto.TaskStateFailed {
+		metricState = state.String()
+	} else if state == proto.TaskStateReverted {
+		metricState = proto.TaskStateFailed.String()
+		if IsCancelledErr(taskErr) {
+			metricState = "cancelled"
+		}
+	}
+	if len(metricState) > 0 {
+		dxfmetric.FinishedTaskCounter.WithLabelValues("all").Add(1)
+		dxfmetric.FinishedTaskCounter.WithLabelValues(state.String()).Add(1)
+	}
 }
