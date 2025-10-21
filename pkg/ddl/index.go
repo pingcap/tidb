@@ -3532,7 +3532,9 @@ func renameIndexes(tblInfo *model.TableInfo, from, to ast.CIStr) {
 	for _, idx := range tblInfo.Indices {
 		if idx.Name.L == from.L {
 			idx.Name = to
-		} else if isTempIndex(idx, tblInfo) && getChangingIndexOriginName(idx) == from.O {
+		} else if isTempIndex(idx, tblInfo) &&
+			(getChangingIndexOriginName(idx) == from.O ||
+				getRemovingObjOriginName(idx.Name.O) == from.O) {
 			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
 			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
 		}

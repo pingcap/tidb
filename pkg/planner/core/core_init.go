@@ -34,10 +34,6 @@ func init() {
 	utilfuncp.ExhaustPhysicalPlans4LogicalApply = exhaustPhysicalPlans4LogicalApply
 	utilfuncp.ExhaustPhysicalPlans4LogicalWindow = exhaustPhysicalPlans4LogicalWindow
 	utilfuncp.ExhaustPhysicalPlans4LogicalExpand = exhaustPhysicalPlans4LogicalExpand
-	utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll = exhaustPhysicalPlans4LogicalUnionAll
-	utilfuncp.ExhaustPhysicalPlans4LogicalSequence = exhaustPhysicalPlans4LogicalSequence
-	utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow = exhaustPhysicalPlans4LogicalMaxOneRow
-	utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll = exhaustPhysicalPlans4LogicalPartitionUnionAll
 
 	// for physical operators.
 	utilfuncp.GetActualProbeCntFromProbeParents = getActualProbeCntFromProbeParents
@@ -157,9 +153,7 @@ func init() {
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost
-	utilfuncp.IsSingleScan = isSingleScan
 	utilfuncp.WindowIsTopN = windowIsTopN
-	utilfuncp.LoadTableStats = loadTableStats
 	utilfuncp.AttachPlan2Task = attachPlan2Task
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CompareTaskCost = compareTaskCost
@@ -171,7 +165,6 @@ func init() {
 	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
 
 	// For mv index init.
-	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
 	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
 	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
 	statistics.PrepareCols4MVIndex = PrepareIdxColsAndUnwrapArrayType

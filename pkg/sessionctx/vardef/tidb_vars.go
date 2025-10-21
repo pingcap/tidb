@@ -1719,6 +1719,7 @@ const (
 	DefTiDBAccelerateUserCreationUpdate               = false
 	DefTiDBEnableTSValidation                         = true
 	DefTiDBLoadBindingTimeout                         = 200
+	DefTiDBEnableBindingUsage                         = true
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 )
 
@@ -1851,6 +1852,7 @@ var (
 	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
 
 	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
+	EnableBindingUsage         = atomic.NewBool(DefTiDBEnableBindingUsage)
 )
 
 func serverMemoryLimitDefaultValue() string {
