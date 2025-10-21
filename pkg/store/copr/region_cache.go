@@ -439,6 +439,18 @@ func (c *RegionCache) splitKeyRangesByLocation(ctx context.Context, loc *tikv.Ke
 	}
 	// All rest ranges belong to the same region.
 	if i == ranges.Len() {
+		// Defensive check: Verify first range actually starts in this location
+		// This should never fail if caller is correct, but catches bugs in our splitting logic
+		if ranges.Len() > 0 && !loc.Contains(ranges.At(0).StartKey) {
+			logutil.Logger(ctx).Error("splitKeyRangesByLocation: all ranges added but first StartKey outside location",
+				zap.Uint64("regionID", loc.Region.GetID()),
+				zap.Uint64("regionVer", loc.Region.GetVer()),
+				zap.Uint64("regionConfVer", loc.Region.GetConfVer()),
+				formatLocation(loc),
+				keyField("rangeStart", ranges.At(0).StartKey),
+				zap.Int("rangeCount", ranges.Len()))
+			panic("splitKeyRangesByLocation: invariant violated - range StartKey outside location")
+		}
 		res = append(res, &LocationKeyRanges{Location: loc, Ranges: ranges})
 		return res, ranges, true
 	}
@@ -534,6 +546,20 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 		loc := locs[nextLocIndex]
 		// For the last loc.
 		if nextLocIndex == (len(locs) - 1) {
+			// Defensive check: Verify remaining ranges start in last location
+			// This should never fail if locations cover ranges correctly, but catches bugs
+			if ranges.Len() > 0 && !loc.Contains(ranges.At(0).StartKey) {
+				logutil.Logger(ctx).Error("SplitKeyRangesByLocations: last location but ranges start outside",
+					zap.Uint64("regionID", loc.Region.GetID()),
+					zap.Uint64("regionVer", loc.Region.GetVer()),
+					zap.Uint64("regionConfVer", loc.Region.GetConfVer()),
+					formatLocation(loc),
+					keyField("rangeStart", ranges.At(0).StartKey),
+					zap.Int("rangeCount", ranges.Len()),
+					zap.Int("locationIndex", nextLocIndex),
+					zap.Int("totalLocations", len(locs)))
+				panic("SplitKeyRangesByLocations: invariant violated - remaining ranges start outside last location")
+			}
 			res = append(res, &LocationKeyRanges{Location: loc, Ranges: ranges})
 			break
 		}
