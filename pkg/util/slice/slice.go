@@ -51,11 +51,11 @@ func DeepClone[T interface{ Clone() T }](s []T) []T {
 }
 
 // BinarySearchRangeFunc performs a binary search on the slice x to find the range [t1, t2).
-func BinarySearchRangeFunc[S ~[]E, E, T any](x S, t1, t2 T, cmp func(E, T) int) (int, int) {
-	n := len(x)
+func BinarySearchRangeFunc[S ~[]E, E, T any](x S, t1, t2 T, cmp func(E, T) int) (i, j int) {
 	// Define cmp(x[-1], target) < 0 and cmp(x[n], target) >= 0 .
 	// Invariant: cmp(x[i - 1], target) < 0, cmp(x[j], target) >= 0.
-	i, j := 0, n
+	// which is the same as slices.BinarySearchFunc.
+	i, j = 0, len(x)
 	for i < j {
 		h := int(uint(i+j) >> 1) // avoid overflow when computing h
 		// i ≤ h < j
@@ -86,8 +86,6 @@ func BinarySearchRangeFunc[S ~[]E, E, T any](x S, t1, t2 T, cmp func(E, T) int) 
 
 // BinarySearchByIndxFunc performs a binary search on the slice x to find the target value.
 func BinarySearchByIndxFunc[S ~[]E, E, T any](x S, target T, start, end int, cmp func(E, T) int) int {
-	// Define cmp(x[-1], target) < 0 and cmp(x[n], target) >= 0 .
-	// Invariant: cmp(x[i - 1], target) < 0, cmp(x[j], target) >= 0.
 	for start < end {
 		h := int(uint(start+end) >> 1) // avoid overflow when computing h
 		// i ≤ h < j
