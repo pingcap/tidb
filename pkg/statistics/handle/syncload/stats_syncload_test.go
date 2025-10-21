@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -482,76 +481,4 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	require.False(t, loadNeeded)
 	require.True(t, analyzed)
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[2].ID).IsFullLoad())
-}
-
-func findEvent(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.ActionType) *notifier.SchemaChangeEvent {
-	// Find the target event.
-	for {
-		event := <-eventCh
-		if event.GetType() == eventType {
-			return event
-		}
-	}
-}
-
-func TestStatsSyncLoadMissingHistogramLogIsSampled(t *testing.T) {
-	// core, recorded := observer.New(zap.WarnLevel)
-	// logger := zap.New(core)
-	// props := &pingcaplog.ZapProperties{
-	// 	Core:      core,
-	// 	Syncer:    zapcore.AddSync(io.Discard),
-	// 	ErrSyncer: zapcore.AddSync(io.Discard),
-	// 	Level:     zap.NewAtomicLevelAt(zap.WarnLevel),
-	// }
-	// restore := pingcaplog.ReplaceGlobals(logger, props)
-	// defer restore()
-	//
-	// // Ensure the stats sampled logger binds to the testing logger instance.
-	// statslogutil.StatsSampleLogger()
-	//
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@cte_max_recursion_depth=10000")
-	tk.MustExec("drop table if exists h")
-	tk.MustExec("create table h (idx int, code int, typ1 int, typ2 int, update_time int, key k1(idx, typ1, typ2), key k2(idx, update_time))")
-	tk.MustExec(`insert into h select * from (
-  with recursive tt as (
-    select 0 idx, 0 as code, 0 as typ1, 0 as typ2, 0 as update_time
-    union all
-    select mod(update_time, 100) as idx, 0 as code, 0 as typ1, 0 as typ2, update_time+1 as update_time from tt where update_time<5000
-  ) select * from tt
-) tt`)
-
-	tk.MustExec("analyze table h")
-	tk.MustQuery("explain select * from h where idx = 0")
-	tk.MustExec("alter table h add index k3(code)")
-	tk.MustQuery("explain select * from h force index(k3) where code = 0").Check(testkit.Rows(
-		"IndexReader_6 1.00 root  index:IndexScan_5",
-		"└─IndexScan_5 1.00 cop   table:h, index:k3(code) range:[0,0], keep order:false, stats:pseudo",
-	))
-
-	// const expectedMsg = "Histogram not found, possibly due to DDL event is not handled, please consider analyze the table"
-	// var matches []observer.LoggedEntry
-	// for _, entry := range recorded.All() {
-	// 	if entry.Level != zap.WarnLevel {
-	// 		continue
-	// 	}
-	// 	matches = append(matches, entry)
-	// }
-	// require.Len(t, matches, 1)
-	//
-	// sampledField := false
-	// categoryChecked := false
-	// for _, field := range matches[0].Context {
-	// 	if field.Key == "sampled" && field.String == "" {
-	// 		sampledField = true
-	// 	}
-	// 	if field.Key == "category" {
-	// 		require.Equal(t, "stats", field.String)
-	// 		categoryChecked = true
-	// 	}
-	// }
-	// require.True(t, sampledField)
-	// require.True(t, categoryChecked)
 }
