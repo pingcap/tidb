@@ -15,8 +15,6 @@
 package ranger
 
 import (
-	"math"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -28,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
+	"math"
 )
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
@@ -338,9 +337,12 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 		}
 		// take the union of the two columnValues
 		columnValues = unionColumnValues(columnValues, res.ColumnValues)
+		// for a=1 or b =1 and c =1 of index(a,b), although we can only use first two of them as access conds.
+		// we can also keep the range from (a=1 or b =1) into consecutive merge consideration.
 		if len(res.AccessConds) == 0 || len(res.RemainedConds) > 0 {
 			continue
 		}
+
 		curRes := getCNFItemRangeResult(sctx, res, i)
 		bestRes = mergeTwoCNFRanges(sctx, cond, bestRes, curRes)
 	}

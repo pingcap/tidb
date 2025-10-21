@@ -445,8 +445,10 @@ var CompareTaskCost func(curTask, bestTask base.Task) (
 var GetPossibleAccessPaths func(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint,
 	tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error)
 
+// GenerateIndexMergePath is temporarily used a util func pointer to avoid import cycle.
 var GenerateIndexMergePath func(p base.LogicalPlan) error
 
+// DebugTraceAccessPaths is temporarily used a util func pointer to avoid import cycle.
 var DebugTraceAccessPaths func(s base.PlanContext, paths []*util.AccessPath)
 
 // **************************************** plan clone related ********************************************
