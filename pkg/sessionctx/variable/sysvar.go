@@ -1718,6 +1718,18 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}},
 	{
+		Scope:                   vardef.ScopeGlobal,
+		Name:                    vardef.TiDBEnableBindingUsage,
+		Value:                   BoolToOnOff(vardef.DefTiDBEnableBindingUsage),
+		Type:                    vardef.TypeBool,
+		IsHintUpdatableVerified: false,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.EnableBindingUsage.Store(TiDBOptOn(val))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.EnableBindingUsage.Load()), nil
+		}},
+	{
 		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:                    vardef.MaxExecutionTime,
 		Value:                   "0",
