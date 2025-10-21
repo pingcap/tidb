@@ -21,12 +21,10 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-// TestValidateLocationCoverage tests various coverage scenarios
-func TestValidateLocationCoverage(t *testing.T) {
-	ctx := context.Background()
-
+// Test helpers
+var (
 	// Helper to create KeyRange
-	kr := func(start, end string) tikv.KeyRange {
+	kr = func(start, end string) tikv.KeyRange {
 		return tikv.KeyRange{
 			StartKey: []byte(start),
 			EndKey:   []byte(end),
@@ -34,13 +32,18 @@ func TestValidateLocationCoverage(t *testing.T) {
 	}
 
 	// Helper to create KeyLocation
-	kl := func(start, end string, regionID uint64) *tikv.KeyLocation {
+	kl = func(start, end string, regionID uint64) *tikv.KeyLocation {
 		return &tikv.KeyLocation{
 			Region:   tikv.NewRegionVerID(regionID, 0, 0),
 			StartKey: []byte(start),
 			EndKey:   []byte(end),
 		}
 	}
+)
+
+// TestValidateLocationCoverage tests various coverage scenarios
+func TestValidateLocationCoverage(t *testing.T) {
+	ctx := context.Background()
 
 	tests := []struct {
 		name      string
@@ -160,6 +163,100 @@ func TestValidateLocationCoverage(t *testing.T) {
 			locs:      []*tikv.KeyLocation{kl("a", "m", 1)},
 			wantValid: false, // Invalid - second range not covered
 		},
+
+		// Edge cases
+		{
+			name:      "empty ranges",
+			ranges:    []tikv.KeyRange{},
+			locs:      []*tikv.KeyLocation{kl("a", "z", 1)},
+			wantValid: true,
+		},
+		{
+			name:      "empty locations",
+			ranges:    []tikv.KeyRange{kr("a", "z")},
+			locs:      []*tikv.KeyLocation{},
+			wantValid: false,
+		},
+		{
+			name:      "both empty",
+			ranges:    []tikv.KeyRange{},
+			locs:      []*tikv.KeyLocation{},
+			wantValid: true,
+		},
+		{
+			name: "exact boundary match",
+			ranges: []tikv.KeyRange{
+				kr("a", "m"),
+				kr("m", "z"),
+			},
+			locs: []*tikv.KeyLocation{
+				kl("a", "m", 1),
+				kl("m", "z", 2),
+			},
+			wantValid: true,
+		},
+		{
+			name:      "location boundary equals range start",
+			ranges:    []tikv.KeyRange{kr("m", "z")},
+			locs:      []*tikv.KeyLocation{kl("m", "z", 1)},
+			wantValid: true,
+		},
+
+		// Monotonicity violations
+		{
+			name:   "locations not monotonic",
+			ranges: []tikv.KeyRange{kr("a", "z")},
+			locs: []*tikv.KeyLocation{
+				kl("m", "z", 1),
+				kl("a", "m", 2), // Out of order
+			},
+			wantValid: false,
+		},
+		{
+			name:   "locations overlap",
+			ranges: []tikv.KeyRange{kr("a", "z")},
+			locs: []*tikv.KeyLocation{
+				kl("a", "n", 1),
+				kl("m", "z", 2), // Overlaps with previous location
+			},
+			wantValid: false,
+		},
+		{
+			name:   "location extends to infinity but not last",
+			ranges: []tikv.KeyRange{kr("a", "z")},
+			locs: []*tikv.KeyLocation{
+				kl("a", "", 1),  // Extends to infinity
+				kl("m", "z", 2), // But there's another location after!
+			},
+			wantValid: false,
+		},
+		{
+			name:   "current location starts from beginning after non-beginning",
+			ranges: []tikv.KeyRange{kr("a", "z")},
+			locs: []*tikv.KeyLocation{
+				kl("a", "m", 1),
+				kl("", "z", 2), // Starts from beginning after a non-beginning location
+			},
+			wantValid: false,
+		},
+		{
+			name:   "valid: first location starts from beginning",
+			ranges: []tikv.KeyRange{kr("", "z")},
+			locs: []*tikv.KeyLocation{
+				kl("", "m", 1), // First location can start from beginning
+				kl("m", "z", 2),
+			},
+			wantValid: true,
+		},
+		{
+			name:   "valid: last location extends to infinity",
+			ranges: []tikv.KeyRange{kr("a", "")},
+			locs: []*tikv.KeyLocation{
+				kl("a", "m", 1),
+				kl("m", "", 2), // Last location can extend to infinity
+			},
+			wantValid: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -170,135 +267,4 @@ func TestValidateLocationCoverage(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestValidateLocationCoverageEdgeCases tests additional edge cases
-func TestValidateLocationCoverageEdgeCases(t *testing.T) {
-	ctx := context.Background()
-
-	kr := func(start, end string) tikv.KeyRange {
-		return tikv.KeyRange{
-			StartKey: []byte(start),
-			EndKey:   []byte(end),
-		}
-	}
-
-	kl := func(start, end string, regionID uint64) *tikv.KeyLocation {
-		return &tikv.KeyLocation{
-			Region:   tikv.NewRegionVerID(regionID, 0, 0),
-			StartKey: []byte(start),
-			EndKey:   []byte(end),
-		}
-	}
-
-	t.Run("empty ranges", func(t *testing.T) {
-		got := validateLocationCoverage(ctx, []tikv.KeyRange{}, []*tikv.KeyLocation{kl("a", "z", 1)})
-		if !got {
-			t.Errorf("validateLocationCoverage() = false, want true for empty ranges")
-		}
-	})
-
-	t.Run("empty locations", func(t *testing.T) {
-		got := validateLocationCoverage(ctx, []tikv.KeyRange{kr("a", "z")}, []*tikv.KeyLocation{})
-		if got {
-			t.Errorf("validateLocationCoverage() = true, want false for missing coverage")
-		}
-	})
-
-	t.Run("both empty", func(t *testing.T) {
-		got := validateLocationCoverage(ctx, []tikv.KeyRange{}, []*tikv.KeyLocation{})
-		if !got {
-			t.Errorf("validateLocationCoverage() = false, want true for both empty")
-		}
-	})
-
-	t.Run("exact boundary match", func(t *testing.T) {
-		got := validateLocationCoverage(ctx,
-			[]tikv.KeyRange{kr("a", "m"), kr("m", "z")},
-			[]*tikv.KeyLocation{kl("a", "m", 1), kl("m", "z", 2)})
-		if !got {
-			t.Errorf("validateLocationCoverage() = false, want true for exact boundary match")
-		}
-	})
-
-	t.Run("location boundary equals range start", func(t *testing.T) {
-		got := validateLocationCoverage(ctx,
-			[]tikv.KeyRange{kr("m", "z")},
-			[]*tikv.KeyLocation{kl("m", "z", 1)})
-		if !got {
-			t.Errorf("validateLocationCoverage() = false, want true for matching boundaries")
-		}
-	})
-
-	t.Run("locations not monotonic", func(t *testing.T) {
-		got := validateLocationCoverage(ctx,
-			[]tikv.KeyRange{kr("a", "z")},
-			[]*tikv.KeyLocation{
-				kl("m", "z", 1),
-				kl("a", "m", 2), // Out of order
-			})
-		if got {
-			t.Errorf("validateLocationCoverage() = true, want false for non-monotonic locations")
-		}
-	})
-
-	t.Run("locations overlap", func(t *testing.T) {
-		got := validateLocationCoverage(ctx,
-			[]tikv.KeyRange{kr("a", "z")},
-			[]*tikv.KeyLocation{
-				kl("a", "n", 1),
-				kl("m", "z", 2), // Overlaps with previous location
-			})
-		if got {
-			t.Errorf("validateLocationCoverage() = true, want false for overlapping locations")
-		}
-	})
-
-	t.Run("location extends to infinity but not last", func(t *testing.T) {
-		got := validateLocationCoverage(ctx,
-			[]tikv.KeyRange{kr("a", "z")},
-			[]*tikv.KeyLocation{
-				kl("a", "", 1),  // Extends to infinity
-				kl("m", "z", 2), // But there's another location after!
-			})
-		if got {
-			t.Errorf("validateLocationCoverage() = true, want false for infinity location not being last")
-		}
-	})
-
-	t.Run("current location starts from beginning after non-beginning", func(t *testing.T) {
-		got := validateLocationCoverage(ctx,
-			[]tikv.KeyRange{kr("a", "z")},
-			[]*tikv.KeyLocation{
-				kl("a", "m", 1),
-				kl("", "z", 2), // Starts from beginning after a non-beginning location
-			})
-		if got {
-			t.Errorf("validateLocationCoverage() = true, want false for going back to beginning")
-		}
-	})
-
-	t.Run("valid: first location starts from beginning", func(t *testing.T) {
-		got := validateLocationCoverage(ctx,
-			[]tikv.KeyRange{kr("", "z")},
-			[]*tikv.KeyLocation{
-				kl("", "m", 1), // First location can start from beginning
-				kl("m", "z", 2),
-			})
-		if !got {
-			t.Errorf("validateLocationCoverage() = false, want true for valid beginning location")
-		}
-	})
-
-	t.Run("valid: last location extends to infinity", func(t *testing.T) {
-		got := validateLocationCoverage(ctx,
-			[]tikv.KeyRange{kr("a", "")},
-			[]*tikv.KeyLocation{
-				kl("a", "m", 1),
-				kl("m", "", 2), // Last location can extend to infinity
-			})
-		if !got {
-			t.Errorf("validateLocationCoverage() = false, want true for valid infinity location")
-		}
-	})
 }
