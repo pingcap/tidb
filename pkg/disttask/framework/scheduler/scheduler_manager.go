@@ -21,8 +21,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -38,8 +41,10 @@ var (
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 	// DefaultCleanUpInterval is the interval of cleanup routine.
-	DefaultCleanUpInterval        = 10 * time.Minute
-	defaultCollectMetricsInterval = 5 * time.Second
+	DefaultCleanUpInterval = 10 * time.Minute
+	// metric scraping mostly happens at 15s intervals, it's meaningless to update
+	// internal collected date more frequently, so we align with that.
+	defaultCollectMetricsInterval = 15 * time.Second
 )
 
 func (sm *Manager) getSchedulerCount() int {
@@ -187,6 +192,10 @@ func (sm *Manager) Stop() {
 	sm.clearSchedulers()
 	sm.initialized = false
 	close(sm.finishCh)
+
+	// clear existing counters on owner change
+	dxfmetric.WorkerCount.Reset()
+	dxfmetric.FinishedTaskCounter.Reset()
 }
 
 // Initialized check the manager initialized.
@@ -295,6 +304,8 @@ func (sm *Manager) failTask(id int64, currState proto.TaskState, err error) {
 	if err2 := sm.taskMgr.FailTask(sm.ctx, id, currState, err); err2 != nil {
 		sm.logger.Warn("failed to update task state to failed",
 			zap.Int64("task-id", id), zap.Error(err2))
+	} else {
+		onTaskFinished(proto.TaskStateFailed, err)
 	}
 }
 
@@ -470,6 +481,35 @@ func (sm *Manager) collect() {
 	}
 	disttaskCollector.taskInfo.Store(&tasks)
 	disttaskCollector.subtaskInfo.Store(&subtasks)
+
+	if kerneltype.IsNextGen() {
+		sm.collectWorkerMetrics(tasks)
+	}
+}
+
+func (sm *Manager) collectWorkerMetrics(tasks []*proto.TaskBase) {
+	manager, err := storage.GetTaskManager()
+	if err != nil {
+		sm.logger.Warn("failed to get task manager", zap.Error(err))
+		return
+	}
+	nodeCount, nodeCPU, err := handle.GetNodesInfo(sm.ctx, manager)
+	if err != nil {
+		sm.logger.Warn("failed to get nodes info", zap.Error(err))
+		return
+	}
+	scheduledTasks := make([]*proto.TaskBase, 0, len(tasks))
+	for _, t := range tasks {
+		if t.State == proto.TaskStateRunning || t.State == proto.TaskStateModifying {
+			scheduledTasks = append(scheduledTasks, t)
+		}
+	}
+	slices.SortFunc(scheduledTasks, func(i, j *proto.TaskBase) int {
+		return i.Compare(j)
+	})
+	requiredNodes := handle.CalculateRequiredNodes(tasks, nodeCPU)
+	dxfmetric.WorkerCount.WithLabelValues("required").Set(float64(requiredNodes))
+	dxfmetric.WorkerCount.WithLabelValues("current").Set(float64(nodeCount))
 }
 
 // MockScheduler mock one scheduler for one task, only used for tests.
