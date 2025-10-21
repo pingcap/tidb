@@ -829,7 +829,7 @@ func findIndexInfosByIDs(
 	tblInfo *model.TableInfo,
 	idxIDs []int64,
 ) ([]*model.IndexInfo, error) {
-	var idxInfos []*model.IndexInfo
+	idxInfos := make([]*model.IndexInfo, 0, len(idxIDs))
 	for _, id := range idxIDs {
 		idx := model.FindIndexInfoByID(tblInfo.Indices, id)
 		if idx == nil {
