@@ -16,8 +16,6 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/core/build"
-	"github.com/pingcap/tidb/pkg/planner/core/plancache"
 	"math"
 	"time"
 
@@ -28,8 +26,10 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/build"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/plancache"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -172,7 +172,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 5: handle expiration
 	// If the lastUpdateTime less than expiredTimeStamp4PC,
-	// it means other sessions have executed 'admin flush instance plancache'.
+	// it means other sessions have executed 'admin flush instance plan_cache'.
 	// So we need to clear the current session's plan cache.
 	// And update lastUpdateTime to the newest one.
 	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()

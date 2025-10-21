@@ -38,7 +38,7 @@ var (
 	// ExplainFormatCostTrace prints the cost and cost formula of each operator.
 	ExplainFormatCostTrace = "cost_trace"
 	// ExplainFormatPlanCache prints the reason why can't use non-prepared plan cache by warning
-	ExplainFormatPlanCache = "plancache"
+	ExplainFormatPlanCache = "plan_cache"
 	// ExplainFormatPlanTree displays the plan in a tree structure format
 	ExplainFormatPlanTree = "plan_tree"
 

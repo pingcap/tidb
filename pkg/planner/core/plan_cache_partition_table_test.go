@@ -145,7 +145,7 @@ func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
 	// since it is already using the fast path!
 	tk.MustExec(`insert into t values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6)`)
 	tk.MustExec(`analyze table t`)
-	tk.MustQuery(`explain format='plancache' select * from t where a IN (2,1,4,1,1,5,5)`).Check(testkit.Rows(""+
+	tk.MustQuery(`explain format='plan_cache' select * from t where a IN (2,1,4,1,1,5,5)`).Check(testkit.Rows(""+
 		"IndexLookUp_8 4.00 root partition:p1,p2 ",
 		"├─IndexRangeScan_6(Build) 4.00 cop[tikv] table:t, index:PRIMARY(a) range:[1,1], [2,2], [4,4], [5,5], keep order:false",
 		"└─TableRowIDScan_7(Probe) 4.00 cop[tikv] table:t keep order:false"))
@@ -164,14 +164,14 @@ func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
 	tk.MustQuery(`select count(*) from t partition (p1)`).Check(testkit.Rows("5"))
 	tk.MustQuery(`select * from t partition (p2)`).Check(testkit.Rows("Ab 1"))
 
-	tk.MustQuery(`explain format='plancache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:p1, index:PRIMARY(a) "))
-	tk.MustQuery(`explain format='plancache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:p1, index:PRIMARY(a) "))
+	tk.MustQuery(`explain format='plan_cache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:p1, index:PRIMARY(a) "))
+	tk.MustQuery(`explain format='plan_cache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:p1, index:PRIMARY(a) "))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(`select * from t where a = 2`).Check(testkit.Rows("abc 2"))
 	tk.MustExec(`create table tk (a int primary key nonclustered, b varchar(255), key (b)) partition by key (a) partitions 3`)
 	tk.MustExec(`insert into tk select a, b from t`)
 	tk.MustExec(`analyze table tk`)
-	tk.MustQuery(`explain format='plancache' select * from tk where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:tk, partition:p1, index:PRIMARY(a) "))
+	tk.MustQuery(`explain format='plan_cache' select * from tk where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:tk, partition:p1, index:PRIMARY(a) "))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	// PointGet will use Fast Plan, so no Plan Cache, even for Key Partitioned tables.
 	tk.MustQuery(`select * from tk where a = 2`).Check(testkit.Rows("2 abc"))

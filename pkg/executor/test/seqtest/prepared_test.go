@@ -567,9 +567,9 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec(`execute stmt2`)
 	require.Equal(t, 1, tk.Session().GetSessionPlanCache().Size()) // use the same cached plan since they have the same statement
 
-	tk.MustExec(`drop database if exists plancache`)
-	tk.MustExec(`create database plancache`)
-	tk.MustExec(`use plancache`)
+	tk.MustExec(`drop database if exists plan_cache`)
+	tk.MustExec(`create database plan_cache`)
+	tk.MustExec(`use plan_cache`)
 	tk.MustExec(`create table prepare_test (id int PRIMARY KEY, c1 int)`)
 	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
 	tk.MustExec(`execute stmt3`)

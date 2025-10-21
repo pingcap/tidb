@@ -16,11 +16,11 @@ package resultset
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/core/plancache"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/plancache"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"

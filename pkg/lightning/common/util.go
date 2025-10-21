@@ -347,8 +347,8 @@ func EscapeIdentifier(identifier string) string {
 	return builder.String()
 }
 
-// WriteMySQLIdentifier writes a MySQL identifier into the string build.
-// Writes a MySQL identifier into the string build.
+// WriteMySQLIdentifier writes a MySQL identifier into the string builder.
+// Writes a MySQL identifier into the string builder.
 // The identifier is always escaped into the form "`foo`".
 func WriteMySQLIdentifier(builder *strings.Builder, identifier string) {
 	builder.Grow(len(identifier) + 2)

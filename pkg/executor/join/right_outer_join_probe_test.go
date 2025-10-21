@@ -107,7 +107,7 @@ func genRightOuterJoinResult(t *testing.T, sessCtx sessionctx.Context, rightFilt
 }
 
 func TestRightOuterJoinProbeBasic(t *testing.T) {
-	// todo test nullable type after build support nullable type
+	// todo test nullable type after builder support nullable type
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	tinyTp.AddFlag(mysql.NotNullFlag)
 	intTp := types.NewFieldType(mysql.TypeLonglong)

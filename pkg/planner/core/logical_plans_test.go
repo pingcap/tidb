@@ -2408,7 +2408,7 @@ func TestRollupExpand(t *testing.T) {
 	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
 	require.NoError(t, err, comment)
 
-	// manual build
+	// manual builder
 	s.GetCtx().GetSessionVars().PlanID.Store(0)
 	s.GetCtx().GetSessionVars().PlanColumnID.Store(0)
 	builder, _ := NewPlanBuilder().Init(s.GetCtx(), s.GetIS(), hint.NewQBHintHandler(nil))

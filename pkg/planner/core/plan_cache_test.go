@@ -1114,9 +1114,9 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		}
 	}
 
-	// unsupported case with warning use 'plancache' format
+	// unsupported case with warning use 'plan_cache' format
 	for idx, q := range unsupported {
-		tk.MustExec("explain format = 'plancache'" + q)
+		tk.MustExec("explain format = 'plan_cache'" + q)
 		warn := tk.MustQuery("show warnings").Rows()[0]
 		require.Equal(t, reasons[idx], warn[2], "idx: %d", idx)
 	}

@@ -83,7 +83,7 @@ func (h *PlanCacheTracker) warnSkipPlanCache(reason string) {
 		h.warnHandler.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: %s", reason))
 	case SessionNonPrepared:
 		if h.alwaysWarnSkipCache {
-			// use "plancache" rather than types.ExplainFormatPlanCache to avoid import cycle
+			// use "plan_cache" rather than types.ExplainFormatPlanCache to avoid import cycle
 			h.warnHandler.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", reason))
 		}
 	}

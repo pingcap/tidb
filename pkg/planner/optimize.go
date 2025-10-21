@@ -505,7 +505,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	activeRoles := sessVars.ActiveRoles
 	// Check privilege. Maybe it's better to move this to the Preprocess, but
 	// we need the table information to check privilege, which is collected
-	// into the visitInfo in the logical plan build.
+	// into the visitInfo in the logical plan builder.
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		visitInfo := build.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
 		if err := build.CheckPrivilege(activeRoles, pm, visitInfo); err != nil {

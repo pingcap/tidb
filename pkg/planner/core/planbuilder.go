@@ -368,12 +368,12 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.qbOffset = b.qbOffset[:len(b.qbOffset)-1]
 }
 
-// PlanBuilderOpt is used to adjust the plan build.
+// PlanBuilderOpt is used to adjust the plan builder.
 type PlanBuilderOpt interface {
 	Apply(builder *PlanBuilder)
 }
 
-// PlanBuilderOptNoExecution means the plan build should not run any executor during Build().
+// PlanBuilderOptNoExecution means the plan builder should not run any executor during Build().
 type PlanBuilderOptNoExecution struct{}
 
 // Apply implements the interface PlanBuilderOpt.
@@ -381,7 +381,7 @@ func (PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
 	builder.disableSubQueryPreprocessing = true
 }
 
-// PlanBuilderOptAllowCastArray means the plan build should allow build cast(... as ... array).
+// PlanBuilderOptAllowCastArray means the plan builder should allow build cast(... as ... array).
 type PlanBuilderOptAllowCastArray struct{}
 
 // Apply implements the interface PlanBuilderOpt.
@@ -405,7 +405,7 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 
 // Init initialize a PlanBuilder.
 // Return the original PlannerSelectBlockAsName as well, callers decide if
-// PlannerSelectBlockAsName should be restored after using this build.
+// PlannerSelectBlockAsName should be restored after using this builder.
 // This is The comman code pattern to use it:
 // NewPlanBuilder().Init(sctx, is, processor)
 func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, processor *hint.QBHintHandler) (*PlanBuilder, []ast.HintTable) {
@@ -428,7 +428,7 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 	return b, *savedBlockNames
 }
 
-// ResetForReuse reset the plan build, put it into pool for reuse.
+// ResetForReuse reset the plan builder, put it into pool for reuse.
 // After reset for reuse, the object should be equal to a object returned by NewPlanBuilder().
 func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	// Save some fields for reuse.

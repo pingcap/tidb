@@ -127,18 +127,18 @@ func TestRandomFlushPlanCache(t *testing.T) {
 			if randNum == 0 {
 				session1PC, session2PC = "0", "0"
 				if j%2 == 0 {
-					err = tk.ExecToErr("admin flush instance plancache;")
+					err = tk.ExecToErr("admin flush instance plan_cache;")
 				} else {
-					err = tk2.ExecToErr("admin flush instance plancache;")
+					err = tk2.ExecToErr("admin flush instance plan_cache;")
 				}
 				require.NoError(t, err)
 			} else if randNum == 1 {
 				session1PC = "0"
-				err = tk.ExecToErr("admin flush session plancache;")
+				err = tk.ExecToErr("admin flush session plan_cache;")
 				require.NoError(t, err)
 			} else if randNum == 2 {
 				session2PC = "0"
-				err = tk2.ExecToErr("admin flush session plancache;")
+				err = tk2.ExecToErr("admin flush session plan_cache;")
 				require.NoError(t, err)
 			}
 
@@ -151,11 +151,11 @@ func TestRandomFlushPlanCache(t *testing.T) {
 			}
 		}
 
-		err = tk.ExecToErr("admin flush instance plancache;")
+		err = tk.ExecToErr("admin flush instance plan_cache;")
 		require.NoError(t, err)
 	}
 
-	err = tk.ExecToErr("admin flush global plancache;")
+	err = tk.ExecToErr("admin flush global plan_cache;")
 	require.EqualError(t, err, "Do not support the 'admin flush global scope.'")
 }
 
@@ -858,9 +858,9 @@ func TestPlanCacheSwitchDB(t *testing.T) {
 	require.Equal(t, tk2.ExecToErr(`prepare stmt from 'select * from test.t'`), nil)
 
 	// switch to a new DB
-	tk.MustExec(`drop database if exists plancache`)
-	tk.MustExec(`create database plancache`)
-	tk.MustExec(`use plancache`)
+	tk.MustExec(`drop database if exists plan_cache`)
+	tk.MustExec(`create database plan_cache`)
+	tk.MustExec(`use plan_cache`)
 	tk.MustExec(`create table t(a int)`)
 	tk.MustExec(`insert into t values (1)`)
 	tk.MustQuery(`execute stmt`).Check(testkit.Rows("-1")) // read test.t
@@ -870,9 +870,9 @@ func TestPlanCacheSwitchDB(t *testing.T) {
 
 	// prepare again
 	tk.MustExec(`prepare stmt from 'select * from t'`)
-	tk.MustQuery(`execute stmt`).Check(testkit.Rows("1")) // read plancache.t
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("1")) // read plan_cache.t
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-	tk.MustQuery(`execute stmt`).Check(testkit.Rows("1")) // read plancache.t
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("1")) // read plan_cache.t
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
 	// specify DB in the query

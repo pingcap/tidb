@@ -351,10 +351,10 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 		case *expression.Column:
 			groupByColsUniqueIDs.Insert(int(x.UniqueID))
 		case *expression.CorrelatedColumn:
-			// shouldn't be here, intercepted by plan build as unknown column.
+			// shouldn't be here, intercepted by plan builder as unknown column.
 			continue
 		case *expression.Constant:
-			// shouldn't be here, interpreted as pos param by plan build.
+			// shouldn't be here, interpreted as pos param by plan builder.
 			continue
 		case *expression.ScalarFunction:
 			hashCode := string(x.HashCode())

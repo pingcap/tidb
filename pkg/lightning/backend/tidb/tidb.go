@@ -485,7 +485,7 @@ func (enc *tidbEncoder) appendSQLBytes(sb *strings.Builder, value []byte) {
 	sb.WriteByte('\'')
 }
 
-// appendSQL appends the SQL representation of the Datum into the string build.
+// appendSQL appends the SQL representation of the Datum into the string builder.
 // Note that we cannot use Datum.ToString since it doesn't perform SQL escaping.
 func (enc *tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, _ *table.Column) error {
 	switch datum.Kind() {

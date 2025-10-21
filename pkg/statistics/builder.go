@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-// local build-only tuning knobs
+// local builder-only tuning knobs
 const (
 	// topNPruningThreshold represents 10% threshold for TopN pruning
 	topNPruningThreshold = 10
