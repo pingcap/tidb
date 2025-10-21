@@ -208,8 +208,8 @@ func (e *GroupExpression) InputsLen() int {
 	return len(e.Inputs)
 }
 
-// GetLogicalSchema returns the logical schema of the idx-th child group.
-func (e *GroupExpression) GetLogicalSchema(idx int) *expression.Schema {
+// GetInputSchema returns the logical schema of the idx-th child group.
+func (e *GroupExpression) GetInputSchema(idx int) *expression.Schema {
 	return e.Inputs[idx].GetLogicalProperty().Schema
 }
 

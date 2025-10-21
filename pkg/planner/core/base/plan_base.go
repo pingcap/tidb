@@ -274,8 +274,8 @@ type GroupExpression interface {
 	IsExplored(i uint) bool
 	// InputsLen returns the length of inputs.
 	InputsLen() int
-	// GetLogicalSchema returns the logical schema of the idx-th child group.
-	GetLogicalSchema(idx int) *expression.Schema
+	// GetInputSchema returns the input logical's schema by index.
+	GetInputSchema(idx int) *expression.Schema
 }
 
 // GetGEAndLogicalOp is get the possible group expression and logical operator from common super pointer.

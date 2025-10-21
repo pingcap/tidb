@@ -115,7 +115,7 @@ func ExhaustPhysicalPlans4LogicalSequence(super base.LogicalPlan, prop *property
 	}
 	var seqSchema *expression.Schema
 	if g != nil {
-		seqSchema = g.GetLogicalSchema(g.InputsLen() - 1)
+		seqSchema = g.GetInputSchema(g.InputsLen() - 1)
 	} else {
 		seqSchema = ls.Children()[ls.ChildLen()-1].Schema()
 	}
