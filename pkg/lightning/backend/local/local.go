@@ -1475,8 +1475,9 @@ func (local *Backend) doImport(
 	}
 
 	if local.ticiWriteGroup != nil {
+		// FIXME: this API should be called in the post process phase.
 		// If the import is done, we can close the write group.
-		return local.ticiWriteGroup.MarkTableUploadFinished(ctx)
+		return local.ticiWriteGroup.FinishIndexUpload(ctx)
 	}
 
 	return nil
@@ -1777,9 +1778,10 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 	return 0, 0, errors.New("get region split size and keys failed")
 }
 
-// InitTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema.
-func (local *Backend) InitTiCIWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) error {
-	ticiWriteGroup, err := tici.NewTiCIDataWriterGroup(ctx, tblInfo, schema)
+// InitTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema
+// in the TiDB instance level. The `taskID` is a unique identifier for this Job.
+func (local *Backend) InitTiCIWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string, taskID string) error {
+	ticiWriteGroup, err := tici.NewTiCIDataWriterGroup(ctx, tblInfo, schema, taskID)
 	if err != nil {
 		return err
 	}
