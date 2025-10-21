@@ -50,7 +50,7 @@ func NewExecutorBuilder(table *model.TableInfo, ts uint64) *ExecutorBuilder {
 	}
 }
 
-// SetOldTable set a old table info to the build.
+// SetOldTable set a old table info to the builder.
 func (builder *ExecutorBuilder) SetOldTable(oldTable *metautil.Table) *ExecutorBuilder {
 	builder.oldTable = oldTable
 	return builder
