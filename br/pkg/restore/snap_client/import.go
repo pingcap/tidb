@@ -58,7 +58,7 @@ const (
 	TiDBFull KvMode = iota
 	Raw
 	Txn
-	TiDBCompcated
+	TiDBCompacted
 )
 
 const (
@@ -155,6 +155,8 @@ type SnapFileImporter struct {
 
 	cacheKey string
 	cond     *sync.Cond
+
+	mergeSst bool
 }
 
 type SnapFileImporterOptions struct {
@@ -243,6 +245,10 @@ func NewSnapFileImporter(
 		}
 	}
 	return fileImporter, nil
+}
+
+func (importer *SnapFileImporter) SetMergeSst() {
+	importer.mergeSst = true
 }
 
 func (importer *SnapFileImporter) PauseForBackpressure() {
@@ -338,71 +344,6 @@ func getKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *restoreutils.R
 			return restoreutils.GetRewriteRawKeys(f, rules)
 		}
 	}
-}
-
-type BackupFileSetWithKeyRange struct {
-	backupFileSet restore.BackupFileSet
-	startKey      []byte
-	endKey        []byte
-}
-
-func GroupOverlappedBackupFileSets(backupFileSets []restore.BackupFileSet) ([]restore.BatchBackupFileSet, error) {
-	backupFileSetWithKeyRanges := make([]*BackupFileSetWithKeyRange, 0, len(backupFileSets))
-	for _, backupFileSet := range backupFileSets {
-		startKey, endKey, err := getKeyRangeForBackupFileSet(backupFileSet)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		backupFileSetWithKeyRanges = append(backupFileSetWithKeyRanges, &BackupFileSetWithKeyRange{
-			backupFileSet: backupFileSet,
-			startKey:      startKey,
-			endKey:        endKey,
-		})
-	}
-	slices.SortFunc(backupFileSetWithKeyRanges, func(a, b *BackupFileSetWithKeyRange) int {
-		startKeyCmp := bytes.Compare(a.startKey, b.startKey)
-		if startKeyCmp == 0 {
-			return bytes.Compare(a.endKey, b.endKey)
-		}
-		return startKeyCmp
-	})
-	batchBackupFileSets := make([]restore.BatchBackupFileSet, 0)
-	thisBatchBackupFileSet := make([]restore.BackupFileSet, 0)
-	lastEndKey := []byte{}
-	for _, file := range backupFileSetWithKeyRanges {
-		if bytes.Compare(lastEndKey, file.startKey) <= 0 {
-			if len(thisBatchBackupFileSet) > 0 {
-				batchBackupFileSets = append(batchBackupFileSets, thisBatchBackupFileSet)
-				thisBatchBackupFileSet = make([]restore.BackupFileSet, 0)
-			}
-			lastEndKey = file.endKey
-		} else if bytes.Compare(lastEndKey, file.endKey) < 0 {
-			lastEndKey = file.endKey
-		}
-		thisBatchBackupFileSet = append(thisBatchBackupFileSet, file.backupFileSet)
-	}
-	if len(thisBatchBackupFileSet) > 0 {
-		batchBackupFileSets = append(batchBackupFileSets, thisBatchBackupFileSet)
-	}
-	return batchBackupFileSets, nil
-}
-
-func getKeyRangeForBackupFileSet(backupFileSet restore.BackupFileSet) ([]byte, []byte, error) {
-	var startKey, endKey []byte
-	getRangeFn := getKeyRangeByMode(TiDBCompcated)
-	for _, f := range backupFileSet.SSTFiles {
-		start, end, err := getRangeFn(f, backupFileSet.RewriteRules)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		if len(startKey) == 0 || bytes.Compare(start, startKey) < 0 {
-			startKey = start
-		}
-		if len(endKey) == 0 || bytes.Compare(endKey, end) < 0 {
-			endKey = end
-		}
-	}
-	return startKey, endKey, nil
 }
 
 // getKeyRangeForFiles gets the maximum range on files.
@@ -613,7 +554,7 @@ func (importer *SnapFileImporter) download(
 		// we treat Txn kv file as Raw kv file. because we don't have table id to decode
 		if importer.kvMode == Raw || importer.kvMode == Txn {
 			downloadMetas, e = importer.downloadRawKVSST(ctx, regionInfo, filesGroup, cipher, apiVersion)
-		} else if importer.kvMode == TiDBCompcated {
+		} else if importer.kvMode == TiDBCompacted && importer.mergeSst {
 			downloadMetas, e = importer.batchDownloadSST(ctx, regionInfo, filesGroup, cipher, apiVersion)
 		} else {
 			downloadMetas, e = importer.downloadSST(ctx, regionInfo, filesGroup, cipher, apiVersion)
@@ -632,7 +573,7 @@ func (importer *SnapFileImporter) download(
 			logutil.CL(ctx).Info("fail to decrypt when download sst, try again with no-crypt")
 			if importer.kvMode == Raw || importer.kvMode == Txn {
 				downloadMetas, e = importer.downloadRawKVSST(ctx, regionInfo, filesGroup, nil, apiVersion)
-			} else if importer.kvMode == TiDBCompcated {
+			} else if importer.kvMode == TiDBCompacted && importer.mergeSst {
 				downloadMetas, e = importer.batchDownloadSST(ctx, regionInfo, filesGroup, nil, apiVersion)
 			} else {
 				downloadMetas, e = importer.downloadSST(ctx, regionInfo, filesGroup, nil, apiVersion)
@@ -762,9 +703,8 @@ func (importer *SnapFileImporter) batchDownloadSST(
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
-	for i, p := range regionInfo.Region.GetPeers() {
+	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
-		indexP := i
 		eg.Go(func() error {
 			tokenCh := importer.downloadTokensMap.acquireTokenCh(peer.GetStoreId(), importer.concurrencyPerStore)
 			select {
@@ -775,7 +715,7 @@ func (importer *SnapFileImporter) batchDownloadSST(
 			defer func() {
 				importer.releaseToken(tokenCh)
 			}()
-			for cfName, req := range downloadReqsMap {
+			for _, req := range downloadReqsMap {
 				var err error
 				var resp *import_sstpb.DownloadResponse
 				resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffStrategy(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
@@ -803,10 +743,6 @@ func (importer *SnapFileImporter) batchDownloadSST(
 				}
 				resultMetasMap[req.Name] = &sstMeta
 				mu.Unlock()
-
-				if indexP == 0 {
-					log.Info("batch download SST", zap.Int("file count", len(req.Ssts)), zap.String("result file name", req.Name), zap.String("cf name", cfName), zap.Uint64("peer id", peer.Id))
-				}
 			}
 			return nil
 		})

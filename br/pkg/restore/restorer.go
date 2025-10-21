@@ -17,6 +17,7 @@ package restore
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -141,6 +142,12 @@ type FileImporter interface {
 	Close() error
 }
 
+type BatchFileImporter interface {
+	FileImporter
+
+	SetMergeSst()
+}
+
 // BalancedFileImporter is a wrapper around FileImporter that adds concurrency controls.
 // It ensures that file imports are balanced across storage nodes, which is particularly useful
 // in MultiTablesRestorer scenarios where concurrency management is critical for efficiency.
@@ -221,31 +228,32 @@ func (s *SimpleRestorer) GoRestore(onProgress func(int64), batchFileSets ...Batc
 }
 
 type BatchRestorer struct {
-	eg               *errgroup.Group
-	ectx             context.Context
-	workerPool       *util.WorkerPool
-	fileImporter     FileImporter
-	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+	eg                *errgroup.Group
+	ectx              context.Context
+	workerPool        *util.WorkerPool
+	batchFileImporter BatchFileImporter
+	checkpointRunner  *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
 func NewBatchSstRestorer(
 	ctx context.Context,
-	fileImporter FileImporter,
+	batchFileImporter BatchFileImporter,
 	workerPool *util.WorkerPool,
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
 ) SstRestorer {
+	batchFileImporter.SetMergeSst()
 	eg, ectx := errgroup.WithContext(ctx)
 	return &BatchRestorer{
-		eg:               eg,
-		ectx:             ectx,
-		workerPool:       workerPool,
-		fileImporter:     fileImporter,
-		checkpointRunner: checkpointRunner,
+		eg:                eg,
+		ectx:              ectx,
+		workerPool:        workerPool,
+		batchFileImporter: batchFileImporter,
+		checkpointRunner:  checkpointRunner,
 	}
 }
 
 func (s *BatchRestorer) Close() error {
-	return s.fileImporter.Close()
+	return s.batchFileImporter.Close()
 }
 
 func (s *BatchRestorer) WaitUntilFinish() error {
@@ -253,7 +261,11 @@ func (s *BatchRestorer) WaitUntilFinish() error {
 }
 
 func (s *BatchRestorer) GoRestore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error {
-	for _, batchSet := range batchFileSets {
+	batchBackupFileSet, err := GroupOverlappedBackupFileSets(slices.Concat(batchFileSets...))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, batchSet := range batchBackupFileSet {
 		s.workerPool.ApplyOnErrorGroup(s.eg,
 			func() (restoreErr error) {
 				fileStart := time.Now()
@@ -268,7 +280,7 @@ func (s *BatchRestorer) GoRestore(onProgress func(int64), batchFileSets ...Batch
 						}
 					}
 				}()
-				err := s.fileImporter.Import(s.ectx, batchSet...)
+				err := s.batchFileImporter.Import(s.ectx, batchSet...)
 				if err != nil {
 					return errors.Trace(err)
 				}

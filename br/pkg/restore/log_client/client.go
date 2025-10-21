@@ -158,6 +158,7 @@ func NewSstRestoreManager(
 	concurrencyPerStore uint,
 	storeCount uint,
 	sstCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
+	mergeSst bool,
 ) (*SstRestoreManager, error) {
 	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 	// This poolSize is similar to full restore, as both workflows are comparable.
@@ -176,7 +177,11 @@ func NewSstRestoreManager(
 			return nil, errors.Trace(err)
 		}
 	}
-	s.restorer = restore.NewBatchSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
+	if mergeSst {
+		s.restorer = restore.NewBatchSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
+	} else {
+		s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
+	}
 	return s, nil
 }
 
@@ -343,11 +348,7 @@ func (rc *LogClient) RestoreSSTFiles(
 		log.Info("[Compacted SST Restore] No SST files found for restoration.")
 		return nil
 	}
-	batchBackupFileSet, err := snapclient.GroupOverlappedBackupFileSets(backupFileSets)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = importModeSwitcher.GoSwitchToImportMode(ctx)
+	err := importModeSwitcher.GoSwitchToImportMode(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -371,7 +372,7 @@ func (rc *LogClient) RestoreSSTFiles(
 	// where batch processing may lead to increased complexity and potential inefficiencies.
 	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
 	// while maintaining optimal performance and resource utilization.
-	err = rc.sstRestoreManager.restorer.GoRestore(onProgress, batchBackupFileSet...)
+	err = rc.sstRestoreManager.restorer.GoRestore(onProgress, backupFileSets)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -559,7 +560,7 @@ func (rc *LogClient) InitClients(
 		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
 	)
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
-		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
+		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompacted, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -569,6 +570,7 @@ func (rc *LogClient) InitClients(
 		concurrencyPerStore,
 		uint(len(stores)),
 		sstCheckpointMetaManager,
+		true,
 	)
 	return errors.Trace(err)
 }

@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -388,4 +390,68 @@ func HasRestoreIDColumn(dom *domain.Domain) bool {
 		}
 	}
 	return false
+}
+
+type BackupFileSetWithKeyRange struct {
+	backupFileSet BackupFileSet
+	startKey      []byte
+	endKey        []byte
+}
+
+func GroupOverlappedBackupFileSets(backupFileSets []BackupFileSet) ([]BatchBackupFileSet, error) {
+	backupFileSetWithKeyRanges := make([]*BackupFileSetWithKeyRange, 0, len(backupFileSets))
+	for _, backupFileSet := range backupFileSets {
+		startKey, endKey, err := getKeyRangeForBackupFileSet(backupFileSet)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		backupFileSetWithKeyRanges = append(backupFileSetWithKeyRanges, &BackupFileSetWithKeyRange{
+			backupFileSet: backupFileSet,
+			startKey:      startKey,
+			endKey:        endKey,
+		})
+	}
+	slices.SortFunc(backupFileSetWithKeyRanges, func(a, b *BackupFileSetWithKeyRange) int {
+		startKeyCmp := bytes.Compare(a.startKey, b.startKey)
+		if startKeyCmp == 0 {
+			return bytes.Compare(a.endKey, b.endKey)
+		}
+		return startKeyCmp
+	})
+	batchBackupFileSets := make([]BatchBackupFileSet, 0)
+	thisBatchBackupFileSet := make([]BackupFileSet, 0)
+	lastEndKey := []byte{}
+	for _, file := range backupFileSetWithKeyRanges {
+		if bytes.Compare(lastEndKey, file.startKey) <= 0 {
+			if len(thisBatchBackupFileSet) > 0 {
+				batchBackupFileSets = append(batchBackupFileSets, thisBatchBackupFileSet)
+				thisBatchBackupFileSet = make([]BackupFileSet, 0)
+			}
+			lastEndKey = file.endKey
+		} else if bytes.Compare(lastEndKey, file.endKey) < 0 {
+			lastEndKey = file.endKey
+		}
+		thisBatchBackupFileSet = append(thisBatchBackupFileSet, file.backupFileSet)
+	}
+	if len(thisBatchBackupFileSet) > 0 {
+		batchBackupFileSets = append(batchBackupFileSets, thisBatchBackupFileSet)
+	}
+	return batchBackupFileSets, nil
+}
+
+func getKeyRangeForBackupFileSet(backupFileSet BackupFileSet) ([]byte, []byte, error) {
+	var startKey, endKey []byte
+	for _, f := range backupFileSet.SSTFiles {
+		start, end, err := restoreutils.GetRewriteRawKeys(f, backupFileSet.RewriteRules)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		if len(startKey) == 0 || bytes.Compare(start, startKey) < 0 {
+			startKey = start
+		}
+		if len(endKey) == 0 || bytes.Compare(endKey, end) < 0 {
+			endKey = end
+		}
+	}
+	return startKey, endKey, nil
 }
