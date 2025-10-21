@@ -67,9 +67,15 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 		return true
 	}
 
-	// First, validate monotonicity of locations to catch PD corruption early
+	valid := true
+
+	// First, validate monotonicity of locations to catch PD corruption
+	// Continue checking all locations to report all errors
 	for i := 1; i < len(locs); i++ {
 		prev, curr := locs[i-1], locs[i]
+		if prev == nil || curr == nil {
+			continue // Skip nil check
+		}
 
 		// Check that locations are ordered (prev.StartKey <= curr.StartKey)
 		// Empty start key means beginning of key space (minimum)
@@ -80,14 +86,16 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 				zap.String("issue", "current location starts from beginning but appears after non-beginning location"),
 				keyField("prevStart", prev.StartKey),
 				keyField("currStart", curr.StartKey))
-			return false
+			valid = false
+			continue // Continue checking other locations
 		}
 		if len(prev.StartKey) > 0 && len(curr.StartKey) > 0 && bytes.Compare(prev.StartKey, curr.StartKey) > 0 {
 			logutil.BgLogger().Error("BatchLocateKeyRanges locations not monotonic",
 				zap.Int("locationIndex", i),
 				keyField("prevStart", prev.StartKey),
 				keyField("currStart", curr.StartKey))
-			return false
+			valid = false
+			continue // Continue checking other locations
 		}
 
 		// Check for overlaps/gaps: prev.EndKey should be <= curr.StartKey
@@ -97,7 +105,8 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 				zap.Int("locationIndex", i-1),
 				zap.Int("totalLocations", len(locs)),
 				keyField("prevStart", prev.StartKey))
-			return false
+			valid = false
+			continue // Continue checking other locations
 		}
 
 		// Both keys non-empty - check for overlap
@@ -106,10 +115,12 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 				zap.Int("locationIndex", i),
 				keyField("prevEnd", prev.EndKey),
 				keyField("currStart", curr.StartKey))
-			return false
+			valid = false
+			// Continue checking other locations
 		}
 	}
 
+	// Check coverage even if monotonicity failed, to report all issues
 	rangeIdx := 0
 	locIdx := 0
 	// Track the first mismatch for better diagnostics
@@ -123,6 +134,9 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 	var prevLocEndKey []byte
 
 	for _, loc := range locs {
+		if loc == nil {
+			continue // Skip nil locations
+		}
 		if rangeIdx >= len(kvRanges) {
 			// All ranges processed - remaining locations are okay
 			break
@@ -233,9 +247,11 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 		}
 
 		logutil.BgLogger().Error("BatchLocateKeyRanges coverage mismatch", fields...)
-		return false
+		valid = false
 	}
-	return true
+
+	// Return false if either monotonicity check or coverage check failed
+	return valid
 }
 
 // RegionCache wraps tikv.RegionCache.
