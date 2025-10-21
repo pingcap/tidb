@@ -174,9 +174,6 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
-	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.MinCountAfterAccess = 0
@@ -408,9 +405,6 @@ func detachCondAndBuildRangeForPath(
 	conds []expression.Expression,
 	histColl *statistics.HistColl,
 ) error {
-	if !sctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	if len(path.IdxCols) == 0 {
 		path.TableFilters = conds
 		return nil

@@ -342,14 +342,8 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 		if len(res.AccessConds) == 0 {
 			continue
 		}
-		if sctx.ExprCtx.ConnectionID() != 0 {
-			fmt.Println("wwz")
-		}
 		curRes := getCNFItemRangeResult(sctx, res, i)
 		bestRes = mergeTwoCNFRanges(sctx, cond, bestRes, curRes)
-	}
-	if sctx.ExprCtx.ConnectionID() != 0 {
-		fmt.Println("wwz")
 	}
 	if bestRes != nil && bestRes.rangeResult != nil {
 		bestRes.rangeResult.IsDNFCond = false
@@ -735,9 +729,6 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 // bool: indicate whether there's nil range when merging eq and in conditions.
 func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) (accesses, filters, newConditions []expression.Expression, columnValues []*valueInfo, _ bool) {
-	if sctx.ExprCtx.ConnectionID() != 0 {
-		fmt.Println("wwz")
-	}
 	rb := builder{sctx: sctx}
 	accesses = make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
