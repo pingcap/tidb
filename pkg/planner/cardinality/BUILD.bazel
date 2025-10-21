@@ -23,6 +23,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/format",
         "//pkg/parser/mysql",
+        "//pkg/planner/core/stats",
         "//pkg/planner/planctx",
         "//pkg/planner/property",
         "//pkg/planner/util",
