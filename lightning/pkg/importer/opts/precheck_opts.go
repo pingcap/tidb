@@ -40,7 +40,7 @@ func WithPreInfoGetterOptions(opts ...GetPreInfoOption) PrecheckItemBuilderOptio
 	}
 }
 
-// WithMDLoaderSetupOptions generates a precheck item build option
+// WithMDLoaderSetupOptions generates a precheck item builder option
 // to control the mydumper loader setup behaviors.
 func WithMDLoaderSetupOptions(opts ...mydump.MDLoaderSetupOption) PrecheckItemBuilderOption {
 	return func(c *PrecheckItemBuilderConfig) {
