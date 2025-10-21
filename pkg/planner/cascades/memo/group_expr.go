@@ -208,6 +208,11 @@ func (e *GroupExpression) InputsLen() int {
 	return len(e.Inputs)
 }
 
+// GetLogicalSchema returns the logical schema of the idx-th child group.
+func (e *GroupExpression) GetLogicalSchema(idx int) *expression.Schema {
+	return e.Inputs[idx].GetLogicalProperty().Schema
+}
+
 // DeriveLogicalProp derive the new group's logical property from a specific GE.
 // DeriveLogicalProp is not called with recursive, because we only examine and
 // init new group from bottom-up, so we can sure that this new group's children

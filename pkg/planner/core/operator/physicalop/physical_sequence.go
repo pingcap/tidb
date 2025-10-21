@@ -20,7 +20,6 @@ import (
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -116,8 +115,7 @@ func ExhaustPhysicalPlans4LogicalSequence(super base.LogicalPlan, prop *property
 	}
 	var seqSchema *expression.Schema
 	if g != nil {
-		ge := g.(*memo.GroupExpression)
-		seqSchema = ge.Inputs[len(ge.Inputs)-1].GetLogicalProperty().Schema
+		seqSchema = g.GetLogicalSchema(g.InputsLen() - 1)
 	} else {
 		seqSchema = ls.Children()[ls.ChildLen()-1].Schema()
 	}
