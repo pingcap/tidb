@@ -153,7 +153,7 @@ func (p *PhysicalSort) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalSort) ResolveIndices() (err error) {
-	return utilfuncp.ResolveIndicesForSort(&p.BasePhysicalPlan)
+	return resolveIndicesForSort(&p.BasePhysicalPlan)
 }
 
 // CloneForPlanCache implements the base.Plan interface.
@@ -275,4 +275,30 @@ func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, b
 		propItems = append(propItems, property.SortItem{Col: col, Desc: item.Desc})
 	}
 	return &property.PhysicalProperty{SortItems: propItems}, true
+}
+
+// resolveIndicesForSort is a helper function to resolve indices for sort operators.
+func resolveIndicesForSort(pp base.PhysicalPlan) (err error) {
+	p := pp.(*BasePhysicalPlan)
+	err = p.ResolveIndices()
+	if err != nil {
+		return err
+	}
+
+	var byItems []*util.ByItems
+	switch x := p.Self.(type) {
+	case *PhysicalSort:
+		byItems = x.ByItems
+	case *NominalSort:
+		byItems = x.ByItems
+	default:
+		return errors.Errorf("expect PhysicalSort or NominalSort, but got %s", p.TP())
+	}
+	for _, item := range byItems {
+		item.Expr, err = item.Expr.ResolveIndices(p.Children()[0].Schema())
+		if err != nil {
+			return err
+		}
+	}
+	return err
 }

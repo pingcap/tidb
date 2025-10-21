@@ -38,7 +38,6 @@ func init() {
 	utilfuncp.GetEstimatedProbeCntFromProbeParents = getEstimatedProbeCntFromProbeParents
 	// for physical sort.
 	utilfuncp.GetCost4PhysicalSort = getCost4PhysicalSort
-	utilfuncp.ResolveIndicesForSort = resolveIndicesForSort
 	utilfuncp.Attach2Task4PhysicalSort = attach2Task4PhysicalSort
 	utilfuncp.GetPlanCostVer14PhysicalSort = getPlanCostVer14PhysicalSort
 	utilfuncp.GetPlanCostVer24PhysicalSort = getPlanCostVer24PhysicalSort

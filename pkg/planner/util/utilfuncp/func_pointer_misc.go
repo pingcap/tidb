@@ -92,9 +92,6 @@ var GetPlanCostVer14PhysicalSort func(pp base.PhysicalPlan, taskType property.Ta
 var GetPlanCostVer24PhysicalSort func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
 
-// ResolveIndicesForSort will be called by PhysicalSort in physicalOp pkg.
-var ResolveIndicesForSort func(p base.PhysicalPlan) (err error)
-
 // Attach2Task4NominalSort will be called by NominalSort in physicalOp pkg.
 var Attach2Task4NominalSort func(base.PhysicalPlan, ...base.Task) base.Task
 
