@@ -67,7 +67,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":bindinfo"],
     flaky = True,
-    shard_count = 46,
+    shard_count = 50,
     deps = [
         "//pkg/bindinfo/internal",
         "//pkg/bindinfo/norm",
