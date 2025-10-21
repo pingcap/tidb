@@ -479,6 +479,9 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 func extractElemIDs(r *reorgInfo) []int64 {
 	elemIDs := make([]int64, 0, len(r.elements))
 	for _, elem := range r.elements {
+		if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
+			continue
+		}
 		elemIDs = append(elemIDs, elem.ID)
 	}
 	return elemIDs
