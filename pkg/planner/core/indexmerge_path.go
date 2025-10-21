@@ -16,6 +16,7 @@ package core
 
 import (
 	"cmp"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"maps"
 	"slices"
 	"strings"
@@ -44,7 +45,8 @@ import (
 )
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
-func generateIndexMergePath(ds *logicalop.DataSource) error {
+func generateIndexMergePath(lp base.LogicalPlan) error {
+	ds := lp.(*logicalop.DataSource)
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
@@ -226,7 +228,7 @@ func accessPathsForConds(
 		} else {
 			newPath.IsIntHandlePath = true
 		}
-		err := deriveTablePathStats(ds, newPath, conditions, true)
+		err := ds.DeriveTablePathStats(newPath, conditions, true)
 		if err != nil {
 			logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 			return nil
@@ -246,12 +248,12 @@ func accessPathsForConds(
 		if !isInIndexMergeHints(ds, newPath.Index.Name.L) {
 			return nil
 		}
-		err := fillIndexPath(ds, newPath, conditions)
+		err := ds.FillIndexPath(newPath, conditions)
 		if err != nil {
 			logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 			return nil
 		}
-		deriveIndexPathStats(ds, newPath, conditions, true)
+		ds.DeriveIndexPathStats(newPath, conditions, true)
 		// If the newPath contains a full range, ignore it.
 		if ranger.HasFullRange(newPath.Ranges, false) {
 			return nil
@@ -691,7 +693,7 @@ func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt
 	condInIdxFilter := make(map[string]struct{}, len(remainedCNFs))
 	// try to derive index filters for each path
 	for _, path := range combinedPartialPaths {
-		idxFilters, _ := splitIndexFilterConditions(ds, remainedCNFs, path.FullIdxCols, path.FullIdxColLens)
+		idxFilters, _ := ds.SplitIndexFilterConditions(remainedCNFs, path.FullIdxCols, path.FullIdxColLens)
 		idxFilters = util.CloneExprs(idxFilters)
 		path.IndexFilters = append(path.IndexFilters, idxFilters...)
 		for _, idxFilter := range idxFilters {
@@ -767,8 +769,7 @@ func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, 
 		// metadata.
 		// And according to buildPartialPaths4MVIndex, there must be at least one partial path if it returns ok.
 		firstPath := partialPaths[0]
-		idxFilters, tableFilters := splitIndexFilterConditions(
-			ds,
+		idxFilters, tableFilters := ds.SplitIndexFilterConditions(
 			remainingFilters,
 			firstPath.FullIdxCols,
 			firstPath.FullIdxColLens,
@@ -960,7 +961,7 @@ func buildPartialPath4MVIndex(
 		partialPath.FullIdxCols = append(partialPath.FullIdxCols, idxCols[i])
 		partialPath.FullIdxColLens = append(partialPath.FullIdxColLens, length)
 	}
-	if err := detachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl); err != nil {
+	if err := stats.DetachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl); err != nil {
 		return nil, false, err
 	}
 	if len(partialPath.AccessConds) != len(accessFilters) || len(partialPath.TableFilters) > 0 {

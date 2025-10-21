@@ -26,6 +26,7 @@ go_test(
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule",
+        "//pkg/planner/core/stats",
         "//pkg/planner/property",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/store/mockstore",

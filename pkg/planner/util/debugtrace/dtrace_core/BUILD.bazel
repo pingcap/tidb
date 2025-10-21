@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "dtrace_core",
+    srcs = ["debug_trace.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/util/debugtrace/dtrace_core",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/meta/model",
+        "//pkg/planner/core/base",
+        "//pkg/planner/util/debugtrace",
+        "//pkg/statistics",
+        "@com_github_pingcap_failpoint//:failpoint",
+    ],
+)

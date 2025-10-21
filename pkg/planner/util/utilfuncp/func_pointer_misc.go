@@ -78,16 +78,6 @@ var ExhaustPhysicalPlans4LogicalExpand func(lp base.LogicalPlan, prop *property.
 
 // ****************************************** stats related **********************************************
 
-// DeriveStats4DataSource will be called by LogicalDataSource in logicalOp pkg.
-var DeriveStats4DataSource func(lp base.LogicalPlan) (*property.StatsInfo, bool, error)
-
-// DeriveStats4LogicalIndexScan will be called by LogicalIndexScan in logicalOp pkg.
-var DeriveStats4LogicalIndexScan func(lp base.LogicalPlan, selfSchema *expression.Schema) (*property.StatsInfo,
-	bool, error)
-
-// DeriveStats4LogicalTableScan will be called by LogicalTableScan in logicalOp pkg.
-var DeriveStats4LogicalTableScan func(lp base.LogicalPlan) (_ *property.StatsInfo, _ bool, err error)
-
 // AddPrefix4ShardIndexes will be called by LogicalSelection in logicalOp pkg.
 var AddPrefix4ShardIndexes func(lp base.LogicalPlan, sc base.PlanContext,
 	conds []expression.Expression) []expression.Expression
@@ -454,6 +444,10 @@ var CompareTaskCost func(curTask, bestTask base.Task) (
 // GetPossibleAccessPaths is used in static pruning, when it is not needed, remove this func pointer.
 var GetPossibleAccessPaths func(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint,
 	tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error)
+
+var GenerateIndexMergePath func(p base.LogicalPlan) error
+
+var DebugTraceAccessPaths func(s base.PlanContext, paths []*util.AccessPath)
 
 // **************************************** plan clone related ********************************************
 

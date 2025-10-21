@@ -15,42 +15,24 @@
 package stats
 
 import (
-	"strconv"
-
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
+	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/debugtrace/dtrace_core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 )
-
-// GetTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable
-// that will be used to record used stats.
-func GetTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (
-	fullName string, tblInfo *model.TableInfo) {
-	fullName = "tableID " + strconv.FormatInt(id, 10)
-
-	is := sctx.GetLatestISWithoutSessExt()
-	tbl, partDef := infoschema.FindTableByTblOrPartID(is.(infoschema.InfoSchema), id)
-	if tbl == nil || tbl.Meta() == nil {
-		return
-	}
-	tblInfo = tbl.Meta()
-	fullName = tblInfo.Name.O
-	if partDef != nil {
-		fullName += " " + partDef.Name.O
-	} else if pi := tblInfo.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-		fullName += " global"
-	}
-	return
-}
 
 // GetStatsTable gets statistics information for a table specified by "tableID".
 // A pseudo statistics table is returned in any of the following scenario:
@@ -69,7 +51,7 @@ func GetStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ctx)
 		defer func() {
-			debugTraceGetStatsTbl(ctx,
+			dtrace_core.DebugTraceGetStatsTbl(ctx,
 				tblInfo,
 				pid,
 				statsHandle == nil,
@@ -173,4 +155,51 @@ func LoadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 		usedStats.Version = statistics.PseudoVersion
 	}
 	statsRecord.RecordUsedInfo(pid, usedStats)
+}
+
+// RecursiveDeriveStats4Test is a exporter just for test.
+func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, bool, error) {
+	return p.RecursiveDeriveStats(nil)
+}
+
+// GetStats4Test is a exporter just for test.
+func GetStats4Test(p base.LogicalPlan) *property.StatsInfo {
+	return p.StatsInfo()
+}
+
+// DetachCondAndBuildRangeForPath detach the con and build range for path.
+func DetachCondAndBuildRangeForPath(
+	sctx base.PlanContext,
+	path *util.AccessPath,
+	conds []expression.Expression,
+	histColl *statistics.HistColl,
+) error {
+	if len(path.IdxCols) == 0 {
+		path.TableFilters = conds
+		return nil
+	}
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
+	if err != nil {
+		return err
+	}
+	path.Ranges = res.Ranges
+	path.AccessConds = res.AccessConds
+	path.TableFilters = res.RemainedConds
+	path.EqCondCount = res.EqCondCount
+	path.EqOrInCondCount = res.EqOrInCount
+	path.IsDNFCond = res.IsDNFCond
+	path.MinAccessCondsForDNFCond = res.MinAccessCondsForDNFCond
+	path.ConstCols = make([]bool, len(path.IdxCols))
+	if res.ColumnValues != nil {
+		for i := range path.ConstCols {
+			path.ConstCols[i] = res.ColumnValues[i] != nil
+		}
+	}
+	indexCols := path.IdxCols
+	if len(indexCols) > len(path.Index.Columns) { // remove clustered primary key if it has been added to path.IdxCols
+		indexCols = indexCols[0:len(path.Index.Columns)]
+	}
+	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, indexCols)
+	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
+	return err
 }

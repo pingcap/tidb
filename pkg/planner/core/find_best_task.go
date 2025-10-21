@@ -2203,25 +2203,6 @@ func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, 
 	return nil
 }
 
-func splitIndexFilterConditions(ds *logicalop.DataSource, conditions []expression.Expression, indexColumns []*expression.Column,
-	idxColLens []int) (indexConds, tableConds []expression.Expression) {
-	var indexConditions, tableConditions []expression.Expression
-	for _, cond := range conditions {
-		var covered bool
-		if ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan {
-			covered = ds.IsIndexCoveringCondition(cond, indexColumns, idxColLens)
-		} else {
-			covered = ds.IsIndexCoveringColumns(expression.ExtractColumns(cond), indexColumns, idxColLens)
-		}
-		if covered {
-			indexConditions = append(indexConditions, cond)
-		} else {
-			tableConditions = append(tableConditions, cond)
-		}
-	}
-	return indexConditions, tableConditions
-}
-
 // isPointGetPath indicates whether the conditions are point-get-able.
 // eg: create table t(a int, b int,c int unique, primary (a,b))
 // select * from t where a = 1 and b = 1 and c =1;
