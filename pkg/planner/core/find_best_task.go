@@ -49,7 +49,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -2014,119 +2013,6 @@ func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.Ph
 	ts.Columns = infoCols
 }
 
-func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
-	for i, indexCol := range indexCols {
-		if indexCol == nil || !col.EqualByExprAndID(sctx, indexCol) {
-			continue
-		}
-		if ignoreLen || idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen() {
-			return true
-		}
-	}
-	return false
-}
-
-func indexCoveringColumn(ds *logicalop.DataSource, column *expression.Column, indexColumns []*expression.Column, idxColLens []int, ignoreLen bool) bool {
-	handleCoveringState := handleCoveringColumn(ds, column, ignoreLen)
-	// Original int pk can always cover the column.
-	if handleCoveringState == stateCoveredByIntHandle {
-		return true
-	}
-	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
-	coveredByPlainIndex := isIndexColsCoveringCol(evalCtx, column, indexColumns, idxColLens, ignoreLen)
-	if !coveredByPlainIndex && handleCoveringState != stateCoveredByCommonHandle {
-		return false
-	}
-	isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
-		column.GetType(evalCtx).EvalType() == types.ETString &&
-		!mysql.HasBinaryFlag(column.GetType(evalCtx).GetFlag())
-	if !coveredByPlainIndex && handleCoveringState == stateCoveredByCommonHandle && isClusteredNewCollationIdx && ds.Table.Meta().CommonHandleVersion == 0 {
-		return false
-	}
-	return true
-}
-
-type handleCoverState uint8
-
-const (
-	stateNotCoveredByHandle handleCoverState = iota
-	stateCoveredByIntHandle
-	stateCoveredByCommonHandle
-)
-
-// handleCoveringColumn checks if the column is covered by the primary key or extra handle columns.
-func handleCoveringColumn(ds *logicalop.DataSource, column *expression.Column, ignoreLen bool) handleCoverState {
-	if ds.TableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
-		return stateCoveredByIntHandle
-	}
-	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
-		return stateCoveredByIntHandle
-	}
-	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
-	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
-	if coveredByClusteredIndex {
-		return stateCoveredByCommonHandle
-	}
-	return stateNotCoveredByHandle
-}
-
-func isIndexCoveringColumns(ds *logicalop.DataSource, columns, indexColumns []*expression.Column, idxColLens []int) bool {
-	for _, col := range columns {
-		if !indexCoveringColumn(ds, col, indexColumns, idxColLens, false) {
-			return false
-		}
-	}
-	return true
-}
-
-func isHandleCoveringColumns(ds *logicalop.DataSource, columns []*expression.Column) bool {
-	for _, col := range columns {
-		if pkCoveringState := handleCoveringColumn(ds, col, false); pkCoveringState == stateNotCoveredByHandle {
-			return false
-		}
-	}
-	return true
-}
-
-func isIndexCoveringCondition(ds *logicalop.DataSource, condition expression.Expression, indexColumns []*expression.Column, idxColLens []int) bool {
-	switch v := condition.(type) {
-	case *expression.Column:
-		return indexCoveringColumn(ds, v, indexColumns, idxColLens, false)
-	case *expression.ScalarFunction:
-		// Even if the index only contains prefix `col`, the index can cover `col is null`.
-		if v.FuncName.L == ast.IsNull {
-			if col, ok := v.GetArgs()[0].(*expression.Column); ok {
-				return indexCoveringColumn(ds, col, indexColumns, idxColLens, true)
-			}
-		}
-		for _, arg := range v.GetArgs() {
-			if !isIndexCoveringCondition(ds, arg, indexColumns, idxColLens) {
-				return false
-			}
-		}
-		return true
-	}
-	return true
-}
-
-func isSingleScan(lp base.LogicalPlan, indexColumns []*expression.Column, idxColLens []int) bool {
-	ds := lp.(*logicalop.DataSource)
-	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || ds.ColsRequiringFullLen == nil {
-		// ds.ColsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
-		// and ds.ColsRequiringFullLen is nil, so we fall back to ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
-		return isIndexCoveringColumns(ds, ds.Schema().Columns, indexColumns, idxColLens)
-	}
-	if !isIndexCoveringColumns(ds, ds.ColsRequiringFullLen, indexColumns, idxColLens) {
-		return false
-	}
-	for _, cond := range ds.AllConds {
-		if !isIndexCoveringCondition(ds, cond, indexColumns, idxColLens) {
-			return false
-		}
-	}
-	return true
-}
-
 // convertToIndexScan converts the DataSource to index scan with idx.
 func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty,
 	candidate *candidatePath) (task base.Task, err error) {
@@ -2323,9 +2209,9 @@ func splitIndexFilterConditions(ds *logicalop.DataSource, conditions []expressio
 	for _, cond := range conditions {
 		var covered bool
 		if ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan {
-			covered = isIndexCoveringCondition(ds, cond, indexColumns, idxColLens)
+			covered = ds.IsIndexCoveringCondition(cond, indexColumns, idxColLens)
 		} else {
-			covered = isIndexCoveringColumns(ds, expression.ExtractColumns(cond), indexColumns, idxColLens)
+			covered = ds.IsIndexCoveringColumns(expression.ExtractColumns(cond), indexColumns, idxColLens)
 		}
 		if covered {
 			indexConditions = append(indexConditions, cond)
@@ -2819,8 +2705,8 @@ func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty)
 	return physicalPlan2
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *mockLogicalPlan4Test) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+// ExhaustPhysicalPlans4MockLogicalPlan iterate physical implementation over mock logic plan.
+func ExhaustPhysicalPlans4MockLogicalPlan(p *mockLogicalPlan4Test, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	plan1 := make([]base.PhysicalPlan, 0, 1)
 	plan2 := make([]base.PhysicalPlan, 0, 1)
 	if prop.IsSortItemEmpty() && p.canGeneratePlan2 {

@@ -17,9 +17,7 @@ package logicalop
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -75,11 +73,6 @@ func (p *LogicalPartitionUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan
 		return topN.AttachChild(p)
 	}
 	return p
-}
-
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll(p, prop)
 }
 
 // *************************** end implementation of LogicalPlan interface ***************************

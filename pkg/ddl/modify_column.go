@@ -329,7 +329,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify column in primary key")
 	}
 
-	defer checkColumnOrderByStates(tblInfo)
+	defer checkTableInfo(tblInfo)
 
 	if args.ModifyColumnType == ModifyTypeIndexReorg {
 		if err := initializeChangingIndexes(args, tblInfo, oldCol); err != nil {
@@ -886,6 +886,22 @@ func buildCheckRangeForIntegerTypes(oldCol, changingCol *model.ColumnInfo) strin
 	return fmt.Sprintf("(%s < %d OR %s > %d)", columnName, lowerBound, columnName, upperBound)
 }
 
+// reorderChangingIdx reorders the changing index infos to match the order of old index infos.
+func reorderChangingIdx(oldIdxInfos []*model.IndexInfo, changingIdxInfos []*model.IndexInfo) {
+	nameToChanging := make(map[string]*model.IndexInfo, len(changingIdxInfos))
+	for _, cIdx := range changingIdxInfos {
+		origName := cIdx.Name.O
+		if cIdx.State != model.StatePublic {
+			origName = getChangingIndexOriginName(cIdx)
+		}
+		nameToChanging[origName] = cIdx
+	}
+
+	for i, oldIdx := range oldIdxInfos {
+		changingIdxInfos[i] = nameToChanging[getRemovingObjOriginName(oldIdx.Name.O)]
+	}
+}
+
 func (w *worker) doModifyColumnTypeWithData(
 	jobCtx *jobContext,
 	job *model.Job,
@@ -1010,6 +1026,9 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 			changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
 			intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
+
+			// In multi-schema change, the order of changingIdxInfos may not be the same as oldIdxInfos,
+			// because we will allocate new indexID for previous temp index.
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 
 			updateObjectState(oldCol, oldIdxInfos, model.StateWriteOnly)
@@ -1284,23 +1303,6 @@ func checkAndMarkNonRevertible(job *model.Job) {
 	}
 }
 
-func reorderChangingIdx(oldIdxInfos []*model.IndexInfo, changingIdxInfos []*model.IndexInfo) {
-	nameToChanging := make(map[string]*model.IndexInfo, len(changingIdxInfos))
-	for _, cIdx := range changingIdxInfos {
-		origName := cIdx.Name.O
-		if cIdx.State != model.StatePublic {
-			origName = getChangingIndexOriginName(cIdx)
-		}
-		nameToChanging[origName] = cIdx
-	}
-
-	for i, oldIdx := range oldIdxInfos {
-		if c, ok := nameToChanging[oldIdx.Name.O]; ok {
-			changingIdxInfos[i] = c
-		}
-	}
-}
-
 func doReorgWorkForModifyColumn(
 	jobCtx *jobContext,
 	w *worker, job *model.Job, tbl table.Table,
@@ -1388,29 +1390,40 @@ var colStateOrd = map[model.SchemaState]int{
 	model.StatePublic:               5,
 }
 
-func checkColumnOrderByStates(tblInfo *model.TableInfo) {
-	if intest.InTest {
-		minState := model.StatePublic
-		for _, col := range tblInfo.Columns {
-			if colStateOrd[col.State] < colStateOrd[minState] {
-				minState = col.State
-			} else if colStateOrd[col.State] > colStateOrd[minState] {
-				intest.Assert(false, fmt.Sprintf("column %s state %s is not in order, expect at least %s", col.Name, col.State, minState))
-			}
-			if col.ChangeStateInfo != nil {
-				offset := col.ChangeStateInfo.DependencyColumnOffset
-				intest.Assert(offset >= 0 && offset < len(tblInfo.Columns))
-				depCol := tblInfo.Columns[offset]
-				switch {
-				case strings.HasPrefix(col.Name.O, changingColumnPrefix):
-					name := getChangingColumnOriginName(col)
-					intest.Assert(name == depCol.Name.O, "%s != %s", name, depCol.Name.O)
-				case strings.HasPrefix(depCol.Name.O, removingObjPrefix):
-					name := getRemovingObjOriginName(depCol.Name.O)
-					intest.Assert(name == col.Name.O, "%s != %s", name, col.Name.O)
-				}
+func checkTableInfo(tblInfo *model.TableInfo) {
+	if !intest.InTest {
+		return
+	}
+
+	// Check columns' order by state.
+	minState := model.StatePublic
+	for _, col := range tblInfo.Columns {
+		if colStateOrd[col.State] < colStateOrd[minState] {
+			minState = col.State
+		} else if colStateOrd[col.State] > colStateOrd[minState] {
+			intest.Assert(false, fmt.Sprintf("column %s state %s is not in order, expect at least %s", col.Name, col.State, minState))
+		}
+		if col.ChangeStateInfo != nil {
+			offset := col.ChangeStateInfo.DependencyColumnOffset
+			intest.Assert(offset >= 0 && offset < len(tblInfo.Columns))
+			depCol := tblInfo.Columns[offset]
+			switch {
+			case strings.HasPrefix(col.Name.O, changingColumnPrefix):
+				name := getChangingColumnOriginName(col)
+				intest.Assert(name == depCol.Name.O, "%s != %s", name, depCol.Name.O)
+			case strings.HasPrefix(depCol.Name.O, removingObjPrefix):
+				name := getRemovingObjOriginName(depCol.Name.O)
+				intest.Assert(name == col.Name.O, "%s != %s", name, col.Name.O)
 			}
 		}
+	}
+
+	// Check index names' uniqueness.
+	allNames := make(map[string]struct{})
+	for _, idx := range tblInfo.Indices {
+		_, exists := allNames[idx.Name.O]
+		intest.Assert(!exists, "duplicate index name %s", idx.Name.O)
+		allNames[idx.Name.O] = struct{}{}
 	}
 }
 
