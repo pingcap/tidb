@@ -60,7 +60,7 @@ type RequestBuilder struct {
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	if builder.used && intest.InTest {
-		return nil, errors.Errorf("request build is already used")
+		return nil, errors.Errorf("request builder is already used")
 	}
 	builder.used = true
 	if builder.ReadReplicaScope == "" {
