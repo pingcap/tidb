@@ -28,7 +28,7 @@ type PrecheckItemBuilderConfig struct {
 	MDLoaderSetupOptions []mydump.MDLoaderSetupOption
 }
 
-// PrecheckItemBuilderOption defines the options when constructing a precheck build,
+// PrecheckItemBuilderOption defines the options when constructing a precheck builder,
 // which affects the behavior for executing precheck items.
 type PrecheckItemBuilderOption func(c *PrecheckItemBuilderConfig)
 
