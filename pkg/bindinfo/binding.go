@@ -105,6 +105,7 @@ func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	return time.Since(updateTime), nil
 }
 
+<<<<<<< HEAD
 // Bindings represents a sql bind record retrieved from the storage.
 type Bindings []Binding
 
@@ -112,6 +113,27 @@ type Bindings []Binding
 func (br Bindings) Copy() Bindings {
 	nbr := append(make(Bindings, 0, len(br)), br...)
 	return nbr
+=======
+func crossDBMatchBindings(sctx sessionctx.Context, tableNames []*ast.TableName, bindings []*Binding) (matchedBinding *Binding, isMatched bool) {
+	leastWildcards := len(tableNames) + 1
+	enableCrossDBBinding := sctx.GetSessionVars().EnableFuzzyBinding
+	for _, binding := range bindings {
+		if !binding.IsBindingEnabled() {
+			// because of cross-db bindings, there might be multiple bindings for the same SQL, skip disabled ones.
+			continue
+		}
+		numWildcards, matched := crossDBMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
+		if matched && numWildcards > 0 && sctx != nil && !enableCrossDBBinding {
+			continue // cross-db binding is disabled, skip this binding
+		}
+		if matched && numWildcards < leastWildcards {
+			matchedBinding = binding
+			isMatched = true
+			leastWildcards = numWildcards
+		}
+	}
+	return
+>>>>>>> 74d7c1eaffc (planner: skip disabled bindings when matching bindings (#64072))
 }
 
 // HasAvailableBinding checks if there are any available bindings in bind record.

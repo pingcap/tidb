@@ -67,8 +67,12 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":bindinfo"],
     flaky = True,
+<<<<<<< HEAD
     race = "on",
     shard_count = 50,
+=======
+    shard_count = 45,
+>>>>>>> 74d7c1eaffc (planner: skip disabled bindings when matching bindings (#64072))
     deps = [
         "//pkg/bindinfo/internal",
         "//pkg/bindinfo/norm",
