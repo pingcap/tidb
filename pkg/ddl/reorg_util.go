@@ -55,9 +55,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		setDistTaskParam = true
 	case model.ActionModifyColumn:
 		setReorgParam = true
-		if modifyColumnNeedReorg(job.CtxVars) {
-			setDistTaskParam = true
-		}
+		setDistTaskParam = modifyColumnNeedReorg(job.CtxVars)
 	case model.ActionReorganizePartition,
 		model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
@@ -74,9 +72,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 				setReorgParam = true
 			case model.ActionModifyColumn:
 				setReorgParam = true
-				if modifyColumnNeedReorg(sub.CtxVars) {
-					setDistTaskParam = true
-				}
+				setDistTaskParam = modifyColumnNeedReorg(sub.CtxVars)
 			}
 		}
 	default:

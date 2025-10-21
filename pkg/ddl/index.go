@@ -2070,9 +2070,7 @@ func newAddIndexTxnWorker(
 
 	allIndexes := make([]table.Index, 0, len(elements))
 	for _, elem := range elements {
-		if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
-			continue
-		}
+		intest.Assert(bytes.Equal(elem.TypeKey, meta.IndexElementKey))
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
 		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 		allIndexes = append(allIndexes, index)
