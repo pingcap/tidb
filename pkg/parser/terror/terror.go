@@ -231,7 +231,7 @@ func ToSQLError(e *Error) *mysql.SQLError {
 	return mysql.NewErrf(code, "%s", nil, e.GetMsg())
 }
 
-var defaultMySQLErrorCode uint16
+const defaultMySQLErrorCode uint16 = mysql.ErrUnknown
 
 func getMySQLErrorCode(e *Error) uint16 {
 	rfcCode := e.RFCCode()
@@ -268,10 +268,6 @@ var (
 		mysql.Message("execution result undetermined", nil),
 	)
 )
-
-func init() {
-	defaultMySQLErrorCode = mysql.ErrUnknown
-}
 
 // ErrorEqual returns a boolean indicating whether err1 is equal to err2.
 func ErrorEqual(err1, err2 error) bool {
