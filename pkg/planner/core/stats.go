@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -603,7 +604,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
 			if !path.IsSingleScan {
-				path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)
+				path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 			}
 		}
 		// step: 3
@@ -730,7 +731,7 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 	}
 
 	pctx := ctx.GetPlanCtx()
-	tableStats := getStatsTable(pctx, tblInfo, pid)
+	tableStats := stats.GetStatsTable(pctx, tblInfo, pid)
 
 	name := tblInfo.Name.O
 	partInfo := tblInfo.GetPartitionInfo()
@@ -917,7 +918,7 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		totalConsecutive := consecutiveWhereCount + consecutiveOrderingCount + consecutiveJoinCount
 
 		if totalLocalCovered == totalLocalRequiredCols && totalJoinCovered == totalJoinRequiredCols {
-			path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)
+			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
 		// Perfect covering: covers ALL required columns AND has consecutive matches from start
 		if ((totalLocalCovered == totalLocalRequiredCols && totalLocalRequiredCols > 0) ||
