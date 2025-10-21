@@ -32,7 +32,7 @@ type PrecheckItemBuilderConfig struct {
 // which affects the behavior for executing precheck items.
 type PrecheckItemBuilderOption func(c *PrecheckItemBuilderConfig)
 
-// WithPreInfoGetterOptions generates a precheck item build option
+// WithPreInfoGetterOptions generates a precheck item builder option
 // to control the get pre info behaviors.
 func WithPreInfoGetterOptions(opts ...GetPreInfoOption) PrecheckItemBuilderOption {
 	return func(c *PrecheckItemBuilderConfig) {
