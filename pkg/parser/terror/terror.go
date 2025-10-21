@@ -231,7 +231,7 @@ func ToSQLError(e *Error) *mysql.SQLError {
 	return mysql.NewErrf(code, "%s", nil, e.GetMsg())
 }
 
-const defaultMySQLErrorCode uint16 = mysql.ErrUnknown
+const defaultMySQLErrorCode = mysql.ErrUnknown
 
 func getMySQLErrorCode(e *Error) uint16 {
 	rfcCode := e.RFCCode()
