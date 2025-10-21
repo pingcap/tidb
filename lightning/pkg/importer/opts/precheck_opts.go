@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 )
 
-// PrecheckItemBuilderConfig defines the config used in a precheck build,
+// PrecheckItemBuilderConfig defines the config used in a precheck builder,
 // which affects the behavior for executing precheck items.
 type PrecheckItemBuilderConfig struct {
 	PreInfoGetterOptions []GetPreInfoOption
