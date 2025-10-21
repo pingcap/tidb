@@ -170,11 +170,9 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		columns := getReplacedColumns(tblInfo, oldCol, args.Column)
 		allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 		for _, idx := range allIdxs {
-			if idx.VectorInfo == nil {
-				if err := checkIndexInModifiableColumns(columns, idx.Columns, model.ColumnarIndexTypeNA); err != nil {
-					job.State = model.JobStateCancelled
-					return ver, errors.Trace(err)
-				}
+			if err := checkIndexInModifiableColumns(columns, idx); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
 			}
 		}
 	}
@@ -1442,7 +1440,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if !modified {
 			return
 		}
-		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.GetColumnarIndexType())
+		err = checkIndexInModifiableColumns(columns, indexInfo)
 		if err != nil {
 			return
 		}
@@ -1475,11 +1473,16 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	return nil
 }
 
-func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, columnarIndexType model.ColumnarIndexType) error {
-	for _, ic := range idxColumns {
+func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxInfo *model.IndexInfo) error {
+	indexType := idxInfo.GetColumnarIndexType()
+	for _, ic := range idxInfo.Columns {
 		col := model.FindColumnInfo(columns, ic.Name.L)
 		if col == nil {
 			return dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
+		}
+
+		if indexType != model.ColumnarIndexTypeNA {
+			continue
 		}
 
 		prefixLength := types.UnspecifiedLength
@@ -1488,10 +1491,8 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if columnarIndexType == model.ColumnarIndexTypeNA {
-			if err := checkIndexColumn(col, prefixLength, false); err != nil {
-				return err
-			}
+		if err := checkIndexColumn(col, prefixLength, false); err != nil {
+			return err
 		}
 	}
 	return nil

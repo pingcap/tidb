@@ -661,7 +661,6 @@ func TestParallelAlterTable(t *testing.T) {
 			<-startSchedule
 		})
 
-		// Submit 2 DDL jobs concurrently.
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterGetJobFromLimitCh", func(ch chan *ddl.JobWrapper) {
 			submitted <- struct{}{}
 		})
@@ -671,7 +670,7 @@ func TestParallelAlterTable(t *testing.T) {
 			_, err1 = tk1.Exec(firstSQL)
 		})
 		wg.Run(func() {
-			// wait until add index is submitted
+			// wait until first ddl is submitted
 			<-submitted
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
@@ -683,7 +682,6 @@ func TestParallelAlterTable(t *testing.T) {
 			return len(gotJobs) == 2
 		}, 10*time.Second, 100*time.Millisecond)
 
-		// start to run the jobs
 		close(startSchedule)
 		wg.Wait()
 		return
@@ -714,6 +712,16 @@ func TestParallelAlterTable(t *testing.T) {
 			"create table t(id int, c1 char(16))",
 			"alter table t add index idx_c1(c1(10))",
 			"alter table t modify column c1 text(255)",
+		)
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+	})
+
+	t.Run("modify column then add index with prefix length", func(t *testing.T) {
+		err1, err2 := checkParallelDDL(t,
+			"create table t(id int, c1 char(16))",
+			"alter table t modify column c1 text(255)",
+			"alter table t add index idx_c1(c1(10))",
 		)
 		require.NoError(t, err1)
 		require.NoError(t, err2)
