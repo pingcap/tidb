@@ -19,13 +19,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -42,17 +40,9 @@ import (
 var FindBestTask4BaseLogicalPlan func(p base.LogicalPlan,
 	prop *property.PhysicalProperty) (bestTask base.Task, err error)
 
-// ExhaustPhysicalPlans4LogicalMaxOneRow will be called by LogicalMaxOneRow in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalMaxOneRow func(p base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
 // FindBestTask4LogicalDataSource will be called by LogicalDataSource in logicalOp pkg.
 var FindBestTask4LogicalDataSource func(lp base.LogicalPlan,
 	prop *property.PhysicalProperty) (t base.Task, err error)
-
-// ExhaustPhysicalPlans4LogicalSequence will be called by LogicalSequence in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalSequence func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
 
 // ExhaustPhysicalPlans4LogicalWindow will be called by LogicalWindow in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalWindow func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
@@ -64,14 +54,6 @@ var ExhaustPhysicalPlans4LogicalJoin func(lp base.LogicalPlan, prop *property.Ph
 
 // ExhaustPhysicalPlans4LogicalApply will be called by LogicalApply in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalApply func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
-// ExhaustPhysicalPlans4LogicalPartitionUnionAll will be called by LogicalPartitionUnionAll in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalPartitionUnionAll func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
-// ExhaustPhysicalPlans4LogicalUnionAll will be called by LogicalUnionAll in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalUnionAll func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
 // ExhaustPhysicalPlans4LogicalExpand will be called by LogicalExpand in logicalOp pkg.
@@ -93,9 +75,6 @@ var DeriveStats4LogicalTableScan func(lp base.LogicalPlan) (_ *property.StatsInf
 // AddPrefix4ShardIndexes will be called by LogicalSelection in logicalOp pkg.
 var AddPrefix4ShardIndexes func(lp base.LogicalPlan, sc base.PlanContext,
 	conds []expression.Expression) []expression.Expression
-
-// IsSingleScan check whether the data source is a single scan.
-var IsSingleScan func(ds base.LogicalPlan, indexColumns []*expression.Column, idxColLens []int) bool
 
 // *************************************** physical op related *******************************************
 
@@ -428,9 +407,6 @@ var GetPlanCostVer14BatchPointGetPlan func(pp base.PhysicalPlan, _ property.Task
 // GetPlanCostVer24BatchPointGetPlan returns the plan-cost of this sub-plan, which is:
 var GetPlanCostVer24BatchPointGetPlan func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *costusage.PlanCostOption) (costusage.CostVer2, error)
-
-// LoadTableStats will be called in physicalOp pkg.
-var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 
 // GetCost4PhysicalIndexMergeJoin computes the cost of index merge join operator and its children.
 var GetCost4PhysicalIndexMergeJoin func(pp base.PhysicalPlan,
