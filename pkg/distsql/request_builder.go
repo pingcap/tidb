@@ -77,7 +77,7 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	failpoint.Inject("assertRequestBuilderReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
 		if builder.ReplicaRead.IsClosestRead() && assertScope != builder.ReadReplicaScope {
-			panic("request build get staleness option fail")
+			panic("request builder get staleness option fail")
 		}
 	})
 	err := builder.verifyTxnScope()
