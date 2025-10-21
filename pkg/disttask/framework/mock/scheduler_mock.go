@@ -16,7 +16,7 @@ import (
 	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	storage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	sessionctx "github.com/pingcap/tidb/pkg/sessionctx"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -507,6 +507,21 @@ func (mr *MockTaskManagerMockRecorder) GetTasksInStates(arg0 any, arg1 ...any) *
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{arg0}, arg1...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTasksInStates", reflect.TypeOf((*MockTaskManager)(nil).GetTasksInStates), varargs...)
+}
+
+// GetTopNoNeedResourceTasks mocks base method.
+func (m *MockTaskManager) GetTopNoNeedResourceTasks(arg0 context.Context) ([]*proto.TaskBase, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTopNoNeedResourceTasks", arg0)
+	ret0, _ := ret[0].([]*proto.TaskBase)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTopNoNeedResourceTasks indicates an expected call of GetTopNoNeedResourceTasks.
+func (mr *MockTaskManagerMockRecorder) GetTopNoNeedResourceTasks(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTopNoNeedResourceTasks", reflect.TypeOf((*MockTaskManager)(nil).GetTopNoNeedResourceTasks), arg0)
 }
 
 // GetTopUnfinishedTasks mocks base method.

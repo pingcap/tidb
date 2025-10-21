@@ -607,3 +607,35 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 		"3 3 3 c",
 		"4 4 4 d"))
 }
+
+func TestMultiSchemaModifyColumnWithIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c1 bigint, c2 bigint, index i1(c1, c2), index i2(c1))")
+
+	oldTblInfo := external.GetTableByName(t, tk, "test", "t").Meta()
+	tk.MustExec("alter table t modify column c1 int, modify column c2 int")
+	newTblInfo := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	require.Equal(t, len(oldTblInfo.Indices), len(newTblInfo.Indices))
+	for i, oldIdx := range oldTblInfo.Indices {
+		newIdx := newTblInfo.Indices[i]
+		require.Equal(t, oldIdx.Name, newIdx.Name)
+		require.Equal(t, len(oldIdx.Columns), len(newIdx.Columns))
+		for j := range oldIdx.Columns {
+			require.Equal(t, oldIdx.Columns[j].Name, newIdx.Columns[j].Name)
+			require.Equal(t, oldIdx.Columns[j].Offset, newIdx.Columns[j].Offset)
+		}
+	}
+
+	// multi schema change with rename index
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(c1 bigint, c2 bigint, index i1(c1, c2), index i2(c1))")
+	tk.MustExec("alter table t modify column c1 int, rename index i1 to new1, rename index i2 to new2, modify column c2 int")
+	newTblInfo = external.GetTableByName(t, tk, "test", "t").Meta()
+	require.Equal(t, 2, len(newTblInfo.Indices))
+	require.Equal(t, "new1", newTblInfo.Indices[0].Name.L)
+	require.Equal(t, "new2", newTblInfo.Indices[1].Name.L)
+}

@@ -51,7 +51,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB", "return(1048576)"))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB")
 	/// 1. test partition table.
-	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
+	tk.MustExec("create table tp1(id int primary key, v int, key idx (id)) PARTITION BY RANGE (id) (\n    " +
 		"PARTITION p0 VALUES LESS THAN (10),\n" +
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
@@ -285,6 +285,16 @@ func TestGetNextStep(t *testing.T) {
 		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
 		task.Step = nextStep
 	}
+
+	// 3. merge temp index
+	task = &proto.Task{
+		TaskBase: proto.TaskBase{Step: proto.StepInit},
+	}
+	ext = &ddl.LitBackfillScheduler{MergeTempIndex: true}
+	for _, nextStep := range []proto.Step{proto.BackfillStepMergeTempIndex, proto.StepDone} {
+		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
+		task.Step = nextStep
+	}
 }
 
 func createAddIndexTask(t *testing.T,
@@ -322,10 +332,21 @@ func createAddIndexTask(t *testing.T,
 				ReorgTp:     model.ReorgTypeLitMerge,
 				IsDistReorg: true,
 			},
+			Version: model.JobVersion2,
 		},
 		EleIDs:     []int64{10},
 		EleTypeKey: meta.IndexElementKey,
 	}
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			IndexName: ast.NewCIStr("idx"),
+			Global:    false,
+		}},
+		OpType: model.OpAddIndex,
+	}
+	taskMeta.Job.FillArgs(args)
+	_, err = taskMeta.Job.Encode(true)
+	require.NoError(t, err)
 	if useGlobalSort {
 		var err error
 		opt := fakestorage.Options{

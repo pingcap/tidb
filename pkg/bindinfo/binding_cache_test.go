@@ -148,9 +148,9 @@ func TestExtractTableName(t *testing.T) {
 	}
 	for _, tt := range tc {
 		stmt, err := parser.New().ParseOneStmt(tt.sql, "", "")
-		require.NoError(t, err)
+		require.NoErrorf(t, err, "sql: %s", tt.sql)
 		rs := CollectTableNames(stmt)
 		result := getTableName(rs)
-		require.Equal(t, tt.tables, result)
+		require.Equalf(t, tt.tables, result, "sql: %s", tt.sql)
 	}
 }

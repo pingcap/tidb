@@ -241,7 +241,7 @@ func TestCrossDBBindingGC(t *testing.T) {
 		testkit.Rows("SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t` deleted")) // status=deleted
 
 	updateTime := time.Now().Add(-(15 * bindinfo.Lease))
-	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
+	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 6).String()
 	tk.MustExec(fmt.Sprintf("update mysql.bind_info set update_time = '%v' where source != 'builtin'", updateTimeStr))
 	bindHandle := bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
 	require.NoError(t, bindHandle.GCBinding())

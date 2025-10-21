@@ -34,7 +34,7 @@ func TestParsePauseScaleInFlag(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, schstatus.PauseScaleInFlag, flag)
 	require.True(t, ttlFlag.Enabled)
-	require.Equal(t, pauseScaleInDefaultTTL, ttlFlag.TTL)
+	require.Equal(t, dxfOperationDefaultTTL, ttlFlag.TTL)
 	require.WithinRange(t, ttlFlag.ExpireTime, time.Now().Add(ttlFlag.TTL-time.Minute), time.Now().Add(ttlFlag.TTL))
 	flag, ttlFlag, err = parsePauseScaleInFlag(&http.Request{Form: map[string][]string{
 		"action": {"pause_scale_in"}, "ttl": {"5h"},
