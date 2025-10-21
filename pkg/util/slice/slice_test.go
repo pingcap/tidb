@@ -15,7 +15,9 @@
 package slice
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -38,4 +40,31 @@ func TestSlice(t *testing.T) {
 			require.Equal(t, test.allOf, AllOf(test.a, even))
 		})
 	}
+}
+
+func TestBinarySearchByIndx(t *testing.T) {
+	arr := []int{1, 3, 5, 7, 9, 11, 13, 15}
+	checkBinarySeachByIndx(t, arr, 1, 7)
+	checkBinarySeachByIndx(t, arr, 0, 0)
+	checkBinarySeachByIndx(t, arr, 1, 8)
+	checkBinarySeachByIndx(t, arr, 0, 16)
+	checkBinarySeachByIndx(t, arr, 6, 14)
+	checkBinarySeachByIndx(t, arr, 1, 3)
+	checkBinarySeachByIndx(t, arr, 3, 5)
+	checkBinarySeachByIndx(t, arr, 5, 7)
+	checkBinarySeachByIndx(t, arr, 7, 9)
+	checkBinarySeachByIndx(t, arr, 9, 11)
+	checkBinarySeachByIndx(t, arr, 11, 13)
+	checkBinarySeachByIndx(t, arr, 13, 15)
+	checkBinarySeachByIndx(t, arr, 130, 150)
+}
+
+func checkBinarySeachByIndx(t *testing.T, arr []int, low, high int) {
+	i1, i2 := BinarySearchRangeFunc(arr, low, high, func(a int, b int) int {
+		return cmp.Compare(a, b)
+	})
+	idx, _ := slices.BinarySearch(arr, low)
+	require.Equal(t, i1, idx)
+	idx, _ = slices.BinarySearch(arr, high)
+	require.Equal(t, i2, idx)
 }

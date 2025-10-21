@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 )
@@ -683,14 +684,13 @@ func (c *TopN) FindTopN(d []byte) int {
 
 // LowerBound searches on the sorted top-n items,
 // returns the smallest index i such that the value at element i is not less than `d`.
-func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
+func (c *TopN) GetRangeBound(r, l []byte) (ridx, ldx int) {
 	if c == nil {
-		return 0, false
+		return 0, 0
 	}
-	idx, match = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
+	return sliceutil.BinarySearchRangeFunc(c.TopN, r, l, func(a TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
-	return idx, match
 }
 
 // BetweenCount estimates the row count for interval [l, r).
@@ -706,8 +706,7 @@ func (c *TopN) BetweenCount(sctx planctx.PlanContext, l, r []byte) (result uint6
 	if c == nil {
 		return 0
 	}
-	lIdx, _ := c.LowerBound(l)
-	rIdx, _ := c.LowerBound(r)
+	lIdx, rIdx := c.GetRangeBound(l, r)
 	ret := uint64(0)
 	for i := lIdx; i < rIdx; i++ {
 		ret += c.TopN[i].Count

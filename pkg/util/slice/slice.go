@@ -49,3 +49,53 @@ func DeepClone[T interface{ Clone() T }](s []T) []T {
 	}
 	return cloned
 }
+
+// BinarySearchRangeFunc performs a binary search on the slice x to find the range [t1, t2).
+func BinarySearchRangeFunc[S ~[]E, E, T any](x S, t1, t2 T, cmp func(E, T) int) (int, int) {
+	n := len(x)
+	// Define cmp(x[-1], target) < 0 and cmp(x[n], target) >= 0 .
+	// Invariant: cmp(x[i - 1], target) < 0, cmp(x[j], target) >= 0.
+	i, j := 0, n
+	for i < j {
+		h := int(uint(i+j) >> 1) // avoid overflow when computing h
+		// i ≤ h < j
+		cmpt1 := cmp(x[h], t1)
+		if cmpt1 < 0 {
+			// x[h] < t1 < t2
+			i = h + 1 // preserves cmp(x[i - 1], target) < 0
+			continue
+		} else if cmpt1 == 0 {
+			// x[h] = t1 < t2
+			return h, BinarySearchByIndxFunc(x, t2, h, j, cmp)
+		}
+		// t1 < x[h]
+		cmpt2 := cmp(x[h], t2)
+		if cmpt2 < 0 {
+			// t1 < x[h] < t2
+			return BinarySearchByIndxFunc(x, t1, i, h, cmp), BinarySearchByIndxFunc(x, t2, h+1, j, cmp)
+		} else if cmpt2 > 0 {
+			// t1 < t2 < x[h]
+			j = h // preserves cmp(x[j], target) >= 0
+		} else if cmpt2 == 0 {
+			// t1 < x[h] = t2
+			return BinarySearchByIndxFunc(x, t1, i, h, cmp), h
+		}
+	}
+	return i, j
+}
+
+// BinarySearchByIndxFunc performs a binary search on the slice x to find the target value.
+func BinarySearchByIndxFunc[S ~[]E, E, T any](x S, target T, start, end int, cmp func(E, T) int) int {
+	// Define cmp(x[-1], target) < 0 and cmp(x[n], target) >= 0 .
+	// Invariant: cmp(x[i - 1], target) < 0, cmp(x[j], target) >= 0.
+	for start < end {
+		h := int(uint(start+end) >> 1) // avoid overflow when computing h
+		// i ≤ h < j
+		if cmp(x[h], target) < 0 {
+			start = h + 1 // preserves cmp(x[i - 1], target) < 0
+		} else {
+			end = h // preserves cmp(x[j], target) >= 0
+		}
+	}
+	return start
+}
