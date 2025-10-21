@@ -51,7 +51,7 @@ func NewBackendCtxBuilder(ctx context.Context, store kv.Storage, job *model.Job)
 	}
 }
 
-// BackendCtxBuilder is the build of BackendCtx.
+// BackendCtxBuilder is the builder of BackendCtx.
 type BackendCtxBuilder struct {
 	ctx   context.Context
 	store kv.Storage
