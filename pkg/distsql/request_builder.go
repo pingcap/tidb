@@ -53,7 +53,7 @@ type RequestBuilder struct {
 	err  error
 	used bool
 
-	// When SetDAGRequest is called, build will also this field.
+	// When SetDAGRequest is called, builder will also this field.
 	dag *tipb.DAGRequest
 }
 
