@@ -62,6 +62,11 @@ func TestBinarySearchByIndx(t *testing.T) {
 	checkBinarySeachByIndx(t, arr, 2, 3)
 	checkBinarySeachByIndx(t, arr, 0, 1)
 	checkBinarySeachByIndx(t, arr, -1, 0)
+	arr = []int{0}
+	checkBinarySeachByIndx(t, arr, -2, -2)
+	checkBinarySeachByIndx(t, arr, 2, 3)
+	checkBinarySeachByIndx(t, arr, 0, 1)
+	checkBinarySeachByIndx(t, arr, -1, 0)
 }
 
 func checkBinarySeachByIndx(t *testing.T, arr []int, low, high int) {
