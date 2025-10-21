@@ -917,7 +917,7 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		totalJoinCovered := coveredWhereCount + coveredJoinCount
 		totalConsecutive := consecutiveWhereCount + consecutiveOrderingCount + consecutiveJoinCount
 
-		if totalLocalCovered == totalLocalRequiredCols && totalJoinCovered == totalJoinRequiredCols {
+		if totalLocalCovered >= totalLocalRequiredCols && totalJoinCovered >= totalJoinRequiredCols {
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
 		// Perfect covering: covers ALL required columns AND has consecutive matches from start
@@ -1022,8 +1022,8 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		if len(preferredIndexes) > remaining {
 			slices.SortFunc(preferredIndexes, func(a, b indexWithScore) int {
 				// Calculate scores using pre-computed coverage info
-				scoreA := calculateScoreFromCoverage(a, totalWhereColumns, totalJoinColumns, totalOrderingColumns, false)
-				scoreB := calculateScoreFromCoverage(b, totalWhereColumns, totalJoinColumns, totalOrderingColumns, false)
+				scoreA := calculateScoreFromCoverage(a, totalWhereColumns, totalJoinColumns, totalOrderingColumns, a.path.IsSingleScan)
+				scoreB := calculateScoreFromCoverage(b, totalWhereColumns, totalJoinColumns, totalOrderingColumns, b.path.IsSingleScan)
 				// Higher score is better, so reverse the comparison
 				if scoreA != scoreB {
 					return scoreB - scoreA
