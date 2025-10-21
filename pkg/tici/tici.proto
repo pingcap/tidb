@@ -17,7 +17,6 @@ syntax = "proto3";
 package tici;
 
 import "gogoproto/gogo.proto";
-import "rustproto.proto";
 
 option (gogoproto.sizer_all) = true;
 option (gogoproto.marshaler_all) = true;
@@ -25,7 +24,7 @@ option (gogoproto.unmarshaler_all) = true;
 option (gogoproto.goproto_unkeyed_all) = false;
 option (gogoproto.goproto_unrecognized_all) = false;
 option (gogoproto.goproto_sizecache_all) = false;
-option (rustproto.lite_runtime_all) = true;
+option (gogoproto.goproto_enum_prefix_all) = true;
 
 enum ErrorCode {
   SUCCESS = 0;
@@ -404,6 +403,8 @@ message CreateIndexRequest {
   string database_name = 1;
   bytes table_info = 2;
   int64 index_id = 3;
+  // Keyspace ID
+  uint32 keyspace_id = 4;
 }
 
 // CreateIndexResponse is a response to the index creation request
@@ -419,6 +420,8 @@ message CreateIndexResponse {
 message DropIndexRequest {
   int64 table_id = 1;
   int64 index_id = 2;
+  // Keyspace ID
+  uint32 keyspace_id = 3;
 }
 
 // DropIndexResponse is a response to the index drop request
@@ -562,6 +565,8 @@ message GetImportStoragePrefixRequest {
   // Index ID of the target index. If this is an Import Into job that relates
   // to multiple indexes, this field should contain all the index IDs.
   repeated int64 index_ids = 3;
+  // Keyspace ID
+  uint32 keyspace_id = 4;
 }
 
 message GetImportStoragePrefixResponse {
@@ -584,6 +589,8 @@ message FinishImportPartitionUploadRequest {
   // The cloud storage path where the partition data is written.
   // The format is "s3://bucket/prefix/filename".
   string storage_uri = 3;
+  // Keyspace ID
+  uint32 keyspace_id = 4;
 }
 
 // - If the index is built successfully, the `status` field should be 0,
@@ -614,6 +621,8 @@ message FinishImportIndexUploadRequest {
   ErrorCode status = 2;
   // The error_message if the status is not SUCCESS.
   string error_message = 3;
+  // Keyspace ID
+  uint32 keyspace_id = 4;
 }
 
 message FinishImportResponse {
