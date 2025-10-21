@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -122,7 +123,32 @@ func (p *PhysicalSort) GetPlanCostVer2(taskType property.TaskType, option *costu
 
 // ToPB converts the PhysicalSort operator to a Protocol Buffer representation.
 func (p *PhysicalSort) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	return utilfuncp.ToPB4PhysicalSort(p, ctx, storeType)
+	if !p.IsPartialSort {
+		return nil, errors.Errorf("sort %s can't convert to pb, because it isn't a partial sort", p.Plan.ExplainID())
+	}
+
+	client := ctx.GetClient()
+
+	sortExec := &tipb.Sort{}
+	for _, item := range p.ByItems {
+		sortExec.ByItems = append(sortExec.ByItems, expression.SortByItemToPB(ctx.GetExprCtx().GetEvalCtx(), client, item.Expr, item.Desc))
+	}
+	isPartialSort := p.IsPartialSort
+	sortExec.IsPartialSort = &isPartialSort
+
+	var err error
+	sortExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	executorID := p.ExplainID().String()
+	return &tipb.Executor{
+		Tp:                            tipb.ExecType_TypeSort,
+		Sort:                          sortExec,
+		ExecutorId:                    &executorID,
+		FineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
+		FineGrainedShuffleBatchSize:   ctx.TiFlashFineGrainedShuffleBatchSize,
+	}, nil
 }
 
 // ResolveIndices implements Plan interface.
