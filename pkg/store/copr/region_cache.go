@@ -522,9 +522,23 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 
 	ctx := bo.GetCtx()
 
-	// Validate PD returned locations cover our requested ranges
-	// Returns false on mismatch, but we continue processing (validation is for diagnostics)
-	_ = validateLocationCoverage(ctx, kvRanges, locs)
+	defer func() {
+		if r := recover(); r != nil {
+			// Panic occurred - add diagnostics by validating coverage
+			valid := validateLocationCoverage(ctx, kvRanges, locs)
+			if !valid {
+				// PD or client-go issue: locations don't properly cover ranges
+				logutil.Logger(ctx).Error("Panic during range splitting - PD returned invalid locations",
+					zap.Any("panicValue", r))
+			} else {
+				// PD locations are valid, so panic is from our splitting logic bug
+				logutil.Logger(ctx).Error("Panic during range splitting - internal bug in splitting logic",
+					zap.Any("panicValue", r))
+			}
+			// Re-panic with original error
+			panic(r)
+		}
+	}()
 
 	resCap := len(locs)
 	if limit != UnspecifiedLimit {
