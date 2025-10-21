@@ -170,8 +170,8 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		columns := getReplacedColumns(tblInfo, oldCol, args.Column)
 		allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 		for _, idx := range allIdxs {
-			for _, idxCol := range idx.Columns {
-				if err := checkIndexColumn(columns[idxCol.Offset], idxCol.Length, false); err != nil {
+			if idx.VectorInfo == nil {
+				if err := checkIndexInModifiableColumns(columns, idx.Columns, model.ColumnarIndexTypeNA); err != nil {
 					job.State = model.JobStateCancelled
 					return ver, errors.Trace(err)
 				}
