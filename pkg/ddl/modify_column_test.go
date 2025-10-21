@@ -746,3 +746,29 @@ func TestGetModifyColumnType(t *testing.T) {
 		require.Equal(t, tc.tp, gotTp)
 	}
 }
+
+func TestModifyColumnVarcharToChar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("create table t (a varchar(10) collate utf8mb4_general_ci, index i1(a))")
+	tk.MustExec("insert into t values ('a '), ('b ')")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/modifyColumnTypeWithData", func(*model.Job, model.JobArgs) {
+		tk2.MustExec("insert into t values ('a ')")
+	})
+	tk.MustExec("alter table t modify column a char(5) collate utf8mb4_general_ci")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(10) collate utf8mb4_general_ci, index i1(a))")
+	tk.MustExec("insert into t values ('a'), ('b')")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/modifyColumnTypeWithData", func(*model.Job, model.JobArgs) {
+		tk2.MustExecToErr("insert into t values ('a ')")
+	})
+	tk.MustExec("alter table t modify column a char(5) collate utf8mb4_general_ci")
+	tk.MustExec("admin check table t")
+}
