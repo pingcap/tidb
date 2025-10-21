@@ -740,13 +740,20 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 }
 
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
+<<<<<<< HEAD
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 func compareCandidates(sctx sessionctx.Context, statisticTable *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
+=======
+// The first return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
+// The 2nd return value indicates whether the "better path" is missing statistics or not.
+func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) {
+>>>>>>> bf9c3284d70 (planner: remove fullRange check from skyline pruning (#63828))
 	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
 	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
 		return 0
 	}
+<<<<<<< HEAD
 
 	lhsHasStatistics := false
 	if lhs.path.Index != nil {
@@ -755,8 +762,24 @@ func compareCandidates(sctx sessionctx.Context, statisticTable *statistics.Table
 	rhsHasStatistics := false
 	if rhs.path.Index != nil {
 		rhsHasStatistics = statisticTable != nil && statisticTable.Indices[rhs.path.Index.ID] != nil
+=======
+	// lhsPseudo == lhs has pseudo (no) stats for the table or index for the lhs path.
+	// rhsPseudo == rhs has pseudo (no) stats for the table or index for the rhs path.
+	//
+	// For the return value - if lhs wins (1), we return lhsPseudo. If rhs wins (-1), we return rhsPseudo.
+	// If there is no winner (0), we return false.
+	//
+	// This return value is used later in SkyLinePruning to determine whether we should preference an index scan
+	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
+	// they otherwise would have lost on cost.
+	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
+	if statsTbl != nil {
+		tablePseudo = statsTbl.HistColl.Pseudo
+		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, statsTbl)
+>>>>>>> bf9c3284d70 (planner: remove fullRange check from skyline pruning (#63828))
 	}
 
+<<<<<<< HEAD
 	if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() && // Not a table scan
 		(lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
 		(!lhsHasStatistics || !rhsHasStatistics) && // At least one index doesn't have statistics
@@ -765,6 +788,27 @@ func compareCandidates(sctx sessionctx.Context, statisticTable *statistics.Table
 		rhsTotalEqual := rhs.path.EqCondCount + rhs.path.EqOrInCondCount
 		if lhsHasStatistics && lhsTotalEqual > 0 && lhsTotalEqual >= rhsTotalEqual {
 			return 1
+=======
+	// predicateResult is separated out. An index may "win" because it has a better
+	// accessResult - but that access has high risk.
+	// Summing these 3 metrics ensures that a "high risk" index wont win ONLY on
+	// accessResult. The high risk will negate that accessResult with erOrIn being the
+	// tiebreaker or equalizer.
+	predicateResult := accessResult + riskResult + eqOrInResult
+
+	// totalSum is the aggregate score of all comparison metrics
+	totalSum := accessResult + scanResult + matchResult + globalResult
+
+	pseudoResult := 0
+	// Determine winner if one index doesn't have statistics and another has statistics
+	if (lhsPseudo || rhsPseudo) && !tablePseudo && // At least one index doesn't have statistics
+		(lhsEqOrInCount > 0 || rhsEqOrInCount > 0) { // At least one index has equal/IN predicates
+		lhsFullMatch := isFullIndexMatch(lhs)
+		rhsFullMatch := isFullIndexMatch(rhs)
+		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount, preferRange)
+		if pseudoResult > 0 && totalSum >= 0 {
+			return pseudoResult, lhsPseudo
+>>>>>>> bf9c3284d70 (planner: remove fullRange check from skyline pruning (#63828))
 		}
 		if rhsHasStatistics && rhsTotalEqual > 0 && rhsTotalEqual >= lhsTotalEqual {
 			return -1
@@ -806,8 +850,57 @@ func compareCandidates(sctx sessionctx.Context, statisticTable *statistics.Table
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && sum > 0 {
 		return 1
 	}
+<<<<<<< HEAD
 	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && sum < 0 {
 		return -1
+=======
+	return 0, false // No winner (0). Do not return the pseudo result
+}
+
+func isCandidatesPseudo(lhs, rhs *candidatePath, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
+	lhsPseudo, rhsPseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
+	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
+		if !lhs.path.IsTablePath() && lhs.path.Index != nil {
+			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
+				lhsPseudo = false // We have statistics for the lhs index
+			} else {
+				lhsPseudo = true
+			}
+		}
+		if !rhs.path.IsTablePath() && rhs.path.Index != nil {
+			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
+				rhsPseudo = false // We have statistics on the rhs index
+			} else {
+				rhsPseudo = true
+			}
+		}
+	}
+	return lhsPseudo, rhsPseudo
+}
+
+func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount int, preferRange bool) int {
+	// TO-DO: Consider a separate set of rules for global indexes.
+	// If one index has statistics and the other does not, choose the index with statistics if it
+	// has the same or higher number of equal/IN predicates.
+	if !lhsPseudo && lhsEqOrInCount > 0 && eqOrInResult >= 0 {
+		return 1 // left wins
+	}
+	if !rhsPseudo && rhsEqOrInCount > 0 && eqOrInResult <= 0 {
+		return -1 // right wins
+	}
+	if preferRange {
+		// keep an index without statistics if that index has more equal/IN predicates, AND:
+		// 1) there are at least 2 equal/INs
+		// 2) OR - it's a full index match for all index predicates
+		if lhsPseudo && eqOrInResult > 0 &&
+			(lhsEqOrInCount > 1 || lhsFullMatch) {
+			return 1 // left wins
+		}
+		if rhsPseudo && eqOrInResult < 0 &&
+			(rhsEqOrInCount > 1 || rhsFullMatch) {
+			return -1 // right wins
+		}
+>>>>>>> bf9c3284d70 (planner: remove fullRange check from skyline pruning (#63828))
 	}
 	return 0
 }
@@ -941,7 +1034,14 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			if candidates[i].path.StoreType == kv.TiFlash {
 				continue
 			}
+<<<<<<< HEAD
 			result := compareCandidates(ds.SCtx(), ds.statisticTable, prop, candidates[i], currentCandidate)
+=======
+			result, missingStats := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, candidates[i], currentCandidate, preferRange)
+			if missingStats {
+				idxMissingStats = true // Ensure that we track idxMissingStats across all iterations
+			}
+>>>>>>> bf9c3284d70 (planner: remove fullRange check from skyline pruning (#63828))
 			if result == 1 {
 				pruned = true
 				// We can break here because the current candidate cannot prune others anymore.
@@ -965,10 +1065,19 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
+<<<<<<< HEAD
 			var unsignedIntHandle bool
 			if c.path.IsIntHandlePath && ds.tableInfo.PKIsHandle {
 				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
 					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+=======
+			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
+			indexFilters := c.equalPredicateCount() > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+			if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
+				if !c.path.IsFullScanRange(ds.TableInfo) {
+					preferredPaths = append(preferredPaths, c)
+					hasRangeScanPath = true
+>>>>>>> bf9c3284d70 (planner: remove fullRange check from skyline pruning (#63828))
 				}
 			}
 			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
