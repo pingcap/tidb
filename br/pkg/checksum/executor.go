@@ -40,7 +40,7 @@ type ExecutorBuilder struct {
 	requestSource     util.RequestSource
 }
 
-// NewExecutorBuilder returns a new executor build.
+// NewExecutorBuilder returns a new executor builder.
 func NewExecutorBuilder(table *model.TableInfo, ts uint64) *ExecutorBuilder {
 	return &ExecutorBuilder{
 		table: table,
