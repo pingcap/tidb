@@ -1916,3 +1916,51 @@ func TestTiDBOptSelectivityFactor(t *testing.T) {
 	warn := vars.StmtCtx.GetWarnings()[0].Err
 	require.Equal(t, "[variable:1292]Truncated incorrect tidb_opt_selectivity_factor value: '1.1'", warn.Error())
 }
+
+func TestTiDBMaxEstimatedCostVar(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBMaxEstimatedCost)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	// set valid SESSION value
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBMaxEstimatedCost, "9.7"))
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBMaxEstimatedCost)
+	require.NoError(t, err)
+	require.Equal(t, "9.7", val)
+	require.Len(t, vars.StmtCtx.GetWarnings(), 0)
+
+	// set valid GLOBAL value
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBMaxEstimatedCost, "111.1")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(vardef.TiDBMaxEstimatedCost)
+	require.NoError(t, err)
+	require.Equal(t, "111.1", val)
+	require.Len(t, vars.StmtCtx.GetWarnings(), 0)
+
+	// set invalid value
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBMaxEstimatedCost, "-0.1")
+	require.NoError(t, err)
+	require.Len(t, vars.StmtCtx.GetWarnings(), 1)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_max_estimated_cost value: '-0.1'", warn.Error())
+	val, err = mock.GetGlobalSysVar(vardef.TiDBMaxEstimatedCost)
+	require.NoError(t, err)
+	// TODO: in case of error/warning/truncation, should we really set it to DEFAULT / disable it? Not leave it untouched?
+	require.Equal(t, "0", val)
+	err = vars.SetSystemVar(vardef.TiDBMaxEstimatedCost, "10e64")
+	require.NoError(t, err)
+	// Nothing is clearing the warnings
+	require.Len(t, vars.StmtCtx.GetWarnings(), 2)
+	warn = vars.StmtCtx.GetWarnings()[1].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_max_estimated_cost value: '10e64'", warn.Error())
+	val, err = mock.GetGlobalSysVar(vardef.TiDBMaxEstimatedCost)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	// set DEFAULT
+}

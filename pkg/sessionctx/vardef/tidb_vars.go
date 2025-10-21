@@ -1060,6 +1060,10 @@ const (
 
 	// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
 	TiDBAccelerateUserCreationUpdate = "tidb_accelerate_user_creation_update"
+
+	// TiDBMaxEstimatedCost set a maximum cost of plans from the optimizer to be executed. Higher costs estimates
+	// would simply return an error, stating that the estimated costs is too high.
+	TiDBMaxEstimatedCost = "tidb_max_estimated_cost"
 )
 
 // TiDB vars that have only global scope
@@ -1716,6 +1720,7 @@ const (
 	DefTiDBEnableTSValidation                         = true
 	DefTiDBLoadBindingTimeout                         = 200
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
+	DefTiDBMaxEstimatedCost                           = 0.0
 )
 
 // Process global variables.
