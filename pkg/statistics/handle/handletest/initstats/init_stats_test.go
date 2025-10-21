@@ -46,9 +46,7 @@ func maxPhysicalTableID(h *handle.Handle, is infoschema.InfoSchema) int64 {
 		if filter.IsSystemSchema(dbInfo.Name.L) {
 			continue
 		}
-		if statsTbl.PhysicalID > maxID {
-			maxID = statsTbl.PhysicalID
-		}
+		maxID = max(maxID, statsTbl.PhysicalID)
 	}
 	return maxID
 }
