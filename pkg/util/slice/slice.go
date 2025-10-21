@@ -66,26 +66,26 @@ func BinarySearchRangeFunc[S ~[]E, E, T any](x S, t1, t2 T, cmp func(E, T) int) 
 			continue
 		} else if cmpt1 == 0 {
 			// x[h] = t1 < t2
-			return h, BinarySearchByIndxFunc(x, t2, h, j, cmp)
+			return h, BinarySearchByIndexFunc(x, t2, h, j, cmp)
 		}
 		// t1 < x[h]
 		cmpt2 := cmp(x[h], t2)
 		if cmpt2 < 0 {
 			// t1 < x[h] < t2
-			return BinarySearchByIndxFunc(x, t1, i, h, cmp), BinarySearchByIndxFunc(x, t2, h+1, j, cmp)
+			return BinarySearchByIndexFunc(x, t1, i, h, cmp), BinarySearchByIndexFunc(x, t2, h+1, j, cmp)
 		} else if cmpt2 > 0 {
 			// t1 < t2 < x[h]
 			j = h // preserves cmp(x[j], target) >= 0
 		} else if cmpt2 == 0 {
 			// t1 < x[h] = t2
-			return BinarySearchByIndxFunc(x, t1, i, h, cmp), h
+			return BinarySearchByIndexFunc(x, t1, i, h, cmp), h
 		}
 	}
 	return i, j
 }
 
-// BinarySearchByIndxFunc performs a binary search on the slice x to find the target value.
-func BinarySearchByIndxFunc[S ~[]E, E, T any](x S, target T, start, end int, cmp func(E, T) int) int {
+// BinarySearchByIndexFunc performs a binary search on the slice x to find the target value between the range [start, end).
+func BinarySearchByIndexFunc[S ~[]E, E, T any](x S, target T, start, end int, cmp func(E, T) int) int {
 	for start < end {
 		h := int(uint(start+end) >> 1) // avoid overflow when computing h
 		// i ≤ h < j
