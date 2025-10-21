@@ -265,6 +265,9 @@ func (h *globalBindingHandle) UpdateBindingUsageInfoToStorage() error {
 			logutil.BindLogger().Warn("panic when update usage info for binding", zap.Any("recover", r))
 		}
 	}()
+	if !variable.EnableBindingUsage.Load() {
+		return nil
+	}
 	bindings := h.GetAllGlobalBindings()
 	return h.updateBindingUsageInfoToStorage(bindings)
 }

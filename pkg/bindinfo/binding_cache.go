@@ -117,6 +117,7 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 	}
 	leastWildcards := len(tableNames) + 1
 	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
+	enableBindingUsage := variable.EnableBindingUsage.Load()
 	for _, sqlDigest := range fbc.fuzzy2SQLDigests[fuzzyDigest] {
 		bindings := bindingCache.GetBinding(sqlDigest)
 		if intest.InTest {
@@ -137,16 +138,20 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 				}
 				if matched && numWildcards < leastWildcards {
 					matchedBinding = binding
-					binding.UpdateLastUsedAt()
-					bindings[idx] = binding
+					if enableBindingUsage {
+						binding.UpdateLastUsedAt()
+						bindings[idx] = binding
+					}
 					isMatched = true
 					leastWildcards = numWildcards
 					break
 				}
 			}
-			err := bindingCache.SetBinding(sqlDigest, bindings) // update the last used time
-			if err != nil {
-				logutil.BindLogger().Warn("bindingCache.SetBinding", zap.Error(err))
+			if enableBindingUsage {
+				err := bindingCache.SetBinding(sqlDigest, bindings) // update the last used time
+				if err != nil {
+					logutil.BindLogger().Warn("bindingCache.SetBinding", zap.Error(err))
+				}
 			}
 		} else {
 			missingSQLDigest = append(missingSQLDigest, sqlDigest)
