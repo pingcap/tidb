@@ -49,3 +49,26 @@ func DeepClone[T interface{ Clone() T }](s []T) []T {
 	}
 	return cloned
 }
+
+// BinarySearchRange searches for target in the sorted slice x within the index range [left, right).
+// It returns the "lower bound" index idx (the smallest index i such that x[i] >= target)
+// and a boolean 'match' indicating if an exact match was found (x[idx] == target).
+// This avoids allocating a new sub-slice unlike slices.BinarySearchFunc on x[left:right].
+func BinarySearchRange[S ~[]E, E, T any](x S, target T, left, right int, cmp func(E, T) int) (int, bool) {
+	// The search range is [left, right)
+	i, j := left, right
+	for i < j {
+		// h = (i + j) / 2, using bitwise shift to avoid overflow
+		h := int(uint(i+j) >> 1)
+		// Compare directly on the original slice x[h]
+		if cmp(x[h], target) < 0 {
+			i = h + 1
+		} else {
+			j = h
+		}
+	}
+	// After the loop, i is the lower bound.
+	// Check for an exact match.
+	match := i < right && cmp(x[i], target) == 0
+	return i, match
+}
