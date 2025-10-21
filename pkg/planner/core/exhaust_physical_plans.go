@@ -73,7 +73,7 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 	case *logicalop.LogicalUnionAll:
 		return physicalop.ExhaustPhysicalPlans4LogicalUnionAll(x, prop)
 	case *logicalop.LogicalSequence:
-		return exhaustPhysicalPlans4LogicalSequence(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalSequence(x, prop)
 	case *logicalop.LogicalSelection:
 		return physicalop.ExhaustPhysicalPlans4LogicalSelection(x, prop)
 	case *logicalop.LogicalMaxOneRow:
@@ -3041,46 +3041,4 @@ func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 
 	windows = append(windows, window)
 	return windows, true, nil
-}
-
-func exhaustPhysicalPlans4LogicalSequence(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	g, ls := base.GetGEAndLogicalOp[*logicalop.LogicalSequence](super)
-	possibleChildrenProps := make([][]*property.PhysicalProperty, 0, 2)
-	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true,
-		CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
-	if prop.TaskTp == property.MppTaskType {
-		if prop.CTEProducerStatus == property.SomeCTEFailedMpp {
-			return nil, true, nil
-		}
-		anyType.CTEProducerStatus = property.AllCTECanMpp
-		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{anyType, prop.CloneEssentialFields()})
-	} else {
-		copied := prop.CloneEssentialFields()
-		copied.CTEProducerStatus = property.SomeCTEFailedMpp
-		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: property.SomeCTEFailedMpp}, copied})
-	}
-
-	if prop.TaskTp != property.MppTaskType && prop.CTEProducerStatus != property.SomeCTEFailedMpp &&
-		ls.SCtx().GetSessionVars().IsMPPAllowed() && prop.IsSortItemEmpty() {
-		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{anyType, anyType.CloneEssentialFields()})
-	}
-	var seqSchema *expression.Schema
-	if g != nil {
-		ge := g.(*memo.GroupExpression)
-		seqSchema = ge.Inputs[len(ge.Inputs)-1].GetLogicalProperty().Schema
-	} else {
-		seqSchema = ls.Children()[ls.ChildLen()-1].Schema()
-	}
-	seqs := make([]base.PhysicalPlan, 0, len(possibleChildrenProps))
-	for _, propChoice := range possibleChildrenProps {
-		childReqs := make([]*property.PhysicalProperty, 0, ls.ChildLen())
-		for range ls.ChildLen() - 1 {
-			childReqs = append(childReqs, propChoice[0].CloneEssentialFields())
-		}
-		childReqs = append(childReqs, propChoice[1])
-		seq := physicalop.PhysicalSequence{}.Init(ls.SCtx(), ls.StatsInfo(), ls.QueryBlockOffset(), childReqs...)
-		seq.SetSchema(seqSchema)
-		seqs = append(seqs, seq)
-	}
-	return seqs, true, nil
 }

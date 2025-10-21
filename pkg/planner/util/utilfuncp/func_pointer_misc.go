@@ -44,10 +44,6 @@ var FindBestTask4BaseLogicalPlan func(p base.LogicalPlan,
 var FindBestTask4LogicalDataSource func(lp base.LogicalPlan,
 	prop *property.PhysicalProperty) (t base.Task, err error)
 
-// ExhaustPhysicalPlans4LogicalSequence will be called by LogicalSequence in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalSequence func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
 // ExhaustPhysicalPlans4LogicalWindow will be called by LogicalWindow in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalWindow func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
