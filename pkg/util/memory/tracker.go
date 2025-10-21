@@ -76,27 +76,23 @@ var (
 // PanicOnExceed, globalPanicOnExceed, LogOnExceed.
 type Tracker struct {
 	bytesLimit           atomic.Pointer[bytesLimits]
+	Killer               *sqlkiller.SQLKiller
+	parent               atomic.Pointer[Tracker]
 	actionMuForHardLimit actionMu
 	actionMuForSoftLimit actionMu
-	Killer               *sqlkiller.SQLKiller
 	mu                   struct {
-		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
+		children map[ // The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
 		// we wouldn't maintain its children in order to avoiding mutex contention.
-		children map[int][]*Tracker
+		int][]*Tracker
 		sync.Mutex
 	}
-	parMu struct {
-		parent *Tracker // The parent memory tracker.
-		sync.Mutex
-	}
-	label int // Label of this "Tracker".
-	// following fields are used with atomic operations, so make them 64-byte aligned.
-	bytesConsumed       int64             // Consumed bytes.
-	bytesReleased       int64             // Released bytes.
-	maxConsumed         atomicutil.Int64  // max number of bytes consumed during execution.
-	SessionID           atomicutil.Uint64 // SessionID indicates the sessionID the tracker is bound.
-	IsRootTrackerOfSess bool              // IsRootTrackerOfSess indicates whether this tracker is bound for session
-	isGlobal            bool              // isGlobal indicates whether this tracker is global tracker
+	label               int
+	bytesConsumed       int64
+	bytesReleased       int64
+	maxConsumed         atomicutil.Int64
+	SessionID           atomicutil.Uint64
+	IsRootTrackerOfSess bool
+	isGlobal            bool
 }
 
 type actionMu struct {
@@ -144,7 +140,7 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 	t.mu.children = nil
 	t.actionMuForHardLimit.actionOnExceed = action
 	t.actionMuForSoftLimit.actionOnExceed = nil
-	t.parMu.parent = nil
+	t.parent.Store(nil)
 
 	t.label = label
 	if bytesLimit <= 0 {
@@ -800,16 +796,12 @@ func (t *Tracker) Reset() {
 	t.mu.children = nil
 }
 
-func (t *Tracker) getParent() *Tracker {
-	t.parMu.Lock()
-	defer t.parMu.Unlock()
-	return t.parMu.parent
+func (t *Tracker) getParent() (tracker *Tracker) {
+	return t.parent.Load()
 }
 
 func (t *Tracker) setParent(parent *Tracker) {
-	t.parMu.Lock()
-	defer t.parMu.Unlock()
-	t.parMu.parent = parent
+	t.parent.Store(parent)
 }
 
 // CountAllChildrenMemUse return memory used tree for the tracker
