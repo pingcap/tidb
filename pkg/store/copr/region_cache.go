@@ -468,20 +468,8 @@ func (c *RegionCache) splitKeyRangesByLocation(ctx context.Context, loc *tikv.Ke
 			EndKey:   r.EndKey,
 		}
 	} else {
-		// Invariant violated: location can't cover the next range
-		// This means upstream (PD or previous split) gave us inconsistent data
-		logutil.Logger(ctx).Error("LocationKeyRanges invariant violated - range start not in location",
-			zap.Uint64("regionID", loc.Region.GetID()),
-			zap.Uint64("regionVer", loc.Region.GetVer()),
-			zap.Uint64("regionConfVer", loc.Region.GetConfVer()),
-			keyField("locationStart", loc.StartKey),
-			keyField("locationEnd", loc.EndKey),
-			keyField("rangeStart", r.StartKey),
-			keyField("rangeEnd", r.EndKey),
-			zap.Int("rangeIndex", i),
-			formatRanges(ranges))
-
-		// Continue processing remaining ranges
+		// Range doesn't belong to this location - normal when processing sequential locations
+		// Add ranges that did belong, return the rest
 		if i > 0 {
 			taskRanges := ranges.Slice(0, i)
 			res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
