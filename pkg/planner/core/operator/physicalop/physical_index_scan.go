@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -102,6 +103,11 @@ type PhysicalIndexScan struct {
 	// UsedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
 	UsedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
+
+	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
+
+	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
+	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
 }
 
 // FullRange represent used all partitions.
@@ -127,8 +133,8 @@ func (p *PhysicalIndexScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.IdxCols = util.CloneCols(p.IdxCols)
 	cloned.IdxColLens = make([]int, len(p.IdxColLens))
 	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.Ranges = util.CloneRanges(p.Ranges)
-	cloned.Columns = util.CloneColInfos(p.Columns)
+	cloned.Ranges = sliceutil.DeepClone(p.Ranges)
+	cloned.Columns = sliceutil.DeepClone(p.Columns)
 	if p.DataSourceSchema != nil {
 		cloned.DataSourceSchema = p.DataSourceSchema.Clone()
 	}
@@ -636,7 +642,7 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		Table:            ds.TableInfo,
 		TableAsName:      ds.TableAsName,
 		DBName:           ds.DBName,
-		Columns:          util.CloneColInfos(ds.Columns),
+		Columns:          sliceutil.DeepClone(ds.Columns),
 		Index:            idx,
 		IdxCols:          path.IdxCols,
 		IdxColLens:       path.IdxColLens,
@@ -687,11 +693,13 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 }
 
 // ConvertToPartialIndexScan converts a DataSource to a PhysicalIndexScan for IndexMerge.
-func ConvertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
-	is := GetOriginalPhysicalIndexScan(ds, prop, path, matchProp, false)
+func ConvertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
+	intest.Assert(matchProp != property.PropMatchedNeedMergeSort,
+		"partial paths of index merge path should not match property using merge sort")
+	is := GetOriginalPhysicalIndexScan(ds, prop, path, matchProp.Matched(), false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
-	if matchProp {
+	if matchProp.Matched() {
 		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 			tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
 			is.Columns = tmpColumns

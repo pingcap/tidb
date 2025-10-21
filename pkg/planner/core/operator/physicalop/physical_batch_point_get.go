@@ -32,9 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -284,9 +284,6 @@ func (p *PointGetPlan) SetAccessCols(cols []*expression.Column) {
 	p.accessCols = cols
 }
 
-// AppendChildCandidate implements PhysicalPlan interface.
-func (*PointGetPlan) AppendChildCandidate(_ *optimizetrace.PhysicalOptimizeOp) {}
-
 const emptyPointGetPlanSize = int64(unsafe.Sizeof(PointGetPlan{}))
 
 // MemoryUsage return the memory usage of PointGetPlan
@@ -346,7 +343,7 @@ func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 			tableID = pi.Definitions[*idx].ID
 		}
 	}
-	utilfuncp.LoadTableStats(ctx, p.TblInfo, tableID)
+	stats.LoadTableStats(ctx, p.TblInfo, tableID)
 }
 
 // PrunePartitions will check which partition to use
@@ -714,9 +711,6 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.SimpleSchemaProducer.SetOutputNames(names)
 }
 
-// AppendChildCandidate implements PhysicalPlan interface.
-func (*BatchPointGetPlan) AppendChildCandidate(_ *optimizetrace.PhysicalOptimizeOp) {}
-
 const emptyBatchPointGetPlanSize = int64(unsafe.Sizeof(BatchPointGetPlan{}))
 
 // MemoryUsage return the memory usage of BatchPointGetPlan
@@ -765,7 +759,7 @@ func (p *BatchPointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 	// as a `BatchPointGet` can access multiple partitions, and we cannot distinguish how many rows come from each
 	// partitions in the existing statistics information, we treat all index usage through a `BatchPointGet` just
 	// like a normal global index.
-	utilfuncp.LoadTableStats(ctx, p.TblInfo, p.TblInfo.ID)
+	stats.LoadTableStats(ctx, p.TblInfo, p.TblInfo.ID)
 }
 
 func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []ast.CIStr) bool {

@@ -301,13 +301,8 @@ func onSetDefaultValue(jobCtx *jobContext, job *model.Job) (ver int64, _ error) 
 	return updateColumnDefaultValue(jobCtx, job, newCol, &newCol.Name)
 }
 
-func setIdxIDName(idxInfo *model.IndexInfo, newID int64, newName ast.CIStr) {
-	idxInfo.ID = newID
-	idxInfo.Name = newName
-}
-
-// SetIdxColNameOffset sets index column name and offset from changing ColumnInfo.
-func SetIdxColNameOffset(idxCol *model.IndexColumn, changingCol *model.ColumnInfo) {
+// UpdateIndexCol sets index column name and offset from changing ColumnInfo.
+func UpdateIndexCol(idxCol *model.IndexColumn, changingCol *model.ColumnInfo) {
 	idxCol.Name = changingCol.Name
 	idxCol.Offset = changingCol.Offset
 	canPrefix := types.IsTypePrefixable(changingCol.GetType())
@@ -359,7 +354,7 @@ func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
 	for _, idx := range changingIdxs {
 		for _, col := range idx.Columns {
 			if col.Name.L == oldName.L {
-				SetIdxColNameOffset(col, changingCol)
+				UpdateIndexCol(col, changingCol)
 			}
 		}
 	}
@@ -375,7 +370,7 @@ func updateModifyingCols(oldCol, changingCol *model.ColumnInfo) {
 	oldCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: changingCol.Offset}
 }
 
-func moveChangingColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, pos *ast.ColumnPosition) {
+func moveChangingColumnToDest(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, pos *ast.ColumnPosition) {
 	// Swap the old column with new column position.
 	oldOffset := oldCol.Offset
 	changingOffset := changingCol.Offset
@@ -388,9 +383,9 @@ func moveChangingColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol 
 	tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
 }
 
-// moveOldColumnInfo is used to make sure the columns in TableInfo
+// moveOldColumnToBack is used to make sure the columns in TableInfo
 // are in correct order after the old column is changed to non-public state.
-func moveOldColumnInfo(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) {
+func moveOldColumnToBack(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) {
 	order := []model.SchemaState{
 		model.StatePublic,
 		model.StateWriteReorganization,
@@ -415,23 +410,31 @@ func moveOldColumnInfo(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) {
 	tblInfo.MoveColumnInfo(oldCol.Offset, dest)
 }
 
+// indexContainsOtherReorg checks if the index still contains other changing columns
+func indexContainsOtherReorg(
+	tblInfo *model.TableInfo,
+	idx *model.IndexInfo,
+	currentChangingCol *model.ColumnInfo,
+) bool {
+	for _, idxCol := range idx.Columns {
+		tblCol := tblInfo.Columns[idxCol.Offset]
+		if tblCol.ID == currentChangingCol.ID {
+			continue // ignore current changing column.
+		}
+		if tblCol.ChangeStateInfo != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
 func moveIndexInfoToDest(tblInfo *model.TableInfo, changingCol *model.ColumnInfo,
 	oldIdxInfos, changingIdxInfos []*model.IndexInfo) {
 	for i, cIdx := range changingIdxInfos {
-		hasOtherChangingCol := false
-		for _, ic := range cIdx.Columns {
-			idxCol := tblInfo.Columns[ic.Offset]
-			if idxCol.ID == changingCol.ID {
-				continue // ignore current modifying column.
-			}
-			if idxCol.ChangeStateInfo != nil {
-				hasOtherChangingCol = true
-				break
-			}
-		}
-		// For the indexes that still contains other changing column, skip swaping it now.
-		// We leave the swaping work to the last modify column job.
-		if !hasOtherChangingCol {
+		// For the index that still contains other changing column,
+		// we leave the swaping work to the last modify column job.
+		if !indexContainsOtherReorg(tblInfo, cIdx, changingCol) {
 			swapIndexInfoByID(tblInfo, oldIdxInfos[i].ID, changingIdxInfos[i].ID)
 		}
 	}
@@ -956,12 +959,7 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 	return nil
 }
 
-func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
-	publicName := newColName
-	removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
-
-	renameColumnTo(oldCol, oldIdxs, removingName)
-	renameColumnTo(changingCol, changingIdxs, publicName)
+func markOldIndexesRemoving(oldIdxs []*model.IndexInfo, changingIdxs []*model.IndexInfo) {
 	for i := range oldIdxs {
 		oldIdxName := oldIdxs[i].Name.O
 		publicName := ast.NewCIStr(getRemovingObjOriginName(oldIdxName))
@@ -970,6 +968,15 @@ func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, chang
 		changingIdxs[i].Name = publicName
 		oldIdxs[i].Name = removingName
 	}
+}
+
+func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
+	publicName := newColName
+	removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
+	renameColumnTo(oldCol, oldIdxs, removingName)
+	renameColumnTo(changingCol, changingIdxs, publicName)
+
+	markOldIndexesRemoving(oldIdxs, changingIdxs)
 }
 
 func removeOldObjects(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, oldIdxs []*model.IndexInfo) []int64 {
@@ -1382,35 +1389,33 @@ func indexInfosToIDList(idxInfos []*model.IndexInfo) []int64 {
 }
 
 func genChangingColumnUniqueName(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) string {
-	suffix := 0
-	newColumnNamePrefix := fmt.Sprintf("%s%s", changingColumnPrefix, oldCol.Name.O)
-	newColumnLowerName := fmt.Sprintf("%s_%d", strings.ToLower(newColumnNamePrefix), suffix)
 	// Check whether the new column name is used.
 	columnNameMap := make(map[string]bool, len(tblInfo.Columns))
 	for _, col := range tblInfo.Columns {
 		columnNameMap[col.Name.L] = true
 	}
-	for columnNameMap[newColumnLowerName] {
+	suffix := 0
+	newColumnName := fmt.Sprintf("%s%s_%d", changingColumnPrefix, oldCol.Name.O, suffix)
+	for columnNameMap[strings.ToLower(newColumnName)] {
 		suffix++
-		newColumnLowerName = fmt.Sprintf("%s_%d", strings.ToLower(newColumnNamePrefix), suffix)
+		newColumnName = fmt.Sprintf("%s%s_%d", changingColumnPrefix, oldCol.Name.O, suffix)
 	}
-	return fmt.Sprintf("%s_%d", newColumnNamePrefix, suffix)
+	return newColumnName
 }
 
 func genChangingIndexUniqueName(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) string {
-	suffix := 0
-	newIndexNamePrefix := fmt.Sprintf("%s%s", changingIndexPrefix, idxInfo.Name.O)
-	newIndexLowerName := fmt.Sprintf("%s_%d", strings.ToLower(newIndexNamePrefix), suffix)
 	// Check whether the new index name is used.
 	indexNameMap := make(map[string]bool, len(tblInfo.Indices))
 	for _, idx := range tblInfo.Indices {
 		indexNameMap[idx.Name.L] = true
 	}
-	for indexNameMap[newIndexLowerName] {
+	suffix := 0
+	newIndexName := fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
+	for indexNameMap[strings.ToLower(newIndexName)] {
 		suffix++
-		newIndexLowerName = fmt.Sprintf("%s_%d", strings.ToLower(newIndexNamePrefix), suffix)
+		newIndexName = fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
 	}
-	return fmt.Sprintf("%s_%d", newIndexNamePrefix, suffix)
+	return newIndexName
 }
 
 func getChangingIndexOriginName(changingIdx *model.IndexInfo) string {

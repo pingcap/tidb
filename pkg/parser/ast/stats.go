@@ -418,6 +418,62 @@ func (n *RefreshStatsStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+func (n *RefreshStatsStmt) Dedup() {
+	if len(n.RefreshObjects) == 0 {
+		return
+	}
+
+	dbSeen := make(map[string]struct{})
+	tableSeen := make(map[string]struct{})
+	result := make([]*RefreshObject, 0, len(n.RefreshObjects))
+
+	for _, obj := range n.RefreshObjects {
+		switch obj.RefreshObjectScope {
+		// Global scope supersedes everything else. Keep the first global target only.
+		case RefreshObjectScopeGlobal:
+			n.RefreshObjects = []*RefreshObject{obj}
+			return
+		case RefreshObjectScopeDatabase:
+			dbKey := obj.DBName.L
+			if _, exists := dbSeen[dbKey]; exists {
+				continue
+			}
+			dbSeen[dbKey] = struct{}{}
+
+			// Remove tables from the same database that might have been added earlier.
+			filtered := result[:0]
+			for _, existing := range result {
+				if existing.RefreshObjectScope == RefreshObjectScopeTable {
+					existingDBKey := existing.DBName.L
+					if existingDBKey != "" && existingDBKey == dbKey {
+						tblKey := existingDBKey + "." + existing.TableName.L
+						delete(tableSeen, tblKey)
+						continue
+					}
+				}
+				filtered = append(filtered, existing)
+			}
+			result = append(filtered, obj)
+
+		case RefreshObjectScopeTable:
+			dbKey := obj.DBName.L
+			if dbKey != "" {
+				if _, exists := dbSeen[dbKey]; exists {
+					continue
+				}
+			}
+			tblKey := dbKey + "." + obj.TableName.L
+			if _, exists := tableSeen[tblKey]; exists {
+				continue
+			}
+			tableSeen[tblKey] = struct{}{}
+			result = append(result, obj)
+		}
+	}
+
+	n.RefreshObjects = result
+}
+
 type RefreshObjectScopeType int
 
 const (

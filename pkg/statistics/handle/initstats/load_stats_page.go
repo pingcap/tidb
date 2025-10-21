@@ -26,6 +26,7 @@ import (
 )
 
 // InitStatsPercentage is the percentage of the table to load stats.
+// This only works for non-lite mode.
 var InitStatsPercentage atomicutil.Float64
 
 var (

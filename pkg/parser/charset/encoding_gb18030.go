@@ -123,10 +123,14 @@ func NewCustomGB18030Decoder() *encoding.Decoder {
 	return customGB18030{}.NewDecoder()
 }
 
+type runeErrorMaybeInputTransformer interface {
+	runeErrorIsLastInput() bool
+}
+
 // NewDecoder returns simplifiedchinese.GB18030.NewDecoder().
 func (customGB18030) NewDecoder() *encoding.Decoder {
 	return &encoding.Decoder{
-		Transformer: customGB18030Decoder{
+		Transformer: &customGB18030Decoder{
 			gb18030Decoder: simplifiedchinese.GB18030.NewDecoder(),
 		},
 	}
@@ -142,11 +146,20 @@ func (customGB18030) NewEncoder() *encoding.Encoder {
 }
 
 type customGB18030Decoder struct {
-	gb18030Decoder *encoding.Decoder
+	gb18030Decoder           *encoding.Decoder
+	runeErrorIsLastInputFlag bool
 }
 
+func (c *customGB18030Decoder) runeErrorIsLastInput() bool {
+	return c.runeErrorIsLastInputFlag
+}
+
+var runeErrorEncodedByGB18030 = convertBytesToUint32([]byte{0x84, 0x31, 0xA4, 0x37})
+
 // Transform special treatment for 0x80,
-func (c customGB18030Decoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
+func (c *customGB18030Decoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
+	c.runeErrorIsLastInputFlag = false
+
 	if len(src) == 0 {
 		return 0, 0, nil
 	}
@@ -161,22 +174,32 @@ func (c customGB18030Decoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc
 
 		if src[nSrc] == 0x80 {
 			nDst += utf8.EncodeRune(dst[nDst:], utf8.RuneError)
-		} else if r, ok := gb18030ToUnicode[convertBytesToUint32(src[nSrc:nSrc+next])]; ok {
-			nDst += utf8.EncodeRune(dst[nDst:], r)
-		} else {
-			d, _, e := c.gb18030Decoder.Transform(dst[nDst:], src[nSrc:nSrc+next], atEOF)
-			if e != nil {
-				return nDst, nSrc, e
-			}
-			nDst += d
+			continue
 		}
+		u32 := convertBytesToUint32(src[nSrc : nSrc+next])
+		if r, ok := gb18030ToUnicode[u32]; ok {
+			nDst += utf8.EncodeRune(dst[nDst:], r)
+			continue
+		}
+		if u32 == runeErrorEncodedByGB18030 {
+			nDst += utf8.EncodeRune(dst[nDst:], utf8.RuneError)
+			c.runeErrorIsLastInputFlag = true
+			continue
+		}
+
+		d, _, e := c.gb18030Decoder.Transform(dst[nDst:], src[nSrc:nSrc+next], atEOF)
+		if e != nil {
+			return nDst, nSrc, e
+		}
+		nDst += d
 	}
 	return
 }
 
 // Reset is same as simplifiedchinese.GB18030.Reset().
-func (c customGB18030Decoder) Reset() {
+func (c *customGB18030Decoder) Reset() {
 	c.gb18030Decoder.Reset()
+	c.runeErrorIsLastInputFlag = false
 }
 
 type customGB18030Encoder struct {

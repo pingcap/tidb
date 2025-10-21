@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -129,29 +128,6 @@ func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
 	return cardinality.GetAvgRowSize(p.SCtx(), GetTblStats(p.TablePlan), p.TablePlan.Schema().Columns, false, false)
 }
 
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.IndexPlan != nil {
-		rp.Children = append(rp.Children, p.IndexPlan.BuildPlanTrace())
-	}
-	if p.TablePlan != nil {
-		rp.Children = append(rp.Children, p.TablePlan.BuildPlanTrace())
-	}
-	return rp
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexLookUpReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.BasePhysicalPlan.AppendChildCandidate(op)
-	if p.IndexPlan != nil {
-		AppendChildCandidate(p, p.IndexPlan, op)
-	}
-	if p.TablePlan != nil {
-		AppendChildCandidate(p, p.TablePlan, op)
-	}
-}
-
 // MemoryUsage return the memory usage of PhysicalIndexLookUpReader
 func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 	if p == nil {
@@ -187,7 +163,7 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 // LoadTableStats preloads the stats data for the physical table
 func (p *PhysicalIndexLookUpReader) LoadTableStats(ctx sessionctx.Context) {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
-	utilfuncp.LoadTableStats(ctx, ts.Table, ts.PhysicalTableID)
+	stats.LoadTableStats(ctx, ts.Table, ts.PhysicalTableID)
 }
 
 // AccessObject implements PartitionAccesser interface.

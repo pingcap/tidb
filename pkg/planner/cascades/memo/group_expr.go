@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -257,26 +256,8 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	return nil
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan.<3rd> interface, it's used to override the wrapped logicalPlans.
-func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) (physicalPlans []base.PhysicalPlan, hintCanWork bool, err error) {
-	// since different logical operator may have different ExhaustPhysicalPlans before like:
-	// utilfuncp.ExhaustPhysicalPlans4LogicalCTE = exhaustPhysicalPlans4LogicalCTE
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalSort = exhaustPhysicalPlans4LogicalSort
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalTopN = exhaustPhysicalPlans4LogicalTopN
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalLock = exhaustPhysicalPlans4LogicalLock
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalJoin = exhaustPhysicalPlans4LogicalJoin
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalApply = exhaustPhysicalPlans4LogicalApply
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalLimit = exhaustPhysicalPlans4LogicalLimit
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalWindow = exhaustPhysicalPlans4LogicalWindow
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalExpand = exhaustPhysicalPlans4LogicalExpand
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll = exhaustPhysicalPlans4LogicalUnionAll
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalSequence = exhaustPhysicalPlans4LogicalSequence
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalSelection = exhaustPhysicalPlans4LogicalSelection
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow = exhaustPhysicalPlans4LogicalMaxOneRow
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan = exhaustPhysicalPlans4LogicalUnionScan
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalProjection = exhaustPhysicalPlans4LogicalProjection
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalAggregation = exhaustPhysicalPlans4LogicalAggregation
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll = exhaustPhysicalPlans4LogicalPartitionUnionAll
+// ExhaustPhysicalPlans4GroupExpression enumerate the physical implementation for concrete ops.
+func ExhaustPhysicalPlans4GroupExpression(e *GroupExpression, prop *property.PhysicalProperty) (physicalPlans []base.PhysicalPlan, hintCanWork bool, err error) {
 	// once we call GE's ExhaustPhysicalPlans from group expression level, we should judge from here, and get the
 	// wrapped logical plan and then call their specific function pointer to handle logic inside. Why not we just
 	// remove GE's level implementation, and call wrapped logical plan's implementing? Cuz sometimes, the wrapped
@@ -289,11 +270,11 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		// wrapped logical plan from GE, so we can use same function pointer to handle logic inside.
 		return physicalop.ExhaustPhysicalPlans4LogicalCTE(x, prop)
 	case *logicalop.LogicalSort:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalSort(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalSort(x, prop)
 	case *logicalop.LogicalTopN:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalTopN(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalTopN(x, prop)
 	case *logicalop.LogicalLock:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalLock(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalLock(x, prop)
 	case *logicalop.LogicalJoin:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalJoin(e, prop)
 	case *logicalop.LogicalApply:
@@ -326,38 +307,6 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 }
 
 // FindBestTask implements LogicalPlan.<3rd> interface, it's used to override the wrapped logicalPlans.
-func (e *GroupExpression) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
-	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
-	// since different logical operator may have different findBestTask before like:
-	// 	utilfuncp.FindBestTask4BaseLogicalPlan = findBestTask
-	//	utilfuncp.FindBestTask4LogicalCTE = findBestTask4LogicalCTE
-	//	utilfuncp.FindBestTask4LogicalShow = findBestTask4LogicalShow
-	//	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
-	//	utilfuncp.FindBestTask4LogicalMemTable = findBestTask4LogicalMemTable
-	//	utilfuncp.FindBestTask4LogicalTableDual = findBestTask4LogicalTableDual
-	//	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
-	//	utilfuncp.FindBestTask4LogicalShowDDLJobs = findBestTask4LogicalShowDDLJobs
-	// once we call GE's findBestTask from group expression level, we should judge from here, and get the
-	// wrapped logical plan and then call their specific function pointer to handle logic inside. At the
-	// same time, we will pass ge (also implement LogicalPlan interface) as the first parameter for iterate
-	// ge's children in memo scenario.
-	// And since base.LogicalPlan is a common parent pointer of GE and LogicalPlan, we can use same portal.
-	switch e.GetWrappedLogicalPlan().(type) {
-	case *logicalop.LogicalCTE:
-		return utilfuncp.FindBestTask4LogicalCTE(e, prop, planCounter, opt)
-	case *logicalop.LogicalShow:
-		return utilfuncp.FindBestTask4LogicalShow(e, prop, planCounter, opt)
-	case *logicalop.LogicalCTETable:
-		return utilfuncp.FindBestTask4LogicalCTETable(e, prop, planCounter, opt)
-	case *logicalop.LogicalMemTable:
-		return utilfuncp.FindBestTask4LogicalMemTable(e, prop, planCounter, opt)
-	case *logicalop.LogicalTableDual:
-		return utilfuncp.FindBestTask4LogicalTableDual(e, prop, planCounter, opt)
-	case *logicalop.DataSource:
-		return utilfuncp.FindBestTask4LogicalDataSource(e, prop, planCounter, opt)
-	case *logicalop.LogicalShowDDLJobs:
-		return utilfuncp.FindBestTask4LogicalShowDDLJobs(e, prop, planCounter, opt)
-	default:
-		return utilfuncp.FindBestTask4BaseLogicalPlan(e, prop, planCounter, opt)
-	}
+func (e *GroupExpression) FindBestTask(prop *property.PhysicalProperty) (bestTask base.Task, err error) {
+	return physicalop.FindBestTask(e, prop)
 }

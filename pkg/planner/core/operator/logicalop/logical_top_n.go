@@ -23,7 +23,6 @@ import (
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -51,7 +50,7 @@ func (lt LogicalTopN) Init(ctx base.PlanContext, offset int) *LogicalTopN {
 func (lt *LogicalTopN) ExplainInfo() string {
 	ectx := lt.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
-	buffer = util.ExplainPartitionBy(ectx, buffer, lt.GetPartitionBy(), false)
+	buffer = property.ExplainPartitionBy(ectx, buffer, lt.GetPartitionBy(), false)
 	if len(lt.GetPartitionBy()) > 0 && len(lt.ByItems) > 0 {
 		buffer.WriteString("order by ")
 	}
@@ -135,7 +134,7 @@ func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expressi
 	if !reload && lt.StatsInfo() != nil {
 		return lt.StatsInfo(), false, nil
 	}
-	lt.SetStats(util.DeriveLimitStats(childStats[0], float64(lt.Count)))
+	lt.SetStats(property.DeriveLimitStats(childStats[0], float64(lt.Count)))
 	return lt.StatsInfo(), true, nil
 }
 
@@ -148,11 +147,6 @@ func (lt *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, _ ...[][]
 		return nil
 	}
 	return [][]*expression.Column{propCols}
-}
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (lt *LogicalTopN) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalTopN(lt, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.

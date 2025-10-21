@@ -80,9 +80,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	planctx "github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/plugin"
@@ -1375,7 +1375,6 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
-// it is called (but skipped) when setting instance scope
 func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string) (err error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
@@ -1386,9 +1385,6 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 	}
 	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, false); err != nil {
 		return err
-	}
-	if sv.HasInstanceScope() { // skip for INSTANCE scope
-		return nil
 	}
 	if sv.GlobalConfigName != "" {
 		domain.GetDomain(s).NotifyGlobalConfigChange(sv.GlobalConfigName, variable.OnOffToTrueFalse(value))
@@ -1407,10 +1403,19 @@ func (s *session) SetGlobalSysVarOnly(ctx context.Context, name string, value st
 	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, true); err != nil {
 		return err
 	}
-	if sv.HasInstanceScope() { // skip for INSTANCE scope
-		return nil
-	}
 	return s.replaceGlobalVariablesTableValue(ctx, sv.Name, value, updateLocal)
+}
+
+// SetInstanceSysVar implements InstanceVarAccessor.SetInstanceSysVar interface.
+func (s *session) SetInstanceSysVar(ctx context.Context, name string, value string) (err error) {
+	sv := variable.GetSysVar(name)
+	if sv == nil {
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	if value, err = sv.Validate(s.sessionVars, value, vardef.ScopeInstance); err != nil {
+		return err
+	}
+	return sv.SetGlobalFromHook(ctx, s.sessionVars, value, false)
 }
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
@@ -1727,7 +1732,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MemTracker:            s.sessionVars.MemTracker,
 		DiskTracker:           s.sessionVars.DiskTracker,
 		RunawayChecker:        s.sessionVars.StmtCtx.RunawayChecker,
-		StatsInfo:             plannercore.GetStatsInfo,
+		StatsInfo:             physicalop.GetStatsInfo,
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
 		TableIDs:              s.sessionVars.StmtCtx.TableIDs,
 		IndexNames:            s.sessionVars.StmtCtx.IndexNames,
@@ -1952,12 +1957,11 @@ func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
 		lock.IncrReferences()
 		return nil
 	}
-	sess, err := createSession(s.store)
+	se, clean, err := s.getInternalSession(sqlexec.GetExecOption(nil))
 	if err != nil {
 		return err
 	}
-	infosync.StoreInternalSession(sess)
-	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.ShowProcess().ID}
+	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.ShowProcess().ID, clean: clean}
 	err = lock.GetLock(lockName, timeout)
 	if err != nil {
 		return err
@@ -1974,11 +1978,11 @@ func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
 	}
 
 	// Check for transaction on advisory_locks table
-	sess, err := createSession(s.store)
+	se, clean, err := s.getInternalSession(sqlexec.GetExecOption(nil))
 	if err != nil {
 		return 0
 	}
-	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.ShowProcess().ID}
+	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.ShowProcess().ID, clean: clean}
 	err = lock.IsUsedLock(lockName)
 	if err != nil {
 		// TODO: Return actual owner pid
@@ -2000,7 +2004,6 @@ func (s *session) ReleaseAdvisoryLock(lockName string) (released bool) {
 		if lock.ReferenceCount() <= 0 {
 			lock.Close()
 			delete(s.advisoryLocks, lockName)
-			infosync.DeleteInternalSession(lock.session)
 		}
 		return true
 	}
@@ -2017,7 +2020,6 @@ func (s *session) ReleaseAllAdvisoryLocks() int {
 		lock.Close()
 		count += lock.ReferenceCount()
 		delete(s.advisoryLocks, lockName)
-		infosync.DeleteInternalSession(lock.session)
 	}
 	return count
 }
@@ -2131,6 +2133,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	if execOption.AnalyzeSnapshot != nil {
 		s.sessionVars.EnableAnalyzeSnapshot = *execOption.AnalyzeSnapshot
 	}
+	s.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	prePruneMode := s.sessionVars.PartitionPruneMode.Load()
 	if len(execOption.PartitionPruneMode) > 0 {
 		s.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
@@ -2195,7 +2198,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	if len(execOption.PartitionPruneMode) > 0 {
 		se.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
 	}
-
+	se.sessionVars.EnableDDLAnalyzeExecOpt = execOption.EnableDDLAnalyze
 	return se, func() {
 		se.sessionVars.AnalyzeVersion = prevStatsVer
 		se.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
@@ -2608,12 +2611,12 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 		if v.LockInfo != nil {
 			return errors.New("select lock hasn't been supported in stale read yet")
 		}
-		if !planner.IsReadOnly(stmtNode, vars) {
+		if !plannercore.IsReadOnly(stmtNode, vars) {
 			return errors.New(errMsg)
 		}
 		return nil
 	case *ast.ExplainStmt, *ast.DoStmt, *ast.ShowStmt, *ast.SetOprStmt, *ast.ExecuteStmt, *ast.SetOprSelectList:
-		if !planner.IsReadOnly(stmtNode, vars) {
+		if !plannercore.IsReadOnly(stmtNode, vars) {
 			return errors.New(errMsg)
 		}
 		return nil

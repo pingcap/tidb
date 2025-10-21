@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/types"
@@ -69,12 +68,6 @@ func AllocateTaskID() uint64 {
 
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn = contextutil.SQLWarn
-
-type jsonSQLWarn struct {
-	Level  string        `json:"level"`
-	SQLErr *terror.Error `json:"err,omitempty"`
-	Msg    string        `json:"msg,omitempty"`
-}
 
 // ReferenceCount indicates the reference count of StmtCtx.
 type ReferenceCount int32
