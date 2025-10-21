@@ -24082,7 +24082,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Total encode/deliver/import-kv speed of distributed task.",
+          "description": "Total encode/deliver/merge/import-kv speed of distributed task.",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -24145,6 +24145,14 @@
               "interval": "",
               "legendFormat": "import kv - {{task_id}}",
               "refId": "C"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_import_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", state=\"merged\"}[1m])) by(task_id)",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "merged - {{task_id}}",
+              "refId": "D"
             }
           ],
           "thresholds": [],

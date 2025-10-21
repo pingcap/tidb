@@ -1067,41 +1067,6 @@ a
 1
 1
 2
-drop table if exists test.tt;
-create table test.tt (a int,b int, index(a), index(b));
-insert into test.tt values (1, 1), (2, 2), (3, 4);
-set @@tidb_partition_prune_mode='static';
-explain format = 'plan_tree' select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1;
-id	task	access object	operator info
-IndexLookUp	root		
-├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:a(a)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	cop[tikv]		eq(test.tt.b, 1)
-  └─TableRowIDScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format = 'plan_tree' select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;
-id	task	access object	operator info
-IndexLookUp	root		
-├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:b(b)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	cop[tikv]		eq(test.tt.a, 1)
-  └─TableRowIDScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format = 'plan_tree' select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;
-id	task	access object	operator info
-IndexLookUp	root		
-├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:a(a)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	cop[tikv]		eq(test.tt.b, 1)
-  └─TableRowIDScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format = 'plan_tree' select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;
-id	task	access object	operator info
-IndexLookUp	root		
-├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:b(b)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	cop[tikv]		eq(test.tt.a, 1)
-  └─TableRowIDScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format = 'plan_tree' select * from test.tt where a=1 and b=1;
-id	task	access object	operator info
-IndexLookUp	root		
-├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:a(a)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	cop[tikv]		eq(test.tt.b, 1)
-  └─TableRowIDScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
-set @@tidb_partition_prune_mode=DEFAULT;
 drop table if exists t;
 create table t(e enum('c','b','a',''), index idx(e));
 insert ignore into t values(0),(1),(2),(3),(4);

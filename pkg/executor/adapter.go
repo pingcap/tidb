@@ -443,7 +443,7 @@ func (a *ExecStmt) IsPrepared() bool {
 // If current StmtNode is an ExecuteStmt, we can get its prepared stmt,
 // then using ast.IsReadOnly function to determine a statement is read only or not.
 func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
-	return planner.IsReadOnly(a.StmtNode, vars)
+	return plannercore.IsReadOnly(a.StmtNode, vars)
 }
 
 // RebuildPlan rebuilds current execute statement plan.
@@ -1664,15 +1664,18 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
-	level := log.GetLevel()
-	cfg := config.GetGlobalConfig()
-	costTime := sessVars.GetTotalCostDuration()
-	threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
-	enable := cfg.Instance.EnableSlowLog.Load()
-	// if the level is Debug, or trace is enabled, print slow logs anyway
-	force := level <= zapcore.DebugLevel || trace.IsEnabled()
-	if (!enable || costTime < threshold) && !force {
-		return
+	var costTime, threshold time.Duration
+	if !stmtCtx.WriteSlowLog {
+		cfg := config.GetGlobalConfig()
+		level := log.GetLevel()
+		costTime = sessVars.GetTotalCostDuration()
+		threshold = time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
+		enable := cfg.Instance.EnableSlowLog.Load()
+		// if the level is Debug, or trace is enabled, print slow logs anyway
+		force := level <= zapcore.DebugLevel || trace.IsEnabled()
+		if (!enable || costTime < threshold) && !force {
+			return
+		}
 	}
 
 	var indexNames string

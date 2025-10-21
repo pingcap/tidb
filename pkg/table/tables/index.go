@@ -82,11 +82,13 @@ func (c *index) TableMeta() *model.TableInfo {
 func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
 	idxTblID := c.phyTblID
 	if c.idxInfo.Global {
+		idxTblID = c.tblInfo.ID
 		pi := c.tblInfo.GetPartitionInfo()
-		if pi.NewTableID != 0 && c.idxInfo.State != model.StatePublic {
-			idxTblID = pi.NewTableID
-		} else {
-			idxTblID = c.tblInfo.ID
+		if pi != nil && pi.NewTableID != 0 {
+			isNew, ok := pi.DDLChangedIndex[c.idxInfo.ID]
+			if ok && isNew {
+				idxTblID = pi.NewTableID
+			}
 		}
 	}
 	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
@@ -95,12 +97,12 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 }
 
 // GenIndexValue generates the index value.
-func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct bool, indexedValues []types.Datum,
+func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, untouched bool, indexedValues []types.Datum,
 	h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error) {
 	c.initNeedRestoreData.Do(func() {
 		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 	})
-	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData, buf)
+	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
 	err = ec.HandleError(err)
 	return idx, err
 }
@@ -244,12 +246,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 
 		// save the key buffer to reuse.
 		writeBufs.IndexKeyBuf = key
-		c.initNeedRestoreData.Do(func() {
-			c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
-		})
-		idxVal, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo,
-			c.needRestoredData, distinct, untouched, value, h, c.phyTblID, handleRestoreData, nil)
-		err = ec.HandleError(err)
+		idxVal, err := c.GenIndexValue(ec, loc, distinct, untouched, value, h, handleRestoreData, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -311,7 +308,21 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			// In DeleteReorganization, overwrite Global Index keys pointing to
 			// old dropped/truncated partitions.
 			// Note that a partitioned table cannot be temporary table
-			value, err = txn.Get(ctx, key)
+
+			// Check mem buffer first. Note that it may be a tombstone
+			// resulting in err == nil and len(value) == 0.
+			// err == nil will also turn off lazyCheck later,
+			// and skip kv.SetPresumeKeyNotExists flag, to allow
+			// taking locks on already existing row.
+			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
+			if kv.IsErrNotFound(err) {
+				// Not in mem buffer, must do non-lazy read, since we must check
+				// if exists now, to be able to overwrite.
+				value, err = txn.GetSnapshot().Get(ctx, key)
+				if err == nil && len(value) == 0 {
+					err = kv.ErrNotExist
+				}
+			}
 			if err == nil && len(value) != 0 {
 				handle, errPart := tablecodec.DecodeHandleInIndexValue(value)
 				if errPart != nil {

@@ -25,9 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -75,19 +72,18 @@ func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column
 // PredicatePushDown inherits the BaseLogicalPlan.LogicalPlan.<1st> implementation.
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	leftCols, rightCols := la.ExtractUsedCols(parentUsedCols)
 	allowEliminateApply := fixcontrol.GetBoolWithDefault(la.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45822, true)
 	var err error
 	if allowEliminateApply && rightCols == nil && la.JoinType == base.LeftOuterJoin {
-		logicaltrace.ApplyEliminateTraceStep(la.Children()[1], opt)
 		resultPlan := la.Children()[0]
 		// reEnter the new child's column pruning, returning child[0] as a new child here.
-		return resultPlan.PruneColumns(parentUsedCols, opt)
+		return resultPlan.PruneColumns(parentUsedCols)
 	}
 
 	// column pruning for child-1.
-	la.Children()[1], err = la.Children()[1].PruneColumns(rightCols, opt)
+	la.Children()[1], err = la.Children()[1].PruneColumns(rightCols)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +94,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	}
 
 	// column pruning for child-0.
-	la.Children()[0], err = la.Children()[0].PruneColumns(leftCols, opt)
+	la.Children()[0], err = la.Children()[0].PruneColumns(leftCols)
 	if err != nil {
 		return nil, err
 	}
@@ -175,11 +171,6 @@ func (la *LogicalApply) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 }
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalApply(la, prop)
-}
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
 func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
