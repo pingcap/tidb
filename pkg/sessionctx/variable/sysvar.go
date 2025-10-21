@@ -68,10 +68,19 @@ import (
 )
 
 type concurrencySetter func(s *SessionVars, v int)
+type execConcurrencySysVarOption func(sv *SysVar)
+
+func withAllowAutoValue(allow bool) execConcurrencySysVarOption {
+	return func(sv *SysVar) { sv.AllowAutoValue = allow }
+}
+
+func withMinValue(minVal int64) execConcurrencySysVarOption {
+	return func(sv *SysVar) { sv.MinValue = minVal }
+}
 
 // newExecConcurrencySysVar creates a session/global SysVar for executor concurrency settings.
-func newExecConcurrencySysVar(name string, defValue int, setter concurrencySetter) *SysVar {
-	return &SysVar{
+func newExecConcurrencySysVar(name string, defValue int, setter concurrencySetter, opts ...execConcurrencySysVarOption) *SysVar {
+	sv := &SysVar{
 		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:  name,
 		Value: strconv.Itoa(defValue), Type: vardef.TypeInt,
@@ -86,6 +95,11 @@ func newExecConcurrencySysVar(name string, defValue int, setter concurrencySette
 			return normalizedValue, nil
 		},
 	}
+	for _, opt := range opts {
+		opt(sv)
+	}
+
+	return sv
 }
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -2282,7 +2296,7 @@ var defaultSysVars = []*SysVar{
 		return normalizedValue, nil
 	}},
 	newExecConcurrencySysVar(vardef.TiDBHashJoinConcurrency, vardef.DefTiDBHashJoinConcurrency, func(s *SessionVars, v int) { s.hashJoinConcurrency = v }),
-	newExecConcurrencySysVar(vardef.TiDBProjectionConcurrency, vardef.DefTiDBProjectionConcurrency, func(s *SessionVars, v int) { s.projectionConcurrency = v }),
+	newExecConcurrencySysVar(vardef.TiDBProjectionConcurrency, vardef.DefTiDBProjectionConcurrency, func(s *SessionVars, v int) { s.projectionConcurrency = v }, withMinValue(-1), withAllowAutoValue(false)),
 	newExecConcurrencySysVar(vardef.TiDBHashAggPartialConcurrency, vardef.DefTiDBHashAggPartialConcurrency, func(s *SessionVars, v int) { s.hashAggPartialConcurrency = v }),
 	newExecConcurrencySysVar(vardef.TiDBHashAggFinalConcurrency, vardef.DefTiDBHashAggFinalConcurrency, func(s *SessionVars, v int) { s.hashAggFinalConcurrency = v }),
 	newExecConcurrencySysVar(vardef.TiDBWindowConcurrency, vardef.DefTiDBWindowConcurrency, func(s *SessionVars, v int) { s.windowConcurrency = v }),
