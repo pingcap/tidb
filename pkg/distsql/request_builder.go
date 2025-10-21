@@ -491,7 +491,7 @@ func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprReques
 	return builder
 }
 
-// SetConnIDAndConnAlias sets connection id for the build.
+// SetConnIDAndConnAlias sets connection id for the builder.
 func (builder *RequestBuilder) SetConnIDAndConnAlias(connID uint64, connAlias string) *RequestBuilder {
 	builder.ConnID = connID
 	builder.ConnAlias = connAlias
