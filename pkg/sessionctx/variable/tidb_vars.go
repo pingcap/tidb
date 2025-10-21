@@ -1614,6 +1614,7 @@ const (
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBLoadBindingTimeout                         = 200
+	DefTiDBEnableBindingUsage                         = true
 )
 
 // Process global variables.
@@ -1736,6 +1737,7 @@ var (
 
 	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	EnableBindingUsage        = atomic.NewBool(DefTiDBEnableBindingUsage)
 )
 
 var (

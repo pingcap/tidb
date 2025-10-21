@@ -88,6 +88,8 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	}
 	binding, matched = globalHandle.MatchGlobalBinding(sctx, fuzzyDigest, tableNames)
 	if matched {
+		// After hitting the cache, update the usage time of the bind.
+		binding.UpdateLastUsedAt()
 		return binding, matched, metrics.ScopeGlobal
 	}
 

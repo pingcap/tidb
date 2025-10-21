@@ -106,6 +106,9 @@ type GlobalBindingHandle interface {
 	// CaptureBaselines is used to automatically capture plan baselines.
 	CaptureBaselines()
 
+	// UpdateBindingUsageInfoToStorage is to update the binding usage info into storage
+	UpdateBindingUsageInfoToStorage() error
+
 	variable.Statistics
 }
 
@@ -255,6 +258,20 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 	})
 }
 
+// UpdateBindingUsageInfoToStorage is to update the binding usage info into storage
+func (h *globalBindingHandle) UpdateBindingUsageInfoToStorage() error {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BindLogger().Warn("panic when update usage info for binding", zap.Any("recover", r))
+		}
+	}()
+	if !variable.EnableBindingUsage.Load() {
+		return nil
+	}
+	bindings := h.GetAllGlobalBindings()
+	return h.updateBindingUsageInfoToStorage(bindings)
+}
+
 // CreateGlobalBinding creates a Bindings to the storage and the cache.
 // It replaces all the exists bindings for the same normalized SQL.
 func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
@@ -293,11 +310,19 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 
 			binding.CreateTime = now
 			binding.UpdateTime = now
-
+			var sqlDigest, planDigest any // null by default
+			if binding.SQLDigest != "" {
+				sqlDigest = binding.SQLDigest
+			}
+			if binding.PlanDigest != "" {
+				planDigest = binding.PlanDigest
+			}
 			// Insert the Bindings to the storage.
 			_, err = exec(
 				sctx,
-				`INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+				`INSERT INTO mysql.bind_info(
+ original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest
+) VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 				binding.OriginalSQL,
 				binding.BindSQL,
 				strings.ToLower(binding.Db),
@@ -307,8 +332,8 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 				binding.Charset,
 				binding.Collation,
 				binding.Source,
-				binding.SQLDigest,
-				binding.PlanDigest,
+				sqlDigest,
+				planDigest,
 			)
 			failpoint.Inject("CreateGlobalBindingNthFail", func(val failpoint.Value) {
 				n := val.(int)

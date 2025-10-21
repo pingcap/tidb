@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -339,4 +340,43 @@ func TestFuzzyBindingPlanCache(t *testing.T) {
 	tk.MustExec(`create global binding using select /*+ use_index(t, c) */ * from *.t where e > 1`)
 	tk.MustExec(`execute stmt using @v`)
 	hasPlan("IndexFullScan", "index:c(c)")
+}
+
+func BenchmarkFuzzyBindingBasic(b *testing.B) {
+	b.ReportAllocs()
+	store := testkit.CreateMockStore(b)
+	tk1 := testkit.NewTestKit(b, store)
+	tk1.MustExec(`use test`)
+	tk1.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
+	tk1.MustExec(`create database test1`)
+	tk1.MustExec(`use test1`)
+	tk1.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
+	tk1.MustExec(`create database test2`)
+	tk1.MustExec(`use test2`)
+	tk1.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
+
+	variable.EnableBindingUsage.Store(true)
+	for _, scope := range []string{"", "session", "global"} {
+		tk := testkit.NewTestKit(b, store)
+		for _, idx := range []string{"a", "b", "c", "d", "e"} {
+			tk.MustExec("use test")
+			tk.MustExec(fmt.Sprintf(`create %v binding using select /*+ use_index(t, %v) */ * from *.t`, scope, idx))
+			for _, useDB := range []string{"test", "test1", "test2"} {
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					tk.MustExec("use " + useDB)
+					for _, testDB := range []string{"", "test.", "test1.", "test2."} {
+						tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`) // enabled
+						tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx)
+						tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+						tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx)
+						tk.MustQuery(`show warnings`).Check(testkit.Rows())  // no warning
+						tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=0`) // disabled
+						tk.MustQuery(fmt.Sprintf("select * from %vt", testDB))
+						tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
+					}
+				}
+			}
+		}
+	}
 }
