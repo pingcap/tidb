@@ -1679,6 +1679,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 
 	if !vardef.GlobalSlowLogRateLimiter.Allow() {
+		sampleLoggerFactory().Info("slow log skipped due to rate limiting", zap.Int64("tidb_slow_log_max_per_sec", int64(vardef.GlobalSlowLogRateLimiter.Limit())))
 		return
 	}
 
