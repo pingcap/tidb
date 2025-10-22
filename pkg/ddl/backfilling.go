@@ -674,7 +674,7 @@ func getActualEndKey(
 		// and IndexMergeTmpWorker should still be finished in a bounded time.
 		return rangeEnd
 	}
-	if bfTp == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+	if bfTp == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
 		// Ingest worker uses coprocessor to read table data. It is fast enough,
 		// we don't need to get the actual end key of this range.
 		return rangeEnd
@@ -790,12 +790,30 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		hasUnique = hasUnique || indexInfo.Unique
 	}
 
+<<<<<<< HEAD
 	//nolint: forcetypeassert
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
 		ctx, job, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, maxWriteSpeed, job.RealStartTS, 0)
+=======
+	var (
+		cfg *local.BackendConfig
+		bd  *local.Backend
+		err error
+	)
+	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
+		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, hasUnique, false, 0)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer bd.Close()
+	}
+	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
+		WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
+		Build(cfg, bd)
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1021,8 +1039,13 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(reorgInfo.Job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
 		}
 	})
+<<<<<<< HEAD
 	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		return dc.runAddIndexInLocalIngestMode(ctx, sessPool, t, reorgInfo)
+=======
+	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
+		return dc.addIndexWithLocalIngest(ctx, sessPool, t, reorgInfo)
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 	}
 
 	jc := reorgInfo.NewJobContext()

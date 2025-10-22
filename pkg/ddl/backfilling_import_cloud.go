@@ -69,6 +69,22 @@ func newCloudImportExecutor(
 
 func (*cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
+<<<<<<< HEAD
+=======
+	e.metric = metrics.RegisterLightningCommonMetricsForDDL(e.job.ID)
+	ctx = lightningmetric.WithCommonMetric(ctx, e.metric)
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, hasUniqueIndex(e.indexes), false, e.taskConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, e.store, e.job).Build(cfg, bd)
+	if err != nil {
+		bd.Close()
+		return err
+	}
+	e.backend = bd
+	e.backendCtx = bCtx
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 	return nil
 }
 
@@ -142,7 +158,20 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	return kv.ErrKeyExists
 }
 
+<<<<<<< HEAD
 func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
+=======
+func hasUniqueIndex(idxs []*model.IndexInfo) bool {
+	for _, idx := range idxs {
+		if idx.Unique {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *cloudImportExecutor) Cleanup(ctx context.Context) error {
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(m.job.ID)

@@ -261,7 +261,7 @@ func rollbackModifyColumnJobWithData(
 	}
 	var changingIdxIDs []int64
 	if args.ChangingColumn != nil {
-		changingIdxIDs = buildRelatedIndexIDs(tblInfo, args.ChangingColumn.ID)
+		changingIdxIDs = getRollbackIndexIDs(job, tblInfo, args.ChangingColumn.ID)
 		// The job is in the middle state. The appended changingCol and changingIndex should
 		// be removed from the tableInfo as well.
 		removeChangingColAndIdxs(tblInfo, args.ChangingColumn.ID)
@@ -477,6 +477,12 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		// none -> delete only
 		updateObjectState(changingCol, changingIdxs, model.StateDeleteOnly)
+		job.ReorgMeta.Stage = model.ReorgStageModifyColumnUpdateColumn
+		err := initForReorgIndexes(w, job, changingIdxs)
+		if err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var sctx sessionctx.Context
@@ -550,6 +556,55 @@ func (w *worker) doModifyColumnTypeWithData(
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+<<<<<<< HEAD
+=======
+		switch job.ReorgMeta.AnalyzeState {
+		case model.AnalyzeStateNone:
+			switch job.ReorgMeta.Stage {
+			case model.ReorgStageModifyColumnUpdateColumn:
+				var done bool
+				reorgElements := BuildElements(changingCol, changingIdxs)
+				done, ver, err = doReorgWorkForModifyColumn(jobCtx, w, job, tbl, oldCol, reorgElements)
+				if !done {
+					return ver, err
+				}
+				if len(changingIdxs) > 0 {
+					job.SnapshotVer = 0
+					job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
+				} else {
+					job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
+				}
+			case model.ReorgStageModifyColumnRecreateIndex:
+				var done bool
+				done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, changingIdxs)
+				if !done {
+					return ver, err
+				}
+				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
+			case model.ReorgStageModifyColumnCompleted:
+				if checkAnalyzeNecessary(job, changingIdxs, tblInfo) {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+				} else {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+					checkAndMarkNonRevertible(job)
+				}
+			}
+		case model.AnalyzeStateRunning:
+			// after all old index data are reorged. re-analyze it.
+			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+			failpoint.InjectCall("afterReorgWorkForModifyColumn")
+			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
+			if tblInfo.TTLInfo != nil {
+				updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, colName)
+			}
+			changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
+			intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 
 		var done bool
 		if job.MultiSchemaInfo != nil {
@@ -594,7 +649,12 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
+<<<<<<< HEAD
 			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
+=======
+			analyzed := job.ReorgMeta.AnalyzeState == model.AnalyzeStateDone
+			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -609,6 +669,11 @@ func (w *worker) doModifyColumnTypeWithData(
 			// Refactor the job args to add the old index ids into delete range table.
 			rmIdxs := append(removedIdxIDs, args.RedundantIdxs...)
 			args.IndexIDs = rmIdxs
+			newIdxIDs := make([]int64, 0, len(changingIdxs))
+			for _, idx := range changingIdxs {
+				newIdxIDs = append(newIdxIDs, idx.ID)
+			}
+			args.NewIndexIDs = newIdxIDs
 			args.PartitionIDs = getPartitionIDs(tblInfo)
 			job.FillFinishedArgs(args)
 		default:
@@ -622,6 +687,7 @@ func (w *worker) doModifyColumnTypeWithData(
 	return ver, errors.Trace(err)
 }
 
+<<<<<<< HEAD
 func doReorgWorkForModifyColumnMultiSchema(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
@@ -640,6 +706,49 @@ func doReorgWorkForModifyColumnMultiSchema(w *worker, jobCtx *jobContext, job *m
 func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+=======
+func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
+	analyzeVer := vardef.DefTiDBAnalyzeVersion
+	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
+		analyzeVer = variable.TidbOptInt(val, analyzeVer)
+	}
+	enableDDLAnalyze := vardef.DefTiDBEnableDDLAnalyze
+	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok {
+		enableDDLAnalyze = variable.TiDBOptOn(val)
+	}
+	hasPartition := tbl.GetPartitionInfo() != nil
+	hasChangingIdx := len(changingIdxes) > 0
+
+	if enableDDLAnalyze && hasChangingIdx && !hasPartition && analyzeVer == 2 {
+		return true
+	}
+	logutil.DDLLogger().Info("skip analyze",
+		zap.Bool("tidb_enable_ddl_analyze", enableDDLAnalyze),
+		zap.Bool("is partitioned table", hasPartition),
+		zap.Int("affected indexes count", len(changingIdxes)),
+		zap.Int("tidb_analyze_version", analyzeVer))
+	return false
+}
+
+// checkAndMarkNonRevertible should be called when the job is in the final revertible state before public.
+func checkAndMarkNonRevertible(job *model.Job) {
+	// previously, when reorg is done, and before we set the state to public, we need all other sub-task to
+	// be ready as well which is via setting this job as NornRevertible, then we can continue skip current
+	// sub and process the others.
+	// And when all sub-task are ready, which means each of them could be public in one more ddl round. And
+	// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
+	// use the schema version generated once.
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+	}
+}
+
+func doReorgWorkForModifyColumn(
+	jobCtx *jobContext,
+	w *worker, job *model.Job, tbl table.Table,
+	oldCol *model.ColumnInfo, elements []*meta.Element,
+) (done bool, ver int64, err error) {
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
 		err = errors.Trace(err1)
@@ -669,7 +778,11 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, t
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tbl.Meta().Name, oldCol.Name)
 			}, false)
+<<<<<<< HEAD
 		return w.updateCurrentElement(jobCtx.stepCtx, tbl, reorgInfo)
+=======
+		return w.modifyTableColumn(jobCtx, tbl, reorgInfo)
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -853,7 +966,11 @@ func GetModifiableColumnJob(
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column")
 		}
 		// new col's origin default value be the same as the new default value.
-		if err = newCol.ColumnInfo.SetOriginDefaultValue(newCol.ColumnInfo.GetDefaultValue()); err != nil {
+		originDefVal, err := generateOriginDefaultValue(newCol.ColumnInfo, sctx, false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if err = newCol.ColumnInfo.SetOriginDefaultValue(originDefVal); err != nil {
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("new column set origin default value failed")
 		}
 	}

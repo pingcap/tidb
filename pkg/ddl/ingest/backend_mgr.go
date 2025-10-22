@@ -146,6 +146,16 @@ func (m *litBackendCtxMgr) Register(
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", job.ID), zap.Error(err))
 		return nil, err
 	}
+<<<<<<< HEAD
+=======
+	intest.Assert(
+		job.Type == model.ActionAddPrimaryKey ||
+			job.Type == model.ActionAddIndex ||
+			job.Type == model.ActionModifyColumn,
+	)
+	intest.Assert(job.ReorgMeta != nil)
+
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 	failpoint.Inject("beforeCreateLocalBackend", func() {
 		ResignOwnerForTest.Store(true)
 	})
@@ -177,12 +187,31 @@ func (m *litBackendCtxMgr) EncodeJobSortPath(jobID int64) string {
 	return filepath.Join(m.path, encodeBackendTag(jobID))
 }
 
+<<<<<<< HEAD
 func createLocalBackend(
 	ctx context.Context,
 	cfg *local.BackendConfig,
 	pdSvcDiscovery pd.ServiceDiscovery,
 	adjustedWorkerConcurrency int,
 ) (*local.Backend, error) {
+=======
+// CreateLocalBackend creates a local backend for adding index.
+func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, hasUnique, checkDup bool, adjustedWorkerConcurrency int) (*local.BackendConfig, *local.Backend, error) {
+	ctx = logutil.WithLogger(ctx, logutil.Logger(ctx))
+	jobSortPath, err := genJobSortPath(job.ID, checkDup)
+	if err != nil {
+		return nil, nil, err
+	}
+	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
+		job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionModifyColumn)
+	intest.Assert(job.ReorgMeta != nil)
+
+	resGroupName := job.ReorgMeta.ResourceGroupName
+	concurrency := job.ReorgMeta.GetConcurrency()
+	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
+	cfg := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, store.GetKeyspace(), concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 	if adjustedWorkerConcurrency > 0 {
 		cfg.WorkerConcurrency = adjustedWorkerConcurrency
 	}
@@ -201,8 +230,22 @@ func createLocalBackend(
 
 	ddllogutil.DDLIngestLogger().Info("create local backend for adding index",
 		zap.String("sortDir", cfg.LocalStoreDir),
+<<<<<<< HEAD
 		zap.String("keyspaceName", cfg.KeyspaceName))
 	return local.NewBackend(ctx, tls, *cfg, pdSvcDiscovery)
+=======
+		zap.String("keyspaceName", cfg.KeyspaceName),
+		zap.Int64("job ID", job.ID),
+		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
+		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()),
+		zap.Bool("has unique index", hasUnique),
+		zap.Bool("checking duplicate", checkDup))
+
+	//nolint: forcetypeassert
+	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
+	be, err := local.NewBackend(ctx, tls, *cfg, pdCli.GetServiceDiscovery())
+	return cfg, be, err
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 }
 
 const checkpointUpdateInterval = 10 * time.Minute

@@ -98,6 +98,22 @@ func newReadIndexExecutor(
 
 func (*readIndexExecutor) Init(_ context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
+<<<<<<< HEAD
+=======
+	cfg := config.GetGlobalConfig()
+	if cfg.Store == config.StoreTypeTiKV {
+		if !r.isGlobalSort() {
+			r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
+			ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
+		}
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.store, r.job, hasUniqueIndex(r.indexes), false, 0)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		r.backendCfg = cfg
+		r.backend = bd
+	}
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 	return nil
 }
 

@@ -987,14 +987,12 @@ SwitchIndexState:
 	switch allIndexInfos[0].State {
 	case model.StateNone:
 		// none -> delete only
-		var reorgTp model.ReorgType
-		reorgTp, err = pickBackfillType(job)
+		err = initForReorgIndexes(w, job, allIndexInfos)
 		if err != nil {
-			if !isRetryableJobError(err, job.ErrorCount) {
-				job.State = model.JobStateCancelled
-			}
+			job.State = model.JobStateCancelled
 			return ver, err
 		}
+<<<<<<< HEAD
 		loadCloudStorageURI(w, job)
 		if reorgTp.NeedMergeProcess() {
 			// Increase telemetryAddIndexIngestUsage
@@ -1002,6 +1000,14 @@ SwitchIndexState:
 			for _, indexInfo := range allIndexInfos {
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}
+=======
+		err = preSplitIndexRegions(jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos, job.ReorgMeta, args)
+		if err != nil {
+			if !isRetryableJobError(err, job.ErrorCount) {
+				job.State = model.JobStateCancelled
+			}
+			return ver, err
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 		}
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateDeleteOnly
@@ -1051,6 +1057,7 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
+<<<<<<< HEAD
 		var done bool
 		if job.MultiSchemaInfo != nil {
 			done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, jobCtx, job, tbl, allIndexInfos)
@@ -1059,6 +1066,87 @@ SwitchIndexState:
 		}
 		if !done {
 			return ver, err
+=======
+		switch job.ReorgMeta.AnalyzeState {
+		case model.AnalyzeStateNone:
+			// reorg the index data.
+			var done bool
+			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
+			if !done {
+				return ver, err
+			}
+			if checkAnalyzeNecessary(job, allIndexInfos, tblInfo) {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+			} else {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateRunning:
+			// after all old index data are reorged. re-analyze it.
+			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+			// Set column index flag.
+			for _, indexInfo := range allIndexInfos {
+				AddIndexColumnFlag(tblInfo, indexInfo)
+				if isPK {
+					if err = UpdateColsNull2NotNull(tblInfo, indexInfo); err != nil {
+						return ver, errors.Trace(err)
+					}
+				}
+				indexInfo.State = model.StatePublic
+			}
+
+			// Inject the failpoint to prevent the progress of index creation.
+			failpoint.Inject("create-index-stuck-before-public", func(v failpoint.Value) {
+				if sigFile, ok := v.(string); ok {
+					for {
+						time.Sleep(1 * time.Second)
+						if _, err := os.Stat(sigFile); err != nil {
+							if os.IsNotExist(err) {
+								continue
+							}
+							failpoint.Return(ver, errors.Trace(err))
+						}
+						break
+					}
+				}
+			})
+
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StatePublic)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+
+			a := &model.ModifyIndexArgs{
+				PartitionIDs: getPartitionIDs(tbl.Meta()),
+				OpType:       model.OpAddIndex,
+			}
+			for _, indexInfo := range allIndexInfos {
+				a.IndexArgs = append(a.IndexArgs, &model.IndexArg{
+					IndexID:  indexInfo.ID,
+					IfExist:  false,
+					IsGlobal: indexInfo.Global,
+				})
+			}
+			job.FillFinishedArgs(a)
+
+			analyzed := job.ReorgMeta.AnalyzeState == model.AnalyzeStateDone
+			addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos, analyzed)
+			err2 := asyncNotifyEvent(jobCtx, addIndexEvent, job, noSubJob, w.sess)
+			if err2 != nil {
+				return ver, errors.Trace(err2)
+			}
+
+			// Finish this job.
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			logutil.DDLLogger().Info("run add index job done",
+				zap.String("charset", job.Charset),
+				zap.String("collation", job.Collate))
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 		}
 
 		// Set column index flag.
@@ -1127,6 +1215,86 @@ SwitchIndexState:
 	return ver, errors.Trace(err)
 }
 
+<<<<<<< HEAD
+=======
+func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo) error {
+	if len(idxInfos) == 0 {
+		return nil
+	}
+	reorgTp, err := pickBackfillType(job)
+	if err != nil {
+		return err
+	}
+	loadCloudStorageURI(w, job)
+	if reorgTp.NeedMergeProcess() {
+		// Increase telemetryAddIndexIngestUsage
+		telemetryAddIndexIngestUsage.Inc()
+		for _, indexInfo := range idxInfos {
+			indexInfo.BackfillState = model.BackfillStateRunning
+		}
+	}
+	return nil
+}
+
+func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) bool {
+	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
+	if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.NeedAnalyze {
+		// If the job is a multi-schema-change job,
+		// we only analyze the table once after all schema changes are done.
+		return true
+	}
+	if doneCh == nil {
+		doneCh = make(chan struct{})
+		eg := util.NewErrorGroupWithRecover()
+		eg.Go(func() error {
+			sessCtx, err := w.sessPool.Get()
+			if err != nil {
+				return err
+			}
+			defer func() {
+				w.sessPool.Put(sessCtx)
+				close(doneCh)
+			}()
+			dbTable := fmt.Sprintf("`%s`.`%s`", dbName, tblName)
+
+			exec, ok := sessCtx.(sqlexec.RestrictedSQLExecutor)
+			if !ok {
+				return errors.Errorf("not restricted SQL executor: %T", sessCtx)
+			}
+			// internal sql may not init the analysis related variable correctly.
+			err = statsutil.UpdateSCtxVarsForStats(sessCtx)
+			if err != nil {
+				return err
+			}
+			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
+			if err != nil {
+				logutil.DDLLogger().Warn("analyze table failed",
+					zap.Int64("jobID", job.ID),
+					zap.String("db", dbName),
+					zap.String("table", tblName),
+					zap.Error(err),
+					zap.Stack("stack"))
+				// We can continue to finish the job even if analyze table failed.
+			}
+			return nil
+		})
+		w.ddlCtx.setAnalyzeDoneCh(job.ID, doneCh)
+	}
+	select {
+	case <-doneCh:
+		logutil.DDLLogger().Info("analyze table after create index done", zap.Int64("jobID", job.ID))
+		return true
+	case <-w.ctx.Done():
+		logutil.DDLLogger().Info("analyze table after create index context done",
+			zap.Int64("jobID", job.ID), zap.Error(w.ctx.Err()))
+		return true
+	case <-time.After(10 * time.Second):
+		logutil.DDLLogger().Info("analyze table after create index timeout check", zap.Int64("jobID", job.ID))
+		return false
+	}
+}
+
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 func checkIfTableReorgWorkCanSkip(
 	store kv.Storage,
 	sessCtx sessionctx.Context,
@@ -1286,17 +1454,22 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 	}
 	if ingest.LitInitialized {
 		if job.ReorgMeta.UseCloudStorage {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			return model.ReorgTypeLitMerge, nil
+			job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
+			return model.ReorgTypeIngest, nil
 		}
 		available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
 		if err != nil {
 			return model.ReorgTypeNone, err
 		}
+<<<<<<< HEAD
 		if available {
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge, nil
 		}
+=======
+		job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
+		return model.ReorgTypeIngest, nil
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 	}
 	// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 	logutil.DDLLogger().Info("fallback to txn-merge backfill process",
@@ -1355,10 +1528,10 @@ func doReorgWorkForCreateIndex(
 		if !skipReorg {
 			logutil.DDLLogger().Info("index backfill state running",
 				zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
-				zap.Bool("ingest mode", reorgTp == model.ReorgTypeLitMerge),
+				zap.Bool("ingest mode", reorgTp == model.ReorgTypeIngest),
 				zap.String("index", allIndexInfos[0].Name.O))
 			switch reorgTp {
-			case model.ReorgTypeLitMerge:
+			case model.ReorgTypeIngest:
 				if job.ReorgMeta.IsDistReorg {
 					done, ver, err = runIngestReorgJobDist(w, jobCtx, job, tbl, allIndexInfos)
 				} else {
@@ -2415,6 +2588,7 @@ func (w *worker) addTableIndex(
 	t table.Table,
 	reorgInfo *reorgInfo,
 ) error {
+<<<<<<< HEAD
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
@@ -2430,6 +2604,13 @@ func (w *worker) addTableIndex(
 				return nil
 			}
 			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, discovery)
+=======
+	ctx := jobCtx.stepCtx
+	if reorgInfo.ReorgMeta.IsDistReorg && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
+		err := w.executeDistTask(jobCtx, t, reorgInfo)
+		if err != nil {
+			return err
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 		}
 	}
 
@@ -2488,9 +2669,22 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		}
 		if indexInfo.Unique {
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
+<<<<<<< HEAD
 			if bc == nil {
 				bc, err = ingest.LitBackCtxMgr.Register(
 					ctx, reorgInfo.Job, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, 0, reorgInfo.RealStartTS, 0)
+=======
+			if backendCtx == nil {
+				if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
+					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true, true, 0)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
+				backendCtx, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
+					ForDuplicateCheck().
+					Build(cfg, backend)
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 				if err != nil {
 					return err
 				}

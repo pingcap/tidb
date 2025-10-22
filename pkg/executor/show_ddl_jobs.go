@@ -297,13 +297,26 @@ func showCommentsFromJob(job *model.Job) string {
 		return ""
 	}
 	var labels []string
+<<<<<<< HEAD
 	if job.Type == model.ActionAddIndex ||
 		job.Type == model.ActionAddPrimaryKey {
+=======
+	if m.AnalyzeState == model.AnalyzeStateRunning {
+		labels = append(labels, "analyzing")
+	}
+	isAddingIndex := job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionAddPrimaryKey
+	if isAddingIndex && kerneltype.IsNextGen() {
+		// The parameters are determined automatically in next-gen.
+		return strings.Join(labels, ", ")
+	}
+	if isAddingIndex {
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 		switch m.ReorgTp {
 		case model.ReorgTypeTxn:
 			labels = append(labels, model.ReorgTypeTxn.String())
-		case model.ReorgTypeLitMerge:
-			labels = append(labels, model.ReorgTypeLitMerge.String())
+		case model.ReorgTypeIngest:
+			labels = append(labels, model.ReorgTypeIngest.String())
 			if m.IsDistReorg {
 				labels = append(labels, "DXF")
 			}

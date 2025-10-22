@@ -17,7 +17,6 @@ package ddl
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"math/bits"
 	"slices"
@@ -130,7 +129,7 @@ func checkDropColumnForStatePublic(colInfo *model.ColumnInfo) (err error) {
 		// But currently will be ok, because we can't cancel the drop column job when the job is running,
 		// so the column will be dropped succeed and client will never see the wrong default value of the dropped column.
 		// More info about this problem, see PR#9115.
-		originDefVal, err := generateOriginDefaultValue(colInfo, nil)
+		originDefVal, err := generateOriginDefaultValue(colInfo, nil, true)
 		if err != nil {
 			return err
 		}
@@ -474,14 +473,18 @@ func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.Inde
 	return indexInfos
 }
 
-func buildRelatedIndexIDs(tblInfo *model.TableInfo, colID int64) []int64 {
-	var oldIdxIDs []int64
+func getRollbackIndexIDs(job *model.Job, tblInfo *model.TableInfo, colID int64) []int64 {
+	hasTempIndexes := job.ReorgMeta.ReorgTp.NeedMergeProcess()
+	var idxIDs []int64
 	for _, idx := range tblInfo.Indices {
 		if idx.HasColumnInIndexColumns(tblInfo, colID) {
-			oldIdxIDs = append(oldIdxIDs, idx.ID)
+			idxIDs = append(idxIDs, idx.ID)
+			if hasTempIndexes {
+				idxIDs = append(idxIDs, tablecodec.TempIndexPrefix|idx.ID)
+			}
 		}
 	}
-	return oldIdxIDs
+	return idxIDs
 }
 
 // LocateOffsetToMove returns the offset of the column to move.
@@ -564,9 +567,15 @@ func (w *worker) updatePhysicalTableRow(
 // TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
 var TestReorgGoroutineRunning = make(chan struct{})
 
+<<<<<<< HEAD
 // updateCurrentElement update the current element for reorgInfo.
 func (w *worker) updateCurrentElement(
 	ctx context.Context,
+=======
+// modifyTableColumn modify the table column data for all rows.
+func (w *worker) modifyTableColumn(
+	jobCtx *jobContext,
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 	t table.Table,
 	reorgInfo *reorgInfo,
 ) error {
@@ -590,6 +599,7 @@ func (w *worker) updateCurrentElement(
 		// https://github.com/pingcap/tidb/issues/38297
 		return dbterror.ErrCancelledDDLJob.GenWithStack("Modify Column on partitioned table / typeUpdateColumnWorker not yet supported.")
 	}
+<<<<<<< HEAD
 	// Get the original start handle and end handle.
 	currentVer, err := getValidCurrentVersion(reorgInfo.jobCtx.store)
 	if err != nil {
@@ -638,6 +648,8 @@ func (w *worker) updateCurrentElement(
 			return errors.Trace(err)
 		}
 	}
+=======
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 	return nil
 }
 
@@ -1296,7 +1308,7 @@ func modifyColsFromNull2NotNull(
 	return nil
 }
 
-func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (any, error) {
+func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context, checkUnsafeFunc bool) (any, error) {
 	var err error
 	odValue := col.GetDefaultValue()
 	if odValue == nil && mysql.HasNotNullFlag(col.GetFlag()) ||
@@ -1343,7 +1355,7 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 		oldValue := strings.ToLower(valStr)
 		// It's checked in getFuncCallDefaultValue.
 		if !strings.Contains(oldValue, fmt.Sprintf("%s(%s(),", ast.DateFormat, ast.Now)) &&
-			!strings.Contains(oldValue, ast.StrToDate) {
+			!strings.Contains(oldValue, ast.StrToDate) && checkUnsafeFunc {
 			return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction)
 		}
 

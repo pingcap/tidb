@@ -545,3 +545,114 @@ func TestAddIndexValidateRangesFailed(t *testing.T) {
 	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
 }
+<<<<<<< HEAD
+=======
+
+func TestIndexChangeWithModifyColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (b int, c varchar(100) collate utf8mb4_unicode_ci)")
+	tk.MustExec("insert t values (1, 'aa'), (2, 'bb'), (3, 'cc');")
+
+	tkddl := testkit.NewTestKit(t, store)
+	tkddl.MustExec("use test")
+
+	var checkErr error
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	runModifyColumn := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateNone:
+			if runModifyColumn {
+				return
+			}
+			runModifyColumn = true
+			go func() {
+				_, checkErr = tkddl.Exec("alter table t modify column c varchar(120) default 'aaaaa' collate utf8mb4_general_ci first;")
+				wg.Done()
+			}()
+		default:
+			return
+		}
+	})
+
+	tk.MustExec("alter table t add index idx(c);")
+	wg.Wait()
+	require.ErrorContains(t, checkErr, "when index is defined")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t;")
+}
+
+func TestModifyColumnWithMultipleIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	testcases := []struct {
+		caseName        string
+		enableDistTask  string
+		enableFastReorg string
+	}{
+		{"txn", "off", "off"},
+		{"local ingest", "off", "on"},
+		{"dxf ingest", "on", "on"},
+	}
+	createTableSQL := `CREATE TABLE t (
+		a int(11) DEFAULT NULL,
+		b varchar(10) DEFAULT NULL,
+		c decimal(10,2) DEFAULT NULL,
+		KEY idx1 (a),
+		UNIQUE KEY idx2 (a),
+		KEY idx3 (a,b),
+		KEY idx4 (a,b,c)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`
+	for _, tc := range testcases {
+		t.Run(tc.caseName, func(t *testing.T) {
+			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
+			tk.MustExec(fmt.Sprintf("set global tidb_ddl_enable_fast_reorg = %s;", tc.enableFastReorg))
+			tk.MustExec("DROP TABLE IF EXISTS t")
+			tk.MustExec(createTableSQL)
+			tk.MustExec("insert into t values(19,1,1),(17,2,2)")
+			tk.MustExec("admin check table t;")
+			tk.MustExec("alter table t modify a bit(5) not null")
+			tk.MustExec("admin check table t;")
+		})
+	}
+}
+
+func TestModifyColumnWithIndexWithDefaultValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	testcases := []struct {
+		caseName        string
+		enableDistTask  string
+		enableFastReorg string
+	}{
+		{"txn", "off", "off"},
+		{"local ingest", "off", "on"},
+		{"dxf ingest", "on", "on"},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.caseName, func(t *testing.T) {
+			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
+			tk.MustExec(fmt.Sprintf("set global tidb_ddl_enable_fast_reorg = %s;", tc.enableFastReorg))
+			tk.MustExec("drop table if exists t1")
+			tk.MustExec("create table t1 (c int(10), c1 datetime default (date_format(now(),'%Y-%m-%d')));")
+			tk.MustExec("insert into t1(c) values (1), (2);")
+			tk.MustExec("alter table t1 add index idx(c1);")
+			tk.MustExec("insert into t1 values (3, default);")
+			tk.MustExec("alter table t1 modify column c1 varchar(30) default 'xx';")
+			tk.MustExec("alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));")
+			tk.MustExec("insert into t1 values (5, default);")
+			tk.MustExec("alter table t1 drop index idx;")
+		})
+	}
+}
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))

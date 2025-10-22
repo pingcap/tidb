@@ -191,7 +191,7 @@ func TestAddIngestRecorder(t *testing.T) {
 
 	// no add-index job, should ignore it
 	err = recorder.TryAddJob(fakeJob(
-		model.ReorgTypeLitMerge,
+		model.ReorgTypeIngest,
 		model.ActionDropIndex,
 		model.JobStateSynced,
 		100,
@@ -208,7 +208,7 @@ func TestAddIngestRecorder(t *testing.T) {
 
 	// no synced job, should ignore it
 	err = recorder.TryAddJob(fakeJob(
-		model.ReorgTypeLitMerge,
+		model.ReorgTypeIngest,
 		model.ActionAddIndex,
 		model.JobStateRollbackDone,
 		100,
@@ -227,7 +227,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		recorder := ingestrec.New()
 		// a normal ingest add index job
 		err = recorder.TryAddJob(fakeJob(
-			model.ReorgTypeLitMerge,
+			model.ReorgTypeIngest,
 			model.ActionAddIndex,
 			model.JobStateSynced,
 			1000,
@@ -249,7 +249,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		recorder := ingestrec.New()
 		// a normal ingest add primary index job
 		err = recorder.TryAddJob(fakeJob(
-			model.ReorgTypeLitMerge,
+			model.ReorgTypeIngest,
 			model.ActionAddPrimaryKey,
 			model.JobStateSynced,
 			1000,
@@ -270,7 +270,7 @@ func TestAddIngestRecorder(t *testing.T) {
 	{
 		// a sub job as add primary index job
 		err = recorder.TryAddJob(fakeJob(
-			model.ReorgTypeLitMerge,
+			model.ReorgTypeIngest,
 			model.ActionAddPrimaryKey,
 			model.JobStateDone,
 			1000,
@@ -368,7 +368,7 @@ func TestIndexesKind(t *testing.T) {
 
 	recorder := ingestrec.New()
 	err = recorder.TryAddJob(fakeJob(
-		model.ReorgTypeLitMerge,
+		model.ReorgTypeIngest,
 		model.ActionAddIndex,
 		model.JobStateSynced,
 		1000,
@@ -465,7 +465,7 @@ func TestRewriteTableID(t *testing.T) {
 
 	recorder := ingestrec.New()
 	err = recorder.TryAddJob(fakeJob(
-		model.ReorgTypeLitMerge,
+		model.ReorgTypeIngest,
 		model.ActionAddIndex,
 		model.JobStateSynced,
 		1000,
@@ -495,3 +495,101 @@ func TestRewriteTableID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
 }
+<<<<<<< HEAD
+=======
+
+func fakeJobWithName(
+	schemaName string,
+	tableName string,
+	tableID int64,
+	indexID int64,
+	indexName string,
+	columnName string,
+	args json.RawMessage,
+) *model.Job {
+	return &model.Job{
+		Version:    model.JobVersion1,
+		SchemaName: schemaName,
+		TableName:  tableName,
+		TableID:    tableID,
+		Type:       model.ActionAddIndex,
+		State:      model.JobStateSynced,
+		RowCount:   100,
+		RawArgs:    args,
+		ReorgMeta: &model.DDLReorgMeta{
+			ReorgTp: model.ReorgTypeIngest,
+		},
+		BinlogInfo: &model.HistoryInfo{
+			TableInfo: &model.TableInfo{
+				Indices: []*model.IndexInfo{
+					{
+						ID:   indexID,
+						Name: ast.NewCIStr(indexName),
+						Columns: []*model.IndexColumn{{
+							Name: ast.NewCIStr(columnName),
+						}},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestRepairIndexNeededInForeignKey(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+
+	tk.MustExec("create table test.parent (id int, index i1(id))")
+	tk.MustExec("create table test.child (id int, pid int, index i1(pid), foreign key (pid) references test.parent (id) on delete cascade)")
+
+	infoSchema := s.Mock.InfoSchema()
+	childTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+	require.NoError(t, err)
+	parentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+	require.NoError(t, err)
+	childTableIndexI1 := childTableInfo.Indices[0]
+	parentTableIndexI1 := parentTableInfo.Indices[0]
+	{
+		recorder := ingestrec.New()
+		err = recorder.TryAddJob(
+			fakeJobWithName("test", "parent", parentTableInfo.ID, parentTableIndexI1.ID, "i1", "id", json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI1.ID))),
+			false,
+		)
+		require.NoError(t, err)
+		err = recorder.TryAddJob(
+			fakeJobWithName("test", "child", childTableInfo.ID, childTableIndexI1.ID, "i1", "pid", json.RawMessage(fmt.Sprintf("[%d, false, [], false]", childTableIndexI1.ID))),
+			false,
+		)
+		require.NoError(t, err)
+		recorder.UpdateIndexInfo(ctx, infoSchema)
+		require.Len(t, recorder.GetFKRecordMap(), 1)
+	}
+	{
+		recorder := ingestrec.New()
+		err = recorder.TryAddJob(
+			fakeJobWithName("test", "child", childTableInfo.ID, childTableIndexI1.ID, "i1", "pid", json.RawMessage(fmt.Sprintf("[%d, false, [], false]", childTableIndexI1.ID))),
+			false,
+		)
+		require.NoError(t, err)
+		recorder.UpdateIndexInfo(ctx, infoSchema)
+		require.Len(t, recorder.GetFKRecordMap(), 1)
+	}
+	{
+		recorder := ingestrec.New()
+		err = recorder.TryAddJob(
+			fakeJobWithName("test", "parent", parentTableInfo.ID, parentTableIndexI1.ID, "i1", "id", json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI1.ID))),
+			false,
+		)
+		require.NoError(t, err)
+		recorder.UpdateIndexInfo(ctx, infoSchema)
+		require.Len(t, recorder.GetFKRecordMap(), 1)
+	}
+	{
+		recorder := ingestrec.New()
+		require.NoError(t, err)
+		recorder.UpdateIndexInfo(ctx, infoSchema)
+		require.Len(t, recorder.GetFKRecordMap(), 0)
+	}
+}
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
