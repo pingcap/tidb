@@ -445,7 +445,7 @@ func (w *worker) runReorgJob(
 }
 
 func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *model.Job, reorgInfo *reorgInfo) error {
-	if job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge {
+	if job.ReorgMeta.ReorgTp != model.ReorgTypeIngest {
 		// Only used for the ingest mode job.
 		return nil
 	}
@@ -479,6 +479,9 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 func extractElemIDs(r *reorgInfo) []int64 {
 	elemIDs := make([]int64, 0, len(r.elements))
 	for _, elem := range r.elements {
+		if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
+			continue
+		}
 		elemIDs = append(elemIDs, elem.ID)
 	}
 	return elemIDs

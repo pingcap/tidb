@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -622,7 +623,13 @@ func TestModifyColumnReorgCheckpoint(t *testing.T) {
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	if kerneltype.IsNextGen() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeInitReorgMeta", func(m *model.DDLReorgMeta) {
+			m.Concurrency.Store(1)
+		})
+	} else {
+		tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	}
 	tk.MustExec("create table t (a int primary key, b bigint);")
 	rowCnt := 10
 	for i := range rowCnt {
