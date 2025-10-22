@@ -270,7 +270,7 @@ func extractBestCNFItemRanges(sctx planctx.PlanContext, conds []expression.Expre
 		}
 		// take the union of the two columnValues
 		columnValues = unionColumnValues(columnValues, res.ColumnValues)
-		if len(res.AccessConds) == 0 || len(res.RemainedConds) > 0 {
+		if len(res.AccessConds) == 0 {
 			continue
 		}
 		curRes := getCNFItemRangeResult(sctx, res, i)
