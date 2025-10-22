@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -74,6 +75,8 @@ func TestDomainAdvancedSessionPoolInternalSessionRegistry(t *testing.T) {
 }
 
 func TestDomainAdvancedSessionPoolPutBackDirtySession(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/SkipSystemTableCheck", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/SkipSystemTableCheck")
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	p := do.AdvancedSysSessionPool()
 	require.NotNil(t, p)

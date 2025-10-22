@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -79,6 +80,8 @@ func testDAGPlanBuilderSimpleCase(t *testing.T, testKit *testkit.TestKit, cascad
 }
 
 func TestDAGPlanBuilderSimpleCase(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/SkipSystemTableCheck", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/SkipSystemTableCheck")
 	if kerneltype.IsNextGen() {
 		t.Skip("Please run the TestDAGPlanBuilderSimpleCaseForNextGen")
 	}
@@ -86,6 +89,8 @@ func TestDAGPlanBuilderSimpleCase(t *testing.T) {
 }
 
 func TestDAGPlanBuilderSimpleCaseForNextGen(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/SkipSystemTableCheck", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/SkipSystemTableCheck")
 	if kerneltype.IsClassic() {
 		t.Skip("Please run the TestDAGPlanBuilderSimpleCase")
 	}
