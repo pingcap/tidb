@@ -390,6 +390,7 @@ CREATE TABLE store_sales (
 }
 
 func createStore(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
+	//nolint: misspell
 	tk.MustExec(`
 CREATE TABLE store (
   s_store_sk int NOT NULL,
