@@ -525,6 +525,8 @@ func TestTruncate(t *testing.T) {
 		{[]any{0, 400}, 0},
 		{[]any{0, -400}, 0},
 		{[]any{0, 3}, 0},
+		// for issue #64095
+		{[]any{0, nil}, nil},
 	}
 
 	Dtbl := tblToDtbl(tbl)

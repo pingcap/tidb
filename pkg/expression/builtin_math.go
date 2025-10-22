@@ -2154,26 +2154,34 @@ func (b *builtinTruncateIntSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
 func (b *builtinTruncateIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	if err != nil {
+		return 0, true, err
+	}
+	if isNull {
+		return 0, true, nil
 	}
 
 	d, isNull, err := b.args[1].EvalInt(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	if err != nil {
+		return 0, true, err
+	}
+	if isNull {
+		return 0, true, nil
 	}
 
-	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+	// unsigned doesn't affect truncation logic here
+	if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
 		return x, false, nil
 	}
 
 	if d >= 0 {
 		return x, false, nil
 	}
-	// -MinInt = MinInt, special case
+
 	if d == mathutil.MinInt {
 		return 0, false, nil
 	}
+
 	shift := int64(math.Pow10(int(-d)))
 	return x / shift * shift, false, nil
 }
@@ -2195,25 +2203,30 @@ type builtinTruncateUintSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
 func (b *builtinTruncateUintSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	if err != nil {
+		return 0, true, err
 	}
-	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
-		return x, false, nil
+	if isNull {
+		return 0, true, nil
 	}
-	uintx := uint64(x)
 
 	d, isNull, err := b.args[1].EvalInt(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	if err != nil {
+		return 0, true, err
 	}
+	if isNull {
+		return 0, true, nil
+	}
+
+	uintx := uint64(x)
 	if d >= 0 {
-		return x, false, nil
+		return int64(uintx), false, nil
 	}
-	// -MinInt = MinInt, special case
+
 	if d == mathutil.MinInt {
 		return 0, false, nil
 	}
+
 	shift := uint64(math.Pow10(int(-d)))
 	return int64(uintx / shift * shift), false, nil
 }
