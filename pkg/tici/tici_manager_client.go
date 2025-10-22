@@ -179,7 +179,7 @@ func (t *ManagerCtx) checkMetaClient() error {
 			errMsg = t.err.Error()
 		}
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return errors.Wrap(t.err, "meta service client is nil")
+		return errors.Errorf("meta service client is nil: %s", errMsg)
 	}
 	return nil
 }
@@ -255,13 +255,8 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if t.metaClient == nil {
-		var errMsg string
-		if t.err != nil {
-			errMsg = t.err.Error()
-		}
-		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return "", 0, errors.Wrap(t.err, "meta service client is nil")
+	if err := t.checkMetaClient(); err != nil {
+		return "", 0, err
 	}
 	resp, err := t.metaClient.client.GetImportStoragePrefix(ctx, req)
 	if err != nil {
