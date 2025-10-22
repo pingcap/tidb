@@ -676,22 +676,6 @@ func (p *LogicalJoin) ExtractFD() *funcdep.FDSet {
 	}
 }
 
-// extractNotNullColumn returns the column in a predicate of the form NOT(ISNULL(col)).
-func extractNotNullColumn(e expression.Expression) (*expression.Column, bool) {
-	sf, ok := e.(*expression.ScalarFunction)
-	if !ok || sf.FuncName.L != ast.UnaryNot {
-		return nil, false
-	}
-	inner, ok := sf.GetArgs()[0].(*expression.ScalarFunction)
-	if !ok || inner.FuncName.L != ast.IsNull {
-		return nil, false
-	}
-	if c, ok := inner.GetArgs()[0].(*expression.Column); ok {
-		return c, true
-	}
-	return nil, false
-}
-
 // Keep predicates that *involve at least one column* from the given schema.
 // to belong to `sch`; it just checks “touches inner side or not”.
 func filterPredsInvolvingSchema(preds []expression.Expression, sch *expression.Schema) []expression.Expression {
