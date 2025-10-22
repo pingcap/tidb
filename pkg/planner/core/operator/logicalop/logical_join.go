@@ -1776,7 +1776,6 @@ func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression)
 	combinedCond = append(combinedCond, p.LeftConditions...)
 	combinedCond = append(combinedCond, p.RightConditions...)
 	combinedCond = append(combinedCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
-	combinedCond = append(combinedCond, p.OtherConditions...)
 	combinedCond = append(combinedCond, predicates...)
 	return combinedCond
 }

@@ -312,7 +312,7 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 func (p *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
 	s := p.Self().(*LogicalSelection)
 	combinedCond := make([]expression.Expression, 0, len(predicates)+len(s.Conditions))
-	copy(combinedCond, predicates)
+	combinedCond = append(combinedCond, predicates...)
 	combinedCond = append(combinedCond, s.Conditions...)
 	child := s.Children()[0]
 	child = child.ConvertOuterToInnerJoin(combinedCond)
