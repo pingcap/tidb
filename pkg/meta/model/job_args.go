@@ -1764,7 +1764,7 @@ func (a *ModifyColumnArgs) decodeV1(job *Job) error {
 }
 
 func (a *ModifyColumnArgs) getFinishedArgsV1(*Job) []any {
-	return []any{a.IndexIDs, a.PartitionIDs}
+	return []any{a.IndexIDs, a.PartitionIDs, a.NewIndexIDs}
 }
 
 // GetModifyColumnArgs get the modify column argument from job.
@@ -1778,13 +1778,15 @@ func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 		var (
 			indexIDs     []int64
 			partitionIDs []int64
+			newIndexIDs  []int64
 		)
-		if err := job.decodeArgs(&indexIDs, &partitionIDs); err != nil {
+		if err := job.decodeArgs(&indexIDs, &partitionIDs, &newIndexIDs); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &ModifyColumnArgs{
 			IndexIDs:     indexIDs,
 			PartitionIDs: partitionIDs,
+			NewIndexIDs:  newIndexIDs,
 		}, nil
 	}
 	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
