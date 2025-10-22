@@ -283,7 +283,6 @@ const (
 	LblRCReadCheckTS  = "read_check"
 	LblRCWriteCheckTS = "write_check"
 	LblResourceGroup  = "resource_group"
-	LblState          = "state"
 
 	LblName = "name"
 
