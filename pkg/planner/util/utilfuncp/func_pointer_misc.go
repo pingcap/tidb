@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // this file is used for passing function pointer at init(){} to avoid some import cycles.
@@ -44,20 +42,12 @@ var FindBestTask4BaseLogicalPlan func(p base.LogicalPlan,
 var FindBestTask4LogicalDataSource func(lp base.LogicalPlan,
 	prop *property.PhysicalProperty) (t base.Task, err error)
 
-// ExhaustPhysicalPlans4LogicalWindow will be called by LogicalWindow in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalWindow func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
 // ExhaustPhysicalPlans4LogicalJoin will be called by LogicalJoin in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalJoin func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
 // ExhaustPhysicalPlans4LogicalApply will be called by LogicalApply in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalApply func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
-// ExhaustPhysicalPlans4LogicalExpand will be called by LogicalExpand in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalExpand func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
 // ****************************************** stats related **********************************************
@@ -101,13 +91,6 @@ var GetPlanCostVer14PhysicalSort func(pp base.PhysicalPlan, taskType property.Ta
 // GetPlanCostVer24PhysicalSort represents the cost of a physical sort operation in version 2.
 var GetPlanCostVer24PhysicalSort func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
-
-// ToPB4PhysicalSort will be called by PhysicalSort in physicalOp pkg.
-var ToPB4PhysicalSort func(pp base.PhysicalPlan, ctx *base.BuildPBContext,
-	storeType kv.StoreType) (*tipb.Executor, error)
-
-// ResolveIndicesForSort will be called by PhysicalSort in physicalOp pkg.
-var ResolveIndicesForSort func(p base.PhysicalPlan) (err error)
 
 // Attach2Task4NominalSort will be called by NominalSort in physicalOp pkg.
 var Attach2Task4NominalSort func(base.PhysicalPlan, ...base.Task) base.Task
@@ -423,10 +406,6 @@ var Attach2Task4PhysicalIndexMergeJoin func(pp base.PhysicalPlan, tasks ...base.
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
 var AttachPlan2Task func(p base.PhysicalPlan, t base.Task) base.Task
-
-// WindowIsTopN is used in DeriveTopNFromWindow rule.
-// todo: @arenatlx: remove it after logical_datasource is migrated to logicalop.
-var WindowIsTopN func(p base.LogicalPlan) (bool, uint64)
 
 // GetTaskPlanCost export the getTaskPlanCost from core pkg for cascades usage.
 var GetTaskPlanCost func(t base.Task) (float64, bool, error)

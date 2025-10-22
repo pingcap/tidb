@@ -36,7 +36,6 @@ go_library(
         "plan_clone_utils.go",
         "plan_cost_ver1.go",
         "plan_cost_ver2.go",
-        "plan_to_pb.go",
         "planbuilder.go",
         "point_get_plan.go",
         "preprocess.go",
