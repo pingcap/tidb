@@ -85,7 +85,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/systimemon"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/topsql"
-	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	repository "github.com/pingcap/tidb/pkg/util/workloadrepo"
 	"github.com/prometheus/client_golang/prometheus"
@@ -279,12 +278,6 @@ func initFlagSet() *flag.FlagSet {
 }
 
 func main() {
-	defer func() {
-		if r := recover(); r != nil {
-			traceevent.DumpFlightRecorderToLogger("panic")
-			panic(r)
-		}
-	}()
 	fset := initFlagSet()
 	if args := fset.Args(); len(args) != 0 {
 		if args[0] == "collect-log" && len(args) > 1 {

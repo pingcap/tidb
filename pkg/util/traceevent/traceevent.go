@@ -54,6 +54,7 @@ var (
 )
 
 // DefaultFlightRecorderCapacity controls the number of events retained in the in-memory recorder.
+// make this small so there won't be too many logs, until we have ability to filter out the ones we need.
 const DefaultFlightRecorderCapacity = 1024
 
 // eventSink stores the global sink used to record events.
