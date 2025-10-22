@@ -4261,6 +4261,9 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 		// need add one more column for pid or physical table id
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+handleLen))
 	}
+	if idxScan.FtsQueryInfo != nil {
+		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+handleLen))
+	}
 	return indexReq, err
 }
 
@@ -4717,7 +4720,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 		}
 		handles, _ := dedupHandles(lookUpContents)
-		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
+		return builder.buildTableReaderFromHandles(ctx, e, handles, nil, canReorderHandles)
 	}
 	tbl, _ := builder.is.TableByID(ctx, tbInfo.ID)
 	pt := tbl.(table.PartitionedTable)
@@ -4805,12 +4808,12 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				continue
 			}
 			handle := kv.IntHandle(content.Keys[0].GetInt64())
-			ranges, _ := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle})
+			ranges, _, _ := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle}, nil)
 			kvRanges = append(kvRanges, ranges...)
 		}
 	} else {
 		for _, p := range usedPartitionList {
-			ranges, _ := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles)
+			ranges, _, _ := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles, nil)
 			kvRanges = append(kvRanges, ranges...)
 		}
 	}
@@ -4935,7 +4938,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	return e, nil
 }
 
-func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle, canReorderHandles bool) (*TableReaderExecutor, error) {
+func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle, handleVersionMap *kv.HandleMap, canReorderHandles bool) (*TableReaderExecutor, error) {
 	if canReorderHandles {
 		slices.SortFunc(handles, func(i, j kv.Handle) int {
 			return i.Compare(j)
@@ -4944,9 +4947,9 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	var b distsql.RequestBuilder
 	if len(handles) > 0 {
 		if _, ok := handles[0].(kv.PartitionHandle); ok {
-			b.SetPartitionsAndHandles(handles)
+			b.SetPartitionsAndHandles(handles, handleVersionMap)
 		} else {
-			b.SetTableHandles(getPhysicalTableID(e.table), handles)
+			b.SetTableHandles(getPhysicalTableID(e.table), handles, handleVersionMap)
 		}
 	} else {
 		b.SetKeyRanges(nil)

@@ -439,6 +439,15 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 		indexCols = append(indexCols, extraPhysTblCol)
 	}
 
+	if p.Index.IsFulltextIndexOnTiCI() {
+		indexCols = append(indexCols, &expression.Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			ID:       model.ExtraVersionID,
+			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+			OrigName: model.ExtraVersionName.O,
+		})
+	}
+
 	p.SetSchema(expression.NewSchema(indexCols...))
 }
 
@@ -594,6 +603,8 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 			columns = append(columns, model.NewExtraHandleColInfo())
 		} else if col.ID == model.ExtraPhysTblID {
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
+		} else if col.ID == model.ExtraVersionID {
+			columns = append(columns, model.NewExtraVersionColInfo())
 		} else {
 			columns = append(columns, model.FindColumnInfoByID(tableColumns, col.ID))
 		}
