@@ -39,6 +39,7 @@ go_library(
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_prometheus_client_golang//prometheus",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_zap//:zap",
     ],
