@@ -28,7 +28,10 @@ const (
 
 	// LblTaskID is the label for task ID.
 	LblTaskID = "task_id"
+)
 
+// event names during schedule and execute
+const (
 	EventSubtaskScheduledAway = "subtask-scheduled-away"
 	EventSubtaskRerun         = "subtask-rerun"
 	EventSubtaskSlow          = "subtask-slow"
@@ -37,8 +40,8 @@ const (
 	EventMergeSort            = "merge-sort"
 )
 
+// DXF metrics
 var (
-	// UsedSlotsGauge is the gauge of used slots on executor node.
 	UsedSlotsGauge       *prometheus.GaugeVec
 	WorkerCount          *prometheus.GaugeVec
 	FinishedTaskCounter  *prometheus.CounterVec
