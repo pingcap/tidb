@@ -67,7 +67,6 @@ go_library(
         "runtime_filter_generator.go",
         "scalar_subq_expression.go",
         "show_predicate_extractor.go",
-        "stats.go",
         "stringer.go",
         "task.go",
         "telemetry.go",

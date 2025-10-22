@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "util",
+    srcs = ["statsutil.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/stats/util",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/planner/core/base",
+    ],
+)

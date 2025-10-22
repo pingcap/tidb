@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stats
+package dtrace_core
 
 import (
 	"github.com/pingcap/failpoint"
@@ -39,7 +39,8 @@ type getStatsTblInfo struct {
 	StatsTblInfo      *statistics.StatsTblTraceInfo
 }
 
-func debugTraceGetStatsTbl(
+// DebugTraceGetStatsTbl is the portal.
+func DebugTraceGetStatsTbl(
 	s base.PlanContext,
 	tblInfo *model.TableInfo,
 	pid int64,

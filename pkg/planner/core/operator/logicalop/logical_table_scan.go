@@ -19,10 +19,10 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
@@ -88,7 +88,26 @@ func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
 func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ []bool) (_ *property.StatsInfo, _ bool, err error) {
-	return utilfuncp.DeriveStats4LogicalTableScan(ts)
+	ts.Source.initStats()
+	ts.SetStats(ts.Source.deriveStatsByFilter(ts.AccessConds, nil))
+	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
+	// TODO: support clustered index.
+	if ts.HandleCols != nil {
+		// TODO: restrict mem usage of table ranges.
+		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.SCtx().GetRangerCtx(), ts.HandleCols.GetCol(0).RetType, 0)
+	} else {
+		isUnsigned := false
+		if ts.Source.TableInfo.PKIsHandle {
+			if pkColInfo := ts.Source.TableInfo.GetPkColInfo(); pkColInfo != nil {
+				isUnsigned = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+			}
+		}
+		ts.Ranges = ranger.FullIntRange(isUnsigned)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return ts.StatsInfo(), true, nil
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.<12th> implementation.

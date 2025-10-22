@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	statsutil "github.com/pingcap/tidb/pkg/planner/core/stats"
+	"github.com/pingcap/tidb/pkg/planner/core/stats/util"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -174,7 +174,7 @@ func recordUsedItemStatsStatus(sctx planctx.PlanContext, stats any, tableID, id 
 	// need to record
 	statsRecord := sctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
 	if statsRecord.GetUsedInfo(tableID) == nil {
-		name, tblInfo := statsutil.GetTblInfoForUsedStatsByPhysicalID(sctx, tableID)
+		name, tblInfo := util.GetTblInfoForUsedStatsByPhysicalID(sctx, tableID)
 		statsRecord.RecordUsedInfo(tableID, &stmtctx.UsedStatsInfoForTable{
 			Name:    name,
 			TblInfo: tblInfo,

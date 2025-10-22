@@ -153,11 +153,10 @@ func init() {
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CompareTaskCost = compareTaskCost
 	utilfuncp.GetPossibleAccessPaths = getPossibleAccessPaths
+	utilfuncp.GenerateIndexMergePath = generateIndexMergePath
+	utilfuncp.DebugTraceAccessPaths = debugTraceAccessPaths
 
 	utilfuncp.AddPrefix4ShardIndexes = addPrefix4ShardIndexes
-	utilfuncp.DeriveStats4DataSource = deriveStats4DataSource
-	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
-	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
 
 	// For mv index init.
 	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex

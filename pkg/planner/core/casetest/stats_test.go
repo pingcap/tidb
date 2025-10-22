@@ -17,6 +17,7 @@ package casetest
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -68,7 +69,7 @@ func TestGroupNDVs(t *testing.T) {
 			p, err = core.LogicalOptimizeTest(ctx, builder.GetOptFlag()|rule.FlagCollectPredicateColumnsPoint, p.(base.LogicalPlan))
 			require.NoError(t, err, comment)
 			lp := p.(base.LogicalPlan)
-			_, _, err = core.RecursiveDeriveStats4Test(lp)
+			_, _, err = stats.RecursiveDeriveStats4Test(lp)
 			require.NoError(t, err, comment)
 			var agg *logicalop.LogicalAggregation
 			var join *logicalop.LogicalJoin
@@ -105,12 +106,12 @@ func TestGroupNDVs(t *testing.T) {
 			aggInput := ""
 			joinInput := ""
 			if agg != nil {
-				s := core.GetStats4Test(agg.Children()[0])
+				s := stats.GetStats4Test(agg.Children()[0])
 				aggInput = property.ToString(s.GroupNDVs)
 			}
 			if join != nil {
-				l := core.GetStats4Test(join.Children()[0])
-				r := core.GetStats4Test(join.Children()[1])
+				l := stats.GetStats4Test(join.Children()[0])
+				r := stats.GetStats4Test(join.Children()[1])
 				joinInput = property.ToString(l.GroupNDVs) + ";" + property.ToString(r.GroupNDVs)
 			}
 			testdata.OnRecord(func() {
