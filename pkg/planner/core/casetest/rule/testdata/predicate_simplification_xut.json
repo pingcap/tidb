@@ -12,7 +12,7 @@
           "      └─HashJoin 10.00 root  inner join, equal:[eq(test.t4.c3, test.t4.c3)]",
           "        ├─Selection(Build) 6.40 root  find_in_set(\"info\", Column#16)",
           "        │ └─HashAgg 8.00 root  group by:test.t4.c1, test.t4.c2, test.t4.c3, funcs:group_concat(distinct test.t2.c3 order by test.t2.c3 separator \",\")->Column#16, funcs:firstrow(test.t4.c3)->test.t4.c3",
-          "        │   └─IndexJoin 15.62 root  left outer join, inner:TableReader, outer key:test.t4.c1, test.t4.c2, inner key:test.t2.c1, test.t2.c2, equal cond:eq(test.t4.c1, test.t2.c1), eq(test.t4.c2, test.t2.c2)",
+          "        │   └─IndexJoin 15.62 root  left outer join, inner:TableReader, left side:IndexJoin, outer key:test.t4.c1, test.t4.c2, inner key:test.t2.c1, test.t2.c2, equal cond:eq(test.t4.c1, test.t2.c1), eq(test.t4.c2, test.t2.c2)",
           "        │     ├─IndexJoin(Build) 12.50 root  inner join, inner:TableReader, outer key:test.t3.c1, test.t3.c2, inner key:test.t4.c1, test.t4.c2, equal cond:eq(test.t3.c1, test.t4.c1), eq(test.t3.c2, test.t4.c2)",
           "        │     │ ├─IndexReader(Build) 10.00 root  index:IndexRangeScan",
           "        │     │ │ └─IndexRangeScan 10.00 cop[tikv] table:t3, index:c3(c3) range:[\"production\",\"production\"], keep order:false, stats:pseudo",
@@ -21,7 +21,7 @@
           "        │     │     └─TableRangeScan 10.00 cop[tikv] table:t4 range: decided by [eq(test.t4.c1, test.t3.c1) eq(test.t4.c2, test.t3.c2)], keep order:false, stats:pseudo",
           "        │     └─TableReader(Probe) 12.50 root  data:TableRangeScan",
           "        │       └─TableRangeScan 12.50 cop[tikv] table:t2 range: decided by [eq(test.t2.c1, test.t4.c1) eq(test.t2.c2, test.t4.c2)], keep order:false, stats:pseudo",
-          "        └─IndexJoin(Probe) 12.50 root  left outer join, inner:TableReader, outer key:test.t1.id, inner key:test.t5.c1, equal cond:eq(test.t1.id, test.t5.c1)",
+          "        └─IndexJoin(Probe) 12.50 root  left outer join, inner:TableReader, left side:IndexJoin, outer key:test.t1.id, inner key:test.t5.c1, equal cond:eq(test.t1.id, test.t5.c1)",
           "          ├─IndexJoin(Build) 12.50 root  inner join, inner:TableReader, outer key:test.t4.c3, inner key:test.t1.id, equal cond:eq(test.t4.c3, test.t1.id)",
           "          │ ├─TableReader(Build) 10.00 root  data:Selection",
           "          │ │ └─Selection 10.00 cop[tikv]  eq(test.t4.state, \"ACTIVE\")",
@@ -32,8 +32,6 @@
           "            └─Selection 0.01 cop[tikv]  eq(test.t5.c2, \"production\")",
           "              └─TableRangeScan 12.50 cop[tikv] table:t5 range: decided by [eq(test.t5.c1, test.t1.id) eq(test.t5.c2, production)], keep order:false, stats:pseudo"
         ]
-<<<<<<< HEAD
-=======
       },
       {
         "SQL": "with cte_81 ( col_108 ) AS ( select    space( 2 ) as r0 from t7c899916 where t7c899916.col_44 = '[17764220206423580415]' and t7c899916.col_44 != '[5725396597060626308,5860284933591136807,11766074999769332834,11879855656810383243]' order by r0 limit 385374223 ) ( select 1,col_108 from cte_81 where cte_81.col_108 = null or cte_81.col_108 in ( '^w#txObGH*=J*Jn5kq' ,'+PzzjiWQ7y&PQV' ,'=%4C7Oain' )   )",
@@ -69,7 +67,6 @@
           "└─Selection(Probe) 1.00 cop[tikv]  or(and(eq(test.t6.a, 1), and(eq(test.t6.b, 1), eq(test.t6.c, 1))), and(eq(test.t6.a, 2), and(eq(test.t6.b, 2), eq(test.t6.c, 2))))",
           "  └─TableRowIDScan 1.25 cop[tikv] table:t6 keep order:false, stats:pseudo"
         ]
->>>>>>> 1d746d80a0e (range: wrongly skip the candidate in the extractBestCNFItemRanges (#62585))
       }
     ]
   }
