@@ -97,3 +97,8 @@ func BinarySearchByIndexFunc[S ~[]E, E, T any](x S, target T, start, end int, cm
 	}
 	return start
 }
+
+// BinarySearchFunc performs a binary search on the slice x to find the target value.
+func BinarySearchFunc[S ~[]E, E, T any](x S, target T, cmp func(E, T) int) int {
+	return BinarySearchByIndexFunc(x, target, 0, len(x), cmp)
+}

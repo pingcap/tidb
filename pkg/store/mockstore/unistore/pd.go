@@ -30,6 +30,7 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	us "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
+	"github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
@@ -441,7 +442,7 @@ func (m *mockKeyspaceManager) GetAllKeyspaces(ctx context.Context, startID uint3
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	startIndex, _ := slices.BinarySearchFunc(m.keyspaces, startID, func(k *keyspacepb.KeyspaceMeta, idToSearch uint32) int {
+	startIndex := slice.BinarySearchFunc(m.keyspaces, startID, func(k *keyspacepb.KeyspaceMeta, idToSearch uint32) int {
 		return int(k.Id) - int(idToSearch)
 	})
 
