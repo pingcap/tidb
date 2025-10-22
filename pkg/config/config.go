@@ -1455,6 +1455,7 @@ func TableLockEnabled() bool {
 	return GetGlobalConfig().EnableTableLock
 }
 
+// GetPlanCacheMaxTable returns the max table count of plan cache.
 func GetPlanCacheMaxTable() int {
 	count := GetGlobalConfig().Experimental.PlanCacheMaxTable
 	if count > 0 && count < 256 {

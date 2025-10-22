@@ -18,13 +18,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/config"
 	"math/rand"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1709,7 +1709,9 @@ func TestNonPreparedPlanCacheMaxTable(t *testing.T) {
 	tk.MustExec(`create table t6 (a int, b int, key(a))`)
 	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
 
-	require.Equal(t, 5, config.GetPlanCacheMaxTable())
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.PlanCacheMaxTable = 5
+	})
 	tk.MustQuery("select * from t1,t2,t3,t4,t5").Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustQuery("select * from t1,t2,t3,t4,t5").Check(testkit.Rows())
