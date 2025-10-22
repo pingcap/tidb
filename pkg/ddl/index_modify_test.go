@@ -375,6 +375,75 @@ func TestAddIndexForGeneratedColumn(t *testing.T) {
 	tk.MustExec("admin check table gcai_table")
 }
 
+func TestAnalyzeStuck(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_ddl_analyze = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_add_index_stuck")
+	tk.MustExec("create table t_add_index_stuck (c1 int, c2 int, c3 int)")
+
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t_add_index_stuck values (?, ?, ?)", i, i, i)
+	}
+
+	oldCumulativeTimeout := ddl.DefaultCumulativeTimeout
+	defer func() {
+		ddl.DefaultCumulativeTimeout = oldCumulativeTimeout
+	}()
+	ddl.DefaultCumulativeTimeout = 2 * time.Second
+
+	// enable failpoint to simulate analyze stuck
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
+		time.Sleep(ddl.DefaultCumulativeTimeout + 10*time.Second)
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := tk.Session().Execute(context.Background(), "alter table t_add_index_stuck add index c3_index(c3)")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10*time.Second + time.Minute):
+		t.Fatalf("add index did not finish in expected time")
+	}
+
+	tbl := external.GetTableByName(t, tk, "test", "t_add_index_stuck")
+	var found bool
+	for _, idx := range tbl.Indices() {
+		if strings.EqualFold(idx.Meta().Name.L, "c3_index") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found)
+
+	// verify analyze eventually executes successfully by checking stats_meta
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show stats_meta where table_name = 't_add_index_stuck'").Rows()
+		return len(rows) > 0
+	}, time.Minute, 200*time.Millisecond)
+
+	go func() {
+		_, err := tk.Session().Execute(context.Background(), "alter table t_add_index_stuck modify column c2 bigint")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10*time.Second + time.Minute):
+		t.Fatalf("modify column did not finish in expected time")
+	}
+
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show stats_meta where table_name = 't_add_index_stuck'").Rows()
+		return len(rows) > 0
+	}, time.Minute, 200*time.Millisecond)
+}
+
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.
 func TestAddPrimaryKeyRollback1(t *testing.T) {
 	idxName := "PRIMARY"
