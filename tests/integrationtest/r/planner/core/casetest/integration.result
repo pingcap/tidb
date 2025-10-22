@@ -447,8 +447,8 @@ IndexReader	root		index:IndexRangeScan
 explain format='plan_tree' select * from t2 where ((a = 1 and b = 1 and d < 3) or (a = 1 and b = 1 and d > 6)) and c = 3 order by d;
 id	task	access object	operator info
 IndexReader	root		index:Selection
-└─Selection	cop[tikv]		eq(planner__core__casetest__integration.t2.c, 3), or(and(eq(planner__core__casetest__integration.t2.a, 1), and(eq(planner__core__casetest__integration.t2.b, 1), lt(planner__core__casetest__integration.t2.d, 3))), and(eq(planner__core__casetest__integration.t2.a, 1), and(eq(planner__core__casetest__integration.t2.b, 1), gt(planner__core__casetest__integration.t2.d, 6))))
-  └─IndexRangeScan	cop[tikv]	table:t2, index:idx_a_b_c_d(a, b, c, d)	range:[1,1], keep order:true, stats:pseudo
+└─Selection	cop[tikv]		or(and(eq(planner__core__casetest__integration.t2.a, 1), and(eq(planner__core__casetest__integration.t2.b, 1), lt(planner__core__casetest__integration.t2.d, 3))), and(eq(planner__core__casetest__integration.t2.a, 1), and(eq(planner__core__casetest__integration.t2.b, 1), gt(planner__core__casetest__integration.t2.d, 6))))
+  └─IndexRangeScan	cop[tikv]	table:t2, index:idx_a_b_c_d(a, b, c, d)	range:[1 1 3,1 1 3], keep order:true, stats:pseudo
 drop table if exists t;
 create table t(a int not null, b int not null);
 explain format='plan_tree' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
