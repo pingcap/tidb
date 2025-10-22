@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
@@ -362,8 +363,13 @@ func (s *StatsCacheImpl) SetStatsCacheCapacity(c int64) {
 func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
 	distribution := make([]int64, 9)
 	uneligibleAnalyze := 0
+	isNextGen := kerneltype.IsNextGen()
 	for _, tbl := range s.Values() {
-		if metadef.IsReservedID(tbl.PhysicalID) {
+		// IsReservedID is only for next-gen kernel.
+		// We cannot check every table by the infoschema, because if customer has millions of tables, it is too slow and
+		// make every schema meta into memory. it will lead the problem.
+		// TODO: infoschemaV2 can record the system table id in the memory, we can directly check whether it is system table id.
+		if isNextGen && metadef.IsReservedID(tbl.PhysicalID) {
 			continue
 		}
 		distribution[7]++ // total table count
