@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/errors"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -111,9 +112,18 @@ func (ei *engineInfo) Close(cleanup bool) {
 	indexEngine := ei.openedEngine
 	closedEngine, err := indexEngine.Close(ei.ctx)
 	if err != nil {
-		logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
-			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-		return
+		if errors.ErrorEqual(err, context.Canceled) {
+			closedEngine, err = indexEngine.Close(context.Background())
+			if err != nil {
+				logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
+					zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+				return
+			}
+		} else {
+			logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
+				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+			return
+		}
 	}
 	ei.openedEngine = nil
 	if cleanup {
