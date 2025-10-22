@@ -950,7 +950,7 @@ type memArbitrator struct {
 			bigB      ConcurrentBudget // bigB.Used (aks growThreshold): threshold to pull from upstream (95% * bigB.Capacity)
 			bigUsed   atomic.Int64     // bigUsed <= growThreshold <= bigB.Capacity
 			smallUsed atomic.Int64
-			_         holder64Bytes
+			_         cpuCacheLinePad
 		}
 		smallLimit int64
 		useBig     struct {

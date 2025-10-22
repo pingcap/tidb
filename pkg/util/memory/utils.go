@@ -19,6 +19,8 @@ import (
 	"math/bits"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/sys/cpu"
 )
 
 const (
@@ -243,7 +245,4 @@ func intoRatio(x float64) (zMilli int64) {
 	return
 }
 
-// Prevent false sharing of cache lines.
-// The typical cache line size is 64 bytes on most architectures, including x86 and ARM.
-// `cpu.CacheLinePad`(128-byte) will be a good option for other platforms, such as Apple Silicon.
-type holder64Bytes struct{ _ [64]byte }
+type cpuCacheLinePad cpu.CacheLinePad

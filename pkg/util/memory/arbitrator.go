@@ -565,11 +565,11 @@ type MemArbitrator struct {
 
 	mu struct {
 		sync.Mutex
-		_         holder64Bytes
+		_         cpuCacheLinePad
 		allocated int64  // allocated mem quota
 		released  uint64 // total released mem quota
 		lastGC    uint64 // total released mem quota at last GC point
-		_         holder64Bytes
+		_         cpuCacheLinePad
 		limit     int64 // hard limit of mem quota which is same as the server limit
 		threshold struct {
 			risk    int64 // threshold of mem risk
@@ -2095,9 +2095,9 @@ type ConcurrentBudget struct {
 	Capacity        int64
 	LastUsedTimeSec int64
 	sync.Mutex
-	_    holder64Bytes
+	_    cpuCacheLinePad
 	Used atomic.Int64
-	_    holder64Bytes
+	_    cpuCacheLinePad
 }
 
 //go:norace
@@ -2118,7 +2118,7 @@ func (b *ConcurrentBudget) getLastUsedTimeSec() int64 {
 type TrackedConcurrentBudget struct {
 	ConcurrentBudget
 	HeapInuse atomic.Int64
-	_         holder64Bytes
+	_         cpuCacheLinePad
 }
 
 // Clear clears the concurrent budget and returns the capacity
