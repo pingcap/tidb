@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"strconv"
 
 	"github.com/gogo/protobuf/proto"
@@ -182,8 +183,8 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 		tp = tipb.ExprType_MysqlJson
 		var err error
 		val, err = codec.EncodeValue(nil, nil, d)
+		intest.Assert(err == nil)
 		if err != nil {
-			logutil.BgLogger().Error("encode json", zap.Error(err))
 			return tp, nil, false
 		}
 	default:
