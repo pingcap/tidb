@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -123,6 +124,8 @@ type Manager struct {
 		schedulers []Scheduler
 	}
 	nodeRes *proto.NodeResource
+	// initialized on demand
+	metricCollector *dxfmetric.Collector
 }
 
 // NewManager creates a scheduler struct.
@@ -458,6 +461,11 @@ func (sm *Manager) collectLoop() {
 	sm.logger.Info("collect loop start")
 	ticker := time.NewTicker(defaultCollectMetricsInterval)
 	defer ticker.Stop()
+	sm.metricCollector = dxfmetric.NewCollector(sm.serverID)
+	metrics.Register(sm.metricCollector)
+	defer func() {
+		metrics.Unregister(sm.metricCollector)
+	}()
 	for {
 		select {
 		case <-sm.ctx.Done():
@@ -479,8 +487,7 @@ func (sm *Manager) collect() {
 		sm.logger.Warn("get all subtasks failed", zap.Error(err))
 		return
 	}
-	disttaskCollector.taskInfo.Store(&tasks)
-	disttaskCollector.subtaskInfo.Store(&subtasks)
+	sm.metricCollector.UpdateInfo(tasks, subtasks)
 
 	if kerneltype.IsNextGen() {
 		sm.collectWorkerMetrics(tasks)

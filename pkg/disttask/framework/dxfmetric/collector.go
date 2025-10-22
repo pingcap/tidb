@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package dxfmetric
 
 import (
 	"strconv"
@@ -21,22 +21,18 @@ import (
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-var disttaskCollector = newCollector()
-
-func init() {
-	prometheus.MustRegister(disttaskCollector)
-}
-
+// Collector is a custom Prometheus collector for DXF metrics.
 // Because the exec_id of a subtask may change, after all tasks
 // are successful, subtasks will be migrated from tidb_subtask_background
 // to tidb_subtask_background_history. In the above situation,
 // the built-in collector of Prometheus needs to delete the previously
 // added metrics, which is quite troublesome.
 // Therefore, a custom collector is used.
-type collector struct {
+type Collector struct {
 	subtaskInfo atomic.Pointer[[]*proto.SubtaskBase]
 	taskInfo    atomic.Pointer[[]*proto.TaskBase]
 
@@ -45,40 +41,53 @@ type collector struct {
 	subtaskDuration *prometheus.Desc
 }
 
-func newCollector() *collector {
-	return &collector{
+// NewCollector creates a new Collector.
+func NewCollector(serverID string) *Collector {
+	var constLabels prometheus.Labels
+	// we might run multiple TiDB servers in the same process in tests, to avoid
+	// register conflict,
+	if intest.InTest {
+		constLabels = prometheus.Labels{"server_id": serverID}
+	}
+	return &Collector{
 		tasks: metricscommon.NewDesc(
 			"tidb_disttask_task_status",
 			"Number of tasks.",
-			[]string{"task_type", "status"},
+			[]string{"task_type", "status"}, constLabels,
 		),
 		subtasks: metricscommon.NewDesc(
 			"tidb_disttask_subtasks",
 			"Number of subtasks.",
-			[]string{"task_type", "task_id", "status", "exec_id"},
+			[]string{"task_type", "task_id", "status", "exec_id"}, constLabels,
 		),
 		subtaskDuration: metricscommon.NewDesc(
 			"tidb_disttask_subtask_duration",
 			"Duration of subtasks in different states.",
-			[]string{"task_type", "task_id", "status", "subtask_id", "exec_id"},
+			[]string{"task_type", "task_id", "status", "subtask_id", "exec_id"}, constLabels,
 		),
 	}
 }
 
+// UpdateInfo updates the task and subtask info in the collector.
+func (c *Collector) UpdateInfo(tasks []*proto.TaskBase, subtasks []*proto.SubtaskBase) {
+	c.taskInfo.Store(&tasks)
+	c.subtaskInfo.Store(&subtasks)
+}
+
 // Describe implements the prometheus.Collector interface.
-func (c *collector) Describe(ch chan<- *prometheus.Desc) {
+func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.tasks
 	ch <- c.subtasks
 	ch <- c.subtaskDuration
 }
 
 // Collect implements the prometheus.Collector interface.
-func (c *collector) Collect(ch chan<- prometheus.Metric) {
+func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	c.collectTasks(ch)
 	c.collectSubtasks(ch)
 }
 
-func (c *collector) collectTasks(ch chan<- prometheus.Metric) {
+func (c *Collector) collectTasks(ch chan<- prometheus.Metric) {
 	p := c.taskInfo.Load()
 	if p == nil {
 		return
@@ -105,7 +114,7 @@ func (c *collector) collectTasks(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (c *collector) collectSubtasks(ch chan<- prometheus.Metric) {
+func (c *Collector) collectSubtasks(ch chan<- prometheus.Metric) {
 	p := c.subtaskInfo.Load()
 	if p == nil {
 		return
@@ -143,7 +152,7 @@ func (c *collector) collectSubtasks(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (c *collector) setDistSubtaskDuration(ch chan<- prometheus.Metric, subtask *proto.SubtaskBase) {
+func (c *Collector) setDistSubtaskDuration(ch chan<- prometheus.Metric, subtask *proto.SubtaskBase) {
 	switch subtask.State {
 	case proto.SubtaskStatePending:
 		ch <- prometheus.MustNewConstMetric(c.subtaskDuration, prometheus.GaugeValue,
