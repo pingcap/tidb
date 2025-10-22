@@ -13,7 +13,6 @@ go_library(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
-        "//pkg/domain/infosync",
         "//pkg/kv",
         "//pkg/lightning/membuf",
         "//pkg/meta/model",

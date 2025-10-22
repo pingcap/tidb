@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -180,7 +179,7 @@ func (t *ManagerCtx) checkMetaClient() error {
 			errMsg = t.err.Error()
 		}
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return errors.Wrap(t.err, "meta service client is nil")
+		return errors.Errorf("meta service client is nil: %s", errMsg)
 	}
 	return nil
 }
@@ -256,13 +255,8 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if t.metaClient == nil {
-		var errMsg string
-		if t.err != nil {
-			errMsg = t.err.Error()
-		}
-		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return "", 0, errors.Wrap(t.err, "meta service client is nil")
+	if err := t.checkMetaClient(); err != nil {
+		return "", 0, err
 	}
 	resp, err := t.metaClient.client.GetImportStoragePrefix(ctx, req)
 	if err != nil {
@@ -505,7 +499,11 @@ func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInf
 		}
 		failpoint.Return(dbterror.ErrInvalidDDLJob.FastGenByArgs("mock create TiCI index failed"))
 	})
-	ticiManager, err := NewManagerCtx(ctx, infosync.GetEtcdClient())
+	etcdClient, err := getEtcdClient()
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	ticiManager, err := NewManagerCtx(ctx, etcdClient)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
@@ -521,9 +519,13 @@ func DropFullTextIndex(ctx context.Context, tableID int64, indexID int64) error 
 		}
 		failpoint.Return(errors.New("mock drop TiCI index failed"))
 	})
-	ticiManager, err := NewManagerCtx(ctx, infosync.GetEtcdClient())
+	etcdClient, err := getEtcdClient()
 	if err != nil {
-		return err
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	ticiManager, err := NewManagerCtx(ctx, etcdClient)
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
 	defer ticiManager.Close()
 	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
