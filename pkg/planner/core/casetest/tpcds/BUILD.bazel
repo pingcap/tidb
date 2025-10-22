@@ -5,12 +5,19 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
-        "tpcds_q14_test.go",
+        "tpcds_test.go",
     ],
+    data = glob(["testdata/**"]),
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/config",
+        "//pkg/domain",
+        "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
+        "//pkg/util/benchdaily",
         "@org_uber_go_goleak//:goleak",
     ],
 )
