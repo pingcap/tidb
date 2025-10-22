@@ -737,7 +737,7 @@ func onTaskFinished(state proto.TaskState, taskErr error) {
 		}
 	}
 	if len(metricState) > 0 {
-		dxfmetric.FinishedTaskCounter.WithLabelValues("all").Add(1)
-		dxfmetric.FinishedTaskCounter.WithLabelValues(state.String()).Add(1)
+		dxfmetric.FinishedTaskCounter.WithLabelValues("all").Inc()
+		dxfmetric.FinishedTaskCounter.WithLabelValues(metricState).Inc()
 	}
 }
