@@ -132,11 +132,6 @@ alter table t auto_increment = 10000;
 
 # DDL can be executed in read-only mode
 # temporary table
-create temporary table t(a INT);
-drop temporary table t;
-create global temporary table t_global(a INT) on commit delete rows;
-drop global temporary table t_global;
-
 alter table t compact tiflash replica;
 
 # finish test

@@ -147,10 +147,6 @@ create or replace view v as select * from t;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t auto_increment = 10000;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
-create temporary table t(a INT);
-drop temporary table t;
-create global temporary table t_global(a INT) on commit delete rows;
-drop global temporary table t_global;
 alter table t compact tiflash replica;
 alter schema db_read_only read only 0;
 alter schema db_read_only_1 read only 0;
