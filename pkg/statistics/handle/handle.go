@@ -16,9 +16,12 @@ package handle
 
 import (
 	"context"
+	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -35,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -60,6 +64,8 @@ var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 }
 
 // Handle can update stats info periodically.
+//
+//nolint:fieldalignment
 type Handle struct {
 	// Pool is used to get a session or a goroutine to execute stats updating.
 	util.Pool
@@ -100,10 +106,13 @@ type Handle struct {
 	// DDL is used to handle ddl events.
 	types.DDL
 
-	InitStatsDone chan struct{}
-
 	// StatsCache ...
 	types.StatsCache
+
+	// systemDBIDCache caches the database IDs that are confirmed as system schemas to avoid repeated session usage.
+	systemDBIDCache sync.Map
+
+	InitStatsDone chan struct{}
 }
 
 // Clear the statsCache, only for test.
@@ -113,6 +122,24 @@ func (h *Handle) Clear() {
 		<-h.DDLEventCh()
 	}
 	h.ResetSessionStatsList()
+	h.resetSystemDBIDCache()
+}
+
+func (h *Handle) resetSystemDBIDCache() {
+	h.systemDBIDCache.Range(func(key, _ any) bool {
+		h.systemDBIDCache.Delete(key)
+		return true
+	})
+}
+
+// GetSystemDBIDCacheLenForTest gets the length of systemDBIDCache, only for test.
+func (h *Handle) GetSystemDBIDCacheLenForTest() int {
+	length := 0
+	h.systemDBIDCache.Range(func(_, _ any) bool {
+		length++
+		return true
+	})
+	return length
 }
 
 // NewHandle creates a Handle for update stats.
@@ -191,17 +218,96 @@ func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.Tabl
 	if ok {
 		return tbl, true
 	}
-	if tblInfo != nil {
-		tbl = statistics.PseudoTable(tblInfo, false, true)
-		tbl.PhysicalID = physicalTableID
-		if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
-			h.UpdateStatsCache(types.CacheUpdate{
-				Updated: []*statistics.Table{tbl},
-			})
-		}
+	if tblInfo == nil {
+		return nil, false
+	}
+
+	tbl = statistics.PseudoTable(tblInfo, false, true)
+	tbl.PhysicalID = physicalTableID
+
+	// TODO: Determine whether we really need to cache pseudo table stats for non-partitioned tables.
+	// If the memory overhead is manageable, we can remove this optimization.
+	shouldCachePseudo := tblInfo.GetPartitionInfo() == nil || h.Len() < 64
+	if !shouldCachePseudo {
 		return tbl, true
 	}
-	return nil, false
+
+	// NOTE: Sessions borrowed from the pool cannot fetch schema metadata for local temporary tables,
+	// so skip caching their statistics.
+	// Also skip global temporary tables for consistency.
+	isTempTable := tblInfo.TempTableType != model.TempTableNone
+	if isTempTable {
+		return tbl, true
+	}
+
+	// The failpoint to skip system table check, for testing only.
+	skipSystemTableCheck := false
+	failpoint.Inject("SkipSystemTableCheck", func(val failpoint.Value) {
+		skip, ok := val.(bool)
+		if ok && skip {
+			skipSystemTableCheck = true
+		}
+	})
+	if skipSystemTableCheck {
+		h.UpdateStatsCache(types.CacheUpdate{
+			Updated: []*statistics.Table{tbl},
+		})
+		return tbl, true
+	}
+
+	isSystemTable, err := h.isSystemTable(physicalTableID, tblInfo)
+	if err != nil {
+		dbID := tblInfo.DBID
+		statslogutil.StatsErrVerboseSampleLogger().Warn("Check system table failed", zap.Int64("tableID", physicalTableID), zap.Int64("dbID", dbID), zap.Error(err))
+		return tbl, true
+	}
+
+	if isSystemTable {
+		return tbl, true
+	}
+
+	h.UpdateStatsCache(types.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
+	return tbl, true
+}
+
+// isSystemTable determines whether the table should be treated as a system table.
+// NOTE: You might worry that this slows down Get. It runs only once per non-partitioned table, or once per partition when the cache holds fewer than 64 entries, so the impact is negligible.
+// Stats healthy metrics almost never show pseudo tables, because once a DDL event is processed or the table is updated, real statistics are loaded into the cache.
+// We also cache the database IDs of system schemas to avoid repeated session usage.
+func (h *Handle) isSystemTable(physicalTableID int64, tblInfo *model.TableInfo) (bool, error) {
+	intest.Assert(tblInfo != nil, "tblInfo should not be nil for tableID %d", physicalTableID)
+	dbID := tblInfo.DBID
+	intest.Assert(dbID > 0, "invalid dbID %d for tableID %d", dbID, physicalTableID)
+	if autoid.IsMemSchemaID(dbID) {
+		return true, nil
+	}
+
+	if _, ok := h.systemDBIDCache.Load(dbID); ok {
+		return true, nil
+	}
+
+	isSystemTable := false
+	err := util.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
+		is := sctx.GetLatestInfoSchema()
+		db, ok := is.SchemaByID(dbID)
+		// 1 is used for some unit tests where the database is not created but directly injected.
+		intest.Assert(ok || dbID == 1, "cannot find db for table %d, dbID %d", physicalTableID, dbID)
+		if ok && filter.IsSystemSchema(db.Name.L) {
+			isSystemTable = true
+		}
+		return nil
+	})
+	if err != nil {
+		intest.Assert(err == nil, "unexpected error: %v, tableID %d, dbID %d", err, physicalTableID, dbID)
+		return false, err
+	}
+	if isSystemTable {
+		h.systemDBIDCache.Store(dbID, struct{}{})
+	}
+
+	return isSystemTable, nil
 }
 
 // FlushStats flushes the cached stats update into store.
@@ -222,4 +328,5 @@ func (h *Handle) Close() {
 	h.StatsCache.Close()
 	h.StatsUsage.Close()
 	h.StatsAnalyze.Close()
+	h.resetSystemDBIDCache()
 }
