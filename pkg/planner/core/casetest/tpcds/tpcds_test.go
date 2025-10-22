@@ -54,6 +54,7 @@ func TestTPCDSQ64(t *testing.T) {
 		testkit.LoadTableStats("tpcds50.store_returns.json", dom)
 		testkit.LoadTableStats("tpcds50.store_sales.json", dom)
 		testkit.LoadTableStats("tpcds_suite_in.json", dom)
+		tk.MustExec("set @@tidb_enforce_mpp=ON")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 		var (
