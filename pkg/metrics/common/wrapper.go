@@ -80,3 +80,8 @@ func NewSummaryVec(opts prometheus.SummaryOpts, labelNames []string) *prometheus
 	opts.ConstLabels = constLabels
 	return prometheus.NewSummaryVec(opts, labelNames)
 }
+
+// NewDesc wraps a prometheus.NewDesc.
+func NewDesc(fqName, help string, variableLabels []string) *prometheus.Desc {
+	return prometheus.NewDesc(fqName, help, variableLabels, constLabels)
+}

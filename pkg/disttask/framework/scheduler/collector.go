@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -46,20 +47,20 @@ type collector struct {
 
 func newCollector() *collector {
 	return &collector{
-		tasks: prometheus.NewDesc(
+		tasks: metricscommon.NewDesc(
 			"tidb_disttask_task_status",
 			"Number of tasks.",
-			[]string{"task_type", "status"}, nil,
+			[]string{"task_type", "status"},
 		),
-		subtasks: prometheus.NewDesc(
+		subtasks: metricscommon.NewDesc(
 			"tidb_disttask_subtasks",
 			"Number of subtasks.",
-			[]string{"task_type", "task_id", "status", "exec_id"}, nil,
+			[]string{"task_type", "task_id", "status", "exec_id"},
 		),
-		subtaskDuration: prometheus.NewDesc(
+		subtaskDuration: metricscommon.NewDesc(
 			"tidb_disttask_subtask_duration",
 			"Duration of subtasks in different states.",
-			[]string{"task_type", "task_id", "status", "subtask_id", "exec_id"}, nil,
+			[]string{"task_type", "task_id", "status", "subtask_id", "exec_id"},
 		),
 	}
 }
