@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -505,7 +504,11 @@ func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInf
 		}
 		failpoint.Return(dbterror.ErrInvalidDDLJob.FastGenByArgs("mock create TiCI index failed"))
 	})
-	ticiManager, err := NewManagerCtx(ctx, infosync.GetEtcdClient())
+	etcdClient, err := getEtcdClient()
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	ticiManager, err := NewManagerCtx(ctx, etcdClient)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
@@ -521,9 +524,13 @@ func DropFullTextIndex(ctx context.Context, tableID int64, indexID int64) error 
 		}
 		failpoint.Return(errors.New("mock drop TiCI index failed"))
 	})
-	ticiManager, err := NewManagerCtx(ctx, infosync.GetEtcdClient())
+	etcdClient, err := getEtcdClient()
 	if err != nil {
-		return err
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	ticiManager, err := NewManagerCtx(ctx, etcdClient)
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
 	defer ticiManager.Close()
 	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
