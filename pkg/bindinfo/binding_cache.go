@@ -131,6 +131,10 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 		}
 		if bindings != nil {
 			for _, binding := range bindings {
+				if !binding.IsBindingEnabled() {
+					// because of cross-db bindings, there might be multiple bindings for the same SQL, skip disabled ones.
+					continue
+				}
 				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
 				if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
 					continue // fuzzy binding is disabled, skip this binding
