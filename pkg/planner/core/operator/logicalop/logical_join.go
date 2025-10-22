@@ -142,34 +142,6 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 	}
 }
 
-// simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
-func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
-	if p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin {
-		return
-	}
-
-	innerTable := p.children[0]
-	if p.JoinType == base.LeftOuterJoin {
-		innerTable = p.children[1]
-	}
-
-	// ---- Convert OUTER→INNER only if there's an explicit NOT IS NULL
-	// on the nullable side (inner side of the outer join). ----
-	innerSch := innerTable.Schema() // schema of the nullable side
-	innerWhere := filterPredsInvolvingSchema(predicates, innerSch)
-	canBeSimplified := false
-	for _, expr := range innerWhere {
-		isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
-		if isOk {
-			canBeSimplified = true
-			break
-		}
-	}
-	if canBeSimplified {
-		p.JoinType = base.InnerJoin
-	}
-}
-
 // *************************** end implementation of Plan interface ***************************
 
 // *************************** start implementation of logicalPlan interface ***************************
@@ -178,7 +150,6 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
-	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	p.allJoinLeaf = getAllJoinLeaf(p)
@@ -711,7 +682,7 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 		}
 	}
 
-	// ---- step 1. Combine ON clause and predicates, then simplify join children. ----
+	// ---- step 2. Combine ON clause and predicates, then simplify join children. ----
 	combinedCond := mergeOnClausePredicates(p, predicates)
 
 	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
