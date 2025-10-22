@@ -348,6 +348,9 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childCtx.reqType = plan.ReadReqType
 		childCtx.label = Empty
 		childCtx.isLastChild = true
+		if !p.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("wwz")
+		}
 		target, childIdx = f.flattenRecursively(plan.TablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
 	case *physicalop.PhysicalIndexReader:
@@ -399,10 +402,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		// for details) to affect the row count display of the independent CTE plan tree.
 		copiedCTE := *plan
 		copiedCTE.SetProbeParents(nil)
-		if info.isRoot {
-			// If it's executed in TiDB, we need to record it since we don't have producer and consumer
-			f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)
-		}
+		f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)
 	case *physicalop.Insert:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true

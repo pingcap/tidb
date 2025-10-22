@@ -65,6 +65,14 @@ func ExhaustPhysicalPlans4LogicalSelection(p *logicalop.LogicalSelection, prop *
 		canPushDownToTiFlash {
 		childPropMpp := prop.CloneEssentialFields()
 		childPropMpp.TaskTp = property.MppTaskType
+		child := p.Children()[0]
+		if cte, ok := child.(*logicalop.LogicalCTE); ok {
+			if tableReader, ok := cte.Cte.SeedPartPhysicalPlan.(*PhysicalTableReader); ok {
+				if tableReader.StoreType == kv.TiFlash && tableReader.ReadReqType == MPP {
+					childPropMpp.CTEProducerStatus = property.AllCTECanMpp
+				}
+			}
+		}
 		newProps = append(newProps, childPropMpp)
 	}
 
@@ -133,6 +141,13 @@ func (p *PhysicalSelection) ExplainNormalizedInfo() string {
 
 // Init initializes PhysicalSelection.
 func (p PhysicalSelection) Init(ctx base.PlanContext, stats *property.StatsInfo, qbOffset int, props ...*property.PhysicalProperty) *PhysicalSelection {
+	if !ctx.GetSessionVars().InRestrictedSQL {
+		for _, prop := range props {
+			if prop.TaskTp == property.MppTaskType && prop.CTEProducerStatus == property.NoCTEOrAllProducerCanMPP {
+				fmt.Println("wwz")
+			}
+		}
+	}
 	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeSel, &p, qbOffset)
 	p.SetChildrenReqProps(props)
 	p.SetStats(stats)

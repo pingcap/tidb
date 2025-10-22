@@ -263,6 +263,9 @@ func (p *PhysicalCTEStorage) Attach2Task(tasks ...base.Task) base.Task {
 }
 
 func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
+	if !super.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, nil

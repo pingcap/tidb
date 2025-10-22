@@ -15,6 +15,7 @@
 package physicalop
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -54,6 +55,9 @@ func (p *PhysicalCTETable) MemoryUsage() (sum int64) {
 }
 
 func findBestTask4LogicalCTETable(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
+	if !super.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, nil
