@@ -639,6 +639,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		// none -> delete only
 		updateObjectState(changingCol, changingIdxs, model.StateDeleteOnly)
+		job.ReorgMeta.Stage = model.ReorgStageModifyColumnUpdateColumn
 		err := initForReorgIndexes(w, job, changingIdxs)
 		if err != nil {
 			job.State = model.JobStateRollingback
@@ -816,26 +817,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
 	return ver, errors.Trace(err)
-}
-
-func initForReorgIndexes(w *worker, job *model.Job, changingIdxs []*model.IndexInfo) error {
-	job.ReorgMeta.Stage = model.ReorgStageModifyColumnUpdateColumn
-	if len(changingIdxs) > 0 {
-		reorgTp, err := pickBackfillType(job)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return err
-		}
-		loadCloudStorageURI(w, job)
-		if reorgTp.NeedMergeProcess() {
-			// Increase telemetryAddIndexIngestUsage
-			telemetryAddIndexIngestUsage.Inc()
-			for _, idxInfo := range changingIdxs {
-				idxInfo.BackfillState = model.BackfillStateRunning
-			}
-		}
-	}
-	return nil
 }
 
 func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
