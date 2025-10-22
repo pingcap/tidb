@@ -1358,6 +1358,12 @@ func BuildTableInfo(
 			if err != nil {
 				return nil, err
 			}
+			if constr.Option != nil && constr.Option.Condition != nil {
+				// Theoretically, if the index is not a clustered index and also not PKIsHandle, it can be a partial index
+				// because it'll have no difference compared to a normal index. However, for simplicity, this branch blocks
+				// all partial primary key.
+				return nil, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("create an primary key with partial index is not supported")
+			}
 			isSingleIntPK := isSingleIntPK(constr, lastCol)
 			if ShouldBuildClusteredIndex(ctx.GetClusteredIndexDefMode(), constr.Option, isSingleIntPK) {
 				if isSingleIntPK {

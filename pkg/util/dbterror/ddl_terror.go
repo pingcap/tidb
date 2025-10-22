@@ -80,6 +80,8 @@ var (
 	ErrUnsupportedAlterTableOption = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("This type of ALTER TABLE is currently unsupported", nil))
 	// ErrUnsupportedAlterCacheForSysTable means we don't support the alter cache for system table.
 	ErrUnsupportedAlterCacheForSysTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table cache for tables in system database is currently unsupported", nil))
+	// ErrUnsupportedAddPartialIndex the partial index condition is not supported
+	ErrUnsupportedAddPartialIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add partial index: %s"), nil))
 	// ErrBlobKeyWithoutLength is used when BLOB is used as key but without a length.
 	ErrBlobKeyWithoutLength = ClassDDL.NewStd(mysql.ErrBlobKeyWithoutLength)
 	// ErrKeyPart0 is used when key parts length is 0.
