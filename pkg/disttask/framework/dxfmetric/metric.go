@@ -15,7 +15,6 @@
 package dxfmetric
 
 import (
-	"github.com/pingcap/tidb/pkg/metrics"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -23,7 +22,9 @@ import (
 const (
 	namespaceTiDB = "tidb"
 	subsystemDXF  = "dxf"
+	lblType       = "type"
 	lblEvent      = "event"
+	lblState      = "state"
 
 	// LblTaskID is the label for task ID.
 	LblTaskID = "task_id"
@@ -60,14 +61,14 @@ func InitDistTaskMetrics() {
 			Subsystem: subsystemDXF,
 			Name:      "worker_count",
 			Help:      "Gauge of DXF worker count.",
-		}, []string{metrics.LblType})
+		}, []string{lblType})
 	FinishedTaskCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: namespaceTiDB,
 			Subsystem: subsystemDXF,
 			Name:      "finished_task_total",
 			Help:      "Counter of finished DXF tasks.",
-		}, []string{metrics.LblState})
+		}, []string{lblState})
 	ScheduleEventCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: namespaceTiDB,
@@ -87,7 +88,6 @@ func InitDistTaskMetrics() {
 
 // Register registers DXF metrics.
 func Register(register prometheus.Registerer) {
-	register.MustRegister(UsedSlotsGauge)
 	register.MustRegister(UsedSlotsGauge)
 	register.MustRegister(WorkerCount)
 	register.MustRegister(FinishedTaskCounter)
