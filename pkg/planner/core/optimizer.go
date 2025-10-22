@@ -50,14 +50,15 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
@@ -72,9 +73,6 @@ var OptimizeAstNodeNoCache func(ctx context.Context, sctx sessionctx.Context, no
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
-
-// IsReadOnly check whether the ast.Node is a read only statement.
-var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
 const initialMaxCores uint64 = 10000
 
@@ -320,11 +318,7 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 		cost     float64
 		physical base.PhysicalPlan
 	)
-	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
-	if planCounter == 0 {
-		planCounter = -1
-	}
-	physical, cost, err = impl.ImplementMemoAndCost(cas.GetMemo().GetRootGroup(), &planCounter)
+	physical, cost, err = impl.ImplementMemoAndCost(cas.GetMemo().GetRootGroup())
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -347,11 +341,7 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
-	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
-	if planCounter == 0 {
-		planCounter = -1
-	}
-	physical, cost, err := physicalOptimize(logic, &planCounter)
+	physical, cost, err := physicalOptimize(logic)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -1087,7 +1077,7 @@ func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 	return disabled
 }
 
-func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
+func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost float64, err error) {
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
@@ -1104,12 +1094,9 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 	}
 
 	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
-	t, _, err := logic.FindBestTask(prop, planCounter)
+	t, err := physicalop.FindBestTask(logic, prop)
 	if err != nil {
 		return nil, 0, err
-	}
-	if *planCounter > 0 {
-		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The parameter of nth_plan() is out of range"))
 	}
 	if t.Invalid() {
 		errMsg := "Can't find a proper physical plan for this query"
@@ -1226,51 +1213,98 @@ func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if !sctx.GetSessionVars().IsAllocValid() {
 		return
 	}
-
-	if checkOverlongColType(sctx, plan) {
+	if disableReuseChunk, continueIterating := checkOverlongColType(sctx, plan); disableReuseChunk || !continueIterating {
 		return
 	}
-
 	for _, child := range plan.Children() {
 		disableReuseChunkIfNeeded(sctx, child)
 	}
 }
 
 // checkOverlongColType Check if read field type is long field.
-func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) bool {
+func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) (skipReuseChunk bool, continueIterating bool) {
 	if plan == nil {
-		return false
+		return false, false
 	}
 	switch plan.(type) {
 	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
-		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader, *physicalop.PointGetPlan:
-		if existsOverlongType(plan.Schema()) {
+		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
+		if existsOverlongType(plan.Schema(), false) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true, false
+		}
+	case *physicalop.PointGetPlan:
+		if existsOverlongType(plan.Schema(), true) {
+			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true, false
+		}
+	default:
+		// Other physical operators do not read data, so we can continue to iterate.
+		return false, true
+	}
+	// PhysicalReader and PointGet is at the root, their children are nil or on the tikv/tiflash side.
+	// So we can stop iterating.
+	return false, false
+}
+
+var (
+	// MaxMemoryLimitForOverlongType is the memory limit for overlong type column check.
+	// Why is it not 128 ?
+	// Because many customers allocate a portion of memory to their management programs,
+	// the actual amount of usable memory does not align to 128GB.
+	// TODO: We are also lacking test data for instances with less than 128GB of memory, so we need to plan the rules here.
+	// TODO: internal sql can force to use chunk reuse if we ensure the memory usage is safe.
+	// TODO: We can consider the limit/Topn in the future.
+	MaxMemoryLimitForOverlongType = 120 * size.GB
+	maxFlenForOverlongType        = mysql.MaxBlobWidth * 2
+)
+
+// existsOverlongType Check if exists long type column.
+// If pointGet is true, we will check the total Flen of all columns, if it exceeds maxFlenForOverlongType,
+// we will disable chunk reuse.
+// For a point get, there is only one row, so we can easily estimate the size.
+// However, for a non-point get, there may be many rows, and it is impossible to determine the memory size used.
+// Therefore, we can only forcibly skip the reuse chunk.
+func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
+	if schema == nil {
+		return false
+	}
+	totalFlen := 0
+	for _, column := range schema.Columns {
+		switch column.RetType.GetType() {
+		case mysql.TypeLongBlob,
+			mysql.TypeBlob, mysql.TypeJSON, mysql.TypeTiDBVectorFloat32:
+			return true
+		case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeTinyBlob, mysql.TypeMediumBlob:
+			// if the column is varchar and the length of
+			// the column is defined to be more than 1000,
+			// the column is considered a large type and
+			// disable chunk_reuse.
+			if column.RetType.GetFlen() <= 1000 {
+				continue
+			}
+			if pointGet {
+				totalFlen += column.RetType.GetFlen()
+				if checkOverlongTypeForPointGet(totalFlen) {
+					return true
+				}
+				continue
+			}
 			return true
 		}
 	}
 	return false
 }
 
-// existsOverlongType Check if exists long type column.
-func existsOverlongType(schema *expression.Schema) bool {
-	if schema == nil {
-		return false
+func checkOverlongTypeForPointGet(totalFlen int) bool {
+	totalMemory, err := memory.MemTotal()
+	if err != nil || totalMemory <= 0 {
+		return true
 	}
-	for _, column := range schema.Columns {
-		switch column.RetType.GetType() {
-		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
-			mysql.TypeBlob, mysql.TypeJSON, mysql.TypeTiDBVectorFloat32:
-			return true
-		case mysql.TypeVarString, mysql.TypeVarchar:
-			// if the column is varchar and the length of
-			// the column is defined to be more than 1000,
-			// the column is considered a large type and
-			// disable chunk_reuse.
-			if column.RetType.GetFlen() > 1000 {
-				return true
-			}
+	if totalMemory >= MaxMemoryLimitForOverlongType {
+		if totalFlen <= maxFlenForOverlongType {
+			return false
 		}
 	}
-	return false
+	return true
 }

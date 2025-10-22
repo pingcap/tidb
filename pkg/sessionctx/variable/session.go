@@ -1508,6 +1508,13 @@ type SessionVars struct {
 	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
 	EnableAnalyzeSnapshot bool
 
+	// EnableDDLAnalyze is a sysVar to indicate create index or reorg index with embedded analyze.
+	EnableDDLAnalyze bool
+
+	// EnableDDLAnalyzeExecOpt is a internal flag to notify internal session whether we do ddl analyze.
+	// It is not controlled by user behavior, and is always default off.
+	EnableDDLAnalyzeExecOpt bool
+
 	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
 	// when > 0: it's the selectivity for the expression.
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
@@ -2337,6 +2344,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
 		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
+		SkipMissingPartitionStats:     vardef.DefTiDBSkipMissingPartitionStats,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
@@ -2344,7 +2352,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            vardef.DefIndexLookupConcurrency,
-		indexSerialScanConcurrency:        vardef.DefIndexSerialScanConcurrency,
 		indexLookupJoinConcurrency:        vardef.DefIndexLookupJoinConcurrency,
 		hashJoinConcurrency:               vardef.DefTiDBHashJoinConcurrency,
 		projectionConcurrency:             vardef.DefTiDBProjectionConcurrency,
@@ -3129,9 +3136,6 @@ type Concurrency struct {
 	// Only meaningful for dynamic pruned partition table.
 	indexMergeIntersectionConcurrency int
 
-	// indexSerialScanConcurrency is the number of concurrent index serial scan worker.
-	indexSerialScanConcurrency int
-
 	// ExecutorConcurrency is the number of concurrent worker for all executors.
 	ExecutorConcurrency int
 
@@ -3200,11 +3204,6 @@ func (c *Concurrency) SetStreamAggConcurrency(n int) {
 // SetIndexMergeIntersectionConcurrency set the number of concurrent intersection process worker.
 func (c *Concurrency) SetIndexMergeIntersectionConcurrency(n int) {
 	c.indexMergeIntersectionConcurrency = n
-}
-
-// SetIndexSerialScanConcurrency set the number of concurrent index serial scan worker.
-func (c *Concurrency) SetIndexSerialScanConcurrency(n int) {
-	c.indexSerialScanConcurrency = n
 }
 
 // IndexLookupConcurrency return the number of concurrent index lookup worker.
@@ -3295,12 +3294,6 @@ func (c *Concurrency) IndexMergeIntersectionConcurrency() int {
 		return c.indexMergeIntersectionConcurrency
 	}
 	return c.ExecutorConcurrency
-}
-
-// IndexSerialScanConcurrency return the number of concurrent index serial scan worker.
-// This option is not sync with ExecutorConcurrency since it's used by Analyze table.
-func (c *Concurrency) IndexSerialScanConcurrency() int {
-	return c.indexSerialScanConcurrency
 }
 
 // UnionConcurrency return the num of concurrent union worker.

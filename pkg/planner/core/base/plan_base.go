@@ -160,27 +160,6 @@ type PhysicalPlan interface {
 	GetActualProbeCnt(*execdetails.RuntimeStatsColl) int64
 }
 
-// PlanCounterTp is used in hint nth_plan() to indicate which plan to use.
-type PlanCounterTp int64
-
-// Dec minus PlanCounterTp value by x.
-func (c *PlanCounterTp) Dec(x int64) {
-	if *c <= 0 {
-		return
-	}
-	*c = max(PlanCounterTp(int64(*c)-x), 0)
-}
-
-// Empty indicates whether the PlanCounterTp is clear now.
-func (c *PlanCounterTp) Empty() bool {
-	return *c == 0
-}
-
-// IsForce indicates whether to force a plan.
-func (c *PlanCounterTp) IsForce() bool {
-	return *c != -1
-}
-
 // LogicalPlan is a tree of logical operators.
 // We can do a lot of logical optimizations to it, like predicate push-down and column pruning.
 type LogicalPlan interface {
@@ -198,16 +177,6 @@ type LogicalPlan interface {
 
 	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
 	PruneColumns([]*expression.Column) (LogicalPlan, error)
-
-	// FindBestTask converts the logical plan to the physical plan. It's a new interface.
-	// It is called recursively from the parent to the children to create the result physical plan.
-	// Some logical plans will convert the children to the physical plans in different ways, and return the one
-	// With the lowest cost and how many plans are found in this function.
-	// planCounter is a counter for planner to force a plan.
-	// If planCounter > 0, the clock_th plan generated in this function will be returned.
-	// If planCounter = 0, the plan generated in this function will not be considered.
-	// If planCounter = -1, then we will not force plan.
-	FindBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (Task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use
@@ -305,6 +274,8 @@ type GroupExpression interface {
 	IsExplored(i uint) bool
 	// InputsLen returns the length of inputs.
 	InputsLen() int
+	// GetInputSchema returns the input logical's schema by index.
+	GetInputSchema(idx int) *expression.Schema
 }
 
 // GetGEAndLogicalOp is get the possible group expression and logical operator from common super pointer.

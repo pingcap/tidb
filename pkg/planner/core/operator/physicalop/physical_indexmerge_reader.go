@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -170,7 +171,7 @@ func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
 // LoadTableStats preloads the stats data for the physical table
 func (p *PhysicalIndexMergeReader) LoadTableStats(ctx sessionctx.Context) {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
-	utilfuncp.LoadTableStats(ctx, ts.Table, ts.PhysicalTableID)
+	stats.LoadTableStats(ctx, ts.Table, ts.PhysicalTableID)
 }
 
 // AccessObject implements PartitionAccesser interface.

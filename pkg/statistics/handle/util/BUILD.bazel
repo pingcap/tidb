@@ -18,6 +18,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/terror",
         "//pkg/planner/core/resolve",
+        "//pkg/session/syssession",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/vardef",

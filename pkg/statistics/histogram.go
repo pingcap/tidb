@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -685,6 +686,13 @@ func (r *RowEstimate) AddAll(f float64) {
 	r.MaxEst += f
 }
 
+// Subtract subtracts two RowEstimates together, storing result in the first RowEstimate.
+func (r *RowEstimate) Subtract(r1 RowEstimate) {
+	r.Est -= r1.Est
+	r.MinEst -= r1.MinEst
+	r.MaxEst -= r1.MaxEst
+}
+
 // MultiplyAll multiplies all three fields of the RowEstimate by a float64 value and stores the result.
 func (r *RowEstimate) MultiplyAll(f float64) {
 	r.Est *= f
@@ -697,6 +705,16 @@ func (r *RowEstimate) DivideAll(f float64) {
 	r.Est /= f
 	r.MinEst /= f
 	r.MaxEst /= f
+}
+
+// Clamp clamps all three fields of the RowEstimate to the given min and max values.
+// Don't allow MinEst to be greater than Est, or MaxEst to be less than Est.
+func (r *RowEstimate) Clamp(f1, f2 float64) {
+	r.Est = mathutil.Clamp(r.Est, f1, f2)
+	r.MinEst = min(r.MinEst, r.Est)
+	r.MinEst = mathutil.Clamp(r.MinEst, f1, f2)
+	r.MaxEst = max(r.MaxEst, r.Est)
+	r.MaxEst = mathutil.Clamp(r.MaxEst, f1, f2)
 }
 
 // TotalRowCount returns the total count of this histogram.
@@ -1069,20 +1087,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// oneValue assumes "one value qualifes", and is used as a lower bound.
 	oneValue := float64(0)
 	if histNDV > 0 {
-		oneValue = hg.NotNullCount() / max(float64(histNDV), outOfRangeBetweenRate) // avoid inaccurate selectivity caused by small NDV
-	}
-
-	// We may have missed the true lowest/highest values due to sampling - and we are out of
-	// range without any modifications. So return oneValue to avoid underestimation.
-	if modifyCount == 0 {
-		return DefaultRowEst(oneValue)
+		oneValue = max(1, hg.NotNullCount()/max(float64(histNDV), outOfRangeBetweenRate)) // avoid inaccurate selectivity caused by small NDV
 	}
 
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
 	// one value qualifies.
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
 	if !allowUseModifyCount {
-		return DefaultRowEst(oneValue)
+		return RowEstimate{Est: oneValue, MinEst: oneValue, MaxEst: oneValue}
 	}
 
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
@@ -1195,10 +1207,27 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
 	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
+	// percentInHist is the percentage of rows that were included in the histogram.
+	// This is used to scale back the out-of-range estimate.
+	percentInHist := hg.NotNullCount() / hg.TotalRowCount()
+	addedOutOfRangePct := min(1.0-percentInHist, 0.5)
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	// Assume on average, half of newly added rows are within the histogram range, and the other
 	// half are distributed out of range according to the diagram in the function description.
-	avgRowCount = (addedRows * 0.5) * totalPercent
+	avgRowCount = (addedRows * addedOutOfRangePct) * totalPercent
+
+	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
+	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
+	// account for at least 1% of the total row count as a worst case for "addedRows".
+	// We inflate this here so ONLY to impact the MaxEst value.
+	if modifyCount == 0 || addedRows == 0 {
+		if realtimeRowCount <= 0 {
+			realtimeRowCount = int64(hg.TotalRowCount())
+		}
+		// Use outOfRangeBetweenRate as a divisor to get a small percentage of the approximate
+		// modifyCount (since outOfRangeBetweenRate has a default value of 100).
+		addedRows = max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
+	}
 
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
@@ -1206,13 +1235,21 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// Add "ratio" of the maximum row count that could be out of range, i.e. all newly added rows
 		result := CalculateSkewRatioCounts(avgRowCount, addedRows, skewRatio)
 		result.Est = max(result.Est, oneValue)
-		result.MinEst = max(result.MinEst, oneValue)
-		result.MaxEst = max(result.MaxEst, oneValue)
+		result.MinEst = 1
+		result.MaxEst = max(result.Est, addedRows)
 		return result
 	}
 
-	// Use oneValue as lower bound
-	return DefaultRowEst(max(avgRowCount, oneValue))
+	// Use oneValue as lower bound and provide meaningful min/max estimates
+	finalEst := max(avgRowCount, oneValue)
+	// Maximum could be as high as all added rows.
+	maxEst := max(finalEst, addedRows)
+
+	return RowEstimate{
+		Est:    finalEst,
+		MinEst: 1, // Assume a minimum of 1 row qualifies
+		MaxEst: maxEst,
+	}
 }
 
 // Copy deep copies the histogram.
@@ -1559,7 +1596,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
 	// This only occurs when there are no histogram records in the histogram system table.
-	// It happens only to tables whose DDL events haven’t been processed yet and that have no indexes or keys,
+	// It happens only to tables whose DDL events haven't been processed yet and that have no indexes or keys,
 	// with the predicate column feature enabled.
 	if len(hists) == 0 {
 		return nil, nil

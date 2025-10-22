@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
@@ -196,7 +195,9 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 				tempResult, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang}, nil)
 				count = tempResult.Est
 			} else {
-				count, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
+				var countEst statistics.RowEstimate
+				countEst, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
+				count = countEst.Est
 			}
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -388,9 +389,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 	if allowZeroEst {
 		minCount = 0
 	}
-	totalCount.Est = mathutil.Clamp(totalCount.Est, minCount, float64(realtimeRowCount))
-	totalCount.MinEst = mathutil.Clamp(totalCount.MinEst, minCount, float64(realtimeRowCount))
-	totalCount.MaxEst = mathutil.Clamp(totalCount.MaxEst, minCount, float64(realtimeRowCount))
+	totalCount.Clamp(minCount, float64(realtimeRowCount))
 	return totalCount, nil
 }
 
@@ -540,7 +539,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	}
 	colsIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
 	singleColumnEstResults := make([]float64, 0, len(indexRange.LowVal))
-	minSel = float64(1)
+	minSel, maxSel = 1.0, 1.0
 	// The following codes uses Exponential Backoff to reduce the impact of independent assumption. It works like:
 	//   1. Calc the selectivity of each column.
 	//   2. Sort them and choose the first 4 most selective filter and the corresponding selectivity is sel_1, sel_2, sel_3, sel_4 where i < j => sel_i < sel_j.
@@ -562,13 +561,18 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		var (
 			count       float64
 			selectivity float64
-			err         error
 			foundStats  bool
 		)
 		if !statistics.ColumnStatsIsInvalid(coll.GetCol(colID), sctx, coll, colID) {
 			foundStats = true
-			count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
+			var countEst statistics.RowEstimate
+			countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
+			if err != nil {
+				return 0, 0, 0, false, err
+			}
+			count = countEst.Est
 			selectivity = count / float64(coll.RealtimeCount)
+			maxSel = min(maxSel, countEst.MaxEst/float64(coll.RealtimeCount))
 		}
 		if idxIDs, ok := coll.ColUniqueID2IdxIDs[colID]; ok && !foundStats && len(indexRange.LowVal) > 1 {
 			// Note the `len(indexRange.LowVal) > 1` condition here, it means we only recursively call
@@ -586,13 +590,11 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 				}
 				realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats)
 				selectivity = countResult.Est / float64(realtimeCnt)
+				maxSel = min(maxSel, countResult.MaxEst/float64(coll.RealtimeCount))
 			}
 		}
 		if !foundStats {
 			continue
-		}
-		if err != nil {
-			return 0, 0, 0, false, err
 		}
 		singleColumnEstResults = append(singleColumnEstResults, selectivity)
 		minSel *= selectivity
@@ -622,8 +624,8 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	if l < len(idx.Info.Columns) {
 		idxLowBound /= 0.9
 	}
-	// maxSel assumes correlation, so is the selectivity of the most filtering column
-	maxSel = max(idxLowBound, singleColumnEstResults[0])
+	// maxSel is the "best" selectivity from all maximum of single column selectivities.
+	maxSel = max(idxLowBound, maxSel)
 	// minSel assumes independence between columns, so is the product of all single column selectivities.
 	minSel = max(minBound, minSel)
 

@@ -93,3 +93,51 @@ func TestRefreshStatsStmt(t *testing.T) {
 		require.Equal(t, test.want, sb.String())
 	}
 }
+
+func TestRefreshStatsStmtDedup(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want string
+	}{
+		{
+			name: "global overrides all",
+			sql:  "REFRESH STATS table1, db1.t1, *.*, db2.t2",
+			want: "REFRESH STATS *.*",
+		},
+		{
+			name: "database removes prior tables",
+			sql:  "REFRESH STATS db1.t1, db2.t1, db1.*, db2.t2",
+			want: "REFRESH STATS `db2`.`t1`, `db1`.*, `db2`.`t2`",
+		},
+		{
+			name: "table duplicates case insensitive",
+			sql:  "REFRESH STATS db1.t1, db1.T1, db2.t1",
+			want: "REFRESH STATS `db1`.`t1`, `db2`.`t1`",
+		},
+		{
+			name: "table duplicates without database",
+			sql:  "REFRESH STATS table1, table1, table2",
+			want: "REFRESH STATS `table1`, `table2`",
+		},
+		{
+			name: "database duplicates case insensitive",
+			sql:  "REFRESH STATS db1.*, DB1.*, db2.t1",
+			want: "REFRESH STATS `db1`.*, `db2`.`t1`",
+		},
+	}
+
+	p := parser.New()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stmt, err := p.ParseOneStmt(test.sql, "", "")
+			require.NoError(t, err)
+			rs := stmt.(*ast.RefreshStatsStmt)
+			rs.Dedup()
+			var sb strings.Builder
+			err = rs.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+			require.NoError(t, err)
+			require.Equal(t, test.want, sb.String())
+		})
+	}
+}

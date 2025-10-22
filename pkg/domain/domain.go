@@ -87,7 +87,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
-	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -1580,9 +1579,11 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
 		gcBindTicker := time.NewTicker(100 * bindinfo.Lease)
+		writeBindingUsageTicker := time.NewTicker(100 * bindinfo.Lease)
 		defer func() {
 			bindWorkerTicker.Stop()
 			gcBindTicker.Stop()
+			writeBindingUsageTicker.Stop()
 		}()
 		for {
 			select {
@@ -1604,9 +1605,29 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}
+			case <-writeBindingUsageTicker.C:
+				bindHandle := do.BindingHandle()
+				err := bindHandle.UpdateBindingUsageInfoToStorage()
+				if err != nil {
+					logutil.BgLogger().Warn("BindingHandle.UpdateBindingUsageInfoToStorage", zap.Error(err))
+				}
+				// randomize the next write interval to avoid thundering herd problem
+				// if there are many tidb servers. The next write interval is [3h, 6h].
+				writeBindingUsageTicker.Reset(
+					randomDuration(
+						3*60*60, // 3h
+						6*60*60, // 6h
+					),
+				)
 			}
 		}
 	}, "globalBindHandleWorkerLoop")
+}
+
+func randomDuration(minSeconds, maxSeconds int) time.Duration {
+	randomIntervalSeconds := rand.Intn(maxSeconds-minSeconds+1) + minSeconds
+	newDuration := time.Duration(randomIntervalSeconds) * time.Second
+	return newDuration
 }
 
 // TelemetryLoop create a goroutine that reports usage data in a loop, it should be called only once
@@ -1852,7 +1873,7 @@ func (do *Domain) CreateStatsHandle(ctx context.Context, initStatsCtx sessionctx
 		ctx,
 		initStatsCtx,
 		do.statsLease,
-		do.sysSessionPool,
+		do.advancedSysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,
 		do.NextConnID,
@@ -1897,7 +1918,7 @@ func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 		do.ctx,
 		initStatsCtx,
 		do.statsLease,
-		do.sysSessionPool,
+		do.advancedSysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,
 		do.NextConnID,
@@ -2044,14 +2065,12 @@ func (do *Domain) initStats(ctx context.Context) {
 	}()
 	t := time.Now()
 	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
-	initstats.InitStatsPercentage.Store(0)
 	var err error
 	if liteInitStats {
 		err = statsHandle.InitStatsLite(ctx)
 	} else {
 		err = statsHandle.InitStats(ctx, do.InfoSchema())
 	}
-	initstats.InitStatsPercentage.Store(100)
 	if err != nil {
 		statslogutil.StatsLogger().Error("Init stats failed", zap.Bool("isLiteInitStats", liteInitStats), zap.Duration("duration", time.Since(t)), zap.Error(err))
 	} else {

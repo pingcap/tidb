@@ -106,7 +106,9 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 			}
 			_, err = exec(
 				sctx,
-				`INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+				`INSERT INTO mysql.bind_info(
+ original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest
+) VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 				binding.OriginalSQL,
 				binding.BindSQL,
 				strings.ToLower(binding.Db),

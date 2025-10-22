@@ -1582,11 +1582,13 @@ func scaleStats4GroupingSets(p *physicalop.PhysicalHashAgg, groupingSets express
 		}
 	}
 	sumNDV := float64(0)
+	groupingSetCols := make([]*expression.Column, 0, 4)
 	for _, groupingSet := range groupingSets {
 		// for every grouping set, pick its cols out, and combine with normal group cols to get the ndv.
-		groupingSetCols := groupingSet.ExtractCols()
+		groupingSetCols = groupingSet.ExtractCols(groupingSetCols)
 		groupingSetCols = append(groupingSetCols, normalGbyCols...)
 		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(p.SCtx(), groupingSetCols, childSchema, childStats)
+		groupingSetCols = groupingSetCols[:0]
 		sumNDV += ndv
 	}
 	// After group operator, all same rows are grouped into one row, that means all
@@ -1903,7 +1905,7 @@ func attach2TaskForMpp(p *physicalop.PhysicalHashAgg, tasks ...base.Task) base.T
 		return t
 	case physicalop.MppScalar:
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
-		if !mpp.NeedEnforceExchanger(prop, nil) {
+		if !property.NeedEnforceExchanger(mpp.GetPartitionType(), mpp.HashCols, prop, nil) {
 			// On the one hand: when the low layer already satisfied the single partition layout, just do the all agg computation in the single node.
 			return attach2TaskForMpp1Phase(p, mpp)
 		}
