@@ -75,7 +75,11 @@ go_test(
     embed = [":ingest"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 24,
+=======
+    shard_count = 28,
+>>>>>>> 4011c9f6c5 (modify column: support ingest/DXF mode to recreate indexes (#63970))
     deps = [
         "//pkg/config",
         "//pkg/ddl/ingest/testutil",

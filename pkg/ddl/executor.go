@@ -4982,10 +4982,17 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		if err != nil {
 			return err
 		}
+	case model.ActionModifyColumn:
+		setReorgParam()
+		if modifyColumnNeedReorg(job.CtxVars) {
+			err := setDistTaskParam()
+			if err != nil {
+				return err
+			}
+		}
 	case model.ActionReorganizePartition,
 		model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning,
-		model.ActionModifyColumn:
+		model.ActionAlterTablePartitioning:
 		setReorgParam()
 	case model.ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
@@ -4996,16 +5003,24 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 				if err != nil {
 					return err
 				}
+			case model.ActionModifyColumn:
+				setReorgParam()
+				if modifyColumnNeedReorg(sub.CtxVars) {
+					err := setDistTaskParam()
+					if err != nil {
+						return err
+					}
+				}
 			case model.ActionReorganizePartition,
 				model.ActionRemovePartitioning,
-				model.ActionAlterTablePartitioning,
-				model.ActionModifyColumn:
+				model.ActionAlterTablePartitioning:
 				setReorgParam()
 			}
 		}
 	default:
 		return nil
 	}
+	failpoint.InjectCall("beforeInitReorgMeta", m)
 	job.ReorgMeta = m
 	logutil.DDLLogger().Info("initialize reorg meta",
 		zap.String("jobSchema", job.SchemaName),
@@ -5018,6 +5033,15 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		zap.Int("batchSize", m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))),
 	)
 	return nil
+}
+
+func modifyColumnNeedReorg(jobCtxVars []any) bool {
+	if len(jobCtxVars) > 0 {
+		if v, ok := jobCtxVars[0].(bool); ok {
+			return v
+		}
+	}
+	return false
 }
 
 // LastReorgMetaFastReorgDisabled is used for test.

@@ -49,7 +49,7 @@ func newCloudImportExecutor(
 	job *model.Job,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
-	bcGetter func(context.Context) (ingest.BackendCtx, error),
+	bcGetter func(context.Context, bool) (ingest.BackendCtx, error),
 	cloudStoreURI string,
 ) (c *cloudImportExecutor, err error) {
 	c = &cloudImportExecutor{
@@ -60,7 +60,7 @@ func newCloudImportExecutor(
 		metric:        metrics.RegisterLightningCommonMetricsForDDL(job.ID),
 	}
 	ctx = lightningmetric.WithCommonMetric(ctx, c.metric)
-	c.bc, err = bcGetter(ctx)
+	c.bc, err = bcGetter(ctx, hasUniqueIndex(indexes))
 	if err != nil {
 		return nil, err
 	}
