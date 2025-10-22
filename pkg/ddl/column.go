@@ -475,18 +475,18 @@ func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.Inde
 	return indexInfos
 }
 
-func buildRelatedIndexIDs(job *model.Job, tblInfo *model.TableInfo, colID int64) []int64 {
+func getRollbackIndexIDs(job *model.Job, tblInfo *model.TableInfo, colID int64) []int64 {
 	hasTempIndexes := job.ReorgMeta.ReorgTp.NeedMergeProcess()
-	var oldIdxIDs []int64
+	var idxIDs []int64
 	for _, idx := range tblInfo.Indices {
 		if idx.HasColumnInIndexColumns(tblInfo, colID) {
-			oldIdxIDs = append(oldIdxIDs, idx.ID)
+			idxIDs = append(idxIDs, idx.ID)
 			if hasTempIndexes {
-				oldIdxIDs = append(oldIdxIDs, tablecodec.TempIndexPrefix|idx.ID)
+				idxIDs = append(idxIDs, tablecodec.TempIndexPrefix|idx.ID)
 			}
 		}
 	}
-	return oldIdxIDs
+	return idxIDs
 }
 
 // LocateOffsetToMove returns the offset of the column to move.

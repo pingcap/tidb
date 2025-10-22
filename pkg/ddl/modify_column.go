@@ -333,7 +333,7 @@ func rollbackModifyColumnJobWithReorg(
 	}
 	var changingIdxIDs []int64
 	if args.ChangingColumn != nil {
-		changingIdxIDs = buildRelatedIndexIDs(job, tblInfo, args.ChangingColumn.ID)
+		changingIdxIDs = getRollbackIndexIDs(job, tblInfo, args.ChangingColumn.ID)
 		// The job is in the middle state. The appended changingCol and changingIndex should
 		// be removed from the tableInfo as well.
 		removeChangingColAndIdxs(tblInfo, args.ChangingColumn.ID)
@@ -806,6 +806,11 @@ func (w *worker) doModifyColumnTypeWithData(
 			// Refactor the job args to add the old index ids into delete range table.
 			rmIdxs := append(removedIdxIDs, args.RedundantIdxs...)
 			args.IndexIDs = rmIdxs
+			newIdxIDs := make([]int64, 0, len(changingIdxs))
+			for _, idx := range changingIdxs {
+				newIdxIDs = append(newIdxIDs, idx.ID)
+			}
+			args.NewIndexIDs = newIdxIDs
 			args.PartitionIDs = getPartitionIDs(tblInfo)
 			job.FillFinishedArgs(args)
 		default:
