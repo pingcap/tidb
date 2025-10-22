@@ -740,6 +740,7 @@ type IndexOption struct {
 	Tp                         IndexType
 	Comment                    string
 	ParserName                 CIStr
+	Parameter                  string
 	Visibility                 IndexVisibility
 	PrimaryKeyTp               PrimaryKeyType
 	Global                     bool
@@ -756,6 +757,7 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Tp != IndexTypeInvalid ||
 		len(n.ParserName.O) > 0 ||
 		n.Comment != "" ||
+		n.Parameter != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
 		n.SplitOpt != nil ||
@@ -805,6 +807,15 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord("WITH PARSER ")
 		ctx.WriteName(n.ParserName.O)
+		hasPrevOption = true
+	}
+
+	if n.Parameter != "" {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("PARAMETER ")
+		ctx.WriteString(n.Parameter)
 		hasPrevOption = true
 	}
 

@@ -1259,6 +1259,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		}
 		if idxInfo.FullTextInfo != nil {
 			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
+			if idxInfo.FullTextInfo.Parameter != "" {
+				fmt.Fprintf(buf, " PARAMETER '%s'", format.OutputFormat(idxInfo.FullTextInfo.Parameter))
+			}
 		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)

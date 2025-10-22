@@ -148,6 +148,7 @@ import (
 	foreign           "FOREIGN"
 	from              "FROM"
 	fulltext          "FULLTEXT"
+	parameter         "PARAMETER"
 	generated         "GENERATED"
 	grant             "GRANT"
 	group             "GROUP"
@@ -6765,6 +6766,8 @@ IndexOptionList:
 				opt1.KeyBlockSize = opt2.KeyBlockSize
 			} else if len(opt2.ParserName.O) > 0 {
 				opt1.ParserName = opt2.ParserName
+			} else if len(opt2.Parameter) > 0 {
+				opt1.Parameter = opt2.Parameter
 			} else if opt2.Visibility != ast.IndexVisibilityDefault {
 				opt1.Visibility = opt2.Visibility
 			} else if opt2.PrimaryKeyTp != ast.PrimaryKeyTypeDefault {
@@ -6811,6 +6814,12 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			Comment: $2,
+		}
+	}
+|	parameter stringLit
+	{
+		$$ = &ast.IndexOption{
+			Parameter: $2,
 		}
 	}
 |	IndexInvisible
@@ -12272,11 +12281,11 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
 	}
-| 	"IMPORT" "GROUPS"
+|	"IMPORT" "GROUPS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups}
 	}
-| 	"IMPORT" "GROUP" stringLit 
+|	"IMPORT" "GROUP" stringLit
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups, ShowGroupKey: $3}
 	}
