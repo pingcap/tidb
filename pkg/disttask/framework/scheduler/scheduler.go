@@ -38,6 +38,7 @@ import (
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -125,7 +126,8 @@ func (s *BaseScheduler) ScheduleTask() {
 }
 
 // Close closes the scheduler.
-func (*BaseScheduler) Close() {
+func (s *BaseScheduler) Close() {
+	dxfmetric.ScheduleEventCounter.DeletePartialMatch(prometheus.Labels{dxfmetric.LblTaskID: fmt.Sprint(s.GetTask().ID)})
 }
 
 // GetTask implements the Scheduler interface.
