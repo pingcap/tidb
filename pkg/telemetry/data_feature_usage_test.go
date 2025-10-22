@@ -913,6 +913,6 @@ func TestFairLockingUsage(t *testing.T) {
 	tk.MustExec("commit")
 	usage, err = telemetry.GetFeatureUsage(tk2.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(4), usage.Txn.FairLockingUsageCounter.TxnFairLockingUsed)
+	require.Equal(t, int64(3), usage.Txn.FairLockingUsageCounter.TxnFairLockingUsed)
 	require.Equal(t, int64(1), usage.Txn.FairLockingUsageCounter.TxnFairLockingEffective)
 }

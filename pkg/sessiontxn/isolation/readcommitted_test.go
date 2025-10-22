@@ -568,6 +568,7 @@ func TestFailedDMLConsistency1(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set @@tidb_pessimistic_txn_fair_locking=1")
 	tk1.MustExec("use test")
 	tk1.MustExec("CREATE TABLE t(id INT primary key, v int not null);")
 	tk1.MustExec("insert into t values (1, 1)")
@@ -598,6 +599,7 @@ func TestFailedDMLConsistency2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("set @@tidb_txn_assertion_level=strict")
+	tk1.MustExec("set @@tidb_pessimistic_txn_fair_locking=1")
 	tk1.MustExec("use test")
 	tk1.MustExec("CREATE TABLE t(id INT primary key, v int not null, v2 int, index (id), unique index (v2));")
 	tk1.MustExec("INSERT INTO t VALUES (1, 1, 1);")
