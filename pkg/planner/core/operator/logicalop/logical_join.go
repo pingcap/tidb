@@ -143,6 +143,34 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 	}
 }
 
+// simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
+func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
+	if p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin {
+		return
+	}
+
+	innerTable := p.children[0]
+	if p.JoinType == base.LeftOuterJoin {
+		innerTable = p.children[1]
+	}
+
+	// ---- Convert OUTER→INNER only if there's an explicit NOT IS NULL
+	// on the nullable side (inner side of the outer join). ----
+	innerSch := innerTable.Schema() // schema of the nullable side
+	innerWhere := filterPredsInvolvingSchema(predicates, innerSch)
+	canBeSimplified := false
+	for _, expr := range innerWhere {
+		isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
+		if isOk {
+			canBeSimplified = true
+			break
+		}
+	}
+	if canBeSimplified {
+		p.JoinType = base.InnerJoin
+	}
+}
+
 // *************************** end implementation of Plan interface ***************************
 
 // *************************** start implementation of logicalPlan interface ***************************
@@ -151,6 +179,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	p.allJoinLeaf = getAllJoinLeaf(p)
@@ -809,26 +838,21 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 		}
 	}
 
-	// ---- step 2. Recurse into children (using passPredsSafely as guard). ----
+	// ---- step 1. Combine ON clause and predicates, then simplify join children. ----
 	combinedCond := mergeOnClausePredicates(p, predicates)
 
-	switch p.JoinType {
-	case base.LeftOuterJoin, base.RightOuterJoin:
-		innerTable = innerTable.ConvertOuterToInnerJoin(
-			passPredsSafely(innerTable, combinedCond),
-		)
-		outerTable = outerTable.ConvertOuterToInnerJoin(
-			passPredsSafely(outerTable, predicates),
-		)
-	case base.InnerJoin, base.SemiJoin:
-		innerTable = innerTable.ConvertOuterToInnerJoin(passPredsSafely(innerTable, combinedCond))
-		outerTable = outerTable.ConvertOuterToInnerJoin(passPredsSafely(outerTable, combinedCond))
-	case base.AntiSemiJoin:
-		innerTable = innerTable.ConvertOuterToInnerJoin(passPredsSafely(innerTable, predicates))
-		outerTable = outerTable.ConvertOuterToInnerJoin(passPredsSafely(outerTable, predicates))
-	default:
-		innerTable = innerTable.ConvertOuterToInnerJoin(passPredsSafely(innerTable, predicates))
-		outerTable = outerTable.ConvertOuterToInnerJoin(passPredsSafely(outerTable, predicates))
+	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
+		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
+		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
+	} else if p.JoinType == base.InnerJoin || p.JoinType == base.SemiJoin {
+		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
+		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
+	} else if p.JoinType == base.AntiSemiJoin {
+		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
+		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
+	} else {
+		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
+		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
 	}
 
 	if switchChild {

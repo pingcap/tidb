@@ -21,12 +21,23 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
+// SQL three-valued logic (3VL) quick reference
+// --------------------------------------------
+// 3VL has three truth values: TRUE, FALSE, UNKNOWN (result from any NULL participation).
+// Basic rules:
+//   - Comparisons/pattern/regex with a NULL operand → UNKNOWN (i.e., result is NULL), except NULL-safe <=>.
+//   - AND: FALSE dominates; TRUE ∧ UNKNOWN = UNKNOWN; UNKNOWN ∧ UNKNOWN = UNKNOWN.
+//   - OR:  TRUE dominates; FALSE ∨ UNKNOWN = UNKNOWN; UNKNOWN ∨ UNKNOWN = UNKNOWN.
+//   - NOT: NOT UNKNOWN = UNKNOWN.
+//
+// In this file, "NULL propagation" means: if any relevant argument is NULL, the function yields NULL (UNKNOWN).
+// We call such functions NullPreserving.
+
 // NullBehavior describes how a function interacts with SQL 3VL and NULL propagation.
 // Function null-behavior traits (centralized, easy to extend):
 //   - NullPreserving:   any NULL input (relevant arg) yields NULL output (e.g., +, -, *, comparisons, LIKE, REGEXP)
 //   - NullHiding:       may turn NULL into non-NULL or short-circuit to a non-NULL truth value
 //     (IF/CASE/COALESCE/IS .../AND/OR)
-//   - ShortCircuitBool: boolean operator with short-circuit semantics (AND/OR/XOR)
 //   - NullSafeEq:       NULL-safe equality (<=>)
 //   - NullTransparentWrapper: unary wrapper that is NULL-transparent and "structurally" transparent for our checks
 //     (e.g., CAST/CONVERT/WEIGHT_STRING、UNARY + / UNARY -). We peel these before reasoning.
@@ -38,8 +49,6 @@ const (
 	NullPreserving NullBehavior = 1 << iota
 	// NullHiding indicates may turn NULL into non-NULL
 	NullHiding
-	// ShortCircuitBool indicates boolean operator with short-circuit semantics
-	ShortCircuitBool
 	// NullSafeEq indicates NULL-safe equality
 	NullSafeEq
 	// NullTransparentWrapper indicates unary wrapper that is NULL-transparent
@@ -63,9 +72,9 @@ var fnTraits = map[string]NullBehavior{
 	ast.NullEQ:     NullSafeEq,
 
 	// Boolean connectives (may hide NULL via short-circuit)
-	ast.LogicAnd: NullHiding | ShortCircuitBool,
-	ast.LogicOr:  NullHiding | ShortCircuitBool,
-	ast.LogicXor: NullHiding | ShortCircuitBool,
+	ast.LogicAnd: NullHiding,
+	ast.LogicOr:  NullHiding,
+	ast.LogicXor: NullHiding,
 
 	// Truth predicates & NULL tests – they *handle* NULL explicitly
 	ast.IsFalsity:          NullHiding,
@@ -131,7 +140,7 @@ func allConstants(ctx expression.BuildContext, expr expression.Expression) bool 
 }
 
 // isNullRejectedInList checks null filter for IN list using OR logic.
-// Reason is that null filtering through evaluation by isNullRejectedSimpleExpr
+// Reason is that null filtering through evaluation by isNullRejectedExpr
 // has problems with IN list. For example, constant in (outer-table.col1, inner-table.col2)
 // is not null rejecting since constant in (outer-table.col1, NULL) is not false/unknown.
 func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
@@ -146,7 +155,7 @@ func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
 			if err != nil {
 				return false
 			}
-			if !(isNullRejectedSimpleExpr(ctx, innerSchema, eQCondition, skipPlanCacheCheck)) {
+			if !(isNullRejectedExpr(ctx, innerSchema, eQCondition, skipPlanCacheCheck)) {
 				return false
 			}
 		}
@@ -184,10 +193,10 @@ func IsNullRejected(
 		case ast.In:
 			return isNullRejectedInList(ctx, expr, innerSchema, skipPlanCacheCheck)
 		default:
-			return isNullRejectedSimpleExpr(ctx, innerSchema, expr, skipPlanCacheCheck)
+			return isNullRejectedExpr(ctx, innerSchema, expr, skipPlanCacheCheck)
 		}
 	default:
-		return isNullRejectedSimpleExpr(ctx, innerSchema, predicate, skipPlanCacheCheck)
+		return isNullRejectedExpr(ctx, innerSchema, predicate, skipPlanCacheCheck)
 	}
 }
 
@@ -308,40 +317,42 @@ func tryNullifyInnerAndFold(
 // +------------------------+
 // | Constant?             |--Yes--> NULL/FALSE? → true
 // +------------------------+                     TRUE → false
-//	          |
-//	          No
-//	          v
+//            |
+//            No
+//            v
 // +------------------------+
 // | All-constant tree?     |--Yes--> Fold → NULL/FALSE? → true
 // +------------------------+                     TRUE → false
-//	          |
-//	          No
-//	          v
-// +------------------------+
-// | Structural decision?   |--Yes--> return decision
-// +------------------------+
-//	          |
-//	          No
-//	          v
+//            |
+//            No
+//            v
 // +------------------------+
 // | Ref inner columns?     |--No--> false
 // +------------------------+
-//	          |
-//	          Yes
-//	          v
+//            |
+//            Yes
+//            v
+// +------------------------+
+// | Structural decision?   |--Yes--> return decision
+// +------------------------+
+//            |
+//            No
+//            v
 // +------------------------+
 // | Replace inner→NULL &   |
 // | constant fold          |--Fold→ NULL/FALSE? → true
 // +------------------------+         else → false
 
-// isNullRejectedSimpleExpr decides whether `predicate` is null-rejecting w.r.t. the `innerSchema`.
+// isNullRejectedExpr decides whether `predicate` is null-rejecting w.r.t. the `innerSchema`.
 // Strategy (fast → slow):
 //  1. Literal constant fast-path: WHERE NULL / 0 / 1.
-//  2. Whole constant tree: FoldConstant, then judge folded constant.
-//  3. Structural decision: syntactic rules (comparisons/LIKE/REGEXP/<=>/AND/OR/NOT ...).
-//  4. Fallback: if the predicate references any inner column, replace inner columns with NULL,
-//     fold, then apply 3VL (NULL/FALSE ⇒ reject; TRUE ⇒ not reject). Otherwise, undecided⇒false.
-func isNullRejectedSimpleExpr(
+//  2. Whole constant tree: FoldConstant, then judge under 3VL (TRUE/FALSE/UNKNOWN).
+//     (Must run before the inner-column check; constant predicates don't depend on columns.)
+//  3. Quick bailout: if the predicate does NOT reference any inner column → false.
+//  4. Structural decision: syntactic rules (comparisons/LIKE/REGEXP/<=>/AND/OR/NOT ...).
+//  5. Fallback: replace inner columns with NULL, fold, then apply 3VL
+//     (NULL/FALSE ⇒ reject; TRUE ⇒ not reject).
+func isNullRejectedExpr(
 	ctx base.PlanContext,
 	innerSchema *expression.Schema,
 	predicate expression.Expression,
@@ -360,7 +371,8 @@ func isNullRejectedSimpleExpr(
 		return false
 	}
 
-	// (2) Whole constant expression tree (safe for plan cache) for cases like: (1 + 2) = 3, COALESCE(1,2) > 0, etc.
+	// (2) Whole constant expression tree (no columns at all).
+	//     Handle upfront to avoid misclassifying expressions like (1=0).
 	if allConstants(ctx.GetExprCtx(), predicate) {
 		if decided, reject := tryConstTree(ctx, predicate); decided {
 			return reject
@@ -368,20 +380,22 @@ func isNullRejectedSimpleExpr(
 		return false
 	}
 
-	// (3) Structural (syntactic) decision; if deterministic, return immediately
+	// (3) Quick bailout: no inner columns ⇒ not null-rejecting WRT inner
+	if !referencesAnyInner(predicate, innerSchema) {
+		return false
+	}
+
+	// (4) Structural (syntactic) decision; if deterministic, return immediately
 	switch result := isNullRejectingByStructure(predicate, innerSchema); result {
 	case NullRejecting:
 		return true
 	case NotNullRejecting:
 		return false
 	case Undecided:
-		// Continue to fallback
+		// continue to fallback
 	}
 
-	// (4) Fallback: only meaningful if the predicate actually references inner columns
-	if !referencesAnyInner(predicate, innerSchema) {
-		return false
-	}
+	// (5) Fallback: inner→NULL substitution + fold; we already know inner cols exist.
 	if decided, reject := tryNullifyInnerAndFold(ctx, innerSchema, predicate, skipPlanCacheCheck); decided {
 		return reject
 	}
@@ -437,6 +451,9 @@ func anyColumnFromSchema(e expression.Expression, sch *expression.Schema) bool {
 // isNullPropagatingWRTInner reports whether expression `e` has at least one
 // evaluation path where a NULL coming from the `inner` schema *must* propagate
 // to the result of `e` (i.e., no guard like IF/IFNULL/COALESCE catches it).
+//
+// WRT = "with respect to": here it means we only consider NULLs coming from
+// columns in `inner` (not from outer columns or constants).
 //
 // Intuition:
 //   - A plain inner column by itself propagates NULL.
