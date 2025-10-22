@@ -42,33 +42,6 @@ func TestSlice(t *testing.T) {
 	}
 }
 
-func TestBinarySearchByIndx(t *testing.T) {
-	arr := []int{1, 3, 5, 7, 9, 11, 13, 15}
-	checkBinarySeachByIndx(t, arr, 1, 7)
-	checkBinarySeachByIndx(t, arr, 0, 0)
-	checkBinarySeachByIndx(t, arr, 1, 8)
-	checkBinarySeachByIndx(t, arr, 0, 16)
-	checkBinarySeachByIndx(t, arr, 6, 14)
-	checkBinarySeachByIndx(t, arr, 1, 3)
-	checkBinarySeachByIndx(t, arr, 3, 5)
-	checkBinarySeachByIndx(t, arr, 5, 7)
-	checkBinarySeachByIndx(t, arr, 7, 9)
-	checkBinarySeachByIndx(t, arr, 9, 11)
-	checkBinarySeachByIndx(t, arr, 11, 13)
-	checkBinarySeachByIndx(t, arr, 13, 15)
-	checkBinarySeachByIndx(t, arr, 130, 150)
-	arr = []int{-1, 1}
-	checkBinarySeachByIndx(t, arr, -2, -2)
-	checkBinarySeachByIndx(t, arr, 2, 3)
-	checkBinarySeachByIndx(t, arr, 0, 1)
-	checkBinarySeachByIndx(t, arr, -1, 0)
-	arr = []int{0}
-	checkBinarySeachByIndx(t, arr, -2, -2)
-	checkBinarySeachByIndx(t, arr, 2, 3)
-	checkBinarySeachByIndx(t, arr, 0, 1)
-	checkBinarySeachByIndx(t, arr, -1, 0)
-}
-
 func checkBinarySeachByIndx(t *testing.T, arr []int, low, high int) {
 	i1, i2 := BinarySearchRangeFunc(arr, low, high, func(a int, b int) int {
 		return cmp.Compare(a, b)
@@ -77,4 +50,38 @@ func checkBinarySeachByIndx(t *testing.T, arr []int, low, high int) {
 	require.Equal(t, i1, idx)
 	idx, _ = slices.BinarySearch(arr, high)
 	require.Equal(t, i2, idx)
+}
+
+func TestBinarySearchByIndex(t *testing.T) {
+	arr := []int{1, 3, 5, 7, 9, 11, 13, 15}
+	checkBinarySeachByIndx(t, arr, 0, 0)     // before first
+	checkBinarySeachByIndx(t, arr, 1, 1)     // first
+	checkBinarySeachByIndx(t, arr, 1, 8)     // [first, before arr[4])
+	checkBinarySeachByIndx(t, arr, 0, 16)    // before first, after last
+	checkBinarySeachByIndx(t, arr, 1, 3)     // [arr[0], arr[1]]
+	checkBinarySeachByIndx(t, arr, 3, 5)     // [arr[1], arr[2]]
+	checkBinarySeachByIndx(t, arr, 5, 7)     // [arr[2], arr[3]]
+	checkBinarySeachByIndx(t, arr, 10, 11)   // [arr[5] < low < arr[6], arr[6]]
+	checkBinarySeachByIndx(t, arr, 10, 12)   // [arr[5] < low < arr[6], arr[6] < high < arr[7]]
+	checkBinarySeachByIndx(t, arr, 10, 13)   // [arr[5] < low < arr[6], arr[7]]
+	checkBinarySeachByIndx(t, arr, 11, 12)   // [arr[5], arr[6] < high < arr[7]]
+	checkBinarySeachByIndx(t, arr, 11, 13)   // [arr[5], arr[7]]
+	checkBinarySeachByIndx(t, arr, 11, 14)   // [arr[5], arr[7] < high < arr[8]]
+	checkBinarySeachByIndx(t, arr, 13, 15)   // [arr[len-2], arr[len-1]]
+	checkBinarySeachByIndx(t, arr, 10, 16)   // [arr[5] < low < arr[6], after last]
+	checkBinarySeachByIndx(t, arr, 10, 15)   // [arr[5] < low < arr[6], last]
+	checkBinarySeachByIndx(t, arr, 10, 14)   // [arr[5] < low < arr[6], arr[len-2] < high < arr[len-1]]
+	checkBinarySeachByIndx(t, arr, 130, 150) // after last
+	arr = []int{-1, 1}
+	checkBinarySeachByIndx(t, arr, -2, -2)
+	checkBinarySeachByIndx(t, arr, 2, 3)
+	checkBinarySeachByIndx(t, arr, 0, 1)
+	checkBinarySeachByIndx(t, arr, -1, 0)
+	checkBinarySeachByIndx(t, arr, -1, -1)
+	checkBinarySeachByIndx(t, arr, 1, 1)
+	arr = []int{0}
+	checkBinarySeachByIndx(t, arr, -2, -2)
+	checkBinarySeachByIndx(t, arr, 2, 3)
+	checkBinarySeachByIndx(t, arr, 0, 1)
+	checkBinarySeachByIndx(t, arr, -1, 0)
 }
