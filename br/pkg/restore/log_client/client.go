@@ -1623,8 +1623,26 @@ func (rc *LogClient) ResetTiflashReplicas(ctx context.Context, sqls []string, g 
 	for _, sql := range sqls {
 		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			resetSession := resetSessions[id%uint64(len(resetSessions))]
-			log.Info("reset tiflash replica", zap.String("sql", sql))
-			return resetSession.ExecuteInternal(ectx, sql)
+			log.Info("reset tiflash replica", zap.Uint64("task id", id), zap.String("sql", sql))
+			var resetErr error
+			for range 5 {
+				resetErr = resetSession.ExecuteInternal(ectx, sql)
+				if resetErr == nil {
+					break
+				}
+				log.Warn("Failed to restore tiflash replica config", zap.Uint64("task id", id), zap.Error(resetErr))
+				if ectx.Err() != nil {
+					log.Warn("Stop retrying because context cancelled", zap.Error(ectx.Err()))
+					break
+				}
+			}
+			if resetErr != nil {
+				logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
+					logutil.ShortError(resetErr),
+					zap.String("sql", sql),
+				)
+			}
+			return nil
 		})
 	}
 	return eg.Wait()
