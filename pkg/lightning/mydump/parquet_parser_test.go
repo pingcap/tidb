@@ -89,12 +89,10 @@ func TestParquetParser(t *testing.T) {
 		verifyRow(i)
 	}
 
-	// test set pos to pos < curpos + batchReadRowSize
 	require.NoError(t, reader.SetPos(15, 15))
 	require.NoError(t, reader.ReadRow())
 	verifyRow(15)
 
-	// test set pos to pos > curpos + batchReadRowSize
 	require.NoError(t, reader.SetPos(80, 80))
 	for i := 80; i < 100; i++ {
 		require.NoError(t, reader.ReadRow())

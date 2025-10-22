@@ -383,19 +383,19 @@ func (pp *ParquetParser) Pos() (pos int64, rowID int64) {
 // For parquet file, this interface will read and discard the first `pos` rows,
 // and set the current row ID to `rowID`
 func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
-	pp.lastRow.RowID = rowID
-
 	row := pp.rowPool.Get()
 	defer pp.rowPool.Put(row)
 
 	// TODO(joechenrh): skip rows use underlying SkipRow interface
 	// For now it's ok, since only UTs use this interface
-	for range pos {
+	toRead := pos - pp.lastRow.RowID
+	for range toRead {
 		if err := pp.readSingleRows(row); err != nil {
 			return err
 		}
 	}
 
+	pp.lastRow.RowID = rowID
 	return nil
 }
 
