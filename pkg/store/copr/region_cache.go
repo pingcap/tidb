@@ -595,12 +595,6 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 
 	ctx := bo.GetCtx()
 
-	// Extract tikv.KeyLocations for validation
-	tikvLocs := make([]*tikv.KeyLocation, 0, len(locs))
-	for _, loc := range locs {
-		tikvLocs = append(tikvLocs, loc.Location)
-	}
-
 	// Defensive: if bucket split panics, query PD directly to compare with cached data
 	// This adds zero overhead in the normal case, only runs on panic
 	defer func() {
@@ -611,7 +605,11 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 				zap.Int("cachedLocationCount", len(locs)))
 
 			// Query PD directly for each region to see current state
+			// Also extract tikv.KeyLocations for coverage validation
+			tikvLocs := make([]*tikv.KeyLocation, 0, len(locs))
 			for i, loc := range locs {
+				tikvLocs = append(tikvLocs, loc.Location)
+
 				logutil.Logger(ctx).Error("Cached region info",
 					zap.Int("index", i),
 					zap.Uint64("regionID", loc.Location.Region.GetID()),
@@ -638,7 +636,7 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 					zap.Bool("boundaryChanged", !bytes.Equal(loc.Location.StartKey, pdLoc.StartKey) || !bytes.Equal(loc.Location.EndKey, pdLoc.EndKey)))
 			}
 
-			// Also validate if locations cover ranges
+			// Validate if locations cover ranges
 			valid := validateLocationCoverage(ctx, kvRanges, tikvLocs)
 			logutil.Logger(ctx).Error("Location coverage validation result",
 				zap.Bool("valid", valid))
