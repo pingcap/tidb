@@ -166,7 +166,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 			val, err := codec.EncodeMySQLTime(tc.Location(), d.GetMysqlTime(), ft.GetType(), nil)
 			err = ec.HandleError(err)
 			if err != nil {
-				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
+				logutil.BgLogger().Warn("encode mysql time", zap.Error(err))
 				return tp, nil, false
 			}
 			return tp, val, true
