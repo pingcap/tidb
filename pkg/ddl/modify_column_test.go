@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -638,4 +639,91 @@ func TestMultiSchemaModifyColumnWithIndex(t *testing.T) {
 	require.Equal(t, 2, len(newTblInfo.Indices))
 	require.Equal(t, "new1", newTblInfo.Indices[0].Name.L)
 	require.Equal(t, "new2", newTblInfo.Indices[1].Name.L)
+}
+
+func TestParallelAlterTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	ctx := context.Background()
+	var wg util.WaitGroupWrapper
+
+	checkParallelDDL := func(t *testing.T, createSQL, firstSQL, secondSQL string) (err1, err2 error) {
+		var (
+			submitted     = make(chan struct{}, 16)
+			startSchedule = make(chan struct{})
+		)
+
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(createSQL)
+
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+			<-startSchedule
+		})
+
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterGetJobFromLimitCh", func(ch chan *ddl.JobWrapper) {
+			submitted <- struct{}{}
+		})
+		wg.Run(func() {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			_, err1 = tk1.Exec(firstSQL)
+		})
+		wg.Run(func() {
+			// wait until first ddl is submitted
+			<-submitted
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			_, err2 = tk1.Exec(secondSQL)
+		})
+		require.Eventually(t, func() bool {
+			gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
+			require.NoError(t, err)
+			return len(gotJobs) == 2
+		}, 10*time.Second, 100*time.Millisecond)
+
+		close(startSchedule)
+		wg.Wait()
+		return
+	}
+
+	t.Run("modify column then add index", func(t *testing.T) {
+		err1, err2 := checkParallelDDL(t,
+			"create table t(id int, c1 char(16))",
+			"alter table t modify column c1 text(255)",
+			"alter table t add index idx_c1(c1)",
+		)
+		require.NoError(t, err1)
+		require.Error(t, err2)
+	})
+
+	t.Run("add index then modify column", func(t *testing.T) {
+		err1, err2 := checkParallelDDL(t,
+			"create table t(id int, c1 char(16))",
+			"alter table t add index idx_c1(c1)",
+			"alter table t modify column c1 text(255)",
+		)
+		require.NoError(t, err1)
+		require.Error(t, err2)
+	})
+
+	t.Run("add index with prefix length then modify column", func(t *testing.T) {
+		err1, err2 := checkParallelDDL(t,
+			"create table t(id int, c1 char(16))",
+			"alter table t add index idx_c1(c1(10))",
+			"alter table t modify column c1 text(255)",
+		)
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+	})
+
+	t.Run("modify column then add index with prefix length", func(t *testing.T) {
+		err1, err2 := checkParallelDDL(t,
+			"create table t(id int, c1 char(16))",
+			"alter table t modify column c1 text(255)",
+			"alter table t add index idx_c1(c1(10))",
+		)
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+	})
 }
