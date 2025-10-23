@@ -288,10 +288,7 @@ func checkDataWithModifyColumn(data types.Datum, changingType *types.FieldType) 
 			exprstatic.NewEvalContext(
 				exprstatic.WithSQLMode(
 					mysql.ModeStrictAllTables | mysql.ModeStrictTransTables))))
-	dummyCol := &model.ColumnInfo{
-		FieldType: *changingType,
-	}
-	value, err := table.CastColumnValue(strictCtx, data, dummyCol, false, false)
+	value, err := table.CastColumnValueToType(strictCtx, data, changingType, false, false)
 	if err != nil {
 		return err
 	}
@@ -463,10 +460,8 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	checkRowBuffer := mutateBuffers.GetCheckRowBufferWithCap(numColsCap)
 
 	for _, col := range t.Columns {
-		var (
-			value types.Datum
-			err   error
-		)
+		var value types.Datum
+		var err error
 
 		if col.ChangingFieldType != nil {
 			if err := checkDataWithModifyColumn(newData[col.Offset], col.ChangingFieldType); err != nil {
@@ -800,7 +795,6 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 
 	for _, col := range t.Columns {
 		if col.ChangingFieldType != nil {
-			intest.Assert(col.State == model.StatePublic, "ChangingFieldType should only be set for public columns")
 			if err := checkDataWithModifyColumn(r[col.Offset], col.ChangingFieldType); err != nil {
 				return nil, err
 			}
