@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/slice"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 )
@@ -691,10 +691,9 @@ func (c *TopN) LowerBoundRange(d []byte, left, right int) (idx int) {
 	if left >= right {
 		return left
 	}
-	idx, _ = slice.BinarySearchRange(c.TopN, d, left, right, func(a TopNMeta, b []byte) int {
+	return sliceutil.BinarySearchRange(c.TopN, d, left, right, func(a TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
-	return idx
 }
 
 // BetweenCount estimates the row count for interval [l, r).
