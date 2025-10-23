@@ -93,6 +93,16 @@ func TestMergeTempIndexBasic(t *testing.T) {
 			readIdxRowCnt: []string{"1"},
 			mergeIdxCnt:   []string{"2", "2"},
 		},
+		{
+			name:          "modify column with index covered",
+			createTable:   "create table t (a int primary key, b int, c int, index idx(b));",
+			createIndex:   "alter table t modify column b smallint;",
+			adminCheck:    "admin check table t;",
+			initOp:        []string{"insert into t values (1, 1, 1);"},
+			incrOp:        []string{"insert into t values (2, 2, 2), (3, 3, 3);"},
+			readIdxRowCnt: []string{"1"},
+			mergeIdxCnt:   []string{"2"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -110,7 +120,10 @@ func TestMergeTempIndexBasic(t *testing.T) {
 
 		var jobID int64
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
-			if jobID == 0 || job.Type == model.ActionAddIndex || job.Type == model.ActionMultiSchemaChange {
+			if jobID == 0 ||
+				job.Type == model.ActionAddIndex ||
+				job.Type == model.ActionModifyColumn ||
+				job.Type == model.ActionMultiSchemaChange {
 				jobID = job.ID
 			}
 		})

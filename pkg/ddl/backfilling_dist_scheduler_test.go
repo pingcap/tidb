@@ -329,7 +329,7 @@ func createAddIndexTask(t *testing.T,
 			ReorgMeta: &model.DDLReorgMeta{
 				SQLMode:     defaultSQLMode,
 				Location:    &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
-				ReorgTp:     model.ReorgTypeLitMerge,
+				ReorgTp:     model.ReorgTypeIngest,
 				IsDistReorg: true,
 			},
 			Version: model.JobVersion2,

@@ -18,6 +18,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -360,6 +361,36 @@ func TestMultiSchemaChangeChangeColumns(t *testing.T) {
 	tk.MustGetErrCode("select d from t", errno.ErrBadField)
 }
 
+func TestMultiSchemaChangeRenameTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, b int default 2, index t(a, b));")
+	tk.MustExec("insert into t values (1, 2);")
+	var wg sync.WaitGroup
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateNone:
+			wg.Add(1)
+			go func() {
+				_, err := tk.Exec("alter table t rename column b to c, change column a e bigint default 3;")
+				require.Error(t, err)
+				wg.Done()
+			}()
+		}
+	})
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("alter table t rename to t1")
+	wg.Wait()
+
+	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+	tk2.MustExec("admin check table t1;")
+	tk2.MustExec("alter table t1 rename column b to c, change column a e bigint default 3;")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+}
 func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

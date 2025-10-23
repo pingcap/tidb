@@ -165,6 +165,18 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
+	// Check index prefix length for the first time
+	if job.SchemaState == model.StateNone {
+		columns := getReplacedColumns(tblInfo, oldCol, args.Column)
+		allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
+		for _, idx := range allIdxs {
+			if err := checkIndexInModifiableColumns(columns, idx); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
+	}
+
 	// For first time running this job, or the job from older version,
 	// we need to fill the ModifyColumnType.
 	if args.ModifyColumnType == modifyTypeNone ||
@@ -236,7 +248,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify column in primary key")
 	}
 
-	defer checkColumnOrderByStates(tblInfo)
+	defer checkTableInfo(tblInfo)
 	changingCol, err := getChangingCol(args, tblInfo, oldCol)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -333,7 +345,7 @@ func rollbackModifyColumnJobWithReorg(
 	}
 	var changingIdxIDs []int64
 	if args.ChangingColumn != nil {
-		changingIdxIDs = buildRelatedIndexIDs(tblInfo, args.ChangingColumn.ID)
+		changingIdxIDs = getRollbackIndexIDs(job, tblInfo, args.ChangingColumn.ID)
 		// The job is in the middle state. The appended changingCol and changingIndex should
 		// be removed from the tableInfo as well.
 		removeChangingColAndIdxs(tblInfo, args.ChangingColumn.ID)
@@ -596,6 +608,22 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
+// reorderChangingIdx reorders the changing index infos to match the order of old index infos.
+func reorderChangingIdx(oldIdxInfos []*model.IndexInfo, changingIdxInfos []*model.IndexInfo) {
+	nameToChanging := make(map[string]*model.IndexInfo, len(changingIdxInfos))
+	for _, cIdx := range changingIdxInfos {
+		origName := cIdx.Name.O
+		if cIdx.State != model.StatePublic {
+			origName = getChangingIndexOriginName(cIdx)
+		}
+		nameToChanging[origName] = cIdx
+	}
+
+	for i, oldIdx := range oldIdxInfos {
+		changingIdxInfos[i] = nameToChanging[getRemovingObjOriginName(oldIdx.Name.O)]
+	}
+}
+
 func (w *worker) doModifyColumnTypeWithData(
 	jobCtx *jobContext,
 	job *model.Job,
@@ -639,6 +667,12 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		// none -> delete only
 		updateObjectState(changingCol, changingIdxs, model.StateDeleteOnly)
+		job.ReorgMeta.Stage = model.ReorgStageModifyColumnUpdateColumn
+		err := initForReorgIndexes(w, job, changingIdxs)
+		if err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var sctx sessionctx.Context
@@ -712,25 +746,42 @@ func (w *worker) doModifyColumnTypeWithData(
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		switch job.AnalyzeState {
+		switch job.ReorgMeta.AnalyzeState {
 		case model.AnalyzeStateNone:
-			// reorg the data.
-			reorgElements := BuildElements(changingCol, changingIdxs)
-			done, ver, err := doReorgWorkForModifyColumn(jobCtx, w, job, tbl, oldCol, reorgElements)
-			if !done {
-				return ver, err
-			}
-			if checkAnalyzeNecessary(job, changingIdxs, tblInfo) {
-				job.AnalyzeState = model.AnalyzeStateRunning
-			} else {
-				job.AnalyzeState = model.AnalyzeStateSkipped
-				checkAndMarkNonRevertible(job)
+			switch job.ReorgMeta.Stage {
+			case model.ReorgStageModifyColumnUpdateColumn:
+				var done bool
+				reorgElements := BuildElements(changingCol, changingIdxs)
+				done, ver, err = doReorgWorkForModifyColumn(jobCtx, w, job, tbl, oldCol, reorgElements)
+				if !done {
+					return ver, err
+				}
+				if len(changingIdxs) > 0 {
+					job.SnapshotVer = 0
+					job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
+				} else {
+					job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
+				}
+			case model.ReorgStageModifyColumnRecreateIndex:
+				var done bool
+				done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, changingIdxs)
+				if !done {
+					return ver, err
+				}
+				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
+			case model.ReorgStageModifyColumnCompleted:
+				if checkAnalyzeNecessary(job, changingIdxs, tblInfo) {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+				} else {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+					checkAndMarkNonRevertible(job)
+				}
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
 			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
 			if done {
-				job.AnalyzeState = model.AnalyzeStateDone
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
@@ -741,6 +792,11 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 			changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
 			intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
+
+			// In multi-schema change, the order of changingIdxInfos may not be the same as oldIdxInfos,
+			// because we will allocate new indexID for previous temp index.
+			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
+
 			updateObjectState(oldCol, oldIdxInfos, model.StateWriteOnly)
 			updateObjectState(changingCol, changingIdxInfos, model.StatePublic)
 			markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, colName)
@@ -767,7 +823,8 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
-			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, job.AnalyzeState == model.AnalyzeStateDone)
+			analyzed := job.ReorgMeta.AnalyzeState == model.AnalyzeStateDone
+			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
 			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -782,6 +839,11 @@ func (w *worker) doModifyColumnTypeWithData(
 			// Refactor the job args to add the old index ids into delete range table.
 			rmIdxs := append(removedIdxIDs, args.RedundantIdxs...)
 			args.IndexIDs = rmIdxs
+			newIdxIDs := make([]int64, 0, len(changingIdxs))
+			for _, idx := range changingIdxs {
+				newIdxIDs = append(newIdxIDs, idx.ID)
+			}
+			args.NewIndexIDs = newIdxIDs
 			args.PartitionIDs = getPartitionIDs(tblInfo)
 			job.FillFinishedArgs(args)
 		default:
@@ -795,28 +857,6 @@ func (w *worker) doModifyColumnTypeWithData(
 	return ver, errors.Trace(err)
 }
 
-func doReorgWorkForModifyColumnWrapper(
-	jobCtx *jobContext,
-	w *worker, job *model.Job, tbl table.Table,
-	oldCol *model.ColumnInfo, elements []*meta.Element,
-) (done bool, ver int64, err error) {
-	if job.MultiSchemaInfo == nil {
-		return doReorgWorkForModifyColumn(jobCtx, w, job, tbl, oldCol, elements)
-	}
-
-	if job.MultiSchemaInfo.Revertible {
-		done, ver, err = doReorgWorkForModifyColumn(jobCtx, w, job, tbl, oldCol, elements)
-		if done {
-			// We need another round to wait for all the others sub-jobs to finish.
-			job.MarkNonRevertible()
-		}
-		// We need another round to run the reorg process.
-		return false, ver, err
-	}
-
-	return true, ver, err
-}
-
 func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
 	analyzeVer := vardef.DefTiDBAnalyzeVersion
 	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
@@ -826,15 +866,15 @@ func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl
 	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok {
 		enableDDLAnalyze = variable.TiDBOptOn(val)
 	}
-	isPartitionedTable := tbl.GetPartitionInfo() == nil
+	hasPartition := tbl.GetPartitionInfo() != nil
 	hasChangingIdx := len(changingIdxes) > 0
 
-	if enableDDLAnalyze && hasChangingIdx && isPartitionedTable && analyzeVer == 2 {
+	if enableDDLAnalyze && hasChangingIdx && !hasPartition && analyzeVer == 2 {
 		return true
 	}
 	logutil.DDLLogger().Info("skip analyze",
 		zap.Bool("tidb_enable_ddl_analyze", enableDDLAnalyze),
-		zap.Bool("is partitioned table", isPartitionedTable),
+		zap.Bool("is partitioned table", hasPartition),
 		zap.Int("affected indexes count", len(changingIdxes)),
 		zap.Int("tidb_analyze_version", analyzeVer))
 	return false
@@ -858,7 +898,6 @@ func doReorgWorkForModifyColumn(
 	w *worker, job *model.Job, tbl table.Table,
 	oldCol *model.ColumnInfo, elements []*meta.Element,
 ) (done bool, ver int64, err error) {
-	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
 		err = errors.Trace(err1)
@@ -888,7 +927,7 @@ func doReorgWorkForModifyColumn(
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tbl.Meta().Name, oldCol.Name)
 			}, false)
-		return w.updateCurrentElement(jobCtx, tbl, reorgInfo)
+		return w.modifyTableColumn(jobCtx, tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -940,29 +979,40 @@ var colStateOrd = map[model.SchemaState]int{
 	model.StatePublic:               5,
 }
 
-func checkColumnOrderByStates(tblInfo *model.TableInfo) {
-	if intest.InTest {
-		minState := model.StatePublic
-		for _, col := range tblInfo.Columns {
-			if colStateOrd[col.State] < colStateOrd[minState] {
-				minState = col.State
-			} else if colStateOrd[col.State] > colStateOrd[minState] {
-				intest.Assert(false, fmt.Sprintf("column %s state %s is not in order, expect at least %s", col.Name, col.State, minState))
-			}
-			if col.ChangeStateInfo != nil {
-				offset := col.ChangeStateInfo.DependencyColumnOffset
-				intest.Assert(offset >= 0 && offset < len(tblInfo.Columns))
-				depCol := tblInfo.Columns[offset]
-				switch {
-				case strings.HasPrefix(col.Name.O, changingColumnPrefix):
-					name := getChangingColumnOriginName(col)
-					intest.Assert(name == depCol.Name.O, "%s != %s", name, depCol.Name.O)
-				case strings.HasPrefix(depCol.Name.O, removingObjPrefix):
-					name := getRemovingObjOriginName(depCol.Name.O)
-					intest.Assert(name == col.Name.O, "%s != %s", name, col.Name.O)
-				}
+func checkTableInfo(tblInfo *model.TableInfo) {
+	if !intest.InTest {
+		return
+	}
+
+	// Check columns' order by state.
+	minState := model.StatePublic
+	for _, col := range tblInfo.Columns {
+		if colStateOrd[col.State] < colStateOrd[minState] {
+			minState = col.State
+		} else if colStateOrd[col.State] > colStateOrd[minState] {
+			intest.Assert(false, fmt.Sprintf("column %s state %s is not in order, expect at least %s", col.Name, col.State, minState))
+		}
+		if col.ChangeStateInfo != nil {
+			offset := col.ChangeStateInfo.DependencyColumnOffset
+			intest.Assert(offset >= 0 && offset < len(tblInfo.Columns))
+			depCol := tblInfo.Columns[offset]
+			switch {
+			case strings.HasPrefix(col.Name.O, changingColumnPrefix):
+				name := getChangingColumnOriginName(col)
+				intest.Assert(name == depCol.Name.O, "%s != %s", name, depCol.Name.O)
+			case strings.HasPrefix(depCol.Name.O, removingObjPrefix):
+				name := getRemovingObjOriginName(depCol.Name.O)
+				intest.Assert(name == col.Name.O, "%s != %s", name, col.Name.O)
 			}
 		}
+	}
+
+	// Check index names' uniqueness.
+	allNames := make(map[string]struct{})
+	for _, idx := range tblInfo.Indices {
+		_, exists := allNames[idx.Name.O]
+		intest.Assert(!exists, "duplicate index name %s", idx.Name.O)
+		allNames[idx.Name.O] = struct{}{}
 	}
 }
 
@@ -1068,7 +1118,11 @@ func GetModifiableColumnJob(
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("columnar indexes on the column")
 		}
 		// new col's origin default value be the same as the new default value.
-		if err = newCol.ColumnInfo.SetOriginDefaultValue(newCol.ColumnInfo.GetDefaultValue()); err != nil {
+		originDefVal, err := generateOriginDefaultValue(newCol.ColumnInfo, sctx, false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if err = newCol.ColumnInfo.SetOriginDefaultValue(originDefVal); err != nil {
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("new column set origin default value failed")
 		}
 	}
@@ -1361,21 +1415,27 @@ func ProcessColumnCharsetAndCollation(ctx *metabuild.Context, col *table.Column,
 	return nil
 }
 
-// checkColumnWithIndexConstraint is used to check the related index constraint of the modified column.
-// Index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
-// will cause index idx to break the max-prefix-length constraint.
-func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
+func getReplacedColumns(tbInfo *model.TableInfo, oldCol, newCol *model.ColumnInfo) []*model.ColumnInfo {
 	columns := make([]*model.ColumnInfo, 0, len(tbInfo.Columns))
 	columns = append(columns, tbInfo.Columns...)
 	// Replace old column with new column.
 	for i, col := range columns {
-		if col.Name.L != originalCol.Name.L {
+		if col.Name.L != oldCol.Name.L {
 			continue
 		}
 		columns[i] = newCol.Clone()
-		columns[i].Name = originalCol.Name
-		break
+		columns[i].Name = oldCol.Name
+		return columns
 	}
+
+	return columns
+}
+
+// checkColumnWithIndexConstraint is used to check the related index constraint of the modified column.
+// Index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
+// will cause index idx to break the max-prefix-length constraint.
+func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
+	columns := getReplacedColumns(tbInfo, originalCol, newCol)
 
 	pkIndex := tables.FindPrimaryIndex(tbInfo)
 
@@ -1390,7 +1450,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if !modified {
 			return
 		}
-		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.GetColumnarIndexType())
+		err = checkIndexInModifiableColumns(columns, indexInfo)
 		if err != nil {
 			return
 		}
@@ -1423,11 +1483,16 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	return nil
 }
 
-func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, columnarIndexType model.ColumnarIndexType) error {
-	for _, ic := range idxColumns {
+func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxInfo *model.IndexInfo) error {
+	indexType := idxInfo.GetColumnarIndexType()
+	for _, ic := range idxInfo.Columns {
 		col := model.FindColumnInfo(columns, ic.Name.L)
 		if col == nil {
 			return dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
+		}
+
+		if indexType != model.ColumnarIndexTypeNA {
+			continue
 		}
 
 		prefixLength := types.UnspecifiedLength
@@ -1436,10 +1501,8 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if columnarIndexType == model.ColumnarIndexTypeNA {
-			if err := checkIndexColumn(col, prefixLength, false); err != nil {
-				return err
-			}
+		if err := checkIndexColumn(col, prefixLength, false); err != nil {
+			return err
 		}
 	}
 	return nil
