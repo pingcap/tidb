@@ -567,7 +567,7 @@ func init() {
 			return nil, err
 		}
 
-		e := newExecutorBuilder(sctx, is, nil)
+		e := newExecutorBuilder(sctx, is)
 		executor := e.build(p)
 		if e.err != nil {
 			return nil, e.err

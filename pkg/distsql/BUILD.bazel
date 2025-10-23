@@ -26,7 +26,6 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/store/copr",
         "//pkg/tablecodec",
-        "//pkg/telemetry",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/codec",

@@ -48,36 +48,6 @@ var (
 	SessionExecuteCompileDurationGeneral  prometheus.Observer
 	SessionExecuteParseDurationInternal   prometheus.Observer
 	SessionExecuteParseDurationGeneral    prometheus.Observer
-
-	TelemetryCTEUsageRecurCTE       prometheus.Counter
-	TelemetryCTEUsageNonRecurCTE    prometheus.Counter
-	TelemetryCTEUsageNotCTE         prometheus.Counter
-	TelemetryMultiSchemaChangeUsage prometheus.Counter
-	TelemetryFlashbackClusterUsage  prometheus.Counter
-
-	TelemetryTablePartitionUsage                prometheus.Counter
-	TelemetryTablePartitionListUsage            prometheus.Counter
-	TelemetryTablePartitionRangeUsage           prometheus.Counter
-	TelemetryTablePartitionHashUsage            prometheus.Counter
-	TelemetryTablePartitionRangeColumnsUsage    prometheus.Counter
-	TelemetryTablePartitionRangeColumnsGt1Usage prometheus.Counter
-	TelemetryTablePartitionRangeColumnsGt2Usage prometheus.Counter
-	TelemetryTablePartitionRangeColumnsGt3Usage prometheus.Counter
-	TelemetryTablePartitionListColumnsUsage     prometheus.Counter
-	TelemetryTablePartitionMaxPartitionsUsage   prometheus.Counter
-	TelemetryTablePartitionCreateIntervalUsage  prometheus.Counter
-	TelemetryTablePartitionAddIntervalUsage     prometheus.Counter
-	TelemetryTablePartitionDropIntervalUsage    prometheus.Counter
-	TelemetryExchangePartitionUsage             prometheus.Counter
-	TelemetryTableCompactPartitionUsage         prometheus.Counter
-	TelemetryReorganizePartitionUsage           prometheus.Counter
-
-	TelemetryLockUserUsage          prometheus.Counter
-	TelemetryUnlockUserUsage        prometheus.Counter
-	TelemetryCreateOrAlterUserUsage prometheus.Counter
-
-	TelemetryIndexMerge        prometheus.Counter
-	TelemetryStoreBatchedUsage prometheus.Counter
 )
 
 func init() {
@@ -113,34 +83,4 @@ func InitMetricsVars() {
 	SessionExecuteCompileDurationGeneral = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
 	SessionExecuteParseDurationInternal = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	SessionExecuteParseDurationGeneral = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
-
-	TelemetryCTEUsageRecurCTE = metrics.TelemetrySQLCTECnt.WithLabelValues("recurCTE")
-	TelemetryCTEUsageNonRecurCTE = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
-	TelemetryCTEUsageNotCTE = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
-	TelemetryMultiSchemaChangeUsage = metrics.TelemetryMultiSchemaChangeCnt
-	TelemetryFlashbackClusterUsage = metrics.TelemetryFlashbackClusterCnt
-
-	TelemetryTablePartitionUsage = metrics.TelemetryTablePartitionCnt
-	TelemetryTablePartitionListUsage = metrics.TelemetryTablePartitionListCnt
-	TelemetryTablePartitionRangeUsage = metrics.TelemetryTablePartitionRangeCnt
-	TelemetryTablePartitionHashUsage = metrics.TelemetryTablePartitionHashCnt
-	TelemetryTablePartitionRangeColumnsUsage = metrics.TelemetryTablePartitionRangeColumnsCnt
-	TelemetryTablePartitionRangeColumnsGt1Usage = metrics.TelemetryTablePartitionRangeColumnsGt1Cnt
-	TelemetryTablePartitionRangeColumnsGt2Usage = metrics.TelemetryTablePartitionRangeColumnsGt2Cnt
-	TelemetryTablePartitionRangeColumnsGt3Usage = metrics.TelemetryTablePartitionRangeColumnsGt3Cnt
-	TelemetryTablePartitionListColumnsUsage = metrics.TelemetryTablePartitionListColumnsCnt
-	TelemetryTablePartitionMaxPartitionsUsage = metrics.TelemetryTablePartitionMaxPartitionsCnt
-	TelemetryTablePartitionCreateIntervalUsage = metrics.TelemetryTablePartitionCreateIntervalPartitionsCnt
-	TelemetryTablePartitionAddIntervalUsage = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
-	TelemetryTablePartitionDropIntervalUsage = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
-	TelemetryExchangePartitionUsage = metrics.TelemetryExchangePartitionCnt
-	TelemetryTableCompactPartitionUsage = metrics.TelemetryCompactPartitionCnt
-	TelemetryReorganizePartitionUsage = metrics.TelemetryReorganizePartitionCnt
-
-	TelemetryLockUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
-	TelemetryUnlockUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
-	TelemetryCreateOrAlterUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
-
-	TelemetryIndexMerge = metrics.TelemetryIndexMergeUsage
-	TelemetryStoreBatchedUsage = metrics.TelemetryStoreBatchedQueryCnt
 }
