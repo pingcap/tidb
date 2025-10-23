@@ -181,11 +181,6 @@ func (t *RootTask) AppendWarning(err error) {
 	t.Warnings.AppendWarning(err)
 }
 
-// GetWarnings returns all warnings stored in the task
-func (t *RootTask) GetWarnings() []context.SQLWarn {
-	return t.Warnings.GetWarnings()
-}
-
 // ************************************* RootTask End ******************************************
 
 // ************************************* MPPTask Start ******************************************
@@ -290,11 +285,6 @@ func (t *MppTask) MemoryUsage() (sum int64) {
 // AppendWarning appends a warning
 func (t *MppTask) AppendWarning(err error) {
 	t.Warnings.AppendWarning(err)
-}
-
-// GetWarnings returns all warnings stored in the task
-func (t *MppTask) GetWarnings() []context.SQLWarn {
-	return t.Warnings.GetWarnings()
 }
 
 // ConvertToRootTaskImpl implements Task interface.
@@ -410,11 +400,6 @@ type CopTask struct {
 // AppendWarning appends a warning
 func (t *CopTask) AppendWarning(err error) {
 	t.Warnings.AppendWarning(err)
-}
-
-// GetWarnings returns all warnings stored in the task
-func (t *CopTask) GetWarnings() []context.SQLWarn {
-	return t.Warnings.GetWarnings()
 }
 
 // Invalid implements Task interface.
