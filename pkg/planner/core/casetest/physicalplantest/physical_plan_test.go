@@ -282,9 +282,8 @@ func TestMPPHints(t *testing.T) {
 		testKit.MustExec("set @@session.tidb_allow_mpp=ON")
 		testKit.MustExec("create definer='root'@'localhost' view v as select a, sum(b) from t group by a, c;")
 		testKit.MustExec("create definer='root'@'localhost' view v1 as select t1.a from t t1, t t2 where t1.a=t2.a;")
-		testkit.SetTiFlashReplica(t, dom, "test", "t")
 		tb := external.GetTableByName(t, testKit, "test", "t")
-		err := domain.GetDomain(testKit.Session()).DDLExecutor().UpdateTableReplicaInfo(testKit.Session(), tb.Meta().ID, true)
+		err := dom.DDLExecutor().UpdateTableReplicaInfo(testKit.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 
 		var input []string
