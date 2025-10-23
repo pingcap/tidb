@@ -155,6 +155,9 @@ func getChangingCol(
 
 func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifyColumnArgs(job)
+	defer func() {
+		failpoint.InjectCall("getModifyColumnType", args.ModifyColumnType)
+	}()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
