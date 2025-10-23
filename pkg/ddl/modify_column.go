@@ -811,6 +811,11 @@ func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 		return false
 	}
 
+	// _bin collation has padding, it must need reorg.
+	if types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType) {
+		return true
+	}
+
 	return !types.IsTypeChar(oldTp) || !types.IsTypeChar(changingTp)
 }
 
