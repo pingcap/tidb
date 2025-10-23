@@ -505,7 +505,7 @@ func attach2TaskForMpp4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task
 	task := physicalop.NewMppTask(p,
 		outerTask.GetPartitionType(),
 		outerTask.GetHashCols(),
-		nil, rTask.GetWarnings(), lTask.GetWarnings())
+		nil, &rTask.Warnings, &lTask.Warnings)
 	// Current TiFlash doesn't support receive Join executors' schema info directly from TiDB.
 	// Instead, it calculates Join executors' output schema using algorithm like BuildPhysicalJoinSchema which
 	// produces full semantic schema.
@@ -2061,7 +2061,7 @@ func attach2Task4PhysicalCTEStorage(pp base.PhysicalPlan, tasks ...base.Task) ba
 		p.SetChildren(t.Plan())
 		nt := physicalop.NewMppTask(p,
 			mpp.GetPartitionType(), mpp.GetHashCols(),
-			mpp.GetTblColHists(), mpp.GetWarnings())
+			mpp.GetTblColHists(), &mpp.Warnings)
 		return nt
 	}
 	t.ConvertToRootTask(p.SCtx())

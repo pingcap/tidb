@@ -183,7 +183,7 @@ func (t *RootTask) AppendWarning(err error) {
 
 // GetWarnings returns all warnings stored in the task
 func (t *RootTask) GetWarnings() []context.SQLWarn {
-	return t.warnings.GetWarnings()
+	return t.Warnings.GetWarnings()
 }
 
 // ************************************* RootTask End ******************************************
@@ -240,11 +240,6 @@ func (t *MppTask) GetHashCols() []*property.MPPPartitionColumn {
 	return t.HashCols
 }
 
-// GetWarnings returns the warnings of the mpp task.
-func (t *MppTask) GetWarnings() *SimpleWarnings {
-	return &t.Warnings
-}
-
 // GetTblColHists returns the table column statistics of the mpp task.
 func (t *MppTask) GetTblColHists() *statistics.HistColl {
 	return t.tblColHists
@@ -299,7 +294,7 @@ func (t *MppTask) AppendWarning(err error) {
 
 // GetWarnings returns all warnings stored in the task
 func (t *MppTask) GetWarnings() []context.SQLWarn {
-	return t.warnings.GetWarnings()
+	return t.Warnings.GetWarnings()
 }
 
 // ConvertToRootTaskImpl implements Task interface.
@@ -419,7 +414,7 @@ func (t *CopTask) AppendWarning(err error) {
 
 // GetWarnings returns all warnings stored in the task
 func (t *CopTask) GetWarnings() []context.SQLWarn {
-	return t.warnings.GetWarnings()
+	return t.Warnings.GetWarnings()
 }
 
 // Invalid implements Task interface.

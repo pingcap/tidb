@@ -94,9 +94,7 @@ func ImplementMemoAndCost(rootGroup *memo.Group) (plan base.PhysicalPlan, cost f
 	}
 
 	// collect the warnings from task.
-	if warnings := task.GetWarnings(); len(warnings) > 0 {
-		sctx.GetSessionVars().StmtCtx.AppendWarnings(warnings)
-	}
+	sctx.GetSessionVars().StmtCtx.AppendWarnings(task.GetWarnings())
 
 	if err = task.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err

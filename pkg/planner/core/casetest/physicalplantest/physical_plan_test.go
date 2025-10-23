@@ -246,11 +246,11 @@ func TestUnmatchedTableInHint(t *testing.T) {
 }
 
 func TestIssue37520(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("drop table if exists t1, t2")
-		testKit.MustExec("create table t1(a int primary key, b int);")
-		testKit.MustExec("create table t2(a int, b int, index ia(a));")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1(a int primary key, b int);")
+		tk.MustExec("create table t2(a int, b int, index ia(a));")
 
 		var input []string
 		var output []struct {
@@ -262,15 +262,16 @@ func TestIssue37520(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + ts).Rows())
-			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
-		})
-		tk.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
-		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
-	}
+		for i, ts := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = ts
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + ts).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			tk.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	}, mockstore.WithMockTiFlash(2))
 }
 
 func TestMPPHints(t *testing.T) {
