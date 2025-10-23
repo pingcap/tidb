@@ -478,7 +478,6 @@ func TestAnalyzeOwnerResignNoReRun(t *testing.T) {
 	_, err := tk.Session().Execute(context.Background(), "alter table t_analyze_owner_resign add index idx_c2(c2)")
 	require.NoError(t, err)
 	require.Equal(t, int32(1), atomic.LoadInt32(&callCount), "analyze should not be re-run after owner resigns")
-	require.Fail(t, "fjf")
 }
 
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.

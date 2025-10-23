@@ -1282,22 +1282,19 @@ func (w *worker) queryAnalyzeStatusSince(startTS uint64, dbName, tblName string)
 	defer w.sessPool.Put(sessCtx)
 
 	// internal sql may not init the analysis related variable correctly.
-	err = statsutil.UpdateSCtxVarsForStats(sessCtx)
+	restore, err := statsutil.UpdateSCtxVarsForStats(sessCtx)
 	if err != nil {
 		return analyzeUnknown, err
 	}
+	defer restore()
 
-	exec, ok := sessCtx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		return analyzeUnknown, errors.Errorf("not restricted SQL executor: %T", sessCtx)
-	}
-
+	exec := sessCtx.GetRestrictedSQLExecutor()
 	startTimeStr := time.Now().Format(time.DateTime)
 	if startTS > 0 {
 		startTimeStr = model.TSConvert2Time(startTS).Format(time.DateTime)
 	}
 	kctx := kv.WithInternalSourceType(w.ctx, kv.InternalTxnStats)
-	rows, _, chkErr := exec.ExecRestrictedSQL(kctx, nil, "SHOW ANALYZE STATUS WHERE table_schema = %? AND table_name = %? AND start_time >= %?", dbName, tblName, startTimeStr)
+	rows, _, chkErr := exec.ExecRestrictedSQL(kctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "SHOW ANALYZE STATUS WHERE table_schema = %? AND table_name = %? AND start_time >= %?", dbName, tblName, startTimeStr)
 	if chkErr != nil {
 		return analyzeUnknown, chkErr
 	}
@@ -1305,28 +1302,24 @@ func (w *worker) queryAnalyzeStatusSince(startTS uint64, dbName, tblName string)
 		return analyzeUnknown, nil
 	}
 
-	anyRunning := false
-	anyFailed := false
 	for _, r := range rows {
 		var state string
 		if !r.IsNull(7) {
 			state = r.GetString(7)
 		}
-		if strings.EqualFold(state, "running") {
-			anyRunning = true
-			break
+		switch {
+		case strings.EqualFold(state, "running"):
+			return analyzeRunning, nil
+		case strings.EqualFold(state, "failed"):
+			return analyzeFailed, nil
+		case strings.EqualFold(state, "finished"):
+			return analyzeFinished, nil
+		default:
+			// unknown state: continue checking other rows
 		}
-		if strings.EqualFold(state, "failed") {
-			anyFailed = true
-		}
 	}
-	if anyRunning {
-		return analyzeRunning, nil
-	}
-	if anyFailed {
-		return analyzeFailed, nil
-	}
-	return analyzeFinished, nil
+	// If no recognizable state found, treat as unknown so caller may attempt to start ANALYZE.
+	return analyzeUnknown, nil
 }
 
 // analyzeStatusDecision encapsulates the decision logic after observing
@@ -1399,7 +1392,6 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 	if _, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); !ok {
 		w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
 	}
-
 	status, err := w.queryAnalyzeStatusSince(job.StartTS, dbName, tblName)
 	if err != nil {
 		logutil.DDLLogger().Warn("query analyze status failed", zap.Int64("jobID", job.ID), zap.Error(err))
@@ -1435,10 +1427,11 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 				return errors.Errorf("not restricted SQL executor: %T", sessCtx)
 			}
 			// internal sql may not init the analysis related variable correctly.
-			err = statsutil.UpdateSCtxVarsForStats(sessCtx)
+			restore, err := statsutil.UpdateSCtxVarsForStats(sessCtx)
 			if err != nil {
 				return err
 			}
+			defer restore()
 			failpoint.InjectCall("beforeAnalyzeTable")
 			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
 			if err != nil {
