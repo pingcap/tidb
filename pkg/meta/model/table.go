@@ -586,7 +586,7 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
 	col := colInfos[idxCol.Offset]
 	colTp := &col.FieldType
-	if idxCol.UsingChangingType && col.ChangingFieldType != nil {
+	if idxCol.UseChangingType && col.ChangingFieldType != nil {
 		colTp = col.ChangingFieldType
 	}
 	return types.NeedRestoredData(colTp)

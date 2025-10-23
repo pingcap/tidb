@@ -420,7 +420,7 @@ func indexContainsOtherReorg(
 		if tblCol.ID == currentChangingCol.ID {
 			continue // ignore current changing column.
 		}
-		if idxCol.UsingChangingType || tblCol.ChangeStateInfo != nil {
+		if idxCol.UseChangingType || tblCol.ChangeStateInfo != nil {
 			return true
 		}
 	}

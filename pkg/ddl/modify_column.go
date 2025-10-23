@@ -221,7 +221,7 @@ func initializeChangingIndexes(
 			tmpIdx.State = model.StateNone
 			tmpIdx.ID = newIdxID
 			tmpIdx.Name = ast.NewCIStr(genChangingIndexUniqueName(tblInfo, info.IndexInfo))
-			tmpIdx.Columns[info.Offset].UsingChangingType = true
+			tmpIdx.Columns[info.Offset].UseChangingType = true
 			UpdateIndexCol(tmpIdx.Columns[info.Offset], tmpCol)
 			tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
 		} else {
@@ -231,7 +231,7 @@ func initializeChangingIndexes(
 			tmpIdx.State = model.StateNone
 			oldTempIdxID := tmpIdx.ID
 			tmpIdx.ID = newIdxID
-			tmpIdx.Columns[info.Offset].UsingChangingType = true
+			tmpIdx.Columns[info.Offset].UseChangingType = true
 			UpdateIndexCol(tmpIdx.Columns[info.Offset], tmpCol)
 			redundantIdxs = append(redundantIdxs, oldTempIdxID)
 		}
@@ -456,7 +456,7 @@ func rollbackModifyColumnJobWithIndexReorg(
 	changingIdxInfos := make([]*model.IndexInfo, 0, len(allIdxs)/2)
 	for _, idx := range allIdxs {
 		for _, idxCol := range idx.Columns {
-			if idxCol.Name.L == oldCol.Name.L && idxCol.UsingChangingType {
+			if idxCol.Name.L == oldCol.Name.L && idxCol.UseChangingType {
 				changingIdxInfos = append(changingIdxInfos, idx)
 				break
 			}
@@ -1292,10 +1292,10 @@ func (w *worker) doModifyColumnIndexReorg(
 					if idxCol.Name.L == oldName.L {
 						oldIdxInfos[i].Columns[j].Name = colName
 						oldIdxInfos[i].Columns[j].Offset = oldCol.Offset
-						oldIdxInfos[i].Columns[j].UsingChangingType = true
+						oldIdxInfos[i].Columns[j].UseChangingType = true
 						changingIdxInfos[i].Columns[j].Name = colName
 						changingIdxInfos[i].Columns[j].Offset = oldCol.Offset
-						changingIdxInfos[i].Columns[j].UsingChangingType = false
+						changingIdxInfos[i].Columns[j].UseChangingType = false
 					}
 				}
 			}

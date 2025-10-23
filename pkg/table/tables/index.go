@@ -87,7 +87,7 @@ func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) erro
 	var err error
 	for i, idxCol := range c.idxInfo.Columns {
 		tblCol := c.tblInfo.Columns[idxCol.Offset]
-		if !idxCol.UsingChangingType || tblCol.ChangingFieldType == nil {
+		if !idxCol.UseChangingType || tblCol.ChangingFieldType == nil {
 			continue
 		}
 		indexedValues[i], err = table.CastColumnValueToType(c.ectx, indexedValues[i], tblCol.ChangingFieldType, true, false)
