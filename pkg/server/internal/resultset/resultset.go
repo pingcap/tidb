@@ -20,7 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core/plancache"
+	"github.com/pingcap/tidb/pkg/planner/core/plans"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -36,7 +36,7 @@ type ResultSet interface {
 	// IsClosed checks whether the result set is closed.
 	IsClosed() bool
 	FieldTypes() []*types.FieldType
-	SetPreparedStmt(stmt *plancache.PlanCacheStmt)
+	SetPreparedStmt(stmt *plans.PlanCacheStmt)
 	Finish() error
 	TryDetach() (ResultSet, bool, error)
 }
@@ -44,7 +44,7 @@ type ResultSet interface {
 var _ ResultSet = &tidbResultSet{}
 
 // New creates a new result set
-func New(recordSet sqlexec.RecordSet, preparedStmt *plancache.PlanCacheStmt) ResultSet {
+func New(recordSet sqlexec.RecordSet, preparedStmt *plans.PlanCacheStmt) ResultSet {
 	return &tidbResultSet{
 		recordSet:    recordSet,
 		preparedStmt: preparedStmt,
@@ -53,7 +53,7 @@ func New(recordSet sqlexec.RecordSet, preparedStmt *plancache.PlanCacheStmt) Res
 
 type tidbResultSet struct {
 	recordSet    sqlexec.RecordSet
-	preparedStmt *plancache.PlanCacheStmt
+	preparedStmt *plans.PlanCacheStmt
 	columns      []*column.Info
 	closed       int32
 	// finishLock is a mutex used to synchronize access to the `Next`,`Finish` and `Close` functions of the adapter.
@@ -140,7 +140,7 @@ func (trs *tidbResultSet) FieldTypes() []*types.FieldType {
 }
 
 // SetPreparedStmt implements ResultSet.SetPreparedStmt interface.
-func (trs *tidbResultSet) SetPreparedStmt(stmt *plancache.PlanCacheStmt) {
+func (trs *tidbResultSet) SetPreparedStmt(stmt *plans.PlanCacheStmt) {
 	trs.preparedStmt = stmt
 }
 

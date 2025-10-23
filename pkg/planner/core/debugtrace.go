@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/plancache"
+	"github.com/pingcap/tidb/pkg/planner/core/plans"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -82,10 +82,10 @@ func DebugTraceReceivedCommand(s base.PlanContext, cmd byte, stmtNode ast.StmtNo
 
 	// Collect information for execute stmt, and record it in executeInfo.
 	var binaryParams []expression.Expression
-	var planCacheStmt *plancache.PlanCacheStmt
+	var planCacheStmt *plans.PlanCacheStmt
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if execStmt.PrepStmt != nil {
-			planCacheStmt, _ = execStmt.PrepStmt.(*plancache.PlanCacheStmt)
+			planCacheStmt, _ = execStmt.PrepStmt.(*plans.PlanCacheStmt)
 		}
 		if execStmt.BinaryArgs != nil {
 			binaryParams, _ = execStmt.BinaryArgs.([]expression.Expression)

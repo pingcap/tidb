@@ -10,7 +10,7 @@ go_library(
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
         "//pkg/parser/terror",
-        "//pkg/planner/core/plancache",
+        "//pkg/planner/core/plans",
         "//pkg/server/internal/column",
         "//pkg/types",
         "//pkg/util/chunk",

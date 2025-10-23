@@ -120,7 +120,7 @@ go_test(
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-        "//pkg/planner/core/plancache",
+        "//pkg/planner/core/plans",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/stmtctx",

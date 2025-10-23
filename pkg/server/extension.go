@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/plancache"
+	"github.com/pingcap/tidb/pkg/planner/core/plans"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -137,7 +137,7 @@ type stmtEventInfo struct {
 	executeStmtID         uint32
 	executeStmt           *ast.ExecuteStmt
 	executePreparedCached bool
-	executePreparedCache  *plancache.PlanCacheStmt
+	executePreparedCache  *plans.PlanCacheStmt
 	// error will only be valid when the stmt is failed
 	err error
 	// failedParseText will only present on parse failed
@@ -242,7 +242,7 @@ func (e *stmtEventInfo) GetError() error {
 	return e.err
 }
 
-func (e *stmtEventInfo) ensureExecutePreparedCache() *plancache.PlanCacheStmt {
+func (e *stmtEventInfo) ensureExecutePreparedCache() *plans.PlanCacheStmt {
 	if e.executeStmt == nil {
 		return nil
 	}

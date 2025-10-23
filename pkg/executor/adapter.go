@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/plancache"
+	"github.com/pingcap/tidb/pkg/planner/core/plans"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
@@ -328,7 +328,7 @@ type ExecStmt struct {
 
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
-	PsStmt      *plancache.PlanCacheStmt
+	PsStmt      *plans.PlanCacheStmt
 	Ti          *TelemetryInfo
 }
 

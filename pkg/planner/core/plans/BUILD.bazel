@@ -16,3 +16,20 @@ go_library(
         "//pkg/table",
     ],
 )
+
+go_library(
+    name = "plans",
+    srcs = ["plan_cache_base.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/plans",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/bindinfo",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/planner/core/build",
+        "//pkg/planner/core/operator/physicalop",
+        "//pkg/planner/core/resolve",
+        "//pkg/sessionctx",
+        "//pkg/table",
+    ],
+)

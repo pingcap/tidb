@@ -50,7 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/plancache"
+	"github.com/pingcap/tidb/pkg/planner/core/plans"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
@@ -311,7 +311,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	// TiDB only has the ID, so don't try to construct an `EXECUTE SOMETHING`. Use the original prepared statement here
 	// instead.
 	sql := ""
-	planCacheStmt, ok := prepStmt.(*plancache.PlanCacheStmt)
+	planCacheStmt, ok := prepStmt.(*plans.PlanCacheStmt)
 	if ok {
 		sql = planCacheStmt.StmtText
 	}
@@ -341,7 +341,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		}
 		return false, cc.writeOK(ctx)
 	}
-	if planCacheStmt, ok := prepStmt.(*plancache.PlanCacheStmt); ok {
+	if planCacheStmt, ok := prepStmt.(*plans.PlanCacheStmt); ok {
 		rs.SetPreparedStmt(planCacheStmt)
 	}
 
@@ -673,7 +673,7 @@ func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {
 	return preparedObj.PreparedAst.Stmt.Text()
 }
 
-func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *plancache.PlanCacheStmt, invalid bool) {
+func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *plans.PlanCacheStmt, invalid bool) {
 	sv := cc.ctx.GetSessionVars()
 	if sv == nil {
 		return nil, false
@@ -683,7 +683,7 @@ func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *planca
 		// not found
 		return nil, false
 	}
-	preparedObj, ok := preparedPointer.(*plancache.PlanCacheStmt)
+	preparedObj, ok := preparedPointer.(*plans.PlanCacheStmt)
 	if !ok {
 		// invalid cache. should never happen.
 		return nil, true
