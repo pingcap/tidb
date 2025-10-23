@@ -444,6 +444,43 @@ func TestAnalyzeStuck(t *testing.T) {
 	}, time.Minute, 200*time.Millisecond)
 }
 
+func TestAnalyzeOwnerResignNoReRun(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_ddl_analyze = 1")
+	tk.MustExec("drop table if exists t_analyze_owner_resign")
+	tk.MustExec("create table t_analyze_owner_resign (c1 int, c2 int, key(c2))")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t_analyze_owner_resign values (?, ?)", i, i)
+	}
+
+	var callCount int32
+	var resignedFlag int32
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
+		atomic.AddInt32(&callCount, 1)
+	})
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", func(job *model.Job) {
+		if atomic.CompareAndSwapInt32(&resignedFlag, 0, 1) {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			// Simulate write-conflict on ddl job table.
+			updateSQL := fmt.Sprintf("update mysql.tidb_ddl_job set processing = 0 where job_id = %d", job.ID)
+			tk2.MustExec(updateSQL)
+			updateSQL = fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID)
+			tk2.MustExec(updateSQL)
+		}
+	})
+
+	_, err := tk.Session().Execute(context.Background(), "alter table t_analyze_owner_resign add index idx_c2(c2)")
+	require.NoError(t, err)
+	require.Equal(t, int32(1), atomic.LoadInt32(&callCount), "analyze should not be re-run after owner resigns")
+	require.Fail(t, "fjf")
+}
+
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.
 func TestAddPrimaryKeyRollback1(t *testing.T) {
 	idxName := "PRIMARY"
