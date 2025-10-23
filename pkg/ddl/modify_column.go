@@ -165,6 +165,18 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
+	// Check index prefix length for the first time
+	if job.SchemaState == model.StateNone {
+		columns := getReplacedColumns(tblInfo, oldCol, args.Column)
+		allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
+		for _, idx := range allIdxs {
+			if err := checkIndexInModifiableColumns(columns, idx); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
+	}
+
 	// For first time running this job, or the job from older version,
 	// we need to fill the ModifyColumnType.
 	if args.ModifyColumnType == modifyTypeNone ||
@@ -1403,21 +1415,27 @@ func ProcessColumnCharsetAndCollation(ctx *metabuild.Context, col *table.Column,
 	return nil
 }
 
-// checkColumnWithIndexConstraint is used to check the related index constraint of the modified column.
-// Index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
-// will cause index idx to break the max-prefix-length constraint.
-func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
+func getReplacedColumns(tbInfo *model.TableInfo, oldCol, newCol *model.ColumnInfo) []*model.ColumnInfo {
 	columns := make([]*model.ColumnInfo, 0, len(tbInfo.Columns))
 	columns = append(columns, tbInfo.Columns...)
 	// Replace old column with new column.
 	for i, col := range columns {
-		if col.Name.L != originalCol.Name.L {
+		if col.Name.L != oldCol.Name.L {
 			continue
 		}
 		columns[i] = newCol.Clone()
-		columns[i].Name = originalCol.Name
-		break
+		columns[i].Name = oldCol.Name
+		return columns
 	}
+
+	return columns
+}
+
+// checkColumnWithIndexConstraint is used to check the related index constraint of the modified column.
+// Index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
+// will cause index idx to break the max-prefix-length constraint.
+func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
+	columns := getReplacedColumns(tbInfo, originalCol, newCol)
 
 	pkIndex := tables.FindPrimaryIndex(tbInfo)
 
@@ -1432,7 +1450,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if !modified {
 			return
 		}
-		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.GetColumnarIndexType())
+		err = checkIndexInModifiableColumns(columns, indexInfo)
 		if err != nil {
 			return
 		}
@@ -1465,11 +1483,16 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	return nil
 }
 
-func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, columnarIndexType model.ColumnarIndexType) error {
-	for _, ic := range idxColumns {
+func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxInfo *model.IndexInfo) error {
+	indexType := idxInfo.GetColumnarIndexType()
+	for _, ic := range idxInfo.Columns {
 		col := model.FindColumnInfo(columns, ic.Name.L)
 		if col == nil {
 			return dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
+		}
+
+		if indexType != model.ColumnarIndexTypeNA {
+			continue
 		}
 
 		prefixLength := types.UnspecifiedLength
@@ -1478,10 +1501,8 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if columnarIndexType == model.ColumnarIndexTypeNA {
-			if err := checkIndexColumn(col, prefixLength, false); err != nil {
-				return err
-			}
+		if err := checkIndexColumn(col, prefixLength, false); err != nil {
+			return err
 		}
 	}
 	return nil
