@@ -94,7 +94,12 @@ func TestPickBackfillType(t *testing.T) {
 	ingest.LitInitialized = true
 	tp, err = pickBackfillType(mockJob)
 	require.NoError(t, err)
+<<<<<<< HEAD
 	require.Equal(t, tp, model.ReorgTypeLitMerge)
+=======
+	require.Equal(t, tp, model.ReorgTypeIngest)
+	ingest.LitInitialized = false
+>>>>>>> 4011c9f6c56 (modify column: support ingest/DXF mode to recreate indexes (#63970))
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {
@@ -241,7 +246,7 @@ func TestReorgExprContext(t *testing.T) {
 		{
 			SQLMode:           mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
 			Location:          &model.TimeZoneLocation{Name: "Asia/Tokyo"},
-			ReorgTp:           model.ReorgTypeLitMerge,
+			ReorgTp:           model.ReorgTypeIngest,
 			ResourceGroupName: "rg1",
 		},
 		{
@@ -384,7 +389,7 @@ func TestReorgDistSQLCtx(t *testing.T) {
 		{
 			SQLMode:           mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
 			Location:          &model.TimeZoneLocation{Name: "Asia/Tokyo"},
-			ReorgTp:           model.ReorgTypeLitMerge,
+			ReorgTp:           model.ReorgTypeIngest,
 			ResourceGroupName: "rg1",
 		},
 		{
