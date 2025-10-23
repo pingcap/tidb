@@ -56,7 +56,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	require.NoError(t, err)
 	is := domain.InfoSchema()
 	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
-	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO(), nil))
 	require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 	stmt, err := par.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)

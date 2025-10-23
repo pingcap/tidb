@@ -103,7 +103,9 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 		require.NoError(s.T(), json.Unmarshal([]byte(r[1].(string)), &summary))
 
 		switch proto.Step(step) {
-		case proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort:
+		case proto.ImportStepEncodeAndSort:
+			require.EqualValues(s.T(), 10000, summary.RowCnt.Load())
+		case proto.ImportStepMergeSort:
 			require.EqualValues(s.T(), 10000, summary.RowCnt.Load())
 		case proto.ImportStepPostProcess:
 			require.EqualValues(s.T(), 0, summary.RowCnt.Load())

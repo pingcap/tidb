@@ -15,7 +15,6 @@
 package logicalop
 
 import (
-	"fmt"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -23,9 +22,6 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -46,21 +42,21 @@ func (p LogicalUnionAll) Init(ctx base.PlanContext, offset int) *LogicalUnionAll
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	for i, proj := range p.Children() {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		newExprs = append(newExprs, predicates...)
-		retCond, newChild, err := proj.PredicatePushDown(newExprs, opt)
+		retCond, newChild, err := proj.PredicatePushDown(newExprs)
 		if err != nil {
 			return nil, nil, err
 		}
-		AddSelection(p, newChild, retCond, i, opt)
+		AddSelection(p, newChild, retCond, i)
 	}
 	return nil, p, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	eCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	used := expression.GetUsedList(eCtx, parentUsedCols, p.Schema())
 	hasBeenUsed := false
@@ -79,7 +75,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 	}
 	var err error
 	for i, child := range p.Children() {
-		p.Children()[i], err = child.PruneColumns(parentUsedCols, opt)
+		p.Children()[i], err = child.PruneColumns(parentUsedCols)
 		if err != nil {
 			return nil, err
 		}
@@ -92,7 +88,6 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 			p.Schema().Columns = slices.Delete(p.Schema().Columns, i, i+1)
 		}
 	}
-	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
 	if hasBeenUsed {
 		// It's possible that the child operator adds extra columns to the schema.
 		// Currently, (*LogicalAggregation).PruneColumns() might do this.
@@ -120,7 +115,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 // BuildKeyInfo inherits BaseLogicalPlan.LogicalPlan.<4th> implementation.
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
-func (p *LogicalUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *LogicalUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
@@ -133,12 +128,11 @@ func (p *LogicalUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *op
 				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
 			}
 			// newTopN to push down Union's child
-			appendNewTopNTraceStep(topN, p, opt)
 		}
-		p.Children()[i] = child.PushDownTopN(newTopN, opt)
+		p.Children()[i] = child.PushDownTopN(newTopN)
 	}
 	if topN != nil {
-		return topN.AttachChild(p, opt)
+		return topN.AttachChild(p)
 	}
 	return p
 }
@@ -177,11 +171,6 @@ func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSche
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll(p, prop)
-}
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
 
@@ -222,20 +211,4 @@ func (p *LogicalUnionAll) ExtractFD() *fd.FDSet {
 	}
 	p.fdSet = res
 	return res
-}
-
-// GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
-
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
-
-// *************************** end implementation of logicalPlan interface ***************************
-
-func appendNewTopNTraceStep(topN *LogicalTopN, union *LogicalUnionAll, opt *optimizetrace.LogicalOptimizeOp) {
-	reason := func() string {
-		return ""
-	}
-	action := func() string {
-		return fmt.Sprintf("%v_%v is added and pushed down across %v_%v", topN.TP(), topN.ID(), union.TP(), union.ID())
-	}
-	opt.AppendStepToCurrent(topN.ID(), topN.TP(), reason, action)
 }

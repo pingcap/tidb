@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -270,6 +271,9 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 		}
 
 		if job.State != model.JobStateRunning {
+			return
+		}
+		if job.SchemaState == model.StatePublic {
 			return
 		}
 		// now c2 has PreventNullInsertFlag, an error is expected.
@@ -545,4 +549,181 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockReorgTimeoutInOneRegion", `return(true)`)
 	tk.MustExec("alter table t modify column b decimal(3,1)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 4096 warnings with this error code, first warning: Truncated incorrect DECIMAL value: '11.22'"))
+}
+
+func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_general_log=1;")
+	tk.MustExec(`
+		CREATE TABLE t (
+			id int NOT NULL AUTO_INCREMENT,
+			val0 bigint NOT NULL,
+			val1 int NOT NULL,
+			padding varchar(256) NOT NULL DEFAULT '',
+			PRIMARY KEY (id)
+		);
+	`)
+	tk.MustExec("CREATE INDEX val0_idx ON t (val0)")
+	tk.MustExec("insert into t (val0, val1, padding) values (1, 1, 'a'), (2, 2, 'b'), (3, 3, 'c');")
+
+	conflictOnce := sync.Once{}
+	conflictCh := make(chan struct{})
+	tk1 := testkit.NewTestKit(t, store)
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/table/tables/duringTableCommonRemoveRecord", func(tblInfo *model.TableInfo) {
+		if tblInfo.Name.L == "t" {
+			conflictOnce.Do(func() {
+				tk1.MustExec("use test")
+				// inject a write conflict for the delete DML.
+				tk1.MustExec("update t set val0 = 100 where id = 1;")
+				close(conflictCh)
+			})
+		}
+	})
+	deleteOnce := sync.Once{}
+	insertOnce := sync.Once{}
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorgWorkForModifyColumn", func() {
+		deleteOnce.Do(func() {
+			go func() {
+				tk2.MustExec("use test")
+				tk2.MustExec("delete from t where id = 1;")
+			}()
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/afterLoadSchemaDiffs", func(int64) {
+				insertOnce.Do(func() {
+					tk3.MustExec("use test")
+					tk3.MustExec("insert into t (val0, val1, padding) values (4, 4, 'd');")
+				})
+			})
+			<-conflictCh
+		})
+	})
+	tk.MustExec("alter table t modify column val0 int not null;")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t order by id;").Check(testkit.Rows(
+		"2 2 2 b",
+		"3 3 3 c",
+		"4 4 4 d"))
+}
+
+func TestMultiSchemaModifyColumnWithIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c1 bigint, c2 bigint, index i1(c1, c2), index i2(c1))")
+
+	oldTblInfo := external.GetTableByName(t, tk, "test", "t").Meta()
+	tk.MustExec("alter table t modify column c1 int, modify column c2 int")
+	newTblInfo := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	require.Equal(t, len(oldTblInfo.Indices), len(newTblInfo.Indices))
+	for i, oldIdx := range oldTblInfo.Indices {
+		newIdx := newTblInfo.Indices[i]
+		require.Equal(t, oldIdx.Name, newIdx.Name)
+		require.Equal(t, len(oldIdx.Columns), len(newIdx.Columns))
+		for j := range oldIdx.Columns {
+			require.Equal(t, oldIdx.Columns[j].Name, newIdx.Columns[j].Name)
+			require.Equal(t, oldIdx.Columns[j].Offset, newIdx.Columns[j].Offset)
+		}
+	}
+
+	// multi schema change with rename index
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(c1 bigint, c2 bigint, index i1(c1, c2), index i2(c1))")
+	tk.MustExec("alter table t modify column c1 int, rename index i1 to new1, rename index i2 to new2, modify column c2 int")
+	newTblInfo = external.GetTableByName(t, tk, "test", "t").Meta()
+	require.Equal(t, 2, len(newTblInfo.Indices))
+	require.Equal(t, "new1", newTblInfo.Indices[0].Name.L)
+	require.Equal(t, "new2", newTblInfo.Indices[1].Name.L)
+}
+
+func TestParallelAlterTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	ctx := context.Background()
+	var wg util.WaitGroupWrapper
+
+	checkParallelDDL := func(t *testing.T, createSQL, firstSQL, secondSQL string) (err1, err2 error) {
+		var (
+			submitted     = make(chan struct{}, 16)
+			startSchedule = make(chan struct{})
+		)
+
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(createSQL)
+
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+			<-startSchedule
+		})
+
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterGetJobFromLimitCh", func(ch chan *ddl.JobWrapper) {
+			submitted <- struct{}{}
+		})
+		wg.Run(func() {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			_, err1 = tk1.Exec(firstSQL)
+		})
+		wg.Run(func() {
+			// wait until first ddl is submitted
+			<-submitted
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			_, err2 = tk1.Exec(secondSQL)
+		})
+		require.Eventually(t, func() bool {
+			gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
+			require.NoError(t, err)
+			return len(gotJobs) == 2
+		}, 10*time.Second, 100*time.Millisecond)
+
+		close(startSchedule)
+		wg.Wait()
+		return
+	}
+
+	t.Run("modify column then add index", func(t *testing.T) {
+		err1, err2 := checkParallelDDL(t,
+			"create table t(id int, c1 char(16))",
+			"alter table t modify column c1 text(255)",
+			"alter table t add index idx_c1(c1)",
+		)
+		require.NoError(t, err1)
+		require.Error(t, err2)
+	})
+
+	t.Run("add index then modify column", func(t *testing.T) {
+		err1, err2 := checkParallelDDL(t,
+			"create table t(id int, c1 char(16))",
+			"alter table t add index idx_c1(c1)",
+			"alter table t modify column c1 text(255)",
+		)
+		require.NoError(t, err1)
+		require.Error(t, err2)
+	})
+
+	t.Run("add index with prefix length then modify column", func(t *testing.T) {
+		err1, err2 := checkParallelDDL(t,
+			"create table t(id int, c1 char(16))",
+			"alter table t add index idx_c1(c1(10))",
+			"alter table t modify column c1 text(255)",
+		)
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+	})
+
+	t.Run("modify column then add index with prefix length", func(t *testing.T) {
+		err1, err2 := checkParallelDDL(t,
+			"create table t(id int, c1 char(16))",
+			"alter table t modify column c1 text(255)",
+			"alter table t add index idx_c1(c1(10))",
+		)
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+	})
 }

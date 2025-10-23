@@ -8,8 +8,10 @@ go_test(
         "ingest_test.go",
         "main_test.go",
         "operator_test.go",
+        "temp_index_test.go",
     ],
     flaky = True,
+    shard_count = 37,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -34,7 +36,6 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/util/chunk",
         "//tests/realtikvtest",
-        "//tests/realtikvtest/testutils",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",

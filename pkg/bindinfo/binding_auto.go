@@ -245,7 +245,9 @@ func (ba *bindingAuto) getBindingPlanInfo(currentDB, sqlOrDigest, charset, colla
 			}); err != nil {
 				bindingLogger().Error("get plan digest failed",
 					zap.String("bind_sql", binding.BindSQL), zap.Error(err))
+				continue
 			}
+			binding.PlanDigest = planDigest
 		}
 
 		pInfo, err := ba.getPlanExecInfo(planDigest)

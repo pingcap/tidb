@@ -11,7 +11,9 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+        "//pkg/bindinfo",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/errno",
         "//pkg/executor",

@@ -34,6 +34,7 @@ go_test(
     timeout = "short",
     srcs = ["session_pool_test.go"],
     flaky = True,
+    shard_count = 2,
     deps = [
         ":session",
         "//pkg/testkit",

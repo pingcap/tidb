@@ -102,7 +102,7 @@ type indexJoinPathInfo struct {
 	innerJoinKeys         []*expression.Column
 	innerSchema           *expression.Schema
 	innerPushedConditions []expression.Expression
-	innerStats            *property.StatsInfo
+	innerTableStats       *property.StatsInfo // the original table's stats
 }
 
 // indexJoinPathTmp records temporary information when building IndexJoin.
@@ -210,7 +210,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		}
 		lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-		ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
+		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
 		return ret, false, nil
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
@@ -259,7 +259,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 			remained = append(remained, colAccesses...)
 		}
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-		ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
+		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
 		return ret, false, nil
 	}
 	tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, true, rangeMaxSize)
@@ -279,7 +279,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		lastColManager = nil
 	}
 	mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-	ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColPos)
+	ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColPos)
 	return ret, false, nil
 }
 
@@ -307,6 +307,7 @@ func indexJoinPathCompare(best, current *indexJoinPathResult) (curIsBetter bool)
 
 // indexJoinPathConstructResult constructs the index join path result.
 func indexJoinPathConstructResult(
+	sctx planctx.PlanContext,
 	indexJoinInfo *indexJoinPathInfo,
 	buildTmp *indexJoinPathTmp,
 	ranges ranger.MutableRanges,
@@ -315,8 +316,13 @@ func indexJoinPathConstructResult(
 	lastColManager *physicalop.ColWithCmpFuncManager,
 	usedColsLen int) *indexJoinPathResult {
 	var innerNDV float64
-	if stats := indexJoinInfo.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
-		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], indexJoinInfo.innerSchema, stats)
+	if stats := indexJoinInfo.innerTableStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
+		// NOTE: use the original table's stats (DataSource.TableStats) to estimate NDV instead of stats
+		// AFTER APPLYING ALL FILTERS (DataSource.stats). Because here we'll use the NDV to measure how many
+		// rows we need to scan in double-read, and these filters will be applied after the scanning, so we need to
+		// ignore these filters to avoid underestimation. See #63869.
+		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(
+			sctx, path.IdxCols[:usedColsLen], indexJoinInfo.innerSchema, stats)
 	}
 	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
@@ -629,7 +635,7 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 }
 
 // getBestIndexJoinInnerTaskByProp tries to build the best inner child task from ds for index join by the given property.
-func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (base.Task, int64, error) {
+func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty) (base.Task, error) {
 	// the below code is quite similar from the original logic
 	// reason1: we need to leverage original indexPathInfo down related logic to build constant range for index plan.
 	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
@@ -646,13 +652,12 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 		innerCopTask = buildDataSource2IndexScanByIndexJoinProp(ds, prop)
 	}
 	if innerCopTask.Invalid() {
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
-	planCounter.Dec(1)
 	if prop.TaskTp == property.RootTaskType {
-		return innerCopTask.ConvertToRootTask(ds.SCtx()), 1, nil
+		return innerCopTask.ConvertToRootTask(ds.SCtx()), nil
 	}
-	return innerCopTask, 1, nil
+	return innerCopTask, nil
 }
 
 // getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds
@@ -667,7 +672,7 @@ func getBestIndexJoinPathResultByProp(
 		innerJoinKeys:         indexJoinProp.InnerJoinKeys,
 		innerPushedConditions: innerDS.PushedDownConds,
 		innerSchema:           innerDS.Schema(),
-		innerStats:            innerDS.StatsInfo(),
+		innerTableStats:       innerDS.TableStats,
 	}
 	var bestResult *indexJoinPathResult
 	for _, path := range innerDS.PossibleAccessPaths {
@@ -715,7 +720,7 @@ func getBestIndexJoinPathResult(
 		innerJoinKeys:         innerJoinKeys,
 		innerPushedConditions: innerChild.PushedDownConds,
 		innerSchema:           innerChild.Schema(),
-		innerStats:            innerChild.StatsInfo(),
+		innerTableStats:       innerChild.TableStats,
 	}
 	var bestResult *indexJoinPathResult
 	for _, path := range innerChild.PossibleAccessPaths {

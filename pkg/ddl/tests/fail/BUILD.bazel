@@ -2,16 +2,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "fail_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "fail_db_test.go",
         "main_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 11,
+    shard_count = 10,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/schematracker",
         "//pkg/ddl/schemaver",
@@ -21,6 +22,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx/vardef",
         "//pkg/store/mockstore",
+        "//pkg/store/mockstore/teststore",
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

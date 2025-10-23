@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -52,6 +53,7 @@ var (
 
 // Manager monitors the task table and manages the taskExecutors.
 type Manager struct {
+	store     kv.Storage
 	taskTable TaskTable
 	mu        struct {
 		sync.RWMutex
@@ -70,13 +72,14 @@ type Manager struct {
 }
 
 // NewManager creates a new task executor Manager.
-func NewManager(ctx context.Context, id string, taskTable TaskTable, resource *proto.NodeResource) (*Manager, error) {
+func NewManager(ctx context.Context, store kv.Storage, id string, taskTable TaskTable, resource *proto.NodeResource) (*Manager, error) {
 	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", id))
 	}
 
 	m := &Manager{
+		store:        store,
 		id:           id,
 		taskTable:    taskTable,
 		logger:       logger,
@@ -209,7 +212,7 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 
 		if !canAlloc {
 			// try to run tasks of low ranking
-			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
+			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
 			continue
 		}
 		failpoint.InjectCall("beforeCallStartTaskExecutor", task.TaskBase)
@@ -291,12 +294,14 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	// TODO: remove it when we can create task executor with task base.
 	task, err := m.taskTable.GetTaskByID(m.ctx, taskBase.ID)
 	if err != nil {
-		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID), zap.Error(err))
+		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID),
+			zap.String("task-key", taskBase.Key), zap.Error(err))
 		return false
 	}
 	if !m.slotManager.alloc(&task.TaskBase) {
 		m.logger.Info("alloc slots failed, maybe other task executor alloc more slots at runtime",
-			zap.Int64("task-id", taskBase.ID), zap.Int("concurrency", taskBase.Concurrency),
+			zap.Int64("task-id", taskBase.ID), zap.String("task-key", taskBase.Key),
+			zap.Int("concurrency", taskBase.Concurrency),
 			zap.Int("remaining-slots", m.slotManager.availableSlots()))
 		return false
 	}
@@ -318,6 +323,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		slotMgr:   m.slotManager,
 		nodeRc:    m.getNodeResource(),
 		execID:    m.id,
+		Store:     m.store,
 	})
 	err = executor.Init(m.ctx)
 	if err != nil {
@@ -325,12 +331,12 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		return false
 	}
 	m.addTaskExecutor(executor)
-	m.logger.Info("task executor started", zap.Int64("task-id", task.ID),
+	m.logger.Info("task executor started", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
 		zap.Stringer("type", task.Type), zap.Int("concurrency", task.Concurrency),
 		zap.Int("remaining-slots", m.slotManager.availableSlots()))
 	m.executorWG.RunWithLog(func() {
 		defer func() {
-			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID),
+			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
 				zap.Stringer("type", task.Type))
 			m.slotManager.free(task.ID)
 			m.delTaskExecutor(executor)

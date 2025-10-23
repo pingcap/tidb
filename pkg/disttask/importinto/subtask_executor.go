@@ -20,9 +20,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -61,8 +62,7 @@ func (e *importMinimalTaskExecutor) Run(
 	dataWriter, indexWriter backend.EngineWriter,
 	collector execute.Collector,
 ) error {
-	logger := logutil.BgLogger().With(zap.Stringer("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
-	logger.Info("execute chunk")
+	logger := e.mTtask.logger
 	failpoint.Inject("beforeSortChunk", func() {})
 	failpoint.Inject("errorWhenSortChunk", func() {
 		failpoint.Return(errors.New("occur an error when sort chunk"))
@@ -149,15 +149,23 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		)
 	}
 
-	taskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	return taskManager.WithNewSession(func(se sessionctx.Context) error {
-		return importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+	return p.taskTbl.WithNewSession(func(se sessionctx.Context) error {
+		err = importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
 			func() (*local.RemoteChecksum, error) {
 				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)
 			},
 		)
+		if kerneltype.IsClassic() {
+			failpoint.Inject("skipPostProcessAlterTableMode", func() {
+				failpoint.Return(err)
+			})
+			// log error instead of raise error to avoid user rerun task,
+			// clean up will alter table mode to normal finally.
+			err2 := ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, p.taskMeta.Plan.DBID, p.taskMeta.Plan.TableInfo.ID)
+			if err2 != nil {
+				callLog.Warn("alter table mode to normal failure", zap.Error(err2))
+			}
+		}
+		return err
 	})
 }

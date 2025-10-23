@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -72,12 +72,22 @@ func (p BasePhysicalAgg) Init(ctx base.PlanContext, stats *property.StatsInfo, o
 
 // InitForHash initializes BasePhysicalAgg for hash aggregation.
 func (p *BasePhysicalAgg) InitForHash(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
-	return utilfuncp.InitForHash(p, ctx, stats, offset, schema, props...)
+	hashAgg := &PhysicalHashAgg{*p, ""}
+	hashAgg.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, hashAgg, offset)
+	hashAgg.SetChildrenReqProps(props)
+	hashAgg.SetStats(stats)
+	hashAgg.SetSchema(schema)
+	return hashAgg
 }
 
 // InitForStream initializes BasePhysicalAgg for stream aggregation.
 func (p *BasePhysicalAgg) InitForStream(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
-	return utilfuncp.InitForStream(p, ctx, stats, offset, schema, props...)
+	streamAgg := &PhysicalStreamAgg{*p}
+	streamAgg.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeStreamAgg, streamAgg, offset)
+	streamAgg.SetChildrenReqProps(props)
+	streamAgg.SetStats(stats)
+	streamAgg.SetSchema(schema)
+	return streamAgg
 }
 
 // IsFinalAgg checks whether the aggregation is a final aggregation.
@@ -516,7 +526,7 @@ func CheckAggCanPushCop(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDe
 	pushDownCtx := util.GetPushDownCtx(sctx)
 	for _, aggFunc := range aggFuncs {
 		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
-		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
+		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args...) {
 			reason = "expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now"
 			ret = false
 			break
@@ -919,4 +929,51 @@ func (p *BasePhysicalAgg) ResolveIndices() (err error) {
 		}
 	}
 	return
+}
+
+// ExhaustPhysicalPlans4LogicalAggregation will be called by LogicalAggregation in logicalOp pkg.
+func ExhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	la := lp.(*logicalop.LogicalAggregation)
+	preferHash, preferStream := la.ResetHintIfConflicted()
+	hashAggs := getHashAggs(la, prop)
+	if len(hashAggs) > 0 && preferHash {
+		return hashAggs, true, nil
+	}
+	streamAggs := getStreamAggs(la, prop)
+	if len(streamAggs) > 0 && preferStream {
+		return streamAggs, true, nil
+	}
+	aggs := append(hashAggs, streamAggs...)
+
+	if streamAggs == nil && preferStream && !prop.IsSortItemEmpty() {
+		la.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint STREAM_AGG is inapplicable")
+	}
+	return aggs, !(preferStream || preferHash), nil
+}
+
+// TODO: support more operators and distinct later
+func checkCanPushDownToMPP(la *logicalop.LogicalAggregation) bool {
+	hasUnsupportedDistinct := false
+	for _, agg := range la.AggFuncs {
+		// MPP does not support distinct except count distinct now
+		if agg.HasDistinct {
+			if agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncGroupConcat {
+				hasUnsupportedDistinct = true
+			}
+		}
+		// MPP does not support AggFuncApproxCountDistinct now
+		if agg.Name == ast.AggFuncApproxCountDistinct {
+			hasUnsupportedDistinct = true
+		}
+	}
+	if hasUnsupportedDistinct {
+		warnErr := errors.NewNoStackError("Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct")
+		if la.SCtx().GetSessionVars().StmtCtx.InExplainStmt {
+			la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warnErr)
+		} else {
+			la.SCtx().GetSessionVars().StmtCtx.AppendExtraWarning(warnErr)
+		}
+		return false
+	}
+	return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
 }

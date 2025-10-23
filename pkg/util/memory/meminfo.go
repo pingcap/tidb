@@ -174,18 +174,18 @@ func init() {
 // It is to solve the problem that tidb cannot read cgroup in the systemd.
 // so if we are not in the container, we compare the cgroup memory limit and the physical memory,
 // the cgroup memory limit is smaller, we use the cgroup memory hook.
-func InitMemoryHook() {
+func InitMemoryHook() error {
 	if cgroup.InContainer() {
 		logutil.BgLogger().Info("use cgroup memory hook because TiDB is in the container")
-		return
+		return nil
 	}
 	cgroupValue, err := cgroup.GetMemoryLimit()
 	if err != nil {
-		return
+		return err
 	}
 	physicalValue, err := memTotalNormal()
 	if err != nil {
-		return
+		return err
 	}
 	if physicalValue > cgroupValue && cgroupValue != 0 {
 		MemTotal = MemTotalCGroup
@@ -196,9 +196,11 @@ func InitMemoryHook() {
 		logutil.BgLogger().Info("use physical memory hook", zap.Int64("cgroupMemorySize", int64(cgroupValue)), zap.Int64("physicalMemorySize", int64(physicalValue)))
 	}
 	_, err = MemTotal()
-	terror.MustNil(err)
+	if err != nil {
+		return err
+	}
 	_, err = MemUsed()
-	terror.MustNil(err)
+	return err
 }
 
 // InstanceMemUsed returns the memory usage of this TiDB server

@@ -618,7 +618,7 @@ func maxSQLLength() uint32 {
 	if GlobalStmtSummary != nil {
 		return GlobalStmtSummary.MaxSQLLength()
 	}
-	return 4096
+	return 32768
 }
 
 // GenerateStmtExecInfo4Test generates a new StmtExecInfo for testing purposes.
@@ -647,7 +647,6 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 			MaxWaitTime:       1500,
 		},
 		ExecDetail: execdetails.ExecDetails{
-			BackoffTime:  80,
 			RequestCount: 10,
 			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime: 100,
@@ -676,16 +675,17 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 					ResolveLockTime: 2000,
 				},
 			},
-			ScanDetail: &util.ScanDetail{
-				TotalKeys:                 1000,
-				ProcessedKeys:             500,
-				RocksdbDeleteSkippedCount: 100,
-				RocksdbKeySkippedCount:    10,
-				RocksdbBlockCacheHitCount: 10,
-				RocksdbBlockReadCount:     10,
-				RocksdbBlockReadByte:      1000,
-			},
-			DetailsNeedP90: execdetails.DetailsNeedP90{
+			CopExecDetails: execdetails.CopExecDetails{
+				BackoffTime: 80,
+				ScanDetail: &util.ScanDetail{
+					TotalKeys:                 1000,
+					ProcessedKeys:             500,
+					RocksdbDeleteSkippedCount: 100,
+					RocksdbKeySkippedCount:    10,
+					RocksdbBlockCacheHitCount: 10,
+					RocksdbBlockReadCount:     10,
+					RocksdbBlockReadByte:      1000,
+				},
 				TimeDetail: util.TimeDetail{
 					ProcessTime: 500,
 					WaitTime:    50,

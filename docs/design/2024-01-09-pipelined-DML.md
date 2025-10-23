@@ -148,7 +148,7 @@ We need to provide a wrapper for the current memdb.
 
 We can mitigate the performance degeneration caused by O(NlogN) complexity of memdb.
 
-At any moment we allow at most 1 memdb to be in the process of flushing. Consider the following operation sequence. It may not be a TiDB case, but we don't want to add more dependency on how TiDB uses it. The final result is expected to be `(x, 2)`. But if there are multiple memdbs flushing concurrently, the handling of the mutations may be totally reversed(`put(x, 2) -> del(x) -> put(x, 1)`) . The final result becoms `(x, 1)`.
+At any moment we allow at most 1 memdb to be in the process of flushing. Consider the following operation sequence. It may not be a TiDB case, but we don't want to add more dependency on how TiDB uses it. The final result is expected to be `(x, 2)`. But if there are multiple memdbs flushing concurrently, the handling of the mutations may be totally reversed(`put(x, 2) -> del(x) -> put(x, 1)`) . The final result becomes `(x, 1)`.
 
 ```Prolog
 put(x, 1)

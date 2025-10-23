@@ -28,21 +28,21 @@ import (
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
-	DetailsNeedP90
+	CopExecDetails
 	CommitDetail   *util.CommitDetails
 	LockKeysDetail *util.LockKeysDetails
-	ScanDetail     *util.ScanDetail
 	CopTime        time.Duration
-	BackoffTime    time.Duration
 	RequestCount   int
 }
 
-// DetailsNeedP90 contains execution detail information which need calculate P90.
-type DetailsNeedP90 struct {
+// CopExecDetails contains cop execution detail information.
+type CopExecDetails struct {
+	ScanDetail    *util.ScanDetail
+	TimeDetail    util.TimeDetail
+	CalleeAddress string
+	BackoffTime   time.Duration
 	BackoffSleep  map[string]time.Duration
 	BackoffTimes  map[string]int
-	CalleeAddress string
-	TimeDetail    util.TimeDetail
 }
 
 // P90BackoffSummary contains execution summary for a backoff type.
@@ -63,16 +63,6 @@ type P90Summary struct {
 	BackoffInfo map[string]*P90BackoffSummary
 }
 
-// CopExecDetails contains cop execution detail information.
-type CopExecDetails struct {
-	ScanDetail    util.ScanDetail
-	TimeDetail    util.TimeDetail
-	CalleeAddress string
-	BackoffTime   time.Duration
-	BackoffSleep  map[string]time.Duration
-	BackoffTimes  map[string]int
-}
-
 // MaxDetailsNumsForOneQuery is the max number of details to keep for P90 for one query.
 const MaxDetailsNumsForOneQuery = 1000
 
@@ -85,27 +75,27 @@ func (d *P90Summary) Reset() {
 }
 
 // Merge merges DetailsNeedP90 into P90Summary.
-func (d *P90Summary) Merge(detail *DetailsNeedP90) {
+func (d *P90Summary) Merge(backoffSleep map[string]time.Duration, backoffTimes map[string]int, calleeAddress string, timeDetail util.TimeDetail) {
 	if d.BackoffInfo == nil {
 		d.Reset()
 	}
 	d.NumCopTasks++
-	d.ProcessTimePercentile.Add(DurationWithAddr{detail.TimeDetail.ProcessTime, detail.CalleeAddress})
-	d.WaitTimePercentile.Add(DurationWithAddr{detail.TimeDetail.WaitTime, detail.CalleeAddress})
+	d.ProcessTimePercentile.Add(DurationWithAddr{timeDetail.ProcessTime, calleeAddress})
+	d.WaitTimePercentile.Add(DurationWithAddr{timeDetail.WaitTime, calleeAddress})
 
 	var info *P90BackoffSummary
 	var ok bool
-	for backoff, timeItem := range detail.BackoffTimes {
+	for backoff, timeItem := range backoffTimes {
 		if info, ok = d.BackoffInfo[backoff]; !ok {
 			d.BackoffInfo[backoff] = &P90BackoffSummary{}
 			info = d.BackoffInfo[backoff]
 		}
-		sleepItem := detail.BackoffSleep[backoff]
+		sleepItem := backoffSleep[backoff]
 		info.ReqTimes++
 		info.TotBackoffTime += sleepItem
 		info.TotBackoffTimes += timeItem
 
-		info.BackoffPercentile.Add(DurationWithAddr{sleepItem, detail.CalleeAddress})
+		info.BackoffPercentile.Add(DurationWithAddr{sleepItem, calleeAddress})
 	}
 }
 
@@ -122,26 +112,14 @@ type StmtExecDetails struct {
 const (
 	// CopTimeStr represents the sum of cop-task time spend in TiDB distSQL.
 	CopTimeStr = "Cop_time"
-	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks.
-	ProcessTimeStr = "Process_time"
 	// WaitTimeStr means the time of all coprocessor wait.
 	WaitTimeStr = "Wait_time"
-	// BackoffTimeStr means the time of all back-off.
-	BackoffTimeStr = "Backoff_time"
 	// LockKeysTimeStr means the time interval between pessimistic lock wait start and lock got obtain
 	LockKeysTimeStr = "LockKeys_time"
 	// RequestCountStr means the request count.
 	RequestCountStr = "Request_count"
-	// TotalKeysStr means the total scan keys.
-	TotalKeysStr = "Total_keys"
-	// ProcessKeysStr means the total processed keys.
-	ProcessKeysStr = "Process_keys"
-	// PreWriteTimeStr means the time of pre-write.
-	PreWriteTimeStr = "Prewrite_time"
 	// WaitPrewriteBinlogTimeStr means the time of waiting prewrite binlog finished when transaction committing.
 	WaitPrewriteBinlogTimeStr = "Wait_prewrite_binlog_time"
-	// CommitTimeStr means the time of commit.
-	CommitTimeStr = "Commit_time"
 	// GetCommitTSTimeStr means the time of getting commit ts.
 	GetCommitTSTimeStr = "Get_commit_ts_time"
 	// GetLatestTsTimeStr means the time of getting latest ts in async commit and 1pc.
@@ -158,12 +136,6 @@ const (
 	ResolveLockTimeStr = "Resolve_lock_time"
 	// LocalLatchWaitTimeStr means the time of waiting in local latch.
 	LocalLatchWaitTimeStr = "Local_latch_wait_time"
-	// WriteKeysStr means the count of keys in the transaction.
-	WriteKeysStr = "Write_keys"
-	// WriteSizeStr means the key/value size in the transaction.
-	WriteSizeStr = "Write_size"
-	// PrewriteRegionStr means the count of region when pre-write.
-	PrewriteRegionStr = "Prewrite_region"
 	// TxnRetryStr means the count of transaction retry.
 	TxnRetryStr = "Txn_retry"
 	// GetSnapshotTimeStr means the time spent on getting an engine snapshot.
@@ -180,6 +152,28 @@ const (
 	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 	// RocksdbBlockReadTimeStr means the time spent on rocksdb block read.
 	RocksdbBlockReadTimeStr = "Rocksdb_block_read_time"
+
+	// The following constants define the set of fields for SlowQueryLogItems
+	// that are relevant to evaluating and triggering SlowLogRules.
+
+	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks.
+	ProcessTimeStr = "Process_time"
+	// BackoffTimeStr means the time of all back-off.
+	BackoffTimeStr = "Backoff_time"
+	// TotalKeysStr means the total scan keys.
+	TotalKeysStr = "Total_keys"
+	// ProcessKeysStr means the total processed keys.
+	ProcessKeysStr = "Process_keys"
+	// PreWriteTimeStr means the time of pre-write.
+	PreWriteTimeStr = "Prewrite_time"
+	// CommitTimeStr means the time of commit.
+	CommitTimeStr = "Commit_time"
+	// WriteKeysStr means the count of keys in the transaction.
+	WriteKeysStr = "Write_keys"
+	// WriteSizeStr means the key/value size in the transaction.
+	WriteSizeStr = "Write_size"
+	// PrewriteRegionStr means the count of region when pre-write.
+	PrewriteRegionStr = "Prewrite_region"
 )
 
 // String implements the fmt.Stringer interface.
@@ -416,15 +410,9 @@ func (s *SyncExecDetails) MergeCopExecDetails(details *CopExecDetails, copTime t
 	s.execDetails.CopTime += copTime
 	s.execDetails.BackoffTime += details.BackoffTime
 	s.execDetails.RequestCount++
-	s.mergeScanDetail(&details.ScanDetail)
+	s.mergeScanDetail(details.ScanDetail)
 	s.mergeTimeDetail(details.TimeDetail)
-	detail := &DetailsNeedP90{
-		BackoffSleep:  details.BackoffSleep,
-		BackoffTimes:  details.BackoffTimes,
-		CalleeAddress: details.CalleeAddress,
-		TimeDetail:    details.TimeDetail,
-	}
-	s.detailsSummary.Merge(detail)
+	s.detailsSummary.Merge(details.BackoffSleep, details.BackoffTimes, details.CalleeAddress, details.TimeDetail)
 }
 
 // mergeScanDetail merges scan details into self.

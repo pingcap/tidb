@@ -1195,8 +1195,7 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 				return nil, err
 			}
 
-			lock.Value = make([]byte, len(reqCtx.buf))
-			copy(lock.Value, reqCtx.buf)
+			lock.Value = slices.Clone(reqCtx.buf)
 		}
 	}
 

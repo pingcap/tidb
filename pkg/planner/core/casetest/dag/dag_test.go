@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -47,35 +49,47 @@ func assertSameHints(t *testing.T, expected, actual []*ast.TableOptimizerHint) {
 	require.ElementsMatch(t, expectedStr, actualStr)
 }
 
+func testDAGPlanBuilderSimpleCase(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_opt_limit_push_down_threshold=0")
+	var input []string
+	var output []struct {
+		SQL  string
+		Best string
+	}
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+	p := parser.New()
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
+	for i, tt := range input {
+		comment := fmt.Sprintf("case: %v, sql: %s", i, tt)
+		stmt, err := p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
+		require.NoError(t, sessiontxn.NewTxn(context.Background(), testKit.Session()))
+		testKit.Session().GetSessionVars().StmtCtx.OriginalSQL = tt
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), testKit.Session(), nodeW, is)
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Best = core.ToString(p)
+		})
+		require.Equal(t, output[i].Best, core.ToString(p), comment)
+	}
+}
+
 func TestDAGPlanBuilderSimpleCase(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("set tidb_opt_limit_push_down_threshold=0")
-		var input []string
-		var output []struct {
-			SQL  string
-			Best string
-		}
-		planSuiteData := GetPlanSuiteData()
-		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
-		for i, tt := range input {
-			comment := fmt.Sprintf("case: %v, sql: %s", i, tt)
-			stmt, err := p.ParseOneStmt(tt, "", "")
-			require.NoError(t, err, comment)
-			require.NoError(t, sessiontxn.NewTxn(context.Background(), testKit.Session()))
-			testKit.Session().GetSessionVars().StmtCtx.OriginalSQL = tt
-			nodeW := resolve.NewNodeW(stmt)
-			p, _, err := planner.Optimize(context.TODO(), testKit.Session(), nodeW, is)
-			require.NoError(t, err)
-			testdata.OnRecord(func() {
-				output[i].SQL = tt
-				output[i].Best = core.ToString(p)
-			})
-			require.Equal(t, output[i].Best, core.ToString(p), comment)
-		}
-	})
+	if kerneltype.IsNextGen() {
+		t.Skip("Please run the TestDAGPlanBuilderSimpleCaseForNextGen")
+	}
+	testkit.RunTestUnderCascades(t, testDAGPlanBuilderSimpleCase)
+}
+
+func TestDAGPlanBuilderSimpleCaseForNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("Please run the TestDAGPlanBuilderSimpleCase")
+	}
+	testkit.RunTestUnderCascades(t, testDAGPlanBuilderSimpleCase)
 }
 
 func TestDAGPlanBuilderJoin(t *testing.T) {
@@ -95,7 +109,7 @@ func TestDAGPlanBuilderJoin(t *testing.T) {
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("case:%v sql:%s", i, tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -132,7 +146,7 @@ func TestDAGPlanBuilderSubquery(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("input: %s", tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -162,7 +176,7 @@ func TestDAGPlanTopN(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("case:%v sql:%s", i, tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -196,7 +210,7 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("input: %s", tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -236,7 +250,7 @@ func TestDAGPlanBuilderUnion(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("case:%v sql:%s", i, tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -310,7 +324,7 @@ func TestDAGPlanBuilderAgg(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("input: %s", tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -340,7 +354,7 @@ func doTestDAGPlanBuilderWindow(t *testing.T, vars, input []string, output []str
 		}
 
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 
 		for i, tt := range input {
 			comment := fmt.Sprintf("case:%v sql:%s", i, tt)

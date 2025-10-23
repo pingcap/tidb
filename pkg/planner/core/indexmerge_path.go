@@ -64,10 +64,7 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 	// because we want to use IndexMerge even if some expr cannot be pushed to TiKV.
 	// We will create new Selection for exprs that cannot be pushed in convertToIndexMergeScan.
 	indexMergeConds := make([]expression.Expression, 0, len(ds.AllConds))
-	for _, expr := range ds.AllConds {
-		indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.SCtx().GetExprCtx(), expr))
-	}
-
+	indexMergeConds = append(indexMergeConds, ds.AllConds...)
 	sessionAndStmtPermission := (ds.SCtx().GetSessionVars().GetEnableIndexMerge() || len(ds.IndexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
 	if !sessionAndStmtPermission {
 		warningMsg = "IndexMerge is inapplicable or disabled. Got no_index_merge hint or tidb_enable_index_merge is off."
@@ -108,7 +105,7 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 			maxRowCount = max(maxRowCount, ds.PossibleAccessPaths[i].CountAfterAccess)
 		}
 		if ds.StatsInfo().RowCount > maxRowCount {
-			ds.SetStats(ds.TableStats.ScaleByExpectCnt(maxRowCount))
+			ds.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), maxRowCount))
 		}
 	}
 
@@ -986,10 +983,11 @@ func PrepareIdxColsAndUnwrapArrayType(
 	tblCols []*expression.Column,
 	checkOnly1ArrayTypeCol bool,
 ) (idxCols []*expression.Column, ok bool) {
+	colInfos := tableInfo.Cols()
 	var virColNum = 0
 	for i := range idxInfo.Columns {
 		colOffset := idxInfo.Columns[i].Offset
-		colMeta := tableInfo.Cols()[colOffset]
+		colMeta := colInfos[colOffset]
 		var col *expression.Column
 		for _, c := range tblCols {
 			if c.ID == colMeta.ID {

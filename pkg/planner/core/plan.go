@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -38,37 +37,6 @@ func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
 	return sctx, nil
 }
 
-func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanContext, fd *funcdep.FDSet) base.Task {
-	if p.TaskTp == property.MppTaskType {
-		mpp, ok := tsk.(*MppTask)
-		if !ok || mpp.Invalid() {
-			return base.InvalidTask
-		}
-		if !p.IsSortItemAllForPartition() {
-			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
-			return base.InvalidTask
-		}
-		tsk = mpp.enforceExchanger(p, fd)
-	}
-	// when task is double cop task warping a index merge reader, tsk.plan() may be nil when indexPlanFinished is marked
-	// as false, while the real plan is in idxMergePartPlans. tsk.plan()==nil is not right here.
-	if p.IsSortItemEmpty() || tsk.Invalid() {
-		return tsk
-	}
-	if p.TaskTp != property.MppTaskType {
-		tsk = tsk.ConvertToRootTask(ctx)
-	}
-	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
-	sort := physicalop.PhysicalSort{
-		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
-		IsPartialSort: p.IsSortItemAllForPartition(),
-	}.Init(ctx, tsk.Plan().StatsInfo(), tsk.Plan().QueryBlockOffset(), sortReqProp)
-	for _, col := range p.SortItems {
-		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
-	}
-	return sort.Attach2Task(tsk)
-}
-
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
 func optimizeByShuffle(tsk base.Task, ctx base.PlanContext) base.Task {
 	if tsk.Plan() == nil {
@@ -76,15 +44,15 @@ func optimizeByShuffle(tsk base.Task, ctx base.PlanContext) base.Task {
 	}
 
 	switch p := tsk.Plan().(type) {
-	case *PhysicalWindow:
+	case *physicalop.PhysicalWindow:
 		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
 			return shuffle.Attach2Task(tsk)
 		}
-	case *PhysicalMergeJoin:
+	case *physicalop.PhysicalMergeJoin:
 		if shuffle := optimizeByShuffle4MergeJoin(p, ctx); shuffle != nil {
 			return shuffle.Attach2Task(tsk)
 		}
-	case *PhysicalStreamAgg:
+	case *physicalop.PhysicalStreamAgg:
 		if shuffle := optimizeByShuffle4StreamAgg(p, ctx); shuffle != nil {
 			return shuffle.Attach2Task(tsk)
 		}
@@ -92,7 +60,7 @@ func optimizeByShuffle(tsk base.Task, ctx base.PlanContext) base.Task {
 	return tsk
 }
 
-func optimizeByShuffle4Window(pp *PhysicalWindow, ctx base.PlanContext) *PhysicalShuffle {
+func optimizeByShuffle4Window(pp *physicalop.PhysicalWindow, ctx base.PlanContext) *physicalop.PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().WindowConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -110,7 +78,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx base.PlanContext) *Physica
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(ctx, partitionBy, dataSource.Schema(), dataSource.StatsInfo())
 	if ndv <= 1 {
 		return nil
 	}
@@ -121,17 +89,17 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx base.PlanContext) *Physica
 		byItems = append(byItems, item.Col)
 	}
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	shuffle := PhysicalShuffle{
+	shuffle := physicalop.PhysicalShuffle{
 		Concurrency:  concurrency,
 		Tails:        []base.PhysicalPlan{tail},
 		DataSources:  []base.PhysicalPlan{dataSource},
-		SplitterType: PartitionHashSplitterType,
+		SplitterType: physicalop.PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{byItems},
 	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
 	return shuffle
 }
 
-func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx base.PlanContext) *PhysicalShuffle {
+func optimizeByShuffle4StreamAgg(pp *physicalop.PhysicalStreamAgg, ctx base.PlanContext) *physicalop.PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().StreamAggConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -151,24 +119,24 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx base.PlanContext) *P
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(ctx, partitionBy, dataSource.Schema(), dataSource.StatsInfo())
 	if ndv <= 1 {
 		return nil
 	}
 	concurrency = min(concurrency, int(ndv))
 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	shuffle := PhysicalShuffle{
+	shuffle := physicalop.PhysicalShuffle{
 		Concurrency:  concurrency,
 		Tails:        []base.PhysicalPlan{tail},
 		DataSources:  []base.PhysicalPlan{dataSource},
-		SplitterType: PartitionHashSplitterType,
+		SplitterType: physicalop.PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{util.CloneExprs(pp.GroupByItems)},
 	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
 	return shuffle
 }
 
-func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx base.PlanContext) *PhysicalShuffle {
+func optimizeByShuffle4MergeJoin(pp *physicalop.PhysicalMergeJoin, ctx base.PlanContext) *physicalop.PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().MergeJoinConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -197,11 +165,11 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx base.PlanContext) *P
 		rightByItemArray = append(rightByItemArray, col.Clone())
 	}
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	shuffle := PhysicalShuffle{
+	shuffle := physicalop.PhysicalShuffle{
 		Concurrency:  concurrency,
 		Tails:        tails,
 		DataSources:  dataSources,
-		SplitterType: PartitionHashSplitterType,
+		SplitterType: physicalop.PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{leftByItemArray, rightByItemArray},
 	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
 	return shuffle
@@ -211,7 +179,8 @@ func getEstimatedProbeCntFromProbeParents(probeParents []base.PhysicalPlan) floa
 	res := float64(1)
 	for _, pp := range probeParents {
 		switch pp.(type) {
-		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
+		case *physicalop.PhysicalApply, *physicalop.PhysicalIndexHashJoin,
+			*physicalop.PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
 			if join, ok := pp.(interface{ GetInnerChildIdx() int }); ok {
 				outer := pp.Children()[1-join.GetInnerChildIdx()]
 				res *= outer.StatsInfo().RowCount
@@ -225,7 +194,8 @@ func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execd
 	res := int64(1)
 	for _, pp := range pps {
 		switch pp.(type) {
-		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
+		case *physicalop.PhysicalApply, *physicalop.PhysicalIndexHashJoin,
+			*physicalop.PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
 			if join, ok := pp.(interface{ GetInnerChildIdx() int }); ok {
 				outerChildID := pp.Children()[1-join.GetInnerChildIdx()].ID()
 				actRows := int64(1)

@@ -963,8 +963,144 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1(t *testing.T) {
 	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
 
 	// Check the stats of the indexes.
-	tableStats := h.GetTableStats(tableInfo)
+	tableStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
+}
+
+func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1AndStaticPartition(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	// Enable the static partition mode.
+	testKit.MustExec("set @@global.tidb_partition_prune_mode='static'")
+	testKit.MustExec("set @@global.tidb_analyze_version=1;")
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	p0ID := tableInfo.GetPartitionInfo().Definitions[0].ID
+	p1ID := tableInfo.GetPartitionInfo().Definitions[1].ID
+	h := do.StatsHandle()
+	// Analyze table.
+	testKit.MustExec("analyze table t")
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+	// Insert some data.
+	testKit.MustExec("insert into t values (1,2),(2,2)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize(context.Background()))
+	isEmpty, err := pq.IsEmpty()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+
+	// Add two indexes.
+	testKit.MustExec("alter table t add index idx1(c1)")
+	testKit.MustExec("alter table t add index idx2(c2)")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+	addIndexEvent1 := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	require.NotNil(t, addIndexEvent1)
+	require.NoError(t, statsutil.CallWithSCtx(
+		h.SPool(),
+		func(sctx sessionctx.Context) error {
+			require.NoError(t, pq.HandleDDLEvent(context.Background(), sctx, addIndexEvent1))
+			return nil
+		}, statsutil.FlagWrapTxn),
+	)
+	addIndexEvent2 := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	require.NotNil(t, addIndexEvent2)
+	require.NoError(t, statsutil.CallWithSCtx(
+		h.SPool(),
+		func(sctx sessionctx.Context) error {
+			require.NoError(t, pq.HandleDDLEvent(context.Background(), sctx, addIndexEvent2))
+			return nil
+		}, statsutil.FlagWrapTxn),
+	)
+	job, err := pq.Pop()
+	require.NoError(t, err)
+	valid, _ := job.ValidateAndPrepare(testKit.Session())
+	require.True(t, valid)
+	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
+	job, err = pq.Pop()
+	require.NoError(t, err)
+	valid, _ = job.ValidateAndPrepare(testKit.Session())
+	require.True(t, valid)
+	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
+
+	// Check the stats of the indexes for each partition.
+	tableStats := h.GetPhysicalTableStats(p0ID, tableInfo)
+	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
+	tableStats = h.GetPhysicalTableStats(p1ID, tableInfo)
+	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
+}
+
+func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	statstestutil.HandleNextDDLEventWithTxn(h)
+	// Insert some data.
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	defer pq.Close()
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
+	isEmpty, err := pq.IsEmpty()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+
+	// enable ddl analyze.
+	testKit.MustExec("set @@tidb_enable_ddl_analyze = 1")
+	// create index.
+	testKit.MustExec("alter table t add index idx(c1, c2)")
+
+	// Find the create index event.
+	addIndexEvent := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	tblInfo, idxInfo, analyzed := addIndexEvent.GetAddIndexInfo()
+	require.Equal(t, tableInfo.ID, tblInfo.ID)
+	require.Equal(t, analyzed, true)
+	require.Equal(t, idxInfo[0].Name.L, "idx")
+
+	// Handle the add index event.
+	err = statstestutil.HandleDDLEventWithTxn(h, addIndexEvent)
+	require.NoError(t, err)
+
+	sctx := testKit.Session().(sessionctx.Context)
+	// Handle the add index event in priority queue.
+	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, addIndexEvent))
+
+	// The table is truncated, the job should be removed from the priority queue.
+	isEmpty, err = pq.IsEmpty()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+
+	// modify column.
+	testKit.MustExec("alter table t modify c1 varchar(10)")
+
+	// Find the modify column event.
+	modifyColumnEvent := findEvent(h.DDLEventCh(), model.ActionModifyColumn)
+	tblInfo, columnInfo, analyzed := modifyColumnEvent.GetModifyColumnInfo()
+	require.Equal(t, tableInfo.ID, tblInfo.ID)
+	require.Equal(t, analyzed, true)
+	require.Equal(t, columnInfo[0].Name.L, "c1")
 }

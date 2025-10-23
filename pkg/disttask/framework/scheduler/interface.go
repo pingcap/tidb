@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
@@ -30,6 +31,11 @@ type TaskManager interface {
 	// to make sure low ranking tasks can be scheduled if resource is enough.
 	// The returned tasks are sorted by task order, see proto.Task.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error)
+	// GetTopNoNeedResourceTasks returns tasks that don't need resource to run,
+	// those tasks are in reverting/pausing/cancelling/modifying states.
+	// we need this API for fast respond to those requests, as we can only
+	// schedule a limited number of tasks at the same time
+	GetTopNoNeedResourceTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllTasks gets all tasks with basic columns.
 	GetAllTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllSubtasks gets all subtasks with basic columns.
@@ -158,6 +164,15 @@ type Param struct {
 	serverID       string
 	allocatedSlots bool
 	nodeRes        *proto.NodeResource
+	Store          kv.Storage
+}
+
+// NewParamForTest creates a new Param for test.
+func NewParamForTest(taskMgr TaskManager, store kv.Storage) Param {
+	return Param{
+		taskMgr: taskMgr,
+		Store:   store,
+	}
 }
 
 // GetNodeResource returns the node resource.

@@ -274,7 +274,7 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			}
 
 			idxWorker, err := newAddIndexTxnWorker(b.decodeColMap, b.tbl, backfillCtx,
-				job.ID, reorgInfo.elements, reorgInfo.currElement.TypeKey)
+				job, reorgInfo.elements, reorgInfo.currElement)
 			if err != nil {
 				return err
 			}

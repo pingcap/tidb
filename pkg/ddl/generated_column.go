@@ -163,10 +163,12 @@ func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName ast.CIStr) 
 }
 
 func isGeneratedRelatedColumn(tblInfo *model.TableInfo, newCol, col *model.ColumnInfo) error {
-	if newCol.IsGenerated() || col.IsGenerated() {
-		// TODO: Make it compatible with MySQL error.
-		msg := fmt.Sprintf("newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
-		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	// TODO: Make it compatible with MySQL error.
+	if newCol.IsGenerated() {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("new column is generated")
+	}
+	if col.IsGenerated() {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("old column is generated")
 	}
 	if ok, dep, _ := hasDependentByGeneratedColumn(tblInfo, col.Name); ok {
 		msg := fmt.Sprintf("oldCol is a dependent column '%s' for generated column", dep)
@@ -199,8 +201,8 @@ func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 //  5. check if the new column is indexed or stored
 func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName ast.CIStr, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
 	// rule 1.
-	oldColIsStored := !oldCol.IsGenerated() || oldCol.GeneratedStored
-	newColIsStored := !newCol.IsGenerated() || newCol.GeneratedStored
+	oldColIsStored := !oldCol.IsVirtualGenerated()
+	newColIsStored := !newCol.IsVirtualGenerated()
 	if oldColIsStored != newColIsStored {
 		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Changing the STORED status")
 	}

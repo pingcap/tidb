@@ -139,6 +139,12 @@ func (c *jobContext) cleanStepCtx() {
 	c.stepCtx = nil // unset stepCtx for the next step initialization
 }
 
+// genReorgTimeoutErr generates a reorganization timeout error.
+func (c *jobContext) genReorgTimeoutErr() error {
+	c.reorgTimeoutOccurred = true
+	return dbterror.ErrWaitReorgTimeout
+}
+
 func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
 	return &asAutoIDRequirement{
 		store:     c.store,
@@ -195,6 +201,7 @@ type ReorgContext struct {
 
 	resourceGroupName string
 	cloudStorageURI   string
+	analyzeDone       chan struct{}
 }
 
 // NewReorgContext returns a new ddl job context.
@@ -308,7 +315,7 @@ func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs 
 
 // registerMDLInfo registers metadata lock info.
 func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
-	if !vardef.EnableMDL.Load() {
+	if !vardef.IsMDLEnabled() {
 		return nil
 	}
 	if ver == 0 {
@@ -893,12 +900,6 @@ func (w *worker) runOneJobStep(
 							return
 						case model.JobStateDone, model.JobStateSynced:
 							return
-						case model.JobStateRunning:
-							if latestJob.IsAlterable() {
-								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrency())
-								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSize())
-								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeed())
-							}
 						}
 					}
 				}
@@ -1124,7 +1125,7 @@ func updateGlobalVersionAndWaitSynced(
 	err = jobCtx.schemaVerSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		if vardef.EnableMDL.Load() {
+		if vardef.IsMDLEnabled() {
 			return err
 		}
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {

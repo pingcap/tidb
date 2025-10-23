@@ -515,11 +515,11 @@ func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.Colum
 func isPlanCacheable(sctx base.PlanContext, p base.Plan, paramNum, limitParamNum int, hasSubQuery bool) (cacheable bool, reason string) {
 	var pp base.PhysicalPlan
 	switch x := p.(type) {
-	case *Insert:
+	case *physicalop.Insert:
 		pp = x.SelectPlan
-	case *Update:
+	case *physicalop.Update:
 		pp = x.SelectPlan
-	case *Delete:
+	case *physicalop.Delete:
 		pp = x.SelectPlan
 	case base.PhysicalPlan:
 		pp = x
@@ -549,29 +549,29 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		if paramNum > 0 {
 			return false, "get a TableDual plan"
 		}
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		if x.StoreType == kv.TiFlash {
 			return false, "TiFlash plan is un-cacheable"
 		}
-	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
+	case *physicalop.PhysicalShuffle, *physicalop.PhysicalShuffleReceiverStub:
 		return false, "get a Shuffle plan"
 	case *physicalop.PhysicalMemTable:
 		return false, "PhysicalMemTable plan is un-cacheable"
-	case *PhysicalIndexMergeReader:
+	case *physicalop.PhysicalIndexMergeReader:
 		if x.AccessMVIndex && !enablePlanCacheForGeneratedCols(sctx) {
 			return false, "the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
 		}
 		underIndexMerge = true
-		subPlans = append(subPlans, x.partialPlans...)
-	case *PhysicalIndexScan:
-		if underIndexMerge && x.isFullScan() {
+		subPlans = append(subPlans, x.PartialPlansRaw...)
+	case *physicalop.PhysicalIndexScan:
+		if underIndexMerge && x.IsFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
-	case *PhysicalTableScan:
-		if underIndexMerge && x.isFullScan() {
+	case *physicalop.PhysicalTableScan:
+		if underIndexMerge && x.IsFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
-	case *PhysicalApply:
+	case *physicalop.PhysicalApply:
 		return false, "PhysicalApply plan is un-cacheable"
 	}
 
