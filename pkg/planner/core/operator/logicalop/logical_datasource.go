@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -84,7 +85,8 @@ type DataSource struct {
 	UnMutableHandleCols util.HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
-	TblCols []*expression.Column
+	TblCols     []*expression.Column
+	TblColsByID map[int64]*expression.Column
 	// CommonHandleCols and CommonHandleLens save the info of primary key which is the clustered index.
 	CommonHandleCols []*expression.Column
 	CommonHandleLens []int
@@ -676,4 +678,117 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		}
 	}
 	return resultColumn, resultColumnInfo
+}
+
+// IsSingleScan checks whether all the needed columns and conditions can be covered by the index.
+func (ds *DataSource) IsSingleScan(indexColumns []*expression.Column, idxColLens []int) bool {
+	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || ds.ColsRequiringFullLen == nil {
+		// ds.ColsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
+		// and ds.ColsRequiringFullLen is nil, so we fall back to ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
+		return ds.IsIndexCoveringColumns(ds.Schema().Columns, indexColumns, idxColLens)
+	}
+	if !ds.IsIndexCoveringColumns(ds.ColsRequiringFullLen, indexColumns, idxColLens) {
+		return false
+	}
+	for _, cond := range ds.AllConds {
+		if !ds.IsIndexCoveringCondition(cond, indexColumns, idxColLens) {
+			return false
+		}
+	}
+	return true
+}
+
+// IsIndexCoveringColumns checks whether all the needed columns can be covered by the index.
+func (ds *DataSource) IsIndexCoveringColumns(columns, indexColumns []*expression.Column, idxColLens []int) bool {
+	for _, col := range columns {
+		if !ds.indexCoveringColumn(col, indexColumns, idxColLens, false) {
+			return false
+		}
+	}
+	return true
+}
+
+// IsIndexCoveringCondition checks whether all the needed columns in the condition can be covered by the index.
+func (ds *DataSource) IsIndexCoveringCondition(condition expression.Expression, indexColumns []*expression.Column, idxColLens []int) bool {
+	switch v := condition.(type) {
+	case *expression.Column:
+		return ds.indexCoveringColumn(v, indexColumns, idxColLens, false)
+	case *expression.ScalarFunction:
+		// Even if the index only contains prefix `col`, the index can cover `col is null`.
+		if v.FuncName.L == ast.IsNull {
+			if col, ok := v.GetArgs()[0].(*expression.Column); ok {
+				return ds.indexCoveringColumn(col, indexColumns, idxColLens, true)
+			}
+		}
+		for _, arg := range v.GetArgs() {
+			if !ds.IsIndexCoveringCondition(arg, indexColumns, idxColLens) {
+				return false
+			}
+		}
+		return true
+	}
+	return true
+}
+
+type handleCoverState uint8
+
+const (
+	stateNotCoveredByHandle handleCoverState = iota
+	stateCoveredByIntHandle
+	stateCoveredByCommonHandle
+)
+
+func (ds *DataSource) indexCoveringColumn(column *expression.Column, indexColumns []*expression.Column, idxColLens []int, ignoreLen bool) bool {
+	handleCoveringState := ds.handleCoveringColumn(column, ignoreLen)
+	// Original int pk can always cover the column.
+	if handleCoveringState == stateCoveredByIntHandle {
+		return true
+	}
+	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
+	coveredByPlainIndex := isIndexColsCoveringCol(evalCtx, column, indexColumns, idxColLens, ignoreLen)
+	if !coveredByPlainIndex && handleCoveringState != stateCoveredByCommonHandle {
+		return false
+	}
+	isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
+		column.GetType(evalCtx).EvalType() == types.ETString &&
+		!mysql.HasBinaryFlag(column.GetType(evalCtx).GetFlag())
+	if !coveredByPlainIndex && handleCoveringState == stateCoveredByCommonHandle && isClusteredNewCollationIdx && ds.Table.Meta().CommonHandleVersion == 0 {
+		return false
+	}
+	return true
+}
+
+// handleCoveringColumn checks if the column is covered by the primary key or extra handle columns.
+func (ds *DataSource) handleCoveringColumn(column *expression.Column, ignoreLen bool) handleCoverState {
+	if ds.TableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
+		return stateCoveredByIntHandle
+	}
+	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
+		return stateCoveredByIntHandle
+	}
+	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
+	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
+	if coveredByClusteredIndex {
+		return stateCoveredByCommonHandle
+	}
+	return stateNotCoveredByHandle
+}
+
+func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
+	for i, indexCol := range indexCols {
+		if indexCol == nil || !col.EqualByExprAndID(sctx, indexCol) {
+			continue
+		}
+		if ignoreLen || idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen() {
+			return true
+		}
+	}
+	return false
+}
+
+// AppendTableCol appends a column to the original columns of the table before pruning,
+// accessed through ds.TblCols and ds.TblColsByID.
+func (ds *DataSource) AppendTableCol(col *expression.Column) {
+	ds.TblCols = append(ds.TblCols, col)
+	ds.TblColsByID[col.ID] = col
 }
