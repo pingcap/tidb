@@ -107,21 +107,21 @@ func (ei *engineInfo) Close(cleanup bool) {
 	}
 	err := ei.closeWriters()
 	if err != nil {
-		logutil.Logger(ei.ctx).Error(LitErrCloseWriterErr, zap.Error(err),
+		logutil.Logger(ei.ctx).Warn(LitErrCloseWriterErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
 	if cleanup {
 		defer func() {
 			err = ei.backend.CleanupEngine(ei.ctx, ei.uuid)
 			if err != nil {
-				logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err),
+				logutil.Logger(ei.ctx).Warn(LitErrCleanEngineErr, zap.Error(err),
 					zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 			}
 		}()
 	}
 	_, err = ei.openedEngine.Close(ei.ctx)
 	if err != nil {
-		logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
+		logutil.Logger(ei.ctx).Warn(LitErrCloseEngineErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return
 	}
