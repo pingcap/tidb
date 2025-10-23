@@ -682,16 +682,13 @@ func (c *TopN) FindTopN(d []byte) int {
 	return idx
 }
 
-// LowerBoundRange searches on the sorted top-n items within the range [left, right),
+// GetRangeBound searches on the sorted top-n items,
 // returns the smallest index i such that the value at element i is not less than `d`.
-func (c *TopN) LowerBoundRange(d []byte, left, right int) (idx int) {
+func (c *TopN) GetRangeBound(r, l []byte) (ridx, ldx int) {
 	if c == nil {
-		return 0
+		return 0, 0
 	}
-	if left >= right {
-		return left
-	}
-	return sliceutil.BinarySearchRange(c.TopN, d, left, right, func(a TopNMeta, b []byte) int {
+	return sliceutil.BinarySearchRangeFunc(c.TopN, r, l, func(a TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
 }
@@ -709,8 +706,7 @@ func (c *TopN) BetweenCount(sctx planctx.PlanContext, l, r []byte) (result uint6
 	if c == nil {
 		return 0
 	}
-	lIdx := c.LowerBoundRange(l, 0, len(c.TopN))
-	rIdx := c.LowerBoundRange(r, lIdx, len(c.TopN))
+	lIdx, rIdx := c.GetRangeBound(l, r)
 	ret := uint64(0)
 	for i := lIdx; i < rIdx; i++ {
 		ret += c.TopN[i].Count
