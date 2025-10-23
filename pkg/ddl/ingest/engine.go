@@ -19,7 +19,6 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/errors"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -55,6 +54,7 @@ type engineInfo struct {
 	openedEngine *backend.OpenedEngine
 
 	uuid        uuid.UUID
+	backend     backend.Backend
 	writerCache generic.SyncMap[int, backend.EngineWriter]
 	memRoot     MemRoot
 	flushLock   *sync.RWMutex
@@ -67,6 +67,7 @@ func newEngineInfo(
 	unique bool,
 	en *backend.OpenedEngine,
 	uuid uuid.UUID,
+	bk backend.Backend,
 	memRoot MemRoot,
 ) *engineInfo {
 	return &engineInfo{
@@ -76,6 +77,7 @@ func newEngineInfo(
 		unique:       unique,
 		openedEngine: en,
 		uuid:         uuid,
+		backend:      bk,
 		writerCache:  generic.NewSyncMap[int, backend.EngineWriter](4),
 		memRoot:      memRoot,
 		flushLock:    &sync.RWMutex{},
@@ -108,32 +110,22 @@ func (ei *engineInfo) Close(cleanup bool) {
 		logutil.Logger(ei.ctx).Error(LitErrCloseWriterErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
-
-	indexEngine := ei.openedEngine
-	closedEngine, err := indexEngine.Close(ei.ctx)
-	if err != nil {
-		if errors.ErrorEqual(err, context.Canceled) {
-			closedEngine, err = indexEngine.Close(context.Background())
+	if cleanup {
+		defer func() {
+			err = ei.backend.CleanupEngine(ei.ctx, ei.uuid)
 			if err != nil {
-				logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
+				logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err),
 					zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-				return
 			}
-		} else {
-			logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
-				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-			return
-		}
+		}()
+	}
+	_, err = ei.openedEngine.Close(ei.ctx)
+	if err != nil {
+		logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		return
 	}
 	ei.openedEngine = nil
-	if cleanup {
-		// local intermediate files will be removed.
-		err = closedEngine.Cleanup(ei.ctx)
-		if err != nil {
-			logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err),
-				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-		}
-	}
 }
 
 // writerContext is used to keep a lightning local writer for each backfill worker.
