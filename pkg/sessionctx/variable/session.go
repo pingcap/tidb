@@ -2240,6 +2240,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
+<<<<<<< HEAD
 		GroupConcatMaxLen:             DefGroupConcatMaxLen,
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
@@ -2248,6 +2249,17 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
+=======
+		GroupConcatMaxLen:             vardef.DefGroupConcatMaxLen,
+		EnableRedactLog:               vardef.DefTiDBRedactLog,
+		EnableWindowFunction:          vardef.DefEnableWindowFunction,
+		CostModelVersion:              vardef.DefTiDBCostModelVer,
+		OptimizerEnableNAAJ:           vardef.DefTiDBEnableNAAJ,
+		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
+		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
+		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
+		SkipMissingPartitionStats:     vardef.DefTiDBSkipMissingPartitionStats,
+>>>>>>> 4e3507a43cf (executor: force pushdown aggregate to TiKV inside `admin check table` (#63665))
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))

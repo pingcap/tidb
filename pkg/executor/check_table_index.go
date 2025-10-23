@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/admin"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -329,6 +330,37 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	}
 }
 
+func queryToRow(ctx context.Context, se sessionctx.Context, sql string) ([]chunk.Row, error) {
+	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	return sqlexec.DrainRecordSetAndClose(ctx, rs, 4096)
+}
+
+func verifyIndexSideQuery(ctx context.Context, se sessionctx.Context, sql string) bool {
+	rows, err := queryToRow(ctx, se, "explain "+sql)
+	if err != nil {
+		return false
+	}
+
+	isTableScan := false
+	isIndexScan := false
+	for _, row := range rows {
+		op := row.GetString(0)
+		if strings.Contains(op, "TableFullScan") {
+			isTableScan = true
+		} else if strings.Contains(op, "IndexFullScan") {
+			isIndexScan = true
+		}
+	}
+
+	if isTableScan || !isIndexScan {
+		return false
+	}
+	return true
+}
+
 // HandleTask implements the Worker interface.
 func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
 	defer w.e.wg.Done()
@@ -444,8 +476,17 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		}
 		checkOnce = true
 
+<<<<<<< HEAD
 		tblQuery := fmt.Sprintf("select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s", TableName(w.e.dbName, w.e.table.Meta().Name.String()), md5HandleAndIndexCol.String(), groupByKey, TableName(w.e.dbName, w.e.table.Meta().Name.String()), whereKey, groupByKey)
 		idxQuery := fmt.Sprintf("select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s", md5HandleAndIndexCol.String(), groupByKey, TableName(w.e.dbName, w.e.table.Meta().Name.String()), idxInfo.Name, whereKey, groupByKey)
+=======
+		tblQuery := fmt.Sprintf(
+			"select /*+ read_from_storage(tikv[%s]), AGG_TO_COP() */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s",
+			tblName, md5HandleAndIndexCol, groupByKey, tblName, whereKey, groupByKey)
+		idxQuery := fmt.Sprintf(
+			"select /*+ AGG_TO_COP() */ bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s",
+			md5HandleAndIndexCol, groupByKey, tblName, idxInfo.Name, whereKey, groupByKey)
+>>>>>>> 4e3507a43cf (executor: force pushdown aggregate to TiKV inside `admin check table` (#63665))
 
 		logutil.BgLogger().Info("fast check table by group", zap.String("table name", w.table.Meta().Name.String()), zap.String("index name", idxInfo.Name.String()), zap.Int("times", times), zap.Int("current offset", offset), zap.Int("current mod", mod), zap.String("table sql", tblQuery), zap.String("index sql", idxQuery))
 
@@ -460,6 +501,9 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		})
 
 		// compute index side checksum.
+		intest.AssertFunc(func() bool {
+			return verifyIndexSideQuery(ctx, se, idxQuery)
+		}, "index side query plan is not correct: %s", idxQuery)
 		indexChecksum, err := getCheckSum(w.e.contextCtx, se, idxQuery)
 		if err != nil {
 			trySaveErr(err)
@@ -511,33 +555,31 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		mod *= bucketSize
 	}
 
-	queryToRow := func(se sessionctx.Context, sql string) ([]chunk.Row, error) {
-		rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
-		if err != nil {
-			return nil, err
-		}
-		row, err := sqlexec.DrainRecordSet(ctx, rs, 4096)
-		if err != nil {
-			return nil, err
-		}
-		err = rs.Close()
-		if err != nil {
-			logutil.BgLogger().Warn("close result set failed", zap.Error(err))
-		}
-		return row, nil
-	}
-
 	if meetError {
+<<<<<<< HEAD
 		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle.String(), offset, mod)
 		indexSQL := fmt.Sprintf("select %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), TableName(w.e.dbName, w.e.table.Meta().Name.String()), idxInfo.Name, groupByKey, handleColumnField)
 		tableSQL := fmt.Sprintf("select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s = 0 order by %s", TableName(w.e.dbName, w.e.table.Meta().Name.String()), handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), TableName(w.e.dbName, w.e.table.Meta().Name.String()), groupByKey, handleColumnField)
 
 		idxRow, err := queryToRow(se, indexSQL)
+=======
+		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, offset, mod)
+		indexSQL := fmt.Sprintf(
+			"select /*+ AGG_TO_COP() */ %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s",
+			handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxInfo.Name, groupByKey, handleColumns)
+		tableSQL := fmt.Sprintf(
+			"select /*+ read_from_storage(tikv[%s]), AGG_TO_COP() */ %s, %s, %s from %s use index() where %s = 0 order by %s",
+			tblName, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, groupByKey, handleColumns)
+		intest.AssertFunc(func() bool {
+			return verifyIndexSideQuery(ctx, se, indexSQL)
+		}, "index side query plan is not correct: %s", indexSQL)
+		idxRow, err := queryToRow(ctx, se, indexSQL)
+>>>>>>> 4e3507a43cf (executor: force pushdown aggregate to TiKV inside `admin check table` (#63665))
 		if err != nil {
 			trySaveErr(err)
 			return
 		}
-		tblRow, err := queryToRow(se, tableSQL)
+		tblRow, err := queryToRow(ctx, se, tableSQL)
 		if err != nil {
 			trySaveErr(err)
 			return
