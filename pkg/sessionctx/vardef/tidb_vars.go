@@ -287,13 +287,13 @@ const (
 const (
 	// TiDBBuildStatsConcurrency specifies the number of concurrent workers used for analyzing tables or partitions.
 	// When multiple tables or partitions are specified in the analyze statement, TiDB will process them concurrently.
-	// Additionally, this setting controls the concurrency for building NDV (Number of Distinct Values) for special indexes,
-	// such as generated columns composed indexes.
 	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
 
 	// TiDBBuildSamplingStatsConcurrency is used to control the concurrency of building stats using sampling.
 	// 1. The number of concurrent workers to merge FMSketches and Sample Data from different regions.
 	// 2. The number of concurrent workers to build TopN and Histogram concurrently.
+	// Additionally, this setting controls the concurrency for building NDV (Number of Distinct Values) for special indexes,
+	// such as generated columns composed indexes.
 	TiDBBuildSamplingStatsConcurrency = "tidb_build_sampling_stats_concurrency"
 
 	// TiDBDistSQLScanConcurrency is used to set the concurrency of a distsql scan task.
@@ -304,6 +304,10 @@ const (
 
 	// TiDBAnalyzeDistSQLScanConcurrency is the number of concurrent workers to scan regions to collect statistics (FMSketch, Samples).
 	// For auto analyze, the value is controlled by tidb_sysproc_scan_concurrency variable.
+	// This variable was introduced in v7.6.0 to separate the scan concurrency of ANALYZE operations from normal queries. See: https://github.com/pingcap/tidb/pull/48829
+	// For versions earlier than v7.6.0, the scan concurrency of regions during ANALYZE is controlled by the tidb_distsql_scan_concurrency variable.
+	// Starting from v7.6.0, this variable also controls the scan concurrency of index serial scans during ANALYZE. See: https://github.com/pingcap/tidb/pull/50639
+	// For versions earlier than v7.6.0, the scan concurrency of index serial scans during ANALYZE is controlled by the tidb_index_serial_scan_concurrency variable.
 	TiDBAnalyzeDistSQLScanConcurrency = "tidb_analyze_distsql_scan_concurrency"
 
 	// TiDBOptInSubqToJoinAndAgg is used to enable/disable the optimizer rule of rewriting IN subquery.
@@ -436,6 +440,9 @@ const (
 
 	// TiDBIndexSerialScanConcurrency is used for controlling the concurrency of index scan operation
 	// when we need to keep the data output order the same as the order of index data.
+	// Deprecated: Use tidb_executor_concurrency for sequential scans and tidb_analyze_distsql_scan_concurrency for ANALYZE.
+	// Before v5.0.0, this variable was used to control the concurrency of index scan operations for both regular queries and ANALYZE statements. See: https://github.com/pingcap/tidb/pull/16999
+	// From version v5.0.0 up to (and including) v8.0.0, this variable was used only to control the concurrency of index scan operations for ANALYZE statements. See: https://github.com/pingcap/tidb/pull/50639
 	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
 
 	// TiDBMaxChunkSize is used to control the max chunk size during query execution.
@@ -1715,6 +1722,7 @@ const (
 	DefTiDBAccelerateUserCreationUpdate               = false
 	DefTiDBEnableTSValidation                         = true
 	DefTiDBLoadBindingTimeout                         = 200
+	DefTiDBEnableBindingUsage                         = true
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 )
 
@@ -1847,6 +1855,7 @@ var (
 	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
 
 	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
+	EnableBindingUsage         = atomic.NewBool(DefTiDBEnableBindingUsage)
 )
 
 func serverMemoryLimitDefaultValue() string {

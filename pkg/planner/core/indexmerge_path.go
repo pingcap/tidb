@@ -983,10 +983,11 @@ func PrepareIdxColsAndUnwrapArrayType(
 	tblCols []*expression.Column,
 	checkOnly1ArrayTypeCol bool,
 ) (idxCols []*expression.Column, ok bool) {
+	colInfos := tableInfo.Cols()
 	var virColNum = 0
 	for i := range idxInfo.Columns {
 		colOffset := idxInfo.Columns[i].Offset
-		colMeta := tableInfo.Cols()[colOffset]
+		colMeta := colInfos[colOffset]
 		var col *expression.Column
 		for _, c := range tblCols {
 			if c.ID == colMeta.ID {

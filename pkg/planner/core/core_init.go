@@ -32,20 +32,12 @@ func init() {
 	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
 	utilfuncp.ExhaustPhysicalPlans4LogicalJoin = exhaustPhysicalPlans4LogicalJoin
 	utilfuncp.ExhaustPhysicalPlans4LogicalApply = exhaustPhysicalPlans4LogicalApply
-	utilfuncp.ExhaustPhysicalPlans4LogicalWindow = exhaustPhysicalPlans4LogicalWindow
-	utilfuncp.ExhaustPhysicalPlans4LogicalExpand = exhaustPhysicalPlans4LogicalExpand
-	utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll = exhaustPhysicalPlans4LogicalUnionAll
-	utilfuncp.ExhaustPhysicalPlans4LogicalSequence = exhaustPhysicalPlans4LogicalSequence
-	utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow = exhaustPhysicalPlans4LogicalMaxOneRow
-	utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll = exhaustPhysicalPlans4LogicalPartitionUnionAll
 
 	// for physical operators.
 	utilfuncp.GetActualProbeCntFromProbeParents = getActualProbeCntFromProbeParents
 	utilfuncp.GetEstimatedProbeCntFromProbeParents = getEstimatedProbeCntFromProbeParents
 	// for physical sort.
-	utilfuncp.ToPB4PhysicalSort = toPB4PhysicalSort
 	utilfuncp.GetCost4PhysicalSort = getCost4PhysicalSort
-	utilfuncp.ResolveIndicesForSort = resolveIndicesForSort
 	utilfuncp.Attach2Task4PhysicalSort = attach2Task4PhysicalSort
 	utilfuncp.GetPlanCostVer14PhysicalSort = getPlanCostVer14PhysicalSort
 	utilfuncp.GetPlanCostVer24PhysicalSort = getPlanCostVer24PhysicalSort
@@ -157,7 +149,6 @@ func init() {
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost
-	utilfuncp.WindowIsTopN = windowIsTopN
 	utilfuncp.AttachPlan2Task = attachPlan2Task
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CompareTaskCost = compareTaskCost
