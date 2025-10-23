@@ -654,11 +654,10 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 
 func TestGetModifyColumnType(t *testing.T) {
 	type testCase struct {
-		tableSQL  string
-		modifySQL string
-		dataSQL   string
-		success   bool
-		tp        byte
+		beforeType string
+		afterType  string
+		index      bool
+		tp         byte
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -668,61 +667,131 @@ func TestGetModifyColumnType(t *testing.T) {
 	tcs := []testCase{
 		// integer
 		{
-			tableSQL:  "create table t(a bigint)",
-			modifySQL: "alter table t modify column a int",
-			dataSQL:   "insert into t values (1), (2), (3)",
-			tp:        ddl.ModifyTypeNoReorgWithCheck,
-			success:   true,
+			beforeType: "int",
+			afterType:  "bigint",
+			tp:         ddl.ModifyTypeNoReorg,
 		},
 		{
-			tableSQL:  "create table t(a bigint)",
-			modifySQL: "alter table t modify column a int",
-			dataSQL:   "insert into t values (100000000000)",
-			tp:        ddl.ModifyTypeNoReorgWithCheck,
-			success:   false,
+			beforeType: "bigint",
+			afterType:  "int",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
 		},
 		{
-			tableSQL:  "create table t(a int)",
-			modifySQL: "alter table t modify column a bigint",
-			tp:        ddl.ModifyTypeNoReorg,
-			success:   true,
+			beforeType: "bigint",
+			afterType:  "int",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
 		},
 		{
-			tableSQL:  "create table t(a int)",
-			modifySQL: "alter table t modify column a bigint",
-			tp:        ddl.ModifyTypeNoReorg,
-			success:   true,
+			beforeType: "bigint",
+			afterType:  "bigint unsigned",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
 		},
 		{
-			tableSQL:  "create table t(a bigint, index idx_a(a))",
-			modifySQL: "alter table t modify column a int",
-			tp:        ddl.ModifyTypeNoReorgWithCheck,
-			success:   true,
+			beforeType: "bigint",
+			afterType:  "bigint unsigned",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
 		},
 		{
-			tableSQL:  "create table t(a bigint, index idx_a(a))",
-			modifySQL: "alter table t modify column a int unsigned",
-			tp:        ddl.ModifyTypeIndexReorg,
-			success:   true,
+			beforeType: "int unsigned",
+			afterType:  "bigint",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "int unsigned",
+			afterType:  "bigint",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
 		},
 		// string
 		{
-			tableSQL:  "create table t(a char(10))",
-			modifySQL: "alter table t modify column a char(5)",
-			tp:        ddl.ModifyTypeNoReorgWithCheck,
-			success:   true,
+			beforeType: "char(10)",
+			afterType:  "char(20)",
+			tp:         ddl.ModifyTypeNoReorg,
 		},
 		{
-			tableSQL:  "create table t(a char(10) collate utf8mb4_general_ci)",
-			modifySQL: "alter table t modify column a varchar(5) collate utf8mb4_general_ci",
-			tp:        ddl.ModifyTypeNoReorgWithCheck,
-			success:   true,
+			beforeType: "char(20)",
+			afterType:  "char(10)",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
 		},
 		{
-			tableSQL:  "create table t(a varchar(10))",
-			modifySQL: "alter table t modify column a char(5)",
-			tp:        ddl.ModifyTypePrecheck,
-			success:   true,
+			beforeType: "char(20) collate utf8mb4_bin",
+			afterType:  "char(10) collate utf8mb4_bin",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "char(20) collate utf8mb4_general_ci",
+			afterType:  "char(10) collate utf8mb4_general_ci",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "char(10)",
+			afterType:  "varchar(20)",
+			tp:         ddl.ModifyTypeNoReorg,
+		},
+		{
+			beforeType: "char(20)",
+			afterType:  "varchar(10)",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "char(20) collate utf8mb4_bin",
+			afterType:  "varchar(10) collate utf8mb4_bin",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
+		{
+			beforeType: "char(20) collate utf8mb4_general_ci",
+			afterType:  "varchar(10) collate utf8mb4_general_ci",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "varchar(10)",
+			afterType:  "varchar(20)",
+			tp:         ddl.ModifyTypeNoReorg,
+		},
+		{
+			beforeType: "varchar(20)",
+			afterType:  "varchar(10)",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "varchar(20) collate utf8mb4_bin",
+			afterType:  "varchar(10) collate utf8mb4_bin",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "varchar(20) collate utf8mb4_general_ci",
+			afterType:  "varchar(10) collate utf8mb4_general_ci",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "varchar(10)",
+			afterType:  "char(20)",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "varchar(20)",
+			afterType:  "char(10)",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "varchar(20) collate utf8mb4_bin",
+			afterType:  "char(10) collate utf8mb4_bin",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
+		{
+			beforeType: "varchar(20) collate utf8mb4_general_ci",
+			afterType:  "char(10) collate utf8mb4_general_ci",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
 		},
 	}
 
@@ -731,19 +800,56 @@ func TestGetModifyColumnType(t *testing.T) {
 		gotTp = tp
 	})
 
+	runSingle := func(t *testing.T, tc testCase) {
+		tk.MustExec("drop table if exists t")
+		indexPart := ""
+		if tc.index {
+			indexPart = ", index idx_a(a)"
+		}
+		tk.MustExec(fmt.Sprintf("create table t (a %s%s)", tc.beforeType, indexPart))
+		tk.MustExec("insert into t values ('1'), ('2'), ('3')")
+		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", tc.afterType))
+		tk.MustExec("insert into t values ('4'), ('5'), ('6 ')")
+		tk.MustExec("admin check table t")
+		require.Equal(t, tc.tp, gotTp, "before type: %s, after type: %s", tc.beforeType, tc.afterType)
+	}
+
 	tk.MustExec("set sql_mode='STRICT_ALL_TABLES'")
 	for _, tc := range tcs {
-		tk.MustExec("drop table if exists t")
-		tk.MustExec(tc.tableSQL)
-		if len(tc.dataSQL) > 0 {
-			tk.MustExec(tc.dataSQL)
-		}
-		if tc.success {
-			tk.MustExec(tc.modifySQL)
-		} else {
-			tk.MustExecToErr(tc.modifySQL)
-		}
-		require.Equal(t, tc.tp, gotTp)
+		runSingle(t, tc)
+	}
+
+	tcsNonStrict := []testCase{
+		{
+			beforeType: "bigint",
+			afterType:  "int",
+			tp:         ddl.ModifyTypeReorg,
+		},
+		{
+			beforeType: "char(20)",
+			afterType:  "char(10)",
+			tp:         ddl.ModifyTypeReorg,
+		},
+		{
+			beforeType: "varchar(20)",
+			afterType:  "varchar(10)",
+			tp:         ddl.ModifyTypeReorg,
+		},
+		{
+			beforeType: "char(20)",
+			afterType:  "varchar(10)",
+			tp:         ddl.ModifyTypeReorg,
+		},
+		{
+			beforeType: "varchar(20)",
+			afterType:  "char(10)",
+			tp:         ddl.ModifyTypeReorg,
+		},
+	}
+
+	tk.MustExec("set sql_mode=''")
+	for _, tc := range tcsNonStrict {
+		runSingle(t, tc)
 	}
 }
 
