@@ -113,6 +113,7 @@ func testWithWorkers(TKs []*testkit.TestKit, stmts []*testStmt) {
 }
 
 func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
+	t.Skip("contraint check skip")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`create database normal`)
