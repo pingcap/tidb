@@ -7792,6 +7792,8 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+        patches = ["//build/patches:com_github_tikv_client_go_v2_trace_events.patch"],
+        patch_args = ["-p1"],
         sha256 = "2906c907af2688fb6dc4c50a77bcbb2d46b7e26c1a0e0a7b688d2725ec4094bd",
         strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20250917111308-6cbd7e4f9761",
         urls = [

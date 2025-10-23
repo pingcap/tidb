@@ -16,7 +16,10 @@ package traceevent
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +28,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/trace"
 	"go.uber.org/zap"
 )
 
@@ -32,8 +36,20 @@ import (
 type TraceCategory uint64
 
 const (
-	// CoprRegionCache traces region cache and coprocessor region info flow.
-	CoprRegionCache TraceCategory = 1 << iota
+	// TxnLifecycle traces transaction begin/commit/rollback events.
+	TxnLifecycle TraceCategory = 1 << iota
+	// Txn2PC traces two-phase commit prewrite and commit phases.
+	Txn2PC
+	// TxnLockResolve traces lock resolution and conflict handling.
+	TxnLockResolve
+	// StmtLifecycle traces statement start/finish events.
+	StmtLifecycle
+	// StmtPlan traces statement plan digest and optimization.
+	StmtPlan
+	// KvRequest traces client-go kv request and responses
+	KvRequest
+	// UnknownClient is the fallback category of events from client-go
+	UnknownClient
 	traceCategorySentinel
 )
 
@@ -41,21 +57,32 @@ const (
 const AllCategories = traceCategorySentinel - 1
 
 const (
-	// ModeOff disables log emission (flight recorder still captures allowed categories).
+	// ModeOff disables all trace event recording (no flight recorder, no logging).
 	ModeOff = "off"
-	// ModeLogging enables log emission for allowed categories.
-	ModeLogging = "logging"
+	// ModeBase enables flight recorder only (default mode).
+	ModeBase = "base"
+	// ModeFull enables both flight recorder and log emission.
+	ModeFull = "full"
 )
 
-// enabledCategories stores the currently enabled category mask and loggingEnabled controls the log sink.
+// enabledCategories stores the currently enabled category mask.
+// recorderEnabled controls whether the flight recorder is active.
+// loggingEnabled controls whether the log sink emits logs.
+// lastDumpTime stores the Unix timestamp of the last flight recorder dump.
 var (
 	enabledCategories atomic.Uint64
+	recorderEnabled   atomic.Bool
 	loggingEnabled    atomic.Bool
+	lastDumpTime      atomic.Int64
 )
 
 // DefaultFlightRecorderCapacity controls the number of events retained in the in-memory recorder.
 // make this small so there won't be too many logs, until we have ability to filter out the ones we need.
 const DefaultFlightRecorderCapacity = 1024
+
+// FlightRecorderCoolingOffPeriod is the minimum time between full flight recorder dumps.
+// During the cooling-off period, only a single summary log is emitted.
+const FlightRecorderCoolingOffPeriod = 10 * time.Second
 
 // eventSink stores the global sink used to record events.
 type sinkHolder struct {
@@ -68,11 +95,16 @@ var eventSink atomic.Value // of type sinkHolder
 var flightRecorder = NewRingBufferSink(DefaultFlightRecorderCapacity)
 
 // init sets up the default sink configuration.
+// Default mode is "base" (flight recorder enabled, logging disabled).
 func init() {
 	defaultSink := &LogSink{}
 	eventSink.Store(sinkHolder{sink: defaultSink})
 	enabledCategories.Store(uint64(AllCategories))
-	loggingEnabled.Store(false)
+	recorderEnabled.Store(true) // base mode: recorder enabled
+	loggingEnabled.Store(false) // base mode: logging disabled
+
+	// Register TiDB's trace event handlers with client-go
+	RegisterWithClientGo()
 }
 
 // Enable enables trace events for the specified categories.
@@ -106,12 +138,14 @@ func SetCategories(categories TraceCategory) {
 // NormalizeMode converts a user-supplied tracing mode string into its canonical representation.
 func NormalizeMode(mode string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case ModeOff:
+	case ModeOff, "0", "false":
 		return ModeOff, nil
-	case ModeLogging:
-		return ModeLogging, nil
+	case ModeBase:
+		return ModeBase, nil
+	case ModeFull:
+		return ModeFull, nil
 	default:
-		return "", fmt.Errorf("unsupported trace event mode %q", mode)
+		return "", fmt.Errorf("unsupported trace event mode %q, valid modes: off, base, full", mode)
 	}
 }
 
@@ -123,19 +157,36 @@ func SetMode(mode string) (string, error) {
 	}
 	switch normalized {
 	case ModeOff:
+		recorderEnabled.Store(false)
 		loggingEnabled.Store(false)
-	case ModeLogging:
+	case ModeBase:
+		recorderEnabled.Store(true)
+		loggingEnabled.Store(false)
+	case ModeFull:
+		recorderEnabled.Store(true)
 		loggingEnabled.Store(true)
+	default:
+		return "", fmt.Errorf("unknown trace event mode %q after normalization", normalized)
 	}
 	return normalized, nil
 }
 
 // CurrentMode reports the canonical tracing mode string.
 func CurrentMode() string {
-	if loggingEnabled.Load() {
-		return ModeLogging
+	recEnabled := recorderEnabled.Load()
+	logEnabled := loggingEnabled.Load()
+
+	if !recEnabled && !logEnabled {
+		return ModeOff
 	}
-	return ModeOff
+	if recEnabled && logEnabled {
+		return ModeFull
+	}
+	if recEnabled && !logEnabled {
+		return ModeBase
+	}
+	// Shouldn't happen (logging without recorder), but return full for consistency
+	return ModeFull
 }
 
 // GetEnabledCategories returns the currently enabled categories.
@@ -161,7 +212,7 @@ type Event struct {
 	Category  TraceCategory
 	Name      string
 	Timestamp time.Time
-	TraceID   string
+	TraceID   []byte
 	Fields    []zap.Field
 }
 
@@ -209,24 +260,40 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 		Category:  category,
 		Name:      name,
 		Timestamp: time.Now(),
-		TraceID:   extractTraceID(ctx), // TODO(trace-id): populate once tracing ID is available.
+		TraceID:   extractTraceID(ctx),
 		Fields:    copyFields(fields),
 	}
 
-	// Flight recorder is always on to provide post-mortem visibility even when logging is disabled.
-	if recorder := FlightRecorder(); recorder != nil {
-		recorder.Record(ctx, event)
+	// Record to flight recorder if enabled (base or full mode).
+	if recorderEnabled.Load() {
+		if recorder := FlightRecorder(); recorder != nil {
+			recorder.Record(ctx, event)
+		}
 	}
 
+	// Record to log sink if logging is enabled (full mode).
 	if sink := CurrentSink(); sink != nil {
 		sink.Record(ctx, event)
 	}
 }
 
-// extractTraceID returns the trace identifier encoded in ctx if present.
-func extractTraceID(_ context.Context) string {
-	// TODO(trace-id): populate once tracing context propagation is implemented.
-	return ""
+// extractTraceID returns the trace identifier from ctx if present.
+// It delegates to client-go's TraceIDFromContext implementation.
+func extractTraceID(ctx context.Context) []byte {
+	return trace.TraceIDFromContext(ctx)
+}
+
+// GenerateTraceID creates a trace ID from transaction start timestamp and statement count.
+// The trace ID is 20 bytes: [start_ts (8 bytes)][stmt_count (8 bytes)][random (4 bytes)] in big-endian format.
+// The random suffix distinguishes different statement executions.
+// This function should be called ONCE per statement execution, not per retry.
+// If no transaction has started, start_ts will be 0.
+func GenerateTraceID(startTS uint64, stmtCount uint64) []byte {
+	traceID := make([]byte, 20)
+	binary.BigEndian.PutUint64(traceID[0:8], startTS)
+	binary.BigEndian.PutUint64(traceID[8:16], stmtCount)
+	binary.BigEndian.PutUint32(traceID[16:20], rand.Uint32())
+	return traceID
 }
 
 // LogSink serializes trace events to the global zap logger. The output structure
@@ -242,8 +309,8 @@ func (*LogSink) Record(ctx context.Context, event Event) {
 	baseFields := make([]zap.Field, 0, len(event.Fields)+3)
 	baseFields = append(baseFields, zap.String("category", getCategoryName(event.Category)))
 	baseFields = append(baseFields, zap.Time("event_ts", event.Timestamp))
-	if event.TraceID != "" {
-		baseFields = append(baseFields, zap.String("trace_id", event.TraceID))
+	if len(event.TraceID) > 0 {
+		baseFields = append(baseFields, zap.String("trace_id", hex.EncodeToString(event.TraceID)))
 	}
 	baseFields = append(baseFields, event.Fields...)
 	logutil.Logger(ctx).Info("[trace-event] "+event.Name, baseFields...)
@@ -339,7 +406,7 @@ func (r *RingBufferSink) Snapshot() []Event {
 
 	result := make([]Event, len(r.buf))
 	if len(r.buf) < r.cap {
-		for i := range r.buf {
+		for i := 0; i < len(r.buf); i++ {
 			result[i] = cloneEvent(r.buf[i])
 		}
 		return result
@@ -350,7 +417,7 @@ func (r *RingBufferSink) Snapshot() []Event {
 		result[idx] = cloneEvent(r.buf[i])
 		idx++
 	}
-	for i := range r.next {
+	for i := 0; i < r.next; i++ {
 		result[idx] = cloneEvent(r.buf[i])
 		idx++
 	}
@@ -365,19 +432,38 @@ func cloneEvent(ev Event) Event {
 
 // DumpFlightRecorderToLogger emits the buffered events to the background logger.
 // Intended for crash diagnostics (e.g. panic handling).
+// If called within the cooling-off period, only a summary log is emitted.
 func DumpFlightRecorderToLogger(reason string) {
 	events := FlightRecorder().Snapshot()
 	if len(events) == 0 {
 		return
 	}
+
 	logger := logutil.BgLogger()
+	now := time.Now().Unix()
+	last := lastDumpTime.Load()
+	elapsed := time.Duration(now-last) * time.Second
+
+	// Check if we're in the cooling-off period
+	if last > 0 && elapsed < FlightRecorderCoolingOffPeriod {
+		logger.Info("flight recorder dump suppressed (cooling off)",
+			zap.String("reason", reason),
+			zap.Int("event_count", len(events)),
+			zap.Duration("elapsed_since_last_dump", elapsed))
+		return
+	}
+
+	// Update timestamp for next cooling-off check
+	lastDumpTime.Store(now)
+
+	// Perform full dump
 	logger.Info("dump flight recorder", zap.String("reason", reason), zap.Int("event_count", len(events)))
 	for _, ev := range events {
 		fields := make([]zap.Field, 0, len(ev.Fields)+4)
 		fields = append(fields, zap.String("category", getCategoryName(ev.Category)))
 		fields = append(fields, zap.Time("event_ts", ev.Timestamp))
-		if ev.TraceID != "" {
-			fields = append(fields, zap.String("trace_id", ev.TraceID))
+		if len(ev.TraceID) > 0 {
+			fields = append(fields, zap.String("trace_id", hex.EncodeToString(ev.TraceID)))
 		}
 		fields = append(fields, ev.Fields...)
 		logger.Info("[trace-event-flight]", fields...)
@@ -387,8 +473,20 @@ func DumpFlightRecorderToLogger(reason string) {
 // getCategoryName returns the string name for a category.
 func getCategoryName(category TraceCategory) string {
 	switch category {
-	case CoprRegionCache:
-		return "copr-region-cache"
+	case TxnLifecycle:
+		return "txn_lifecycle"
+	case Txn2PC:
+		return "txn_2pc"
+	case TxnLockResolve:
+		return "txn_lock_resolve"
+	case StmtLifecycle:
+		return "stmt_lifecycle"
+	case StmtPlan:
+		return "stmt_plan"
+	case KvRequest:
+		return "kv_request"
+	case UnknownClient:
+		return "unknown_client"
 	default:
 		return "unknown(" + strconv.FormatUint(uint64(category), 10) + ")"
 	}

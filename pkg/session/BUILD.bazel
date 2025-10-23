@@ -12,6 +12,7 @@ go_library(
         "sync_upgrade.go",
         "testutil.go",  #keep
         "tidb.go",
+        "traceid.go",
         "txn.go",
         "txnmanager.go",
         "upgrade.go",
@@ -136,6 +137,7 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//error",
+        "@com_github_tikv_client_go_v2//trace",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//txnkv/transaction",

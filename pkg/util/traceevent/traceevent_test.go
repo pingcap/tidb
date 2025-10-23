@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/trace"
 	"go.uber.org/zap"
 )
 
@@ -45,18 +46,18 @@ func TestTraceEventCategories(t *testing.T) {
 		SetCategories(original)
 	})
 
-	require.True(t, IsEnabled(CoprRegionCache))
+	require.True(t, IsEnabled(TxnLifecycle))
 
-	Disable(CoprRegionCache)
-	require.False(t, IsEnabled(CoprRegionCache))
+	Disable(TxnLifecycle)
+	require.False(t, IsEnabled(TxnLifecycle))
 
-	Enable(CoprRegionCache)
-	require.True(t, IsEnabled(CoprRegionCache))
+	Enable(TxnLifecycle)
+	require.True(t, IsEnabled(TxnLifecycle))
 
 	SetCategories(0)
-	require.False(t, IsEnabled(CoprRegionCache))
+	require.False(t, IsEnabled(TxnLifecycle))
 	SetCategories(AllCategories)
-	require.True(t, IsEnabled(CoprRegionCache))
+	require.True(t, IsEnabled(TxnLifecycle))
 }
 
 func TestTraceEventCategoryFiltering(t *testing.T) {
@@ -72,12 +73,12 @@ func TestTraceEventCategoryFiltering(t *testing.T) {
 	})
 
 	SetCategories(0)
-	_, _ = SetMode(ModeLogging)
+	_, _ = SetMode(ModeFull)
 	FlightRecorder().Reset()
 	recorder := installRecorderSink(t, 8)
 
 	ctx := context.Background()
-	TraceEvent(ctx, CoprRegionCache, "should-not-record", zap.Int("value", 1))
+	TraceEvent(ctx, TxnLifecycle, "should-not-record", zap.Int("value", 1))
 	require.Empty(t, FlightRecorder().Snapshot())
 	require.Empty(t, recorder.Snapshot())
 }
@@ -88,14 +89,16 @@ func TestTraceEventModes(t *testing.T) {
 		_, _ = SetMode(prev)
 	})
 
-	mode, err := NormalizeMode(" ON ")
+	// Test mode values
+	mode, err := SetMode("base")
 	require.NoError(t, err)
-	require.Equal(t, ModeLogging, mode)
+	require.Equal(t, ModeBase, mode)
+	require.Equal(t, ModeBase, CurrentMode())
 
-	mode, err = SetMode("logging")
+	mode, err = SetMode("full")
 	require.NoError(t, err)
-	require.Equal(t, ModeLogging, mode)
-	require.Equal(t, ModeLogging, CurrentMode())
+	require.Equal(t, ModeFull, mode)
+	require.Equal(t, ModeFull, CurrentMode())
 
 	mode, err = SetMode("off")
 	require.NoError(t, err)
@@ -121,19 +124,19 @@ func TestTraceEventRecordsEvent(t *testing.T) {
 	})
 
 	SetCategories(AllCategories)
-	_, _ = SetMode(ModeLogging)
+	_, _ = SetMode(ModeFull)
 	FlightRecorder().Reset()
 	recorder := installRecorderSink(t, 8)
 	ctx := context.Background()
 
-	TraceEvent(ctx, CoprRegionCache, "test-event",
+	TraceEvent(ctx, TxnLifecycle, "test-event",
 		zap.Int("count", 42),
 		zap.String("scope", "unit-test"))
 
 	frEvents := FlightRecorder().Snapshot()
 	require.Len(t, frEvents, 1)
 	ev := frEvents[0]
-	require.Equal(t, CoprRegionCache, ev.Category)
+	require.Equal(t, TxnLifecycle, ev.Category)
 	require.Equal(t, "test-event", ev.Name)
 	require.False(t, ev.Timestamp.IsZero())
 	require.Len(t, ev.Fields, 2)
@@ -142,6 +145,31 @@ func TestTraceEventRecordsEvent(t *testing.T) {
 	require.Len(t, recorded, 1)
 	require.Equal(t, "test-event", recorded[0].Name)
 	require.Len(t, recorded[0].Fields, 2)
+}
+
+func TestTraceEventCarriesTraceID(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("trace events only work for next-gen kernel")
+	}
+	originalCategories := GetEnabledCategories()
+	prevMode := CurrentMode()
+	t.Cleanup(func() {
+		SetCategories(originalCategories)
+		_, _ = SetMode(prevMode)
+		FlightRecorder().Reset()
+	})
+
+	SetCategories(AllCategories)
+	_, _ = SetMode(ModeFull)
+	FlightRecorder().Reset()
+
+	rawTrace := []byte{0x01, 0x10, 0xFE, 0xAA}
+	ctx := trace.ContextWithTraceID(context.Background(), rawTrace)
+	TraceEvent(ctx, Txn2PC, "trace-id-check", zap.Int("value", 7))
+
+	events := FlightRecorder().Snapshot()
+	require.Len(t, events, 1)
+	require.Equal(t, rawTrace, events[0].TraceID)
 }
 
 func TestTraceEventLoggingSwitch(t *testing.T) {
@@ -166,12 +194,12 @@ func TestTraceEventLoggingSwitch(t *testing.T) {
 	flightBefore := len(FlightRecorder().Snapshot())
 
 	require.Equal(t, ModeOff, CurrentMode())
-	TraceEvent(ctx, CoprRegionCache, "disabled-log", zap.Int("value", 1))
+	TraceEvent(ctx, TxnLifecycle, "disabled-log", zap.Int("value", 1))
 	require.Equal(t, flightBefore+1, len(FlightRecorder().Snapshot()))
 	disabledLogged := len(recorder.Snapshot())
 
-	_, _ = SetMode(ModeLogging)
-	TraceEvent(ctx, CoprRegionCache, "enabled-log", zap.Int("value", 2))
+	_, _ = SetMode(ModeFull)
+	TraceEvent(ctx, TxnLifecycle, "enabled-log", zap.Int("value", 2))
 	fr := FlightRecorder().Snapshot()
 	require.Len(t, fr, flightBefore+2)
 	recorded := recorder.Snapshot()
@@ -182,9 +210,9 @@ func TestTraceEventLoggingSwitch(t *testing.T) {
 func TestRingBufferSnapshotOrder(t *testing.T) {
 	recorder := NewRingBufferSink(2)
 
-	ev1 := Event{Category: CoprRegionCache, Name: "first", Timestamp: time.Unix(0, 1)}
-	ev2 := Event{Category: CoprRegionCache, Name: "second", Timestamp: time.Unix(0, 2)}
-	ev3 := Event{Category: CoprRegionCache, Name: "third", Timestamp: time.Unix(0, 3)}
+	ev1 := Event{Category: TxnLifecycle, Name: "first", Timestamp: time.Unix(0, 1)}
+	ev2 := Event{Category: TxnLifecycle, Name: "second", Timestamp: time.Unix(0, 2)}
+	ev3 := Event{Category: TxnLifecycle, Name: "third", Timestamp: time.Unix(0, 3)}
 
 	recorder.Record(context.Background(), ev1)
 	recorder.Record(context.Background(), ev2)
@@ -197,7 +225,7 @@ func TestRingBufferSnapshotOrder(t *testing.T) {
 func TestRingBufferFlushTo(t *testing.T) {
 	recorder := NewRingBufferSink(4)
 	ev := Event{
-		Category:  CoprRegionCache,
+		Category:  TxnLifecycle,
 		Name:      "flush",
 		Timestamp: time.Unix(0, 123456000), // 123456 microseconds
 		Fields: []zap.Field{
@@ -210,7 +238,7 @@ func TestRingBufferFlushTo(t *testing.T) {
 	events := recorder.Snapshot()
 	require.Len(t, events, 1)
 	require.Equal(t, "flush", events[0].Name)
-	require.Equal(t, CoprRegionCache, events[0].Category)
+	require.Equal(t, TxnLifecycle, events[0].Category)
 	require.Equal(t, ev.Timestamp, events[0].Timestamp)
 	require.Len(t, events[0].Fields, 2)
 }
@@ -220,7 +248,13 @@ func TestCategoryNames(t *testing.T) {
 		category TraceCategory
 		name     string
 	}{
-		{CoprRegionCache, "copr-region-cache"},
+		{TxnLifecycle, "txn_lifecycle"},
+		{Txn2PC, "txn_2pc"},
+		{TxnLockResolve, "txn_lock_resolve"},
+		{StmtLifecycle, "stmt_lifecycle"},
+		{StmtPlan, "stmt_plan"},
+		{KvRequest, "kv_request"},
+		{UnknownClient, "unknown_client"},
 		{TraceCategory(999), "unknown(999)"},
 	}
 	for _, tc := range cases {
@@ -242,7 +276,7 @@ func BenchmarkTraceEventDisabled(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		TraceEvent(ctx, CoprRegionCache, "benchmark-disabled",
+		TraceEvent(ctx, TxnLifecycle, "benchmark-disabled",
 			zap.String("key", "value"),
 			zap.Int("iteration", i))
 	}
@@ -253,8 +287,8 @@ func BenchmarkTraceEventEnabled(b *testing.B) {
 	ctx := context.Background()
 	prevCategories := GetEnabledCategories()
 	prevMode := CurrentMode()
-	Enable(CoprRegionCache)
-	_, _ = SetMode(ModeLogging)
+	Enable(TxnLifecycle)
+	_, _ = SetMode(ModeFull)
 	b.Cleanup(func() {
 		SetCategories(prevCategories)
 		_, _ = SetMode(prevMode)
@@ -262,7 +296,7 @@ func BenchmarkTraceEventEnabled(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		TraceEvent(ctx, CoprRegionCache, "benchmark-enabled",
+		TraceEvent(ctx, TxnLifecycle, "benchmark-enabled",
 			zap.String("key", "value"),
 			zap.Int("iteration", i))
 	}
@@ -275,4 +309,45 @@ func extractNames(events []Event) []string {
 		names[i] = ev.Name
 	}
 	return names
+}
+
+func TestFlightRecorderCoolingOff(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("trace events only work for next-gen kernel")
+	}
+	originalCategories := GetEnabledCategories()
+	prevMode := CurrentMode()
+	t.Cleanup(func() {
+		SetCategories(originalCategories)
+		_, _ = SetMode(prevMode)
+		FlightRecorder().Reset()
+		lastDumpTime.Store(0) // Reset cooling-off state
+	})
+
+	SetCategories(AllCategories)
+	_, _ = SetMode(ModeFull)
+	FlightRecorder().Reset()
+	lastDumpTime.Store(0) // Reset cooling-off state
+
+	ctx := context.Background()
+	TraceEvent(ctx, TxnLifecycle, "cooloff-test-event", zap.Int("value", 1))
+
+	// First dump should succeed
+	DumpFlightRecorderToLogger("test-reason-1")
+	firstDumpTime := lastDumpTime.Load()
+	require.Greater(t, firstDumpTime, int64(0))
+
+	// Immediate second dump should be suppressed (in cooling-off period)
+	DumpFlightRecorderToLogger("test-reason-2")
+	secondDumpTime := lastDumpTime.Load()
+	require.Equal(t, firstDumpTime, secondDumpTime, "timestamp should not update during cooling-off")
+
+	// Simulate passage of time by manually setting lastDumpTime to 11 seconds ago
+	elevenSecondsAgo := time.Now().Unix() - 11
+	lastDumpTime.Store(elevenSecondsAgo)
+
+	// Third dump should succeed (outside cooling-off period)
+	DumpFlightRecorderToLogger("test-reason-3")
+	thirdDumpTime := lastDumpTime.Load()
+	require.Greater(t, thirdDumpTime, elevenSecondsAgo, "timestamp should update after cooling-off period")
 }
