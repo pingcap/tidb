@@ -2643,13 +2643,16 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 				return err
 			}
 			updateTime = runInfo.UpdateTime
+			if updateTime.IsZero() {
+				updateTime = info.UpdateTime
+			}
 		}
 
 		gInfo := groupMap[info.GroupKey]
 		if gInfo.createTime.IsZero() || info.CreateTime.Compare(gInfo.createTime) < 0 {
 			gInfo.createTime = info.CreateTime
 		}
-		if gInfo.updateTime.IsZero() || updateTime.Compare(gInfo.updateTime) > 0 {
+		if gInfo.updateTime.IsZero() || (!updateTime.IsZero() && updateTime.Compare(gInfo.updateTime) > 0) {
 			gInfo.updateTime = updateTime
 		}
 
