@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -786,16 +785,7 @@ func needIndexReorg(_ *model.TableInfo, oldCol, changingCol *model.ColumnInfo) b
 	}
 
 	// Check index key part, ref tablecodec.GenIndexKey
-	if oldCol.FieldType.GetCollate() != changingCol.FieldType.GetCollate() {
-		return true
-	}
-
-	// Same type with same collation
-	if oldCol.GetType() == changingCol.GetType() {
-		return false
-	}
-
-	if collate.IsBinCollation(oldCol.GetCollate()) || collate.IsBinCollation(changingCol.GetCollate()) {
+	if oldCol.GetCollate() != changingCol.GetCollate() {
 		return true
 	}
 
