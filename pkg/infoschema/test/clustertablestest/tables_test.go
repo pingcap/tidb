@@ -198,11 +198,11 @@ func TestSomeTables(t *testing.T) {
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	se2, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
+
+	se2, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.SetSession(se2)
 
@@ -230,7 +230,7 @@ func TestSomeTables(t *testing.T) {
 		Digest:            "abc1",
 		State:             1,
 		Info:              "do something",
-		StmtCtx:           se2.GetSessionVars().StmtCtx,
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg1",
 		SessionAlias:      "alias1",
 	})
@@ -244,7 +244,7 @@ func TestSomeTables(t *testing.T) {
 		Digest:            "abc2",
 		State:             2,
 		Info:              strings.Repeat("x", 101),
-		StmtCtx:           se2.GetSessionVars().StmtCtx,
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg2",
 	})
 	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
@@ -265,9 +265,9 @@ func TestSomeTables(t *testing.T) {
 	tk.Session().GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 2.1 1970-01-02 10:17:36.789 123456789123 0"+
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 <nil> <nil> <nil> 0"+
 				"  rg1 alias1 0 0 0", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 2.1 1970-01-02 10:17:36.789 123456789123 0  rg2  0 0 0",
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 <nil> <nil> <nil> 0  rg2  0 0 0",
 				"autocommit", strings.Repeat("x", 101)),
 			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 2.1 1970-01-02 10:17:36.789 123456789123 0  rg3"+
 				" 中文alias 0 0 0", "in transaction", "check port"),
