@@ -233,7 +233,7 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// SkipRegisterToDashboard tells TiDB don't register itself to the dashboard.
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
-	// EnableTelemetry enables the usage data print to log.
+	// EnableTelemetry enables the usage data report to PingCAP. Deprecated: Telemetry has been removed.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
 	// server like `zone`/`rack`/`host`. Currently, labels won't affect the tidb server except for some special
@@ -903,6 +903,8 @@ type Experimental struct {
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 	// Whether enable create table as select
 	EnableCreateTableAsSelect bool `toml:"enable-create-table-as-select" json:"enable-create-table-as-select"`
+	// PlanCacheMaxTable is the config for the max table count of plan cache.
+	PlanCacheMaxTable int `toml:"plan-cache-max-table" json:"plan-cache-max-table"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -1057,7 +1059,9 @@ var defaultConf = Config{
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
-	Experimental:               Experimental{},
+	Experimental: Experimental{
+		PlanCacheMaxTable: 2,
+	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),
@@ -1449,6 +1453,15 @@ func hasRootPrivilege() bool {
 // TableLockEnabled uses to check whether enabled the table lock feature.
 func TableLockEnabled() bool {
 	return GetGlobalConfig().EnableTableLock
+}
+
+// GetPlanCacheMaxTable returns the max table count of plan cache.
+func GetPlanCacheMaxTable() int {
+	count := GetGlobalConfig().Experimental.PlanCacheMaxTable
+	if count > 0 && count < 256 {
+		return count
+	}
+	return 2
 }
 
 // TableLockDelayClean uses to get the time of delay clean table lock.

@@ -257,48 +257,6 @@ func (a *recordSet) GetExecutor4Test() any {
 	return a.executor
 }
 
-// TelemetryInfo records some telemetry information during execution.
-type TelemetryInfo struct {
-	UseNonRecursive       bool
-	UseRecursive          bool
-	UseMultiSchemaChange  bool
-	UseExchangePartition  bool
-	UseFlashbackToCluster bool
-	PartitionTelemetry    *PartitionTelemetryInfo
-	AccountLockTelemetry  *AccountLockTelemetryInfo
-	UseIndexMerge         bool
-	UseTableLookUp        atomic.Bool
-}
-
-// PartitionTelemetryInfo records table partition telemetry information during execution.
-type PartitionTelemetryInfo struct {
-	UseTablePartition                bool
-	UseTablePartitionList            bool
-	UseTablePartitionRange           bool
-	UseTablePartitionHash            bool
-	UseTablePartitionRangeColumns    bool
-	UseTablePartitionRangeColumnsGt1 bool
-	UseTablePartitionRangeColumnsGt2 bool
-	UseTablePartitionRangeColumnsGt3 bool
-	UseTablePartitionListColumns     bool
-	TablePartitionMaxPartitionsNum   uint64
-	UseCreateIntervalPartition       bool
-	UseAddIntervalPartition          bool
-	UseDropIntervalPartition         bool
-	UseCompactTablePartition         bool
-	UseReorganizePartition           bool
-}
-
-// AccountLockTelemetryInfo records account lock/unlock information during execution
-type AccountLockTelemetryInfo struct {
-	// The number of CREATE/ALTER USER statements that lock the user
-	LockUser int64
-	// The number of CREATE/ALTER USER statements that unlock the user
-	UnlockUser int64
-	// The number of CREATE/ALTER USER statements
-	CreateOrAlterUser int64
-}
-
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
 type ExecStmt struct {
 	// GoCtx stores parent go context.Context for a stmt.
@@ -335,7 +293,6 @@ type ExecStmt struct {
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
 	PsStmt      *plannercore.PlanCacheStmt
-	Ti          *TelemetryInfo
 }
 
 // GetStmtNode returns the stmtNode inside Statement
@@ -385,7 +342,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 
 	if executor == nil {
-		b := newExecutorBuilder(a.Ctx, a.InfoSchema, a.Ti)
+		b := newExecutorBuilder(a.Ctx, a.InfoSchema)
 		executor = b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -1284,7 +1241,7 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti)
+	b := newExecutorBuilder(ctx, a.InfoSchema)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
@@ -1759,7 +1716,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		TimeOptimize:      sessVars.DurationOptimization,
 		TimeWaitTS:        sessVars.DurationWaitTS,
 		IndexNames:        indexNames,
-		CopTasks:          &copTaskInfo,
+		CopTasks:          copTaskInfo,
 		ExecDetail:        execDetail,
 		MemMax:            memMax,
 		DiskMax:           diskMax,
@@ -1880,12 +1837,7 @@ func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p base.Plan) int64 {
 	if runtimeStatsColl == nil {
 		return 0
 	}
-	rootPlanID := p.ID()
-	if !runtimeStatsColl.ExistsRootStats(rootPlanID) {
-		return 0
-	}
-	rootStats := runtimeStatsColl.GetRootStats(rootPlanID)
-	return rootStats.GetActRows()
+	return runtimeStatsColl.GetPlanActRows(p.ID())
 }
 
 // getFlatPlan generates a FlatPhysicalPlan from the plan stored in stmtCtx.plan,
@@ -2019,46 +1971,19 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 	sessVars.SetPrevStmtDigest(digest.String())
 
-	// No need to encode every time, so encode lazily.
-	planGenerator := func() (p string, h string, e any) {
-		defer func() {
-			e = recover()
-			if e != nil {
-				logutil.BgLogger().Warn("fail to generate plan info",
-					zap.Stack("backtrace"),
-					zap.Any("error", e))
-			}
-		}()
-		p, h = getEncodedPlan(stmtCtx, !sessVars.InRestrictedSQL)
-		return
-	}
-	var binPlanGen func() string
-	if variable.GenerateBinaryPlan.Load() {
-		binPlanGen = func() string {
-			binPlan := getBinaryPlan(a.Ctx)
-			return binPlan
-		}
-	}
 	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
 	// If it's a point get, different SQLs leads to different plans, so SQL digest
 	// is enough to distinguish different plans in this case.
 	var planDigest string
-	var planDigestGen func() string
-	if a.Plan.TP() == plancodec.TypePointGet {
-		planDigestGen = func() string {
-			_, planDigest := GetPlanDigest(stmtCtx)
-			return planDigest.String()
-		}
-	} else {
+	if a.Plan.TP() != plancodec.TypePointGet {
 		_, tmp := GetPlanDigest(stmtCtx)
 		planDigest = tmp.String()
 	}
 
 	execDetail := stmtCtx.GetExecDetails()
-	copTaskInfo := stmtCtx.CopTasksDetails()
+	copTaskInfo := stmtCtx.CopTasksSummary()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
-	sql := a.getLazyStmtText()
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
@@ -2094,50 +2019,87 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
 	}
 
-	stmtExecInfo := &stmtsummary.StmtExecInfo{
-		SchemaName:          strings.ToLower(sessVars.CurrentDB),
-		OriginalSQL:         &sql,
-		Charset:             charset,
-		Collation:           collation,
-		NormalizedSQL:       normalizedSQL,
-		Digest:              digest.String(),
-		PrevSQL:             prevSQL,
-		PrevSQLDigest:       prevSQLDigest,
-		PlanGenerator:       planGenerator,
-		BinaryPlanGenerator: binPlanGen,
-		PlanDigest:          planDigest,
-		PlanDigestGen:       planDigestGen,
-		User:                userString,
-		TotalLatency:        costTime,
-		ParseLatency:        sessVars.DurationParse,
-		CompileLatency:      sessVars.DurationCompile,
-		StmtCtx:             stmtCtx,
-		CopTasks:            &copTaskInfo,
-		ExecDetail:          &execDetail,
-		MemMax:              memMax,
-		DiskMax:             diskMax,
-		StartTime:           sessVars.StartTime,
-		IsInternal:          sessVars.InRestrictedSQL,
-		Succeed:             succ,
-		PlanInCache:         sessVars.FoundInPlanCache,
-		PlanInBinding:       sessVars.FoundInBinding,
-		ExecRetryCount:      a.retryCount,
-		StmtExecDetails:     stmtDetail,
-		ResultRows:          resultRows,
-		TiKVExecDetails:     tikvExecDetail,
-		Prepared:            a.isPreparedStmt,
-		KeyspaceName:        keyspaceName,
-		KeyspaceID:          keyspaceID,
-		RUDetail:            ruDetail,
-		ResourceGroupName:   sessVars.StmtCtx.ResourceGroupName,
-		CPUUsages:           sessVars.SQLCPUUsages.GetCPUUsages(),
-
-		PlanCacheUnqualified: sessVars.StmtCtx.PlanCacheUnqualified(),
+	if sessVars.CacheStmtExecInfo == nil {
+		sessVars.CacheStmtExecInfo = &stmtsummary.StmtExecInfo{}
 	}
+	stmtExecInfo := sessVars.CacheStmtExecInfo
+	stmtExecInfo.SchemaName = strings.ToLower(sessVars.CurrentDB)
+	stmtExecInfo.Charset = charset
+	stmtExecInfo.Collation = collation
+	stmtExecInfo.NormalizedSQL = normalizedSQL
+	stmtExecInfo.Digest = digest.String()
+	stmtExecInfo.PrevSQL = prevSQL
+	stmtExecInfo.PrevSQLDigest = prevSQLDigest
+	stmtExecInfo.PlanDigest = planDigest
+	stmtExecInfo.User = userString
+	stmtExecInfo.TotalLatency = costTime
+	stmtExecInfo.ParseLatency = sessVars.DurationParse
+	stmtExecInfo.CompileLatency = sessVars.DurationCompile
+	stmtExecInfo.StmtCtx = stmtCtx
+	stmtExecInfo.CopTasks = copTaskInfo
+	stmtExecInfo.ExecDetail = execDetail
+	stmtExecInfo.MemMax = memMax
+	stmtExecInfo.DiskMax = diskMax
+	stmtExecInfo.StartTime = sessVars.StartTime
+	stmtExecInfo.IsInternal = sessVars.InRestrictedSQL
+	stmtExecInfo.Succeed = succ
+	stmtExecInfo.PlanInCache = sessVars.FoundInPlanCache
+	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding
+	stmtExecInfo.ExecRetryCount = a.retryCount
+	stmtExecInfo.StmtExecDetails = stmtDetail
+	stmtExecInfo.ResultRows = resultRows
+	stmtExecInfo.TiKVExecDetails = tikvExecDetail
+	stmtExecInfo.Prepared = a.isPreparedStmt
+	stmtExecInfo.KeyspaceName = keyspaceName
+	stmtExecInfo.KeyspaceID = keyspaceID
+	stmtExecInfo.RUDetail = ruDetail
+	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
+	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
+	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()
+	stmtExecInfo.LazyInfo = a
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
 	stmtsummaryv2.Add(stmtExecInfo)
+}
+
+// GetOriginalSQL implements StmtExecLazyInfo interface.
+func (a *ExecStmt) GetOriginalSQL() string {
+	stmt := a.getLazyStmtText()
+	return stmt.String()
+}
+
+// GetEncodedPlan implements StmtExecLazyInfo interface.
+func (a *ExecStmt) GetEncodedPlan() (p string, h string, e any) {
+	defer func() {
+		e = recover()
+		if e != nil {
+			logutil.BgLogger().Warn("fail to generate plan info",
+				zap.Stack("backtrace"),
+				zap.Any("error", e))
+		}
+	}()
+
+	sessVars := a.Ctx.GetSessionVars()
+	p, h = getEncodedPlan(sessVars.StmtCtx, !sessVars.InRestrictedSQL)
+	return
+}
+
+// GetBinaryPlan implements StmtExecLazyInfo interface.
+func (a *ExecStmt) GetBinaryPlan() string {
+	if variable.GenerateBinaryPlan.Load() {
+		return getBinaryPlan(a.Ctx)
+	}
+	return ""
+}
+
+// GetPlanDigest implements StmtExecLazyInfo interface.
+func (a *ExecStmt) GetPlanDigest() string {
+	if a.Plan.TP() == plancodec.TypePointGet {
+		_, planDigest := GetPlanDigest(a.Ctx.GetSessionVars().StmtCtx)
+		return planDigest.String()
+	}
+	return ""
 }
 
 // GetTextToLog return the query text to log.

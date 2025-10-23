@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
-	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -160,7 +159,6 @@ func TestBootstrapWithError(t *testing.T) {
 		se.tblctx = tblsession.NewMutateContext(se)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
-		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]any)
 		se.SetValue(sessionctx.Initing, true)
@@ -175,7 +173,7 @@ func TestBootstrapWithError(t *testing.T) {
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
 		require.NoError(t, dom.Start(ddl.Bootstrap))
-		domain.BindDomain(se, dom)
+		se.dom = dom
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
@@ -2478,7 +2476,7 @@ func TestTiDBUpgradeToVer211(t *testing.T) {
 	require.NoError(t, err)
 	require.Less(t, int64(ver210), ver)
 
-	domain.BindDomain(seV210, dom)
+	seV210.(*session).dom = dom
 	r := MustExecToRecodeSet(t, seV210, "select count(summary) from mysql.tidb_background_subtask_history;")
 	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)

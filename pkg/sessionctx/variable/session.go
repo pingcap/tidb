@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
@@ -1731,6 +1732,8 @@ type SessionVars struct {
 	EnableSPParamSubstitute bool
 	// CreateFromSelectUsingImport indicates whether to use import into to create table as select.
 	CreateFromSelectUsingImport bool
+	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
+	CacheStmtExecInfo *stmtsummary.StmtExecInfo
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.

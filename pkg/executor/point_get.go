@@ -76,7 +76,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 
 	e := &PointGetExecutor{
 		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
-		indexUsageReporter: b.buildIndexUsageReporter(p),
+		indexUsageReporter: b.buildIndexUsageReporter(p, false),
 		txnScope:           b.txnScope,
 		readReplicaScope:   b.readReplicaScope,
 		isStaleness:        b.isStaleness,
@@ -225,7 +225,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
 	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
 	e.BaseExecutor = exec.NewBaseExecutor(e.Ctx(), p.Schema(), p.ID())
-	e.indexUsageReporter = buildIndexUsageReporter(e.Ctx(), p)
+	e.indexUsageReporter = buildIndexUsageReporter(e.Ctx(), p, false)
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -272,10 +272,11 @@ func (e *PointGetExecutor) Close() error {
 		tableID := e.tblInfo.ID
 		physicalTableID := GetPhysID(e.tblInfo, e.partitionDefIdx)
 		kvReqTotal := e.stats.SnapshotRuntimeStats.GetCmdRPCCount(tikvrpc.CmdGet)
+		rows := e.RuntimeStats().GetActRows()
 		if e.idxInfo != nil {
-			e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, kvReqTotal, rows)
 		} else {
-			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, physicalTableID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, physicalTableID, kvReqTotal, rows)
 		}
 	}
 	e.done = false
