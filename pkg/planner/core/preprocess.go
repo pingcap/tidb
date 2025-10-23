@@ -252,22 +252,54 @@ type preprocessor struct {
 	resolveCtx *resolve.Context
 }
 
+type tableSourceCollector struct {
+	tableSources []*ast.TableSource
+}
+
+func (t *tableSourceCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	if ts, ok := in.(*ast.TableSource); ok {
+		if _, ok := ts.Source.(*ast.TableName); ok {
+			t.tableSources = append(t.tableSources, ts)
+		}
+	}
+	return in, false
+}
+
+func (*tableSourceCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
+func (p *preprocessor) getAllDBInfos(node *ast.TableRefsClause) []pmodel.CIStr {
+	dbNames := make([]pmodel.CIStr, 0)
+	collector := tableSourceCollector{
+		tableSources: make([]*ast.TableSource, 0),
+	}
+	node.Accept(&collector)
+
+	for _, tbl := range collector.tableSources {
+		tblName := tbl.Source.(*ast.TableName)
+		dbName := tblName.Schema
+		if dbName.L == "" {
+			dbName = pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+		}
+		dbNames = append(dbNames, dbName)
+	}
+	return dbNames
+}
+
 // extractTableName extracts the db name from the ast.Node for checking database read only.
 func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 	dbNames := make([]pmodel.CIStr, 0, 1)
+	currentDBName := pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
-		if node.TemporaryKeyword == ast.TemporaryNone {
-			dbNames = append(dbNames, node.Table.Schema)
-		}
+		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.CreateViewStmt:
 		dbNames = append(dbNames, node.ViewName.Schema)
 	case *ast.DropTableStmt:
 		for _, tbl := range node.Tables {
-			table, err := p.tableByName(tbl)
-			if err == nil && table.Meta().TempTableType == model.TempTableNone {
-				dbNames = append(dbNames, tbl.Schema)
-			}
+			dbNames = append(dbNames, tbl.Schema)
 		}
 	case *ast.RenameTableStmt:
 		for _, tbl := range node.TableToTables {
@@ -294,6 +326,46 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.LoadDataStmt:
 		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.InsertStmt:
+		for _, tbl := range p.resolveCtx.GetTableNames() {
+			dbNames = append(dbNames, tbl.DBInfo.Name)
+		}
+	case *ast.DeleteStmt:
+		if node.Tables != nil {
+			// multiple table delete statement
+			for _, tbl := range node.Tables.Tables {
+				dbName := tbl.Schema
+				if dbName.L == "" {
+					dbName = currentDBName
+				}
+				dbNames = append(dbNames, dbName)
+			}
+		} else {
+			// single table delete statement
+			for _, dbName := range p.getAllDBInfos(node.TableRefs) {
+				dbNames = append(dbNames, dbName)
+			}
+		}
+	case *ast.UpdateStmt:
+		for _, set := range node.List {
+			dbName := set.Column.Schema
+			if dbName.L == "" {
+				dbName = currentDBName
+			}
+			dbNames = append(dbNames, dbName)
+		}
+	case *ast.SelectStmt:
+		if node.LockInfo != nil {
+			if node.LockInfo.LockType == ast.SelectLockForUpdate ||
+				node.LockInfo.LockType == ast.SelectLockForUpdateNoWait ||
+				node.LockInfo.LockType == ast.SelectLockForUpdateWaitN ||
+				((node.LockInfo.LockType == ast.SelectLockForShare || node.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
+					p.sctx.GetSessionVars().SharedLockPromotion) {
+				for _, dbName := range p.getAllDBInfos(node.From) {
+					dbNames = append(dbNames, dbName)
+				}
+			}
+		}
 	}
 	return dbNames
 }
