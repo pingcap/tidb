@@ -406,7 +406,7 @@ func (r *RingBufferSink) Snapshot() []Event {
 
 	result := make([]Event, len(r.buf))
 	if len(r.buf) < r.cap {
-		for i := 0; i < len(r.buf); i++ {
+		for i := range len(r.buf) {
 			result[i] = cloneEvent(r.buf[i])
 		}
 		return result
@@ -417,7 +417,7 @@ func (r *RingBufferSink) Snapshot() []Event {
 		result[idx] = cloneEvent(r.buf[i])
 		idx++
 	}
-	for i := 0; i < r.next; i++ {
+	for i := range r.next {
 		result[idx] = cloneEvent(r.buf[i])
 		idx++
 	}
