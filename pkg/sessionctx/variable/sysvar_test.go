@@ -111,11 +111,11 @@ func TestTiDBTraceEventSysVar(t *testing.T) {
 		return
 	}
 
-	require.NoError(t, sv.SetGlobal(context.Background(), vars, "logging"))
-	require.Equal(t, traceevent.ModeLogging, traceevent.CurrentMode())
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, "baSe"))
+	require.Equal(t, traceevent.ModeBase, traceevent.CurrentMode())
 
-	require.NoError(t, sv.SetGlobal(context.Background(), vars, vardef.Off))
-	require.Equal(t, traceevent.ModeOff, traceevent.CurrentMode())
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, "FulL"))
+	require.Equal(t, traceevent.ModeFull, traceevent.CurrentMode())
 }
 
 func TestMaxExecutionTime(t *testing.T) {

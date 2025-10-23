@@ -2424,7 +2424,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 				zap.String("plan_digest", planDigestHex),
 				zap.Bool("autocommit", se.sessionVars.IsAutocommit()),
 				zap.Uint64("conn_id", se.sessionVars.ConnectionID),
-				zap.Int("retry_count", int(se.sessionVars.TxnCtx.StatementCount)),
+				zap.Int("retry_count", se.sessionVars.TxnCtx.StatementCount),
 			}
 			if err != nil {
 				fields = append(fields, zap.Error(err))
