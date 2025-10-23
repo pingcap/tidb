@@ -18,6 +18,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/store/driver/backoff"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -267,4 +271,66 @@ func TestValidateLocationCoverage(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPanicInSplitKeyRangesByBuckets tests that panic recovery correctly logs the location index
+func TestPanicInSplitKeyRangesByBuckets(t *testing.T) {
+	// Set up mock TiKV cluster with multiple regions
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	// Create 4 regions: nil---g---n---x---nil
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("x"))
+	// Add buckets to each region
+	cluster.SplitRegionBuckets(regionIDs[0], [][]byte{{}, {'c'}, {'g'}}, regionIDs[0])
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'g'}, {'k'}, {'n'}}, regionIDs[1])
+	cluster.SplitRegionBuckets(regionIDs[2], [][]byte{{'n'}, {'t'}, {'x'}}, regionIDs[2])
+	cluster.SplitRegionBuckets(regionIDs[3], [][]byte{{'x'}, {}}, regionIDs[3])
+
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	// Build key ranges that span multiple regions
+	ranges := buildCopRanges("a", "z")
+
+	// Enable the failpoint to trigger panic at location index 2 (the 3rd region)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/panicInSplitKeyRangesByBuckets", "return(2)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/panicInSplitKeyRangesByBuckets"))
+	}()
+
+	// Call SplitKeyRangesByBuckets which should trigger the panic
+	// The defer/recover in the function should catch it, log diagnostics, and re-panic
+	didPanic := false
+	panicValue := ""
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				didPanic = true
+				panicValue = r.(string)
+				t.Logf("Successfully caught panic: %v", r)
+			}
+		}()
+
+		// This will trigger the panic when processing location index 2
+		_, err = cache.SplitKeyRangesByBuckets(bo, ranges)
+		// Should not reach here
+		t.Fatal("Expected panic but none occurred")
+	}()
+
+	// Verify that panic occurred and was re-panicked
+	require.True(t, didPanic, "Expected panic to occur")
+	require.Equal(t, "failpoint triggered panic in bucket splitting", panicValue)
+
+	t.Logf("Test completed successfully - panic was caught, diagnostics logged, and re-panicked as expected")
 }

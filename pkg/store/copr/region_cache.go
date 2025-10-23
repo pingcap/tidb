@@ -20,6 +20,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
@@ -42,6 +43,17 @@ func formatLocation(loc *tikv.KeyLocation) zap.Field {
 		enc.AddString("endKey", redact.Key(loc.EndKey))
 		if loc.Buckets != nil {
 			enc.AddInt("bucketCount", len(loc.Buckets.Keys))
+			// Log bucket keys as redacted strings
+			bucketKeys := make([]string, 0, len(loc.Buckets.Keys))
+			for _, key := range loc.Buckets.Keys {
+				bucketKeys = append(bucketKeys, redact.Key(key))
+			}
+			enc.AddArray("bucketKeys", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
+				for _, key := range bucketKeys {
+					ae.AppendString(key)
+				}
+				return nil
+			}))
 		}
 		return nil
 	}))
@@ -81,7 +93,7 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 		// Empty start key means beginning of key space (minimum)
 		if len(curr.StartKey) == 0 && len(prev.StartKey) > 0 {
 			// Current starts from beginning, but previous doesn't - wrong order!
-			logutil.BgLogger().Error("BatchLocateKeyRanges locations not monotonic",
+			logutil.BgLogger().Warn("BatchLocateKeyRanges locations not monotonic",
 				zap.Int("locationIndex", i),
 				zap.String("issue", "current location starts from beginning but appears after non-beginning location"),
 				keyField("prevStart", prev.StartKey),
@@ -90,7 +102,7 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 			continue // Continue checking other locations
 		}
 		if len(prev.StartKey) > 0 && len(curr.StartKey) > 0 && bytes.Compare(prev.StartKey, curr.StartKey) > 0 {
-			logutil.BgLogger().Error("BatchLocateKeyRanges locations not monotonic",
+			logutil.BgLogger().Warn("BatchLocateKeyRanges locations not monotonic",
 				zap.Int("locationIndex", i),
 				keyField("prevStart", prev.StartKey),
 				keyField("currStart", curr.StartKey))
@@ -101,7 +113,7 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 		// Check for overlaps/gaps: prev.EndKey should be <= curr.StartKey
 		// Empty end key means infinity - there should be no next location
 		if len(prev.EndKey) == 0 {
-			logutil.BgLogger().Error("BatchLocateKeyRanges location extends to infinity but is not last",
+			logutil.BgLogger().Warn("BatchLocateKeyRanges location extends to infinity but is not last",
 				zap.Int("locationIndex", i-1),
 				zap.Int("totalLocations", len(locs)),
 				keyField("prevStart", prev.StartKey))
@@ -111,7 +123,7 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 
 		// Both keys non-empty - check for overlap
 		if len(prev.EndKey) > 0 && len(curr.StartKey) > 0 && bytes.Compare(prev.EndKey, curr.StartKey) > 0 {
-			logutil.BgLogger().Error("BatchLocateKeyRanges locations overlap",
+			logutil.BgLogger().Warn("BatchLocateKeyRanges locations overlap",
 				zap.Int("locationIndex", i),
 				keyField("prevEnd", prev.EndKey),
 				keyField("currStart", curr.StartKey))
@@ -246,7 +258,7 @@ func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, loc
 			fields = append(fields, zap.Int("remainingRangeCount", len(kvRanges)-rangeIdx))
 		}
 
-		logutil.BgLogger().Error("BatchLocateKeyRanges coverage mismatch", fields...)
+		logutil.BgLogger().Warn("BatchLocateKeyRanges coverage mismatch", fields...)
 		valid = false
 	}
 
@@ -595,6 +607,9 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 
 	ctx := bo.GetCtx()
 
+	// Track the index of location being processed for better diagnostics on panic
+	locIdx := 0
+
 	// Defensive: if bucket split panics, query PD directly to compare with cached data
 	// This adds zero overhead in the normal case, only runs on panic
 	defer func() {
@@ -602,6 +617,7 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 			// Panic occurred - query PD for all regions to compare with cache
 			logutil.Logger(ctx).Error("Panic during bucket splitting - querying PD for fresh region data",
 				zap.Any("panicValue", r),
+				zap.Int("panicLocationIndex", locIdx),
 				zap.Int("cachedLocationCount", len(locs)))
 
 			// Query PD directly for each region to see current state
@@ -610,7 +626,7 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 			for i, loc := range locs {
 				tikvLocs = append(tikvLocs, loc.Location)
 
-				logutil.Logger(ctx).Error("Cached region info",
+				logutil.Logger(ctx).Warn("Cached region info",
 					zap.Int("index", i),
 					zap.Uint64("regionID", loc.Location.Region.GetID()),
 					zap.Uint64("regionVer", loc.Location.Region.GetVer()),
@@ -620,13 +636,13 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 				// Query PD for current state
 				pdLoc, err := c.RegionCache.LocateRegionByIDFromPD(bo.TiKVBackoffer(), loc.Location.Region.GetID())
 				if err != nil {
-					logutil.Logger(ctx).Error("Failed to query PD for region",
+					logutil.Logger(ctx).Warn("Failed to query PD for region",
 						zap.Uint64("regionID", loc.Location.Region.GetID()),
 						zap.Error(err))
 					continue
 				}
 
-				logutil.Logger(ctx).Error("PD region info",
+				logutil.Logger(ctx).Warn("PD region info",
 					zap.Int("index", i),
 					zap.Uint64("regionID", pdLoc.Region.GetID()),
 					zap.Uint64("regionVer", pdLoc.Region.GetVer()),
@@ -638,7 +654,7 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 
 			// Validate if locations cover ranges
 			valid := validateLocationCoverage(ctx, kvRanges, tikvLocs)
-			logutil.Logger(ctx).Error("Location coverage validation result",
+			logutil.Logger(ctx).Warn("Location coverage validation result",
 				zap.Bool("valid", valid))
 
 			// Re-panic with original error
@@ -647,8 +663,13 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 	}()
 
 	res := make([]*LocationKeyRanges, 0, len(locs))
-	for _, loc := range locs {
-		res = append(res, loc.splitKeyRangesByBuckets(ctx)...)
+	for ; locIdx < len(locs); locIdx++ {
+		failpoint.Inject("panicInSplitKeyRangesByBuckets", func(val failpoint.Value) {
+			if val.(int) == locIdx {
+				panic("failpoint triggered panic in bucket splitting")
+			}
+		})
+		res = append(res, locs[locIdx].splitKeyRangesByBuckets(ctx)...)
 	}
 	return res, nil
 }
