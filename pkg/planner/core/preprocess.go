@@ -290,6 +290,8 @@ func (p *preprocessor) getAllDBInfos(node *ast.TableRefsClause) []pmodel.CIStr {
 // extractTableName extracts the db name from the ast.Node for checking database read only.
 func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 	dbNames := make([]pmodel.CIStr, 0, 1)
+	currentDBName := pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
 		dbNames = append(dbNames, node.Table.Schema)
@@ -334,7 +336,7 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 			for _, tbl := range node.Tables.Tables {
 				dbName := tbl.Schema
 				if dbName.L == "" {
-					dbName = pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+					dbName = currentDBName
 				}
 				dbNames = append(dbNames, dbName)
 			}
@@ -346,11 +348,11 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 		}
 	case *ast.UpdateStmt:
 		for _, set := range node.List {
-			if set.Column.Schema.L != "" {
-				dbNames = append(dbNames, set.Column.Schema)
-			} else {
-				dbNames = append(dbNames, pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB))
+			dbName := set.Column.Schema
+			if dbName.L == "" {
+				dbName = currentDBName
 			}
+			dbNames = append(dbNames, dbName)
 		}
 	case *ast.SelectStmt:
 		if node.LockInfo != nil {
