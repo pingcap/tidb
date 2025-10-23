@@ -36,7 +36,7 @@ func createMockRowTable(maxRowsPerSeg int, segmentCount int, fixedSize bool) *ro
 		if !fixedSize {
 			rows = int(rand.Int31n(int32(maxRowsPerSeg)) + 1)
 		}
-		rowSeg := newRowTableSegment(uint(rows))
+		rowSeg := newRowTableSegment()
 		rowSeg.rawData = make([]byte, rows)
 		for j := range rows {
 			rowSeg.rowStartOffset = append(rowSeg.rowStartOffset, uint64(j))
@@ -78,12 +78,11 @@ func createRowTable(rows int) (*rowTable, uint8, error) {
 	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, false, false)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, false, false, meta.nullMapLength)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	if err != nil {
 		return nil, 0, err
 	}
-	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	taggedBits := uint8(maxTaggedBits)
 	for _, seg := range hashJoinCtx.hashTableContext.rowTables[0][0].segments {
 		taggedBits = min(taggedBits, seg.taggedBits)

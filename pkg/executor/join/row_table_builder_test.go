@@ -116,10 +116,9 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, buildFilter != nil, keepFilteredRows)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, buildFilter != nil, keepFilteredRows, meta.nullMapLength)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err, "processOneChunk returns error")
-	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	require.Equal(t, chk.NumRows(), len(builder.usedRows))
 	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
 	checkRowLocationAlignment(t, rowTables)
@@ -156,53 +155,6 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 		}
 		rowStart := rowTables[0].getRowPointer(rowIndex)
 		require.Equal(t, unsafe.Pointer(nil), rowStart, "row start must be nil at the end of the test")
-	}
-}
-
-func TestLargeColumn(t *testing.T) {
-	intTp := types.NewFieldType(mysql.TypeLonglong)
-	stringTp := types.NewFieldType(mysql.TypeVarString)
-	buildKeyIndex := []int{0, 1}
-	buildKeyTypes := []*types.FieldType{intTp, stringTp}
-	buildTypes := []*types.FieldType{intTp, stringTp}
-	probeKeyTypes := []*types.FieldType{intTp, stringTp}
-
-	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, []int{1}, false)
-	buildSchema := &expression.Schema{}
-	for _, tp := range buildTypes {
-		buildSchema.Append(&expression.Column{
-			RetType: tp,
-		})
-	}
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, 1, true, false, false)
-	rows := 2048
-	chk := chunk.NewEmptyChunk(buildTypes)
-	// each string value is 256k
-	stringValue := make([]byte, 1024*256)
-	for i := range rows {
-		// first column is int
-		chk.AppendInt64(0, int64(i))
-		chk.AppendBytes(1, stringValue)
-	}
-
-	hashJoinCtx := &HashJoinCtxV2{
-		hashTableMeta: meta,
-	}
-	hashJoinCtx.Concurrency = 1
-	hashJoinCtx.SetupPartitionInfo()
-	hashJoinCtx.initHashTableContext()
-	hashJoinCtx.SessCtx = mock.NewContext()
-	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
-	require.NoError(t, err, "processOneChunk returns error")
-	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
-	require.Equal(t, chk.NumRows(), len(builder.usedRows))
-	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
-	checkRowLocationAlignment(t, rowTables)
-	for _, rowTable := range rowTables {
-		for _, seg := range rowTable.segments {
-			require.True(t, len(seg.rawData) < maxRowTableSegmentByteSize*2)
-			require.True(t, len(seg.hashValues) < int(maxRowTableSegmentSize))
-		}
 	}
 }
 
@@ -351,7 +303,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 			break
 		}
 	}
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, 1, hasNullableKey, buildFilter != nil, keepFilteredRows)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, 1, hasNullableKey, buildFilter != nil, keepFilteredRows, meta.nullMapLength)
 	chk := testutil.GenRandomChunks(buildTypes, 2049)
 	if withSelCol {
 		sel := make([]int, 0, 2049)
@@ -374,7 +326,6 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
-	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	require.NoError(t, err, "processOneChunk returns error")
 	require.Equal(t, chk.NumRows(), len(builder.usedRows))
 	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
@@ -598,10 +549,9 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, true, true)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, true, true, meta.nullMapLength)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err)
-	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
 	for i := range int(hashJoinCtx.partitionNumber) {
 		require.Equal(t, int(3000/hashJoinCtx.partitionNumber), int(rowTables[i].rowCount()))
