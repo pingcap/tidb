@@ -356,7 +356,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 			i++
 		}
 	})
-	tk.MustExec("alter table t modify column b varchar(16) NOT NULL")
+	tk.MustExec("alter table t modify column b varchar(16) DEFAULT '0' NOT NULL")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	require.NoError(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
