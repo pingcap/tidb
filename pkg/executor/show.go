@@ -2637,6 +2637,7 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 		}
 
 		updateTime := types.ZeroTime
+		// See FillOneImportJobInfo, we make the update time calculation same with SHOW IMPORT JOBS.
 		if info.Status == importer.JobStatusRunning {
 			runInfo, err := importinto.GetRuntimeInfoForJob(ctx, sctx.GetSessionVars().Location(), info.ID)
 			if err != nil {
