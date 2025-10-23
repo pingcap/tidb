@@ -361,7 +361,7 @@ func TestMultiSchemaChangeChangeColumns(t *testing.T) {
 	tk.MustGetErrCode("select d from t", errno.ErrBadField)
 }
 
-func TestMultiSchemaChangeChangeRenameTable(t *testing.T) {
+func TestMultiSchemaChangeRenameTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
