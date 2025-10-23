@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/build"
-	"github.com/pingcap/tidb/pkg/planner/core/plans"
+	"github.com/pingcap/tidb/pkg/planner/core/planscache"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -126,7 +126,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		sctx.GetSessionVars().AddNonPreparedPlanCacheStmt(paramSQL, cachedStmt)
 		val = cachedStmt
 	}
-	cachedStmt := val.(*plans.PlanCacheStmt)
+	cachedStmt := val.(*planscache.PlanCacheStmt)
 
 	cachedPlan, names, err := core.GetPlanFromPlanCache(ctx, sctx, true, is, cachedStmt, paramExprs)
 	if err != nil {

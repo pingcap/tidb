@@ -50,7 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/build"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/plans"
+	"github.com/pingcap/tidb/pkg/planner/core/planscache"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -6901,7 +6901,7 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 	case *ast.UseStmt:
 		e.tableNames = append(e.tableNames, &ast.TableName{Schema: ast.NewCIStr(x.DBName)})
 	case *ast.ExecuteStmt:
-		if v, ok := x.PrepStmt.(*plans.PlanCacheStmt); ok {
+		if v, ok := x.PrepStmt.(*planscache.PlanCacheStmt); ok {
 			e.tableNames = append(e.tableNames, innerExtract(v.PreparedAst.Stmt, v.ResolveCtx)...)
 		}
 	}

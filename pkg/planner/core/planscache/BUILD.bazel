@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "plans",
+    name = "planscache",
     srcs = ["plan_cache_base.go"],
-    importpath = "github.com/pingcap/tidb/pkg/planner/core/plans",
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/planscache",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/bindinfo",

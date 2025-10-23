@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/plans"
+	"github.com/pingcap/tidb/pkg/planner/core/planscache"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -91,7 +91,7 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 // paramSQL is the corresponding parameterized sql like 'select * from t where a<? and b>?'.
 // paramStmt is the Node of paramSQL.
 func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool,
-	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*plans.PlanCacheStmt, base.Plan, int, error) {
+	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*planscache.PlanCacheStmt, base.Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
 	paramStmt.Accept(&extractor)
@@ -211,7 +211,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		relateVersion[id] = tbl.Meta().Revision
 	}
 
-	preparedObj := &plans.PlanCacheStmt{
+	preparedObj := &planscache.PlanCacheStmt{
 		PreparedAst:         prepared,
 		ResolveCtx:          nodeW.GetResolveContext(),
 		StmtDB:              vars.CurrentDB,
@@ -258,7 +258,7 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
-func NewPlanCacheKey(sctx sessionctx.Context, stmt *plans.PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
+func NewPlanCacheKey(sctx sessionctx.Context, stmt *planscache.PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
 	binding = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
 
 	// In rc or for update read, we need the latest schema version to decide whether we need to
@@ -527,7 +527,7 @@ var planCacheHasherPool = sync.Pool{
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(
 	sctx sessionctx.Context,
-	stmt *plans.PlanCacheStmt,
+	stmt *planscache.PlanCacheStmt,
 	cacheKey string,
 	binding string,
 	plan base.Plan, // the cached plan,
@@ -584,7 +584,7 @@ func NewPlanCacheValue(
 type planCacheStmtProcessor struct {
 	ctx  context.Context
 	is   infoschema.InfoSchema
-	stmt *plans.PlanCacheStmt
+	stmt *planscache.PlanCacheStmt
 }
 
 // Enter implements Visitor interface.
@@ -609,9 +609,9 @@ func (*planCacheStmtProcessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
-func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*plans.PlanCacheStmt, error) {
+func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*planscache.PlanCacheStmt, error) {
 	if stmt.PrepStmt != nil {
-		return stmt.PrepStmt.(*plans.PlanCacheStmt), nil
+		return stmt.PrepStmt.(*planscache.PlanCacheStmt), nil
 	}
 	if stmt.Name != "" {
 		prepStmt, err := vars.GetPreparedStmtByName(stmt.Name)
@@ -619,7 +619,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*plans.
 			return nil, err
 		}
 		stmt.PrepStmt = prepStmt
-		return prepStmt.(*plans.PlanCacheStmt), nil
+		return prepStmt.(*planscache.PlanCacheStmt), nil
 	}
 	return nil, plannererrors.ErrStmtNotFound
 }
