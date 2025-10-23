@@ -785,7 +785,7 @@ func needIndexReorg(_ *model.TableInfo, oldCol, changingCol *model.ColumnInfo) b
 		return true
 	}
 
-	// Check index key part.
+	// Check index key part, ref tablecodec.GenIndexKey
 	if oldCol.FieldType.GetCollate() != changingCol.FieldType.GetCollate() {
 		return true
 	}
@@ -799,7 +799,7 @@ func needIndexReorg(_ *model.TableInfo, oldCol, changingCol *model.ColumnInfo) b
 		return true
 	}
 
-	// Check index value part.
+	// Check index value part, ref tablecodec.GenIndexValuePortal
 	return types.NeedRestoredData(&oldCol.FieldType) != types.NeedRestoredData(&changingCol.FieldType)
 }
 
