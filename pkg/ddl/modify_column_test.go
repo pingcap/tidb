@@ -548,6 +548,7 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_general_log=1;")
+	tk.MustExec("set sql_mode = ''") // disable lossy ddl optimization
 	tk.MustExec(`
 		CREATE TABLE t (
 			id int NOT NULL AUTO_INCREMENT,

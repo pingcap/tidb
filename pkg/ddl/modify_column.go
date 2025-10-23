@@ -1194,8 +1194,13 @@ func (w *worker) doModifyColumnIndexReorg(
 		oldCol.AddFlag(mysql.PreventNullInsertFlag)
 		oldCol.ChangingFieldType = &args.Column.FieldType
 		// none -> delete only
-		job.ReorgMeta.Stage = model.ReorgStageModifyColumnUpdateColumn
 		updateObjectState(nil, changingIdxInfos, model.StateDeleteOnly)
+		job.ReorgMeta.Stage = model.ReorgStageModifyColumnUpdateColumn
+		err := initForReorgIndexes(w, job, changingIdxInfos)
+		if err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
