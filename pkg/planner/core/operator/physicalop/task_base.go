@@ -235,6 +235,11 @@ func (t *MppTask) GetHashCols() []*property.MPPPartitionColumn {
 	return t.HashCols
 }
 
+// GetWarnings returns the warnings of the mpp task.
+func (t *MppTask) GetWarnings() *SimpleWarnings {
+	return &t.Warnings
+}
+
 // GetTblColHists returns the table column statistics of the mpp task.
 func (t *MppTask) GetTblColHists() *statistics.HistColl {
 	return t.tblColHists
