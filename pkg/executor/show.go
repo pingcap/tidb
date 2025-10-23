@@ -2649,10 +2649,10 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 		}
 
 		gInfo := groupMap[info.GroupKey]
-		if gInfo.createTime.IsZero() || info.CreateTime.Compare(gInfo.createTime) < 0 {
+		if !info.CreateTime.IsZero() && (gInfo.createTime.IsZero() || info.CreateTime.Compare(gInfo.createTime) < 0) {
 			gInfo.createTime = info.CreateTime
 		}
-		if gInfo.updateTime.IsZero() || (!updateTime.IsZero() && updateTime.Compare(gInfo.updateTime) > 0) {
+		if updateTime.Compare(gInfo.updateTime) > 0 {
 			gInfo.updateTime = updateTime
 		}
 
