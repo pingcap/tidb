@@ -402,7 +402,10 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		// for details) to affect the row count display of the independent CTE plan tree.
 		copiedCTE := *plan
 		copiedCTE.SetProbeParents(nil)
-		f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)
+		if info.isRoot {
+			// If it's executed in TiDB, we need to record it since we don't have producer and consumer
+			f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)
+		}
 	case *physicalop.Insert:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true

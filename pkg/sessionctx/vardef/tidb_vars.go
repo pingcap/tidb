@@ -1678,7 +1678,7 @@ const (
 	DefTiDBOptEnableLateMaterialization               = true
 	DefTiDBOptOrderingIdxSelThresh                    = 0.0
 	DefTiDBOptOrderingIdxSelRatio                     = 0.01
-	DefTiDBOptEnableMPPSharedCTEExecution             = false
+	DefTiDBOptEnableMPPSharedCTEExecution             = true
 	DefTiDBPlanCacheInvalidationOnFreshStats          = true
 	DefTiDBEnableRowLevelChecksum                     = false
 	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"

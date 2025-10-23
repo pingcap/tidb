@@ -46,7 +46,7 @@ const (
 	FlagResolveExpand
 )
 
-func setPredicatePushDownFlag(u uint64) uint64 {
+func SetPredicatePushDownFlag(u uint64) uint64 {
 	u |= FlagPredicatePushDown
 	return u
 }

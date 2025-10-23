@@ -15,6 +15,7 @@
 package physicalop
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -303,6 +304,9 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	}()
 	// In disaggregated-tiflash mode, need to consider generated column.
 	tryExpandVirtualColumn(t.p)
+	if !ctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}.Init(ctx, t.p.StatsInfo())

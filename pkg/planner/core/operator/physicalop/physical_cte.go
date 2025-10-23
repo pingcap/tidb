@@ -50,6 +50,9 @@ type PhysicalCTE struct {
 
 // ExhaustPhysicalPlans4LogicalCTE will be called by LogicalCTE in logicalOp pkg.
 func ExhaustPhysicalPlans4LogicalCTE(p *logicalop.LogicalCTE, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	pcte := PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
 	if prop.IsFlashProp() {
 		pcte.StorageSender = PhysicalExchangeSender{
@@ -99,6 +102,9 @@ func (p *PhysicalCTE) ExplainID(_ ...bool) fmt.Stringer {
 
 // Clone implements op.PhysicalPlan interface.
 func (p *PhysicalCTE) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	cloned := new(PhysicalCTE)
 	cloned.SetSCtx(newCtx)
 	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)

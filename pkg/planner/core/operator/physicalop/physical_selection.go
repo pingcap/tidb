@@ -65,11 +65,14 @@ func ExhaustPhysicalPlans4LogicalSelection(p *logicalop.LogicalSelection, prop *
 		canPushDownToTiFlash {
 		childPropMpp := prop.CloneEssentialFields()
 		childPropMpp.TaskTp = property.MppTaskType
+		if !p.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("wwz")
+		}
 		child := p.Children()[0]
 		if cte, ok := child.(*logicalop.LogicalCTE); ok {
 			if tableReader, ok := cte.Cte.SeedPartPhysicalPlan.(*PhysicalTableReader); ok {
 				if tableReader.StoreType == kv.TiFlash && tableReader.ReadReqType == MPP {
-					childPropMpp.CTEProducerStatus = property.AllCTECanMpp
+					//childPropMpp.CTEProducerStatus = property.AllCTECanMpp
 				}
 			}
 		}
