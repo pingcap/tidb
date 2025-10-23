@@ -65,10 +65,37 @@ func keyField(name string, key []byte) zap.Field {
 
 func formatRanges(ranges *KeyRanges) zap.Field {
 	return zap.Object("ranges", zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
-		enc.AddInt("count", ranges.Len())
-		if ranges.Len() > 0 {
-			enc.AddString("firstStart", redact.Key(ranges.At(0).StartKey))
-			enc.AddString("lastEnd", redact.Key(ranges.At(ranges.Len()-1).EndKey))
+		count := ranges.Len()
+		enc.AddInt("count", count)
+
+		if count > 0 {
+			enc.AddArray("ranges", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
+				// Log up to first 10 ranges
+				limit := count
+				if limit > 10 {
+					limit = 10
+				}
+
+				for i := 0; i < limit; i++ {
+					r := ranges.At(i)
+					ae.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
+						enc.AddString("start", redact.Key(r.StartKey))
+						enc.AddString("end", redact.Key(r.EndKey))
+						return nil
+					}))
+				}
+
+				// If truncated, also log the last range to show the full span
+				if count > limit {
+					r := ranges.At(count - 1)
+					ae.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
+						enc.AddString("start", redact.Key(r.StartKey))
+						enc.AddString("end", redact.Key(r.EndKey))
+						return nil
+					}))
+				}
+				return nil
+			}))
 		}
 		return nil
 	}))
