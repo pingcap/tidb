@@ -269,11 +269,15 @@ func (b *builtinBenchmarkSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	loopCount := b.constLoopCount
 	arg := b.args[1]
 	evalType := arg.GetType(ctx).EvalType()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 
 	var k int64
 	switch evalType {
@@ -415,11 +419,15 @@ func (b *builtinTiDBDecodeKeySig) vectorized() bool {
 
 func (b *builtinTiDBDecodeKeySig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := globalColumnAllocator.get()
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer func() {
+		if err == nil {
+			globalColumnAllocator.put(buf)
+		}
+	}()
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}

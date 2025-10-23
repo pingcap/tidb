@@ -348,7 +348,7 @@ func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode,
 		if err1 != nil {
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
 		}
-		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str)
+		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), strings.Clone(str))
 	} else if !casted.IsNull() &&
 		(col.GetType() == mysql.TypeDate || col.GetType() == mysql.TypeDatetime || col.GetType() == mysql.TypeTimestamp) {
 		str, err1 := val.ToString()

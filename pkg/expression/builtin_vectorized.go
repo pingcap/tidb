@@ -16,7 +16,6 @@ package expression
 
 import (
 	"sync"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -30,20 +29,18 @@ type columnBufferAllocator interface {
 	get() (*chunk.Column, error)
 	// put releases a column buffer.
 	put(buf *chunk.Column)
-	// MemoryUsage return the memory usage of columnBufferAllocator
-	MemoryUsage() int64
 }
 
-// localColumnPool implements columnBufferAllocator interface.
+// columnPool implements columnBufferAllocator interface.
 // It works like a concurrency-safe deque which is implemented by lock-free sync.Pool.
-type localColumnPool struct {
+type columnPool struct {
 	sync.Pool
 }
 
 var columnTempl = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
 
-func newLocalColumnPool() *localColumnPool {
-	return &localColumnPool{
+func newColumnPool() *columnPool {
+	return &columnPool{
 		sync.Pool{
 			New: func() any {
 				return columnTempl.CopyConstruct(nil)
@@ -52,7 +49,15 @@ func newLocalColumnPool() *localColumnPool {
 	}
 }
 
-var globalColumnAllocator = newLocalColumnPool()
+var globalColumnAllocator = newColumnPool()
+
+func init() {
+	// Pre-allocate some column buffers to avoid frequent memory allocation when to startup.
+	for range 64 {
+		// align to the 64 cpu-core server.
+		globalColumnAllocator.put(columnTempl.CopyConstruct(nil))
+	}
+}
 
 // GetColumn allocates a column. The allocator is not responsible for initializing the column, so please initialize it before using.
 func GetColumn(_ types.EvalType, _ int) (*chunk.Column, error) {
@@ -64,22 +69,18 @@ func PutColumn(buf *chunk.Column) {
 	globalColumnAllocator.put(buf)
 }
 
-func (r *localColumnPool) get() (*chunk.Column, error) {
+func (r *columnPool) get() (*chunk.Column, error) {
 	col, ok := r.Pool.Get().(*chunk.Column)
 	if !ok {
-		return nil, errors.New("unexpected object in localColumnPool")
+		return nil, errors.New("unexpected object in columnPool")
 	}
 	return col, nil
 }
 
-func (r *localColumnPool) put(col *chunk.Column) {
-	r.Pool.Put(col)
-}
-
-const emptyLocalColumnPoolSize = int64(unsafe.Sizeof(localColumnPool{}))
-
-func (r *localColumnPool) MemoryUsage() (sum int64) {
-	return emptyLocalColumnPoolSize
+func (r *columnPool) put(col *chunk.Column) {
+	if col.TryReset() {
+		r.Pool.Put(col)
+	}
 }
 
 // vecEvalIntByRows uses the non-vectorized(row-based) interface `evalInt` to eval the expression.
