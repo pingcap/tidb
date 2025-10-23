@@ -682,13 +682,13 @@ func (c *TopN) FindTopN(d []byte) int {
 	return idx
 }
 
-// GetRangeBound searches on the sorted top-n items,
-// returns the smallest index i such that the value at element i is not less than `d`.
-func (c *TopN) GetRangeBound(r, l []byte) (ridx, ldx int) {
+// GetRangeBound searches on the sorted top-n items to find the index range [lIdx, rIdx)
+// that corresponds to the value range [l, r) (l is inclusive, r is exclusive).
+func (c *TopN) GetRangeBound(l, r []byte) (lIdx, rIdx int) {
 	if c == nil {
 		return 0, 0
 	}
-	return sliceutil.BinarySearchRangeFunc(c.TopN, r, l, func(a TopNMeta, b []byte) int {
+	return sliceutil.BinarySearchRangeFunc(c.TopN, l, r, func(a TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
 }

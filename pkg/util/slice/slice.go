@@ -50,7 +50,8 @@ func DeepClone[T interface{ Clone() T }](s []T) []T {
 	return cloned
 }
 
-// BinarySearchRangeFunc performs a binary search on the slice x to find the range [t1, t2).
+// BinarySearchRangeFunc finds the index range [i, j) in slice x that corresponds to the value range [t1, t2).
+// It returns 'i' as the smallest index where cmp(x[i], t1) >= 0, and 'j' as the smallest index where cmp(x[j], t2) >= 0.
 func BinarySearchRangeFunc[S ~[]E, E, T any](x S, t1, t2 T, cmp func(E, T) int) (i, j int) {
 	// Define cmp(x[-1], target) < 0 and cmp(x[n], target) >= 0 .
 	// Invariant: cmp(x[i - 1], target) < 0, cmp(x[j], target) >= 0.
