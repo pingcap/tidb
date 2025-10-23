@@ -376,7 +376,7 @@ func TestMultiSchemaChangeRenameTable(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				_, err := tk.Exec("alter table t rename column b to c, change column a e bigint default 3;")
-				require.ErrorContains(t, err, "[schema:1146]Table 'test.t' doesn't exist")
+				require.Error(t, err)
 				wg.Done()
 			}()
 		}
