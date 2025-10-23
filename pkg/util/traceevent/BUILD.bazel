@@ -25,6 +25,7 @@ go_test(
     deps = [
         "//pkg/config/kerneltype",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//trace",
         "@org_uber_go_zap//:zap",
     ],
 )

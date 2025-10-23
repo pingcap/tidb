@@ -60,7 +60,6 @@ go_library(
         "//pkg/util/systimemon",
         "//pkg/util/tiflashcompute",
         "//pkg/util/topsql",
-        "//pkg/util/traceevent",
         "//pkg/util/versioninfo",
         "//pkg/util/workloadrepo",
         "@com_github_grafana_pyroscope_go//:pyroscope-go",
