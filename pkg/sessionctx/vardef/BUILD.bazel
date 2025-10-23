@@ -18,6 +18,7 @@ go_library(
         "//pkg/util/paging",
         "//pkg/util/size",
         "@com_github_pingcap_tipb//go-tipb",
+        "@org_golang_x_time//rate",
         "@org_uber_go_atomic//:atomic",
     ],
 )
@@ -35,5 +36,6 @@ go_test(
     deps = [
         "//pkg/config/kerneltype",
         "@com_github_stretchr_testify//require",
+        "@org_golang_x_time//rate",
     ],
 )
