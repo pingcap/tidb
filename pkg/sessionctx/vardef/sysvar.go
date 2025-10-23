@@ -310,6 +310,8 @@ const (
 	TiKVClientReadTimeout = "tikv_client_read_timeout"
 	// TiDBLoadBindingTimeout is the name of the 'tidb_load_binding_timeout' system variable.
 	TiDBLoadBindingTimeout = "tidb_load_binding_timeout"
+	// TiDBEnableBindingUsage is the name of the 'tidb_enable_binding_usage' system variable.
+	TiDBEnableBindingUsage = "tidb_enable_binding_usage"
 	// ReadOnly is the name of the 'read_only' system variable.
 	ReadOnly = "read_only"
 	// DefaultAuthPlugin is the name of 'default_authentication_plugin' system variable.
