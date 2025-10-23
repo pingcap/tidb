@@ -4155,7 +4155,7 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 		ColName:     model.ExtraPhysTblIDName,
 		OrigColName: model.ExtraPhysTblIDName,
 	}))
-	ds.TblCols = append(ds.TblCols, pidCol)
+	ds.AppendTableCol(pidCol)
 	return pidCol
 }
 
@@ -4696,6 +4696,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	ds := logicalop.DataSource{
+<<<<<<< HEAD
 		DBName:              dbName,
 		TableAsName:         asName,
 		Table:               tbl,
@@ -4711,6 +4712,25 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		PreferPartitions:    make(map[int][]pmodel.CIStr),
 		IS:                  b.is,
 		IsForUpdateRead:     b.isForUpdateRead,
+=======
+		DBName:                 dbName,
+		TableAsName:            asName,
+		Table:                  tbl,
+		TableInfo:              tableInfo,
+		PhysicalTableID:        tableInfo.ID,
+		AstIndexHints:          tn.IndexHints,
+		IndexHints:             b.TableHints().IndexHintList,
+		IndexMergeHints:        indexMergeHints,
+		PossibleAccessPaths:    possiblePaths,
+		AllPossibleAccessPaths: allPaths,
+		Columns:                make([]*model.ColumnInfo, 0, countCnt),
+		PartitionNames:         tn.PartitionNames,
+		TblCols:                make([]*expression.Column, 0, countCnt),
+		TblColsByID:            make(map[int64]*expression.Column, countCnt),
+		PreferPartitions:       make(map[int][]ast.CIStr),
+		IS:                     b.is,
+		IsForUpdateRead:        b.isForUpdateRead,
+>>>>>>> 0deccbba5fa (planner: maintain a map of columns by ID in DataSource (#64053))
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
@@ -4737,7 +4757,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			handleCols = util.NewIntHandleCols(newCol)
 		}
 		schema.Append(newCol)
-		ds.TblCols = append(ds.TblCols, newCol)
+		ds.AppendTableCol(newCol)
 	}
 	// We append an extra handle column to the schema when the handle
 	// column is not the primary key of "ds".
@@ -4756,7 +4776,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				ColName:     model.ExtraHandleName,
 				OrigColName: model.ExtraHandleName,
 			})
-			ds.TblCols = append(ds.TblCols, extraCol)
+			ds.AppendTableCol(extraCol)
 		}
 	}
 	ds.HandleCols = handleCols
