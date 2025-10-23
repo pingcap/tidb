@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -74,9 +73,6 @@ var OptimizeAstNodeNoCache func(ctx context.Context, sctx sessionctx.Context, no
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
-
-// IsReadOnly check whether the ast.Node is a read only statement.
-var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
 const initialMaxCores uint64 = 10000
 

@@ -459,12 +459,13 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: vardef.ScopeInstance, Name: vardef.TiDBSlowLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowThreshold), Type: vardef.TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		atomic.StoreUint64(&config.GetGlobalConfig().Instance.SlowThreshold, uint64(TidbOptInt64(val, logutil.DefaultSlowThreshold)))
-		return nil
-	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.SlowThreshold), 10), nil
-	}},
+	{Scope: vardef.ScopeInstance, Name: vardef.TiDBSlowLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowThreshold), Type: vardef.TypeInt, MinValue: -1, MaxValue: math.MaxInt64,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			atomic.StoreUint64(&config.GetGlobalConfig().Instance.SlowThreshold, uint64(TidbOptInt64(val, logutil.DefaultSlowThreshold)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.SlowThreshold), 10), nil
+		}},
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBRecordPlanInSlowLog, Value: int32ToBoolStr(logutil.DefaultRecordPlanInSlowLog), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		atomic.StoreUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog, uint32(TidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
 		return nil
@@ -1718,6 +1719,18 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}},
 	{
+		Scope:                   vardef.ScopeGlobal,
+		Name:                    vardef.TiDBEnableBindingUsage,
+		Value:                   BoolToOnOff(vardef.DefTiDBEnableBindingUsage),
+		Type:                    vardef.TypeBool,
+		IsHintUpdatableVerified: false,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.EnableBindingUsage.Store(TiDBOptOn(val))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.EnableBindingUsage.Load()), nil
+		}},
+	{
 		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:                    vardef.MaxExecutionTime,
 		Value:                   "0",
@@ -2215,8 +2228,11 @@ var defaultSysVars = []*SysVar{
 		return normalizedValue, nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBIndexSerialScanConcurrency, Value: strconv.Itoa(vardef.DefIndexSerialScanConcurrency), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency, SetSession: func(s *SessionVars, val string) error {
-		s.indexSerialScanConcurrency = tidbOptPositiveInt32(val, vardef.DefIndexSerialScanConcurrency)
+		// NOTE: do nothing here because this variable is deprecated.
 		return nil
+	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+		vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGen("The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'."))
+		return normalizedValue, nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBSkipUTF8Check, Value: BoolToOnOff(vardef.DefSkipUTF8Check), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.SkipUTF8Check = TiDBOptOn(val)
@@ -3674,6 +3690,34 @@ var defaultSysVars = []*SysVar{
 		},
 		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
 			return vardef.AdvancerCheckPointLagLimit.Load().String(), nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBSlowLogRules, Value: "", Type: vardef.TypeStr,
+		SetSession: func(s *SessionVars, val string) error {
+			slowLogRules, err := ParseSessionSlowLogRules(val)
+			if err != nil {
+				return err
+			}
+			s.SlowLogRules.SlowLogRules = slowLogRules
+			s.SlowLogRules.NeedUpdateEffectiveFields = true
+			return nil
+		},
+		GetSession: func(vars *SessionVars) (string, error) {
+			if vars.SlowLogRules.SlowLogRules != nil {
+				return vars.SlowLogRules.RawRules, nil
+			}
+			return "", nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			gRules, err := ParseGlobalSlowLogRules(s)
+			if err != nil {
+				return err
+			}
+			vardef.GlobalSlowLogRules.Store(gRules)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return vardef.GlobalSlowLogRules.Load().RawRules, nil
 		},
 	},
 }

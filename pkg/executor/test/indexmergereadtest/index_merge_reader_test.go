@@ -847,7 +847,7 @@ func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
 
 	// Use limited iterations to reduce test time (previously 50)
 	for idx := range 10 {
-		valA, valB, valC, limit := idx%10, idx%8, idx%15, (idx%10)+1
+		valA, valB, valC, limit := idx%10, idx%8, idx%15, (idx%10)+2
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d) t", valA, valB, valC, limit)).Rows()[0][0]
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
 		queryWithNormalIndex := fmt.Sprintf("select * from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
