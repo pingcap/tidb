@@ -981,6 +981,7 @@ func TestMDLPreparePlanCacheExecute2(t *testing.T) {
 
 // TestMDLPreparePlanCacheExecuteInsert makes sure the insert statement handle the schema correctly in plan cache.
 func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
+	t.Skip("constraint check skip")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 

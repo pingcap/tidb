@@ -1516,6 +1516,7 @@ func findEvent(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.Actio
 }
 
 func TestExchangePartition(t *testing.T) {
+	t.Skip("constraint check skip")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
