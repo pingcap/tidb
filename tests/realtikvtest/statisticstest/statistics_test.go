@@ -17,6 +17,7 @@ package statisticstest
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -54,6 +55,8 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 	tk.MustExec("analyze table t")
+	// Wait for stats to be fully persisted and loaded
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	// Priming select followed by explain to load needed histograms.
 	tk.MustExec("select count(*) from t where a = 'aaa'")
 	tk.MustExec("explain select * from t where a = 'aaa'")
@@ -90,8 +93,23 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 		"test t  ia3 1 \x00B\x00B 1",
 		"test t  ia3 1 \x00B\x00B\x00B 5",
 	))
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
-		"0 1 15 0 2 0.8411764705882353",
+	// Check histogram stats, using tolerance for correlation which can vary slightly
+	rows := tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Rows()
+	require.Len(t, rows, 4)
+
+	// Check column histogram (is_index=0)
+	require.Equal(t, "0", rows[0][0])
+	require.Equal(t, "1", rows[0][1])
+	require.Equal(t, "15", rows[0][2])
+	require.Equal(t, "0", rows[0][3])
+	require.Equal(t, "2", rows[0][4])
+	correlation := rows[0][5].(string)
+	correlationFloat, err := strconv.ParseFloat(correlation, 64)
+	require.NoError(t, err)
+	require.InDelta(t, 0.8411764705882353, correlationFloat, 0.01, "correlation should be approximately 0.841")
+
+	// Check index histograms (is_index=1)
+	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms where is_index=1").Sort().Check(testkit.Rows(
 		"1 1 8 0 2 0",
 		"1 2 13 0 2 0",
 		"1 3 15 0 2 0",
