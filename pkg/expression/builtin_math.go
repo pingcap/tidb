@@ -2154,19 +2154,13 @@ func (b *builtinTruncateIntSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
 func (b *builtinTruncateIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(ctx, row)
-	if err != nil {
+	if isNull || err != nil {
 		return 0, true, err
-	}
-	if isNull {
-		return 0, true, nil
 	}
 
 	d, isNull, err := b.args[1].EvalInt(ctx, row)
-	if err != nil {
+	if isNull || err != nil {
 		return 0, true, err
-	}
-	if isNull {
-		return 0, true, nil
 	}
 
 	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
@@ -2203,28 +2197,22 @@ type builtinTruncateUintSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
 func (b *builtinTruncateUintSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(ctx, row)
-	if err != nil {
+	if isNull || err != nil {
 		return 0, true, err
-	}
-	if isNull {
-		return 0, true, nil
 	}
 
 	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
 		return x, false, nil
 	}
+	uintx := uint64(x)
 
 	d, isNull, err := b.args[1].EvalInt(ctx, row)
-	if err != nil {
+	if isNull || err != nil {
 		return 0, true, err
 	}
-	if isNull {
-		return 0, true, nil
-	}
 
-	uintx := uint64(x)
 	if d >= 0 {
-		return int64(uintx), false, nil
+		return x, false, nil
 	}
 
 	// -MinInt = MinInt, special case
