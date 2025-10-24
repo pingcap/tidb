@@ -85,7 +85,8 @@ func BinarySearchRangeFunc[S ~[]E, E, T any](x S, t1, t2 T, cmp func(E, T) int) 
 	return i, j
 }
 
-// BinarySearchByIndexFunc performs a binary search on the slice x to find the target value between the range [start, end).
+// BinarySearchByIndexFunc searches the sorted sub-slice x[start:end).Duplicates are allowed.
+// It returns the smallest index i in [start, end] such that cmp(x[i], target) >= 0.
 func BinarySearchByIndexFunc[S ~[]E, E, T any](x S, target T, start, end int, cmp func(E, T) int) int {
 	for start < end {
 		h := int(uint(start+end) >> 1) // avoid overflow when computing h
@@ -99,7 +100,8 @@ func BinarySearchByIndexFunc[S ~[]E, E, T any](x S, target T, start, end int, cm
 	return start
 }
 
-// BinarySearchFunc performs a binary search on the slice x to find the target value.
+// BinarySearchFunc searches the sorted slice x.
+// It returns the smallest index i in [0, len(x)] such that cmp(x[i], target) >= 0.
 func BinarySearchFunc[S ~[]E, E, T any](x S, target T, cmp func(E, T) int) int {
 	return BinarySearchByIndexFunc(x, target, 0, len(x), cmp)
 }
