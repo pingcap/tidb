@@ -163,9 +163,11 @@ func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*
 		rows = reader.GetStmtSummaryCumulativeRows()
 	} else if isCurrentTable(e.table.Name.O) {
 		rows = reader.GetStmtSummaryCurrentRows()
-		rows = filterRowsByUserAndPriv(rows, columns, user.Username, priv)
 	} else if isHistoryTable(e.table.Name.O) {
 		rows = reader.GetStmtSummaryHistoryRows()
+	}
+
+	if user != nil {
 		rows = filterRowsByUserAndPriv(rows, columns, user.Username, priv)
 	}
 
@@ -263,7 +265,10 @@ func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx
 	var rowsReader *rowsReader
 	if isCurrentTable(r.table.Name.O) {
 		// filter for ordinary users
-		memRows = filterRowsByUserAndPriv(memRows, columns, user.Username, priv)
+		if user != nil {
+			memRows = filterRowsByUserAndPriv(memRows, columns, user.Username, priv)
+		}
+		
 		rowsReader = newSimpleRowsReader(memRows)
 	}
 	if isHistoryTable(r.table.Name.O) {
@@ -273,7 +278,11 @@ func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx
 		if err != nil {
 			return nil, err
 		}
-		memRows = filterRowsByUserAndPriv(memRows, columns, user.Username, priv)
+
+		if user != nil {
+			memRows = filterRowsByUserAndPriv(memRows, columns, user.Username, priv)
+		}
+		
 		rowsReader = newRowsReader(memRows, history)
 	}
 
