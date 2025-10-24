@@ -163,11 +163,11 @@ func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*
 		rows = reader.GetStmtSummaryCumulativeRows()
 	} else if isCurrentTable(e.table.Name.O) {
 		rows = reader.GetStmtSummaryCurrentRows()
+		rows = filterRowsByUserAndPriv(rows, columns, user.Username, priv)
 	} else if isHistoryTable(e.table.Name.O) {
 		rows = reader.GetStmtSummaryHistoryRows()
+		rows = filterRowsByUserAndPriv(rows, columns, user.Username, priv)
 	}
-
-	rows = filterRowsByUserAndPriv(rows, columns, user.Username, priv)
 
 	return newSimpleRowsReader(rows), nil
 }
