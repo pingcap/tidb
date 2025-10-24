@@ -2219,10 +2219,6 @@ func (b *builtinTruncateUintSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 		return 0, true, nil
 	}
 
-	if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
-		return x, false, nil
-	}
-
 	uintx := uint64(x)
 	if d >= 0 {
 		return int64(uintx), false, nil
@@ -2233,6 +2229,7 @@ func (b *builtinTruncateUintSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 		return 0, false, nil
 	}
 
+	// Truncation logic for d < 0:
 	shift := uint64(math.Pow10(int(-d)))
 	return int64(uintx / shift * shift), false, nil
 }
