@@ -2178,6 +2178,7 @@ func (b *builtinTruncateIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 		return x, false, nil
 	}
 
+	// -MinInt = MinInt, special case
 	if d == mathutil.MinInt {
 		return 0, false, nil
 	}
@@ -2218,11 +2219,16 @@ func (b *builtinTruncateUintSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 		return 0, true, nil
 	}
 
+	if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
+		return x, false, nil
+	}
+
 	uintx := uint64(x)
 	if d >= 0 {
 		return int64(uintx), false, nil
 	}
 
+	// -MinInt = MinInt, special case
 	if d == mathutil.MinInt {
 		return 0, false, nil
 	}
