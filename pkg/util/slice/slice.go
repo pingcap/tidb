@@ -59,49 +59,33 @@ func BinarySearchRangeFunc[S ~[]E, E, T any](x S, t1, t2 T, cmp func(E, T) int) 
 	i, j = 0, len(x)
 	for i < j {
 		h := int(uint(i+j) >> 1) // avoid overflow when computing h
-		// i ≤ h < j
+		// x[h] < t1 < t2
 		cmpt1 := cmp(x[h], t1)
 		if cmpt1 < 0 {
-			// x[h] < t1 < t2
-			i = h + 1 // preserves cmp(x[i - 1], target) < 0
+			i = h + 1
 			continue
-		} else if cmpt1 == 0 {
-			// x[h] = t1 < t2
-			return h, BinarySearchByIndexFunc(x, t2, h, j, cmp)
 		}
-		// t1 < x[h]
+		// t1 < t2 <= x[h]
 		cmpt2 := cmp(x[h], t2)
-		if cmpt2 < 0 {
-			// t1 < x[h] < t2
-			return BinarySearchByIndexFunc(x, t1, i, h, cmp), BinarySearchByIndexFunc(x, t2, h+1, j, cmp)
-		} else if cmpt2 > 0 {
-			// t1 < t2 < x[h]
-			j = h // preserves cmp(x[j], target) >= 0
-		} else if cmpt2 == 0 {
-			// t1 < x[h] = t2
-			return BinarySearchByIndexFunc(x, t1, i, h, cmp), h
+		if cmpt2 >= 0 {
+			j = h
+			continue
 		}
+		// t1 <= x[h] < t2
+		iEnd := h
+		// If x[h] == t1, then h is a candidate for left point, so we must include it in the search [i, h+1)
+		if cmpt1 == 0 {
+			iEnd = h + 1
+		}
+		return BinarySearchByIndexFunc(x, t1, i, iEnd, cmp), BinarySearchByIndexFunc(x, t2, h+1, j, cmp)
 	}
+	// Not found, return [i, i)
 	return i, j
 }
 
-// BinarySearchByIndexFunc searches the sorted sub-slice x[start:end).Duplicates are allowed.
+// BinarySearchByIndexFunc searches the sorted sub-slice x[start:end).
 // It returns the smallest index i in [start, end] such that cmp(x[i], target) >= 0.
 func BinarySearchByIndexFunc[S ~[]E, E, T any](x S, target T, start, end int, cmp func(E, T) int) int {
-	for start < end {
-		h := int(uint(start+end) >> 1) // avoid overflow when computing h
-		// i ≤ h < j
-		if cmp(x[h], target) < 0 {
-			start = h + 1 // preserves cmp(x[i - 1], target) < 0
-		} else {
-			end = h // preserves cmp(x[j], target) >= 0
-		}
-	}
-	return start
-}
-
-// BinarySearchFunc searches the sorted slice x.
-// It returns the smallest index i in [0, len(x)] such that cmp(x[i], target) >= 0.
-func BinarySearchFunc[S ~[]E, E, T any](x S, target T, cmp func(E, T) int) int {
-	return BinarySearchByIndexFunc(x, target, 0, len(x), cmp)
+	idx, _ := slices.BinarySearchFunc(x[start:end], target, cmp)
+	return start + idx
 }
