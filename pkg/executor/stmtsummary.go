@@ -430,7 +430,7 @@ func filterRowsByUserAndPriv(rows [][]types.Datum, columns []*model.ColumnInfo, 
 	if privileged {
 		return rows
 	}
-	if len(columns) == 0{
+	if len(columns) == 0 {
 		return rows
 	}
 	sampleUserCol := -1
