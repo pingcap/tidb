@@ -2169,8 +2169,7 @@ func (b *builtinTruncateIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 		return 0, true, nil
 	}
 
-	// unsigned doesn't affect truncation logic here
-	if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
+	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
 		return x, false, nil
 	}
 
@@ -2209,6 +2208,10 @@ func (b *builtinTruncateUintSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 	}
 	if isNull {
 		return 0, true, nil
+	}
+
+	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		return x, false, nil
 	}
 
 	d, isNull, err := b.args[1].EvalInt(ctx, row)
