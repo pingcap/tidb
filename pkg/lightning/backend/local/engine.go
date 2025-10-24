@@ -1568,6 +1568,13 @@ type dbSSTIngester struct {
 }
 
 func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*sstMeta, error) {
+	failpoint.InjectCall("beforeMergeSSTs")
+	failpoint.Inject("mockErrInMergeSSTs", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("mocked error in mergeSSTs"))
+		}
+	})
+
 	if len(metas) == 0 {
 		return nil, errors.New("sst metas is empty")
 	} else if len(metas) == 1 {
