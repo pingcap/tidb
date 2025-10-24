@@ -2175,7 +2175,7 @@ func (b *builtinTruncateIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	}
 
 	if d >= 0 || d == mathutil.MinInt { 
-        return x, false, nil // or int64(uintx), false, nil for UintSig
+        return x, false, nil
     }
 
 	shift := int64(math.Pow10(int(-d)))
