@@ -2174,13 +2174,9 @@ func (b *builtinTruncateIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 		return x, false, nil
 	}
 
-	if d >= 0 {
-		return x, false, nil
-	}
-
-	if d == mathutil.MinInt {
-		return 0, false, nil
-	}
+	if d >= 0 || d == mathutil.MinInt { 
+        return x, false, nil // or int64(uintx), false, nil for UintSig
+    }
 
 	shift := int64(math.Pow10(int(-d)))
 	return x / shift * shift, false, nil
@@ -2219,13 +2215,9 @@ func (b *builtinTruncateUintSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 	}
 
 	uintx := uint64(x)
-	if d >= 0 {
-		return int64(uintx), false, nil
-	}
-
-	if d == mathutil.MinInt {
-		return 0, false, nil
-	}
+	if d >= 0 || d == mathutil.MinInt { 
+        return int64(uintx), false, nil
+    }
 
 	shift := uint64(math.Pow10(int(-d)))
 	return int64(uintx / shift * shift), false, nil
