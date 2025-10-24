@@ -268,7 +268,7 @@ func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx
 		if user != nil {
 			memRows = filterRowsByUserAndPriv(memRows, columns, user.Username, priv)
 		}
-		
+
 		rowsReader = newSimpleRowsReader(memRows)
 	}
 	if isHistoryTable(r.table.Name.O) {
@@ -282,7 +282,7 @@ func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx
 		if user != nil {
 			memRows = filterRowsByUserAndPriv(memRows, columns, user.Username, priv)
 		}
-		
+
 		rowsReader = newRowsReader(memRows, history)
 	}
 
