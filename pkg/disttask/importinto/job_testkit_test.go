@@ -177,8 +177,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 		return tk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	ctx := context.WithValue(context.Background(), "etcd", true)
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 
 	manager := storage.NewTaskManager(pool)
 	storage.SetTaskManager(manager)
@@ -277,8 +276,7 @@ func TestShowImportProgress(t *testing.T) {
 		return tk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	ctx := context.WithValue(context.Background(), "etcd", true)
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 
 	manager := storage.NewTaskManager(pool)
 	storage.SetTaskManager(manager)
@@ -412,8 +410,7 @@ func TestShowImportGroup(t *testing.T) {
 		return tk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	ctx := context.WithValue(context.Background(), "etcd", true)
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 
 	manager := storage.NewTaskManager(pool)
 	storage.SetTaskManager(manager)
@@ -453,6 +450,10 @@ func TestShowImportGroup(t *testing.T) {
 	}
 
 	rs = tk.MustQuery("show import groups").Sort().Rows()
+	for _, r := range rs {
+		// create time should never be null
+		require.NotEqual(t, "<nil>", r[7])
+	}
 	require.Len(t, rs, 2)
 	require.Equal(t, "group1", rs[0][0])
 	require.Equal(t, "2", rs[0][1])
@@ -466,6 +467,7 @@ func TestShowImportGroup(t *testing.T) {
 	require.Len(t, rs, 1)
 	require.Equal(t, "group2", rs[0][0])
 	require.Equal(t, "1", rs[0][1])
+	require.NotEqual(t, "<nil>", rs[0][7])
 }
 
 func TestFormatTime(t *testing.T) {
