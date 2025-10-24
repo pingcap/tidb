@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -149,7 +150,7 @@ func (m *Manager) handleTasksLoop() {
 
 		m.handleTasks()
 		// service scope might change, so we call WithLabelValues every time.
-		metrics.DistTaskUsedSlotsGauge.WithLabelValues(vardef.ServiceScope.Load()).
+		dxfmetric.UsedSlotsGauge.WithLabelValues(vardef.ServiceScope.Load()).
 			Set(float64(m.slotManager.usedSlots()))
 		metrics.GlobalSortUploadWorkerCount.Set(float64(litstorage.GetActiveUploadWorkerCount()))
 	}

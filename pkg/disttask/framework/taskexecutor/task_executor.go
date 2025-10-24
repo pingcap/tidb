@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	goerrors "errors"
+	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -39,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -138,6 +141,7 @@ func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *Ba
 //   - If current running subtask are scheduled away from this node, i.e. this node
 //     is taken as down, cancel running.
 func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCancel context.CancelFunc) {
+	start := time.Now()
 	ticker := time.NewTicker(checkBalanceSubtaskInterval)
 	defer ticker.Stop()
 	for {
@@ -148,6 +152,12 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCa
 		}
 
 		task := e.task.Load()
+		if time.Since(start) > time.Hour {
+			start = time.Now()
+			e.logger.Info("subtask running for too long", zap.Int64("subtaskID", e.currSubtaskID.Load()))
+			dxfmetric.ExecuteEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventSubtaskSlow).Inc()
+		}
+
 		subtasks, err := e.taskTable.GetSubtasksByExecIDAndStepAndStates(ctx, e.execID, task.ID, task.Step,
 			proto.SubtaskStateRunning)
 		if err != nil {
@@ -158,6 +168,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCa
 			e.logger.Info("subtask is scheduled away, cancel running",
 				zap.Int64("subtaskID", e.currSubtaskID.Load()))
 			// cancels runStep, but leave the subtask state unchanged.
+			dxfmetric.ExecuteEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventSubtaskScheduledAway).Inc()
 			if subtaskCtxCancel != nil {
 				subtaskCtxCancel()
 			}
@@ -369,6 +380,7 @@ func (e *BaseTaskExecutor) createStepExecutor() error {
 
 	if err := stepExecutor.Init(e.ctx); err != nil {
 		if e.IsRetryableError(err) {
+			dxfmetric.ExecuteEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventRetry).Inc()
 			e.logger.Info("meet retryable err when init step executor", zap.Error(err))
 		} else {
 			e.logger.Info("failed to init step executor", zap.Error(err))
@@ -423,6 +435,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 			}
 			return ErrNonIdempotentSubtask
 		}
+		dxfmetric.ExecuteEventCounter.WithLabelValues(fmt.Sprint(subtask.TaskID), dxfmetric.EventSubtaskRerun).Inc()
 		e.logger.Info("subtask in running state and is idempotent",
 			zap.Int64("subtask-id", subtask.ID))
 	} else {
@@ -626,6 +639,8 @@ func (e *BaseTaskExecutor) Cancel() {
 // Close closes the TaskExecutor when all the subtasks are complete.
 func (e *BaseTaskExecutor) Close() {
 	e.Cancel()
+
+	dxfmetric.ExecuteEventCounter.DeletePartialMatch(prometheus.Labels{dxfmetric.LblTaskID: fmt.Sprint(e.GetTaskBase().ID)})
 }
 
 func (e *BaseTaskExecutor) cancelRunStepWith(cause error) {
@@ -709,6 +724,7 @@ func (e *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 
 		e.logger.Info("meet context canceled for gracefully shutdown")
 	} else if e.IsRetryableError(stErr) {
+		dxfmetric.ExecuteEventCounter.WithLabelValues(fmt.Sprint(subtask.TaskID), dxfmetric.EventRetry).Inc()
 		e.logger.Warn("meet retryable error", zap.Error(stErr))
 	} else {
 		e.logger.Warn("subtask failed", zap.Error(stErr))
