@@ -430,9 +430,12 @@ func filterRowsByUserAndPriv(rows [][]types.Datum, columns []*model.ColumnInfo, 
 	if privileged {
 		return rows
 	}
+	if len(columns) == 0{
+		return rows
+	}
 	sampleUserCol := -1
 	for i, col := range columns {
-		if col.Name.O == "SAMPLE_USER" {
+		if col != nil && col.Name.O == "SAMPLE_USER" {
 			sampleUserCol = i
 			break
 		}
