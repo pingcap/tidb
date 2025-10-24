@@ -682,8 +682,8 @@ func (c *TopN) FindTopN(d []byte) int {
 	return idx
 }
 
-// GetRangeBound searches on the sorted top-n items to find the index range [lIdx, rIdx)
-// that corresponds to the value range [l, r) (l is inclusive, r is exclusive).
+// GetRangeBound searches the sorted c.TopN items to find the longest index range [lIdx, rIdx)
+// such that all items c.TopN[lIdx:rIdx] fall within the value range [l, r) (l is inclusive, r is exclusive).
 func (c *TopN) GetRangeBound(l, r []byte) (lIdx, rIdx int) {
 	if c == nil {
 		return 0, 0
