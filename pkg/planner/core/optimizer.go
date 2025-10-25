@@ -31,11 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lock"
-	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"github.com/pingcap/tidb/pkg/planner/cascades/impl"
@@ -47,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
@@ -134,123 +130,6 @@ func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node 
 		RecheckCTE(logic)
 	}
 	return p, err
-}
-
-// CheckPrivilege checks the privilege for a user.
-func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs []visitInfo) error {
-	for _, v := range vs {
-		if v.privilege == mysql.ExtendedPriv {
-			hasPriv := false
-			for _, priv := range v.dynamicPrivs {
-				hasPriv = hasPriv || pm.RequestDynamicVerification(activeRoles, priv, v.dynamicWithGrant)
-				if hasPriv {
-					break
-				}
-			}
-			if !hasPriv {
-				if v.err == nil {
-					return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPrivs)
-				}
-				return v.err
-			}
-		} else if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
-			if v.err == nil {
-				return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(v.privilege.String())
-			}
-			return v.err
-		}
-	}
-	return nil
-}
-
-// VisitInfo4PrivCheck generates privilege check infos because privilege check of local temporary tables is different
-// with normal tables. `CREATE` statement needs `CREATE TEMPORARY TABLE` privilege from the database, and subsequent
-// statements do not need any privileges.
-func VisitInfo4PrivCheck(ctx context.Context, is infoschema.InfoSchema, node ast.Node, vs []visitInfo) (privVisitInfo []visitInfo) {
-	if node == nil {
-		return vs
-	}
-
-	switch stmt := node.(type) {
-	case *ast.CreateTableStmt:
-		privVisitInfo = make([]visitInfo, 0, len(vs))
-		for _, v := range vs {
-			if v.privilege == mysql.CreatePriv {
-				if stmt.TemporaryKeyword == ast.TemporaryLocal {
-					// `CREATE TEMPORARY TABLE` privilege is required from the database, not the table.
-					newVisitInfo := v
-					newVisitInfo.privilege = mysql.CreateTMPTablePriv
-					newVisitInfo.table = ""
-					privVisitInfo = append(privVisitInfo, newVisitInfo)
-				} else {
-					// If both the normal table and temporary table already exist, we need to check the privilege.
-					privVisitInfo = append(privVisitInfo, v)
-				}
-			} else {
-				// `CREATE TABLE LIKE tmp` or `CREATE TABLE FROM SELECT tmp` in the future.
-				if needCheckTmpTablePriv(ctx, is, v) {
-					privVisitInfo = append(privVisitInfo, v)
-				}
-			}
-		}
-	case *ast.DropTableStmt:
-		// Dropping a local temporary table doesn't need any privileges.
-		if stmt.IsView {
-			privVisitInfo = vs
-		} else {
-			privVisitInfo = make([]visitInfo, 0, len(vs))
-			if stmt.TemporaryKeyword != ast.TemporaryLocal {
-				for _, v := range vs {
-					if needCheckTmpTablePriv(ctx, is, v) {
-						privVisitInfo = append(privVisitInfo, v)
-					}
-				}
-			}
-		}
-	case *ast.GrantStmt, *ast.DropSequenceStmt, *ast.DropPlacementPolicyStmt:
-		// Some statements ignore local temporary tables, so they should check the privileges on normal tables.
-		privVisitInfo = vs
-	default:
-		privVisitInfo = make([]visitInfo, 0, len(vs))
-		for _, v := range vs {
-			if needCheckTmpTablePriv(ctx, is, v) {
-				privVisitInfo = append(privVisitInfo, v)
-			}
-		}
-	}
-	return
-}
-
-func needCheckTmpTablePriv(ctx context.Context, is infoschema.InfoSchema, v visitInfo) bool {
-	if v.db != "" && v.table != "" {
-		// Other statements on local temporary tables except `CREATE` do not check any privileges.
-		tb, err := is.TableByName(ctx, ast.NewCIStr(v.db), ast.NewCIStr(v.table))
-		// If the table doesn't exist, we do not report errors to avoid leaking the existence of the table.
-		if err == nil && tb.Meta().TempTableType == model.TempTableLocal {
-			return false
-		}
-	}
-	return true
-}
-
-// CheckTableLock checks the table lock.
-func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema, vs []visitInfo) error {
-	if !config.TableLockEnabled() {
-		return nil
-	}
-
-	checker := lock.NewChecker(ctx, is)
-	for i := range vs {
-		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege, vs[i].alterWritable)
-		// if table with lock-write table dropped, we can access other table, such as `rename` operation
-		if err == lock.ErrLockedTableDropped {
-			break
-		}
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // CheckTableMode checks if the table is accessible by table mode, only TableModeNormal can be accessed.
