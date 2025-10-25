@@ -292,7 +292,6 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 			zap.Int64("oldColumnID", oldCol.ID),
 			zap.String("type", typeToString(args.ModifyColumnType)),
 		)
-		failpoint.InjectCall("getModifyColumnType", args.ModifyColumnType)
 		if oldCol.GetType() == mysql.TypeVarchar && args.Column.GetType() == mysql.TypeString &&
 			(args.ModifyColumnType == ModifyTypeNoReorgWithCheck ||
 				args.ModifyColumnType == ModifyTypeIndexReorg) {
