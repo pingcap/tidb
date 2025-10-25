@@ -766,7 +766,7 @@ func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.C
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
 	start := time.Now()
-	cache, _, err := h.initStatsMeta(ctx, tableIDs...)
+	cache, _, err := h.initStatsMeta(ctx, sctx, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
