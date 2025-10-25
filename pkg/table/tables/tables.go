@@ -280,21 +280,27 @@ func initTableIndices(t *TableCommon) error {
 	return nil
 }
 
-// checkDataWithModifyColumn checks if the data can be stored in the column with changingType.
+// checkDataForModifyColumn checks if the data can be stored in the column with changingType.
 // It's used to prevent illegal data being inserted if we want to skip reorg.
-func checkDataWithModifyColumn(data types.Datum, changingType *types.FieldType) error {
-	strictCtx := exprstatic.NewExprContext(
+func checkDataForModifyColumn(row []types.Datum, col *table.Column) error {
+	if col.ChangingFieldType == nil {
+		return nil
+	}
+
+	var strictCtx = exprstatic.NewExprContext(
 		exprstatic.WithEvalCtx(
 			exprstatic.NewEvalContext(
 				exprstatic.WithSQLMode(
 					mysql.ModeStrictAllTables | mysql.ModeStrictTransTables))))
-	value, err := table.CastColumnValueToType(strictCtx, data, changingType, false, false)
+
+	data := row[col.Offset]
+	value, err := table.CastColumnValueToType(strictCtx, data, col.ChangingFieldType, false, false)
 	if err != nil {
 		return err
 	}
 
 	// For the case from VARCHAR -> CHAR
-	if changingType.GetType() == mysql.TypeVarString && value.GetString() != data.GetString() {
+	if col.ChangingFieldType.GetType() == mysql.TypeVarString && value.GetString() != data.GetString() {
 		return errors.New("data truncation error during modify column")
 	}
 	return nil
@@ -462,11 +468,8 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	for _, col := range t.Columns {
 		var value types.Datum
 		var err error
-
-		if col.ChangingFieldType != nil {
-			if err := checkDataWithModifyColumn(newData[col.Offset], col.ChangingFieldType); err != nil {
-				return err
-			}
+		if err := checkDataForModifyColumn(newData, col); err != nil {
+			return err
 		}
 
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
@@ -794,10 +797,8 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	defer memBuffer.Cleanup(sh)
 
 	for _, col := range t.Columns {
-		if col.ChangingFieldType != nil {
-			if err := checkDataWithModifyColumn(r[col.Offset], col.ChangingFieldType); err != nil {
-				return nil, err
-			}
+		if err := checkDataForModifyColumn(r, col); err != nil {
+			return nil, err
 		}
 
 		var value types.Datum

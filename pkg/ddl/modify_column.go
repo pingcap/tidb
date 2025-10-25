@@ -143,7 +143,7 @@ func getModifyColumnType(
 	}
 
 	relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
-	if len(relatedIndexes) == 0 || !needIndexReorg(tblInfo, oldCol, args.Column) {
+	if len(relatedIndexes) == 0 || !needIndexReorg(oldCol, args.Column) {
 		return ModifyTypeNoReorgWithCheck
 	}
 	return ModifyTypeIndexReorg
@@ -774,7 +774,7 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
-func needIndexReorg(_ *model.TableInfo, oldCol, changingCol *model.ColumnInfo) bool {
+func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
 	if mysql.IsIntegerType(oldCol.GetType()) && mysql.IsIntegerType(changingCol.GetType()) {
 		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
 	}
@@ -790,6 +790,8 @@ func needIndexReorg(_ *model.TableInfo, oldCol, changingCol *model.ColumnInfo) b
 	}
 
 	// Check index value part, ref tablecodec.GenIndexValuePortal
+	// TODO(joechenrh): It's better to check each index here, because not all indexes need
+	// reorg even if the below condition is true.
 	return types.NeedRestoredData(&oldCol.FieldType) != types.NeedRestoredData(&changingCol.FieldType)
 }
 
