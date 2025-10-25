@@ -1384,3 +1384,70 @@ func TestFix62253(t *testing.T) {
 	require.Equal(t, "p1", dbInfo2.PlacementPolicyRef.Name.L)
 	tk1.MustExec("commit")
 }
+
+func TestGetDatabaseCount(t *testing.T) {
+	// Test with empty InfoSchema using MockInfoSchema
+	is := infoschema.MockInfoSchema([]*model.TableInfo{})
+	
+	// MockInfoSchema always creates 2 databases (test and mysql)
+	dbCount := is.GetDatabaseCount()
+	require.Equal(t, int64(2), dbCount)
+
+	// Test with additional table using MockInfoSchema
+	tblInfo := &model.TableInfo{
+		ID:   1,
+		Name: ast.NewCIStr("test_table"),
+		Columns: []*model.ColumnInfo{
+			{
+				State:  model.StatePublic,
+				Offset: 0,
+				Name:   ast.NewCIStr("id"),
+				ID:     1,
+			},
+		},
+		State: model.StatePublic,
+	}
+	is = infoschema.MockInfoSchema([]*model.TableInfo{tblInfo})
+
+	// Should still have 2 databases (test and mysql)
+	dbCount = is.GetDatabaseCount()
+	require.Equal(t, int64(2), dbCount)
+}
+
+func TestGetTableCount(t *testing.T) {
+	// Test with empty InfoSchema using MockInfoSchema
+	is := infoschema.MockInfoSchema([]*model.TableInfo{})
+	
+	// MockInfoSchema always creates 1 system table (stats_meta)
+	tableCount := is.GetTableCount()
+	require.Equal(t, int64(1), tableCount)
+
+	// Test with additional table using MockInfoSchema
+	tblInfo := &model.TableInfo{
+		ID:   1,
+		Name: ast.NewCIStr("test_table"),
+		Columns: []*model.ColumnInfo{
+			{
+				State:  model.StatePublic,
+				Offset: 0,
+				Name:   ast.NewCIStr("id"),
+				ID:     1,
+			},
+		},
+		State: model.StatePublic,
+	}
+	is = infoschema.MockInfoSchema([]*model.TableInfo{tblInfo})
+
+	// Should have 2 tables (stats_meta + test_table)
+	tableCount = is.GetTableCount()
+	require.Equal(t, int64(2), tableCount)
+}
+
+func TestGetSchemaVersion(t *testing.T) {
+	// Test with empty InfoSchema using MockInfoSchema
+	is := infoschema.MockInfoSchema([]*model.TableInfo{})
+	
+	// Should have a valid schema version (0 or greater)
+	schemaVersion := is.GetSchemaVersion()
+	require.GreaterOrEqual(t, schemaVersion, int64(0))
+}

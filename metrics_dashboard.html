@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TiDB Metrics Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .metric-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        .metric-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+            margin-bottom: 5px;
+        }
+        .metric-description {
+            color: #666;
+            font-size: 14px;
+        }
+        .refresh-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-bottom: 20px;
+        }
+        .refresh-btn:hover {
+            background: #0056b3;
+        }
+        .status {
+            text-align: center;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .raw-metrics {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .urls {
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .urls h3 {
+            margin-top: 0;
+            color: #495057;
+        }
+        .urls a {
+            color: #007bff;
+            text-decoration: none;
+            display: block;
+            margin: 5px 0;
+        }
+        .urls a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 TiDB Metrics Dashboard</h1>
+            <p>Real-time monitoring of database count, table count, and schema version</p>
+        </div>
+        
+        <div class="urls">
+            <h3>📋 Available URLs:</h3>
+            <a href="http://localhost:10080/metrics" target="_blank">🔗 Raw Metrics: http://localhost:10080/metrics</a>
+            <a href="http://localhost:8080/metrics_dashboard.html" target="_blank">📊 Dashboard: http://localhost:8080/metrics_dashboard.html</a>
+        </div>
+        
+        <button class="refresh-btn" onclick="refreshMetrics()">🔄 Refresh Metrics</button>
+        
+        <div id="status" class="status success">
+            ✅ Connected to TiDB metrics endpoint
+        </div>
+        
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-title">📊 Database Count</div>
+                <div class="metric-value" id="database-count">Loading...</div>
+                <div class="metric-description">Number of databases in TiDB instance</div>
+            </div>
+            
+            <div class="metric-card">
+                <div class="metric-title">📋 Table Count</div>
+                <div class="metric-value" id="table-count">Loading...</div>
+                <div class="metric-description">Total number of tables across all databases</div>
+            </div>
+            
+            <div class="metric-card">
+                <div class="metric-title">🔄 Schema Version</div>
+                <div class="metric-value" id="schema-version">Loading...</div>
+                <div class="metric-description">Current schema version (updates with DDL changes)</div>
+            </div>
+        </div>
+        
+        <h3>📈 Raw Metrics Data</h3>
+        <div id="raw-metrics" class="raw-metrics">Loading metrics...</div>
+    </div>
+
+    <script>
+        async function fetchMetrics() {
+            try {
+                // Use a proxy to avoid CORS issues
+                const response = await fetch('http://localhost:10080/metrics');
+                const text = await response.text();
+                
+                // Parse our custom metrics
+                const lines = text.split('\n');
+                let databaseCount = 'N/A';
+                let tableCount = 'N/A';
+                let schemaVersion = 'N/A';
+                
+                for (let i = 0; i < lines.length; i++) {
+                    if (lines[i].includes('tidb_server_database_count') && !lines[i].startsWith('#')) {
+                        databaseCount = lines[i].split(' ')[1] || '0';
+                    }
+                    if (lines[i].includes('tidb_server_table_count') && !lines[i].startsWith('#')) {
+                        tableCount = lines[i].split(' ')[1] || '0';
+                    }
+                    if (lines[i].includes('tidb_server_schema_version') && !lines[i].startsWith('#')) {
+                        schemaVersion = lines[i].split(' ')[1] || '0';
+                    }
+                }
+                
+                // Update the UI
+                document.getElementById('database-count').textContent = databaseCount;
+                document.getElementById('table-count').textContent = tableCount;
+                document.getElementById('schema-version').textContent = schemaVersion;
+                document.getElementById('raw-metrics').textContent = text;
+                
+                // Update status
+                document.getElementById('status').className = 'status success';
+                document.getElementById('status').textContent = '✅ Metrics updated successfully';
+                
+            } catch (error) {
+                console.error('Error fetching metrics:', error);
+                document.getElementById('status').className = 'status error';
+                document.getElementById('status').textContent = '❌ Error fetching metrics: ' + error.message;
+            }
+        }
+        
+        function refreshMetrics() {
+            document.getElementById('status').textContent = '🔄 Refreshing metrics...';
+            fetchMetrics();
+        }
+        
+        // Load metrics on page load
+        fetchMetrics();
+        
+        // Auto-refresh every 30 seconds
+        setInterval(fetchMetrics, 30000);
+    </script>
+</body>
+</html>

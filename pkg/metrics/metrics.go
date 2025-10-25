@@ -32,6 +32,15 @@ var (
 
 	// MemoryUsage measures the usage gauge of memory.
 	MemoryUsage *prometheus.GaugeVec
+
+	// DatabaseCount measures the number of databases.
+	DatabaseCount prometheus.Gauge
+
+	// TableCount measures the total number of tables.
+	TableCount prometheus.Gauge
+
+	// SchemaVersion measures the current schema version.
+	SchemaVersion prometheus.Gauge
 )
 
 // metrics labels.
@@ -118,6 +127,30 @@ func InitMetrics() {
 			Name:      "memory_usage",
 			Help:      "Memory Usage",
 		}, []string{LblModule, LblType})
+
+	DatabaseCount = metricscommon.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "database_count",
+			Help:      "Number of databases",
+		})
+
+	TableCount = metricscommon.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "table_count",
+			Help:      "Total number of tables",
+		})
+
+	SchemaVersion = metricscommon.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "schema_version",
+			Help:      "Current schema version",
+		})
 }
 
 // RegisterMetrics registers the metrics which are ONLY used in TiDB server.
@@ -329,6 +362,10 @@ func RegisterMetrics() {
 	prometheus.MustRegister(KVApplyBatchRegions)
 	prometheus.MustRegister(KVApplyBatchSize)
 	prometheus.MustRegister(KVApplyRegionFiles)
+
+	prometheus.MustRegister(DatabaseCount)
+	prometheus.MustRegister(TableCount)
+	prometheus.MustRegister(SchemaVersion)
 
 	tikvmetrics.InitMetricsWithConstLabels(TiDB, TiKVClient, metricscommon.GetConstLabels())
 	tikvmetrics.RegisterMetrics()
