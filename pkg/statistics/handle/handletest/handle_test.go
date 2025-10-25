@@ -114,7 +114,6 @@ func TestDurationToTS(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit2 := testkit.NewTestKit(t, store)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
@@ -126,7 +125,6 @@ func TestVersion(t *testing.T) {
 	tableInfo1 := tbl1.Meta()
 	h, err := handle.NewHandle(
 		context.Background(),
-		testKit2.Session(),
 		time.Millisecond,
 		do.AdvancedSysSessionPool(),
 		do.SysProcTracker(),

@@ -1011,9 +1011,9 @@ func DeleteInternalSession(se any) {
 	sm.DeleteInternalSession(se)
 }
 
-// ContainsInternalSessionForTest is the entry function for check whether an internal session is in Manager.
+// ContainsInternalSession is the entry function for check whether an internal session is in Manager.
 // It is only used for test.
-func ContainsInternalSessionForTest(se any) bool {
+func ContainsInternalSession(se any) bool {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return false

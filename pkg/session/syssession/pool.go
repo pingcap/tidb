@@ -17,8 +17,11 @@ package syssession
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -37,6 +40,9 @@ type Pool interface {
 	Get() (*Session, error)
 	// Put puts the session back to the pool.
 	Put(*Session)
+	// WithForceBlockGCSession executes the input function with the session and ensures the session is registered to
+	// the session manager so GC can be blocked safely.
+	WithForceBlockGCSession(func(*Session) error) error
 	// WithSession executes the input function with the session.
 	// After the function called, the session will be returned to the pool automatically.
 	WithSession(func(*Session) error) error
@@ -251,6 +257,16 @@ func (p *AdvancedSessionPool) Put(se *Session) {
 // WithSession executes the input function with the session.
 // After the function called, the session will be returned to the pool automatically.
 func (p *AdvancedSessionPool) WithSession(fn func(*Session) error) error {
+	return p.withSession(fn, false)
+}
+
+// WithForceBlockGCSession executes the input function with the session and ensures the internal session is
+// registered to the session manager so GC can be blocked safely.
+func (p *AdvancedSessionPool) WithForceBlockGCSession(fn func(*Session) error) error {
+	return p.withSession(fn, true)
+}
+
+func (p *AdvancedSessionPool) withSession(fn func(*Session) error, forceBlockGC bool) error {
 	se, err := p.Get()
 	if err != nil {
 		return err
@@ -264,6 +280,23 @@ func (p *AdvancedSessionPool) WithSession(fn func(*Session) error) error {
 			se.Close()
 		}
 	}()
+
+	// Make sure the internal session is registered to the session manager to block GC.
+	const retryInterval = 100 * time.Millisecond
+	if forceBlockGC && !infosync.ContainsInternalSession(se.internal.sctx) {
+		for !infosync.StoreInternalSession(se.internal.sctx) {
+			// In most cases, the session manager is not set, so this step will be skipped.
+			// It is only enabled explicitly in tests through a failpoint.
+			forceBlockGCInTest := !intest.InTest
+			failpoint.Inject("ForceBlockGCInTest", func(val failpoint.Value) {
+				forceBlockGCInTest = val.(bool)
+			})
+			if !forceBlockGCInTest {
+				break
+			}
+			time.Sleep(retryInterval)
+		}
+	}
 
 	if err = fn(se); err != nil {
 		return err
