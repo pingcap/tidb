@@ -269,6 +269,7 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 
 	// Check insert error when column has PreventNullInsertFlag.
 	tk1.MustExec("delete from t1")
+<<<<<<< HEAD
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
@@ -282,6 +283,11 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 		}
 		// now c2 has PreventNullInsertFlag, an error is expected.
 		checkErr = tk2.ExecToErr("insert into t1 values ()")
+=======
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterModifyColumnStateDeleteOnly", func(_ int64) {
+		err = tk2.ExecToErr("insert into t1 values ()")
+		require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 	})
 	tk1.MustExec("alter table t1 change c2 c2 tinyint not null")
 
@@ -565,6 +571,7 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_general_log=1;")
+	tk.MustExec("set sql_mode = ''") // disable lossy ddl optimization
 	tk.MustExec(`
 		CREATE TABLE t (
 			id int NOT NULL AUTO_INCREMENT,
@@ -934,6 +941,286 @@ func TestGetModifyColumnType(t *testing.T) {
 	for _, tc := range tcsNonStrict {
 		runSingle(t, tc)
 	}
+}
+
+func TestMultiSchemaModifyColumnWithSkipReorg(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(16), b bigint, c bigint, index i1(a), index i2(b), index i3(c), index i4(a, b))")
+	tk.MustExec("insert into t values ('a  ', 1, 1), ('b  ', 2, 2), ('c ', 3, 3)")
+	oldMeta := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	tk.MustExec("alter table t modify column a char(8) after b, modify column b int after a")
+	tk.MustExec("admin check table t")
+	newMeta := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	// the offset and ID of b should be unchanged
+	require.Equal(t, oldMeta.Columns[1].ID, newMeta.Columns[1].ID)
+}
+
+func TestModifyColumnWithSkipReorg(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index i1(a), index i2(b), index i3(a, b))")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+
+	oldMeta := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	// insert should fail by new column type check
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDoModifyColumnSkipReorgCheck", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		_, err := tk2.Exec("insert into t values (2147483648, 2147483648)")
+		require.Error(t, err)
+	})
+	tk.MustExec("alter table t modify column b mediumint not null")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterDoModifyColumnSkipReorgCheck")
+	newMeta := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	// ID should be the same.
+	require.Equal(t, oldMeta.Columns[1].ID, newMeta.Columns[1].ID)
+	require.Nil(t, newMeta.Columns[1].ChangingFieldType)
+	tk.MustExec("admin check table t")
+
+	// insert should succeed before adding flag, and this will make modify column fail.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDoModifyColumnSkipReorgCheck", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		_, err := tk2.Exec("insert into t values (512, 512)")
+		require.NoError(t, err)
+	})
+	tk.MustExecToErr("alter table t modify column b tinyint not null")
+}
+
+func TestGetModifyColumnType(t *testing.T) {
+	type testCase struct {
+		beforeType string
+		afterType  string
+		index      bool
+		tp         byte
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tcs := []testCase{
+		// integer
+		{
+			beforeType: "int",
+			afterType:  "bigint",
+			tp:         ddl.ModifyTypeNoReorg,
+		},
+		{
+			beforeType: "bigint",
+			afterType:  "int",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "bigint",
+			afterType:  "int",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "bigint",
+			afterType:  "bigint unsigned",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "bigint",
+			afterType:  "bigint unsigned",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
+		{
+			beforeType: "int unsigned",
+			afterType:  "bigint",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "int unsigned",
+			afterType:  "bigint",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
+		// string
+		{
+			beforeType: "char(10)",
+			afterType:  "char(20)",
+			tp:         ddl.ModifyTypeNoReorg,
+		},
+		{
+			beforeType: "char(20)",
+			afterType:  "char(10)",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "char(20) collate utf8mb4_bin",
+			afterType:  "char(10) collate utf8mb4_bin",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "char(20) collate utf8mb4_general_ci",
+			afterType:  "char(10) collate utf8mb4_general_ci",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "char(10)",
+			afterType:  "varchar(20)",
+			tp:         ddl.ModifyTypeNoReorg,
+		},
+		{
+			beforeType: "char(20)",
+			afterType:  "varchar(10)",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "char(20) collate utf8mb4_bin",
+			afterType:  "varchar(10) collate utf8mb4_bin",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
+		{
+			beforeType: "char(20) collate utf8mb4_general_ci",
+			afterType:  "varchar(10) collate utf8mb4_general_ci",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "varchar(10)",
+			afterType:  "varchar(20)",
+			tp:         ddl.ModifyTypeNoReorg,
+		},
+		{
+			beforeType: "varchar(20)",
+			afterType:  "varchar(10)",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "varchar(20) collate utf8mb4_bin",
+			afterType:  "varchar(10) collate utf8mb4_bin",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "varchar(20) collate utf8mb4_general_ci",
+			afterType:  "varchar(10) collate utf8mb4_general_ci",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "varchar(10)",
+			afterType:  "char(20)",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "varchar(20)",
+			afterType:  "char(10)",
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+		{
+			beforeType: "varchar(20) collate utf8mb4_bin",
+			afterType:  "char(10) collate utf8mb4_bin",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
+		{
+			beforeType: "varchar(20) collate utf8mb4_general_ci",
+			afterType:  "char(10) collate utf8mb4_general_ci",
+			index:      true,
+			tp:         ddl.ModifyTypeNoReorgWithCheck,
+		},
+	}
+
+	var gotTp byte
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+		gotTp = tp
+	})
+
+	runSingle := func(t *testing.T, tc testCase) {
+		tk.MustExec("drop table if exists t")
+		indexPart := ""
+		if tc.index {
+			indexPart = ", index idx_a(a)"
+		}
+		tk.MustExec(fmt.Sprintf("create table t (a %s%s)", tc.beforeType, indexPart))
+		tk.MustExec("insert into t values ('1'), ('2'), ('3')")
+		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", tc.afterType))
+		tk.MustExec("insert into t values ('4'), ('5'), ('6 ')")
+		tk.MustExec("admin check table t")
+		require.Equal(t, tc.tp, gotTp, "before type: %s, after type: %s", tc.beforeType, tc.afterType)
+	}
+
+	tk.MustExec("set sql_mode='STRICT_ALL_TABLES'")
+	for _, tc := range tcs {
+		runSingle(t, tc)
+	}
+
+	tcsNonStrict := []testCase{
+		{
+			beforeType: "bigint",
+			afterType:  "int",
+			tp:         ddl.ModifyTypeReorg,
+		},
+		{
+			beforeType: "char(20)",
+			afterType:  "char(10)",
+			tp:         ddl.ModifyTypeReorg,
+		},
+		{
+			beforeType: "varchar(20)",
+			afterType:  "varchar(10)",
+			tp:         ddl.ModifyTypeReorg,
+		},
+		{
+			beforeType: "char(20)",
+			afterType:  "varchar(10)",
+			tp:         ddl.ModifyTypeReorg,
+		},
+		{
+			beforeType: "varchar(20)",
+			afterType:  "char(10)",
+			tp:         ddl.ModifyTypeReorg,
+		},
+	}
+
+	tk.MustExec("set sql_mode=''")
+	for _, tc := range tcsNonStrict {
+		runSingle(t, tc)
+	}
+}
+
+func TestModifyColumnVarcharToChar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("create table t (a varchar(10) collate utf8mb4_general_ci, index i1(a))")
+	tk.MustExec("insert into t values ('a '), ('b ')")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/modifyColumnTypeWithData", func(*model.Job, model.JobArgs) {
+		tk2.MustExec("insert into t values ('a ')")
+	})
+	tk.MustExec("alter table t modify column a char(5) collate utf8mb4_general_ci")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(10) collate utf8mb4_general_ci, index i1(a))")
+	tk.MustExec("insert into t values ('a'), ('b')")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/modifyColumnTypeWithData", func(*model.Job, model.JobArgs) {
+		tk2.MustExecToErr("insert into t values ('a ')")
+	})
+	tk.MustExec("alter table t modify column a char(5) collate utf8mb4_general_ci")
+	tk.MustExec("admin check table t")
 }
 
 func TestMultiSchemaModifyColumnWithIndex(t *testing.T) {

@@ -26,6 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/types"
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
@@ -545,6 +550,16 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 		}
 	}
 	return nil
+}
+
+// ColumnNeedRestoredData checks whether a single index column needs restored data.
+func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
+	col := colInfos[idxCol.Offset]
+	colTp := &col.FieldType
+	if idxCol.UseChangingType && col.ChangingFieldType != nil {
+		colTp = col.ChangingFieldType
+	}
+	return types.NeedRestoredData(colTp)
 }
 
 // TableNameInfo provides meta data describing a table name info.

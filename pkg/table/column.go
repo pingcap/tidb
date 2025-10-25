@@ -331,6 +331,7 @@ func CastValue(sctx variable.SessionVarsProvider, val types.Datum, col *model.Co
 	return castColumnValue(sc.TypeCtx(), sc.ErrCtx(), vars.SQLMode, val, &col.FieldType, col.Name.O, vars.ConnectionID, returnErr, forceIgnoreTruncate)
 }
 
+<<<<<<< HEAD
 var strictCtx = types.NewContext(types.StrictFlags, time.UTC, context.IgnoreWarn)
 
 // CastColumnValueWithStrictMode casts a value based on column type with strict flags.
@@ -338,6 +339,12 @@ var strictCtx = types.NewContext(types.StrictFlags, time.UTC, context.IgnoreWarn
 func CastColumnValueWithStrictMode(val types.Datum, tp *types.FieldType) (casted types.Datum, err error) {
 	// The sql mode passed in is not used.
 	return castColumnValue(strictCtx, errctx.StrictNoWarningContext, mysql.ModeNone, val, tp, "", 0, true, false)
+=======
+// CastColumnValueToType casts a value based on column type with expression BuildContext
+func CastColumnValueToType(ctx expression.BuildContext, val types.Datum, tp *types.FieldType, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+	evalCtx := ctx.GetEvalCtx()
+	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, tp, "", ctx.ConnectionID(), returnErr, forceIgnoreTruncate)
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 }
 
 // CastColumnValue casts a value based on column type with expression BuildContext

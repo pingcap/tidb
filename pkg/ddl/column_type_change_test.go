@@ -221,6 +221,7 @@ func TestRowFormat(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set sql_mode=''") // disable lossy ddl optimization
 	tk.MustExec("create table t (id int primary key, v varchar(10))")
 	tk.MustExec("insert into t values (1, \"123\");")
 	tk.MustExec("alter table t modify column v varchar(5);")
@@ -244,6 +245,7 @@ func TestRowFormatWithChecksums(t *testing.T) {
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set sql_mode=''") // disable lossy ddl optimization
 	tk.MustExec("create table t (id int primary key, v varchar(10))")
 	tk.MustExec("insert into t values (1, \"123\");")
 	tk.MustExec("alter table t modify column v varchar(5);")
@@ -267,6 +269,7 @@ func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set sql_mode=''") // disable lossy ddl optimization
 	tk.MustExec("create table t (id int primary key, v varchar(10))")
 	tk.MustExec("insert into t values (1, \"123\")")
 
@@ -360,7 +363,11 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t modify column b varchar(16) DEFAULT '0' NOT NULL")
+<<<<<<< HEAD
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+=======
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 	require.NoError(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "4 4", "5 5"))

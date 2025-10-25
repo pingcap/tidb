@@ -133,12 +133,15 @@ func getModifyColumnType(
 		return ModifyTypeReorg
 	}
 
+<<<<<<< HEAD
 	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
 		if v, ok := val.(bool); ok && v {
 			failpoint.Return(ModifyTypeReorg)
 		}
 	})
 
+=======
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 	if !sqlMode.HasStrictMode() {
 		return ModifyTypeReorg
 	}
@@ -225,7 +228,11 @@ func initializeChangingIndexes(
 			tmpIdx := info.IndexInfo.Clone()
 			tmpIdx.State = model.StateNone
 			tmpIdx.ID = newIdxID
+<<<<<<< HEAD
 			tmpIdx.Name = pmodel.NewCIStr(genChangingIndexUniqueName(tblInfo, info.IndexInfo))
+=======
+			tmpIdx.Name = ast.NewCIStr(genChangingIndexUniqueName(tblInfo, info.IndexInfo))
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 			tmpIdx.Columns[info.Offset].UseChangingType = true
 			UpdateIndexCol(tmpIdx.Columns[info.Offset], tmpCol)
 			tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
@@ -285,7 +292,11 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		// Previously, the second DDL will be submitted successfully (VARCHAR(255) utf8 -> VARCHAR(100) utf8 is OK)
 		// but fail during execution, since the columnID has changed. However, as we now may reuse the old column,
 		// we must check the type again here as utf8mb4->utf8 is an invalid change.
+<<<<<<< HEAD
 		if err = checkModifyTypes(&oldCol.FieldType, &args.Column.FieldType, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
+=======
+		if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -297,6 +308,10 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 			zap.Int64("oldColumnID", oldCol.ID),
 			zap.String("type", typeToString(args.ModifyColumnType)),
 		)
+<<<<<<< HEAD
+=======
+		failpoint.InjectCall("getModifyColumnType", args.ModifyColumnType)
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 		if oldCol.GetType() == mysql.TypeVarchar && args.Column.GetType() == mysql.TypeString &&
 			(args.ModifyColumnType == ModifyTypeNoReorgWithCheck ||
 				args.ModifyColumnType == ModifyTypeIndexReorg) {
@@ -472,7 +487,10 @@ func rollbackModifyColumnJobWithIndexReorg(
 	for _, idx := range changingIdxInfos {
 		args.IndexIDs = append(args.IndexIDs, idx.ID)
 	}
+<<<<<<< HEAD
 	args.IndexIDs = append(args.IndexIDs, getIngestTempIndexIDs(job, changingIdxInfos)...)
+=======
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 	removeOldIndexes(tblInfo, changingIdxInfos)
 
 	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
@@ -823,7 +841,11 @@ func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 func checkModifyColumnData(
 	ctx context.Context,
 	w *worker,
+<<<<<<< HEAD
 	dbName, tblName pmodel.CIStr,
+=======
+	dbName, tblName ast.CIStr,
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 	oldCol, changingCol *model.ColumnInfo,
 	checkValueRange bool,
 ) (checked bool, err error) {
@@ -861,7 +883,11 @@ func checkModifyColumnData(
 // buildCheckSQLFromModifyColumn builds the SQL to check whether the data
 // is valid after modifying to new type.
 func buildCheckSQLFromModifyColumn(
+<<<<<<< HEAD
 	dbName, tblName pmodel.CIStr,
+=======
+	dbName, tblName ast.CIStr,
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 	oldCol, changingCol *model.ColumnInfo,
 	checkValueRange bool,
 ) string {
@@ -1173,8 +1199,11 @@ func (w *worker) doModifyColumnIndexReorg(
 		for _, idx := range allIdxs {
 			if strings.HasPrefix(idx.Name.O, removingObjPrefix) {
 				oldIdxInfos = append(oldIdxInfos, idx)
+<<<<<<< HEAD
 			} else {
 				changingIdxInfos = append(changingIdxInfos, idx)
+=======
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 			}
 		}
 	} else {
@@ -1187,7 +1216,10 @@ func (w *worker) doModifyColumnIndexReorg(
 		for _, idx := range oldIdxInfos {
 			removedIdxIDs = append(removedIdxIDs, idx.ID)
 		}
+<<<<<<< HEAD
 		removedIdxIDs = append(removedIdxIDs, getIngestTempIndexIDs(job, changingIdxInfos)...)
+=======
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 		removeOldIndexes(tblInfo, oldIdxInfos)
 		oldCol.ChangingFieldType = nil
 		oldCol.DelFlag(mysql.PreventNullInsertFlag)
@@ -1286,6 +1318,7 @@ func (w *worker) doModifyColumnIndexReorg(
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
+<<<<<<< HEAD
 			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
 			if done || timedOut || failed {
 				if done {
@@ -1300,6 +1333,14 @@ func (w *worker) doModifyColumnIndexReorg(
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+=======
+			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 			oldTp := oldCol.FieldType
@@ -1351,7 +1392,11 @@ func (w *worker) doModifyColumnIndexReorg(
 		default:
 			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
 			intest.Assert(false, errMsg)
+<<<<<<< HEAD
 			return ver, errors.New(errMsg)
+=======
+			return ver, errors.Errorf(errMsg)
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", oldIdxInfos[0].State)

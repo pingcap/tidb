@@ -1609,7 +1609,11 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				continue
 			}
+<<<<<<< HEAD
 			if types.ColumnNeedRestoredData(idxCol, tblInfo.Columns) {
+=======
+			if model.ColumnNeedRestoredData(idxCol, tblInfo.Columns) {
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 				colIds = append(colIds, col.ID)
 				if collate.IsBinCollation(model.GetIdxChangingFieldType(idxCol, col).GetCollate()) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))

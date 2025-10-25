@@ -26,6 +26,12 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/parser/types",
+<<<<<<< HEAD
+=======
+        "//pkg/planner/cascades/base",
+        "//pkg/sessionctx/vardef",
+        "//pkg/types",
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
         "//pkg/util/intest",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_pd_client//http",

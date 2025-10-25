@@ -546,6 +546,13 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+<<<<<<< HEAD
+=======
+	tk.MustExec("set sql_mode='';") // disable lossy ddl optimization
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test;")
+	tk2.MustExec("set sql_mode='';") // disable lossy ddl optimization
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 
 	// unsupported ddl operations
 	{

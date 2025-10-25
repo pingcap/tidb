@@ -476,6 +476,7 @@ func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.Inde
 	return indexInfos
 }
 
+<<<<<<< HEAD
 func getIngestTempIndexIDs(job *model.Job, idxInfos []*model.IndexInfo) []int64 {
 	ids := make([]int64, 0, len(idxInfos))
 	if !job.ReorgMeta.ReorgTp.NeedMergeProcess() {
@@ -487,6 +488,8 @@ func getIngestTempIndexIDs(job *model.Job, idxInfos []*model.IndexInfo) []int64 
 	return ids
 }
 
+=======
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 func getRelatedIndexIDs(tblInfo *model.TableInfo, colID int64, needTempIndex bool) []int64 {
 	var idxIDs []int64
 	for _, idx := range tblInfo.Indices {
@@ -931,10 +934,17 @@ func markOldIndexesRemoving(oldIdxs []*model.IndexInfo, changingIdxs []*model.In
 }
 
 // markOldObjectRemoving changes the names of the old and new indexes/columns to mark them as removing and public respectively.
+<<<<<<< HEAD
 func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName pmodel.CIStr) {
 	if oldCol.ID != changingCol.ID {
 		publicName := newColName
 		removingName := pmodel.NewCIStr(getRemovingObjName(oldCol.Name.O))
+=======
+func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
+	if oldCol.ID != changingCol.ID {
+		publicName := newColName
+		removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 		renameColumnTo(oldCol, oldIdxs, removingName)
 		renameColumnTo(changingCol, changingIdxs, publicName)
 	}

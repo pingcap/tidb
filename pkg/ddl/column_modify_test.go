@@ -622,7 +622,17 @@ func TestModifyColumnReorgCheckpoint(t *testing.T) {
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
+<<<<<<< HEAD
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+=======
+	if kerneltype.IsNextGen() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeInitReorgMeta", func(m *model.DDLReorgMeta) {
+			m.Concurrency.Store(1)
+		})
+	} else {
+		tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	}
+>>>>>>> a84aea05598 (ddl: make some `MODIFY COLUMN` skip row reorg (#63465))
 	tk.MustExec("create table t (a int primary key, b varchar(16));")
 	rowCnt := 10
 	for i := 0; i < rowCnt; i++ {
