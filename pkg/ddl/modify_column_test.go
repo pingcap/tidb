@@ -17,7 +17,9 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -998,4 +1000,275 @@ func TestParallelAlterTable(t *testing.T) {
 		require.NoError(t, err1)
 		require.NoError(t, err2)
 	})
+}
+
+func TestModifyIntegerColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	var reorgType byte
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+		reorgType = tp
+	})
+
+	maxMinSignedVal := map[string][]int{
+		"bigint":    {math.MaxInt64, math.MinInt64},
+		"int":       {math.MaxInt32, math.MinInt32},
+		"mediumint": {1<<23 - 1, -1 << 23},
+		"smallint":  {math.MaxInt16, math.MinInt16},
+		"tinyint":   {math.MaxInt8, math.MinInt8},
+	}
+
+	maxMinUnsignedVal := map[string][]uint{
+		"bigint unsigned":    {math.MaxUint64, 0},
+		"int unsigned":       {math.MaxUint32, 0},
+		"mediumint unsigned": {1<<24 - 1, 0},
+		"smallint unsigned":  {math.MaxUint16, 0},
+		"tinyint unsigned":   {math.MaxUint8, 0},
+	}
+
+	signed2Signed := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
+		maxValOfNewCol, minValOfNewCol := maxMinSignedVal[newColTp][0], maxMinSignedVal[newColTp][1]
+		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
+
+		// [maxValOfNewCol+1, maxValOfOldCol] fail
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfNewCol+1))
+		err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Contains(t, err.Error(), "Data truncated for column 'a'")
+		tk.MustExec("delete from t")
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfOldCol))
+		err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Contains(t, err.Error(), "Data truncated for column 'a'")
+		tk.MustExec("delete from t")
+
+		// [minValOfOldCol, minValOfNewCol-1] fail
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", minValOfNewCol-1))
+		err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Contains(t, err.Error(), "Data truncated for column 'a'")
+		tk.MustExec("delete from t")
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", minValOfOldCol))
+		err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Contains(t, err.Error(), "Data truncated for column 'a'")
+		tk.MustExec("delete from t")
+
+		// [maxValOfNewCol, minValOfNewCol] pass
+		tk.MustExec(fmt.Sprintf("insert into t values(%d),(%d),(0)", maxValOfNewCol, minValOfNewCol))
+		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Equal(t, expectReorgTp, reorgType)
+	}
+
+	unsigned2Unsigned := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
+		maxValOfNewCol, minValOfNewCol := maxMinUnsignedVal[newColTp][0], maxMinUnsignedVal[newColTp][1]
+		maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
+
+		// [maxValOfNewCol+1, maxValOfOldCol] fail
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfNewCol+1))
+		err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Contains(t, err.Error(), "Data truncated for column 'a'")
+		tk.MustExec("delete from t")
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfOldCol))
+		err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Contains(t, err.Error(), "Data truncated for column 'a'")
+		tk.MustExec("delete from t")
+
+		// [0, maxValOfNewCol] pass
+		tk.MustExec(fmt.Sprintf("insert into t values(%d),(%d),(1)", maxValOfNewCol, minValOfNewCol))
+		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Equal(t, expectReorgTp, reorgType)
+	}
+
+	signed2Unsigned := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte, oldColIdx, newColIdx int) {
+		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
+		maxValOfNewCol := maxMinUnsignedVal[newColTp][0]
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
+
+		// [minValOfOldCol, -1] fail
+		tk.MustExec("insert into t values(-1)")
+		err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Contains(t, err.Error(), "Data truncated for column 'a'")
+		tk.MustExec("delete from t")
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", minValOfOldCol))
+		err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Contains(t, err.Error(), "Data truncated for column 'a'")
+		tk.MustExec("delete from t")
+
+		if oldColIdx < newColIdx {
+			// [maxValOfNewCol+1, maxValOfOldCol] fail
+			tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfOldCol))
+			err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
+			require.Contains(t, err.Error(), "Data truncated for column 'a'")
+			tk.MustExec("delete from t")
+			tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfNewCol+1))
+			err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
+			require.Contains(t, err.Error(), "Data truncated for column 'a'")
+			tk.MustExec("delete from t")
+		}
+
+		// [0, min(maxValOfOldCol, maxValOfNewCol)] pass
+		tk.MustExec(fmt.Sprintf("insert into t values(%d),(1),(0)", min(uint(maxValOfOldCol), maxValOfNewCol)))
+		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Equal(t, expectReorgTp, reorgType)
+	}
+
+	unsigned2Signed := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
+		maxValOfNewCol := maxMinSignedVal[newColTp][0]
+		maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
+
+		// [maxValOfNewCol+1, maxValOfOldCol] fail
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", uint64(maxValOfNewCol)+1))
+		err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Contains(t, err.Error(), "Data truncated for column 'a'")
+		tk.MustExec("delete from t")
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfOldCol))
+		err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Contains(t, err.Error(), "Data truncated for column 'a'")
+		tk.MustExec("delete from t")
+
+		// [0, maxValOfNewCol] pass
+		tk.MustExec(fmt.Sprintf("insert into t values(%d),(1),(0)", maxValOfNewCol))
+		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Equal(t, expectReorgTp, reorgType)
+	}
+
+	signedTp := []string{"bigint", "int", "mediumint", "smallint", "tinyint"}
+	unsignedTp := []string{"bigint unsigned", "int unsigned", "mediumint unsigned", "smallint unsigned", "tinyint unsigned"}
+	for oldColIdx := range signedTp {
+		// bigint -> int, mediumint, smallint, tinyint
+		for newColIdx := oldColIdx + 1; newColIdx < len(signedTp); newColIdx++ {
+			signed2Signed(signedTp[oldColIdx], signedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
+		}
+		// bigint -> bigint unsigned, int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned
+		for newColIdx := range unsignedTp {
+			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck, oldColIdx, newColIdx)
+		}
+	}
+	for oldColIdx := range unsignedTp {
+		// bigint unsigned -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned
+		for newColIdx := oldColIdx + 1; newColIdx < len(unsignedTp); newColIdx++ {
+			unsigned2Unsigned(unsignedTp[oldColIdx], unsignedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
+		}
+		// bigint unsigned -> bigint, int, mediumint, smallint, tinyint
+		for newColIdx := oldColIdx; newColIdx < len(signedTp); newColIdx++ {
+			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
+		}
+	}
+}
+
+func TestModifyStringColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	var reorgType byte
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+		reorgType = tp
+	})
+	type testCase struct {
+		oldColTp        string
+		newColTp        string
+		insertVal       string
+		pass            bool
+		expectedReorgTp byte
+	}
+	noPaddingStrLen5 := strings.Repeat("a", 5)
+	noPaddingStrLen15 := strings.Repeat("a", 15)
+	paddingStrLen5 := strings.Repeat("a", 1) + strings.Repeat(" ", 4)
+	paddingStrLen15 := strings.Repeat("a", 1) + strings.Repeat(" ", 14)
+
+	cases := []testCase{
+		{
+			oldColTp:  "char(20)",
+			newColTp:  "char(10)",
+			insertVal: noPaddingStrLen15,
+		},
+		{
+			oldColTp:  "char(20)",
+			newColTp:  "char(10)",
+			insertVal: noPaddingStrLen5,
+			pass:      true,
+		},
+		{
+			oldColTp:  "varchar(20)",
+			newColTp:  "varchar(10)",
+			insertVal: noPaddingStrLen15,
+		},
+		{
+			oldColTp:  "varchar(20)",
+			newColTp:  "varchar(10)",
+			insertVal: noPaddingStrLen5,
+			pass:      true,
+		},
+		{
+			oldColTp:  "char(20)",
+			newColTp:  "varchar(10)",
+			insertVal: noPaddingStrLen15,
+		},
+		{
+			oldColTp:  "char(20)",
+			newColTp:  "varchar(10)",
+			insertVal: noPaddingStrLen5,
+			pass:      true,
+		},
+		{
+			oldColTp:        "varchar(10)",
+			newColTp:        "char(20)",
+			insertVal:       paddingStrLen5,
+			pass:            true,
+			expectedReorgTp: ddl.ModifyTypeReorg,
+		},
+		{
+			oldColTp:  "varchar(10)",
+			newColTp:  "char(20)",
+			insertVal: noPaddingStrLen5,
+			pass:      true,
+		},
+		{
+			oldColTp:        "varchar(20)",
+			newColTp:        "char(10)",
+			insertVal:       paddingStrLen5,
+			pass:            true,
+			expectedReorgTp: ddl.ModifyTypeReorg,
+		},
+		{
+			oldColTp:        "varchar(20)",
+			newColTp:        "char(10)",
+			insertVal:       paddingStrLen15,
+			pass:            true,
+			expectedReorgTp: ddl.ModifyTypeReorg,
+		},
+		{
+			oldColTp:  "varchar(20)",
+			newColTp:  "char(10)",
+			insertVal: noPaddingStrLen15,
+		},
+		{
+			oldColTp:  "varchar(20)",
+			newColTp:  "char(10)",
+			insertVal: noPaddingStrLen5,
+			pass:      true,
+		},
+	}
+
+	for _, tc := range cases {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(fmt.Sprintf("create table t(a %s)", tc.oldColTp))
+		tk.MustExec(fmt.Sprintf("insert into t values('%s')", tc.insertVal))
+		err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", tc.newColTp))
+		if tc.pass {
+			require.Nil(t, err)
+			expectedReorgTp := tc.expectedReorgTp
+			if tc.expectedReorgTp == ddl.ModifyTypeNone {
+				expectedReorgTp = ddl.ModifyTypeNoReorgWithCheck
+			}
+			require.Equal(t, expectedReorgTp, reorgType)
+		} else {
+			require.Contains(t, err.Error(), "Data truncated for column 'a'")
+		}
+	}
 }
