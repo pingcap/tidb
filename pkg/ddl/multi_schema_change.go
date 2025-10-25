@@ -72,7 +72,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 
 		// Save table info and sub-jobs for rolling back.
 		var tblInfo *model.TableInfo
-		tblInfo, err = metaMut.GetTable(job.SchemaID, job.TableID)
+		tblInfo, err = GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 		if err != nil {
 			return ver, err
 		}
