@@ -792,6 +792,11 @@ func (t *Table) IsEligibleForAnalysis() bool {
 	return true
 }
 
+// MeetAutoAnalyzeMinCnt checks whether the table meets the minimum count required for auto-analyze.
+func (t *Table) MeetAutoAnalyzeMinCnt() bool {
+	return t != nil && t.RealtimeCount >= AutoAnalyzeMinCnt
+}
+
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (coll *HistColl) GetAnalyzeRowCount() float64 {

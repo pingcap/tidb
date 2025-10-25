@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session/syssession"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -200,17 +202,72 @@ func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.Tabl
 	if ok {
 		return tbl, true
 	}
-	if tblInfo != nil {
-		tbl = statistics.PseudoTable(tblInfo, false, true)
-		tbl.PhysicalID = physicalTableID
-		if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
-			h.UpdateStatsCache(types.CacheUpdate{
-				Updated: []*statistics.Table{tbl},
-			})
-		}
+	if tblInfo == nil {
+		return nil, false
+	}
+
+	tbl = statistics.PseudoTable(tblInfo, false, true)
+	tbl.PhysicalID = physicalTableID
+
+	// TODO: Determine whether we really need to cache pseudo table stats for non-partitioned tables.
+	// If the memory overhead is manageable, we can remove this optimization.
+	shouldCachePseudo := tblInfo.GetPartitionInfo() == nil || h.Len() < 64
+	if !shouldCachePseudo {
 		return tbl, true
 	}
-	return nil, false
+
+	// HACK: Sessions borrowed from the pool cannot fetch schema metadata for local temporary tables,
+	// so skip caching their statistics.
+	// Also skip global temporary tables for consistency.
+	isTempTable := tblInfo.TempTableType != model.TempTableNone
+	if isTempTable {
+		return tbl, true
+	}
+
+	// The failpoint to skip system table check, for testing only.
+	skipSystemTableCheck := false
+	failpoint.Inject("SkipSystemTableCheck", func(val failpoint.Value) {
+		skip, ok := val.(bool)
+		if ok && skip {
+			skipSystemTableCheck = true
+		}
+	})
+	if skipSystemTableCheck {
+		h.UpdateStatsCache(types.CacheUpdate{
+			Updated: []*statistics.Table{tbl},
+		})
+		return tbl, true
+	}
+
+	isSystemTable := false
+	// NOTE: You might worry that this slows down Get.
+	// It runs only once per non-partitioned table, or once per partition when the cache holds fewer than 64 entries.
+	// Therefore the performance impact is acceptable
+	dbID := tblInfo.DBID
+	err := util.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
+		is := sctx.GetLatestInfoSchema()
+		db, ok := is.SchemaByID(dbID)
+		// 1 is used for some unit tests where the database is not created but directly injected.
+		intest.Assert(ok || dbID == 1, "cannot find db for table %d, dbID %d", physicalTableID, dbID)
+		if ok && filter.IsSystemSchema(db.Name.L) {
+			isSystemTable = true
+		}
+		return nil
+	})
+	intest.Assert(err == nil, "unexpected error: %v, tableID %d, dbID %d", err, physicalTableID, dbID)
+	if err != nil {
+		statslogutil.StatsErrVerboseSampleLogger().Warn("Check system table failed", zap.Int64("tableID", physicalTableID), zap.Int64("dbID", dbID), zap.Error(err))
+		return tbl, true
+	}
+
+	if isSystemTable {
+		return tbl, true
+	}
+
+	h.UpdateStatsCache(types.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
+	return tbl, true
 }
 
 // FlushStats flushes the cached stats update into store.
