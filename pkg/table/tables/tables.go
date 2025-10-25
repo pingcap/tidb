@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -279,6 +280,32 @@ func initTableIndices(t *TableCommon) error {
 	return nil
 }
 
+// checkDataForModifyColumn checks if the data can be stored in the column with changingType.
+// It's used to prevent illegal data being inserted if we want to skip reorg.
+func checkDataForModifyColumn(row []types.Datum, col *table.Column) error {
+	if col.ChangingFieldType == nil {
+		return nil
+	}
+
+	var strictCtx = exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(
+			exprstatic.NewEvalContext(
+				exprstatic.WithSQLMode(
+					mysql.ModeStrictAllTables | mysql.ModeStrictTransTables))))
+
+	data := row[col.Offset]
+	value, err := table.CastColumnValueToType(strictCtx, data, col.ChangingFieldType, false, false)
+	if err != nil {
+		return err
+	}
+
+	// For the case from VARCHAR -> CHAR
+	if col.ChangingFieldType.GetType() == mysql.TypeVarString && value.GetString() != data.GetString() {
+		return errors.New("data truncation error during modify column")
+	}
+	return nil
+}
+
 // asIndex casts a table.Index to *index which is the actual type of index in TableCommon.
 func asIndex(idx table.Index) *index {
 	return idx.(*index)
@@ -441,6 +468,10 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	for _, col := range t.Columns {
 		var value types.Datum
 		var err error
+		if err := checkDataForModifyColumn(newData, col); err != nil {
+			return err
+		}
+
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
@@ -766,6 +797,10 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	defer memBuffer.Cleanup(sh)
 
 	for _, col := range t.Columns {
+		if err := checkDataForModifyColumn(r, col); err != nil {
+			return nil, err
+		}
+
 		var value types.Datum
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			continue
