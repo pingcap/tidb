@@ -84,4 +84,21 @@ func TestBinarySearchByIndex(t *testing.T) {
 	checkBinarySeachByIndx(t, arr, 2, 3)
 	checkBinarySeachByIndx(t, arr, 0, 1)
 	checkBinarySeachByIndx(t, arr, -1, 0)
+	// zero-length slices
+	arr = []int{}
+	checkBinarySeachByIndx(t, arr, -1, 1)
+	checkBinarySeachByIndx(t, arr, 0, 0)
+	checkBinarySeachByIndx(t, arr, 1, 2)
+	// slices with duplicated value
+	arr = []int{1, 3, 3, 3, 5, 7, 7, 9}
+	checkBinarySeachByIndx(t, arr, 0, 2)    // [before first, value < first duplicate]
+	checkBinarySeachByIndx(t, arr, 3, 3)    // [on first duplicate]
+	checkBinarySeachByIndx(t, arr, 2, 4)    // [value < first duplicate, value > last duplicate]
+	checkBinarySeachByIndx(t, arr, 3, 4)    // [on first duplicate, value > last duplicate]
+	checkBinarySeachByIndx(t, arr, 3, 5)    // [on first duplicate, on next value]
+	checkBinarySeachByIndx(t, arr, 5, 7)    // [on single value, on first of second duplicate]
+	checkBinarySeachByIndx(t, arr, 6, 8)    // [value between duplicates, value > last of second duplicate]
+	checkBinarySeachByIndx(t, arr, 7, 7)    // [on second duplicate]
+	checkBinarySeachByIndx(t, arr, 9, 10)   // [on last value, after last]
+	checkBinarySeachByIndx(t, arr, 10, 100) // [after last]
 }
