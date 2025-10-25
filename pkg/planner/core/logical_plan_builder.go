@@ -5422,7 +5422,7 @@ func pruneAndBuildColPositionInfoForDelete(
 		tblInfo := tbl.Meta()
 		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
 		// nonPrunedSet will be nil if it's a point get or has foreign keys.
-		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
+		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil || tblInfo.EnableActiveActive {
 			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo)
 			if err != nil {
 				return nil, nil, err
