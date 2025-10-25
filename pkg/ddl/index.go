@@ -677,7 +677,7 @@ func onAlterIndexVisibility(jobCtx *jobContext, job *model.Job) (ver int64, _ er
 
 func setIndexVisibility(tblInfo *model.TableInfo, name ast.CIStr, invisible bool) {
 	for _, idx := range tblInfo.Indices {
-		if idx.Name.L == name.L || (isTempIndex(idx, tblInfo) && getChangingIndexOriginName(idx) == name.O) {
+		if idx.Name.L == name.L || getChangingIndexOriginName(idx) == name.O {
 			idx.Invisible = invisible
 		}
 	}
@@ -3563,9 +3563,13 @@ func isColumnarIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool
 	return false
 }
 
+// isTempIndex checks whether the index is a temp index created by modify column.
+// There are two types of temp index:
+// 1. The index contains a temp column that is newly added, indicated by ChangeStateInfo
+// 2. The index contains a old column changing its type in place, indicated by UsingChangingType
 func isTempIndex(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
 	for _, idxCol := range idxInfo.Columns {
-		if tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil {
+		if idxCol.UseChangingType || tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil {
 			return true
 		}
 	}

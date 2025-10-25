@@ -221,7 +221,7 @@ func TestAddIndexShowAnalyzeProgress(t *testing.T) {
 		require.Contains(t, show, "analyzing")
 		analyzed = true
 	})
-	tk1.MustExec("alter table t modify column b smallint;")
+	tk1.MustExec("alter table t modify column b char(16);")
 	require.True(t, analyzed)
 }
 
