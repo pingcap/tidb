@@ -258,15 +258,14 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 		return
 	}
 
-	// Defensive copy: fields parameter may point to a caller's reusable buffer.
-	// Without copying, modifications by the caller after TraceEvent returns could
-	// corrupt the event data stored in flight recorder or passed to sinks.
+	// Defensive copy prevents corruption from caller's buffer reuse.
+	// Reserve extra capacity for LogSink to append metadata without allocation.
 	event := Event{
 		Category:  category,
 		Name:      name,
 		Timestamp: time.Now(),
 		TraceID:   extractTraceID(ctx),
-		Fields:    copyFields(fields),
+		Fields:    copyFieldsWithCapacity(fields, 3),
 	}
 
 	// Record to flight recorder if enabled (base or full mode).
@@ -311,16 +310,30 @@ func (*LogSink) Record(ctx context.Context, event Event) {
 	if !loggingEnabled.Load() {
 		return
 	}
-	baseFields := make([]zap.Field, 0, len(event.Fields)+3)
-	baseFields = append(baseFields, zap.String("category", getCategoryName(event.Category)))
-	baseFields = append(baseFields, zap.Time("event_ts", event.Timestamp))
+
+	// Append to reserved capacity without allocation.
+	// Field order: [event fields] [category] [timestamp] [trace_id?]
+	fields := event.Fields
+	fields = append(fields, zap.String("category", getCategoryName(event.Category)))
+	fields = append(fields, zap.Time("event_ts", event.Timestamp))
 	if len(event.TraceID) > 0 {
-		baseFields = append(baseFields, zap.String("trace_id", hex.EncodeToString(event.TraceID)))
+		fields = append(fields, zap.String("trace_id", hex.EncodeToString(event.TraceID)))
 	}
-	baseFields = append(baseFields, event.Fields...)
-	logutil.Logger(ctx).Info("[trace-event] "+event.Name, baseFields...)
+
+	logutil.Logger(ctx).Info("[trace-event] "+event.Name, fields...)
 }
 
+// copyFieldsWithCapacity copies fields with extra capacity for appending without reallocation.
+func copyFieldsWithCapacity(fields []zap.Field, extraCap int) []zap.Field {
+	if len(fields) == 0 {
+		return nil
+	}
+	out := make([]zap.Field, len(fields), len(fields)+extraCap)
+	copy(out, fields)
+	return out
+}
+
+// copyFields copies fields without extra capacity.
 func copyFields(fields []zap.Field) []zap.Field {
 	if len(fields) == 0 {
 		return nil
@@ -373,7 +386,7 @@ func NewRingBufferSink(capacity int) *RingBufferSink {
 }
 
 // Record implements the Sink interface.
-// The event must already have independent field storage (copyFields called by TraceEvent).
+// Assumes event.Fields is already an independent copy.
 func (r *RingBufferSink) Record(_ context.Context, event Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
