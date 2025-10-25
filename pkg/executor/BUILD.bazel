@@ -271,6 +271,7 @@ go_library(
         "//pkg/util/tls",
         "//pkg/util/topsql",
         "//pkg/util/topsql/state",
+        "//pkg/util/traceevent",
         "//pkg/util/tracing",
         "@com_github_docker_go_units//:go-units",
         "@com_github_gogo_protobuf//proto",

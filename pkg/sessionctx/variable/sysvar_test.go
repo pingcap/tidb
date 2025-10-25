@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/stretchr/testify/require"
 )
 
@@ -86,6 +87,35 @@ func TestSQLModeVar(t *testing.T) {
 	sqlMode, err = mysql.GetSQLMode(val)
 	require.NoError(t, err)
 	require.Equal(t, sqlMode, vars.SQLMode)
+}
+
+func TestTiDBTraceEventSysVar(t *testing.T) {
+	prevCategories := traceevent.GetEnabledCategories()
+	prevMode := traceevent.CurrentMode()
+	traceevent.SetCategories(traceevent.AllCategories)
+	_, _ = traceevent.SetMode(traceevent.ModeOff)
+	t.Cleanup(func() {
+		traceevent.SetCategories(prevCategories)
+		_, _ = traceevent.SetMode(prevMode)
+	})
+
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(vardef.TiDBTraceEvent)
+
+	require.Equal(t, traceevent.ModeOff, traceevent.CurrentMode())
+	require.Equal(t, traceevent.AllCategories, traceevent.GetEnabledCategories())
+
+	if kerneltype.IsClassic() {
+		err := sv.SetGlobal(context.Background(), vars, vardef.On)
+		require.Error(t, err)
+		return
+	}
+
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, "baSe"))
+	require.Equal(t, traceevent.ModeBase, traceevent.CurrentMode())
+
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, "FulL"))
+	require.Equal(t, traceevent.ModeFull, traceevent.CurrentMode())
 }
 
 func TestMaxExecutionTime(t *testing.T) {
