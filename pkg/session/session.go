@@ -812,7 +812,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	var err error
 	txnSize := s.txn.Size()
-	isPessimistic := s.txn.IsPessimistic()
+	isPessimistic := s.sessionVars.TxnCtx.IsPessimistic
 	isPipelined := s.txn.IsPipelined()
 	r, ctx := tracing.StartRegionEx(ctx, "session.doCommitWithRetry")
 	defer r.End()
@@ -1019,12 +1019,9 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	if traceevent.IsEnabled(traceevent.TxnLifecycle) {
 		startTS := s.sessionVars.TxnCtx.StartTS
 		stmtCount := uint64(s.sessionVars.TxnCtx.StatementCount)
-		isPessimistic := s.txn.IsPessimistic()
 		traceevent.TraceEvent(ctx, traceevent.TxnLifecycle, "txn.rollback",
 			zap.Uint64("start_ts", startTS),
 			zap.Uint64("stmt_count", stmtCount),
-			zap.Bool("pessimistic", isPessimistic),
-			zap.Uint64("conn_id", s.sessionVars.ConnectionID),
 		)
 	}
 

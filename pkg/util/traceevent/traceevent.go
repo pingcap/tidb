@@ -48,7 +48,9 @@ const (
 	StmtPlan
 	// KvRequest traces client-go kv request and responses
 	KvRequest
-	// UnknownClient is the fallback category of events from client-go
+	// UnknownClient is the fallback category for unmapped client-go trace events.
+	// Used when client-go emits events with categories not yet mapped in adapter.go.
+	// This provides forward compatibility if client-go adds new categories.
 	UnknownClient
 	traceCategorySentinel
 )
@@ -256,6 +258,9 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 		return
 	}
 
+	// Defensive copy: fields parameter may point to a caller's reusable buffer.
+	// Without copying, modifications by the caller after TraceEvent returns could
+	// corrupt the event data stored in flight recorder or passed to sinks.
 	event := Event{
 		Category:  category,
 		Name:      name,
@@ -368,22 +373,20 @@ func NewRingBufferSink(capacity int) *RingBufferSink {
 }
 
 // Record implements the Sink interface.
+// The event must already have independent field storage (copyFields called by TraceEvent).
 func (r *RingBufferSink) Record(_ context.Context, event Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	eventCopy := event
-	eventCopy.Fields = copyFields(event.Fields)
-
 	if len(r.buf) < r.cap {
-		r.buf = append(r.buf, eventCopy)
+		r.buf = append(r.buf, event)
 		if len(r.buf) == r.cap {
 			r.next = 0
 		}
 		return
 	}
 
-	r.buf[r.next] = eventCopy
+	r.buf[r.next] = event
 	r.next = (r.next + 1) % r.cap
 }
 
