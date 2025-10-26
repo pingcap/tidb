@@ -23,8 +23,13 @@ import (
 
 func TestVariableRewritter(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		// scope validation
 		tk.MustGetErrCode("select @@session.ddl_slow_threshold", errno.ErrIncorrectGlobalLocalVar)
 		tk.MustGetErrCode("select @@global.warning_count", errno.ErrIncorrectGlobalLocalVar)
 		tk.MustGetErrCode("select @@instance.tidb_redact_log", errno.ErrIncorrectGlobalLocalVar)
+
+		// hidden internal system variable
+		tk.MustGetErrCode("select @@session.tidb_redact_log", errno.ErrUnknownSystemVariable)
+		tk.MustExec("select @@tidb_redact_log")
 	})
 }

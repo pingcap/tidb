@@ -21,11 +21,30 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
+	coreusage "github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
 // OuterJoinEliminator is used to eliminate outer join.
 type OuterJoinEliminator struct {
+}
+
+// appendUniqueCorrelatedCols appends correlated columns to the target slice, avoiding duplicates.
+func appendUniqueCorrelatedCols(target []*expression.Column, corCols []*expression.CorrelatedColumn) []*expression.Column {
+	if len(corCols) == 0 {
+		return target
+	}
+	seen := make(map[int64]struct{})
+	for _, cc := range corCols {
+		uid := cc.Column.UniqueID
+		if _, ok := seen[uid]; ok {
+			continue
+		}
+		seen[uid] = struct{}{}
+		target = append(target, &cc.Column)
+	}
+	return target
 }
 
 // tryToEliminateOuterJoin will eliminate outer join plan base on the following rules
@@ -164,10 +183,44 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 	}
 
 	switch x := p.(type) {
+	case *logicalop.LogicalApply:
+		// TODO: this is tied to variable tidb_opt_enable_no_decorrelate_in_select
+		// to enable outer join elimination when correlated subqueries exist in the select
+		// list. Future enhancement can remove the variable check.
+		x.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableNoDecorrelateInSelect)
+		if x.SCtx().GetSessionVars().EnableNoDecorrelateInSelect {
+			// For Apply, only columns from the left child are visible to the parent at this layer.
+			// Filter incoming parentCols to left child's schema and also include correlated columns
+			// from the right child that reference the left schema (required by subqueries).
+			leftSchema := x.Children()[0].Schema()
+			filtered := make([]*expression.Column, 0, len(parentCols))
+			for _, col := range parentCols {
+				if leftSchema.Contains(col) {
+					filtered = append(filtered, col)
+				}
+			}
+			// Add correlated columns from the right child that map to the left schema
+			corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(x.Children()[1], leftSchema)
+			filtered = appendUniqueCorrelatedCols(filtered, corCols)
+			parentCols = filtered
+		} else {
+			parentCols = append(parentCols[:0], p.Schema().Columns...)
+		}
 	case *logicalop.LogicalProjection:
 		parentCols = parentCols[:0]
 		for _, expr := range x.Exprs {
 			parentCols = append(parentCols, expression.ExtractColumns(expr)...)
+		}
+		// Include columns required by subqueries (appear as correlated columns in child subtree)
+		// TODO: this is tied to variable tidb_opt_enable_no_decorrelate_in_select
+		// to enable outer join elimination when correlated subqueries exist in the select
+		// list. Future enhancement can remove the variable check.
+		if len(x.Children()) > 0 {
+			x.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableNoDecorrelateInSelect)
+			if x.SCtx().GetSessionVars().EnableNoDecorrelateInSelect {
+				corCols := coreusage.ExtractCorrelatedCols4LogicalPlan(x.Children()[0])
+				parentCols = appendUniqueCorrelatedCols(parentCols, corCols)
+			}
 		}
 	case *logicalop.LogicalAggregation:
 		parentCols = parentCols[:0]

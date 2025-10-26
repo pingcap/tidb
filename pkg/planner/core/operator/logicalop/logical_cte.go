@@ -144,11 +144,6 @@ func (p *LogicalCTE) PruneColumns(_ []*expression.Column) (base.LogicalPlan, err
 	return p, nil
 }
 
-// FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalCTE) FindBestTask(prop *property.PhysicalProperty) (t base.Task, err error) {
-	return utilfuncp.FindBestTask4LogicalCTE(p, prop)
-}
-
 // BuildKeyInfo inherits the BaseLogicalPlan.<4th> implementation.
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.

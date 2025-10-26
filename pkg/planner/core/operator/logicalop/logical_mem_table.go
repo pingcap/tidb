@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -106,11 +105,6 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) (bas
 		}
 	}
 	return p, nil
-}
-
-// FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty) (t base.Task, err error) {
-	return utilfuncp.FindBestTask4LogicalMemTable(p, prop)
 }
 
 // BuildKeyInfo inherits BaseLogicalPlan.<4th> implementation.

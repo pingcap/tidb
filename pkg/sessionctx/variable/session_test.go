@@ -17,18 +17,22 @@ package variable_test
 import (
 	"context"
 	"math/rand"
+	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -135,9 +139,12 @@ func TestSession(t *testing.T) {
 }
 
 func TestSlowLogFormat(t *testing.T) {
-	ctx := mock.NewContext()
-
-	seVar := ctx.GetSessionVars()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1,1), (2,2)")
+	seVar := tk.Session().GetSessionVars()
 	require.NotNil(t, seVar)
 
 	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "192.168.0.1"}
@@ -319,6 +326,7 @@ func TestSlowLogFormat(t *testing.T) {
 	}
 	logItems.UsedStats.RecordUsedInfo(1, usedStats1)
 	logItems.UsedStats.RecordUsedInfo(2, usedStats2)
+	seVar.CurrentDBChanged = false
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
 
@@ -326,6 +334,85 @@ func TestSlowLogFormat(t *testing.T) {
 	logString = seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+"use test;\n"+sql, logString)
 	require.False(t, seVar.CurrentDBChanged)
+
+	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
+	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
+		Fields: map[string]struct{}{
+			strings.ToLower(variable.SlowLogDBStr):          {},
+			strings.ToLower(variable.SlowLogSucc):           {},
+			strings.ToLower(execdetails.ProcessTimeStr):     {},
+			strings.ToLower(variable.SlowLogResourceGroup):  {},
+			strings.ToLower(variable.SlowLogExecRetryCount): {},
+		},
+	})
+	seVar.StmtCtx.SyncExecDetails.Reset()
+	seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(&execDetail.CopExecDetails, 0)
+	// Make RequestCount to be 2.
+	seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(&execdetails.CopExecDetails{}, 0)
+	seVar.StmtCtx.ExecRetryCount = logItems.ExecRetryCount
+	seVar.StmtCtx.ResourceGroupName = logItems.ResourceGroupName
+	ctx := context.WithValue(context.Background(), execdetails.StmtExecDetailKey,
+		&execdetails.StmtExecDetails{WriteSQLRespDuration: logItems.WriteSQLRespTotal})
+	actual := executor.PrepareSlowLogItemsForRules(ctx, vardef.GlobalSlowLogRules.Load(), seVar)
+	childCtx := context.WithValue(ctx, util.ExecDetailsKey, &tikvExecDetail)
+	executor.CompleteSlowLogItemsForRules(childCtx, seVar, actual)
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	// make StmtCtx.OriginalSQL is the same as sql
+	seVar.StmtCtx.OriginalSQL = sql
+	seVar.StmtCtx.ResetSQLDigest(sql)
+	seVar.StmtCtx.IndexNames = []string{"t1:a", "t2:b"}
+	seVar.TxnCtx.IsExplicit = logItems.IsExplicitTxn
+	seVar.FoundInPlanCache = logItems.PlanFromCache
+	seVar.FoundInBinding = logItems.PlanFromBinding
+	seVar.RewritePhaseInfo = logItems.RewriteInfo
+	// get an ExecStmt
+	compiler := executor.Compiler{Ctx: tk.Session()}
+	execStmt, err := compiler.Compile(childCtx, stmt)
+	execStmt.GoCtx = childCtx
+	require.NoError(t, err)
+
+	executor.SetSlowLogItems(execStmt, txnTS, logItems.HasMoreResults, actual)
+	compareSlowLogItems(t, logItems, actual)
+}
+
+func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogItems) {
+	require.NotNil(t, expected)
+	require.NotNil(t, actual)
+
+	ev := reflect.ValueOf(expected).Elem()
+	av := reflect.ValueOf(actual).Elem()
+	et := ev.Type()
+
+	// Some fields are hard to mock, so we skip them.
+	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
+		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV"}
+	skipFieldsFunc := func(res string, fields []string) bool {
+		for _, f := range fields {
+			if res == f {
+				return true
+			}
+		}
+		return false
+	}
+
+	for i := 0; i < ev.NumField(); i++ {
+		field := et.Field(i)
+		expVal := ev.Field(i).Interface()
+		actVal := av.Field(i).Interface()
+
+		if skipFieldsFunc(field.Name, skipFields) {
+			continue
+		}
+		if ev.Field(i).Kind() == reflect.Ptr {
+			if ev.Field(i).IsNil() && av.Field(i).IsNil() {
+				continue
+			}
+			require.Equal(t, expVal, actVal, "field %s mismatch", field.Name)
+		} else {
+			require.Equal(t, expVal, actVal, "field %s mismatch", field.Name)
+		}
+	}
 }
 
 func TestIsolationRead(t *testing.T) {
