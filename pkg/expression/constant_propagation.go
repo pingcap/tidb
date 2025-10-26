@@ -68,11 +68,11 @@ func (s *basePropConstSolver) getColID(col *Column) int {
 	return s.colMapper[col.UniqueID]
 }
 
-func (s *basePropConstSolver) insertCols(cols ...*Column) {
-	for _, col := range cols {
-		_, ok := s.colMapper[col.UniqueID]
+func (s *basePropConstSolver) insertCols(cols map[int64]*Column) {
+	for uniqueID, col := range cols {
+		_, ok := s.colMapper[uniqueID]
 		if !ok {
-			s.colMapper[col.UniqueID] = len(s.colMapper)
+			s.colMapper[uniqueID] = len(s.colMapper)
 			s.columns = append(s.columns, col)
 		}
 	}
@@ -469,9 +469,12 @@ func (s *propConstSolver) solve(keepJoinKey bool, conditions []Expression) []Exp
 		joinKeys = cloneJoinKeys(conditions, s.schema1, s.schema2)
 	}
 	s.conditions = slices.Grow(s.conditions, len(conditions))
+	mp := make(map[int64]*Column, 4)
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
-		s.insertCols(ExtractColumns(cond)...)
+		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
+		s.insertCols(mp)
+		clear(mp)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
 		logutil.BgLogger().Warn("too many columns in a single CNF",
@@ -840,14 +843,20 @@ func (s *propOuterJoinConstSolver) solve(keepJoinKey bool, joinConds, filterCond
 		// and index join selection. (#63314, #60076)
 		joinKeys = cloneJoinKeys(joinConds, s.outerSchema, s.innerSchema)
 	}
+	mp := GetUniqueIDToColumnMap()
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
-		s.insertCols(ExtractColumns(cond)...)
+		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
+		s.insertCols(mp)
+		clear(mp)
 	}
 	for _, cond := range filterConds {
 		s.filterConds = append(s.filterConds, SplitCNFItems(cond)...)
-		s.insertCols(ExtractColumns(cond)...)
+		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
+		s.insertCols(mp)
+		clear(mp)
 	}
+	PutUniqueIDToColumnMap(mp)
 	if len(s.columns) > MaxPropagateColsCnt {
 		logutil.BgLogger().Warn("too many columns",
 			zap.Int("numCols", len(s.columns)),
