@@ -177,7 +177,7 @@ const (
 	tidbGCLeaderUUID  = "tidb_gc_leader_uuid"
 	tidbGCSafePoint   = "tidb_gc_safe_point"
 
-	loadAllKeyspacesForUnifiedGCTestsBatchSize = 50
+	loadAllKeyspacesForUnifiedGCBatchSize = 50
 )
 
 var txnSafePointSyncWaitTime = tikv.GcStateCacheInterval
@@ -1234,11 +1234,11 @@ func (w *GCWorker) resolveLocks(
 	runner := rangetask.NewRangeTaskRunner(runnerName, w.tikvStore, concurrency, handler)
 
 	isNullKeyspace := w.store.GetCodec().GetKeyspace() == nil
-	var allKeyspaces []*keyspacepb.KeyspaceMeta
+	var keyspaceBatch []*keyspacepb.KeyspaceMeta
 
 	if isNullKeyspace {
 		var err error
-		allKeyspaces, err = w.pdClient.GetAllKeyspaces(ctx, 0, loadAllKeyspacesForUnifiedGCTestsBatchSize)
+		keyspaceBatch, err = w.pdClient.GetAllKeyspaces(ctx, 0, loadAllKeyspacesForUnifiedGCBatchSize)
 		if err != nil {
 			return err
 		}
@@ -1248,7 +1248,7 @@ func (w *GCWorker) resolveLocks(
 	//   in this case, resolve locks on the unbounded range, and the keyspace prefix will be automatically
 	//   attached.
 	// * If there are no keyspaces in the cluster at all, resolve locks for the unbounded whole key range.
-	if !isNullKeyspace || len(allKeyspaces) == 0 {
+	if !isNullKeyspace || len(keyspaceBatch) == 0 {
 		err := runner.RunOnRange(ctx, []byte(""), []byte(""))
 		if err != nil {
 			logutil.Logger(ctx).Warn("resolve locks failed", zap.String("category", "gc worker"),
@@ -1266,7 +1266,7 @@ func (w *GCWorker) resolveLocks(
 		return nil
 	}
 
-	// Otherwise, the null keyspace, which is the current keyspace, has the responsibility to resolve locks forr
+	// Otherwise, the null keyspace, which is the current keyspace, has the responsibility to resolve locks for
 	// other keyspaces that are configured running unified GC, but skip keyspaces that use keyspace level GC.
 
 	isSuccessful := true
@@ -1310,9 +1310,14 @@ func (w *GCWorker) resolveLocks(
 		}
 	}
 
-	// Then, resolve locks for keyspaces with Unified GC enabled.
-	{
-		for _, keyspace := range allKeyspaces {
+	// Then, resolve locks for keyspaces with Unified GC enabled, if any.
+	for {
+		// The first batch has already been fetched. We fetch the next batch at the end of the outer loop.
+		if len(keyspaceBatch) == 0 {
+			break
+		}
+
+		for _, keyspace := range keyspaceBatch {
 			if keyspace.GetState() != keyspacepb.KeyspaceState_ENABLED {
 				continue
 			}
@@ -1339,6 +1344,18 @@ func (w *GCWorker) resolveLocks(
 				isSuccessful = false
 				continue
 			}
+		}
+
+		// The current batch of keyspaces has been processed. Continue next batch.
+		// The keyspaceBatch must be non-nil here, otherwise the outer loop should have been finished.
+		nextKeyspaceID := keyspaceBatch[len(keyspaceBatch)-1].GetId() + 1
+		if nextKeyspaceID > constants.MaxKeyspaceID {
+			break
+		}
+		var err error
+		keyspaceBatch, err = w.pdClient.GetAllKeyspaces(ctx, nextKeyspaceID, loadAllKeyspacesForUnifiedGCBatchSize)
+		if err != nil {
+			return err
 		}
 	}
 

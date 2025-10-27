@@ -17,6 +17,7 @@ package gcworker
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"slices"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/stretchr/testify/require"
+	kv2 "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/oracle/oracles"
 	"github.com/tikv/client-go/v2/testutils"
@@ -1391,7 +1393,7 @@ func TestResolveLocksWithKeyspaces(t *testing.T) {
 		}
 	}
 
-	mkKey := func(id uint32, key string) string {
+	makeKey := func(id uint32, key string) string {
 		c, err := tikv.NewCodecV2(tikv.ModeTxn, makeKeyspace(id, "dummyks", true))
 		require.NoError(t, err)
 		return string(c.EncodeKey([]byte(key)))
@@ -1406,10 +1408,10 @@ func TestResolveLocksWithKeyspaces(t *testing.T) {
 			makeKeyspace(3, "ks3", true),
 		}, constants.NullKeyspaceID))
 		s.splitAtKeys(t,
-			mkKey(1, ""), mkKey(1, "a"),
-			mkKey(2, ""), mkKey(2, "a"),
-			mkKey(3, ""), mkKey(3, "a"),
-			mkKey(4, ""), mkKey(4, "a"),
+			makeKey(1, ""), makeKey(1, "a"),
+			makeKey(2, ""), makeKey(2, "a"),
+			makeKey(3, ""), makeKey(3, "a"),
+			makeKey(4, ""), makeKey(4, "a"),
 			"t1", "t2", "m")
 		err := s.gcWorker.resolveLocks(context.Background(), 100, 2)
 		require.NoError(t, err)
@@ -1437,11 +1439,11 @@ func TestResolveLocksWithKeyspaces(t *testing.T) {
 		}, constants.MaxKeyspaceID-1))
 
 		s.splitAtKeys(t,
-			mkKey(1, ""), mkKey(1, "a"),
-			mkKey(2, ""), mkKey(2, "a"),
-			mkKey(3, ""), mkKey(3, "a"),
-			mkKey(4, ""), mkKey(4, "a"),
-			mkKey(constants.MaxKeyspaceID-1, ""), mkKey(constants.MaxKeyspaceID-1, "a"),
+			makeKey(1, ""), makeKey(1, "a"),
+			makeKey(2, ""), makeKey(2, "a"),
+			makeKey(3, ""), makeKey(3, "a"),
+			makeKey(4, ""), makeKey(4, "a"),
+			makeKey(constants.MaxKeyspaceID-1, ""), makeKey(constants.MaxKeyspaceID-1, "a"),
 			"t1", "t2", "m")
 		err := s.gcWorker.resolveLocks(context.Background(), 100, 2)
 		require.NoError(t, err)
@@ -1474,7 +1476,7 @@ func TestResolveLocksWithKeyspaces(t *testing.T) {
 		}, constants.NullKeyspaceID))
 		splitKeys := []string{"t1", "t2", "m"}
 		for i := 0; i < 8; i++ {
-			splitKeys = append(splitKeys, mkKey(uint32(i), ""), mkKey(uint32(i), "a"))
+			splitKeys = append(splitKeys, makeKey(uint32(i), ""), makeKey(uint32(i), "a"))
 		}
 		s.splitAtKeys(t, splitKeys...)
 		err := s.gcWorker.resolveLocks(context.Background(), 100, 2)
@@ -1490,6 +1492,88 @@ func TestResolveLocksWithKeyspaces(t *testing.T) {
 			{StartKey: []byte("y"), EndKey: nil, TxnSafePoint: 100},                                 // 1 region
 		}, ranges)
 		require.Equal(t, int64(12), counter.Load())
+	})
+
+	t.Run("UnifiedGCWithMaxKeyspaceID", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip()
+		}
+		s, counter, ch := createSuiteForTestResolveLocks(t, mockstore.WithKeyspacesAndCurrentKeyspaceID([]*keyspacepb.KeyspaceMeta{
+			makeKeyspace(constants.MaxKeyspaceID, "max", false),
+		}, constants.NullKeyspaceID))
+
+		splitKeys := []string{"t1", "t2", "m", makeKey(constants.MaxKeyspaceID, ""), makeKey(constants.MaxKeyspaceID, "a"), "y", "y\x00\x00\x00"}
+		s.splitAtKeys(t, splitKeys...)
+		err := s.gcWorker.resolveLocks(context.Background(), 100, 2)
+		require.NoError(t, err)
+		close(ch)
+		ranges := collectAndMergeRanges(t, ch)
+		require.Equal(t, []reqRange{
+			{StartKey: nil, EndKey: []byte("r"), TxnSafePoint: 100},             // Non-keyspace range, 2 regions (split at "m")
+			{StartKey: []byte("s"), EndKey: []byte("x"), TxnSafePoint: 100},     // Non-keyspace range, 3 regions (split at "t1", "t2")
+			{StartKey: []byte("x\xff\xff\xff"), EndKey: nil, TxnSafePoint: 100}, // Keyspace MaxKeyspaceID + ranges after keyspace prefix, 2 + 2 regions.
+		}, ranges)
+		// Note: The range ["y", "y\x00\x00\x00") is actually repeatedly handled, but it doesn't matter for now as it's never used and contains only 3 keys.
+		require.Equal(t, int64(10), counter.Load())
+	})
+
+	testUnifiedGCInLargeAmountOfKeyspacesImpl := func(t *testing.T, startID uint32, count uint32, step uint32) {
+		if kerneltype.IsNextGen() {
+			t.Skip()
+		}
+
+		keyspaces := make([]*keyspacepb.KeyspaceMeta, 0, count)
+		splitKeys := make([]string, 0, count*2+3)
+		expectedRanges := make([]reqRange, 0, count+3)
+		expectedScanLocksCount := int(count)*2 + 6
+		splitKeys = append(splitKeys, "t1", "t2", "m")
+
+		expectedRanges = append(expectedRanges, reqRange{StartKey: nil, EndKey: []byte("r"), TxnSafePoint: 100})         //  Non-keyspace range, 2 regions (split at "m")
+		expectedRanges = append(expectedRanges, reqRange{StartKey: []byte("s"), EndKey: []byte("x"), TxnSafePoint: 100}) // Non-keyspace range, 3 regions (split at "t1", "t2")
+		for i := range count {
+			id := startID + i*step
+			keyspaces = append(keyspaces, makeKeyspace(id, fmt.Sprintf("ks%d", id), false))
+			splitKeys = append(splitKeys, makeKey(id, ""), makeKey(id, "a"))
+			startKey, err := hex.DecodeString(fmt.Sprintf("78%06x", id))
+			require.NoError(t, err)
+			endKey := kv2.PrefixNextKey(startKey)
+			require.NoError(t, err)
+			if bytes.Equal(startKey, expectedRanges[len(expectedRanges)-1].EndKey) {
+				expectedRanges[len(expectedRanges)-1].EndKey = endKey
+			} else {
+				expectedRanges = append(expectedRanges, reqRange{StartKey: startKey, EndKey: endKey, TxnSafePoint: 100}) // 2 regions each
+			}
+		}
+		if bytes.Compare(expectedRanges[len(expectedRanges)-1].EndKey, []byte("y")) >= 0 {
+			expectedRanges[len(expectedRanges)-1].EndKey = nil
+		} else {
+			expectedRanges = append(expectedRanges, reqRange{StartKey: []byte("y"), EndKey: nil, TxnSafePoint: 100}) // 1 region
+		}
+
+		s, counter, ch := createSuiteForTestResolveLocks(t, mockstore.WithKeyspacesAndCurrentKeyspaceID(keyspaces, constants.NullKeyspaceID))
+		s.splitAtKeys(t, splitKeys...)
+		err := s.gcWorker.resolveLocks(context.Background(), 100, 10)
+		require.NoError(t, err)
+		close(ch)
+		ranges := collectAndMergeRanges(t, ch)
+		require.Equal(t, expectedRanges, ranges)
+		require.Equal(t, int64(expectedScanLocksCount), counter.Load())
+	}
+
+	t.Run("UnifiedGCInLargeAmountOfKeyspaces_1_to_180", func(t *testing.T) {
+		testUnifiedGCInLargeAmountOfKeyspacesImpl(t, 1, 180, 1)
+	})
+
+	t.Run("UnifiedGCInLargeAmountOfKeyspaces_0xffff00_to_0xffffff_step2", func(t *testing.T) {
+		testUnifiedGCInLargeAmountOfKeyspacesImpl(t, 0xffff00, 128, 2)
+	})
+
+	t.Run("UnifiedGCInLargeAmountOfKeyspaces_MultipleOfBatchSize", func(t *testing.T) {
+		testUnifiedGCInLargeAmountOfKeyspacesImpl(t, 1, loadAllKeyspacesForUnifiedGCBatchSize*2, 1)
+	})
+
+	t.Run("UnifiedGCInLargeAmountOfKeyspaces_MultipleOfBatchSizeToEnd", func(t *testing.T) {
+		testUnifiedGCInLargeAmountOfKeyspacesImpl(t, constants.MaxKeyspaceID-loadAllKeyspacesForUnifiedGCBatchSize*2+1, loadAllKeyspacesForUnifiedGCBatchSize*2, 1)
 	})
 }
 
