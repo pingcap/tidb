@@ -287,9 +287,9 @@ func ExhaustPhysicalPlans4GroupExpression(e *GroupExpression, prop *property.Phy
 	case *logicalop.LogicalLimit:
 		return physicalop.ExhaustPhysicalPlans4LogicalLimit(x, prop)
 	case *logicalop.LogicalWindow:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalWindow(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalWindow(x, prop)
 	case *logicalop.LogicalExpand:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalExpand(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalExpand(x, prop)
 	case *logicalop.LogicalUnionAll:
 		return physicalop.ExhaustPhysicalPlans4LogicalUnionAll(x, prop)
 	case *logicalop.LogicalSequence:
