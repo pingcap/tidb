@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/tls"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -453,6 +454,19 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.ProcessGeneralLog.Load()), nil
 	}},
+	// NOTE: The trace-event switch is experimental. It is subject to changes.
+	{Scope: vardef.ScopeInstance, Name: vardef.TiDBTraceEvent, Hidden: kerneltype.IsClassic(), Value: vardef.DefTiDBTraceEvent, Type: vardef.TypeStr,
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			if kerneltype.IsClassic() {
+				return errors.New("can only be set for TiDB X kernel")
+			}
+			_, err := traceevent.SetMode(val)
+			return err
+		},
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return strings.ToUpper(traceevent.CurrentMode()), nil
+		},
+	},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBSlowTxnLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowTxnThreshold),
 		Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 			s.SlowTxnThreshold = TidbOptUint64(val, logutil.DefaultSlowTxnThreshold)
