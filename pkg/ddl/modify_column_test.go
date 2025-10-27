@@ -545,7 +545,7 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 }
 
 func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
 
 	store := testkit.CreateMockStore(t)
 
