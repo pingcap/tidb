@@ -545,12 +545,13 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 }
 
 func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_general_log=1;")
-	tk.MustExec("set sql_mode = ''") // disable lossy ddl optimization
 	tk.MustExec(`
 		CREATE TABLE t (
 			id int NOT NULL AUTO_INCREMENT,

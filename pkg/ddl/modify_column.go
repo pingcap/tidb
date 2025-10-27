@@ -134,6 +134,12 @@ func getModifyColumnType(
 		return ModifyTypeReorg
 	}
 
+	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(ModifyTypeReorg)
+		}
+	})
+
 	if !sqlMode.HasStrictMode() {
 		return ModifyTypeReorg
 	}
