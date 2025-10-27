@@ -15,6 +15,7 @@ go_library(
         "metric_table_def.go",
         "metrics.go",
         "metrics_schema.go",
+        "pkdb_tables.go",
         "sieve.go",
         "tables.go",
     ],
