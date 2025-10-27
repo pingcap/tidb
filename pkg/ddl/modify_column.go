@@ -1281,7 +1281,7 @@ func (w *worker) doModifyColumnIndexReorg(
 				}
 				checkAndMarkNonRevertible(job)
 			}
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 			oldTp := oldCol.FieldType

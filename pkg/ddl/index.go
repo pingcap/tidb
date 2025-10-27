@@ -1185,7 +1185,7 @@ SwitchIndexState:
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
 			done, timedOut := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			failpoint.InjectCall("afterAnalyzeTable", job)
+			failpoint.InjectCall("analyzeTableDone", job)
 			if done || timedOut {
 				if done {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
@@ -1410,26 +1410,26 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 		w.ddlCtx.setAnalyzeCumulativeTimeout(job.ID, cumulativeTimeout)
 	}
 
-	if _, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); !ok {
-		w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
-	}
-	status, err := w.queryAnalyzeStatusSince(job.StartTS, dbName, tblName)
-	if err != nil {
-		logutil.DDLLogger().Warn("query analyze status failed", zap.Int64("jobID", job.ID), zap.Error(err))
-		status = analyzeUnknown
-	}
-
-	done, timeOut, proceed := w.analyzeStatusDecision(job, dbName, tblName, status, cumulativeTimeout)
-	if done || timeOut {
-		return done, timeOut
-	}
-	if !proceed {
-		// We decided not to proceed to start ANALYZE locally (i.e. it's running and we waited),
-		// so simply return and retry later.
-		return false, false
-	}
-
 	if doneCh == nil {
+		if _, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); !ok {
+			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
+		}
+		status, err := w.queryAnalyzeStatusSince(job.StartTS, dbName, tblName)
+		if err != nil {
+			logutil.DDLLogger().Warn("query analyze status failed", zap.Int64("jobID", job.ID), zap.Error(err))
+			status = analyzeUnknown
+		}
+
+		done, timeOut, proceed := w.analyzeStatusDecision(job, dbName, tblName, status, cumulativeTimeout)
+		if done || timeOut {
+			return done, timeOut
+		}
+		if !proceed {
+			// We decided not to proceed to start ANALYZE locally (i.e. it's running and we waited),
+			// so simply return and retry later.
+			return false, false
+		}
+
 		doneCh = make(chan struct{})
 		eg := util.NewErrorGroupWithRecover()
 		eg.Go(func() error {
@@ -1464,6 +1464,7 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 					zap.Stack("stack"))
 				// We can continue to finish the job even if analyze table failed.
 			}
+			failpoint.InjectCall("afterAnalyzeTable")
 			return nil
 		})
 		w.ddlCtx.setAnalyzeDoneCh(job.ID, doneCh)

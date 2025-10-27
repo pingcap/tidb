@@ -232,8 +232,8 @@ func TestAnalyzeTimeout(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("drop table if exists t_timeout;")
-	tk1.MustExec("create table t_timeout (a int, b int, key idx_b(b));")
-	tk1.MustExec("insert into t_timeout values (1, 1), (2, 2), (3, 3);")
+	tk1.MustExec("create table t_timeout (a int, b varchar(16), key idx_b(b));")
+	tk1.MustExec("insert into t_timeout values (1, '1'), (2, '2'), (3, '3');")
 	tk1.MustExec("set @@tidb_enable_ddl_analyze = 1;")
 
 	jobID := int64(0)
@@ -247,11 +247,18 @@ func TestAnalyzeTimeout(t *testing.T) {
 	ddl.DefaultCumulativeTimeout = 2 * time.Second
 	defer func() { ddl.DefaultCumulativeTimeout = oldCum }()
 
+	analyzedNotify := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", func() {
+		// wait an extra second because analyze start_time is compared at second granularity
+		time.Sleep(1 * time.Second)
+		close(analyzedNotify)
+	})
+
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
 		time.Sleep(ddl.DefaultCumulativeTimeout + 10*time.Second)
 	})
 
-	tk1.MustExec("alter table t_timeout modify column b smallint;")
+	tk1.MustExec("alter table t_timeout modify column b char(16);")
 
 	require.Eventually(t, func() bool {
 		if jobID == 0 {
@@ -269,6 +276,15 @@ func TestAnalyzeTimeout(t *testing.T) {
 		rows := tk1.MustQuery("show stats_meta where table_name = 't_timeout'").Rows()
 		return len(rows) > 0
 	}, time.Minute, 200*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-analyzedNotify:
+			return true
+		default:
+			return false
+		}
+	}, 30*time.Second, 200*time.Millisecond)
 
 	jobID = 0
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {

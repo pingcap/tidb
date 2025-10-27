@@ -463,7 +463,7 @@ func TestAnalyzeOwnerResignNoReRun(t *testing.T) {
 		atomic.AddInt32(&callCount, 1)
 	})
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/analyzeTableDone", func(job *model.Job) {
 		if atomic.CompareAndSwapInt32(&resignedFlag, 0, 1) {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")
