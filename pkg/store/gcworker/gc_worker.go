@@ -1285,10 +1285,11 @@ func (w *GCWorker) resolveLocks(
 			nextStartKey = tikvstore.PrefixNextKey(prefix)
 		}
 
-		// If there are prefixes that has been processed but `nextStartKey` is set to empty, it means that there
-		// exist a prefix full of 0xff, causing the PrefixNextKey founds the global end. So no remaining range
-		// is needed to be added.
-		// Currently, there's no such prefix in use, but we handle it in code for strictness.
+		// Add the remaining range that after the last excluded prefix and until the global end.
+		// But there's theoretically a special case: if there are prefixes that has been processed but `nextStartKey`
+		// is set to empty, it means that there exist a prefix containing only `0xff` bytes, causing the `PrefixNextKey`
+		// giving the global end. In this case, there isn't such a remaining range.
+		// Currently, there's no such kind of prefix in use, but we handle this special case for strictness.
 		if !(len(nullKeyspaceExcludePrefixes) > 0 && len(nextStartKey) == 0) {
 			nullKeyspaceKeyRanges = append(nullKeyspaceKeyRanges, tikvstore.KeyRange{
 				StartKey: nextStartKey,
