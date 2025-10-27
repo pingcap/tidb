@@ -394,19 +394,19 @@ func mockWorkerReadJob(
 ) []*regionJob {
 	ret := make([]*regionJob, len(jobs))
 	jobToWorkerCh <- jobs[0]
+	time.Sleep(10 * time.Millisecond)
 	require.Eventually(t, func() bool {
 		// wait runSendToWorker goroutine is blocked at sending
 		return b.jobLen() == 0
 	}, time.Second, 10*time.Millisecond)
-	time.Sleep(10 * time.Millisecond)
 	for _, job := range jobs[1:] {
 		jobToWorkerCh <- job
 	}
+	time.Sleep(10 * time.Millisecond)
 	require.Eventually(t, func() bool {
 		// rest are waiting to be picked
 		return b.jobLen() == len(jobs)-1
 	}, time.Second, 10*time.Millisecond)
-	time.Sleep(10 * time.Millisecond)
 	for i := range ret {
 		got := <-b.innerJobToWorkerCh
 		ret[i] = got

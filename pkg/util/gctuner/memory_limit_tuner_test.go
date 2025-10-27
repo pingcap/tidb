@@ -195,12 +195,12 @@ func TestIssue48741(t *testing.T) {
 		// Try to trigger GC by 1GB * 80% = 800MB (tidb_server_memory_limit * tidb_server_memory_limit_gc_trigger)
 		gcNum := getMemoryLimitGCTotal()
 		memory810mb := allocator.alloc(810 << 20)
+
+		time.Sleep(100 * time.Millisecond)
 		require.Eventually(t,
 			// Wait for the GC triggered by memory810mb
 			func() bool {
-				result := GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getMemoryLimitGCTotal()
-				t.Log(result)
-				return result
+				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getMemoryLimitGCTotal()
 			},
 			500*time.Millisecond, 100*time.Millisecond)
 
@@ -214,9 +214,7 @@ func TestIssue48741(t *testing.T) {
 		require.Eventually(t,
 			// The GC will be trigged immediately after memoryLimit is set back to 1GB * 80% = 800MB.
 			func() bool {
-				result := GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNumAfterMemory810mb < getMemoryLimitGCTotal()
-				t.Log(result)
-				return result
+				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNumAfterMemory810mb < getMemoryLimitGCTotal()
 			},
 			2*time.Second, 100*time.Millisecond)
 
