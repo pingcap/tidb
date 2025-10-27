@@ -45,7 +45,7 @@ type Collector struct {
 func NewCollector(serverID string) *Collector {
 	var constLabels prometheus.Labels
 	// we might run multiple TiDB servers in the same process in tests, to avoid
-	// register conflict,
+	// register conflict, please use different ports for domains.
 	if intest.InTest {
 		constLabels = prometheus.Labels{"server_id": serverID}
 	}
