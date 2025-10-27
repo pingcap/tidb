@@ -720,7 +720,7 @@ func TestCreateSameTableOrDBOnOwnerChange(t *testing.T) {
 	)
 	enableWaitSubmit.Store(true)
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func() { time.Sleep(300 * time.Millisecond) })
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) { time.Sleep(300 * time.Millisecond) })
 	// create and wait all jobs are submitted to tidb_ddl_job before they are run.
 	// we are creating same table/database, only the first will success.
 	var wg util.WaitGroupWrapper

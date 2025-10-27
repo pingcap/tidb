@@ -2709,7 +2709,7 @@ func TestBackfillConcurrentDMLRange(t *testing.T) {
 		columnFt[col.ID] = &col.FieldType
 	}
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		// TODO: start a transaction to be committed during backfill
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
