@@ -524,10 +524,8 @@ func (dc *ddlCtx) getAnalyzeStartTime(jobID int64) (time.Time, bool) {
 	if !exists {
 		return time.Time{}, false
 	}
-	if ctx.analyzeStartTime.IsZero() {
-		return time.Time{}, false
-	}
-	return ctx.analyzeStartTime, true
+	t := ctx.analyzeStartTime
+	return t, !t.IsZero()
 }
 
 // clearAnalyzeStartTime clears the analyze start time for a given job ID.

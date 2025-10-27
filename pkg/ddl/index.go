@@ -1347,9 +1347,9 @@ func (w *worker) queryAnalyzeStatusSince(startTS uint64, dbName, tblName string)
 // the analyze status for a table. It returns three booleans:
 //
 //	done: whether the caller should consider analyze finished (true) and continue DDL;
-//	timeOut: whether the analyze has exceeded cumulative timeout and caller should proceed with timeout handling;
+//	timedOut: whether the analyze has exceeded cumulative timeout and caller should proceed with timeout handling;
 //	proceed: whether the caller should proceed to start ANALYZE locally (true for unknown status).
-func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, status analyzeStatus, cumulativeTimeout time.Duration) (done bool, timeOut bool, proceed bool) {
+func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, status analyzeStatus, cumulativeTimeout time.Duration) (done bool, timedOut bool, proceed bool) {
 	switch status {
 	case analyzeFinished:
 		logutil.DDLLogger().Info("analyze already finished by other owner", zap.Int64("jobID", job.ID), zap.String("db", dbName), zap.String("table", tblName))
@@ -1389,7 +1389,7 @@ func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, s
 }
 
 // analyzeTableAfterCreateIndex analyzes the table after creating index.
-func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) (done bool, timeOut bool) {
+func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) (done bool, timedOut bool) {
 	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
 	if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.NeedAnalyze {
 		// If the job is a multi-schema-change job,
@@ -1411,23 +1411,24 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 	}
 
 	if doneCh == nil {
-		if _, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); !ok {
-			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
-		}
 		status, err := w.queryAnalyzeStatusSince(job.StartTS, dbName, tblName)
 		if err != nil {
 			logutil.DDLLogger().Warn("query analyze status failed", zap.Int64("jobID", job.ID), zap.Error(err))
 			status = analyzeUnknown
 		}
 
-		done, timeOut, proceed := w.analyzeStatusDecision(job, dbName, tblName, status, cumulativeTimeout)
-		if done || timeOut {
-			return done, timeOut
+		done, timedOut, proceed := w.analyzeStatusDecision(job, dbName, tblName, status, cumulativeTimeout)
+		if done || timedOut {
+			return done, timedOut
 		}
 		if !proceed {
 			// We decided not to proceed to start ANALYZE locally (i.e. it's running and we waited),
 			// so simply return and retry later.
 			return false, false
+		}
+
+		if _, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); !ok {
+			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
 		}
 
 		doneCh = make(chan struct{})

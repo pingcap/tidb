@@ -1271,12 +1271,12 @@ func (w *worker) doModifyColumnIndexReorg(
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
-			done, timeOut := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			if done || timeOut {
+			done, timedOut := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done || timedOut {
 				if done {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
 				}
-				if timeOut {
+				if timedOut {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
 				}
 				checkAndMarkNonRevertible(job)
