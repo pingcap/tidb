@@ -455,7 +455,7 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(vardef.ProcessGeneralLog.Load()), nil
 	}},
 	// NOTE: The trace-event switch is experimental. It is subject to changes.
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBTraceEvent, Value: vardef.DefTiDBTraceEvent, Type: vardef.TypeStr,
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBTraceEvent, Hidden: kerneltype.IsClassic(), Value: vardef.DefTiDBTraceEvent, Type: vardef.TypeStr,
 		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
 			if kerneltype.IsClassic() {
 				return errors.New("can only be set for TiDB X kernel")
