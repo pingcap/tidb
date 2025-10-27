@@ -479,7 +479,7 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestoreImpl(i int, i
 	return nil
 }
 
-func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chunk.DataInDiskByChunks, syncCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
+func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chunk.DataInDiskByChunks, syncCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
 	cost := int64(0)
 	defer func() {
 		if b.HashJoinCtx.stats != nil {
@@ -501,9 +501,6 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 			handleErr(err, errCh, doneCh)
 		}
 	}
-
-	// Wait for command from the controller so that we can avoid data race with the spill executed in controller
-	<-waitForController
 }
 
 func (b *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, fetcherAndWorkerSyncer *sync.WaitGroup, srcChkCh chan *chunk.Chunk, errCh chan error, doneCh chan struct{}) {
@@ -1291,8 +1288,8 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 	for _, worker := range e.BuildWorkers {
 		worker.builder = createRowTableBuilder(worker.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, hashJoinCtx.partitionNumber, worker.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone, hashJoinCtx.hashTableMeta.nullMapLength)
 	}
-	srcChkCh, waitForController := e.fetchBuildSideRows(ctx, fetcherAndWorkerSyncer, wg, errCh, doneCh)
-	e.splitAndAppendToRowTable(srcChkCh, waitForController, fetcherAndWorkerSyncer, wg, errCh, doneCh)
+	srcChkCh := e.fetchBuildSideRows(ctx, fetcherAndWorkerSyncer, wg, errCh, doneCh)
+	e.splitAndAppendToRowTable(srcChkCh, fetcherAndWorkerSyncer, wg, errCh, doneCh)
 	success := waitJobDone(wg, errCh)
 	if !success {
 		return
@@ -1318,12 +1315,8 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 	waitJobDone(wg, errCh)
 }
 
-func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) (chan *chunk.Chunk, chan struct{}) {
+func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) chan *chunk.Chunk {
 	srcChkCh := make(chan *chunk.Chunk, 1)
-	var waitForController chan struct{}
-	if e.inRestore {
-		waitForController = make(chan struct{})
-	}
 
 	wg.Add(1)
 	e.workerWg.RunWithRecover(
@@ -1331,7 +1324,7 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorke
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
 			if e.inRestore {
 				chunkNum := e.getRestoredBuildChunkNum()
-				e.controlWorkersForRestore(chunkNum, srcChkCh, waitForController, fetcherAndWorkerSyncer, errCh, doneCh)
+				e.controlWorkersForRestore(chunkNum, srcChkCh, fetcherAndWorkerSyncer, errCh, doneCh)
 			} else {
 				fetcher := e.BuildWorkers[0]
 				fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, fetcherAndWorkerSyncer, e.spillHelper, srcChkCh, errCh, doneCh)
@@ -1344,7 +1337,7 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorke
 			wg.Done()
 		},
 	)
-	return srcChkCh, waitForController
+	return srcChkCh
 }
 
 func (e *HashJoinV2Exec) getRestoredBuildChunkNum() int {
@@ -1355,7 +1348,7 @@ func (e *HashJoinV2Exec) getRestoredBuildChunkNum() int {
 	return chunkNum
 }
 
-func (e *HashJoinV2Exec) controlWorkersForRestore(chunkNum int, syncCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, errCh chan<- error, doneCh <-chan struct{}) {
+func (e *HashJoinV2Exec) controlWorkersForRestore(chunkNum int, syncCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, errCh chan<- error, doneCh <-chan struct{}) {
 	defer func() {
 		close(syncCh)
 
@@ -1374,8 +1367,6 @@ func (e *HashJoinV2Exec) controlWorkersForRestore(chunkNum int, syncCh chan *chu
 				errCh <- err
 			}
 		}
-
-		close(waitForController)
 	}()
 
 	for range chunkNum {
@@ -1413,14 +1404,14 @@ func handleErr(err error, errCh chan error, doneCh chan struct{}) {
 	doneCh <- struct{}{}
 }
 
-func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
+func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
 	wg.Add(int(e.Concurrency))
 	for i := range e.Concurrency {
 		workIndex := i
 		e.workerWg.RunWithRecover(
 			func() {
 				if e.inRestore {
-					e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTableForRestore(e.restoredBuildInDisk[workIndex], srcChkCh, waitForController, fetcherAndWorkerSyncer, errCh, doneCh)
+					e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTableForRestore(e.restoredBuildInDisk[workIndex], srcChkCh, fetcherAndWorkerSyncer, errCh, doneCh)
 				} else {
 					e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), fetcherAndWorkerSyncer, srcChkCh, errCh, doneCh)
 				}
