@@ -1181,6 +1181,10 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 	// TODO: Update the test code.
 	// This test rely on the obsolete mock tikv, but mock tikv does not implement paging.
 	// So use this failpoint to force non-paging protocol.
+	// Mock TiKV does not have implementation to up-to-date PD APIs about GC either, making it fail when running in next gen.
+	if kerneltype.IsNextGen() {
+		t.Skip("The test is currently not compatible with next gen")
+	}
 	failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/DisablePaging", `return`)
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/DisablePaging"))
