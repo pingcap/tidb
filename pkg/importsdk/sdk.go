@@ -97,8 +97,11 @@ func NewImportSDK(ctx context.Context, sourcePath string, db *sql.DB, options ..
 		DefaultFileRules: len(cfg.fileRouteRules) == 0,
 		CharacterSet:     cfg.charset,
 	}
-
-	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store)
+	var loaderOptions []mydump.MDLoaderSetupOption
+	if cfg.maxScanFiles != nil {
+		loaderOptions = append(loaderOptions, mydump.WithMaxScanFiles(*cfg.maxScanFiles))
+	}
+	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store, loaderOptions...)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to create MyDump loader (source=%s, charset=%s, filter=%v). Please check dump layout and router rules", sourcePath, cfg.charset, cfg.filter)
 	}
@@ -123,6 +126,7 @@ type sdkConfig struct {
 	fileRouteRules []*config.FileRouteRule
 	filter         []string
 	charset        string
+	maxScanFiles   *int
 
 	// General options
 	logger log.Logger
@@ -179,6 +183,15 @@ func WithCharset(cs string) SDKOption {
 	return func(cfg *sdkConfig) {
 		if cs != "" {
 			cfg.charset = cs
+		}
+	}
+}
+
+// WithMaxScanFiles specifies custom file scan limitation
+func WithMaxScanFiles(limit int) SDKOption {
+	return func(cfg *sdkConfig) {
+		if limit > 0 {
+			cfg.maxScanFiles = &limit
 		}
 	}
 }
