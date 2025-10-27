@@ -109,7 +109,7 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 			r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
 			ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
 		}
-		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.store, r.job, false, 0)
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.store, r.job, hasUniqueIndex(r.indexes), false, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
