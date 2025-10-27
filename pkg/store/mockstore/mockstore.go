@@ -288,7 +288,6 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 			}
 			WithCurrentKeyspaceMeta(meta)(&opt)
 		}
-
 	}
 
 	var (
