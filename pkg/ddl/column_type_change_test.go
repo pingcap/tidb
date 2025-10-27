@@ -261,11 +261,12 @@ func TestRowFormatWithChecksums(t *testing.T) {
 }
 
 func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set sql_mode=''") // disable lossy ddl optimization
 	tk.MustExec("create table t (id int primary key, v varchar(10))")
 	tk.MustExec("insert into t values (1, \"123\")")
 
