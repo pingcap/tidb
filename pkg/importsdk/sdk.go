@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"go.uber.org/zap"
 )
 
 // SDK defines the interface for cloud import services
@@ -38,6 +39,9 @@ type SDK interface {
 
 	// GetTableMetaByName returns metadata for a specific table
 	GetTableMetaByName(ctx context.Context, schema, table string) (*TableMeta, error)
+
+	// CreateSchemaAndTableByName creates specific table and database schema from source
+	CreateSchemaAndTableByName(ctx context.Context, schema, table string) error
 
 	// GetTotalSize returns the cumulative size (in bytes) of all data files under the source path
 	GetTotalSize(ctx context.Context) int64
@@ -121,12 +125,13 @@ type SDKOption func(*sdkConfig)
 
 type sdkConfig struct {
 	// Loader options
-	concurrency    int
-	sqlMode        mysql.SQLMode
-	fileRouteRules []*config.FileRouteRule
-	filter         []string
-	charset        string
-	maxScanFiles   *int
+	concurrency      int
+	sqlMode          mysql.SQLMode
+	fileRouteRules   []*config.FileRouteRule
+	filter           []string
+	charset          string
+	maxScanFiles     *int
+	skipInvalidFiles bool
 
 	// General options
 	logger log.Logger
@@ -196,6 +201,13 @@ func WithMaxScanFiles(limit int) SDKOption {
 	}
 }
 
+// WithSkipInvalidFiles specifies whether sdk need raise error on found invalid files
+func WithSkipInvalidFiles(skip bool) SDKOption {
+	return func(cfg *sdkConfig) {
+		cfg.skipInvalidFiles = skip
+	}
+}
+
 // CreateSchemasAndTables implements the CloudImportSDK interface
 func (sdk *ImportSDK) CreateSchemasAndTables(ctx context.Context) error {
 	dbMetas := sdk.loader.GetDatabases()
@@ -220,6 +232,41 @@ func (sdk *ImportSDK) CreateSchemasAndTables(ctx context.Context) error {
 	return nil
 }
 
+func (sdk *ImportSDK) CreateSchemaAndTableByName(ctx context.Context, schema, table string) error {
+	dbMetas := sdk.loader.GetDatabases()
+	// Find the specific table
+	for _, dbMeta := range dbMetas {
+		if dbMeta.Name != schema {
+			continue
+		}
+
+		for _, tblMeta := range dbMeta.Tables {
+			if tblMeta.Name != table {
+				continue
+			}
+
+			importer := mydump.NewSchemaImporter(
+				sdk.logger,
+				sdk.config.sqlMode,
+				sdk.db,
+				sdk.store,
+				sdk.config.concurrency,
+			)
+
+			err := importer.Run(ctx, []*mydump.MDDatabaseMeta{dbMeta})
+			if err != nil {
+				return errors.Annotatef(err, "creating schema and table failed (source=%s, concurrency=%d, schema=%s, table=%s)", sdk.sourcePath, sdk.config.concurrency, schema, table)
+			}
+
+			return nil
+		}
+
+		return errors.Annotatef(ErrTableNotFound, "schema=%s, table=%s", schema, table)
+	}
+
+	return errors.Annotatef(ErrSchemaNotFound, "schema=%s", schema)
+}
+
 // GetTableMetas implements the CloudImportSDK interface
 func (sdk *ImportSDK) GetTableMetas(context.Context) ([]*TableMeta, error) {
 	dbMetas := sdk.loader.GetDatabases()
@@ -229,8 +276,13 @@ func (sdk *ImportSDK) GetTableMetas(context.Context) ([]*TableMeta, error) {
 		for _, tblMeta := range dbMeta.Tables {
 			tableMeta, err := sdk.buildTableMeta(dbMeta, tblMeta, allFiles)
 			if err != nil {
-				return nil, errors.Wrapf(err, "failed to build metadata for table %s.%s",
+				retErr := errors.Wrapf(err, "failed to build metadata for table %s.%s",
 					dbMeta.Name, tblMeta.Name)
+				if sdk.config.skipInvalidFiles {
+					sdk.logger.Error("skip error", zap.Error(err))
+					continue
+				}
+				return nil, retErr
 			}
 			results = append(results, tableMeta)
 		}
