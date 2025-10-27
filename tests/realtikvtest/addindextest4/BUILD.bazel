@@ -10,10 +10,12 @@ go_test(
         "partial_index_test.go",
     ],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//pkg/config",
+        "//pkg/disttask/framework/proto",
         "//pkg/domain",
+        "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",
