@@ -393,6 +393,14 @@ func (w *worker) runReorgJob(
 	for {
 		select {
 		case res := <-rc.doneCh:
+			failpoint.InjectCall("beforeReorgJobDone")
+			failpoint.Inject("mockRunReorgJobTimeout", func(val failpoint.Value) {
+				if val.(bool) {
+					rc.doneCh <- res
+					err := jobCtx.genReorgTimeoutErr()
+					failpoint.Return(err)
+				}
+			})
 			err := res.err
 			curTS := w.ddlCtx.reorgCtx.getOwnerTS()
 			if res.ownerTS != curTS {
