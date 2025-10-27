@@ -185,15 +185,15 @@ func TestTraceEventLoggingSwitch(t *testing.T) {
 	})
 
 	SetCategories(AllCategories)
-	_, _ = SetMode(ModeOff)
+	_, _ = SetMode(ModeBase)
 	FlightRecorder().Reset()
 	recorder := installRecorderSink(t, 8)
-	_, _ = SetMode(ModeOff)
+	_, _ = SetMode(ModeBase)
 	ctx := context.Background()
 
 	flightBefore := len(FlightRecorder().Snapshot())
 
-	require.Equal(t, ModeOff, CurrentMode())
+	require.Equal(t, ModeBase, CurrentMode())
 	TraceEvent(ctx, TxnLifecycle, "disabled-log", zap.Int("value", 1))
 	require.Equal(t, flightBefore+1, len(FlightRecorder().Snapshot()))
 	disabledLogged := len(recorder.Snapshot())
