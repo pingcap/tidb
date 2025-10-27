@@ -80,7 +80,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -1375,7 +1374,6 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
-// it is called (but skipped) when setting instance scope
 func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string) (err error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
@@ -1386,9 +1384,6 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 	}
 	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, false); err != nil {
 		return err
-	}
-	if sv.HasInstanceScope() { // skip for INSTANCE scope
-		return nil
 	}
 	if sv.GlobalConfigName != "" {
 		domain.GetDomain(s).NotifyGlobalConfigChange(sv.GlobalConfigName, variable.OnOffToTrueFalse(value))
@@ -1407,10 +1402,19 @@ func (s *session) SetGlobalSysVarOnly(ctx context.Context, name string, value st
 	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, true); err != nil {
 		return err
 	}
-	if sv.HasInstanceScope() { // skip for INSTANCE scope
-		return nil
-	}
 	return s.replaceGlobalVariablesTableValue(ctx, sv.Name, value, updateLocal)
+}
+
+// SetInstanceSysVar implements InstanceVarAccessor.SetInstanceSysVar interface.
+func (s *session) SetInstanceSysVar(ctx context.Context, name string, value string) (err error) {
+	sv := variable.GetSysVar(name)
+	if sv == nil {
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	if value, err = sv.Validate(s.sessionVars, value, vardef.ScopeInstance); err != nil {
+		return err
+	}
+	return sv.SetGlobalFromHook(ctx, s.sessionVars, value, false)
 }
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
@@ -2279,12 +2283,12 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 		if v.LockInfo != nil {
 			return errors.New("select lock hasn't been supported in stale read yet")
 		}
-		if !planner.IsReadOnly(stmtNode, vars) {
+		if !plannercore.IsReadOnly(stmtNode, vars) {
 			return errors.New(errMsg)
 		}
 		return nil
 	case *ast.ExplainStmt, *ast.DoStmt, *ast.ShowStmt, *ast.SetOprStmt, *ast.ExecuteStmt, *ast.SetOprSelectList:
-		if !planner.IsReadOnly(stmtNode, vars) {
+		if !plannercore.IsReadOnly(stmtNode, vars) {
 			return errors.New(errMsg)
 		}
 		return nil

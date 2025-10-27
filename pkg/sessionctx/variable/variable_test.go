@@ -618,8 +618,9 @@ func TestInstanceScope(t *testing.T) {
 	// be INSTANCE scoped or GLOBAL scoped, never *both* at the same time (at least for now).
 	// Otherwise the semantics are confusing to users for how precedence applies.
 
+	// Now Instance scope is a valid scope, and it can be used with GLOBAL scope at the same time.
 	for _, sv := range GetSysVars() {
-		require.False(t, sv.HasGlobalScope() && sv.HasInstanceScope(), "sysvar %s has both instance and global scope", sv.Name)
+		// But instance scope should not have Set/GetSession
 		if sv.HasInstanceScope() {
 			require.Nil(t, sv.GetSession)
 			require.Nil(t, sv.SetSession)
