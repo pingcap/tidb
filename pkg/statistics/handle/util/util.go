@@ -100,7 +100,6 @@ func CallWithSCtx(pool syssession.Pool, f func(sctx sessionctx.Context) error, f
 }
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
-// UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
 // It returns a restore function that can be invoked to restore the original session variables.
 func UpdateSCtxVarsForStats(sctx sessionctx.Context) (func(), error) {
 	// async merge global stats
