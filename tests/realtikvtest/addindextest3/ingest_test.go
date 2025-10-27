@@ -513,6 +513,7 @@ func TestAddIndexTempDirDataRemoved(t *testing.T) {
 		t.Skip("next-gen doesn't use local backend")
 	}
 	tempDir := t.TempDir()
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempDir = tempDir
 	})
