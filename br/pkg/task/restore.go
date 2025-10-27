@@ -1232,7 +1232,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	metaReader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
 	if err = client.LoadSchemaIfNeededAndInitClient(ctx, backupMeta, u, metaReader, cfg.LoadStats, nil, nil,
-		cfg.ExplicitFilter, isFullRestore(cmdName), cfg.WithSysTable); err != nil {
+		cfg.ExplicitFilter, isFullRestore(cmdName), len(cfg.KeyspaceName) > 0, cfg.WithSysTable); err != nil {
 		return errors.Trace(err)
 	}
 	if client.IsIncremental() || cfg.ExplicitFilter || !isFullRestore(cmdName) {

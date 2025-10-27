@@ -56,7 +56,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
 	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, true, nil, nil,
-		cfg.ExplicitFilter, isFullRestore(cmdName), false); err != nil {
+		cfg.ExplicitFilter, isFullRestore(cmdName), false, false); err != nil {
 		return errors.Trace(err)
 	}
 

@@ -153,6 +153,8 @@ type SnapFileImporter struct {
 	rawEndKey   []byte
 	rewriteMode RewriteMode
 
+	isNextGenRestore bool
+
 	cacheKey string
 	cond     *sync.Cond
 }
@@ -164,6 +166,8 @@ type SnapFileImporterOptions struct {
 	backend      *backuppb.StorageBackend
 	rewriteMode  RewriteMode
 	tikvStores   []*metapb.Store
+	// for next gen restore, only download/ingest at leader.
+	isNextGenRestore bool
 
 	concurrencyPerStore uint
 	createCallBacks     []func(*SnapFileImporter) error
@@ -178,6 +182,7 @@ func NewSnapFileImporterOptions(
 	rewriteMode RewriteMode,
 	tikvStores []*metapb.Store,
 	concurrencyPerStore uint,
+	isNextGenRestore bool,
 	createCallbacks []func(*SnapFileImporter) error,
 	closeCallbacks []func(*SnapFileImporter) error,
 ) *SnapFileImporterOptions {
@@ -188,6 +193,7 @@ func NewSnapFileImporterOptions(
 		backend:             backend,
 		rewriteMode:         rewriteMode,
 		tikvStores:          tikvStores,
+		isNextGenRestore:    isNextGenRestore,
 		concurrencyPerStore: concurrencyPerStore,
 		createCallBacks:     createCallbacks,
 		closeCallbacks:      closeCallbacks,
@@ -673,8 +679,15 @@ func (importer *SnapFileImporter) downloadSST(
 		}
 	}
 
+	downloadPeers := regionInfo.Region.GetPeers()
+	if importer.isNextGenRestore {
+		// for next gen restore, due to the leader will handle ingest cmd and convert sst file/upload to s3
+		// we only need download to leader peer, if ingest fail due to NotLeader error, need retry download SST outside.
+		downloadPeers = []*metapb.Peer{regionInfo.Leader}
+	}
+
 	eg, ectx := errgroup.WithContext(ctx)
-	for _, p := range regionInfo.Region.GetPeers() {
+	for _, p := range downloadPeers {
 		peer := p
 		eg.Go(func() error {
 			tokenCh := importer.downloadTokensMap.acquireTokenCh(peer.GetStoreId(), importer.concurrencyPerStore)
@@ -848,7 +861,7 @@ func (importer *SnapFileImporter) ingest(
 		switch {
 		case errPb == nil:
 			return nil
-		case errPb.NotLeader != nil:
+		case !importer.isNextGenRestore && errPb.NotLeader != nil:
 			// If error is `NotLeader`, update the region info and retry
 			var newInfo *split.RegionInfo
 			if newLeader := errPb.GetNotLeader().GetLeader(); newLeader != nil {
