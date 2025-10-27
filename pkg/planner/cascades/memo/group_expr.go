@@ -208,6 +208,11 @@ func (e *GroupExpression) InputsLen() int {
 	return len(e.Inputs)
 }
 
+// GetInputSchema returns the logical schema of the idx-th child group.
+func (e *GroupExpression) GetInputSchema(idx int) *expression.Schema {
+	return e.Inputs[idx].GetLogicalProperty().Schema
+}
+
 // DeriveLogicalProp derive the new group's logical property from a specific GE.
 // DeriveLogicalProp is not called with recursive, because we only examine and
 // init new group from bottom-up, so we can sure that this new group's children
@@ -256,26 +261,8 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	return nil
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan.<3rd> interface, it's used to override the wrapped logicalPlans.
-func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) (physicalPlans []base.PhysicalPlan, hintCanWork bool, err error) {
-	// since different logical operator may have different ExhaustPhysicalPlans before like:
-	// utilfuncp.ExhaustPhysicalPlans4LogicalCTE = exhaustPhysicalPlans4LogicalCTE
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalSort = exhaustPhysicalPlans4LogicalSort
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalTopN = exhaustPhysicalPlans4LogicalTopN
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalLock = exhaustPhysicalPlans4LogicalLock
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalJoin = exhaustPhysicalPlans4LogicalJoin
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalApply = exhaustPhysicalPlans4LogicalApply
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalLimit = exhaustPhysicalPlans4LogicalLimit
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalWindow = exhaustPhysicalPlans4LogicalWindow
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalExpand = exhaustPhysicalPlans4LogicalExpand
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll = exhaustPhysicalPlans4LogicalUnionAll
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalSequence = exhaustPhysicalPlans4LogicalSequence
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalSelection = exhaustPhysicalPlans4LogicalSelection
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow = exhaustPhysicalPlans4LogicalMaxOneRow
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan = exhaustPhysicalPlans4LogicalUnionScan
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalProjection = exhaustPhysicalPlans4LogicalProjection
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalAggregation = exhaustPhysicalPlans4LogicalAggregation
-	//	utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll = exhaustPhysicalPlans4LogicalPartitionUnionAll
+// ExhaustPhysicalPlans4GroupExpression enumerate the physical implementation for concrete ops.
+func ExhaustPhysicalPlans4GroupExpression(e *GroupExpression, prop *property.PhysicalProperty) (physicalPlans []base.PhysicalPlan, hintCanWork bool, err error) {
 	// once we call GE's ExhaustPhysicalPlans from group expression level, we should judge from here, and get the
 	// wrapped logical plan and then call their specific function pointer to handle logic inside. Why not we just
 	// remove GE's level implementation, and call wrapped logical plan's implementing? Cuz sometimes, the wrapped
@@ -300,17 +287,17 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	case *logicalop.LogicalLimit:
 		return physicalop.ExhaustPhysicalPlans4LogicalLimit(x, prop)
 	case *logicalop.LogicalWindow:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalWindow(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalWindow(x, prop)
 	case *logicalop.LogicalExpand:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalExpand(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalExpand(x, prop)
 	case *logicalop.LogicalUnionAll:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalUnionAll(x, prop)
 	case *logicalop.LogicalSequence:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalSequence(e, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalSequence(e, prop)
 	case *logicalop.LogicalSelection:
 		return physicalop.ExhaustPhysicalPlans4LogicalSelection(x, prop)
 	case *logicalop.LogicalMaxOneRow:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
 	case *logicalop.LogicalUnionScan:
 		return physicalop.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
 	case *logicalop.LogicalProjection:
@@ -318,7 +305,7 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	case *logicalop.LogicalAggregation:
 		return physicalop.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
 	case *logicalop.LogicalPartitionUnionAll:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
 	default:
 		panic("unreachable")
 	}
