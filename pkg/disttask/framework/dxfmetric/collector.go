@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -42,12 +43,12 @@ type Collector struct {
 }
 
 // NewCollector creates a new Collector.
-func NewCollector(serverID string) *Collector {
+func NewCollector() *Collector {
 	var constLabels prometheus.Labels
-	// we might run multiple TiDB servers in the same process in tests, to avoid
-	// register conflict, please use different ports for domains.
+	// we might create multiple domains in the same process in tests, we will
+	// add an uuid label to avoid conflict.
 	if intest.InTest {
-		constLabels = prometheus.Labels{"server_id": serverID}
+		constLabels = prometheus.Labels{"server_id": uuid.New().String()}
 	}
 	return &Collector{
 		tasks: metricscommon.NewDesc(

@@ -461,7 +461,7 @@ func (sm *Manager) collectLoop() {
 	sm.logger.Info("collect loop start")
 	ticker := time.NewTicker(defaultCollectMetricsInterval)
 	defer ticker.Stop()
-	sm.metricCollector = dxfmetric.NewCollector(sm.serverID)
+	sm.metricCollector = dxfmetric.NewCollector()
 	metrics.Register(sm.metricCollector)
 	defer func() {
 		metrics.Unregister(sm.metricCollector)
