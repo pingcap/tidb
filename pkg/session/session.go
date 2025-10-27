@@ -2411,7 +2411,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		if traceevent.IsEnabled(traceevent.StmtLifecycle) {
 			stmtCtx := se.sessionVars.StmtCtx
 			sqlDigest, _ := stmtCtx.SQLDigest()
-			normalized, planDigest := stmtCtx.GetPlanDigest()
+			_, planDigest := stmtCtx.GetPlanDigest()
 			var planDigestHex string
 			if planDigest != nil {
 				planDigestHex = hex.EncodeToString(planDigest.Bytes())
@@ -2426,8 +2426,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			if err != nil {
 				fields = append(fields, zap.Error(err))
 			}
-			// Avoid logging normalized plan in finish event (it's in plan.digest event)
-			_ = normalized
 			traceevent.TraceEvent(ctx, traceevent.StmtLifecycle, "stmt.finish", fields...)
 		}
 	}()
