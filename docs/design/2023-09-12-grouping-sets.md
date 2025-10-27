@@ -157,7 +157,7 @@ Multi Distinct Aggregation is not strong dependent on grouping sets and expand o
 
 From the explanation result above, we could find that, aggregation has been pull as long as 3 stages.
 
-- `HashAgg_24` is used to group underlying data with a unified group expressions (a,b), while actually for a specified data replica from level-projection expressions: like [a, null], group-by(a,b) is functioned as group(a), which is exactly what `count(distint a)` wants.
+- `HashAgg_24` is used to group underlying data with a unified group expressions (a,b), while actually for a specified data replica from level-projection expressions: like [a, null], group-by(a,b) is functioned as group(a), which is exactly what `count(distinct a)` wants.
 - `HashAgg_28` is used to firstly count(distinct x) partial result after data shuffled by [gid, a, b]
 - `HashAgg_26` is used to secondly collect all partial result as final result after distributing intensive computation task out and data are pass through to single node again.
 

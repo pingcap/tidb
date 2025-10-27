@@ -23,8 +23,29 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"go.uber.org/zap"
 )
+
+// IsReadOnly check whether the ast.Node is a read only statement.
+func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
+	return IsReadOnlyInternal(node, vars, true)
+}
+
+// IsReadOnlyInternal is that If checkGlobalVars is true, false will be returned when there are updates to global variables.
+func IsReadOnlyInternal(node ast.Node, vars *variable.SessionVars, checkGlobalVars bool) bool {
+	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
+		prepareStmt, err := GetPreparedStmt(execStmt, vars)
+		if err != nil {
+			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
+			return false
+		}
+		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt, checkGlobalVars)
+	}
+	return ast.IsReadOnly(node, checkGlobalVars)
+}
 
 // AggregateFuncExtractor visits Expr tree.
 // It collects AggregateFuncExpr from AST Node.
