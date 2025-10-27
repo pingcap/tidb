@@ -233,6 +233,7 @@ func NewSnapFileImporter(
 		metaClient:          options.metaClient,
 		backend:             options.backend,
 		importClient:        options.importClient,
+		isNextGenRestore:    options.isNextGenRestore,
 		downloadTokensMap:   newStoreTokenChannelMap(options.tikvStores, options.concurrencyPerStore),
 		ingestTokensMap:     newStoreTokenChannelMap(options.tikvStores, options.concurrencyPerStore),
 		rewriteMode:         options.rewriteMode,
