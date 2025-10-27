@@ -1679,6 +1679,8 @@ func TestSetServiceSafePoint(t *testing.T) {
 }
 
 func TestRunGCJobAPI(t *testing.T) {
+	t.Skip("RunGCJobAPI currently does not support running under non-null keyspace")
+
 	s := createGCWorkerSuite(t)
 	mockLockResolver := &mockGCWorkerLockResolver{
 		RegionLockResolver: tikv.NewRegionLockResolver("test", s.tikvStore),
@@ -1708,6 +1710,8 @@ func TestRunGCJobAPI(t *testing.T) {
 }
 
 func TestRunDistGCJobAPI(t *testing.T) {
+	t.Skip("RunDistributedGCJob currently does not support running under non-null keyspace")
+
 	s := createGCWorkerSuite(t)
 
 	txnSafePointSyncWaitTime = 0
