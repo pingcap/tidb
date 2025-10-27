@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -128,15 +127,15 @@ func (c *jobContext) initStepCtx() {
 	}
 }
 
-func (c *jobContext) cleanStepCtx(force bool) {
+func (c *jobContext) cleanStepCtx(cause error) {
 	// reorgTimeoutOccurred indicates whether the current reorg process
 	// was temporarily exit due to a timeout condition. When set to true,
 	// it prevents premature cleanup of step context.
-	if !force && c.reorgTimeoutOccurred {
+	if cause == context.Canceled && c.reorgTimeoutOccurred {
 		c.reorgTimeoutOccurred = false // reset flag
 		return
 	}
-	c.stepCtxCancel(context.Canceled)
+	c.stepCtxCancel(cause)
 	c.stepCtx = nil // unset stepCtx for the next step initialization
 }
 
@@ -857,9 +856,8 @@ func (w *worker) runOneJobStep(
 			// resources (workers, tickers, goroutines). Clean the step context
 			// explicitly to release those resources and avoid leaks before we
 			// continue rollback processing.
-			jobCtx.cleanStepCtx(true)
+			jobCtx.cleanStepCtx(dbterror.ErrCancelledDDLJob)
 		}
-		intest.Assert(jobCtx.stepCtx.Err() != nil)
 		// when rolling back, we use worker context to process.
 		jobCtx.stepCtx = w.workCtx
 	} else {
@@ -871,7 +869,7 @@ func (w *worker) runOneJobStep(
 			defer close(stopCheckingJobCancelled)
 
 			jobCtx.initStepCtx()
-			defer jobCtx.cleanStepCtx(false)
+			defer jobCtx.cleanStepCtx(context.Canceled)
 			w.wg.Run(func() {
 				ticker := time.NewTicker(2 * time.Second)
 				defer ticker.Stop()

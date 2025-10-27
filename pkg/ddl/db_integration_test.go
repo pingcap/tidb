@@ -3147,27 +3147,3 @@ func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 	tk.MustExec("create table t(id int, a json DEFAULT NULL, b varchar(2) DEFAULT NULL);")
 	tk.MustGetErrMsg("CREATE INDEX idx_test on t ((cast(a as char(2000) array)),b);", "[ddl:1071]Specified key was too long (2000 bytes); max key length is 1000 bytes")
 }
-
-func TestCancelAfterReorgTimeout(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-
-	tk.MustExec("create table t (a int, b int);")
-	tk.MustExec("insert into t values (1, 1);")
-
-	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if job.Type != model.ActionAddIndex {
-			return
-		}
-		jobID = job.ID
-	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeReorgJobDone", func() {
-		tk1 := testkit.NewTestKit(t, store)
-		tk1.MustExec("use test;")
-		tk1.MustExec(fmt.Sprintf("admin cancel ddl jobs %d;", jobID))
-	})
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRunReorgJobTimeout", `1*return(true)`)
-	tk.MustGetErrCode("alter table t add index idx(a);", errno.ErrCancelledDDLJob)
-}

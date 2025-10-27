@@ -15,12 +15,15 @@
 package addindextest_test
 
 import (
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -260,4 +263,57 @@ func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
 	checkFn("alter table t modify column c char(5), modify column a bigint, modify column b bigint;", "all columns")
 	checkFn("alter table t modify column a bigint, modify column c char(5), modify column b bigint;", "all columns")
 	checkFn("alter table t modify column a bigint, modify column b bigint;", "") // no lossy change
+}
+
+func TestCancelAfterReorgTimeout(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+
+	// Mock subtask executor encounter the same error continuously.
+	afterMeetErr := false
+	meetErr := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeReadIndexStepExecRunSubtask", func(err *error) {
+		*err = errors.New("mock err")
+		if !afterMeetErr {
+			meetErr <- struct{}{}
+			afterMeetErr = true
+		}
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs", "return(10)") // Speed up the test.
+	var jobID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionAddIndex {
+			return
+		}
+		jobID = job.ID
+	})
+	afterTimeout := false
+	timeout := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterDXFTaskSubmitted", func() {
+		<-meetErr
+		<-timeout
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test;")
+		tk1.MustExec(fmt.Sprintf("admin cancel ddl jobs %d;", jobID))
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunReorgJobTimeout", func() {
+		if !afterTimeout {
+			timeout <- struct{}{}
+			afterTimeout = true
+		}
+	})
+	tk.MustGetErrCode("alter table t add index idx(a);", errno.ErrCancelledDDLJob)
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery("select state from mysql.tidb_global_task;").Rows()
+		require.Greater(t, len(result), 0)
+		state := result[0][0].(string)
+		done := state == proto.TaskStateSucceed.String() ||
+			state == proto.TaskStateReverted.String() ||
+			state == proto.TaskStateFailed.String()
+		return done
+	}, 10*time.Second, 300*time.Millisecond)
 }
