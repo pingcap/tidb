@@ -132,12 +132,7 @@ func (rts *rowTableSegment) initTaggedBits() {
 }
 
 func newRowTableSegment() *rowTableSegment {
-	return &rowTableSegment{
-		rawData:         make([]byte, 0),
-		hashValues:      make([]uint64, 0),
-		rowStartOffset:  make([]uint64, 0),
-		validJoinKeyPos: make([]int, 0),
-	}
+	return &rowTableSegment{}
 }
 
 func (rts *rowTableSegment) rowCount() int64 {

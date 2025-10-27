@@ -735,6 +735,15 @@ func (c *Column) GetRaw(rowID int) []byte {
 	return data
 }
 
+// GetRawLength returns the length of the raw
+func (c *Column) GetRawLength(rowID int) int {
+	if c.isFixed() {
+		return len(c.elemBuf)
+	} else {
+		return int(c.offsets[rowID+1] - c.offsets[rowID])
+	}
+}
+
 // SetRaw sets the raw bytes for the rowIdx-th element.
 // NOTE: Two conditions must be satisfied before calling this function:
 // 1. The column should be stored with variable-length elements.

@@ -76,7 +76,7 @@ type rowTableBuilder struct {
 	hash      hash.Hash64
 	rehashBuf []byte
 
-	bitMap          []byte
+	nullMap         []byte
 	partitionNumber uint
 
 	helpers          []preAllocHelper
@@ -91,7 +91,7 @@ func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType
 		hasFilter:        hasFilter,
 		keepFilteredRows: keepFilteredRows,
 		partitionNumber:  partitionNumber,
-		bitMap:           make([]byte, nullMapLength),
+		nullMap:          make([]byte, nullMapLength),
 		helpers:          make([]preAllocHelper, partitionNumber),
 	}
 	return builder
@@ -284,12 +284,12 @@ func (b *rowTableBuilder) preAllocForSegmentsInSpill(segs []*rowTableSegment, ch
 		b.partIDForEachRow[i] = partID
 		b.helpers[partID].hashValuesBuf = append(b.helpers[partID].hashValuesBuf, newHashValue)
 		b.helpers[partID].totalRowNum++
-		b.helpers[partID].rawDataLen += int64(len(row.GetBytes(2)))
+		b.helpers[partID].rawDataLen += int64(row.GetRawLen(2))
 	}
 
 	totalMemUsage := int64(0)
 	for _, helper := range b.helpers {
-		totalMemUsage += helper.rawDataLen + (helper.totalRowNum+int64(len(helper.hashValuesBuf)))*serialization.Uint64Len + int64(len(helper.validJoinKeyPosBuf))*serialization.Int64Len
+		totalMemUsage += helper.rawDataLen + (helper.totalRowNum+int64(len(helper.hashValuesBuf)))*serialization.Uint64Len + int64(len(helper.validJoinKeyPosBuf))*serialization.IntLen
 	}
 
 	hashJoinCtx.hashTableContext.memoryTracker.Consume(totalMemUsage)
@@ -431,7 +431,7 @@ func fillRowData(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegme
 	return appendRowLength
 }
 
-func (b *rowTableBuilder) calculateFillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta *joinTableMeta, hasValidKey bool, logicalRowIndex int) int64 {
+func (b *rowTableBuilder) calculateSerializedKeyAndKeyLength(rowTableMeta *joinTableMeta, hasValidKey bool, logicalRowIndex int) int64 {
 	appendRowLength := int64(0)
 	if !rowTableMeta.isJoinKeysFixedLength {
 		appendRowLength += int64(sizeOfElementSize)
@@ -448,7 +448,7 @@ func (b *rowTableBuilder) calculateFillSerializedKeyAndKeyLengthIfNeeded(rowTabl
 	return appendRowLength
 }
 
-func calculateFillRowData(rowTableMeta *joinTableMeta, row *chunk.Row) int64 {
+func calculateRowDataLength(rowTableMeta *joinTableMeta, row *chunk.Row) int64 {
 	appendRowLength := int64(0)
 	for index, colIdx := range rowTableMeta.rowColumnsOrder {
 		if rowTableMeta.columnsSize[index] > 0 {
@@ -460,7 +460,7 @@ func calculateFillRowData(rowTableMeta *joinTableMeta, row *chunk.Row) int64 {
 	return appendRowLength
 }
 
-func calculateFillFake(rowLength int64) int64 {
+func calculateFakeLength(rowLength int64) int64 {
 	return (8 - rowLength%8) % 8
 }
 
@@ -488,15 +488,15 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 		}
 
 		rowLength := int64(fakeAddrPlaceHolderLen) + int64(rowTableMeta.nullMapLength)
-		rowLength += b.calculateFillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta, hasValidKey, logicalRowIndex)
-		rowLength += calculateFillRowData(rowTableMeta, &row)
-		rowLength += calculateFillFake(rowLength)
+		rowLength += b.calculateSerializedKeyAndKeyLength(rowTableMeta, hasValidKey, logicalRowIndex)
+		rowLength += calculateRowDataLength(rowTableMeta, &row)
+		rowLength += calculateFakeLength(rowLength)
 		b.helpers[partIdx].rawDataLen += rowLength
 	}
 
 	totalMemUsage := int64(0)
 	for i := range b.helpers {
-		totalMemUsage += b.helpers[i].rawDataLen + (b.helpers[i].totalRowNum+b.helpers[i].totalRowNum)*serialization.Uint64Len + b.helpers[i].validRowNum*serialization.Int64Len
+		totalMemUsage += b.helpers[i].rawDataLen + (b.helpers[i].totalRowNum+b.helpers[i].totalRowNum)*serialization.Uint64Len + b.helpers[i].validRowNum*serialization.IntLen
 	}
 
 	hashJoinCtx.hashTableContext.memoryTracker.Consume(totalMemUsage)
@@ -553,7 +553,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		// fill next_row_ptr field
 		rowLength += int64(fillNextRowPtr(seg))
 		// fill null_map
-		rowLength += int64(fillNullMap(rowTableMeta, &row, seg, b.bitMap))
+		rowLength += int64(fillNullMap(rowTableMeta, &row, seg, b.nullMap))
 		// fill serialized key and key length if needed
 		rowLength += b.fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta, hasValidKey, logicalRowIndex, seg)
 		// fill row data
