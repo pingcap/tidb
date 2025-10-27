@@ -487,9 +487,7 @@ func (s *propConstSolver) solve(keepJoinKey bool, conditions []Expression) []Exp
 
 func (s *propConstSolver) extractColumns(conditions []Expression) {
 	mp := GetUniqueIDToColumnMap()
-	defer func() {
-		PutUniqueIDToColumnMap(mp)
-	}()
+	defer PutUniqueIDToColumnMap(mp)
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
 		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
@@ -868,9 +866,7 @@ func (s *propOuterJoinConstSolver) solve(keepJoinKey bool, joinConds, filterCond
 
 func (s *propOuterJoinConstSolver) extractColumns(joinConds, filterConds []Expression) {
 	mp := GetUniqueIDToColumnMap()
-	defer func() {
-		PutUniqueIDToColumnMap(mp)
-	}()
+	defer PutUniqueIDToColumnMap(mp)
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
 		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
