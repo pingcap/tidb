@@ -315,7 +315,7 @@ func (*LogSink) Record(ctx context.Context, event Event) {
 	// Field order: [event fields] [category] [timestamp] [trace_id?]
 	fields := event.Fields
 	fields = append(fields, zap.String("category", getCategoryName(event.Category)))
-	fields = append(fields, zap.Time("event_ts", event.Timestamp))
+	fields = append(fields, zap.Int64("event_ts", event.Timestamp.UnixMicro()))
 	if len(event.TraceID) > 0 {
 		fields = append(fields, zap.String("trace_id", hex.EncodeToString(event.TraceID)))
 	}
@@ -477,7 +477,7 @@ func DumpFlightRecorderToLogger(reason string) {
 	for _, ev := range events {
 		fields := make([]zap.Field, 0, len(ev.Fields)+4)
 		fields = append(fields, zap.String("category", getCategoryName(ev.Category)))
-		fields = append(fields, zap.Time("event_ts", ev.Timestamp))
+		fields = append(fields, zap.Int64("event_ts", ev.Timestamp.UnixMicro()))
 		if len(ev.TraceID) > 0 {
 			fields = append(fields, zap.String("trace_id", hex.EncodeToString(ev.TraceID)))
 		}
