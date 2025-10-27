@@ -45,7 +45,6 @@ func init() {
 
 var sampleLoggerFactory = logutil.SampleLoggerFactory(time.Minute, 1, zap.String(logutil.LogFieldCategory, "slow log"))
 
-// PrepareSlowLogItemsForRules builds a SlowQueryLogItems containing only the fields referenced by current session's SlowLogRules.
 func mergeConditionFields(dst, src map[string]struct{}) {
 	for k := range src {
 		dst[k] = struct{}{}
