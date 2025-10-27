@@ -1172,7 +1172,8 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 
 // outOfRangeFullNDV estimates the number of qualified rows when the topN represents all NDV values
 // and the searched value does not appear in the topN
-func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increaseFactor float64, modifyCount int64) (result float64) {
+func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increaseFactor float64,
+	modifyCount int64, emptyHist bool) (result float64) {
 	// If the table hasn't been modified, it's safe to return 0.
 	if modifyCount == 0 {
 		return 0
@@ -1190,7 +1191,8 @@ func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increa
 		newRows = min(notNullCount, realtimeRowCount)
 	}
 	// if no NDV - derive an NDV using sqrt
-	if ndv <= 0 {
+	// if the Hist is empty and the value can't hit any values in TopN - derive an NDV using sqrt
+	if ndv <= 0 || emptyHist {
 		ndv = math.Sqrt(max(notNullCount, realtimeRowCount))
 	} else {
 		// We need to increase the ndv by increaseFactor because the estimate will be increased by
