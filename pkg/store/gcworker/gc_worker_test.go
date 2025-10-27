@@ -1679,7 +1679,9 @@ func TestSetServiceSafePoint(t *testing.T) {
 }
 
 func TestRunGCJobAPI(t *testing.T) {
-	t.Skip("RunGCJobAPI currently does not support running under non-null keyspace")
+	if kerneltype.IsNextGen() {
+		t.Skip("RunGCJobAPI currently does not support running under non-null keyspace")
+	}
 
 	s := createGCWorkerSuite(t)
 	mockLockResolver := &mockGCWorkerLockResolver{
@@ -1710,7 +1712,9 @@ func TestRunGCJobAPI(t *testing.T) {
 }
 
 func TestRunDistGCJobAPI(t *testing.T) {
-	t.Skip("RunDistributedGCJob currently does not support running under non-null keyspace")
+	if kerneltype.IsNextGen() {
+		t.Skip("RunDistributedGCJob currently does not support running under non-null keyspace")
+	}
 
 	s := createGCWorkerSuite(t)
 
