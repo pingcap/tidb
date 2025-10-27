@@ -469,13 +469,14 @@ func (s *propConstSolver) solve(keepJoinKey bool, conditions []Expression) []Exp
 		joinKeys = cloneJoinKeys(conditions, s.schema1, s.schema2)
 	}
 	s.conditions = slices.Grow(s.conditions, len(conditions))
-	mp := make(map[int64]*Column, 4)
+	mp := GetUniqueIDToColumnMap()
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
 		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
 		s.insertCols(mp)
 		clear(mp)
 	}
+	PutUniqueIDToColumnMap(mp)
 	if len(s.columns) > MaxPropagateColsCnt {
 		logutil.BgLogger().Warn("too many columns in a single CNF",
 			zap.Int("numCols", len(s.columns)),
