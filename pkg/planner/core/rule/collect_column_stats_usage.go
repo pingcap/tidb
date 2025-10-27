@@ -169,28 +169,42 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 	// We should use `PushedDownConds` here. `AllConds` is used for partition pruning, which doesn't need stats.
 	c.addPredicateColumnsFromExpressions(ds.PushedDownConds, true)
 
-	// Store WHERE columns directly in the DataSource
-	// PushedDownConds contains WHERE clause conditions and LeftConditions/RightConditions from joins
-	whereCols := expression.ExtractColumnsFromExpressions(ds.PushedDownConds, nil)
-	whereColSet := make(map[int64]struct{})
-	for _, col := range whereCols {
-		if ds.Schema().Contains(col) {
-			if _, exists := whereColSet[col.UniqueID]; !exists {
-				ds.WhereColumns = append(ds.WhereColumns, col)
-				whereColSet[col.UniqueID] = struct{}{}
-			}
-		}
-	}
-
-	// Store join columns in the DataSource if they belong to this DataSource
+	// Store join columns in the DataSource first if they belong to this DataSource
 	// Join columns come from EqualConditions and OtherConditions of joins
+	joinColSet := make(map[int64]struct{})
 	if len(c.joinColumns) > 0 {
-		joinColSet := make(map[int64]struct{})
 		for _, joinCol := range c.joinColumns {
 			if ds.Schema().Contains(joinCol) {
 				if _, exists := joinColSet[joinCol.UniqueID]; !exists {
 					ds.JoinColumns = append(ds.JoinColumns, joinCol)
 					joinColSet[joinCol.UniqueID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	// Store WHERE columns directly in the DataSource
+	// PushedDownConds contains WHERE clause conditions and join conditions that have been pushed down
+	// We need to extract only local WHERE conditions (those that reference only this table's columns)
+	// A column can appear in both local WHERE and join predicates - e.g., "WHERE t1.a = t2.a AND t1.a = 5"
+	whereColSet := make(map[int64]struct{})
+	for _, cond := range ds.PushedDownConds {
+		// Extract all columns from this condition
+		condCols := expression.ExtractColumns(cond)
+		// Check if all columns in this condition belong to this DataSource's schema
+		allLocal := true
+		for _, col := range condCols {
+			if !ds.Schema().Contains(col) {
+				allLocal = false
+				break
+			}
+		}
+		// Only extract columns from local conditions for WhereColumns
+		if allLocal {
+			for _, col := range condCols {
+				if _, exists := whereColSet[col.UniqueID]; !exists {
+					ds.WhereColumns = append(ds.WhereColumns, col)
+					whereColSet[col.UniqueID] = struct{}{}
 				}
 			}
 		}

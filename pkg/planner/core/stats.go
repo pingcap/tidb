@@ -759,10 +759,18 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	totalJoinColumns := 0
 
 	// Build ID-based lookup maps for column matching
+	joinColIDs := make(map[int64]struct{}, len(joinColumns))
+	for _, col := range joinColumns {
+		joinColIDs[col.ID] = struct{}{}
+		totalJoinColumns++
+	}
 	whereColIDs := make(map[int64]struct{}, len(whereColumns))
 	for _, col := range whereColumns {
-		whereColIDs[col.ID] = struct{}{}
-		totalWhereColumns++
+		// Skip if already in joinColIDs to avoid double-counting
+		if _, exists := joinColIDs[col.ID]; !exists {
+			whereColIDs[col.ID] = struct{}{}
+			totalWhereColumns++
+		}
 	}
 	orderingColIDs := make(map[int64]struct{}, len(orderingColumns))
 	for _, col := range orderingColumns {
@@ -772,18 +780,13 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			totalOrderingColumns++
 		}
 	}
-	joinColIDs := make(map[int64]struct{}, len(joinColumns))
-	for _, col := range joinColumns {
-		// Skip if already in whereColIDs to avoid double-counting
-		if _, exists := whereColIDs[col.ID]; !exists {
-			joinColIDs[col.ID] = struct{}{}
-			totalJoinColumns++
-		}
-	}
 	// Calculate total coverage as a single table index
 	totalLocalRequiredCols := totalWhereColumns + totalOrderingColumns
 	// Calculate total coverage as a join table index
-	totalJoinRequiredCols := totalJoinColumns + totalWhereColumns
+	totalJoinRequiredCols := totalJoinColumns
+	if totalJoinRequiredCols > 0 {
+		totalJoinRequiredCols += totalWhereColumns
+	}
 	maxConsecutiveWhere, maxConsecutiveJoin := 0, 0
 
 	// maxIndexes allows a minimum number of indexes to be kept regardless of threshold.
@@ -797,7 +800,7 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	preferredIndexes := make([]indexWithScore, 0, maxIndexes)       // "Next" best indexes with preferable coveraage
 	tablePaths := make([]*util.AccessPath, 0, 1)                    // Usually just one table path
 
-	lenPerfectCoveringIndexes := 0
+	lenPerfectCoveringIndexes, lenPreferredIndexes := 0, 0
 	hasSingleScan := false
 	for _, path := range paths {
 		if path.IsTablePath() {
@@ -868,9 +871,7 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			}
 			// If we have enough perfect covering indexes, and we've reached here then
 			// the index columns are not a match. Don't continue with this index.
-			if (i == 0 && lenPerfectCoveringIndexes >= minToKeep) ||
-				((lenPerfectCoveringIndexes > maxToKeep || hasSingleScan) &&
-					i < maxConsecutiveWhere && i < maxConsecutiveJoin) {
+			if lenPerfectCoveringIndexes >= minToKeep && (i == 0 || hasSingleScan) && i < max(maxConsecutiveWhere, maxConsecutiveJoin) {
 				skipThisIndex = true
 				break
 			}
@@ -883,14 +884,19 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		totalLocalCovered := coveredWhereCount + coveredOrderingCount
 		totalJoinCovered := coveredWhereCount + coveredJoinCount
 		totalConsecutive := consecutiveWhereCount + consecutiveOrderingCount + consecutiveJoinCount
+		maxListLength := max(lenPerfectCoveringIndexes, lenPreferredIndexes)
 
 		if totalLocalCovered >= totalLocalRequiredCols && totalJoinCovered >= totalJoinRequiredCols {
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
+		if maxListLength >= minToKeep && hasSingleScan && !path.IsSingleScan &&
+			consecutiveWhereCount <= maxConsecutiveWhere && consecutiveJoinCount <= maxConsecutiveJoin {
+			continue
+		}
 		// Perfect covering: covers ALL required columns AND has consecutive matches from start
 		if ((totalLocalCovered == totalLocalRequiredCols && totalLocalRequiredCols > 0) ||
 			(totalJoinCovered == totalJoinRequiredCols && totalJoinRequiredCols > 0)) &&
-			totalConsecutive > 0 {
+			(totalConsecutive > 0 || path.IsSingleScan) {
 			perfectCoveringIndexes = append(perfectCoveringIndexes, indexWithScore{
 				path:                     path,
 				whereCount:               coveredWhereCount,
@@ -912,11 +918,15 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		// Preferred: has meaningful coverage
 		hasGoodCoverage := false
 
-		if lenPerfectCoveringIndexes >= minToKeep {
-			if consecutiveWhereCount > maxConsecutiveWhere || consecutiveJoinCount > maxConsecutiveJoin {
+		if maxListLength >= maxToKeep {
+			if (consecutiveWhereCount > maxConsecutiveWhere && maxConsecutiveWhere > 0) || (consecutiveJoinCount > maxConsecutiveJoin && maxConsecutiveJoin > 0) {
 				hasGoodCoverage = true
 			}
-			if consecutiveWhereCount == totalWhereColumns && totalWhereColumns > 1 {
+		} else if maxListLength >= minToKeep {
+			if (consecutiveWhereCount >= maxConsecutiveWhere && maxConsecutiveWhere > 0) || (consecutiveJoinCount >= maxConsecutiveJoin && maxConsecutiveJoin > 0) {
+				hasGoodCoverage = true
+			}
+			if consecutiveWhereCount >= totalWhereColumns && totalWhereColumns > 1 {
 				hasGoodCoverage = true
 			}
 			// consecutiveJoinCount can be greater than totalJoinColumns because
@@ -925,14 +935,17 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			if consecutiveJoinCount >= totalJoinColumns && totalJoinColumns > 0 {
 				hasGoodCoverage = true
 			}
-			if consecutiveOrderingCount == totalOrderingColumns && totalOrderingColumns > 0 {
+			if consecutiveOrderingCount >= totalOrderingColumns && totalOrderingColumns > 0 {
 				hasGoodCoverage = true
 			}
 		} else {
 			if totalConsecutive > 0 {
-				hasGoodCoverage = true
+				if lenPreferredIndexes < minToKeep ||
+					(totalLocalCovered > 1 || totalJoinCovered > 1) {
+					hasGoodCoverage = true
+				}
 			}
-			if coveredWhereCount == totalWhereColumns && totalWhereColumns > 0 {
+			if coveredWhereCount >= totalWhereColumns && totalWhereColumns > 0 {
 				hasGoodCoverage = true
 			}
 		}
@@ -947,6 +960,7 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 				consecutiveWhereCount:    consecutiveWhereCount,
 				consecutiveOrderingCount: consecutiveOrderingCount,
 			})
+			lenPreferredIndexes = len(preferredIndexes)
 		}
 	}
 
@@ -958,6 +972,7 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 
 	// Only sort perfect covering indexes if we have more than we can use
 	// If we'll keep all of them, no need to sort
+	maxScoreToKeep := 0
 	if len(perfectCoveringIndexes) > maxToKeep {
 		// Score perfectCoveringIndexes the same way as preferred, but include isSingleScan bonus
 		slices.SortFunc(perfectCoveringIndexes, func(a, b indexWithScore) int {
@@ -969,6 +984,8 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			// Tie-breaker: shorter index first
 			return len(a.path.Index.Columns) - len(b.path.Index.Columns)
 		})
+		// Track the max score from the best perfect covering index
+		maxScoreToKeep = calculateScoreFromCoverage(perfectCoveringIndexes[0], totalWhereColumns, totalJoinColumns, totalOrderingColumns, perfectCoveringIndexes[0].path.IsSingleScan)
 	}
 
 	// Add perfect covering indexes (prefer these over preferred)
@@ -978,12 +995,30 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		toAdd := min(remaining, len(perfectCoveringIndexes))
 		for _, idxWithScore := range perfectCoveringIndexes[:toAdd] {
 			result = append(result, idxWithScore.path)
+			// Track max score if not already set
+			if maxScoreToKeep == 0 {
+				score := calculateScoreFromCoverage(idxWithScore, totalWhereColumns, totalJoinColumns, totalOrderingColumns, idxWithScore.path.IsSingleScan)
+				maxScoreToKeep = max(maxScoreToKeep, score)
+			}
 		}
 		remaining -= toAdd
 	}
 
 	// Add preferred indexes if we still have room (extract paths from indexWithScore)
 	if remaining > 0 && len(preferredIndexes) > 0 {
+		// Filter out indexes that are 50% below the max score before sorting
+		minScoreThreshold := maxScoreToKeep / 2
+		if maxScoreToKeep > 0 {
+			filtered := make([]indexWithScore, 0, len(preferredIndexes))
+			for _, idxWithScore := range preferredIndexes {
+				score := calculateScoreFromCoverage(idxWithScore, totalWhereColumns, totalJoinColumns, totalOrderingColumns, idxWithScore.path.IsSingleScan)
+				if score >= minScoreThreshold {
+					filtered = append(filtered, idxWithScore)
+				}
+			}
+			preferredIndexes = filtered
+		}
+
 		// Only sort if we have more preferred indexes than remaining slots
 		// If we'll keep all of them, no need to sort
 		if len(preferredIndexes) > remaining {
@@ -999,6 +1034,7 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 				return len(a.path.Index.Columns) - len(b.path.Index.Columns)
 			})
 		}
+
 		toAdd := min(remaining, len(preferredIndexes))
 		for _, idxWithScore := range preferredIndexes[:toAdd] {
 			result = append(result, idxWithScore.path)

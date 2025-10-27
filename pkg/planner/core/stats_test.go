@@ -162,10 +162,10 @@ func TestIndexChoiceFromPruning(t *testing.T) {
 		"select * from t1 where a in (1,2,3) and f = 5",
 		"select * from t1 where a = 9 and f in (1,2)",
 		"select d from t1 where a = 1 and (b = 5 or b = 7 or b in (1,2,3))",
-		"select e from t1 where a = 1 and(b = 1 and f = 1) or (b = 3 and f = 3) order by e",
+		"select e from t1 where (a = 1 and b = 1 and f = 1) or (a = 1 and b = 3 and f = 3)",
 		"select first_value(c) over(order by b) from t1 where a = 1 and (b = 5 or b = 7 or b in (1,2,3))",
 		"select min(a) from t1",
-		"select a, d, c, b from t1 where a = 1",
+		"select a, d, c, b from t1 where a = 1 and d > 5",
 		"select t2.* from t2 left join t1 on t1.a = t2.a where t2.b = 1",
 		"select t1.e from t2 left join t1 on t1.b = t2.b and t1.f = t2.f where t2.b = 1",
 	}
