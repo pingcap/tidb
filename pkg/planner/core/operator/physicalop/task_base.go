@@ -121,7 +121,7 @@ func (t *RootTask) GetPlan() base.PhysicalPlan {
 	return t.p
 }
 
-// SetPlan sets the root task' plan.
+// SetPlan sets the root task's plan.
 func (t *RootTask) SetPlan(p base.PhysicalPlan) {
 	t.p = p
 }
