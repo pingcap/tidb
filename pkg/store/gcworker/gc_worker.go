@@ -1233,7 +1233,8 @@ func (w *GCWorker) resolveLocks(
 
 	runner := rangetask.NewRangeTaskRunner(runnerName, w.tikvStore, concurrency, handler)
 
-	isNullKeyspace := w.store.GetCodec().GetKeyspace() == nil
+	// w.store may be nil in some test environments.
+	isNullKeyspace := w.store == nil || w.store.GetCodec().GetKeyspace() == nil
 	var keyspaceBatch []*keyspacepb.KeyspaceMeta
 
 	if isNullKeyspace {
