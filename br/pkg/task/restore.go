@@ -1230,9 +1230,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
+	isNextGenRestore := len(cfg.KeyspaceName) > 0
+	if isNextGenRestore {
+		log.Info("start restore to next-gen cluster")
+	}
+
 	metaReader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
 	if err = client.LoadSchemaIfNeededAndInitClient(ctx, backupMeta, u, metaReader, cfg.LoadStats, nil, nil,
-		cfg.ExplicitFilter, isFullRestore(cmdName), len(cfg.KeyspaceName) > 0, cfg.WithSysTable); err != nil {
+		cfg.ExplicitFilter, isFullRestore(cmdName), isNextGenRestore, cfg.WithSysTable); err != nil {
 		return errors.Trace(err)
 	}
 	if client.IsIncremental() || cfg.ExplicitFilter || !isFullRestore(cmdName) {
@@ -1520,7 +1525,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	IsNextGenRestore := len(cfg.KeyspaceName) > 0
 	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder, IsNextGenRestore)
 	if err != nil {
 		return errors.Trace(err)
