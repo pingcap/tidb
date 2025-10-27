@@ -623,20 +623,18 @@ func TestMultiSchemaModifyColumnWithSkipReorg(t *testing.T) {
 
 func TestModifyColumnWithSkipReorg(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+
+	// INT -> MEDIUMINT
 	tk.MustExec("create table t(a int, b int, index i1(a), index i2(b), index i3(a, b))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
-
 	oldMeta := external.GetTableByName(t, tk, "test", "t").Meta()
 
 	// insert should fail by new column type check
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDoModifyColumnSkipReorgCheck", func() {
 		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec("use test")
-		_, err := tk2.Exec("insert into t values (2147483648, 2147483648)")
-		require.Error(t, err)
+		tk2.MustExecToErr("insert into test.t values (2147483648, 2147483648)")
 	})
 	tk.MustExec("alter table t modify column b mediumint not null")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterDoModifyColumnSkipReorgCheck")
@@ -650,11 +648,39 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	// insert should succeed before adding flag, and this will make modify column fail.
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDoModifyColumnSkipReorgCheck", func() {
 		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec("use test")
-		_, err := tk2.Exec("insert into t values (512, 512)")
-		require.NoError(t, err)
+		tk2.MustExec("insert into test.t values (512, 512)")
 	})
 	tk.MustExecToErr("alter table t modify column b tinyint not null")
+
+	// VARCHAR -> CHAR
+	var gotTp byte
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+		gotTp = tp
+	})
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10))")
+	tk.MustExec("insert into t values ('a '), ('b ')")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/modifyColumnTypeWithData", func(*model.Job, model.JobArgs) {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("insert into t values ('a ')")
+	})
+	tk.MustExec("alter table t modify column a char(5)")
+	tk.MustExec("admin check table t")
+	require.Equal(t, ddl.ModifyTypeReorg, gotTp)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(10))")
+	tk.MustExec("insert into t values ('a'), ('b')")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDoModifyColumnSkipReorgCheck", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExecToErr("insert into t values ('a ')")
+	})
+	tk.MustExec("alter table t modify column a char(5)")
+	tk.MustExec("admin check table t")
+	require.Equal(t, ddl.ModifyTypeNoReorgWithCheck, gotTp)
 }
 
 func TestGetModifyColumnType(t *testing.T) {
@@ -856,32 +882,6 @@ func TestGetModifyColumnType(t *testing.T) {
 	for _, tc := range tcsNonStrict {
 		runSingle(t, tc)
 	}
-}
-
-func TestModifyColumnVarcharToChar(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-
-	tk.MustExec("create table t (a varchar(10) collate utf8mb4_general_ci, index i1(a))")
-	tk.MustExec("insert into t values ('a '), ('b ')")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/modifyColumnTypeWithData", func(*model.Job, model.JobArgs) {
-		tk2.MustExec("insert into t values ('a ')")
-	})
-	tk.MustExec("alter table t modify column a char(5) collate utf8mb4_general_ci")
-	tk.MustExec("admin check table t")
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a varchar(10) collate utf8mb4_general_ci, index i1(a))")
-	tk.MustExec("insert into t values ('a'), ('b')")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/modifyColumnTypeWithData", func(*model.Job, model.JobArgs) {
-		tk2.MustExecToErr("insert into t values ('a ')")
-	})
-	tk.MustExec("alter table t modify column a char(5) collate utf8mb4_general_ci")
-	tk.MustExec("admin check table t")
 }
 
 func TestMultiSchemaModifyColumnWithIndex(t *testing.T) {
