@@ -290,7 +290,14 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	case *logicalop.LogicalSort:
 		return physicalop.ExhaustPhysicalPlans4LogicalSort(x, prop)
 	case *logicalop.LogicalTopN:
-		return physicalop.ExhaustPhysicalPlans4LogicalTopN(x, prop)
+		opsSlice, hintCanWork, err := physicalop.ExhaustPhysicalPlans4LogicalTopN(x, prop)
+		if err != nil {
+			return nil, hintCanWork, err
+		}
+		for _, ops := range opsSlice {
+			physicalPlans = append(physicalPlans, ops...)
+		}
+		return physicalPlans, hintCanWork, nil
 	case *logicalop.LogicalLock:
 		return physicalop.ExhaustPhysicalPlans4LogicalLock(x, prop)
 	case *logicalop.LogicalJoin:

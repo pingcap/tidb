@@ -84,18 +84,48 @@ type enumerateState struct {
 	limitCopExist bool
 }
 
-// @first: indicates the best task returned.
-// @second: indicates the plan cnt in this subtree.
-// @third: indicates whether this plan apply the hint.
-// @fourth: indicates error
 func enumeratePhysicalPlans4Task(
+	super base.LogicalPlan,
+	physicalPlans [][]base.PhysicalPlan,
+	prop *property.PhysicalProperty,
+	addEnforcer bool,
+) (base.Task, bool, error) {
+	if len(physicalPlans) == 0 {
+		return base.InvalidTask, false, nil
+	}
+
+	bestTask := base.InvalidTask
+	var hintCanWork bool
+	for _, ops := range physicalPlans {
+		if len(ops) == 0 {
+			continue
+		}
+		curTask, curHint, curErr := enumeratePhysicalPlans4TaskHelper(super, ops, prop, addEnforcer)
+		if curErr != nil {
+			return nil, false, curErr
+		}
+		if bestTask.Invalid() {
+			bestTask = curTask
+			hintCanWork = curHint
+		} else if curIsBetter, err := compareTaskCost(curTask, bestTask); err != nil {
+			return nil, false, err
+		} else if curIsBetter {
+			bestTask = curTask
+			hintCanWork = curHint
+		}
+	}
+	return bestTask, hintCanWork, nil
+}
+
+func enumeratePhysicalPlans4TaskHelper(
 	super base.LogicalPlan,
 	physicalPlans []base.PhysicalPlan,
 	prop *property.PhysicalProperty,
 	addEnforcer bool,
 ) (base.Task, bool, error) {
-	var bestTask, preferTask = base.InvalidTask, base.InvalidTask
 	var err error
+	var bestTask, preferTask = base.InvalidTask, base.InvalidTask
+	initState := &enumerateState{}
 	_, baseLP, childLen, iteration, iterObj := prepareIterationDownElems(super)
 	childTasks := make([]base.Task, 0, childLen)
 	var fd *funcdep.FDSet
@@ -106,10 +136,7 @@ func enumeratePhysicalPlans4Task(
 			fd = logicalPlan.ExtractFD()
 		}
 	}
-	if len(physicalPlans) == 0 {
-		return base.InvalidTask, false, nil
-	}
-	initState := &enumerateState{}
+
 	for _, pp := range physicalPlans {
 		childTasks, err = iteration(iterObj, pp, childTasks, prop)
 		if err != nil {
@@ -149,7 +176,9 @@ func enumeratePhysicalPlans4Task(
 		}
 
 		// Get the most efficient one only by low-cost priority among all valid plans.
-		if curIsBetter, err := compareTaskCost(curTask, bestTask); err != nil {
+		if bestTask.Invalid() {
+			bestTask = curTask
+		} else if curIsBetter, err := compareTaskCost(curTask, bestTask); err != nil {
 			return nil, false, err
 		} else if curIsBetter {
 			bestTask = curTask
@@ -157,7 +186,9 @@ func enumeratePhysicalPlans4Task(
 
 		if hintApplicable {
 			// curTask is a preferred physic plan, compare cost with previous preferred one and cache the low-cost one.
-			if curIsBetter, err := compareTaskCost(curTask, preferTask); err != nil {
+			if preferTask.Invalid() {
+				preferTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, preferTask); err != nil {
 				return nil, false, err
 			} else if curIsBetter {
 				preferTask = curTask
@@ -166,8 +197,10 @@ func enumeratePhysicalPlans4Task(
 	}
 	// there is a valid preferred low-cost physical one, return it.
 	if !preferTask.Invalid() {
+		// gjt todo: what about limit meet threshold?
 		return preferTask, true, nil
 	}
+
 	// if there is no valid preferred low-cost physical one, return the normal low one.
 	// if the hint is specified without any valid plan, we should also record the warnings.
 	if !bestTask.Invalid() {
@@ -175,7 +208,6 @@ func enumeratePhysicalPlans4Task(
 			bestTask.AppendWarning(warn)
 		}
 	}
-	// return the normal lowest-cost physical one.
 	return bestTask, false, nil
 }
 
@@ -567,7 +599,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 	// for childProp := prop.CloneEssentialFields(), we do not clone indexJoinProp childProp for by default.
 	// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	newProp.IndexJoinProp = prop.IndexJoinProp
-	var plansFitsProp, plansNeedEnforce []base.PhysicalPlan
+	var plansFitsProp, plansNeedEnforce [][]base.PhysicalPlan
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
 	// so we try to get the task without the enforced sort first.

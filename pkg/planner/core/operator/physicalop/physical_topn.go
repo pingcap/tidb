@@ -44,9 +44,9 @@ type PhysicalTopN struct {
 }
 
 // ExhaustPhysicalPlans4LogicalTopN exhausts PhysicalTopN plans from LogicalTopN.
-func ExhaustPhysicalPlans4LogicalTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func ExhaustPhysicalPlans4LogicalTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) ([][]base.PhysicalPlan, bool, error) {
 	if MatchItems(prop, lt.ByItems) {
-		return append(getPhysTopN(lt, prop), getPhysLimits(lt, prop)...), true, nil
+		return [][]base.PhysicalPlan{getPhysTopN(lt, prop), getPhysLimits(lt, prop)}, true, nil
 	}
 	return nil, true, nil
 }

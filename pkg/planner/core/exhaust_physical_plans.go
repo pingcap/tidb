@@ -51,49 +51,63 @@ import (
 // It will return:
 // 1. All possible plans that can match the required property.
 // 2. Whether the SQL hint can work. Return true if there is no hint.
-func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) ([][]base.PhysicalPlan, bool, error) {
+	var ops []base.PhysicalPlan
+	var hintCanWork bool
+	var err error
+
 	switch x := lp.(type) {
 	case *logicalop.LogicalCTE:
-		return physicalop.ExhaustPhysicalPlans4LogicalCTE(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalCTE(x, prop)
 	case *logicalop.LogicalSort:
-		return physicalop.ExhaustPhysicalPlans4LogicalSort(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalSort(x, prop)
 	case *logicalop.LogicalTopN:
+		// NOTE: ExhaustPhysicalPlans4LogicalTopN return PhysicalLimit and PhysicalTopN in different slice
+		// to make it possible for always prefer limit pushdown instead of limit not pushdown.
 		return physicalop.ExhaustPhysicalPlans4LogicalTopN(x, prop)
 	case *logicalop.LogicalLock:
-		return physicalop.ExhaustPhysicalPlans4LogicalLock(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalLock(x, prop)
 	case *logicalop.LogicalJoin:
-		return exhaustPhysicalPlans4LogicalJoin(x, prop)
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalJoin(x, prop)
 	case *logicalop.LogicalApply:
-		return exhaustPhysicalPlans4LogicalApply(x, prop)
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalApply(x, prop)
 	case *logicalop.LogicalLimit:
-		return physicalop.ExhaustPhysicalPlans4LogicalLimit(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalLimit(x, prop)
 	case *logicalop.LogicalWindow:
-		return exhaustPhysicalPlans4LogicalWindow(x, prop)
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalWindow(x, prop)
 	case *logicalop.LogicalExpand:
-		return exhaustPhysicalPlans4LogicalExpand(x, prop)
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalExpand(x, prop)
 	case *logicalop.LogicalUnionAll:
-		return exhaustPhysicalPlans4LogicalUnionAll(x, prop)
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalUnionAll(x, prop)
 	case *logicalop.LogicalSequence:
-		return exhaustPhysicalPlans4LogicalSequence(x, prop)
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalSequence(x, prop)
 	case *logicalop.LogicalSelection:
-		return physicalop.ExhaustPhysicalPlans4LogicalSelection(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalSelection(x, prop)
 	case *logicalop.LogicalMaxOneRow:
-		return exhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
 	case *logicalop.LogicalUnionScan:
-		return physicalop.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
 	case *logicalop.LogicalProjection:
-		return physicalop.ExhaustPhysicalPlans4LogicalProjection(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalProjection(x, prop)
 	case *logicalop.LogicalAggregation:
-		return physicalop.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
 	case *logicalop.LogicalPartitionUnionAll:
-		return exhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
 	case *memo.GroupExpression:
-		return x.ExhaustPhysicalPlans(prop)
+		ops, hintCanWork, err = x.ExhaustPhysicalPlans(prop)
 	case *mockLogicalPlan4Test:
-		return x.ExhaustPhysicalPlans(prop)
+		ops, hintCanWork, err = x.ExhaustPhysicalPlans(prop)
 	default:
 		panic("unreachable")
 	}
+
+	if err != nil {
+		return nil, hintCanWork, err
+	}
+	if len(ops) > 0 {
+		return [][]base.PhysicalPlan{ops}, hintCanWork, nil
+	}
+	return nil, hintCanWork, nil
 }
 
 func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
@@ -1885,10 +1899,12 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
 }
 
-func enumerationContainIndexJoin(candidates []base.PhysicalPlan) bool {
-	return slices.ContainsFunc(candidates, func(candidate base.PhysicalPlan) bool {
-		_, _, ok := getIndexJoinSideAndMethod(candidate)
-		return ok
+func enumerationContainIndexJoin(candidates [][]base.PhysicalPlan) bool {
+	return slices.ContainsFunc(candidates, func(candidate []base.PhysicalPlan) bool {
+		return slices.ContainsFunc(candidate, func(op base.PhysicalPlan) bool {
+			_, _, ok := getIndexJoinSideAndMethod(op)
+			return ok
+		})
 	})
 }
 
