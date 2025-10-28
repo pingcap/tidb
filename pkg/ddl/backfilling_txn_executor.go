@@ -54,6 +54,7 @@ type backfillExecutor interface {
 
 	currentWorkerSize() int
 	adjustWorkerSize() error
+	cleanupMetrics()
 }
 
 var (
@@ -70,6 +71,7 @@ type txnBackfillExecutor struct {
 	tbl          table.PhysicalTable
 	decodeColMap map[int64]decoder.Column
 	jobCtx       *ReorgContext
+	backfillCtx  *backfillCtx
 
 	workers []*backfillWorker
 	wg      sync.WaitGroup
@@ -99,6 +101,13 @@ func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess
 		taskCh:       make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultCh:     make(chan *backfillResult, backfillTaskChanSize),
 	}, nil
+}
+
+// cleanupMetrics cleans up the metrics used by this backfill executor.
+func (b *txnBackfillExecutor) cleanupMetrics() {
+	if b.backfillCtx != nil {
+		b.backfillCtx.CleanupMetrics()
+	}
 }
 
 func (b *txnBackfillExecutor) setupWorkers() error {
@@ -316,6 +325,9 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 		runner.resultCh = b.resultCh
 		runner.wg = &b.wg
 		b.workers = append(b.workers, runner)
+		if b.backfillCtx == nil {
+			b.backfillCtx = worker.GetCtx()
+		}
 		b.wg.Add(1)
 		go runner.run(reorgInfo.jobCtx.oldDDLCtx, worker, job)
 	}

@@ -3515,6 +3515,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 
 	case model.StatePublic:
+		metrics.RemoveBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "")
 		// Drop the droppingDefinitions and finish the DDL
 		// This state is needed for the case where client A sees the schema
 		// with version of StateWriteReorg and would not see updates of

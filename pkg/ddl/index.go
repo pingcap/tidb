@@ -2929,6 +2929,22 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	})
 
 	err = g.Wait()
+
+	// cleanup metrics
+	for _, elem := range extractElemIDs(reorgInfo) {
+		for _, label := range []string{
+			metrics.LblAddIdxRate,
+			metrics.LblMergeTmpIdxRate,
+			fmt.Sprintf("%s-conflict", metrics.LblMergeTmpIdxRate),
+		} {
+			for _, idx := range t.Meta().Indices {
+				if idx.ID == elem {
+					metrics.RemoveBackfillTotalByLabel(label, reorgInfo.SchemaName, reorgInfo.TableName, idx.Name.L)
+				}
+			}
+		}
+	}
+
 	return err
 }
 
