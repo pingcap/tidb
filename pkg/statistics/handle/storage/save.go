@@ -23,6 +23,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -166,12 +167,15 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	// txn1: lockKeys on point get (row lock) — deadlock occurs here and it's not retryable
 	// We need to use a random fake ID here to avoid heavy lock contention on the stats_meta table.
 	// Under RR (Repeatable Read) isolation level, non-existent keys are also locked.
+	start := time.Now()
 	fakeID := getRandomFakeID()
 	tableIDStrs := []string{strconv.FormatInt(fakeID, 10), strconv.FormatInt(tableID, 10)}
 	rs, err = util.Exec(sctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id in (%?) for update", tableIDStrs)
 	if err != nil {
 		return 0, err
 	}
+	// TODO: clean up the debug log later.
+	statslogutil.StatsLogger().Info("lock stats_meta", zap.Int64("tableID", tableID), zap.Duration("takeTime", time.Since(start)))
 	var rows []chunk.Row
 	rows, err = sqlexec.DrainRecordSet(ctx, rs, sctx.GetSessionVars().MaxChunkSize)
 	if err != nil {
