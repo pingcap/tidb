@@ -297,7 +297,7 @@ func showCommentsFromJob(job *model.Job) string {
 		return ""
 	}
 	var labels []string
-	if job.AnalyzeState == model.AnalyzeStateRunning {
+	if m.AnalyzeState == model.AnalyzeStateRunning {
 		labels = append(labels, "analyzing")
 	}
 	if job.Type == model.ActionAddIndex ||
@@ -305,8 +305,8 @@ func showCommentsFromJob(job *model.Job) string {
 		switch m.ReorgTp {
 		case model.ReorgTypeTxn:
 			labels = append(labels, model.ReorgTypeTxn.String())
-		case model.ReorgTypeLitMerge:
-			labels = append(labels, model.ReorgTypeLitMerge.String())
+		case model.ReorgTypeIngest:
+			labels = append(labels, model.ReorgTypeIngest.String())
 			if m.IsDistReorg {
 				labels = append(labels, "DXF")
 			}

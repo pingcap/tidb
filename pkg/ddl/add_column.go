@@ -268,7 +268,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 		return nil, errors.Trace(err)
 	}
 
-	originDefVal, err := generateOriginDefaultValue(col.ToInfo(), ctx)
+	originDefVal, err := generateOriginDefaultValue(col.ToInfo(), ctx, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

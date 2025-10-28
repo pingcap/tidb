@@ -138,12 +138,8 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 	}
 }
 
-func (s *backfillDistExecutor) getBackendCtx(ctx context.Context) (ingest.BackendCtx, error) {
+func (s *backfillDistExecutor) getBackendCtx(ctx context.Context, hasUnique bool) (ingest.BackendCtx, error) {
 	job := &s.taskMeta.Job
-	hasUnique, err := hasUniqueIndex(job)
-	if err != nil {
-		return nil, err
-	}
 	ddlObj := s.d
 	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 
@@ -158,20 +154,6 @@ func (s *backfillDistExecutor) getBackendCtx(ctx context.Context) (ingest.Backen
 		job.RealStartTS,
 		s.GetTaskBase().Concurrency,
 	)
-}
-
-func hasUniqueIndex(job *model.Job) (bool, error) {
-	args, err := model.GetModifyIndexArgs(job)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	for _, a := range args.IndexArgs {
-		if a.Unique {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 type backfillDistExecutor struct {
