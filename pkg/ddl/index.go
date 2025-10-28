@@ -2924,7 +2924,7 @@ func (w *worker) checkRunnableOrHandlePauseOrCanceled(stepCtx context.Context, t
 	if err = w.isReorgRunnable(stepCtx, true); err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
 			if err = handle.PauseTask(w.workCtx, taskKey); err != nil {
-				logutil.DDLLogger().Error("pause task error", zap.String("task_key", taskKey), zap.Error(err))
+				logutil.DDLLogger().Warn("pause task error", zap.String("task_key", taskKey), zap.Error(err))
 				return nil
 			}
 			failpoint.InjectCall("syncDDLTaskPause")
@@ -2933,7 +2933,7 @@ func (w *worker) checkRunnableOrHandlePauseOrCanceled(stepCtx context.Context, t
 			return errors.Trace(err)
 		}
 		if err = handle.CancelTask(w.workCtx, taskKey); err != nil {
-			logutil.DDLLogger().Error("cancel task error", zap.String("task_key", taskKey), zap.Error(err))
+			logutil.DDLLogger().Warn("cancel task error", zap.String("task_key", taskKey), zap.Error(err))
 			return nil
 		}
 	}
