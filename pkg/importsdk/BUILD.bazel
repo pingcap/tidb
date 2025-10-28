@@ -12,6 +12,7 @@ go_library(
         "//pkg/lightning/mydump",
         "//pkg/parser/mysql",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:"
     ],
 )
 
@@ -33,5 +34,6 @@ go_test(
         "@com_github_ngaut_pools//:pools",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
+        "@org_uber_go_zap//:"
     ],
 )
