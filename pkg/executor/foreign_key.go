@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -249,25 +248,14 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 		fkc.stats.Check = time.Since(start)
 	}
 
-	if len(fkc.toBeLockedKeys) == 0 {
-		return nil
+	if len(fkc.toBeLockedKeys) > 0 {
+		txnCtx := fkc.ctx.GetSessionVars().TxnCtx
+		for _, k := range fkc.toBeLockedKeys {
+			txnCtx.AddUnchangedKeyForLock(k, true)
+		}
 	}
-	sessVars := fkc.ctx.GetSessionVars()
-	lockCtx, err := newLockCtx(fkc.ctx, sessVars.LockWaitTimeout, len(fkc.toBeLockedKeys))
-	if err != nil {
-		return err
-	}
-	// WARN: Since tidb current doesn't support `LOCK IN SHARE MODE`, therefore, performance will be very poor in concurrency cases.
-	// TODO(crazycs520):After TiDB support `LOCK IN SHARE MODE`, use `LOCK IN SHARE MODE` here.
-	forUpdate := atomic.LoadUint32(&sessVars.TxnCtx.ForUpdate)
-	err = doLockKeys(ctx, fkc.ctx, lockCtx, fkc.toBeLockedKeys...)
-	// doLockKeys may set TxnCtx.ForUpdate to 1, then if the lock meet write conflict, TiDB can't retry for update.
-	// So reset TxnCtx.ForUpdate to 0 then can be retry if meet write conflict.
-	atomic.StoreUint32(&sessVars.TxnCtx.ForUpdate, forUpdate)
-	if fkc.stats != nil {
-		fkc.stats.Lock = time.Since(start) - fkc.stats.Check
-	}
-	return err
+
+	return nil
 }
 
 func (fkc *FKCheckExec) buildCheckKeyFromFKValue(sc *stmtctx.StatementContext, vals []types.Datum) (key kv.Key, isPrefix bool, err error) {
