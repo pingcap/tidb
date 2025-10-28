@@ -511,6 +511,7 @@
   "misspell": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
+      "pkg/planner/core/casetest/tpcds/main_test.go": "ignore code",
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
       "$GOROOT/": "ignore GOROOT code",

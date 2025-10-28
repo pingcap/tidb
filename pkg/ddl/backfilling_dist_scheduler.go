@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -146,7 +148,14 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
 		return generateReadIndexPlan(ctx, sch.d, store, tbl, job, sch.GlobalSort, nodeCnt, logger)
 	case proto.BackfillStepMergeSort:
-		return generateMergeSortPlan(ctx, taskHandle, task, nodeCnt, backfillMeta.CloudStorageURI, logger)
+		metaBytes, err2 := generateMergeSortPlan(ctx, taskHandle, task, nodeCnt, backfillMeta.CloudStorageURI, logger)
+		if err2 != nil {
+			return nil, err2
+		}
+		if len(metaBytes) > 0 {
+			dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventMergeSort).Inc()
+		}
+		return metaBytes, nil
 	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
 			failpoint.Inject("mockWriteIngest", func() {

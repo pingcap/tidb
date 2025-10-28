@@ -68,6 +68,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",
+        "//pkg/util/benchdaily",
         "//pkg/util/collate",
         "//pkg/util/context",
         "@com_github_stretchr_testify//require",

@@ -135,9 +135,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
@@ -810,10 +812,41 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	var err error
 	txnSize := s.txn.Size()
-	isPessimistic := s.txn.IsPessimistic()
+	isPessimistic := s.sessionVars.TxnCtx.IsPessimistic
 	isPipelined := s.txn.IsPipelined()
 	r, ctx := tracing.StartRegionEx(ctx, "session.doCommitWithRetry")
 	defer r.End()
+
+	// Emit txn.commit.start trace event
+	startTS := s.sessionVars.TxnCtx.StartTS
+	if traceevent.IsEnabled(traceevent.TxnLifecycle) {
+		traceevent.TraceEvent(ctx, traceevent.TxnLifecycle, "txn.commit.start",
+			zap.Uint64("start_ts", startTS),
+			zap.Bool("pessimistic", isPessimistic),
+			zap.Bool("pipelined", isPipelined),
+			zap.Int("txn_size", txnSize),
+			zap.Uint64("conn_id", s.sessionVars.ConnectionID),
+		)
+	}
+
+	// Defer txn.commit.finish to capture final result
+	defer func() {
+		if traceevent.IsEnabled(traceevent.TxnLifecycle) {
+			fields := []zap.Field{
+				zap.Uint64("start_ts", startTS),
+				zap.Bool("pessimistic", isPessimistic),
+				zap.Bool("pipelined", isPipelined),
+				zap.Uint64("conn_id", s.sessionVars.ConnectionID),
+			}
+			if s.txn.lastCommitTS > 0 {
+				fields = append(fields, zap.Uint64("commit_ts", s.txn.lastCommitTS))
+			}
+			if err != nil {
+				fields = append(fields, zap.Error(err))
+			}
+			traceevent.TraceEvent(ctx, traceevent.TxnLifecycle, "txn.commit.finish", fields...)
+		}
+	}()
 
 	err = s.doCommit(ctx)
 	if err != nil {
@@ -981,6 +1014,16 @@ func (s *session) CommitTxn(ctx context.Context) error {
 func (s *session) RollbackTxn(ctx context.Context) {
 	r, ctx := tracing.StartRegionEx(ctx, "session.RollbackTxn")
 	defer r.End()
+
+	// Emit txn.rollback trace event
+	if traceevent.IsEnabled(traceevent.TxnLifecycle) {
+		startTS := s.sessionVars.TxnCtx.StartTS
+		stmtCount := uint64(s.sessionVars.TxnCtx.StatementCount)
+		traceevent.TraceEvent(ctx, traceevent.TxnLifecycle, "txn.rollback",
+			zap.Uint64("start_ts", startTS),
+			zap.Uint64("stmt_count", stmtCount),
+		)
+	}
 
 	s.setLastTxnInfoBeforeTxnEnd()
 	if s.txn.Valid() {
@@ -2335,6 +2378,57 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if r.Span != nil {
 		r.Span.LogKV("sql", s.Text())
 	}
+
+	// Capture previous trace ID before generating new one (for statement chaining)
+	prevTraceID := trace.TraceIDFromContext(ctx)
+
+	// Inject trace ID into context for correlation across TiDB -> client-go -> TiKV
+	// This enables trace events to be correlated by trace_id field
+	// The trace ID is generated from transaction start_ts and statement count
+	startTS := se.sessionVars.TxnCtx.StartTS
+	stmtCount := uint64(se.sessionVars.TxnCtx.StatementCount)
+	traceID := traceevent.GenerateTraceID(startTS, stmtCount)
+	ctx = trace.ContextWithTraceID(ctx, traceID)
+
+	// Emit stmt.start trace event
+	if traceevent.IsEnabled(traceevent.StmtLifecycle) {
+		stmtCtx := se.sessionVars.StmtCtx
+		sqlDigest, _ := stmtCtx.SQLDigest()
+		fields := []zap.Field{
+			zap.String("sql_digest", sqlDigest),
+			zap.Bool("autocommit", se.sessionVars.IsAutocommit()),
+			zap.Uint64("conn_id", se.sessionVars.ConnectionID),
+		}
+		// Include previous trace ID to create statement chain
+		if len(prevTraceID) > 0 {
+			fields = append(fields, zap.String("prev_trace_id", redact.Key(prevTraceID)))
+		}
+		traceevent.TraceEvent(ctx, traceevent.StmtLifecycle, "stmt.start", fields...)
+	}
+
+	// Defer stmt.finish trace event to capture final state including errors
+	defer func() {
+		if traceevent.IsEnabled(traceevent.StmtLifecycle) {
+			stmtCtx := se.sessionVars.StmtCtx
+			sqlDigest, _ := stmtCtx.SQLDigest()
+			_, planDigest := stmtCtx.GetPlanDigest()
+			var planDigestHex string
+			if planDigest != nil {
+				planDigestHex = hex.EncodeToString(planDigest.Bytes())
+			}
+			fields := []zap.Field{
+				zap.String("sql_digest", sqlDigest),
+				zap.String("plan_digest", planDigestHex),
+				zap.Bool("autocommit", se.sessionVars.IsAutocommit()),
+				zap.Uint64("conn_id", se.sessionVars.ConnectionID),
+				zap.Int("retry_count", se.sessionVars.TxnCtx.StatementCount),
+			}
+			if err != nil {
+				fields = append(fields, zap.Error(err))
+			}
+			traceevent.TraceEvent(ctx, traceevent.StmtLifecycle, "stmt.finish", fields...)
+		}
+	}()
 
 	se.SetValue(sessionctx.QueryString, s.Text())
 	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DDLNode); ok {
