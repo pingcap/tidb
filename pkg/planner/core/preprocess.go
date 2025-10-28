@@ -342,9 +342,7 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 			}
 		} else {
 			// single table delete statement
-			for _, dbName := range p.getAllDBInfos(node.TableRefs) {
-				dbNames = append(dbNames, dbName)
-			}
+			dbNames = append(dbNames, p.getAllDBInfos(node.TableRefs)...)
 		}
 	case *ast.UpdateStmt:
 		for _, set := range node.List {
@@ -361,9 +359,7 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 				node.LockInfo.LockType == ast.SelectLockForUpdateWaitN ||
 				((node.LockInfo.LockType == ast.SelectLockForShare || node.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
 					p.sctx.GetSessionVars().SharedLockPromotion) {
-				for _, dbName := range p.getAllDBInfos(node.From) {
-					dbNames = append(dbNames, dbName)
-				}
+				dbNames = append(dbNames, p.getAllDBInfos(node.From)...)
 			}
 		}
 	}
