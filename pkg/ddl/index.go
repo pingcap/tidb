@@ -1303,9 +1303,9 @@ func (w *worker) queryAnalyzeStatusSince(startTS uint64, dbName, tblName string)
 	defer w.sessPool.Put(sessCtx)
 
 	exec := sessCtx.GetRestrictedSQLExecutor()
-	startTimeStr := time.Now().Format(time.DateTime)
+	startTimeStr := time.Now().UTC().Format(time.DateTime)
 	if startTS > 0 {
-		startTimeStr = model.TSConvert2Time(startTS).Format(time.DateTime)
+		startTimeStr = model.TSConvert2Time(startTS).UTC().Format(time.DateTime)
 	}
 	kctx := kv.WithInternalSourceType(w.ctx, kv.InternalTxnStats)
 	rows, _, chkErr := exec.ExecRestrictedSQL(kctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
