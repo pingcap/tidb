@@ -96,6 +96,7 @@ type generalColumnDumper[T parquet.ColumnTypes, R innerReader[T]] struct {
 }
 
 // newGeneralColumnDumper creates a new generic column dumper
+// The dumper should not be used in parallel.
 func newGeneralColumnDumper[T parquet.ColumnTypes, R innerReader[T]](
 	batchSize int, getter setter[T],
 ) *generalColumnDumper[T, R] {
@@ -105,11 +106,15 @@ func newGeneralColumnDumper[T parquet.ColumnTypes, R innerReader[T]](
 		repLevels: make([]int16, batchSize),
 		values:    make([]T, batchSize),
 		setter:    getter,
+		closed:    true,
 	}
 }
 
+// SetReader sets the column reader for the dumper.
+// Remember to call Close() before setting a new reader.
 func (dump *generalColumnDumper[T, R]) SetReader(colReader file.ColumnChunkReader) {
 	dump.reader, _ = colReader.(R)
+	dump.closed = false
 }
 
 func (dump *generalColumnDumper[T, R]) Type() parquet.Type {
