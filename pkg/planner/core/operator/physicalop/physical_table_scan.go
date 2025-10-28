@@ -704,7 +704,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType,
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, scanFactor,
 			rows*max(math.Log2(rowSize-lmRowSize), 0)*scanFactor.Value*cost.DefaultVer2Factors.LateMaterializationScan.Value,
 			func() string {
-				return fmt.Sprintf("lm_rest_col_scan(%v*logrowsize(%v)*%v*lm_scan_factor(%v))", rows, rowSize-lmRowSize, scanFactor, defaultVer2Factors.LateMaterializationScan.Value)
+				return fmt.Sprintf("lm_rest_col_scan(%v*logrowsize(%v)*%v*lm_scan_factor(%v))", rows, rowSize-lmRowSize, scanFactor, cost.DefaultVer2Factors.LateMaterializationScan.Value)
 			}))
 	} else {
 		p.PlanCostVer2 = cost.ScanCostVer2(option, rows, rowSize, scanFactor)
