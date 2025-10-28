@@ -243,7 +243,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 	if isColumnarIndexColumn(tblInfo, oldCol) {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("columnar indexes on the column"))
+		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column"))
 	}
 	if mysql.HasPriKeyFlag(oldCol.GetFlag()) {
 		job.State = model.JobStateCancelled
@@ -1173,7 +1173,7 @@ func GetModifiableColumnJob(
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
 		}
 		if isColumnarIndexColumn(t.Meta(), col.ColumnInfo) {
-			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("columnar indexes on the column")
+			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column")
 		}
 		// new col's origin default value be the same as the new default value.
 		if err = newCol.ColumnInfo.SetOriginDefaultValue(newCol.ColumnInfo.GetDefaultValue()); err != nil {
