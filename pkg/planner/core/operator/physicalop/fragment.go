@@ -455,7 +455,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 			return err
 		}
 	}
-	receiver := cteReader.ReaderReceiver
+	receiver := cteReader.readerReceiver
 	receiver.Tasks = group.StorageTasks
 	e.fragMap[receiver] = group.StorageFragments
 	cteReader.SetChildren(receiver)
