@@ -65,6 +65,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
@@ -1781,7 +1782,7 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 // InitTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema
 // in the TiDB instance level. The `taskID` is a unique identifier for this Job.
 func (local *Backend) InitTiCIWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string, taskID string) error {
-	keyspaceID := uint32(0)
+	keyspaceID := uint32(constants.NullKeyspaceID)
 	if local.tikvCodec != nil {
 		keyspaceID = uint32(local.tikvCodec.GetKeyspaceID())
 	}
