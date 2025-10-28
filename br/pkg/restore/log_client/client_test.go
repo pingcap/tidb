@@ -1765,11 +1765,12 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
 	tk.MustExec("create table test.parent (id int, index i2(id))")
 	tk.MustExec("create table test.child (id int, pid int, index i1(pid), foreign key (pid) references test.parent (id) on delete cascade)")
+	tk.MustExec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", checkpoint.LogRestoreCheckpointDatabaseName))
 	g := gluetidb.New()
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	ctx := context.Background()
-	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, fakeSession{})
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
 	client.SetUseCheckpoint()
 
 	fakeJob := func(
@@ -1851,6 +1852,7 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			sqls.SQLs[0].IndexID = newParentTableInfo.Indices[0].ID
 			sqls.SQLs[1].IndexID = newChildTableInfo.Indices[0].ID
 		}
+		tk.MustExec(fmt.Sprintf("drop table %s.cpt_ingest", checkpoint.LogRestoreCheckpointDatabaseName))
 		err = checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, se, sqls)
 		require.NoError(t, err)
 	}
@@ -1880,6 +1882,7 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 	{
 		require.NoError(t, checkpoint.RemoveCheckpointDataForLogRestore(ctx, s.Mock.Domain, se))
 		infoSchema := s.Mock.InfoSchema()
+		tk.MustExec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", checkpoint.LogRestoreCheckpointDatabaseName))
 		childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
 		require.NoError(t, err)
 		parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))

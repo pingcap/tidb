@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
@@ -76,7 +76,7 @@ func (m *ForeignKeyRecordManager) Merge(tm *TableForeignKeyRecordManager) {
 func NewForeignKeyRecordManagerForTables(
 	ctx context.Context,
 	infoSchema infoschema.InfoSchema,
-	dbName ast.CIStr,
+	dbName pmodel.CIStr,
 	tableInfo *model.TableInfo,
 ) (*TableForeignKeyRecordManager, error) {
 	tm := &TableForeignKeyRecordManager{
