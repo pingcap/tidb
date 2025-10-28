@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -102,11 +103,13 @@ func NewImportSDK(ctx context.Context, sourcePath string, db *sql.DB, options ..
 	}
 	var loaderOptions []mydump.MDLoaderSetupOption
 	if cfg.maxScanFiles != nil && *cfg.maxScanFiles > 0 {
-		loaderOptions = append(loaderOptions, mydump.WithMaxScanFiles(*cfg.maxScanFiles), mydump.ReturnPartialResultOnError(true))
+		loaderOptions = append(loaderOptions, mydump.WithMaxScanFiles(*cfg.maxScanFiles))
 	}
 	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store, loaderOptions...)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to create MyDump loader (source=%s, charset=%s, filter=%v). Please check dump layout and router rules", sourcePath, cfg.charset, cfg.filter)
+		if loader == nil || !errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
+			return nil, errors.Annotatef(err, "failed to create MyDump loader (source=%s, charset=%s, filter=%v). Please check dump layout and router rules", sourcePath, cfg.charset, cfg.filter)
+		}
 	}
 
 	return &ImportSDK{

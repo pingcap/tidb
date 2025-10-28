@@ -128,7 +128,7 @@ func (s *mockGCSSuite) TestDumplingSource() {
 	s.NoError(err)
 	defer importSDK.Close()
 
-	err = importSDK.CreateSchemaAndTableByName(context.Background(), "db2", "tb2")
+	err = importSDK.CreateSchemaAndTableByName(context.Background(), "db1", "tb1")
 	s.NoError(err)
 
 	err = importSDK.CreateSchemasAndTables(context.Background())
