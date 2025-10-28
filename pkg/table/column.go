@@ -333,8 +333,9 @@ func CastValue(sctx variable.SessionVarsProvider, val types.Datum, col *model.Co
 
 var strictCtx = types.NewContext(types.StrictFlags, time.UTC, context.IgnoreWarn)
 
-// CastColumnValueWithStrictMode casts a value based on column type with expression BuildContext
+// CastColumnValueWithStrictMode casts a value based on column type with strict flags.
 func CastColumnValueWithStrictMode(val types.Datum, tp *types.FieldType) (casted types.Datum, err error) {
+	// The sql mode passed in is not used.
 	return castColumnValue(strictCtx, errctx.StrictNoWarningContext, mysql.ModeNone, val, tp, "", 0, true, false)
 }
 
