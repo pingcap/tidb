@@ -23,7 +23,6 @@ go_library(
         "//pkg/domain/infosync",
         "//pkg/kv",
         "//pkg/lightning/log",
-        "//pkg/metrics",
         "//pkg/sessionctx",
         "//pkg/util",
         "//pkg/util/backoff",

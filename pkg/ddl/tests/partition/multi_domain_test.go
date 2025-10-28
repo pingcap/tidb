@@ -551,7 +551,6 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 	}
 	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
 		tkO.MustQuery(`select * from t where b = 5`).Check(testkit.Rows("5 5 5"))
-		tkO.MustExec(`admin check table t`)
 		tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
 			"1 1 1",
 			"10 10 10",
@@ -912,6 +911,9 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 
 	initFn(tkO)
 
+	tkO.MustExec("set session tidb_enable_fast_table_check = off")
+	tkO.MustExec(`admin check table t`)
+
 	domOwner.Reload()
 	domNonOwner.Reload()
 
@@ -986,6 +988,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 			state = job.SchemaState
 		}
 		states = append(states, state)
+		tkO.MustExec(fmt.Sprintf(`admin check table t /* state: %s */`, state.String()))
 		loopFn(tkO, tkNO)
 		domNonOwner.Reload()
 		if !releaseHook {
@@ -999,6 +1002,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	}
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
+	tkO.MustExec(`admin check table t`)
 	if !tbl.Meta().HasClusteredIndex() {
 		// Debug prints, so it is possible to verify possible newly generated _tidb_rowid's
 		res := tkO.MustQuery(`select *, _tidb_rowid from t`)
@@ -1018,47 +1022,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	if tableID != newTableID {
 		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, 0), "Old table id %d has still entries!", tableID)
 	}
-GlobalLoop:
-	for _, globIdx := range originalGlobalIndexIDs {
-		for _, idx := range tbl.Meta().Indices {
-			if idx.ID == globIdx {
-				continue GlobalLoop
-			}
-		}
-		// Global index removed
-		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, globIdx), "Global index id %d for table id %d has still entries!", globIdx, tableID)
-	}
-LocalLoop:
-	for _, locIdx := range originalIndexIDs {
-		for _, idx := range tbl.Meta().Indices {
-			if idx.ID == locIdx {
-				continue LocalLoop
-			}
-		}
-		// local index removed
-		if tbl.Meta().Partition != nil {
-			for _, part := range tbl.Meta().Partition.Definitions {
-				require.False(t, HaveEntriesForTableIndex(t, tkO, part.ID, locIdx), "Local index id %d for partition id %d has still entries!", locIdx, tableID)
-			}
-		}
-	}
-PartitionLoop:
-	for _, partID := range originalPartitions {
-		if tbl.Meta().Partition != nil {
-			for _, def := range tbl.Meta().Partition.Definitions {
-				if def.ID == partID {
-					continue PartitionLoop
-				}
-			}
-		}
-		// old partitions removed
-		require.False(t, HaveEntriesForTableIndex(t, tkO, partID, 0), "Reorganized partition id %d for table id %d has still entries!", partID, tableID)
-	}
-	// TODO: Use this instead of the above, which check for any row that should not exists
-	// When the following issues are fixed:
-	// TestMultiSchemaModifyColumn - https://github.com/pingcap/tidb/issues/60264
-	// TestMultiSchemaPartitionByGlobalIndex -https://github.com/pingcap/tidb/issues/60263
-	//checkTableAndIndexEntries(t, tkO, originalIDs)
+	checkTableAndIndexEntries(t, tkO, originalPartitions)
 
 	if postFn != nil {
 		postFn(tkO, store)
