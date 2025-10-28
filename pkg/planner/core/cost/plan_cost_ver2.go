@@ -16,17 +16,17 @@ package cost
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 const (
