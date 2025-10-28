@@ -764,6 +764,11 @@ func pruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		joinColIDs[col.ID] = struct{}{}
 		totalJoinColumns++
 	}
+	// NOTE: Where columns may also be included in join columns, so that are excluded here to avoid double-counting
+	// TO-DO: Consider refactoring the way columns are extracted from the predicate columns to avoid this risk.
+	// If a join column has never appeared in a query as a local where column, then it will be correctly
+	// identified as a join column only. But if a join column has also appeared in a local where column,
+	// then it will be identified as both a join column and a where column in the current implementation.
 	whereColIDs := make(map[int64]struct{}, len(whereColumns))
 	for _, col := range whereColumns {
 		// Skip if already in joinColIDs to avoid double-counting
@@ -1076,10 +1081,8 @@ func calculateScoreFromCoverage(info indexWithScore, totalWhereColumns, totalJoi
 		score += 10
 	}
 
-	// Bonus for consecutive WHERE columns from start (critical for index usage)
+	// Bonus for consecutive JOIN columns from start (critical for index usage)
 	// Consecutive columns are much more valuable than scattered matches
-	// Index on (a,b,c,d) with WHERE a=1 AND b=2 AND c=3 can use first 3 columns
-	// But with WHERE a=1 AND d=4, can only use first 1 column
 	score += info.consecutiveJoinCount * 10
 
 	// Bonus if the index is covering all WHERE columns
