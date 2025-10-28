@@ -107,7 +107,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) (func(), error) {
 	sv := sctx.GetSessionVars()
 	prev := struct {
 		AnalyzeSkipColumnTypes           map[string]struct{}
-		TimeZone                         *time.Location
 		PartitionPruneMode               string
 		AnalyzePartitionConcurrency      int
 		AnalyzeVersion                   int
@@ -118,7 +117,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) (func(), error) {
 		SkipMissingPartitionStats        bool
 	}{
 		AnalyzeSkipColumnTypes:           sv.AnalyzeSkipColumnTypes,
-		TimeZone:                         sv.TimeZone,
 		PartitionPruneMode:               sv.PartitionPruneMode.Load(),
 		AnalyzePartitionConcurrency:      sv.AnalyzePartitionConcurrency,
 		AnalyzePartitionMergeConcurrency: sv.AnalyzePartitionMergeConcurrency,
@@ -138,7 +136,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) (func(), error) {
 		sv.EnableAnalyzeSnapshot = prev.EnableAnalyzeSnapshot
 		sv.AnalyzeSkipColumnTypes = prev.AnalyzeSkipColumnTypes
 		sv.SkipMissingPartitionStats = prev.SkipMissingPartitionStats
-		sv.TimeZone = prev.TimeZone
 		sv.AnalyzePartitionMergeConcurrency = prev.AnalyzePartitionMergeConcurrency
 	}
 
@@ -213,10 +210,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) (func(), error) {
 		return restore, err
 	}
 	sv.AnalyzePartitionMergeConcurrency = int(ver)
-
-	if sv.TimeZone == nil {
-		sv.TimeZone = time.UTC
-	}
 
 	return restore, nil
 }

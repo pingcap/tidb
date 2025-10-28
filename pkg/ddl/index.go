@@ -1290,7 +1290,7 @@ const (
 	analyzeFailed
 )
 
-// queryAnalyzeStatusSince queries `SHOW ANALYZE STATUS` for the specified table
+// queryAnalyzeStatusSince queries `analyze_jobs` for the specified table
 // and start_time >= startTS. It returns one of analyzeStatus values. If the
 // sessPool cannot provide a session or the query fails, it returns
 // analyzeUnknown and a nil error so the caller may decide to proceed with
@@ -1315,7 +1315,8 @@ func (w *worker) queryAnalyzeStatusSince(startTS uint64, dbName, tblName string)
 		startTimeStr = model.TSConvert2Time(startTS).Format(time.DateTime)
 	}
 	kctx := kv.WithInternalSourceType(w.ctx, kv.InternalTxnStats)
-	rows, _, chkErr := exec.ExecRestrictedSQL(kctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "SHOW ANALYZE STATUS WHERE table_schema = %? AND table_name = %? AND start_time >= %?", dbName, tblName, startTimeStr)
+	rows, _, chkErr := exec.ExecRestrictedSQL(kctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		"SELECT state FROM mysql.analyze_jobs WHERE table_schema = %? AND table_name = %? AND start_time >= %?", dbName, tblName, startTimeStr)
 	if chkErr != nil {
 		return analyzeUnknown, chkErr
 	}
@@ -1325,8 +1326,8 @@ func (w *worker) queryAnalyzeStatusSince(startTS uint64, dbName, tblName string)
 
 	for _, r := range rows {
 		var state string
-		if !r.IsNull(7) {
-			state = r.GetString(7)
+		if !r.IsNull(0) {
+			state = r.GetString(0)
 		}
 		switch {
 		case strings.EqualFold(state, "running"):
