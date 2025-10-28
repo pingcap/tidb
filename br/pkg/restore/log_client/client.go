@@ -62,11 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
->>>>>>> b854521ee91 (br: repair the index that any foreign key is needed in (#62418))
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/config"
@@ -1346,7 +1342,6 @@ func WrapLogFilesIterWithCheckpointFailpoint(
 	return logIter, nil
 }
 
-<<<<<<< HEAD
 func (rc *LogClient) WrapLogFilesIterWithCheckpoint(
 	ctx context.Context,
 	logIter LogIter,
@@ -1366,8 +1361,9 @@ func (rc *LogClient) WrapLogFilesIterWithCheckpoint(
 		}
 		return false
 	}), nil
-=======
-func colsToStr(cols []ast.CIStr) string {
+}
+
+func colsToStr(cols []pmodel.CIStr) string {
 	var str strings.Builder
 	for i, col := range cols {
 		if i != 0 {
@@ -1376,7 +1372,6 @@ func colsToStr(cols []ast.CIStr) string {
 		str.WriteString(col.O)
 	}
 	return str.String()
->>>>>>> b854521ee91 (br: repair the index that any foreign key is needed in (#62418))
 }
 
 const (
@@ -1391,26 +1386,12 @@ const (
 func (rc *LogClient) generateRepairIngestIndexSQLs(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
-<<<<<<< HEAD
-) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
-=======
-	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) ([]checkpoint.CheckpointIngestIndexRepairSQL, []checkpoint.CheckpointForeignKeyUpdateSQL, bool, error) {
->>>>>>> b854521ee91 (br: repair the index that any foreign key is needed in (#62418))
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
 	var fkSqls []checkpoint.CheckpointForeignKeyUpdateSQL
 	if rc.useCheckpoint {
-<<<<<<< HEAD
 		if checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, rc.dom) {
 			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.se.GetSessionCtx().GetRestrictedSQLExecutor())
-=======
-		exists, err := logCheckpointMetaManager.ExistsCheckpointIngestIndexRepairSQLs(ctx)
-		if err != nil {
-			return sqls, fkSqls, false, errors.Trace(err)
-		}
-		if exists {
-			checkpointSQLs, err := logCheckpointMetaManager.LoadCheckpointIngestIndexRepairSQLs(ctx)
->>>>>>> b854521ee91 (br: repair the index that any foreign key is needed in (#62418))
 			if err != nil {
 				return sqls, fkSqls, false, errors.Trace(err)
 			}
@@ -1435,10 +1416,10 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		addArgs = append(addArgs,
 			fkRecord.ChildSchemaNameO, fkRecord.ChildTableNameO, fkRecord.Name.O, fkRecord.RefSchema.O, fkRecord.RefTable.O,
 		)
-		if onDelete := ast.ReferOptionType(fkRecord.OnDelete); onDelete != ast.ReferOptionNoOption {
+		if onDelete := pmodel.ReferOptionType(fkRecord.OnDelete); onDelete != pmodel.ReferOptionNoOption {
 			addSQL.WriteString(fmt.Sprintf(" ON DELETE %s", onDelete.String()))
 		}
-		if onUpdate := ast.ReferOptionType(fkRecord.OnUpdate); onUpdate != ast.ReferOptionNoOption {
+		if onUpdate := pmodel.ReferOptionType(fkRecord.OnUpdate); onUpdate != pmodel.ReferOptionNoOption {
 			addSQL.WriteString(fmt.Sprintf(" ON UPDATE %s", onUpdate.String()))
 		}
 		fkSqls = append(fkSqls, checkpoint.CheckpointForeignKeyUpdateSQL{
@@ -1477,11 +1458,6 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addSQL.WriteString(" USING ")
 			addSQL.WriteString(indexTypeStr)
 		}
-		// WITH PARSER [...]
-		if info.IndexInfo.FullTextInfo != nil {
-			addSQL.WriteString(" WITH PARSER ")
-			addSQL.WriteString(info.IndexInfo.FullTextInfo.ParserType.SQLName())
-		}
 		// COMMENT [...]
 		if len(info.IndexInfo.Comment) > 0 {
 			addSQL.WriteString(" COMMENT %?")
@@ -1515,14 +1491,9 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 	}
 
 	if rc.useCheckpoint && len(sqls) > 0 {
-<<<<<<< HEAD
 		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.se, &checkpoint.CheckpointIngestIndexRepairSQLs{
-			SQLs: sqls,
-=======
-		if err := logCheckpointMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, &checkpoint.CheckpointIngestIndexRepairSQLs{
 			SQLs:   sqls,
 			FKSQLs: fkSqls,
->>>>>>> b854521ee91 (br: repair the index that any foreign key is needed in (#62418))
 		}); err != nil {
 			return sqls, fkSqls, false, errors.Trace(err)
 		}
@@ -1531,18 +1502,8 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 }
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
-<<<<<<< HEAD
 func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue) error {
-	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder)
-=======
-func (rc *LogClient) RepairIngestIndex(
-	ctx context.Context,
-	ingestRecorder *ingestrec.IngestRecorder,
-	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-	g glue.Glue,
-) error {
-	sqls, fkSqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, logCheckpointMetaManager)
->>>>>>> b854521ee91 (br: repair the index that any foreign key is needed in (#62418))
+	sqls, fkSqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1579,7 +1540,7 @@ func (rc *LogClient) RepairIngestIndex(
 		}
 	}
 	for i, sql := range fkSqls {
-		tableInfo, err := info.TableByName(ctx, ast.NewCIStr(sql.SchemaName), ast.NewCIStr(sql.TableName))
+		tableInfo, err := info.TableByName(ctx, pmodel.NewCIStr(sql.SchemaName), pmodel.NewCIStr(sql.TableName))
 		if err != nil {
 			return errors.Trace(err)
 		}

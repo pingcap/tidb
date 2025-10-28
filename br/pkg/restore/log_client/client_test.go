@@ -1759,191 +1759,6 @@ func TestPutRawKvWithRetry(t *testing.T) {
 		})
 	}
 }
-<<<<<<< HEAD
-=======
-
-func TestRepairIngestIndex(t *testing.T) {
-	s := utiltest.CreateRestoreSchemaSuite(t)
-	tk := testkit.NewTestKit(t, s.Mock.Storage)
-	tk.Exec("CREATE TABLE test.repair_index_t1(id int, a int, b int, key i1(id), key i2(a));")
-	g := gluetidb.New()
-	ctx := context.Background()
-	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, fakeSession{})
-
-	fakeJob := func(
-		schemaName string,
-		tableName string,
-		tableID int64,
-		indexID int64,
-		indexName string,
-		columnName string,
-		args json.RawMessage,
-	) *model.Job {
-		return &model.Job{
-			Version:    model.JobVersion1,
-			SchemaName: schemaName,
-			TableName:  tableName,
-			TableID:    tableID,
-			Type:       model.ActionAddIndex,
-			State:      model.JobStateSynced,
-			RowCount:   100,
-			RawArgs:    args,
-			ReorgMeta: &model.DDLReorgMeta{
-				ReorgTp: model.ReorgTypeLitMerge,
-			},
-			BinlogInfo: &model.HistoryInfo{
-				TableInfo: &model.TableInfo{
-					Indices: []*model.IndexInfo{
-						{
-							ID:   indexID,
-							Name: ast.NewCIStr(indexName),
-							Columns: []*model.IndexColumn{{
-								Name: ast.NewCIStr(columnName),
-							}},
-						},
-					},
-				},
-			},
-		}
-	}
-
-	{
-		infoschema := s.Mock.InfoSchema()
-		table, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
-		require.NoError(t, err)
-		tableInfo := table.Meta()
-		indexIDi1 := int64(0)
-		indexIDi2 := int64(0)
-		for _, indexInfo := range tableInfo.Indices {
-			switch indexInfo.Name.L {
-			case "i1":
-				indexIDi1 = indexInfo.ID
-			case "i2":
-				indexIDi2 = indexInfo.ID
-			}
-		}
-		require.NotEqual(t, int64(0), indexIDi1)
-		require.NotEqual(t, int64(0), indexIDi2)
-		ingestRecorder := ingestrec.New()
-		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
-			"test", "repair_index_t1", tableInfo.ID, indexIDi1, "i1", "id",
-			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi1)),
-		), false))
-		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
-			"test", "repair_index_t1", tableInfo.ID, indexIDi2, "i2", "a",
-			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi2)),
-		), false))
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, nil, g))
-		infoschema = s.Mock.InfoSchema()
-		table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
-		require.NoError(t, err)
-		tableInfo2 := table2.Meta()
-		existsCount := 0
-		for _, indexInfo2 := range tableInfo2.Indices {
-			switch indexInfo2.Name.L {
-			case "i1":
-				require.Less(t, indexIDi1, indexInfo2.ID)
-				existsCount++
-			case "i2":
-				require.Less(t, indexIDi2, indexInfo2.ID)
-				existsCount++
-			}
-		}
-		require.Equal(t, 2, existsCount)
-	}
-}
-
-func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
-	s := utiltest.CreateRestoreSchemaSuite(t)
-	tk := testkit.NewTestKit(t, s.Mock.Storage)
-	tk.Exec("CREATE TABLE test.repair_index_t1(id int, a int, b int, key i1(id), key i2(a));")
-	g := gluetidb.New()
-	ctx := context.Background()
-	se, err := g.CreateSession(s.Mock.Storage)
-	require.NoError(t, err)
-	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
-	client.SetUseCheckpoint()
-
-	infoschema := s.Mock.InfoSchema()
-	table, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
-	require.NoError(t, err)
-	tableInfo := table.Meta()
-	indexIDi1 := int64(0)
-	indexIDi2 := int64(0)
-	for _, indexInfo := range tableInfo.Indices {
-		switch indexInfo.Name.L {
-		case "i1":
-			indexIDi1 = indexInfo.ID
-		case "i2":
-			indexIDi2 = indexInfo.ID
-		}
-	}
-	require.NotEqual(t, int64(0), indexIDi1)
-	require.NotEqual(t, int64(0), indexIDi2)
-
-	// add checkpoint
-	_, err = tk.Exec("CREATE DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint_1")
-	require.NoError(t, err)
-	defer func() {
-		_, err = tk.Exec("DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint_1")
-		require.NoError(t, err)
-	}()
-	logCheckpointMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName, 1)
-	require.NoError(t, err)
-	defer logCheckpointMetaManager.Close()
-	require.NoError(t, logCheckpointMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, &checkpoint.CheckpointIngestIndexRepairSQLs{
-		SQLs: []checkpoint.CheckpointIngestIndexRepairSQL{
-			{
-				// from checkpoint and old index (i1) id is found
-				IndexID:    indexIDi1,
-				SchemaName: ast.NewCIStr("test"),
-				TableName:  ast.NewCIStr("repair_index_t1"),
-				IndexName:  "i1",
-				AddSQL:     "ALTER TABLE %n.%n ADD INDEX %n(%n) USING BTREE VISIBLE",
-				AddArgs:    []any{"test", "repair_index_t1", "i1", "id"},
-			},
-			{
-				// from checkpoint and the index (i2) is repaired
-				IndexID:    indexIDi2 + 99,
-				SchemaName: ast.NewCIStr("test"),
-				TableName:  ast.NewCIStr("repair_index_t1"),
-				IndexName:  "i2",
-				AddSQL:     "ALTER TABLE %n.%n ADD INDEX %n(%n) USING BTREE VISIBLE",
-				AddArgs:    []any{"test", "repair_index_t1", "i2", "a"},
-			},
-			{
-				// from checkpoint and old index (i3) id is not found
-				IndexID:    indexIDi2 + 100,
-				SchemaName: ast.NewCIStr("test"),
-				TableName:  ast.NewCIStr("repair_index_t1"),
-				IndexName:  "i3",
-				AddSQL:     "ALTER TABLE %n.%n ADD INDEX %n(%n) USING BTREE VISIBLE",
-				AddArgs:    []any{"test", "repair_index_t1", "i3", "b"},
-			},
-		},
-	}))
-	ingestRecorder := ingestrec.New()
-	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logCheckpointMetaManager, g))
-	infoschema = s.Mock.InfoSchema()
-	table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
-	require.NoError(t, err)
-	tableInfo2 := table2.Meta()
-	existsCount := 0
-	for _, indexInfo2 := range tableInfo2.Indices {
-		switch indexInfo2.Name.L {
-		case "i1":
-			require.Less(t, indexIDi2, indexInfo2.ID)
-			existsCount++
-		case "i2":
-			require.Equal(t, indexIDi2, indexInfo2.ID)
-			existsCount++
-		case "i3":
-			require.Less(t, indexIDi2, indexInfo2.ID)
-			existsCount++
-		}
-	}
-	require.Equal(t, 3, existsCount)
-}
 
 func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
@@ -1951,6 +1766,8 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 	tk.MustExec("create table test.parent (id int, index i2(id))")
 	tk.MustExec("create table test.child (id int, pid int, index i1(pid), foreign key (pid) references test.parent (id) on delete cascade)")
 	g := gluetidb.New()
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
 	ctx := context.Background()
 	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, fakeSession{})
 	client.SetUseCheckpoint()
@@ -1981,9 +1798,9 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 					Indices: []*model.IndexInfo{
 						{
 							ID:   indexID,
-							Name: ast.NewCIStr(indexName),
+							Name: pmodel.NewCIStr(indexName),
 							Columns: []*model.IndexColumn{{
-								Name: ast.NewCIStr(columnName),
+								Name: pmodel.NewCIStr(columnName),
 							}},
 						},
 					},
@@ -1991,15 +1808,12 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			},
 		}
 	}
-	stg, err := storage.NewLocalStorage(t.TempDir())
-	require.NoError(t, err)
-	logStorageMetaManager := checkpoint.NewLogStorageMetaManager(stg, nil, 123, "test", 1)
 
 	{
 		infoSchema := s.Mock.InfoSchema()
-		childTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+		childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
 		require.NoError(t, err)
-		parentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+		parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
 		require.NoError(t, err)
 		childTableIndexI1 := childTableInfo.Indices[0]
 		parentTableIndexI2 := parentTableInfo.Indices[0]
@@ -2013,11 +1827,11 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			"test", "parent", parentTableInfo.ID, parentTableIndexI2.ID, "i2", "id",
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
 		), false))
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
 		infoSchema = s.Mock.InfoSchema()
-		newChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+		newChildTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
 		require.NoError(t, err)
-		newParentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+		newParentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
 		require.NoError(t, err)
 
 		require.Equal(t, parentTableIndexI2.Name, newParentTableInfo.Indices[0].Name)
@@ -2026,7 +1840,7 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 		require.NotEqual(t, childTableIndexI1.ID, newChildTableInfo.Indices[0].ID)
 		require.Equal(t, childTableInfo.ForeignKeys[0].Name, newChildTableInfo.ForeignKeys[0].Name)
 		require.NotEqual(t, childTableInfo.ForeignKeys[0].ID, newChildTableInfo.ForeignKeys[0].ID)
-		sqls, err := logStorageMetaManager.LoadCheckpointIngestIndexRepairSQLs(ctx)
+		sqls, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
 		require.NoError(t, err)
 		require.Len(t, sqls.FKSQLs, 1)
 		sqls.FKSQLs[0].FKID = newChildTableInfo.ForeignKeys[0].ID
@@ -2037,24 +1851,24 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			sqls.SQLs[0].IndexID = newParentTableInfo.Indices[0].ID
 			sqls.SQLs[1].IndexID = newChildTableInfo.Indices[0].ID
 		}
-		err = logStorageMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, sqls)
+		err = checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, se, sqls)
 		require.NoError(t, err)
 	}
 	{
 		infoSchema := s.Mock.InfoSchema()
-		childTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+		childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
 		require.NoError(t, err)
-		parentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+		parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
 		require.NoError(t, err)
 		childTableIndexI1 := childTableInfo.Indices[0]
 		parentTableIndexI2 := parentTableInfo.Indices[0]
 
 		ingestRecorder := ingestrec.New()
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
 		infoSchema = s.Mock.InfoSchema()
-		newChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+		newChildTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
 		require.NoError(t, err)
-		newParentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+		newParentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
 		require.NoError(t, err)
 		require.Equal(t, parentTableIndexI2.Name, newParentTableInfo.Indices[0].Name)
 		require.NotEqual(t, parentTableIndexI2.ID, newParentTableInfo.Indices[0].ID)
@@ -2064,11 +1878,11 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 		require.NotEqual(t, childTableInfo.ForeignKeys[0].ID, newChildTableInfo.ForeignKeys[0].ID)
 	}
 	{
-		require.NoError(t, logStorageMetaManager.RemoveCheckpointData(ctx))
+		require.NoError(t, checkpoint.RemoveCheckpointDataForLogRestore(ctx, s.Mock.Domain, se))
 		infoSchema := s.Mock.InfoSchema()
-		childTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+		childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
 		require.NoError(t, err)
-		parentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+		parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
 		require.NoError(t, err)
 		childTableIndexI1 := childTableInfo.Indices[0]
 		parentTableIndexI2 := parentTableInfo.Indices[0]
@@ -2086,26 +1900,26 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			"test", "parent", parentTableInfo.ID, parentTableIndexI2.ID, "i2", "id",
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
 		), false))
-		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index"))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index", `return(true)`))
 		defer func() {
 			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index")
 		}()
-		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index"))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index", `return(true)`))
 		defer func() {
 			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index")
 		}()
-		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index"))
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
 
 		infoSchema = s.Mock.InfoSchema()
-		newChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+		newChildTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
 		require.NoError(t, err)
-		newParentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+		newParentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
 		require.NoError(t, err)
 		require.Equal(t, parentTableIndexI2.Name, newParentTableInfo.Indices[0].Name)
 		require.NotEqual(t, parentTableIndexI2.ID, newParentTableInfo.Indices[0].ID)
@@ -2115,24 +1929,3 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 		require.NotEqual(t, childTableInfo.ForeignKeys[0].ID, newChildTableInfo.ForeignKeys[0].ID)
 	}
 }
-
-type mockBatchProcessor struct {
-	processFunc func(
-		ctx context.Context,
-		files []*backuppb.DataFileInfo,
-		entries []*logclient.KvEntryWithTS,
-		filterTS uint64,
-		cf string,
-	) ([]*logclient.KvEntryWithTS, error)
-}
-
-func (m *mockBatchProcessor) ProcessBatch(
-	ctx context.Context,
-	files []*backuppb.DataFileInfo,
-	entries []*logclient.KvEntryWithTS,
-	filterTS uint64,
-	cf string,
-) ([]*logclient.KvEntryWithTS, error) {
-	return m.processFunc(ctx, files, entries, filterTS, cf)
-}
->>>>>>> b854521ee91 (br: repair the index that any foreign key is needed in (#62418))
