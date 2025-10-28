@@ -41,6 +41,7 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *physicalop
 		dst.HandleConstant = nil
 	} else {
 		if src.HandleConstant.SafeToShareAcrossSession() {
+			src.HandleConstant.CleanHashCode()
 			dst.HandleConstant = src.HandleConstant
 		} else {
 			dst.HandleConstant = src.HandleConstant.Clone().(*expression.Constant)
