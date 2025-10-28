@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"sort"
 	"strings"
 	"testing"
@@ -524,7 +525,7 @@ func TestPlanBuilder(t *testing.T) {
 
 	s := coretestsdk.CreatePlannerSuiteElems()
 	defer s.Close()
-	s.GetCtx().GetSessionVars().CostModelVersion = modelVer1
+	s.GetCtx().GetSessionVars().CostModelVersion = cost.ModelVer1
 	ctx := context.Background()
 	for i, ca := range input {
 		comment := fmt.Sprintf("for %s", ca)

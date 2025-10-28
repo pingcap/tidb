@@ -17,6 +17,7 @@ package physicalop
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/telemetry"
@@ -630,7 +632,118 @@ func (p *PhysicalTableScan) GetPlanCostVer1(_ property.TaskType, option *costusa
 // log2(row-size) is from experimenp.
 func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType,
 	option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalTableScan(p, taskType, option, isChildOfINL...)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	var columns []*expression.Column
+	if p.StoreType == kv.TiKV { // Assume all columns for TiKV
+		columns = p.TblCols
+	} else { // TiFlash
+		columns = p.Schema().Columns
+	}
+	rows := cost.GetCardinality(p, option.CostFlag)
+	rowSize := cost.GetAvgRowSize(p.StatsInfo(), columns)
+	// Ensure rows and rowSize have a reasonable minimum value to avoid underestimation
+	if len(isChildOfINL) <= 0 || (len(isChildOfINL) > 0 && !isChildOfINL[0]) {
+		rows = max(cost.MinNumRows, rows)
+		rowSize = max(rowSize, cost.MinRowSize)
+	}
+
+	scanFactor := cost.GetTaskScanFactorVer2(p.StoreType, taskType, isTemporaryTable(p), isDescScan(p))
+
+	// For not TiFlash
+	if p.StoreType != kv.TiFlash {
+		var unsignedIntHandle bool
+		if p.Table.PKIsHandle {
+			if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
+				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+			}
+		}
+		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
+		p.PlanCostVer2 = cost.ScanCostVer2(option, rows, rowSize, scanFactor)
+		if ((len(isChildOfINL) > 0 && !isChildOfINL[0]) || len(isChildOfINL) <= 0) && hasFullRangeScan {
+			if newRowCount := getTableScanPenalty(p, rows); newRowCount > 0 {
+				p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, cost.ScanCostVer2(option, newRowCount, rowSize, scanFactor))
+			}
+		}
+		p.PlanCostInit = true
+		// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+		if len(isChildOfINL) > 0 && isChildOfINL[0] {
+			// This is a RowID table scan (child of IndexLookUp)
+			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRowIDScanCostFactor)
+			p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTableRowIDScanCostFactor)
+		} else if !hasFullRangeScan {
+			// This is a table range scan (predicate exists on the PK)
+			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRangeScanCostFactor)
+			p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTableRangeScanCostFactor)
+		} else {
+			// This is a table full scan
+			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableFullScanCostFactor)
+			p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTableFullScanCostFactor)
+		}
+		return p.PlanCostVer2, nil
+	}
+
+	// For TiFlash
+
+	// for late materialization
+	if len(p.LateMaterializationFilterCondition) > 0 {
+		// For late materialization, we will scan all rows of filter columns in the table or given range first.
+		// And the rows of rest columns after filtering may be discrete, so we need to add some penalty for it.
+		// so late materialization cost = lmRowSize * scanFactor * totalRowCount + restRowSize * scanFactor * rows * lateMaterializationFactor
+		// And for small tables, len(p.LateMaterializationFilterCondition) always equal to 0, so do
+		cols := expression.ExtractColumnsFromExpressions(p.LateMaterializationFilterCondition, nil)
+		lmRowSize := cost.GetAvgRowSize(p.StatsInfo(), cols)
+		totalRowCount := rows/p.LateMaterializationSelectivity + cost.TiFlashStartupRowPenalty
+		p.PlanCostVer2 = costusage.NewCostVer2(option, scanFactor,
+			totalRowCount*max(math.Log2(lmRowSize), 0)*scanFactor.Value,
+			func() string {
+				return fmt.Sprintf("lm_col_scan(%v*logrowsize(%v)*%v)", totalRowCount, lmRowSize, scanFactor)
+			})
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, scanFactor,
+			rows*max(math.Log2(rowSize-lmRowSize), 0)*scanFactor.Value*cost.DefaultVer2Factors.LateMaterializationScan.Value,
+			func() string {
+				return fmt.Sprintf("lm_rest_col_scan(%v*logrowsize(%v)*%v*lm_scan_factor(%v))", rows, rowSize-lmRowSize, scanFactor, defaultVer2Factors.LateMaterializationScan.Value)
+			}))
+	} else {
+		p.PlanCostVer2 = cost.ScanCostVer2(option, rows, rowSize, scanFactor)
+		// Apply TiFlash startup cost to prefer TiKV for small table scans
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, cost.ScanCostVer2(option, cost.TiFlashStartupRowPenalty, rowSize, scanFactor))
+	}
+
+	// Add penalty for search index
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx == nil {
+			continue
+		}
+		if idx.IndexInfo.VectorInfo != nil {
+			if idx.QueryInfo == nil {
+				p.PlanCostVer2 = costusage.NewCostVer2(option, cost.DefaultVer2Factors.ANNIndexNoTopK, cost.DefaultVer2Factors.ANNIndexNoTopK.Value, func() string {
+					return fmt.Sprintf("ann-index-no-topk(%v)", cost.DefaultVer2Factors.ANNIndexNoTopK)
+				})
+			} else {
+				p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, cost.DefaultVer2Factors.ANNIndexStart, rows*cost.DefaultVer2Factors.ANNIndexStart.Value, func() string {
+					return fmt.Sprintf("ann-index-start(%v*%v)", rows, cost.DefaultVer2Factors.ANNIndexStart)
+				}))
+				p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, cost.DefaultVer2Factors.ANNIndexScanRow, float64(idx.QueryInfo.GetAnnQueryInfo().TopK)*cost.DefaultVer2Factors.ANNIndexScanRow.Value, func() string {
+					return fmt.Sprintf("ann-index-topk(%v*%v)", idx.QueryInfo.GetAnnQueryInfo().TopK, cost.DefaultVer2Factors.ANNIndexScanRow)
+				}))
+			}
+		} else if idx.IndexInfo.InvertedInfo != nil {
+			// penelty = rows * inverted-index-scan-factor + inverted-index-search-factor * rows
+			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, cost.DefaultVer2Factors.InvertedIndexScan.Value)
+			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, cost.DefaultVer2Factors.InvertedIndexSearch, rows*cost.DefaultVer2Factors.InvertedIndexSearch.Value, func() string {
+				return fmt.Sprintf("inverted-index-search(%v*%v)", rows, cost.DefaultVer2Factors.InvertedIndexSearch)
+			}))
+		}
+	}
+	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	// This is a table full scan
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableTiFlashScanCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTableTiFlashScanCostFactor)
+	return p.PlanCostVer2, nil
 }
 
 // GetScanRowSize is to get the row size when to scan.
@@ -884,4 +997,52 @@ func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTabl
 	}
 	ts.HandleCols, err = handleCols.ResolveIndices(expression.NewSchema(exprCols...))
 	return
+}
+
+func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64) {
+	// Apply cost penalty for full scans that carry high risk of underestimation. Exclude those
+	// that are the child of an index scan or child is TableRangeScan
+	if len(p.RangeInfo) > 0 {
+		return float64(0)
+	}
+	sessionVars := p.SCtx().GetSessionVars()
+	allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
+	tblColHists := p.TblColHists
+	originalRows := int64(tblColHists.GetAnalyzeRowCount())
+
+	// hasUnreliableStats is a check for pseudo or zero stats
+	hasUnreliableStats := tblColHists.Pseudo || originalRows < 1
+	// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
+	hasHighModifyCount := tblColHists.ModifyCount > originalRows
+	// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
+	hasLowEstimate := rows > 1 && tblColHists.ModifyCount < originalRows && int64(rows) <= tblColHists.ModifyCount
+	// preferRangeScan check here is same as in skylinePruning
+	preferRangeScanCondition := allowPreferRangeScan && (hasUnreliableStats || hasHighModifyCount || hasLowEstimate)
+
+	// differentiate a FullTableScan from a partition level scan - so we shouldn't penalize these
+	hasPartitionScan := false
+	if p.PlanPartInfo != nil {
+		if len(p.PlanPartInfo.PruningConds) > 0 {
+			hasPartitionScan = true
+		}
+	}
+
+	// GetIndexForce assumes that the USE/FORCE index is to force a range scan, and thus the
+	// penalty is applied to a full table scan (not range scan). This may also penalize a
+	// full table scan where USE/FORCE was applied to the primary key.
+	hasIndexForce := sessionVars.StmtCtx.GetIndexForce()
+	shouldApplyPenalty := hasIndexForce || preferRangeScanCondition
+	if shouldApplyPenalty {
+		// MySQL will increase the cost of table scan if FORCE index is used. TiDB takes this one
+		// step further - because we don't differentiate USE/FORCE - the added penalty applies to
+		// both, and it also applies to any full table scan in the query. Use "max" to get the minimum
+		// number of rows to add as a penalty to the table scan.
+		minRows := max(cost.MaxPenaltyRowCount, rows)
+		if hasPartitionScan {
+			return minRows
+		}
+		// If it isn't a partitioned table - choose the max that includes ModifyCount
+		return max(minRows, float64(tblColHists.ModifyCount))
+	}
+	return float64(0)
 }

@@ -22,13 +22,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -353,7 +356,7 @@ func (cwc *ColWithCmpFuncManager) MemoryUsage() (sum int64) {
 // (probe-cost + probe-filter-cost) / concurrency
 // probe-cost = probe-child-cost * build-rows / batchRatio
 func (p *PhysicalIndexJoin) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin(p, taskType, option, 0)
+	return getIndexJoinCostVer24PhysicalIndexJoin(p, taskType, option, 0)
 }
 
 // Attach2Task implements PhysicalPlan interface.
@@ -473,4 +476,101 @@ type IndexJoinInfo struct {
 	KeyOff2IdxOff  []int
 	Ranges         ranger.MutableRanges
 	CompareFilters *ColWithCmpFuncManager
+}
+
+func getIndexJoinCostVer24PhysicalIndexJoin(p *PhysicalIndexJoin, taskType property.TaskType, option *costusage.PlanCostOption, indexJoinType int) (costusage.CostVer2, error) {
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	build, probe := p.Children()[1-p.InnerChildIdx], p.Children()[p.InnerChildIdx]
+	buildRows := cost.GetCardinality(build, option.CostFlag)
+	buildRowSize := cost.GetAvgRowSize(build.StatsInfo(), build.Schema().Columns)
+	probeRowsOne := cost.GetCardinality(probe, option.CostFlag)
+	probeRowsTot := probeRowsOne * buildRows
+	probeRowSize := cost.GetAvgRowSize(probe.StatsInfo(), probe.Schema().Columns)
+	buildFilters, probeFilters := p.LeftConditions, p.RightConditions
+	probeConcurrency := float64(p.SCtx().GetSessionVars().IndexLookupJoinConcurrency())
+	cpuFactor := cost.GetTaskCPUFactorVer2(p, taskType)
+	memFactor := cost.GetTaskMemFactorVer2(p, taskType)
+	requestFactor := cost.GetTaskRequestFactorVer2(isTemporaryTable(p))
+	scanFactor := cost.GetTaskScanFactorVer2(kv.TiKV, taskType, isTemporaryTable(p), isDescScan(p))
+
+	buildFilterCost := cost.FilterCostVer2(option, buildRows, buildFilters, cpuFactor)
+	buildChildCost, err := build.GetPlanCostVer2(taskType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+	buildTaskCost := costusage.NewCostVer2(option, cpuFactor,
+		buildRows*10*cpuFactor.Value,
+		func() string { return fmt.Sprintf("cpu(%v*10*%v)", buildRows, cpuFactor) })
+	startCost := costusage.NewCostVer2(option, cpuFactor,
+		10*3*cpuFactor.Value,
+		func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
+
+	probeFilterCost := cost.FilterCostVer2(option, probeRowsTot, probeFilters, cpuFactor)
+	probeChildCost, err := probe.GetPlanCostVer2(taskType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	var hashTableCost costusage.CostVer2
+	switch indexJoinType {
+	case 1: // IndexHashJoin
+		hashTableCost = cost.HashBuildCostVer2(option, buildRows, buildRowSize, float64(len(p.RightJoinKeys)), cpuFactor, memFactor)
+	case 2: // IndexMergeJoin
+		hashTableCost = costusage.NewZeroCostVer2(costusage.TraceCost(option))
+	default: // IndexJoin
+		hashTableCost = cost.HashBuildCostVer2(option, probeRowsTot, probeRowSize, float64(len(p.LeftJoinKeys)), cpuFactor, memFactor)
+	}
+
+	// IndexJoin executes a batch of rows at a time, so the actual cost of this part should be
+	//  `innerCostPerBatch * numberOfBatches` instead of `innerCostPerRow * numberOfOuterRow`.
+	// Use an empirical value batchRatio to handle this now.
+	// TODO: remove this empirical value.
+	batchRatio := 6.0
+	probeCost := costusage.DivCostVer2(costusage.MulCostVer2(probeChildCost, buildRows), batchRatio)
+
+	// Double Read Cost
+	doubleReadCost := costusage.NewZeroCostVer2(costusage.TraceCost(option))
+	if p.SCtx().GetSessionVars().IndexJoinDoubleReadPenaltyCostRate > 0 {
+		batchSize := float64(p.SCtx().GetSessionVars().IndexJoinBatchSize)
+		taskPerBatch := 1024.0 // TODO: remove this magic number
+		doubleReadTasks := buildRows / batchSize * taskPerBatch
+		doubleReadCost = cost.DoubleReadCostVer2(option, doubleReadTasks, requestFactor)
+		doubleReadCost = costusage.MulCostVer2(doubleReadCost, p.SCtx().GetSessionVars().IndexJoinDoubleReadPenaltyCostRate)
+	}
+
+	// consider the seeking cost of the probe side of index join,
+	// since this part of cost might be magnified by index join, see #62499.
+	numRanges := getNumberOfRanges(probe)
+	seekingCost := cost.IndexJoinSeekingCostVer2(option, buildRows, float64(numRanges), scanFactor)
+
+	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, seekingCost, costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
+	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexJoinCostFactor)
+	return p.PlanCostVer2, nil
+}
+
+// GetNumberOfRanges returns the total number of ranges of a physical plan tree.
+// Some queries with large IN list like `a in (1, 2, 3...)` could generate a large number of ranges, which may slow down the query performance.
+func getNumberOfRanges(pp base.PhysicalPlan) (totNumRanges int) {
+	switch p := pp.(type) {
+	case *PhysicalTableReader:
+		return getNumberOfRanges(p.TablePlan)
+	case *PhysicalIndexReader:
+		return getNumberOfRanges(p.IndexPlan)
+	case *PhysicalIndexLookUpReader:
+		return getNumberOfRanges(p.IndexPlan) + getNumberOfRanges(p.TablePlan)
+	case *PhysicalTableScan:
+		return len(p.Ranges)
+	case *PhysicalIndexScan:
+		return len(p.Ranges)
+	}
+	for _, child := range pp.Children() {
+		totNumRanges += getNumberOfRanges(child)
+	}
+	return totNumRanges
 }

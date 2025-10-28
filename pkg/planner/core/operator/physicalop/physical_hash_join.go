@@ -23,10 +23,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
@@ -347,7 +349,55 @@ func (p *PhysicalHashJoin) GetPlanCostVer1(taskType property.TaskType,
 // (probe-filter-cost + probe-hash-cost) / concurrency
 func (p *PhysicalHashJoin) GetPlanCostVer2(taskType property.TaskType,
 	option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalHashJoin(p, taskType, option)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	build, probe := p.Children()[0], p.Children()[1]
+	buildFilters, probeFilters := p.LeftConditions, p.RightConditions
+	buildKeys, probeKeys := p.LeftJoinKeys, p.RightJoinKeys
+	if (p.InnerChildIdx == 1 && !p.UseOuterToBuild) || (p.InnerChildIdx == 0 && p.UseOuterToBuild) {
+		build, probe = probe, build
+		buildFilters, probeFilters = probeFilters, buildFilters
+	}
+	buildRows := max(cost.MinNumRows, cost.GetCardinality(build, option.CostFlag))
+	probeRows := cost.GetCardinality(probe, option.CostFlag)
+	buildRowSize := max(cost.MinRowSize, cost.GetAvgRowSize(build.StatsInfo(), build.Schema().Columns))
+	tidbConcurrency := float64(p.Concurrency)
+	mppConcurrency := float64(3) // TODO: remove this empirical value
+	cpuFactor := cost.GetTaskCPUFactorVer2(p, taskType)
+	memFactor := cost.GetTaskMemFactorVer2(p, taskType)
+
+	buildFilterCost := cost.FilterCostVer2(option, buildRows, buildFilters, cpuFactor)
+	buildHashCost := cost.HashBuildCostVer2(option, buildRows, buildRowSize, float64(len(buildKeys)), cpuFactor, memFactor)
+
+	probeFilterCost := cost.FilterCostVer2(option, probeRows, probeFilters, cpuFactor)
+	probeHashCost := cost.HashProbeCostVer2(option, probeRows, float64(len(probeKeys)), cpuFactor)
+
+	buildChildCost, err := build.GetPlanCostVer2(taskType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+	probeChildCost, err := probe.GetPlanCostVer2(taskType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	if taskType == property.MppTaskType { // BCast or Shuffle Join, use mppConcurrency
+		p.PlanCostVer2 = costusage.SumCostVer2(buildChildCost, probeChildCost,
+			costusage.DivCostVer2(costusage.SumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeFilterCost), mppConcurrency))
+	} else { // TiDB HashJoin
+		startCost := costusage.NewCostVer2(option, cpuFactor,
+			10*3*cpuFactor.Value, // 10rows * 3func * cpuFactor
+			func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
+		p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
+			costusage.DivCostVer2(costusage.SumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
+	}
+	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().HashJoinCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptHashJoinCostFactor)
+	return p.PlanCostVer2, nil
 }
 
 // MemoryUsage return the memory usage of PhysicalHashJoin

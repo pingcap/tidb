@@ -24,11 +24,13 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -280,7 +282,35 @@ func (p *PhysicalMergeJoin) GetPlanCostVer1(taskType property.TaskType, option *
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = left-child-cost + right-child-cost + filter-cost + group-cost
 func (p *PhysicalMergeJoin) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalMergeJoin(p, taskType, option)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	leftRows := max(cost.MinNumRows, cost.GetCardinality(p.Children()[0], option.CostFlag))
+	rightRows := max(cost.MinNumRows, cost.GetCardinality(p.Children()[1], option.CostFlag))
+	cpuFactor := cost.GetTaskCPUFactorVer2(p, taskType)
+
+	filterCost := costusage.SumCostVer2(cost.FilterCostVer2(option, leftRows, p.LeftConditions, cpuFactor),
+		cost.FilterCostVer2(option, rightRows, p.RightConditions, cpuFactor),
+		cost.FilterCostVer2(option, leftRows+rightRows, p.OtherConditions, cpuFactor)) // OtherConditions are applied to both sides
+	groupCost := costusage.SumCostVer2(cost.GroupCostVer2(option, leftRows, cols2Exprs(p.LeftJoinKeys), cpuFactor),
+		cost.GroupCostVer2(option, rightRows, cols2Exprs(p.RightJoinKeys), cpuFactor))
+
+	leftChildCost, err := p.Children()[0].GetPlanCostVer2(taskType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+	rightChildCost, err := p.Children()[1].GetPlanCostVer2(taskType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	p.PlanCostVer2 = costusage.SumCostVer2(leftChildCost, rightChildCost, filterCost, groupCost)
+	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().MergeJoinCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptMergeJoinCostFactor)
+	return p.PlanCostVer2, nil
 }
 
 // ExplainInfo implements Plan interface.
@@ -530,4 +560,12 @@ func getNewNullEQByOffsets(oldNullEQ []bool, offsets []int) []bool {
 		}
 	}
 	return newNullEQ
+}
+
+func cols2Exprs(cols []*expression.Column) []expression.Expression {
+	exprs := make([]expression.Expression, 0, len(cols))
+	for _, c := range cols {
+		exprs = append(exprs, c)
+	}
+	return exprs
 }

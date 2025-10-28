@@ -16,6 +16,7 @@ package physicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -70,6 +71,23 @@ func (p *PhysicalUnionAll) GetPlanCostVer1(taskType property.TaskType, option *c
 }
 
 // GetPlanCostVer2 implements base.PhysicalPlan interface.
+// it calculates the cost of the plan if it has not been calculated yet and returns the cost.
+// plan-cost = sum(child-cost) / concurrency
 func (p *PhysicalUnionAll) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalUnionAll(p, taskType, option)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	concurrency := float64(p.SCtx().GetSessionVars().UnionConcurrency())
+	childCosts := make([]costusage.CostVer2, 0, len(p.Children()))
+	for _, child := range p.Children() {
+		childCost, err := child.GetPlanCostVer2(taskType, option)
+		if err != nil {
+			return costusage.ZeroCostVer2, err
+		}
+		childCosts = append(childCosts, childCost)
+	}
+	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCosts...), concurrency)
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
 }

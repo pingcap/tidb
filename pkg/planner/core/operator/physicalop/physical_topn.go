@@ -23,11 +23,13 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
@@ -222,8 +224,46 @@ func (p *PhysicalTopN) GetPlanCostVer1(taskType property.TaskType, option *costu
 }
 
 // GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns a CostVer2 object.
+// it returns the plan-cost of this sub-plan, which is:
+// plan-cost = child-cost + topn-cpu-cost + topn-mem-cost
+// topn-cpu-cost = rows * log2(N) * len(sort-items) * cpu-factor
+// topn-mem-cost = N * row-size * mem-factor
 func (p *PhysicalTopN) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalTopN(p, taskType, option, isChildOfINL...)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	rows := max(cost.MinNumRows, cost.GetCardinality(p.Children()[0], option.CostFlag))
+	n := max(cost.MinNumRows, float64(p.Count+p.Offset))
+	minTopNThreshold := float64(100) // set a minimum of 100 to avoid too low n
+	if n > minTopNThreshold {
+		// `rows` may be under-estimated. We need to adjust 'n' to ensure we keep a reasonable value.
+		if rows < float64(p.Offset) {
+			n = rows + float64(p.Offset)
+		} else {
+			n = max(min(n, rows), minTopNThreshold)
+		}
+	}
+	rowSize := max(cost.MinRowSize, cost.GetAvgRowSize(p.StatsInfo(), p.Schema().Columns))
+	cpuFactor := cost.GetTaskCPUFactorVer2(p, taskType)
+	memFactor := cost.GetTaskMemFactorVer2(p, taskType)
+
+	topNCPUCost := cost.OrderCostVer2(option, rows, n, p.ByItems, cpuFactor)
+	topNMemCost := costusage.NewCostVer2(option, memFactor,
+		n*rowSize*memFactor.Value,
+		func() string { return fmt.Sprintf("topMem(%v*%v*%v)", n, rowSize, memFactor) })
+
+	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option, isChildOfINL...)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	p.PlanCostVer2 = costusage.SumCostVer2(childCost, topNCPUCost, topNMemCost)
+	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TopNCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTopNCostFactor)
+	return p.PlanCostVer2, nil
 }
 
 // ResolveIndices implements Plan interface.

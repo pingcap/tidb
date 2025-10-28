@@ -79,7 +79,7 @@ func (p *PhysicalIndexHashJoin) GetPlanCostVer1(taskType property.TaskType, opti
 // GetPlanCostVer2 implements PhysicalPlan interface.
 func (p *PhysicalIndexHashJoin) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption,
 	_ ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin(&p.PhysicalIndexJoin, taskType, option, 1)
+	return getIndexJoinCostVer24PhysicalIndexJoin(&p.PhysicalIndexJoin, taskType, option, 1)
 }
 
 // MemoryUsage return the memory usage of PhysicalIndexHashJoin

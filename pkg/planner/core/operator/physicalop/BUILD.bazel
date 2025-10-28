@@ -110,6 +110,7 @@ go_library(
         "//pkg/util/hint",
         "//pkg/util/intest",
         "//pkg/util/logutil",
+        "//pkg/util/paging",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
         "//pkg/util/ranger/context",

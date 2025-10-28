@@ -16,6 +16,7 @@ package planner
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"math"
 	"math/rand"
 	"sort"
@@ -627,7 +628,7 @@ func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) 
 	if !ok {
 		return 0, errors.Errorf("plan is not a physical plan: %T", plan)
 	}
-	return core.GetPlanCost(pp, property.RootTaskType, costusage.NewDefaultPlanCostOption())
+	return cost.GetPlanCost(pp, property.RootTaskType, costusage.NewDefaultPlanCostOption())
 }
 
 func calculatePlanDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error) {

@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -151,14 +151,14 @@ func BenchmarkGetPlanCost(b *testing.B) {
 		b.Fatal(err)
 	}
 	phyPlan := plan.(base.PhysicalPlan)
-	_, err = core.GetPlanCost(phyPlan, property.RootTaskType, costusage.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate))
+	_, err = cost.GetPlanCost(phyPlan, property.RootTaskType, costusage.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate))
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = core.GetPlanCost(phyPlan, property.RootTaskType, costusage.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate))
+		_, _ = cost.GetPlanCost(phyPlan, property.RootTaskType, costusage.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate))
 	}
 }
 
