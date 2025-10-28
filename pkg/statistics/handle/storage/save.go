@@ -133,9 +133,9 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 // We prefer crypto/rand for its stronger randomness characteristics.
 func getRandomFakeID() int64 {
 	// Int cannot return an error when using rand.Reader.
-	a, _ := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
+	id, _ := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
 	// Make sure the fake ID is negative.
-	return -a.Int64() - 1
+	return -id.Int64() - 1
 }
 
 // SaveAnalyzeResultToStorage saves the analyze result to the storage.
