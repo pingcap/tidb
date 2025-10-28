@@ -27,18 +27,59 @@ const seed = 4992862800126241206 // set the fixed seed for test
 func TestSwissTable(t *testing.T) {
 	require.True(t, maxTableCapacity == 1024)
 	{
+		m := make(map[int]int)
+		tp := ToSwissMap(m).Type
+		require.True(t, tp.GroupSize == 136)
+		require.True(t, tp.SlotSize == 16)
+		require.True(t, tp.ElemOff == 8)
+	}
+	{
+		m := make(map[int32]int32)
+		tp := ToSwissMap(m).Type
+		require.True(t, tp.GroupSize == 72)
+		require.True(t, tp.SlotSize == 8)
+		require.True(t, tp.ElemOff == 4)
+	}
+	{
+		m := make(map[int8]int8)
+		tp := ToSwissMap(m).Type
+		require.True(t, tp.GroupSize == 24)
+		require.True(t, tp.SlotSize == 2)
+		require.True(t, tp.ElemOff == 1)
+	}
+	{
+		m := make(map[int64]float64)
+		tp := ToSwissMap(m).Type
+		require.True(t, tp.GroupSize == 136)
+		require.True(t, tp.SlotSize == 16)
+		require.True(t, tp.ElemOff == 8)
+	}
+	{
+		m := make(map[complex128]complex128)
+		tp := ToSwissMap(m).Type
+		require.True(t, tp.GroupSize == 264)
+		require.True(t, tp.SlotSize == 32)
+		require.True(t, tp.ElemOff == 16)
+	}
+	{
 		const N = 1024
 		mp := make(map[uint64]uint64)
+		sm := ToSwissMap(mp)
+		sm.Data.MockSeedForTest(seed)
 		mp[1234] = 5678
 		for i := range N {
 			mp[uint64(i)] = uint64(i * 2)
 		}
-		sm := ToSwissMap(mp)
-		sm.Data.MockSeedForTest(seed)
 		require.Equal(t, N+1, len(mp))
 		require.Equal(t, uint64(N+1), sm.Data.Used)
 		found := false
-		for _, table := range sm.Data.directory() {
+		var lastTab *swissMapTable
+
+		for i := range sm.Data.dirLen {
+			table := sm.Data.directoryAt(uintptr(i))
+			if table == lastTab {
+				continue
+			}
 			for i := range table.groups.lengthMask + 1 {
 				ref := table.groups.group(sm.Type, i)
 				require.True(t, (sm.Type.GroupSize-groupSlotsOffset)%sm.Type.SlotSize == 0)
@@ -55,16 +96,22 @@ func TestSwissTable(t *testing.T) {
 			}
 		}
 		require.True(t, found)
+
+		oriSeed := sm.Data.seed
+		for k := range mp {
+			delete(mp, k)
+		}
+		require.True(t, oriSeed != sm.Data.seed)
 	}
 	{
 		const N = 2000
 		mp := make(map[string]int)
+		sm := ToSwissMap(mp)
+		sm.Data.MockSeedForTest(seed)
 		for i := range N {
 			mp[fmt.Sprintf("key-%d", i)] = i
 		}
 		require.Equal(t, N, len(mp))
-		sm := ToSwissMap(mp)
-		sm.Data.MockSeedForTest(seed)
 		require.Equal(t, N, int(sm.Data.Used))
 		require.True(t, sm.Type.GroupSize == 200)
 		require.True(t, sm.Data.dirLen == 4)
@@ -90,28 +137,42 @@ func TestSwissTable(t *testing.T) {
 
 	{
 		mp := make(map[complex128]complex128)
-		ToSwissMap(mp).Data.MockSeedForTest(seed)
 		m := MemAwareMap[complex128, complex128]{}
 		const N = 1024*50 - 1
 		delta := m.Init(mp)
+		m.MockSeedForTest(seed)
 		for i := range N {
 			k := complex(float64(i), float64(i))
 			d := m.Set(k, k)
 			delta += d
 			if d > 0 {
 				sz := m.RealBytes()
-				expMin := sz * 70 / 100
+				expMin := sz * 75 / 100
 				require.True(t, m.Bytes >= expMin, "ApproxSize %d, RealSize %d, index %d, expMin %d", m.Bytes, sz, i, expMin)
-				require.True(t, approxSizeV2(m.groupSize, uint64(m.Len())) >= expMin, "ApproxSize %d, RealSize %d, index %d, expMin %d", m.Bytes, sz, i, expMin)
+				require.True(t, approxSize(m.groupSize, uint64(m.Len())) >= expMin, "ApproxSize %d, RealSize %d, index %d, expMin %d", m.Bytes, sz, i, expMin)
 			}
 		}
 		sz := m.RealBytes()
 		require.True(t, sz == 2165296, sz)
 		require.True(t, delta == 2702278, delta)
 		require.True(t, delta == int64(m.Bytes))
+		require.True(t, seed == m.unwrap().seed)
+		clearSeq := m.unwrap().clearSeq
 		clear(m.M)
+		require.True(t, m.Len() == 0)
+		require.True(t, clearSeq+1 == m.unwrap().clearSeq)
+		require.True(t, m.unwrap().seed != seed)
 		require.True(t, sz == m.RealBytes())
 		require.True(t, delta == int64(m.Bytes))
+
+		m.MockSeedForTest(seed)
+		for i := range 1024 {
+			k := complex(float64(i), float64(i))
+			d, insert := m.SetExt(k, k)
+			require.True(t, d == 0)
+			require.True(t, insert)
+		}
+		require.True(t, m.Len() == 1024)
 	}
 }
 

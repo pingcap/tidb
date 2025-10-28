@@ -29,7 +29,7 @@ const swissMapGroupSlotsBits = 3
 // Number of slots in a group.
 const swissMapGroupSlots = 1 << swissMapGroupSlotsBits // 8
 
-// src/internal/runtime/maps/table.go:table
+// $GOROOT/src/internal/runtime/maps/table.go:`type table struct`
 type swissMapTable struct {
 	// The number of filled slots (i.e. the number of elements in the table).
 	used uint16
@@ -83,8 +83,7 @@ type groupsReference struct {
 	lengthMask uint64
 }
 
-// src/internal/runtime/maps/map.go:Map
-// Note: changes here must be reflected in cmd/compile/internal/reflectdata/map_swiss.go:SwissMapType.
+// $GOROOT/src/internal/runtime/maps/map.go:`type Map struct`
 type swissMap struct {
 	// The number of filled slots (i.e. the number of elements in all
 	// tables). Excludes deleted slots.
@@ -136,11 +135,6 @@ type swissMap struct {
 	// clearSeq is a sequence counter of calls to Clear. It is used to
 	// detect map clears during iteration.
 	clearSeq uint64
-}
-
-func (m *swissMap) directory() []*swissMapTable {
-	directory := unsafe.Slice((**swissMapTable)(m.dirPtr), m.dirLen)
-	return directory
 }
 
 func (m *swissMap) directoryAt(i uintptr) *swissMapTable {
@@ -199,7 +193,7 @@ const (
 )
 
 // TODO: use a more accurate size calculation if necessary
-func approxSizeV2(groupSize uint64, maxLen uint64) (size uint64) {
+func approxSize(groupSize uint64, maxLen uint64) (size uint64) {
 	// 204 can fit the `split`/`rehash` behavior of different kinds of swisstable
 	const ratio = 204
 	return groupSize * maxLen * ratio / 1000
@@ -233,20 +227,15 @@ func (g *groupsReference) group(typ *swissMapType, i uint64) groupReference {
 	}
 }
 
-type abiTFlag uint8
-type abiKind uint8
-type abiNameOff int32
-type abiTypeOff int32
-
-// src/internal/abi/type.go:Type
+// $GOROOT/src/internal/abi/type.go:`type Type struct`
 type abiType struct {
 	Size       uintptr
-	PtrBytes   uintptr  // number of (prefix) bytes in the type that can contain pointers
-	Hash       uint32   // hash of type; avoids computation in hash tables
-	TFlag      abiTFlag // extra type information flags
-	Align      uint8    // alignment of variable with this type
-	FieldAlign uint8    // alignment of struct field with this type
-	Kind       abiKind  // enumeration for C
+	PtrBytes   uintptr // number of (prefix) bytes in the type that can contain pointers
+	Hash       uint32  // hash of type; avoids computation in hash tables
+	TFlag      uint8   // extra type information flags
+	Align      uint8   // alignment of variable with this type
+	FieldAlign uint8   // alignment of struct field with this type
+	Kind       uint8   // enumeration for C
 	// function for comparing objects of this type
 	// (ptr to object A, ptr to object B) -> ==?
 	Equal func(unsafe.Pointer, unsafe.Pointer) bool
@@ -262,11 +251,11 @@ type abiType struct {
 	// including when TFlagGCMaskOnDemand is set. The types will, of course,
 	// have the same pointer layout (but not necessarily the same size).
 	GCData    *byte
-	Str       abiNameOff // string form
-	PtrToThis abiTypeOff // type for pointer to this type, may be zero
+	Str       int32 // string form
+	PtrToThis int32 // type for pointer to this type, may be zero
 }
 
-// src/internal/abi/map_swiss.go:SwissMapType
+// $GOROOT/src/internal/abi/map_swiss.go:`type SwissMapType struct`
 type swissMapType struct {
 	abiType
 	Key   *abiType
@@ -321,21 +310,22 @@ func (g *groupReference) elem(typ *swissMapType, i uintptr) unsafe.Pointer {
 
 // MemAwareMap is a map with memory usage tracking.
 type MemAwareMap[K comparable, V any] struct {
-	M            map[K]V
-	groupSize    uint64
-	nextCheckNum uint64 // every `maxTableCapacity` increase in Used
-	Bytes        uint64
+	M              map[K]V
+	groupSize      uint64
+	nextCheckpoint uint64 // every `maxTableCapacity` increase in Used
+	Bytes          uint64
 }
 
-// MockSeedForTest sets the seed of the map
+// MockSeedForTest sets the seed of the swissMap inside MemAwareMap
 func (m *MemAwareMap[K, V]) MockSeedForTest(seed uint64) (oriSeed uint64) {
-	oriSeed = uint64(m.unwrap().seed)
-	m.unwrap().seed = uintptr(seed)
-	return
+	return m.unwrap().MockSeedForTest(seed)
 }
 
-// MockSeedForTest sets the seed of the map
+// MockSeedForTest sets the seed of the swissMap
 func (m *swissMap) MockSeedForTest(seed uint64) (oriSeed uint64) {
+	if m.Used != 0 {
+		panic("MockSeedForTest can only be called on empty map")
+	}
 	oriSeed = uint64(m.seed)
 	m.seed = uintptr(seed)
 	return
@@ -365,11 +355,11 @@ func (m *MemAwareMap[K, V]) unwrap() *swissMap {
 func (m *MemAwareMap[K, V]) Set(key K, value V) (deltaBytes int64) {
 	sm := m.unwrap()
 	m.M[key] = value
-	if sm.Used >= m.nextCheckNum {
-		newBytes := max(m.Bytes, approxSizeV2(m.groupSize, sm.Used))
+	if sm.Used >= m.nextCheckpoint {
+		newBytes := max(m.Bytes, approxSize(m.groupSize, sm.Used))
 		deltaBytes = int64(newBytes) - int64(m.Bytes)
 		m.Bytes = newBytes
-		m.nextCheckNum = min(sm.Used, maxTableCapacity) + sm.Used
+		m.nextCheckpoint = min(sm.Used, maxTableCapacity) + sm.Used
 	}
 	return
 }
@@ -395,9 +385,9 @@ func (m *MemAwareMap[K, V]) Init(v map[K]V) int64 {
 	m.groupSize = uint64(ToSwissMap(m.M).Type.GroupSize)
 	m.Bytes = sm.Size(m.groupSize)
 	if sm.Used <= swissMapGroupSlots {
-		m.nextCheckNum = swissMapGroupSlots * 2
+		m.nextCheckpoint = swissMapGroupSlots * 2
 	} else {
-		m.nextCheckNum = min(sm.Used, maxTableCapacity) + sm.Used
+		m.nextCheckpoint = min(sm.Used, maxTableCapacity) + sm.Used
 	}
 	return int64(m.Bytes)
 }
@@ -418,7 +408,7 @@ func (m *MemAwareMap[K, V]) RealBytes() uint64 {
 
 func checkMapABI() {
 	if !strings.Contains(runtime.Version(), `go1.25`) {
-		panic("The hack package only supports go1.25, please confirm the ABI of types has no change before upgrading")
+		panic("The hack package only supports go1.25, please confirm the correctness of the ABI before upgrading")
 	}
 }
 
