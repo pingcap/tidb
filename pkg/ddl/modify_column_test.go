@@ -1028,6 +1028,21 @@ func TestModifyIntegerColumn(t *testing.T) {
 		"tinyint unsigned":   {math.MaxUint8, 0},
 	}
 
+	failedValue := func(insertVal []string, newColTp string) {
+		for _, val := range insertVal {
+			tk.MustExec(fmt.Sprintf("insert into t values(%s)", val))
+			err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
+			require.Contains(t, err.Error(), "Data truncated for column 'a'")
+			tk.MustExec("delete from t")
+		}
+	}
+
+	successValue := func(insertVal string, newColTp string) {
+		tk.MustExec(fmt.Sprintf("insert into t values %s", insertVal))
+		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
+		require.Equal(t, ddl.ModifyTypeNoReorgWithCheck, reorgType)
+	}
+
 	signed2Signed := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
 		maxValOfNewCol, minValOfNewCol := maxMinSignedVal[newColTp][0], maxMinSignedVal[newColTp][1]
 		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
@@ -1035,29 +1050,19 @@ func TestModifyIntegerColumn(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
 
 		// [maxValOfNewCol+1, maxValOfOldCol] fail
-		tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfNewCol+1))
-		err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Contains(t, err.Error(), "Data truncated for column 'a'")
-		tk.MustExec("delete from t")
-		tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfOldCol))
-		err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Contains(t, err.Error(), "Data truncated for column 'a'")
-		tk.MustExec("delete from t")
+		failedValue([]string{
+			fmt.Sprintf("%d", maxValOfNewCol+1),
+			fmt.Sprintf("%d", maxValOfOldCol),
+		}, newColTp)
 
 		// [minValOfOldCol, minValOfNewCol-1] fail
-		tk.MustExec(fmt.Sprintf("insert into t values(%d)", minValOfNewCol-1))
-		err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Contains(t, err.Error(), "Data truncated for column 'a'")
-		tk.MustExec("delete from t")
-		tk.MustExec(fmt.Sprintf("insert into t values(%d)", minValOfOldCol))
-		err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Contains(t, err.Error(), "Data truncated for column 'a'")
-		tk.MustExec("delete from t")
+		failedValue([]string{
+			fmt.Sprintf("%d", minValOfNewCol-1),
+			fmt.Sprintf("%d", minValOfOldCol),
+		}, newColTp)
 
 		// [maxValOfNewCol, minValOfNewCol] pass
-		tk.MustExec(fmt.Sprintf("insert into t values(%d),(%d),(0)", maxValOfNewCol, minValOfNewCol))
-		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Equal(t, expectReorgTp, reorgType)
+		successValue(fmt.Sprintf("(%d), (%d), (0)", maxValOfNewCol, minValOfNewCol), newColTp)
 	}
 
 	unsigned2Unsigned := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
@@ -1067,19 +1072,13 @@ func TestModifyIntegerColumn(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
 
 		// [maxValOfNewCol+1, maxValOfOldCol] fail
-		tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfNewCol+1))
-		err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Contains(t, err.Error(), "Data truncated for column 'a'")
-		tk.MustExec("delete from t")
-		tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfOldCol))
-		err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Contains(t, err.Error(), "Data truncated for column 'a'")
-		tk.MustExec("delete from t")
+		failedValue([]string{
+			fmt.Sprintf("%d", maxValOfNewCol+1),
+			fmt.Sprintf("%d", maxValOfOldCol),
+		}, newColTp)
 
 		// [0, maxValOfNewCol] pass
-		tk.MustExec(fmt.Sprintf("insert into t values(%d),(%d),(1)", maxValOfNewCol, minValOfNewCol))
-		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Equal(t, expectReorgTp, reorgType)
+		successValue(fmt.Sprintf("(%d), (%d), (1)", maxValOfNewCol, minValOfNewCol), newColTp)
 	}
 
 	signed2Unsigned := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte, oldColIdx, newColIdx int) {
@@ -1089,31 +1088,21 @@ func TestModifyIntegerColumn(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
 
 		// [minValOfOldCol, -1] fail
-		tk.MustExec("insert into t values(-1)")
-		err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Contains(t, err.Error(), "Data truncated for column 'a'")
-		tk.MustExec("delete from t")
-		tk.MustExec(fmt.Sprintf("insert into t values(%d)", minValOfOldCol))
-		err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Contains(t, err.Error(), "Data truncated for column 'a'")
-		tk.MustExec("delete from t")
+		failedValue([]string{
+			"-1",
+			fmt.Sprintf("%d", minValOfOldCol),
+		}, newColTp)
 
 		if oldColIdx < newColIdx {
 			// [maxValOfNewCol+1, maxValOfOldCol] fail
-			tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfOldCol))
-			err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-			require.Contains(t, err.Error(), "Data truncated for column 'a'")
-			tk.MustExec("delete from t")
-			tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfNewCol+1))
-			err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-			require.Contains(t, err.Error(), "Data truncated for column 'a'")
-			tk.MustExec("delete from t")
+			failedValue([]string{
+				fmt.Sprintf("%d", maxValOfNewCol+1),
+				fmt.Sprintf("%d", maxValOfOldCol),
+			}, newColTp)
 		}
 
 		// [0, min(maxValOfOldCol, maxValOfNewCol)] pass
-		tk.MustExec(fmt.Sprintf("insert into t values(%d),(1),(0)", min(uint(maxValOfOldCol), maxValOfNewCol)))
-		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Equal(t, expectReorgTp, reorgType)
+		successValue(fmt.Sprintf("(%d), (1), (0)", min(uint(maxValOfOldCol), maxValOfNewCol)), newColTp)
 	}
 
 	unsigned2Signed := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
@@ -1123,19 +1112,13 @@ func TestModifyIntegerColumn(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
 
 		// [maxValOfNewCol+1, maxValOfOldCol] fail
-		tk.MustExec(fmt.Sprintf("insert into t values(%d)", uint64(maxValOfNewCol)+1))
-		err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Contains(t, err.Error(), "Data truncated for column 'a'")
-		tk.MustExec("delete from t")
-		tk.MustExec(fmt.Sprintf("insert into t values(%d)", maxValOfOldCol))
-		err = tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Contains(t, err.Error(), "Data truncated for column 'a'")
-		tk.MustExec("delete from t")
+		failedValue([]string{
+			fmt.Sprintf("%d", uint64(maxValOfNewCol)+1),
+			fmt.Sprintf("%d", maxValOfOldCol),
+		}, newColTp)
 
 		// [0, maxValOfNewCol] pass
-		tk.MustExec(fmt.Sprintf("insert into t values(%d),(1),(0)", maxValOfNewCol))
-		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Equal(t, expectReorgTp, reorgType)
+		successValue(fmt.Sprintf("(%d), (1), (0)", maxValOfNewCol), newColTp)
 	}
 
 	signedTp := []string{"bigint", "int", "mediumint", "smallint", "tinyint"}
