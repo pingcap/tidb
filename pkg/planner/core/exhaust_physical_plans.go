@@ -50,10 +50,8 @@ import (
 // It will return:
 // 1. All possible plans that can match the required property.
 // 2. Whether the SQL hint can work. Return true if there is no hint.
-func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) ([][]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) (physicalPlans [][]base.PhysicalPlan, hintCanWork bool, err error) {
 	var ops []base.PhysicalPlan
-	var hintCanWork bool
-	var err error
 
 	switch x := lp.(type) {
 	case *logicalop.LogicalCTE:
@@ -61,8 +59,9 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 	case *logicalop.LogicalSort:
 		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalSort(x, prop)
 	case *logicalop.LogicalTopN:
-		// NOTE: ExhaustPhysicalPlans4LogicalTopN return PhysicalLimit and PhysicalTopN in different slice
-		// to make it possible for always prefer limit pushdown instead of limit not pushdown.
+		// ExhaustPhysicalPlans4LogicalTopN return PhysicalLimit and PhysicalTopN in different slice.
+		// So we can always choose limit plan with pushdown when comparing with a limit plan without pushdown directly,
+		// and choose a better plan by checking their cost when comparing a limit plan and a topn plan.
 		return physicalop.ExhaustPhysicalPlans4LogicalTopN(x, prop)
 	case *logicalop.LogicalLock:
 		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalLock(x, prop)
@@ -93,7 +92,7 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 	case *logicalop.LogicalPartitionUnionAll:
 		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
 	case *memo.GroupExpression:
-		ops, hintCanWork, err = memo.ExhaustPhysicalPlans4GroupExpression(x, prop)
+		return memo.ExhaustPhysicalPlans4GroupExpression(x, prop)
 	case *mockLogicalPlan4Test:
 		ops, hintCanWork, err = ExhaustPhysicalPlans4MockLogicalPlan(x, prop)
 	default:

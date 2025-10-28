@@ -196,7 +196,6 @@ func enumeratePhysicalPlans4TaskHelper(
 	}
 	// there is a valid preferred low-cost physical one, return it.
 	if !preferTask.Invalid() {
-		// gjt todo: what about limit meet threshold?
 		return preferTask, true, nil
 	}
 
