@@ -670,3 +670,4 @@ func (m *MockExpr) Traverse(action TraverseAction) Expression {
 }
 func (m *MockExpr) Hash64(_ base.Hasher) {}
 func (m *MockExpr) Equals(_ any) bool    { return false }
+func (m *MockExpr) CleanHashCode()       {}
