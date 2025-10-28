@@ -16,14 +16,10 @@ package storage
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"math"
-	"math/big"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -121,16 +117,6 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 	return
 }
 
-// getRandomFakeID generates a random negative int64 as a fake table ID.
-// NOTE: we don't demand extremely high concurrency here, so the overhead of crypto/rand is negligible.
-// We prefer crypto/rand for its stronger randomness characteristics.
-func getRandomFakeID() int64 {
-	// Int cannot return an error when using rand.Reader.
-	id, _ := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
-	// Make sure the fake ID is negative.
-	return -id.Int64() - 1
-}
-
 // SaveAnalyzeResultToStorage saves the analyze result to the storage.
 func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	results *statistics.AnalyzeResults, analyzeSnapshot bool) (statsVer uint64, err error) {
@@ -165,17 +151,15 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	// txn1: lockKeys on point get (index lock)
 	// txn2: lockKeys on batch point get (row lock) — waits for txn1 for index lock
 	// txn1: lockKeys on point get (row lock) — deadlock occurs here and it's not retryable
-	// We need to use a random fake ID here to avoid heavy lock contention on the stats_meta table.
-	// Under RR (Repeatable Read) isolation level, non-existent keys are also locked.
-	start := time.Now()
-	fakeID := getRandomFakeID()
+	// Pick a fake table ID to reduce lock contention on mysql.stats_meta.
+	// Under repeatable-read, even non-existent keys are locked.
+	// Using the negative table ID keeps it separate from real table IDs and from other fake IDs.
+	fakeID := -tableID
 	tableIDStrs := []string{strconv.FormatInt(fakeID, 10), strconv.FormatInt(tableID, 10)}
 	rs, err = util.Exec(sctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id in (%?) for update", tableIDStrs)
 	if err != nil {
 		return 0, err
 	}
-	// TODO: clean up the debug log later.
-	statslogutil.StatsLogger().Info("lock stats_meta", zap.Int64("tableID", tableID), zap.Duration("takeTime", time.Since(start)))
 	var rows []chunk.Row
 	rows, err = sqlexec.DrainRecordSet(ctx, rs, sctx.GetSessionVars().MaxChunkSize)
 	if err != nil {
