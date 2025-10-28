@@ -1003,6 +1003,19 @@ func TestParallelAlterTable(t *testing.T) {
 	})
 }
 
+// > This test cover the scenarios of modifying integer column types. From signed/unsigned aspect here are 4 kinds
+//
+//	of changes: 1. signed to signed  2. signed to unsigned 3. unsigned to unsigned  4. unsigned to signed
+//
+// > For each kind of change, we test the different combinations of old and new integer types,
+//
+//			e.g. For 1. signed to signed, we test
+//				bigint -> int, mediumint, smallint, tinyint,
+//				int -> mediumint, smallint, tinyint,
+//	 			mediumint -> smallint, tinyint,
+//				smallint -> tinyint
+//
+// > And for each combination, we test the values that are expected to fail and expected to succeed.
 func TestModifyIntegerColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1124,21 +1137,25 @@ func TestModifyIntegerColumn(t *testing.T) {
 	signedTp := []string{"bigint", "int", "mediumint", "smallint", "tinyint"}
 	unsignedTp := []string{"bigint unsigned", "int unsigned", "mediumint unsigned", "smallint unsigned", "tinyint unsigned"}
 	for oldColIdx := range signedTp {
-		// bigint -> int, mediumint, smallint, tinyint
+		// 1. signed -> signed
+		// bigint -> int, mediumint, smallint, tinyint; int -> mediumint, smallint, tinyint; ...
 		for newColIdx := oldColIdx + 1; newColIdx < len(signedTp); newColIdx++ {
 			signed2Signed(signedTp[oldColIdx], signedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
 		}
-		// bigint -> bigint unsigned, int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned
+		// 2. signed -> unsigned
+		// bigint -> bigint unsigned, int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; ...
 		for newColIdx := range unsignedTp {
 			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck, oldColIdx, newColIdx)
 		}
 	}
 	for oldColIdx := range unsignedTp {
-		// bigint unsigned -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned
+		// 3. unsigned -> unsigned
+		// bigint unsigned -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int unsigned -> mediumint unsigned, smallint unsigned, tinyint unsigned; ...
 		for newColIdx := oldColIdx + 1; newColIdx < len(unsignedTp); newColIdx++ {
 			unsigned2Unsigned(unsignedTp[oldColIdx], unsignedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
 		}
-		// bigint unsigned -> bigint, int, mediumint, smallint, tinyint
+		// 4. unsigned -> signed
+		// bigint unsigned -> bigint, int, mediumint, smallint, tinyint; int unsigned -> int, mediumint, smallint, tinyint; ...
 		for newColIdx := oldColIdx; newColIdx < len(signedTp); newColIdx++ {
 			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
 		}
