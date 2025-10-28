@@ -128,9 +128,6 @@ func (s *mockGCSSuite) TestDumplingSource() {
 	s.NoError(err)
 	defer importSDK.Close()
 
-	err = importSDK.CreateSchemaAndTableByName(context.Background(), "db1", "tb1")
-	s.NoError(err)
-
 	err = importSDK.CreateSchemasAndTables(context.Background())
 	s.NoError(err)
 
@@ -657,4 +654,65 @@ func (s *mockGCSSuite) TestScanLimitation() {
 	s.NoError(err)
 	s.Len(metas, 1)
 	s.Len(metas[0].DataFiles, 1)
+}
+
+func (s *mockGCSSuite) TestCreateTableMetaByName() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1-schema-create.sql"},
+		Content:     []byte("CREATE DATABASE IF NOT EXISTS db1;\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db2-schema-create.sql"},
+		Content:     []byte("CREATE DATABASE IF NOT EXISTS db2;\n"),
+	})
+	// table1 in db1
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1.tb1-schema.sql"},
+		Content:     []byte("CREATE TABLE IF NOT EXISTS db1.tb1 (a INT, b VARCHAR(10));\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1.tb1.001.sql"},
+		Content:     []byte("INSERT INTO db1.tb1 VALUES (1,'a'),(2,'b');\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1.tb1.002.sql"},
+		Content:     []byte("INSERT INTO db1.tb1 VALUES (3,'c'),(4,'d');\n"),
+	})
+	// table2 in db2
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db2.tb2-schema.sql"},
+		Content:     []byte("CREATE TABLE IF NOT EXISTS db2.tb2 (x INT, y VARCHAR(10));\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db2.tb2.001.sql"},
+		Content:     []byte("INSERT INTO db2.tb2 VALUES (5,'e'),(6,'f');\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db2.tb2.002.sql"},
+		Content:     []byte("INSERT INTO db2.tb2 VALUES (7,'g'),(8,'h');\n"),
+	})
+
+	db, mock, err := sqlmock.New()
+	s.NoError(err)
+	defer db.Close()
+
+	mock.ExpectQuery(`SELECT SCHEMA_NAME FROM information_schema.SCHEMATA`).
+		WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}))
+	mock.ExpectExec("CREATE DATABASE IF NOT EXISTS `db1`;").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS `db1`.`tb1` (`a` INT,`b` VARCHAR(10));")).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	importSDK, err := NewImportSDK(
+		context.Background(),
+		fmt.Sprintf("gs://dumpling?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
+		db,
+		WithConcurrency(1),
+	)
+	s.NoError(err)
+	defer importSDK.Close()
+
+	err = importSDK.CreateSchemaAndTableByName(context.Background(), "db1", "tb1")
+	s.NoError(err)
+
 }
