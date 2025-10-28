@@ -1065,12 +1065,17 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
-			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			if done {
-				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+			done, timedOut := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done || timedOut {
+				if done {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				}
+				if timedOut {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
+				}
 				checkAndMarkNonRevertible(job)
 			}
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 			if tblInfo.TTLInfo != nil {
@@ -1274,12 +1279,17 @@ func (w *worker) doModifyColumnIndexReorg(
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
-			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			if done {
-				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+			done, timedOut := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done || timedOut {
+				if done {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				}
+				if timedOut {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
+				}
 				checkAndMarkNonRevertible(job)
 			}
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 			oldTp := oldCol.FieldType
