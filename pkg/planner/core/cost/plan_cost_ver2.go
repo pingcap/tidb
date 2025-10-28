@@ -30,7 +30,9 @@ import (
 )
 
 const (
+	// ModelVer1 indicate the cost model v1.
 	ModelVer1 = 1
+	// ModelVer2 indicate the cost model v2.
 	ModelVer2 = 2
 )
 
