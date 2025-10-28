@@ -671,3 +671,8 @@ func (c *Constant) MemoryUsage() (sum int64) {
 	}
 	return
 }
+
+// CleanHashCode cleans the cached hash code.
+func (c *Constant) CleanHashCode() {
+	c.hashcode = nil
+}

@@ -442,6 +442,7 @@ func CloneExpressionsForPlanCache(exprs, cloned []expression.Expression) []expre
 	}
 	for _, e := range exprs {
 		if e.SafeToShareAcrossSession() {
+			e.CleanHashCode()
 			cloned = append(cloned, e)
 		} else {
 			cloned = append(cloned, e.Clone())
@@ -450,75 +451,8 @@ func CloneExpressionsForPlanCache(exprs, cloned []expression.Expression) []expre
 	return cloned
 }
 
-// CloneColumnsForPlanCache is used to clone columns for plan cache.
-func CloneColumnsForPlanCache(cols, cloned []*expression.Column) []*expression.Column {
-	if cols == nil {
-		return nil
-	}
-	allSafe := true
-	for _, c := range cols {
-		if !c.SafeToShareAcrossSession() {
-			allSafe = false
-			break
-		}
-	}
-	if allSafe {
-		return cols
-	}
-	if cloned == nil {
-		cloned = make([]*expression.Column, 0, len(cols))
-	} else {
-		cloned = cloned[:0]
-	}
-	for _, c := range cols {
-		if c == nil {
-			cloned = append(cloned, nil)
-			continue
-		}
-		if c.SafeToShareAcrossSession() {
-			cloned = append(cloned, c)
-		} else {
-			cloned = append(cloned, c.Clone().(*expression.Column))
-		}
-	}
-	return cloned
-}
-
-// CloneConstantsForPlanCache is used to clone constants for plan cache.
-func CloneConstantsForPlanCache(constants, cloned []*expression.Constant) []*expression.Constant {
-	if constants == nil {
-		return nil
-	}
-	allSafe := true
-	for _, c := range constants {
-		if c == nil {
-			continue
-		}
-		if !c.SafeToShareAcrossSession() {
-			allSafe = false
-			break
-		}
-	}
-	if allSafe {
-		return constants
-	}
-	if cloned == nil {
-		cloned = make([]*expression.Constant, 0, len(constants))
-	} else {
-		cloned = cloned[:0]
-	}
-	for _, c := range constants {
-		if c.SafeToShareAcrossSession() {
-			cloned = append(cloned, c)
-		} else {
-			cloned = append(cloned, c.Clone().(*expression.Constant))
-		}
-	}
-	return cloned
-}
-
-// CloneScalarFunctionsForPlanCache is used clone scalar functions for plan cache
-func CloneScalarFunctionsForPlanCache(scalarFuncs, cloned []*expression.ScalarFunction) []*expression.ScalarFunction {
+// CloneForPlanCache is used clone scalar functions for plan cache
+func CloneForPlanCache[T expression.Expression](scalarFuncs, cloned []T) []T {
 	if scalarFuncs == nil {
 		return nil
 	}
@@ -533,15 +467,16 @@ func CloneScalarFunctionsForPlanCache(scalarFuncs, cloned []*expression.ScalarFu
 		return scalarFuncs
 	}
 	if cloned == nil {
-		cloned = make([]*expression.ScalarFunction, 0, len(scalarFuncs))
+		cloned = make([]T, 0, len(scalarFuncs))
 	} else {
 		cloned = cloned[:0]
 	}
 	for _, f := range scalarFuncs {
 		if f.SafeToShareAcrossSession() {
+			f.CleanHashCode()
 			cloned = append(cloned, f)
 		} else {
-			cloned = append(cloned, f.Clone().(*expression.ScalarFunction))
+			cloned = append(cloned, f.Clone().(T))
 		}
 	}
 	return cloned
@@ -554,7 +489,7 @@ func CloneExpression2DForPlanCache(exprs [][]expression.Expression) [][]expressi
 	}
 	cloned := make([][]expression.Expression, 0, len(exprs))
 	for _, e := range exprs {
-		cloned = append(cloned, CloneExpressionsForPlanCache(e, nil))
+		cloned = append(cloned, CloneForPlanCache(e, nil))
 	}
 	return cloned
 }

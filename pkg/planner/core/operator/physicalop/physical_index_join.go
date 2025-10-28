@@ -241,8 +241,8 @@ func (cwc *ColWithCmpFuncManager) cloneForPlanCache() *ColWithCmpFuncManager {
 	cloned.ColLength = cwc.ColLength
 	cloned.OpType = make([]string, len(cwc.OpType))
 	copy(cloned.OpType, cwc.OpType)
-	cloned.opArg = utilfuncp.CloneExpressionsForPlanCache(cwc.opArg, nil)
-	cloned.TmpConstant = utilfuncp.CloneConstantsForPlanCache(cwc.TmpConstant, nil)
+	cloned.opArg = utilfuncp.CloneForPlanCache(cwc.opArg, nil)
+	cloned.TmpConstant = utilfuncp.CloneForPlanCache(cwc.TmpConstant, nil)
 	cloned.AffectedColSchema = cwc.AffectedColSchema
 	cloned.compareFuncs = cwc.compareFuncs
 	return cloned

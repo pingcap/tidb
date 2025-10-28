@@ -270,7 +270,7 @@ func CloneConstant2DForPlanCache(constants [][]*expression.Constant) [][]*expres
 	}
 	cloned := make([][]*expression.Constant, 0, len(constants))
 	for _, c := range constants {
-		cloned = append(cloned, utilfuncp.CloneConstantsForPlanCache(c, nil))
+		cloned = append(cloned, utilfuncp.CloneForPlanCache(c, nil))
 	}
 	return cloned
 }

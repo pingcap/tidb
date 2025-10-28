@@ -82,21 +82,21 @@ func (p *BasePhysicalJoin) CloneForPlanCacheWithSelf(newCtx base.PlanContext, ne
 	}
 	cloned.PhysicalSchemaProducer = *base
 	cloned.JoinType = p.JoinType
-	cloned.LeftConditions = utilfuncp.CloneExpressionsForPlanCache(p.LeftConditions, nil)
-	cloned.RightConditions = utilfuncp.CloneExpressionsForPlanCache(p.RightConditions, nil)
-	cloned.OtherConditions = utilfuncp.CloneExpressionsForPlanCache(p.OtherConditions, nil)
+	cloned.LeftConditions = utilfuncp.CloneForPlanCache(p.LeftConditions, nil)
+	cloned.RightConditions = utilfuncp.CloneForPlanCache(p.RightConditions, nil)
+	cloned.OtherConditions = utilfuncp.CloneForPlanCache(p.OtherConditions, nil)
 	cloned.InnerChildIdx = p.InnerChildIdx
-	cloned.OuterJoinKeys = utilfuncp.CloneColumnsForPlanCache(p.OuterJoinKeys, nil)
-	cloned.InnerJoinKeys = utilfuncp.CloneColumnsForPlanCache(p.InnerJoinKeys, nil)
-	cloned.LeftJoinKeys = utilfuncp.CloneColumnsForPlanCache(p.LeftJoinKeys, nil)
-	cloned.RightJoinKeys = utilfuncp.CloneColumnsForPlanCache(p.RightJoinKeys, nil)
+	cloned.OuterJoinKeys = utilfuncp.CloneForPlanCache(p.OuterJoinKeys, nil)
+	cloned.InnerJoinKeys = utilfuncp.CloneForPlanCache(p.InnerJoinKeys, nil)
+	cloned.LeftJoinKeys = utilfuncp.CloneForPlanCache(p.LeftJoinKeys, nil)
+	cloned.RightJoinKeys = utilfuncp.CloneForPlanCache(p.RightJoinKeys, nil)
 	cloned.IsNullEQ = make([]bool, len(p.IsNullEQ))
 	copy(cloned.IsNullEQ, p.IsNullEQ)
 	for _, d := range p.DefaultValues {
 		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
 	}
-	cloned.LeftNAJoinKeys = utilfuncp.CloneColumnsForPlanCache(p.LeftNAJoinKeys, nil)
-	cloned.RightNAJoinKeys = utilfuncp.CloneColumnsForPlanCache(p.RightNAJoinKeys, nil)
+	cloned.LeftNAJoinKeys = utilfuncp.CloneForPlanCache(p.LeftNAJoinKeys, nil)
+	cloned.RightNAJoinKeys = utilfuncp.CloneForPlanCache(p.RightNAJoinKeys, nil)
 	return cloned, true
 }
 

@@ -45,7 +45,7 @@ type InsertGeneratedColumns struct {
 
 func (i InsertGeneratedColumns) cloneForPlanCache() InsertGeneratedColumns {
 	return InsertGeneratedColumns{
-		Exprs:        utilfuncp.CloneExpressionsForPlanCache(i.Exprs, nil),
+		Exprs:        utilfuncp.CloneForPlanCache(i.Exprs, nil),
 		OnDuplicates: util.CloneAssignments(i.OnDuplicates),
 	}
 }

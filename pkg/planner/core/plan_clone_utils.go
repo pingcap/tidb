@@ -53,11 +53,11 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *physicalop
 	} else {
 		dst.IndexValues = dst.IndexValues[:len(src.IndexValues)]
 	}
-	dst.IndexConstants = utilfuncp.CloneConstantsForPlanCache(src.IndexConstants, dst.IndexConstants)
+	dst.IndexConstants = utilfuncp.CloneForPlanCache(src.IndexConstants, dst.IndexConstants)
 	dst.ColsFieldType = src.ColsFieldType
-	dst.IdxCols = utilfuncp.CloneColumnsForPlanCache(src.IdxCols, dst.IdxCols)
+	dst.IdxCols = utilfuncp.CloneForPlanCache(src.IdxCols, dst.IdxCols)
 	dst.IdxColLens = src.IdxColLens
-	dst.AccessConditions = utilfuncp.CloneExpressionsForPlanCache(src.AccessConditions, dst.AccessConditions)
+	dst.AccessConditions = utilfuncp.CloneForPlanCache(src.AccessConditions, dst.AccessConditions)
 	dst.UnsignedHandle = src.UnsignedHandle
 	dst.IsTableDual = src.IsTableDual
 	dst.Lock = src.Lock

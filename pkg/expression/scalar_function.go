@@ -959,3 +959,8 @@ func (sf *ScalarFunction) MemoryUsage() (sum int64) {
 	}
 	return sum
 }
+
+// CleanHashCode clean the cached hash code.
+func (sf *ScalarFunction) CleanHashCode() {
+	sf.hashcode = nil
+}

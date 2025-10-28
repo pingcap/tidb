@@ -100,9 +100,9 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 		return nil, false
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(op.AccessCondition, nil)
-	cloned.FilterCondition = utilfuncp.CloneExpressionsForPlanCache(op.FilterCondition, nil)
-	cloned.LateMaterializationFilterCondition = utilfuncp.CloneExpressionsForPlanCache(op.LateMaterializationFilterCondition, nil)
+	cloned.AccessCondition = utilfuncp.CloneForPlanCache(op.AccessCondition, nil)
+	cloned.FilterCondition = utilfuncp.CloneForPlanCache(op.FilterCondition, nil)
+	cloned.LateMaterializationFilterCondition = utilfuncp.CloneForPlanCache(op.LateMaterializationFilterCondition, nil)
 	cloned.HandleIdx = make([]int, len(op.HandleIdx))
 	copy(cloned.HandleIdx, op.HandleIdx)
 	if op.HandleCols != nil {
@@ -133,8 +133,8 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 		return nil, false
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(op.AccessCondition, nil)
-	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(op.IdxCols, nil)
+	cloned.AccessCondition = utilfuncp.CloneForPlanCache(op.AccessCondition, nil)
+	cloned.IdxCols = utilfuncp.CloneForPlanCache(op.IdxCols, nil)
 	cloned.IdxColLens = make([]int, len(op.IdxColLens))
 	copy(cloned.IdxColLens, op.IdxColLens)
 	if op.GenExprs != nil {
@@ -162,7 +162,7 @@ func (op *PhysicalSelection) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 		return nil, false
 	}
 	cloned.BasePhysicalPlan = *basePlan
-	cloned.Conditions = utilfuncp.CloneExpressionsForPlanCache(op.Conditions, nil)
+	cloned.Conditions = utilfuncp.CloneForPlanCache(op.Conditions, nil)
 	return cloned, true
 }
 
@@ -175,7 +175,7 @@ func (op *PhysicalProjection) CloneForPlanCache(newCtx base.PlanContext) (base.P
 		return nil, false
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.Exprs = utilfuncp.CloneExpressionsForPlanCache(op.Exprs, nil)
+	cloned.Exprs = utilfuncp.CloneForPlanCache(op.Exprs, nil)
 	return cloned, true
 }
 
@@ -239,8 +239,8 @@ func (op *PhysicalHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Pla
 		return nil, false
 	}
 	cloned.BasePhysicalJoin = *basePlan
-	cloned.EqualConditions = utilfuncp.CloneScalarFunctionsForPlanCache(op.EqualConditions, nil)
-	cloned.NAEqualConditions = utilfuncp.CloneScalarFunctionsForPlanCache(op.NAEqualConditions, nil)
+	cloned.EqualConditions = utilfuncp.CloneForPlanCache(op.EqualConditions, nil)
+	cloned.NAEqualConditions = utilfuncp.CloneForPlanCache(op.NAEqualConditions, nil)
 	if op.runtimeFilterList != nil {
 		return nil, false
 	}
@@ -281,8 +281,8 @@ func (op *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.IdxColLens = make([]int, len(op.IdxColLens))
 	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.CompareFilters = op.CompareFilters.cloneForPlanCache()
-	cloned.OuterHashKeys = utilfuncp.CloneColumnsForPlanCache(op.OuterHashKeys, nil)
-	cloned.InnerHashKeys = utilfuncp.CloneColumnsForPlanCache(op.InnerHashKeys, nil)
+	cloned.OuterHashKeys = utilfuncp.CloneForPlanCache(op.OuterHashKeys, nil)
+	cloned.InnerHashKeys = utilfuncp.CloneForPlanCache(op.InnerHashKeys, nil)
 	return cloned, true
 }
 
@@ -316,7 +316,7 @@ func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 		cloned.IndexPlan = IndexPlan.(base.PhysicalPlan)
 	}
 	cloned.IndexPlans = FlattenListPushDownPlan(cloned.IndexPlan)
-	cloned.OutputColumns = utilfuncp.CloneColumnsForPlanCache(op.OutputColumns, nil)
+	cloned.OutputColumns = utilfuncp.CloneForPlanCache(op.OutputColumns, nil)
 	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	return cloned, true
 }
@@ -423,7 +423,7 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 		}
 	}
 	cloned.PushedLimit = op.PushedLimit.Clone()
-	cloned.CommonHandleCols = utilfuncp.CloneColumnsForPlanCache(op.CommonHandleCols, nil)
+	cloned.CommonHandleCols = utilfuncp.CloneForPlanCache(op.CommonHandleCols, nil)
 	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	return cloned, true
 }
@@ -454,16 +454,16 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.ProbeParents = ProbeParents
 	cloned.ctx = newCtx
 	cloned.Handles = util.CloneHandles(op.Handles)
-	cloned.HandleParams = utilfuncp.CloneConstantsForPlanCache(op.HandleParams, nil)
+	cloned.HandleParams = utilfuncp.CloneForPlanCache(op.HandleParams, nil)
 	cloned.IndexValues = util.CloneDatum2D(op.IndexValues)
 	cloned.IndexValueParams = CloneConstant2DForPlanCache(op.IndexValueParams)
-	cloned.AccessConditions = utilfuncp.CloneExpressionsForPlanCache(op.AccessConditions, nil)
-	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(op.IdxCols, nil)
+	cloned.AccessConditions = utilfuncp.CloneForPlanCache(op.AccessConditions, nil)
+	cloned.IdxCols = utilfuncp.CloneForPlanCache(op.IdxCols, nil)
 	cloned.IdxColLens = make([]int, len(op.IdxColLens))
 	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.PartitionIdxs = make([]int, len(op.PartitionIdxs))
 	copy(cloned.PartitionIdxs, op.PartitionIdxs)
-	cloned.accessCols = utilfuncp.CloneColumnsForPlanCache(op.accessCols, nil)
+	cloned.accessCols = utilfuncp.CloneForPlanCache(op.accessCols, nil)
 	return cloned, true
 }
 
@@ -487,12 +487,12 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 		}
 	}
 	cloned.IndexValues = util.CloneDatums(op.IndexValues)
-	cloned.IndexConstants = utilfuncp.CloneConstantsForPlanCache(op.IndexConstants, nil)
-	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(op.IdxCols, nil)
+	cloned.IndexConstants = utilfuncp.CloneForPlanCache(op.IndexConstants, nil)
+	cloned.IdxCols = utilfuncp.CloneForPlanCache(op.IdxCols, nil)
 	cloned.IdxColLens = make([]int, len(op.IdxColLens))
 	copy(cloned.IdxColLens, op.IdxColLens)
-	cloned.AccessConditions = utilfuncp.CloneExpressionsForPlanCache(op.AccessConditions, nil)
-	cloned.accessCols = utilfuncp.CloneColumnsForPlanCache(op.accessCols, nil)
+	cloned.AccessConditions = utilfuncp.CloneForPlanCache(op.AccessConditions, nil)
+	cloned.accessCols = utilfuncp.CloneForPlanCache(op.accessCols, nil)
 	return cloned, true
 }
 
@@ -505,7 +505,7 @@ func (op *PhysicalUnionScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 		return nil, false
 	}
 	cloned.BasePhysicalPlan = *basePlan
-	cloned.Conditions = utilfuncp.CloneExpressionsForPlanCache(op.Conditions, nil)
+	cloned.Conditions = utilfuncp.CloneForPlanCache(op.Conditions, nil)
 	if op.HandleCols != nil {
 		cloned.HandleCols = op.HandleCols.Clone()
 	}

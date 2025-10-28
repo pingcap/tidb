@@ -111,9 +111,9 @@ func (pi *PhysPlanPartInfo) CloneForPlanCache() *PhysPlanPartInfo {
 		return nil
 	}
 	cloned := new(PhysPlanPartInfo)
-	cloned.PruningConds = utilfuncp.CloneExpressionsForPlanCache(pi.PruningConds, nil)
+	cloned.PruningConds = utilfuncp.CloneForPlanCache(pi.PruningConds, nil)
 	cloned.PartitionNames = pi.PartitionNames
-	cloned.Columns = utilfuncp.CloneColumnsForPlanCache(pi.Columns, nil)
+	cloned.Columns = utilfuncp.CloneForPlanCache(pi.Columns, nil)
 	cloned.ColumnNames = pi.ColumnNames
 	return cloned
 }

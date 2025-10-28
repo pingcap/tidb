@@ -259,6 +259,9 @@ type Expression interface {
 	// ScalarFunction: SFFlag+encoded function name + encoded arg_1 + encoded arg_2 + ...
 	HashCode() []byte
 
+	// CleanHashCode cleans the cached hash code of the expression.
+	CleanHashCode()
+
 	// CanonicalHashCode creates the canonical hashcode for expression.
 	// Different with `HashCode`, this method will produce the same hashcode for expressions with the same semantic.
 	// For example, `a + b` and `b + a` have the same return value of this method.
