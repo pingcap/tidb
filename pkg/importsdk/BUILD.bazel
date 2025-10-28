@@ -7,11 +7,11 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/storage",
+        "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/lightning/mydump",
         "//pkg/parser/mysql",
-        "//pkg/lightning/common",
         "@com_github_pingcap_errors//:errors",
     ],
 )
@@ -24,12 +24,12 @@ go_test(
     flaky = True,
     shard_count = 9,
     deps = [
+        "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/lightning/mydump",
         "//pkg/parser/mysql",
         "//pkg/util/table-filter",
-        "//pkg/lightning/common",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_ngaut_pools//:pools",
