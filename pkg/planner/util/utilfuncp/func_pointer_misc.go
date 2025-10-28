@@ -420,58 +420,60 @@ var GetPossibleAccessPaths func(ctx base.PlanContext, tableHints *hint.PlanHints
 
 // **************************************** plan clone related ********************************************
 
-// CloneExpressionsForPlanCache is used to clone expressions for plan cache.
-func CloneExpressionsForPlanCache(exprs, cloned []expression.Expression) []expression.Expression {
-	if exprs == nil {
+// CloneConstantsForPlanCache is used to clone constants for plan cache.
+func CloneConstantsForPlanCache(constants, cloned []*expression.Constant) []*expression.Constant {
+	if constants == nil {
 		return nil
 	}
 	allSafe := true
-	for _, e := range exprs {
-		if !e.SafeToShareAcrossSession() {
+	for _, c := range constants {
+		if c == nil {
+			continue
+		}
+		if !c.SafeToShareAcrossSession() {
 			allSafe = false
 			break
 		}
 	}
 	if allSafe {
-		return exprs
+		return constants
 	}
 	if cloned == nil {
-		cloned = make([]expression.Expression, 0, len(exprs))
+		cloned = make([]*expression.Constant, 0, len(constants))
 	} else {
 		cloned = cloned[:0]
 	}
-	for _, e := range exprs {
-		if e.SafeToShareAcrossSession() {
-			e.CleanHashCode()
-			cloned = append(cloned, e)
+	for _, c := range constants {
+		if c.SafeToShareAcrossSession() {
+			cloned = append(cloned, c)
 		} else {
-			cloned = append(cloned, e.Clone())
+			cloned = append(cloned, c.Clone().(*expression.Constant))
 		}
 	}
 	return cloned
 }
 
 // CloneForPlanCache is used clone scalar functions for plan cache
-func CloneForPlanCache[T expression.Expression](scalarFuncs, cloned []T) []T {
-	if scalarFuncs == nil {
+func CloneForPlanCache[T expression.Expression](expr, cloned []T) []T {
+	if expr == nil {
 		return nil
 	}
 	allSafe := true
-	for _, f := range scalarFuncs {
+	for _, f := range expr {
 		if !f.SafeToShareAcrossSession() {
 			allSafe = false
 			break
 		}
 	}
 	if allSafe {
-		return scalarFuncs
+		return expr
 	}
 	if cloned == nil {
-		cloned = make([]T, 0, len(scalarFuncs))
+		cloned = make([]T, 0, len(expr))
 	} else {
 		cloned = cloned[:0]
 	}
-	for _, f := range scalarFuncs {
+	for _, f := range expr {
 		if f.SafeToShareAcrossSession() {
 			f.CleanHashCode()
 			cloned = append(cloned, f)

@@ -122,8 +122,10 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = *op.%v.CloneWithNewCtx(newCtx)", f.Name, f.Name)
 		case "physicalop.SimpleSchemaProducer":
 			c.write("cloned.%v = *op.%v.CloneSelfForPlanCache(newCtx)", f.Name, f.Name)
+		case "[]*expression.Constant":
+			c.write("cloned.%v = utilfuncp.CloneConstantsForPlanCache(op.%v, nil)", f.Name, f.Name)
 		case "[]expression.Expression", "[]*expression.Column",
-			"[]*expression.Constant", "[]*expression.ScalarFunction":
+			"[]*expression.ScalarFunction":
 			c.write("cloned.%v = utilfuncp.CloneForPlanCache(op.%v, nil)", f.Name, f.Name)
 		case "[][]expression.Expression":
 			structureName := strings.Split(f.Type.String(), ".")[1]

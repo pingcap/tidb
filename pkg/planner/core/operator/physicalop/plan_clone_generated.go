@@ -454,7 +454,7 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.ProbeParents = ProbeParents
 	cloned.ctx = newCtx
 	cloned.Handles = util.CloneHandles(op.Handles)
-	cloned.HandleParams = utilfuncp.CloneForPlanCache(op.HandleParams, nil)
+	cloned.HandleParams = utilfuncp.CloneConstantsForPlanCache(op.HandleParams, nil)
 	cloned.IndexValues = util.CloneDatum2D(op.IndexValues)
 	cloned.IndexValueParams = CloneConstant2DForPlanCache(op.IndexValueParams)
 	cloned.AccessConditions = utilfuncp.CloneForPlanCache(op.AccessConditions, nil)
@@ -487,7 +487,7 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 		}
 	}
 	cloned.IndexValues = util.CloneDatums(op.IndexValues)
-	cloned.IndexConstants = utilfuncp.CloneForPlanCache(op.IndexConstants, nil)
+	cloned.IndexConstants = utilfuncp.CloneConstantsForPlanCache(op.IndexConstants, nil)
 	cloned.IdxCols = utilfuncp.CloneForPlanCache(op.IdxCols, nil)
 	cloned.IdxColLens = make([]int, len(op.IdxColLens))
 	copy(cloned.IdxColLens, op.IdxColLens)
