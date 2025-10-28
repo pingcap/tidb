@@ -651,6 +651,7 @@ func (s *mockGCSSuite) TestScanLimitation() {
 		WithSkipInvalidFiles(true),
 		WithMaxScanFiles(1),
 	)
+	s.NoError(err)
 	defer importSDK.Close()
 	metas, err := importSDK.GetTableMetas(context.Background())
 	s.NoError(err)
