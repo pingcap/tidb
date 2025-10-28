@@ -1007,7 +1007,7 @@ func TestParallelAlterTable(t *testing.T) {
 //
 //	of changes: 1. signed to signed  2. signed to unsigned 3. unsigned to unsigned  4. unsigned to signed
 //
-// > For each kind of change, we test the different combinations of old and new integer types,
+// > For each kind of change, we test the combinations of old and new integer types by different byte size,
 //
 //			e.g. For 1. signed to signed, we test
 //				bigint -> int, mediumint, smallint, tinyint,
