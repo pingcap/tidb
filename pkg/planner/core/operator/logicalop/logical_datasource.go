@@ -282,7 +282,7 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 // PredicateSimplification implements the base.LogicalPlan.<7th> interface.
 func (ds *DataSource) PredicateSimplification() base.LogicalPlan {
 	p := ds.Self().(*DataSource)
-	p.PushedDownConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true, true, nil)
+	p.PushedDownConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true, false, nil)
 	p.AllConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.AllConds, true, false, nil)
 	return p
 }
