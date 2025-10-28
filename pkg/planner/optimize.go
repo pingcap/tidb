@@ -47,29 +47,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"go.uber.org/zap"
 )
-
-// IsReadOnly check whether the ast.Node is a read only statement.
-func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
-	return isReadOnlyInternal(node, vars, true)
-}
-
-// If checkGlobalVars is true, false will be returned when there are updates to global variables.
-func isReadOnlyInternal(node ast.Node, vars *variable.SessionVars, checkGlobalVars bool) bool {
-	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
-		prepareStmt, err := core.GetPreparedStmt(execStmt, vars)
-		if err != nil {
-			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
-			return false
-		}
-		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt, checkGlobalVars)
-	}
-	return ast.IsReadOnly(node, checkGlobalVars)
-}
 
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
 func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
@@ -252,7 +232,7 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 	}
 
 	// XXX: this should be handled after any bindings are setup.
-	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node.Node, sessVars) {
+	if sessVars.SQLMode.HasStrictMode() && !core.IsReadOnly(node.Node, sessVars) {
 		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
 		if hasTiFlashAccess {
@@ -456,7 +436,7 @@ func allowInReadOnlyMode(sctx planctx.PlanContext, node ast.Node) (bool, error) 
 
 	vars := sctx.GetSessionVars()
 	// Passing false allows global variables updates in read-only mode.
-	return isReadOnlyInternal(node, vars, false), nil
+	return core.IsReadOnlyInternal(node, vars, false), nil
 }
 
 var planBuilderPool = sync.Pool{
@@ -720,7 +700,6 @@ func planIDFunc(plan any) (planID int, ok bool) {
 func init() {
 	core.OptimizeAstNode = optimizeCache
 	core.OptimizeAstNodeNoCache = optimizeNoCache
-	core.IsReadOnly = IsReadOnly
 	indexadvisor.QueryPlanCostHook = queryPlanCost
 	bindinfo.GetBindingHandle = func(sctx sessionctx.Context) bindinfo.BindingHandle {
 		dom := domain.GetDomain(sctx)
