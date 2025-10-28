@@ -265,7 +265,7 @@ func (*parquetFileWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
-func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeekerOpener, error) {
+func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeeker, error) {
 	reader, err := pf.store.Open(pf.ctx, pf.path, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -547,7 +547,7 @@ func NewParquetParser(
 	prop.BufferedStreamEnabled = true
 	prop.BufferSize = 1024
 
-	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop), file.WithPrefetch(8))
+	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
