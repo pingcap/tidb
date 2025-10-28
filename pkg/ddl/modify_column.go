@@ -106,7 +106,39 @@ func getModifyColumnType(
 		return modifyTypeNoReorgWithCheck
 	}
 
+<<<<<<< HEAD
 	return modifyTypeReorg
+=======
+	// For backward compatibility
+	if args.ModifyColumnType == mysql.TypeNull {
+		return ModifyTypeReorg
+	}
+
+	// FIXME(joechenrh): handle partition table case
+	if tblInfo.Partition != nil {
+		return ModifyTypeReorg
+	}
+
+	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(ModifyTypeReorg)
+		}
+	})
+
+	if !sqlMode.HasStrictMode() {
+		return ModifyTypeReorg
+	}
+
+	if needRowReorg(oldCol, args.Column) {
+		return ModifyTypeReorg
+	}
+
+	relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
+	if len(relatedIndexes) == 0 || !needIndexReorg(oldCol, args.Column) {
+		return ModifyTypeNoReorgWithCheck
+	}
+	return ModifyTypeIndexReorg
+>>>>>>> 427b8916859 (ddl: add unit test for lossy column change (#64111))
 }
 
 func getChangingCol(
@@ -157,6 +189,9 @@ func getChangingCol(
 
 func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifyColumnArgs(job)
+	defer func() {
+		failpoint.InjectCall("getModifyColumnType", args.ModifyColumnType)
+	}()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -189,6 +224,15 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 			zap.Int64("oldColumnID", oldCol.ID),
 			zap.String("type", typeToString(args.ModifyColumnType)),
 		)
+<<<<<<< HEAD
+=======
+		if oldCol.GetType() == mysql.TypeVarchar && args.Column.GetType() == mysql.TypeString &&
+			(args.ModifyColumnType == ModifyTypeNoReorgWithCheck ||
+				args.ModifyColumnType == ModifyTypeIndexReorg) {
+			logutil.DDLLogger().Info("meet varchar to char modify column, change type to precheck")
+			args.ModifyColumnType = ModifyTypePrecheck
+		}
+>>>>>>> 427b8916859 (ddl: add unit test for lossy column change (#64111))
 	}
 
 	if job.IsRollingback() {

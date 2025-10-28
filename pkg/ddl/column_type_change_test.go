@@ -224,6 +224,8 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 
 // TestRowFormat is used to close issue #21391, the encoded row in column type change should be aware of the new row format.
 func TestRowFormat(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -244,6 +246,8 @@ func TestRowFormat(t *testing.T) {
 }
 
 func TestRowFormatWithChecksums(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
@@ -266,6 +270,8 @@ func TestRowFormatWithChecksums(t *testing.T) {
 }
 
 func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

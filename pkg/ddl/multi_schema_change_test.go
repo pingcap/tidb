@@ -541,9 +541,16 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAlterIndex(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+<<<<<<< HEAD
+=======
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test;")
+>>>>>>> 427b8916859 (ddl: add unit test for lossy column change (#64111))
 
 	// unsupported ddl operations
 	{

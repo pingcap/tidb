@@ -279,6 +279,35 @@ func initTableIndices(t *TableCommon) error {
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+// checkDataForModifyColumn checks if the data can be stored in the column with changingType.
+// It's used to prevent illegal data being inserted if we want to skip reorg.
+func checkDataForModifyColumn(row []types.Datum, col *table.Column) error {
+	if col.ChangingFieldType == nil {
+		return nil
+	}
+
+	var strictCtx = exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(
+			exprstatic.NewEvalContext(
+				exprstatic.WithSQLMode(
+					mysql.ModeStrictAllTables | mysql.ModeStrictTransTables))))
+
+	data := row[col.Offset]
+	value, err := table.CastColumnValueToType(strictCtx, data, col.ChangingFieldType, false, false)
+	if err != nil {
+		return err
+	}
+
+	// For the case from VARCHAR -> CHAR
+	if col.ChangingFieldType.GetType() == mysql.TypeString && value.GetString() != data.GetString() {
+		return errors.New("data truncation error during modify column")
+	}
+	return nil
+}
+
+>>>>>>> 427b8916859 (ddl: add unit test for lossy column change (#64111))
 // asIndex casts a table.Index to *index which is the actual type of index in TableCommon.
 func asIndex(idx table.Index) *index {
 	return idx.(*index)
