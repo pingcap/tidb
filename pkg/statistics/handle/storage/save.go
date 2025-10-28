@@ -16,8 +16,11 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"math"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -125,6 +128,16 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 	return
 }
 
+// getRandomFakeID generates a random negative int64 as a fake table ID.
+// NOTE: we don't demand extremely high concurrency here, so the overhead of crypto/rand is negligible.
+// We prefer crypto/rand for its stronger randomness characteristics.
+func getRandomFakeID() int64 {
+	// Int cannot return an error when using rand.Reader.
+	a, _ := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
+	// Make sure the fake ID is negative.
+	return -a.Int64() - 1
+}
+
 // SaveAnalyzeResultToStorage saves the analyze result to the storage.
 func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	results *statistics.AnalyzeResults, analyzeSnapshot bool) (statsVer uint64, err error) {
@@ -159,7 +172,7 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	// txn1: lockKeys on point get (index lock)
 	// txn2: lockKeys on batch point get (row lock) — waits for txn1 for index lock
 	// txn1: lockKeys on point get (row lock) — deadlock occurs here and it's not retryable
-	fakeID := int64(-1988)
+	fakeID := getRandomFakeID()
 	tableIDStrs := []string{strconv.FormatInt(fakeID, 10), strconv.FormatInt(tableID, 10)}
 	rs, err = util.Exec(sctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id in (%?) for update", tableIDStrs)
 	if err != nil {
