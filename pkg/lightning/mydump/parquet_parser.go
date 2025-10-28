@@ -219,7 +219,7 @@ func (pf *parquetFileWrapper) readNBytes(p []byte) (int, error) {
 		return 0, errors.Trace(err)
 	}
 	if n != len(p) {
-		return n, errors.Errorf("Error reading %d bytes, only read %d bytes", len(p), n)
+		return n, errors.Errorf("error reading %d bytes, only read %d bytes", len(p), n)
 	}
 	return n, nil
 }

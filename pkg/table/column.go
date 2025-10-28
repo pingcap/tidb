@@ -226,9 +226,9 @@ func convertToIncorrectStringErr(err error, colName string) error {
 	return ErrTruncatedWrongValueForField.FastGen("Incorrect string value '%s' for column '%s'", res.String(), colName)
 }
 
-// handleZeroDatetime handles zero and invalid value for Timestamp/Datetime/Date types.
-// Currently it's only used in CastValue.
-// Returns:
+// handleZeroDatetime handles Timestamp/Datetime/Date zero date and invalid dates.
+// Currently only called from CastValue.
+// returns:
 //
 //	value (possibly adjusted)
 //	boolean; true if break error/warning handling in CastValue and return what was returned from this

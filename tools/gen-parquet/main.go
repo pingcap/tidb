@@ -20,6 +20,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/apache/arrow-go/v18/parquet"
@@ -45,7 +46,7 @@ func (w *writeWrapper) Write(b []byte) (int, error) {
 }
 
 func (w *writeWrapper) Close() error {
-	return nil
+	return w.Writer.Close()
 }
 
 func getParquetWriter(w io.Writer, rowNames []string, rowTypes []parquet.Type) *file.Writer {
@@ -151,7 +152,7 @@ func main() {
 
 	for i := range *chunks {
 		name := fmt.Sprintf("%s.%s.%04d.parquet", *schemaName, *tableName, i)
-		filePath := fmt.Sprintf("%s/%s", *sourceDir, name)
+		filePath := filepath.Join(*sourceDir, name)
 		err := writeSimpleParquetFile(filePath, *rowNumbers)
 		if err != nil {
 			log.Fatalf("generate test source failed, name: %s, err: %+v", name, err)
