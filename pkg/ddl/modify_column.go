@@ -134,6 +134,12 @@ func getModifyColumnType(
 		return ModifyTypeReorg
 	}
 
+	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(ModifyTypeReorg)
+		}
+	})
+
 	if !sqlMode.HasStrictMode() {
 		return ModifyTypeReorg
 	}
@@ -243,6 +249,9 @@ func initializeChangingIndexes(
 
 func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifyColumnArgs(job)
+	defer func() {
+		failpoint.InjectCall("getModifyColumnType", args.ModifyColumnType)
+	}()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -289,7 +298,6 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 			zap.Int64("oldColumnID", oldCol.ID),
 			zap.String("type", typeToString(args.ModifyColumnType)),
 		)
-		failpoint.InjectCall("getModifyColumnType", args.ModifyColumnType)
 		if oldCol.GetType() == mysql.TypeVarchar && args.Column.GetType() == mysql.TypeString &&
 			(args.ModifyColumnType == ModifyTypeNoReorgWithCheck ||
 				args.ModifyColumnType == ModifyTypeIndexReorg) {
