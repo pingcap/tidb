@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"go.uber.org/zap"
 )
 
 // SDK defines the interface for cloud import services
@@ -279,7 +278,6 @@ func (sdk *ImportSDK) GetTableMetas(context.Context) ([]*TableMeta, error) {
 				retErr := errors.Wrapf(err, "failed to build metadata for table %s.%s",
 					dbMeta.Name, tblMeta.Name)
 				if sdk.config.skipInvalidFiles {
-					sdk.logger.Error("skip error", zap.Error(err))
 					continue
 				}
 				return nil, retErr
