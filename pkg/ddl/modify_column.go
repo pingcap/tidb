@@ -781,12 +781,17 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
-			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			if done {
-				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+			done, timedOut := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done || timedOut {
+				if done {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				}
+				if timedOut {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
+				}
 				checkAndMarkNonRevertible(job)
 			}
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 			if tblInfo.TTLInfo != nil {
@@ -859,6 +864,210 @@ func (w *worker) doModifyColumnTypeWithData(
 	return ver, errors.Trace(err)
 }
 
+<<<<<<< HEAD
+=======
+func (w *worker) doModifyColumnIndexReorg(
+	jobCtx *jobContext,
+	job *model.Job,
+	dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo,
+	oldCol *model.ColumnInfo,
+	args *model.ModifyColumnArgs,
+) (ver int64, err error) {
+	colName, pos := args.Column.Name, args.Position
+
+	allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
+	oldIdxInfos := make([]*model.IndexInfo, 0, len(allIdxs)/2)
+	changingIdxInfos := make([]*model.IndexInfo, 0, len(allIdxs)/2)
+
+	if job.SchemaState == model.StatePublic {
+		// The constraint that the first half of allIdxs is oldIdxInfos and
+		// the second half is changingIdxInfos isn't true now, so we need to
+		// find the oldIdxInfos again.
+		for _, idx := range allIdxs {
+			if strings.HasPrefix(idx.Name.O, removingObjPrefix) {
+				oldIdxInfos = append(oldIdxInfos, idx)
+			}
+		}
+	} else {
+		changingIdxInfos = allIdxs[len(allIdxs)/2:]
+		oldIdxInfos = allIdxs[:len(allIdxs)/2]
+	}
+
+	finishFunc := func() (ver int64, err error) {
+		removedIdxIDs := make([]int64, 0, len(oldIdxInfos))
+		for _, idx := range oldIdxInfos {
+			removedIdxIDs = append(removedIdxIDs, idx.ID)
+		}
+		removeOldIndexes(tblInfo, oldIdxInfos)
+		oldCol.ChangingFieldType = nil
+		oldCol.DelFlag(mysql.PreventNullInsertFlag)
+
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		// Refactor the job args to add the old index ids into delete range table.
+		rmIdxs := append(removedIdxIDs, args.RedundantIdxs...)
+		args.IndexIDs = rmIdxs
+		args.PartitionIDs = getPartitionIDs(tblInfo)
+		job.FillFinishedArgs(args)
+		return ver, nil
+	}
+
+	switch job.SchemaState {
+	case model.StateNone:
+		oldCol.AddFlag(mysql.PreventNullInsertFlag)
+		oldCol.ChangingFieldType = &args.Column.FieldType
+		// none -> delete only
+		updateObjectState(nil, changingIdxInfos, model.StateDeleteOnly)
+		job.ReorgMeta.Stage = model.ReorgStageModifyColumnUpdateColumn
+		err := initForReorgIndexes(w, job, changingIdxInfos)
+		if err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteOnly
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
+		args.ChangingIdxs = changingIdxInfos
+		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
+		job.FillArgs(args)
+	case model.StateDeleteOnly:
+		checked, err := checkModifyColumnData(
+			jobCtx.stepCtx, w,
+			dbInfo.Name, tblInfo.Name,
+			oldCol, args.Column, true)
+		if err != nil {
+			if checked {
+				job.State = model.JobStateRollingback
+			}
+			return ver, errors.Trace(err)
+		}
+
+		// delete only -> write only
+		updateObjectState(nil, changingIdxInfos, model.StateWriteOnly)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
+		failpoint.InjectCall("afterModifyColumnStateDeleteOnly", job.ID)
+	case model.StateWriteOnly:
+		// write only -> reorganization
+		updateObjectState(nil, changingIdxInfos, model.StateWriteReorganization)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Initialize SnapshotVer to 0 for later reorganization check.
+		job.SnapshotVer = 0
+		job.SchemaState = model.StateWriteReorganization
+	case model.StateWriteReorganization:
+		tbl, err := getTable(jobCtx.getAutoIDRequirement(), dbInfo.ID, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		switch job.ReorgMeta.AnalyzeState {
+		case model.AnalyzeStateNone:
+			switch job.ReorgMeta.Stage {
+			case model.ReorgStageModifyColumnUpdateColumn:
+				// Now row reorg
+				job.SnapshotVer = 0
+				job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
+			case model.ReorgStageModifyColumnRecreateIndex:
+				var done bool
+				done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, changingIdxInfos)
+				if !done {
+					return ver, err
+				}
+				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
+			case model.ReorgStageModifyColumnCompleted:
+				if checkAnalyzeNecessary(job, changingIdxInfos, tblInfo) {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+				} else {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+					checkAndMarkNonRevertible(job)
+				}
+			}
+		case model.AnalyzeStateRunning:
+			// after all old index data are reorged. re-analyze it.
+			done, timedOut := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done || timedOut {
+				if done {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				}
+				if timedOut {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
+				}
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout:
+			failpoint.InjectCall("afterReorgWorkForModifyColumn")
+			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
+			oldTp := oldCol.FieldType
+			oldName := oldCol.Name
+			oldID := oldCol.ID
+			tblInfo.Columns[oldCol.Offset] = args.Column.Clone()
+			tblInfo.Columns[oldCol.Offset].ChangingFieldType = &oldTp
+			tblInfo.Columns[oldCol.Offset].Offset = oldCol.Offset
+			tblInfo.Columns[oldCol.Offset].ID = oldID
+			tblInfo.Columns[oldCol.Offset].State = model.StatePublic
+			oldCol = tblInfo.Columns[oldCol.Offset]
+
+			updateObjectState(nil, oldIdxInfos, model.StateWriteOnly)
+			updateObjectState(nil, changingIdxInfos, model.StatePublic)
+			moveChangingColumnToDest(tblInfo, oldCol, oldCol, pos)
+			moveIndexInfoToDest(tblInfo, oldCol, oldIdxInfos, changingIdxInfos)
+			markOldIndexesRemoving(oldIdxInfos, changingIdxInfos)
+			for i, idx := range changingIdxInfos {
+				for j, idxCol := range idx.Columns {
+					if idxCol.Name.L == oldName.L {
+						oldIdxInfos[i].Columns[j].Name = colName
+						oldIdxInfos[i].Columns[j].Offset = oldCol.Offset
+						oldIdxInfos[i].Columns[j].UseChangingType = true
+						changingIdxInfos[i].Columns[j].Name = colName
+						changingIdxInfos[i].Columns[j].Offset = oldCol.Offset
+						changingIdxInfos[i].Columns[j].UseChangingType = false
+					}
+				}
+			}
+			job.SchemaState = model.StatePublic
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+	case model.StatePublic:
+		if len(oldIdxInfos) == 0 {
+			// All the old indexes has been deleted by previous modify column,
+			// we can just finish the job.
+			return finishFunc()
+		}
+
+		switch oldIdxInfos[0].State {
+		case model.StateWriteOnly:
+			updateObjectState(nil, oldIdxInfos, model.StateDeleteOnly)
+			return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		case model.StateDeleteOnly:
+			return finishFunc()
+		default:
+			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
+			intest.Assert(false, errMsg)
+			return ver, errors.Errorf(errMsg)
+		}
+	default:
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", oldIdxInfos[0].State)
+	}
+	return ver, errors.Trace(err)
+}
+
+>>>>>>> 6dc2c5b63fe (ddl: add timeout mechanism for add index analyze (#64096))
 func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
 	analyzeVer := variable.DefTiDBAnalyzeVersion
 	if val, ok := job.GetSessionVars(variable.TiDBAnalyzeVersion); ok {
