@@ -1153,7 +1153,7 @@ const (
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableDDLAnalyze indicates whether ddl(create/reorg index) is with embedded index analyze.
-	TiDBEnableDDLAnalyze = "tidb_enable_ddl_analyze"
+	TiDBEnableDDLAnalyze = "tidb_stats_update_during_ddl"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
 	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
 	// TiDBEnableTmpStorageOnOOM controls whether to enable the temporary storage for some operators

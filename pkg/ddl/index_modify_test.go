@@ -1148,7 +1148,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	// add index
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_ddl_analyze = 1")
+	tk.MustExec("set @@tidb_stats_update_during_ddl = 1")
 	tk.MustExec("create table t(a int NOT NULL DEFAULT 10, b int, index idx_b(b))")
 	for i := range 50 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
