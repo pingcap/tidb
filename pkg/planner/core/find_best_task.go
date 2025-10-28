@@ -83,6 +83,13 @@ type enumerateState struct {
 	limitCopExist bool
 }
 
+// Why argument of physicalPlans is a slice of slice:
+// In the logic of the following function, if `preferTask` is not nil, the function will skip cost comparison and return preferTask directly,
+// for example, to forcibly select a plan specified by a hint.
+// By splitting the physical plans into multiple slices, preferTask only takes effect within its own slice,
+// while the final plan is chosen based on cost comparison among the best plans from all slices.
+// For example, when comparing a limit pushdown plan with a non-pushdown limit plan, the optimizer should always prefer the limit pushdown plan.
+// However, the limit pushdown plan still needs to be compared by cost against the TopN plan to decide which one should be selected in the end.
 func enumeratePhysicalPlans4Task(
 	super base.LogicalPlan,
 	physicalPlans [][]base.PhysicalPlan,

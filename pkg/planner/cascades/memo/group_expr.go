@@ -278,6 +278,7 @@ func ExhaustPhysicalPlans4GroupExpression(e *GroupExpression, prop *property.Phy
 	case *logicalop.LogicalSort:
 		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalSort(x, prop)
 	case *logicalop.LogicalTopN:
+		// check planner/core/exhaust_physical_plans.go to see why return a slice of slice for topn/limit.
 		return physicalop.ExhaustPhysicalPlans4LogicalTopN(x, prop)
 	case *logicalop.LogicalLock:
 		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalLock(x, prop)
@@ -311,13 +312,10 @@ func ExhaustPhysicalPlans4GroupExpression(e *GroupExpression, prop *property.Phy
 		panic("unreachable")
 	}
 
-	if err != nil {
-		return nil, hintCanWork, err
-	}
-	if len(ops) > 0 {
+	if len(ops) > 0 && err != nil {
 		return [][]base.PhysicalPlan{ops}, hintCanWork, nil
 	}
-	return nil, hintCanWork, nil
+	return nil, hintCanWork, err
 }
 
 // FindBestTask implements LogicalPlan.<3rd> interface, it's used to override the wrapped logicalPlans.

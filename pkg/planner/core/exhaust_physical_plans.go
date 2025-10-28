@@ -99,13 +99,10 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 		panic("unreachable")
 	}
 
-	if err != nil {
-		return nil, hintCanWork, err
-	}
-	if len(ops) > 0 {
+	if len(ops) > 0 && err != nil {
 		return [][]base.PhysicalPlan{ops}, hintCanWork, nil
 	}
-	return nil, hintCanWork, nil
+	return nil, hintCanWork, err
 }
 
 func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
