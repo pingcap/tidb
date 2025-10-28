@@ -100,27 +100,38 @@ func enumeratePhysicalPlans4Task(
 		return base.InvalidTask, false, nil
 	}
 
-	bestTask := base.InvalidTask
-	var hintCanWork bool
+	var normalTask, hintTask = base.InvalidTask, base.InvalidTask
 	for _, ops := range physicalPlans {
 		if len(ops) == 0 {
 			continue
 		}
-		curTask, curHint, curErr := enumeratePhysicalPlans4TaskHelper(super, ops, prop, addEnforcer)
+		curTask, curHintCanWork, curErr := enumeratePhysicalPlans4TaskHelper(super, ops, prop, addEnforcer)
 		if curErr != nil {
 			return nil, false, curErr
 		}
-		if bestTask.Invalid() {
-			bestTask = curTask
-			hintCanWork = curHint
-		} else if curIsBetter, err := compareTaskCost(curTask, bestTask); err != nil {
-			return nil, false, err
-		} else if curIsBetter {
-			bestTask = curTask
-			hintCanWork = curHint
+
+		if curHintCanWork || !hintTask.Invalid() {
+			if hintTask.Invalid() {
+				hintTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, hintTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				hintTask = curTask
+			}
+		} else {
+			if normalTask.Invalid() {
+				normalTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, normalTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				normalTask = curTask
+			}
 		}
 	}
-	return bestTask, hintCanWork, nil
+	if !hintTask.Invalid() {
+		return hintTask, true, nil
+	}
+	return normalTask, false, nil
 }
 
 func enumeratePhysicalPlans4TaskHelper(
@@ -130,7 +141,7 @@ func enumeratePhysicalPlans4TaskHelper(
 	addEnforcer bool,
 ) (base.Task, bool, error) {
 	var err error
-	var bestTask, preferTask = base.InvalidTask, base.InvalidTask
+	var normalIterTask, normalPreferTask, hintTask = base.InvalidTask, base.InvalidTask, base.InvalidTask
 	initState := &enumerateState{}
 	_, baseLP, childLen, iteration, iterObj := prepareIterationDownElems(super)
 	childTasks := make([]base.Task, 0, childLen)
@@ -168,7 +179,7 @@ func enumeratePhysicalPlans4TaskHelper(
 		// we need to check the hint is applicable before enforcing the property. otherwise
 		// what we get is Sort ot Exchanger kind of operators.
 		// todo: extend applyLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
-		hintApplicable := applyLogicalHintVarEigen(baseLP.Self(), initState, pp, childTasks)
+		hintApplicable := applyLogicalHintVarEigen(baseLP.Self(), pp, childTasks)
 
 		// Enforce curTask property
 		if addEnforcer {
@@ -181,39 +192,52 @@ func enumeratePhysicalPlans4TaskHelper(
 			curTask = optimizeByShuffle(curTask, baseLP.Plan.SCtx())
 		}
 
-		// Get the most efficient one only by low-cost priority among all valid plans.
-		if bestTask.Invalid() {
-			bestTask = curTask
-		} else if curIsBetter, err := compareTaskCost(curTask, bestTask); err != nil {
-			return nil, false, err
-		} else if curIsBetter {
-			bestTask = curTask
-		}
-
 		if hintApplicable {
-			// curTask is a preferred physic plan, compare cost with previous preferred one and cache the low-cost one.
-			if preferTask.Invalid() {
-				preferTask = curTask
-			} else if curIsBetter, err := compareTaskCost(curTask, preferTask); err != nil {
+			if hintTask.Invalid() {
+				hintTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, hintTask); err != nil {
 				return nil, false, err
 			} else if curIsBetter {
-				preferTask = curTask
+				hintTask = curTask
+			}
+		}
+
+		if hintTask.Invalid() && hasNormalPreferTask(baseLP.Self(), initState, pp, childTasks) {
+			if normalPreferTask.Invalid() {
+				normalPreferTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, normalPreferTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				normalPreferTask = curTask
+			}
+		}
+
+		if hintTask.Invalid() && normalPreferTask.Invalid() {
+			if normalIterTask.Invalid() {
+				normalIterTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, normalIterTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				normalIterTask = curTask
 			}
 		}
 	}
-	// there is a valid preferred low-cost physical one, return it.
-	if !preferTask.Invalid() {
-		return preferTask, true, nil
+
+	if !hintTask.Invalid() {
+		return hintTask, true, nil
 	}
 
-	// if there is no valid preferred low-cost physical one, return the normal low one.
-	// if the hint is specified without any valid plan, we should also record the warnings.
-	if !bestTask.Invalid() {
+	if !normalIterTask.Invalid() || !normalPreferTask.Invalid() {
 		if warn := recordWarnings(baseLP.Self(), prop, addEnforcer); warn != nil {
-			bestTask.AppendWarning(warn)
+			normalIterTask.AppendWarning(warn)
 		}
 	}
-	return bestTask, false, nil
+
+	if !normalPreferTask.Invalid() {
+		return normalPreferTask, false, nil
+	}
+
+	return normalIterTask, false, nil
 }
 
 // TODO: remove the taskTypeSatisfied function, it is only used to check the task type in the root, cop, mpp task.

@@ -2016,9 +2016,9 @@ func recordIndexJoinHintWarnings(p *logicalop.LogicalJoin, prop *property.Physic
 	return nil
 }
 
-func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+func applyLogicalHintVarEigen(lp base.LogicalPlan, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
 	return applyLogicalJoinHint(lp, pp) ||
-		applyLogicalTopNAndLimitHint(lp, state, pp, childTasks) ||
+		applyLogicalTopNAndLimitHint(lp, pp, childTasks) ||
 		applyLogicalAggregationHint(lp, pp, childTasks)
 }
 
@@ -2074,8 +2074,8 @@ func applyLogicalAggregationHint(lp base.LogicalPlan, physicPlan base.PhysicalPl
 	return false
 }
 
-func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
-	hintPrefer, meetThreshold := pushLimitOrTopNForcibly(lp, pp)
+func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+	hintPrefer, _ := pushLimitOrTopNForcibly(lp, pp)
 	if hintPrefer {
 		// if there is a user hint control, try to get the copTask as the prior.
 		// here we don't assert task itself, because when topN attach 2 cop task, it will become root type automatically.
@@ -2084,6 +2084,11 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 		}
 		return false
 	}
+	return false
+}
+
+func hasNormalPreferTask(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+	_, meetThreshold := pushLimitOrTopNForcibly(lp, pp)
 	if meetThreshold {
 		// previously, we set meetThreshold for pruning root task type but mpp task type. so:
 		// 1: when one copTask exists, we will ignore root task type.
