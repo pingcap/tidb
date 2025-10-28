@@ -265,8 +265,11 @@ func (*parquetFileWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
-func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeeker, error) {
-	reader, err := pf.store.Open(pf.ctx, pf.path, nil)
+func (pf *parquetFileWrapper) Open(name string) (parquet.ReaderAtSeeker, error) {
+	if len(name) == 0 {
+		name = pf.path
+	}
+	reader, err := pf.store.Open(pf.ctx, name, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -275,7 +278,7 @@ func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeeker, error) {
 		ReadSeekCloser: reader,
 		store:          pf.store,
 		ctx:            pf.ctx,
-		path:           pf.path,
+		path:           name,
 		skipBuf:        make([]byte, defaultBufSize),
 	}
 	return newPf, nil
@@ -284,7 +287,7 @@ func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeeker, error) {
 // ParquetParser parses a parquet file for import
 // It implements the Parser interface.
 type ParquetParser struct {
-	reader   *file.Reader
+	readers  []*file.Reader
 	colTypes []convertedType
 	colNames []string
 
@@ -309,9 +312,9 @@ type ParquetParser struct {
 
 // Init initializes the Parquet parser and allocate necessary buffers
 func (pp *ParquetParser) Init(loc *time.Location) error {
-	meta := pp.reader.MetaData()
+	meta := pp.readers[0].MetaData()
 
-	pp.curRowGroup, pp.totalRowGroup, pp.totalRows = -1, pp.reader.NumRowGroups(), int(meta.NumRows)
+	pp.curRowGroup, pp.totalRowGroup, pp.totalRows = -1, pp.readers[0].NumRowGroups(), int(meta.NumRows)
 
 	numCols := meta.Schema.NumColumns()
 	pp.dumpers = make([]columnDumper, numCols)
@@ -355,15 +358,15 @@ func (pp *ParquetParser) readSingleRows(row []types.Datum) error {
 			return io.EOF
 		}
 
-		rowGroup := pp.reader.RowGroup(pp.curRowGroup)
 		for c := range len(pp.dumpers) {
+			rowGroup := pp.readers[c].RowGroup(pp.curRowGroup)
 			colReader, err := rowGroup.Column(c)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			pp.dumpers[c].SetReader(colReader)
 		}
-		pp.curRowInGroup, pp.totalRowsInGroup = 0, int(pp.reader.MetaData().RowGroups[pp.curRowGroup].NumRows)
+		pp.curRowInGroup, pp.totalRowsInGroup = 0, int(pp.readers[0].MetaData().RowGroups[pp.curRowGroup].NumRows)
 	}
 
 	// Read in this group
@@ -422,7 +425,12 @@ func (pp *ParquetParser) Close() error {
 	if err := pp.resetDumpers(); err != nil {
 		pp.logger.Warn("Close parquet parser get error", zap.Error(err))
 	}
-	return pp.reader.Close()
+	for _, r := range pp.readers {
+		if err := r.Close(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // ReadRow reads a row in the parquet file by the parser.
@@ -570,13 +578,33 @@ func NewParquetParser(
 		}
 	}
 
+	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
+	subreaders = append(subreaders, reader)
+	for i := 1; i < fileSchema.NumColumns(); i++ {
+		var newWrapper parquet.ReaderAtSeeker
+		// Open file for each column.
+		newWrapper, err = wrapper.Open("")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		reader, err := file.NewParquetReader(newWrapper,
+			file.WithReadProps(prop),
+			file.WithMetadata(reader.MetaData()),
+		)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		subreaders = append(subreaders, reader)
+	}
+
 	numColumns := len(colTypes)
 	pool := zeropool.New(func() []types.Datum {
 		return make([]types.Datum, numColumns)
 	})
 
 	parser := &ParquetParser{
-		reader:   reader,
+		readers:  subreaders,
 		colTypes: colTypes,
 		colNames: colNames,
 		alloc:    allocator,
@@ -615,7 +643,7 @@ func SampleStatisticsFromParquet(
 
 	var rowSize int64
 
-	reader := parser.reader
+	reader := parser.readers[0]
 	if reader.NumRowGroups() == 0 || reader.MetaData().RowGroups[0].NumRows == 0 {
 		return 0, 0, nil
 	}
