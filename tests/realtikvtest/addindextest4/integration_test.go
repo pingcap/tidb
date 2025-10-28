@@ -270,6 +270,7 @@ func TestCancelAfterReorgTimeout(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
+	tk.MustExec("create view all_global_tasks as select * from mysql.tidb_global_task union all select * from mysql.tidb_global_task_history;")
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t values (1, 1);")
 
@@ -308,7 +309,7 @@ func TestCancelAfterReorgTimeout(t *testing.T) {
 	})
 	tk.MustGetErrCode("alter table t add index idx(a);", errno.ErrCancelledDDLJob)
 	require.Eventually(t, func() bool {
-		result := tk.MustQuery("select state from mysql.tidb_global_task;").Rows()
+		result := tk.MustQuery("select state from all_global_tasks;").Rows()
 		require.Greater(t, len(result), 0)
 		state := result[0][0].(string)
 		done := state == proto.TaskStateSucceed.String() ||

@@ -135,7 +135,9 @@ func (c *jobContext) cleanStepCtx(cause error) {
 		c.reorgTimeoutOccurred = false // reset flag
 		return
 	}
-	c.stepCtxCancel(cause)
+	if c.stepCtxCancel != nil {
+		c.stepCtxCancel(cause)
+	}
 	c.stepCtx = nil // unset stepCtx for the next step initialization
 }
 
