@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -34,17 +34,17 @@ func TestForeignKeyRecordManager(t *testing.T) {
 	tk.MustExec("create table test.child (id int, pid int, index i1(pid), foreign key (pid) references test.parent (id) on delete cascade)")
 
 	infoSchema := s.Mock.InfoSchema()
-	childTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+	childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
 	require.NoError(t, err)
-	parentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+	parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
 	require.NoError(t, err)
 	childTableIndexI1 := childTableInfo.Indices[0]
 	parentTableIndexI1 := parentTableInfo.Indices[0]
 	{
 		foreignKeyRecordManager := ingestrec.NewForeignKeyRecordManager()
-		childTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), childTableInfo)
+		childTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), childTableInfo)
 		require.NoError(t, err)
-		parentTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), parentTableInfo)
+		parentTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), parentTableInfo)
 		require.NoError(t, err)
 		require.Len(t, childTableForeignKeyRecordManager.GetFKRecordMap(), 1)
 		require.Len(t, childTableForeignKeyRecordManager.GetReferredFKRecordMap(), 0)
@@ -56,9 +56,9 @@ func TestForeignKeyRecordManager(t *testing.T) {
 	}
 	{
 		foreignKeyRecordManager := ingestrec.NewForeignKeyRecordManager()
-		childTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), childTableInfo)
+		childTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), childTableInfo)
 		require.NoError(t, err)
-		parentTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), parentTableInfo)
+		parentTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), parentTableInfo)
 		require.NoError(t, err)
 		childTableForeignKeyRecordManager.RemoveForeignKeys(childTableInfo, childTableIndexI1)
 		require.Len(t, childTableForeignKeyRecordManager.GetFKRecordMap(), 0)
@@ -71,9 +71,9 @@ func TestForeignKeyRecordManager(t *testing.T) {
 	}
 	{
 		foreignKeyRecordManager := ingestrec.NewForeignKeyRecordManager()
-		childTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), childTableInfo)
+		childTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), childTableInfo)
 		require.NoError(t, err)
-		parentTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), parentTableInfo)
+		parentTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), parentTableInfo)
 		require.NoError(t, err)
 		parentTableForeignKeyRecordManager.RemoveForeignKeys(parentTableInfo, parentTableIndexI1)
 		require.Len(t, childTableForeignKeyRecordManager.GetFKRecordMap(), 1)
@@ -86,9 +86,9 @@ func TestForeignKeyRecordManager(t *testing.T) {
 	}
 	{
 		foreignKeyRecordManager := ingestrec.NewForeignKeyRecordManager()
-		childTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), childTableInfo)
+		childTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), childTableInfo)
 		require.NoError(t, err)
-		parentTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), parentTableInfo)
+		parentTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), parentTableInfo)
 		require.NoError(t, err)
 		childTableForeignKeyRecordManager.RemoveForeignKeys(childTableInfo, childTableIndexI1)
 		parentTableForeignKeyRecordManager.RemoveForeignKeys(parentTableInfo, parentTableIndexI1)
@@ -111,16 +111,16 @@ func TestForeignKeyRecordManagerForPK1(t *testing.T) {
 	tk.MustExec("create table test.child (id int, pid int, index i1(pid), foreign key (pid) references test.parent (id) on delete cascade)")
 
 	infoSchema := s.Mock.InfoSchema()
-	childTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+	childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
 	require.NoError(t, err)
-	parentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+	parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
 	require.NoError(t, err)
 	childTableIndexI1 := childTableInfo.Indices[0]
 
 	foreignKeyRecordManager := ingestrec.NewForeignKeyRecordManager()
-	childTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), childTableInfo)
+	childTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), childTableInfo)
 	require.NoError(t, err)
-	parentTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), parentTableInfo)
+	parentTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), parentTableInfo)
 	require.NoError(t, err)
 	childTableForeignKeyRecordManager.RemoveForeignKeys(childTableInfo, childTableIndexI1)
 	require.Len(t, childTableForeignKeyRecordManager.GetFKRecordMap(), 0)
@@ -141,16 +141,16 @@ func TestForeignKeyRecordManagerForPK2(t *testing.T) {
 	tk.MustExec("create table test.child (id int, pid int primary key, index i1(pid, id), foreign key (pid) references test.parent (id) on delete cascade)")
 
 	infoSchema := s.Mock.InfoSchema()
-	childTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+	childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
 	require.NoError(t, err)
-	parentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+	parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
 	require.NoError(t, err)
 	parentTableIndexI1 := parentTableInfo.Indices[0]
 
 	foreignKeyRecordManager := ingestrec.NewForeignKeyRecordManager()
-	childTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), childTableInfo)
+	childTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), childTableInfo)
 	require.NoError(t, err)
-	parentTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), parentTableInfo)
+	parentTableForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), parentTableInfo)
 	require.NoError(t, err)
 	parentTableForeignKeyRecordManager.RemoveForeignKeys(parentTableInfo, parentTableIndexI1)
 	require.Len(t, childTableForeignKeyRecordManager.GetFKRecordMap(), 0)

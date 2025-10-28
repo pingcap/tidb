@@ -527,9 +527,9 @@ func fakeJobWithName(
 				Indices: []*model.IndexInfo{
 					{
 						ID:   indexID,
-						Name: ast.NewCIStr(indexName),
+						Name: pmodel.NewCIStr(indexName),
 						Columns: []*model.IndexColumn{{
-							Name: ast.NewCIStr(columnName),
+							Name: pmodel.NewCIStr(columnName),
 						}},
 					},
 				},
@@ -547,9 +547,9 @@ func TestRepairIndexNeededInForeignKey(t *testing.T) {
 	tk.MustExec("create table test.child (id int, pid int, index i1(pid), foreign key (pid) references test.parent (id) on delete cascade)")
 
 	infoSchema := s.Mock.InfoSchema()
-	childTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+	childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
 	require.NoError(t, err)
-	parentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+	parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
 	require.NoError(t, err)
 	childTableIndexI1 := childTableInfo.Indices[0]
 	parentTableIndexI1 := parentTableInfo.Indices[0]
