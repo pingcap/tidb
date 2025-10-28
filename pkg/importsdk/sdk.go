@@ -101,8 +101,8 @@ func NewImportSDK(ctx context.Context, sourcePath string, db *sql.DB, options ..
 		CharacterSet:     cfg.charset,
 	}
 	var loaderOptions []mydump.MDLoaderSetupOption
-	if cfg.maxScanFiles != nil {
-		loaderOptions = append(loaderOptions, mydump.WithMaxScanFiles(*cfg.maxScanFiles))
+	if cfg.maxScanFiles != nil && *cfg.maxScanFiles > 0 {
+		loaderOptions = append(loaderOptions, mydump.WithMaxScanFiles(*cfg.maxScanFiles), mydump.ReturnPartialResultOnError(true))
 	}
 	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store, loaderOptions...)
 	if err != nil {
