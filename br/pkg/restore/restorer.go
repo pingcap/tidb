@@ -142,12 +142,6 @@ type FileImporter interface {
 	Close() error
 }
 
-type BatchFileImporter interface {
-	FileImporter
-
-	SetMergeSst()
-}
-
 // BalancedFileImporter is a wrapper around FileImporter that adds concurrency controls.
 // It ensures that file imports are balanced across storage nodes, which is particularly useful
 // in MultiTablesRestorer scenarios where concurrency management is critical for efficiency.
@@ -231,22 +225,24 @@ type BatchRestorer struct {
 	eg                *errgroup.Group
 	ectx              context.Context
 	workerPool        *util.WorkerPool
-	batchFileImporter BatchFileImporter
+	regionClient      split.SplitClient
+	batchFileImporter FileImporter
 	checkpointRunner  *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
 func NewBatchSstRestorer(
 	ctx context.Context,
-	batchFileImporter BatchFileImporter,
+	batchFileImporter FileImporter,
+	regionClient split.SplitClient,
 	workerPool *util.WorkerPool,
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
 ) SstRestorer {
-	batchFileImporter.SetMergeSst()
 	eg, ectx := errgroup.WithContext(ctx)
 	return &BatchRestorer{
 		eg:                eg,
 		ectx:              ectx,
 		workerPool:        workerPool,
+		regionClient:      regionClient,
 		batchFileImporter: batchFileImporter,
 		checkpointRunner:  checkpointRunner,
 	}
@@ -261,43 +257,42 @@ func (s *BatchRestorer) WaitUntilFinish() error {
 }
 
 func (s *BatchRestorer) GoRestore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error {
-	batchBackupFileSet, err := GroupOverlappedBackupFileSets(slices.Concat(batchFileSets...))
-	if err != nil {
+	cctx, cancel := context.WithCancel(s.ectx)
+	defer cancel()
+	if err := GroupOverlappedBackupFileSetsIter(cctx, s.regionClient, slices.Concat(batchFileSets...), func(batchSet BatchBackupFileSet) {
+		s.workerPool.ApplyOnErrorGroup(s.eg, func() (restoreErr error) {
+			fileStart := time.Now()
+			defer func() {
+				if restoreErr == nil {
+					log.Info("import sst files done",
+						zap.Duration("take", time.Since(fileStart)))
+					for _, sets := range batchSet {
+						for _, f := range sets.SSTFiles {
+							onProgress(int64(f.TotalKvs))
+						}
+					}
+				}
+			}()
+			err := s.batchFileImporter.Import(cctx, batchSet...)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if s.checkpointRunner != nil {
+				// The checkpoint shows this ranges of files has been restored into
+				// the table corresponding to the table-id.
+				for _, set := range batchSet {
+					for _, f := range set.SSTFiles {
+						if err := checkpoint.AppendRangesForRestore(cctx, s.checkpointRunner,
+							checkpoint.NewCheckpointFileItem(set.TableID, f.GetName())); err != nil {
+							return errors.Trace(err)
+						}
+					}
+				}
+			}
+			return nil
+		})
+	}); err != nil {
 		return errors.Trace(err)
-	}
-	for _, batchSet := range batchBackupFileSet {
-		s.workerPool.ApplyOnErrorGroup(s.eg,
-			func() (restoreErr error) {
-				fileStart := time.Now()
-				defer func() {
-					if restoreErr == nil {
-						log.Info("import sst files done",
-							zap.Duration("take", time.Since(fileStart)))
-						for _, sets := range batchSet {
-							for _, f := range sets.SSTFiles {
-								onProgress(int64(f.TotalKvs))
-							}
-						}
-					}
-				}()
-				err := s.batchFileImporter.Import(s.ectx, batchSet...)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if s.checkpointRunner != nil {
-					// The checkpoint shows this ranges of files has been restored into
-					// the table corresponding to the table-id.
-					for _, set := range batchSet {
-						for _, f := range set.SSTFiles {
-							if err := checkpoint.AppendRangesForRestore(s.ectx, s.checkpointRunner,
-								checkpoint.NewCheckpointFileItem(set.TableID, f.GetName())); err != nil {
-								return errors.Trace(err)
-							}
-						}
-					}
-				}
-				return nil
-			})
 	}
 	return nil
 }

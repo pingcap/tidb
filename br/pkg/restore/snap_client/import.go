@@ -247,8 +247,8 @@ func NewSnapFileImporter(
 	return fileImporter, nil
 }
 
-func (importer *SnapFileImporter) SetMergeSst() {
-	importer.mergeSst = true
+func (importer *SnapFileImporter) GetMergeSst() bool {
+	return importer.mergeSst
 }
 
 func (importer *SnapFileImporter) PauseForBackpressure() {
@@ -294,6 +294,24 @@ func (importer *SnapFileImporter) SetDownloadSpeedLimit(ctx context.Context, sto
 	}
 	_, err := importer.importClient.SetDownloadSpeedLimit(ctx, storeID, req)
 	return errors.Trace(err)
+}
+
+// CheckBatchDownloadSupport checks whether all stores support batch-download
+func (importer *SnapFileImporter) CheckBatchDownloadSupport(ctx context.Context, tikvStores []*metapb.Store) error {
+	storeIDs := make([]uint64, 0, len(tikvStores))
+	for _, s := range tikvStores {
+		if s.State != metapb.StoreState_Up {
+			continue
+		}
+		storeIDs = append(storeIDs, s.Id)
+	}
+
+	support, err := importer.importClient.CheckBatchDownloadSupport(ctx, storeIDs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	importer.mergeSst = support
+	return nil
 }
 
 // CheckMultiIngestSupport checks whether all stores support multi-ingest
@@ -664,9 +682,10 @@ func (importer *SnapFileImporter) batchDownloadSST(
 	apiVersion kvrpcpb.APIVersion,
 ) ([]*import_sstpb.SSTMeta, error) {
 	var mu sync.Mutex
-	downloadReqsMap := make(map[string]*import_sstpb.DownloadRequest)
+	downloadReqs := make([]map[string]*import_sstpb.DownloadRequest, 0, len(filesGroup))
 	resultMetasMap := make(map[string]*import_sstpb.SSTMeta)
 	for _, files := range filesGroup {
+		downloadReqMap := make(map[string]*import_sstpb.DownloadRequest)
 		for _, file := range files.SSTFiles {
 			req, sstMeta, err := importer.buildDownloadRequest(file, files.RewriteRules, regionInfo, cipher)
 			if err != nil {
@@ -676,7 +695,7 @@ func (importer *SnapFileImporter) batchDownloadSST(
 				continue
 			}
 			sstMeta.ApiVersion = apiVersion
-			cfReq, exists := downloadReqsMap[file.Cf]
+			cfReq, exists := downloadReqMap[file.Cf]
 			if !exists {
 				cfReq = &import_sstpb.DownloadRequest{
 					Sst:            req.Sst,
@@ -689,7 +708,7 @@ func (importer *SnapFileImporter) batchDownloadSST(
 					Context:        req.Context,
 					Ssts:           make(map[string]*import_sstpb.SSTMeta),
 				}
-				downloadReqsMap[file.Cf] = cfReq
+				downloadReqMap[file.Cf] = cfReq
 			}
 			// check the rewrite rule the same
 			if !(bytes.Equal(cfReq.RewriteRule.NewKeyPrefix, req.RewriteRule.NewKeyPrefix) &&
@@ -699,6 +718,15 @@ func (importer *SnapFileImporter) batchDownloadSST(
 				log.Panic("rewrite rule mismatch", zap.Reflect("cfReq", cfReq.RewriteRule), zap.Reflect("req", req.RewriteRule))
 			}
 			cfReq.Ssts[req.Name] = &sstMeta
+		}
+		// fallback to single download if there is only one sst
+		for _, req := range downloadReqMap {
+			if len(req.Ssts) <= 1 {
+				req.Ssts = nil
+			}
+		}
+		if len(downloadReqMap) > 0 {
+			downloadReqs = append(downloadReqs, downloadReqMap)
 		}
 	}
 
@@ -715,34 +743,41 @@ func (importer *SnapFileImporter) batchDownloadSST(
 			defer func() {
 				importer.releaseToken(tokenCh)
 			}()
-			for _, req := range downloadReqsMap {
-				var err error
-				var resp *import_sstpb.DownloadResponse
-				resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffStrategy(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
-					dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
-					defer cancel()
-					return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
-				})
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if resp.GetError() != nil {
-					return errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage())
-				}
-				if resp.GetIsEmpty() {
-					log.Warn("download file skipped", zap.String("filename", req.Name),
-						logutil.Region(regionInfo.Region), zap.Error(berrors.ErrKVRangeIsEmpty))
-					continue
-				}
+			for _, downloadReqMap := range downloadReqs {
+				for _, req := range downloadReqMap {
+					var err error
+					var resp *import_sstpb.DownloadResponse
+					resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffStrategy(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
+						dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
+						defer cancel()
+						if len(req.Ssts) == 0 {
+							// fallback to single download
+							return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
+						} else {
+							return importer.importClient.BatchDownloadSST(dctx, peer.GetStoreId(), req)
+						}
+					})
+					if err != nil {
+						return errors.Trace(err)
+					}
+					if resp.GetError() != nil {
+						return errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage())
+					}
+					if resp.GetIsEmpty() {
+						log.Warn("download file skipped", zap.String("filename", req.Name),
+							logutil.Region(regionInfo.Region), zap.Error(berrors.ErrKVRangeIsEmpty))
+						continue
+					}
 
-				mu.Lock()
-				sstMeta := req.Sst
-				sstMeta.Range = &import_sstpb.Range{
-					Start: restoreutils.TruncateTS(resp.Range.GetStart()),
-					End:   restoreutils.TruncateTS(resp.Range.GetEnd()),
+					mu.Lock()
+					sstMeta := req.Sst
+					sstMeta.Range = &import_sstpb.Range{
+						Start: restoreutils.TruncateTS(resp.Range.GetStart()),
+						End:   restoreutils.TruncateTS(resp.Range.GetEnd()),
+					}
+					resultMetasMap[req.Name] = &sstMeta
+					mu.Unlock()
 				}
-				resultMetasMap[req.Name] = &sstMeta
-				mu.Unlock()
 			}
 			return nil
 		})

@@ -29,9 +29,11 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -392,18 +394,69 @@ func HasRestoreIDColumn(dom *domain.Domain) bool {
 	return false
 }
 
+type regionScanner struct {
+	regionClient split.SplitClient
+	regionCache  []*split.RegionInfo
+	cacheSize    int
+}
+
+func NewRegionScanner(regionClient split.SplitClient, cacheSize int) *regionScanner {
+	return &regionScanner{
+		regionClient: regionClient,
+		cacheSize:    cacheSize,
+	}
+}
+
+func (scanner *regionScanner) locateRegionFromRemote(ctx context.Context, key []byte) (*split.RegionInfo, error) {
+	regionInfos, err := split.ScanRegionsWithRetry(ctx, scanner.regionClient, key, []byte(""), scanner.cacheSize)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	scanner.regionCache = regionInfos
+	return scanner.regionCache[0], nil
+}
+
+func (scanner *regionScanner) locateRegionFromCache(ctx context.Context, key []byte) (*split.RegionInfo, error) {
+	if len(scanner.regionCache) == 0 {
+		return scanner.locateRegionFromRemote(ctx, key)
+	}
+	if bytes.Compare(key, scanner.regionCache[len(scanner.regionCache)-1].Region.EndKey) >= 0 {
+		return scanner.locateRegionFromRemote(ctx, key)
+	}
+	i, ok := slices.BinarySearchFunc(scanner.regionCache, key, func(regionInfo *split.RegionInfo, k []byte) int {
+		startCmpRet := bytes.Compare(regionInfo.Region.StartKey, k)
+		if startCmpRet <= 0 && (len(regionInfo.Region.EndKey) == 0 || bytes.Compare(regionInfo.Region.EndKey, k) > 0) {
+			return 0
+		}
+		return startCmpRet
+	})
+	if !ok {
+		return scanner.locateRegionFromRemote(ctx, key)
+	}
+	scanner.regionCache = scanner.regionCache[i:]
+	return scanner.regionCache[0], nil
+}
+
+func (scanner *regionScanner) IsKeyRangeInOneRegion(ctx context.Context, startKey, endKey []byte) (bool, error) {
+	regionInfo, err := scanner.locateRegionFromCache(ctx, startKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return bytes.Compare(endKey, regionInfo.Region.EndKey) < 0, nil
+}
+
 type BackupFileSetWithKeyRange struct {
 	backupFileSet BackupFileSet
 	startKey      []byte
 	endKey        []byte
 }
 
-func GroupOverlappedBackupFileSets(backupFileSets []BackupFileSet) ([]BatchBackupFileSet, error) {
+func GroupOverlappedBackupFileSetsIter(ctx context.Context, regionClient split.SplitClient, backupFileSets []BackupFileSet, fn func(BatchBackupFileSet)) error {
 	backupFileSetWithKeyRanges := make([]*BackupFileSetWithKeyRange, 0, len(backupFileSets))
 	for _, backupFileSet := range backupFileSets {
 		startKey, endKey, err := getKeyRangeForBackupFileSet(backupFileSet)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		backupFileSetWithKeyRanges = append(backupFileSetWithKeyRanges, &BackupFileSetWithKeyRange{
 			backupFileSet: backupFileSet,
@@ -418,25 +471,65 @@ func GroupOverlappedBackupFileSets(backupFileSets []BackupFileSet) ([]BatchBacku
 		}
 		return startKeyCmp
 	})
-	batchBackupFileSets := make([]BatchBackupFileSet, 0)
+	regionScanner := NewRegionScanner(regionClient, 64)
+	var thisBackupFileSet *BackupFileSet = nil
 	thisBatchBackupFileSet := make([]BackupFileSet, 0)
 	lastEndKey := []byte{}
 	for _, file := range backupFileSetWithKeyRanges {
-		if bytes.Compare(lastEndKey, file.startKey) <= 0 {
-			if len(thisBatchBackupFileSet) > 0 {
-				batchBackupFileSets = append(batchBackupFileSets, thisBatchBackupFileSet)
+		if bytes.Compare(lastEndKey, file.startKey) < 0 {
+			// the next file is not overlapped with this backup file set anymore, so add the set
+			// into the batch set.
+			if thisBackupFileSet != nil {
+				thisBatchBackupFileSet = append(thisBatchBackupFileSet, *thisBackupFileSet)
+				thisBackupFileSet = nil
+			}
+			// create new this backup file set
+			thisBackupFileSet = &BackupFileSet{
+				TableID:      file.backupFileSet.TableID,
+				SSTFiles:     make([]*backuppb.File, 0),
+				RewriteRules: file.backupFileSet.RewriteRules,
+			}
+			thisBackupFileSet.SSTFiles = append(thisBackupFileSet.SSTFiles, file.backupFileSet.SSTFiles...)
+			// check whether [lastEndKey, file.startKey] is in the one region
+			inOneRegion, err := regionScanner.IsKeyRangeInOneRegion(ctx, lastEndKey, file.startKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !inOneRegion && len(thisBatchBackupFileSet) > 0 {
+				// not in the same region, so this batch backup file set can be output
+				fn(thisBatchBackupFileSet)
 				thisBatchBackupFileSet = make([]BackupFileSet, 0)
 			}
 			lastEndKey = file.endKey
-		} else if bytes.Compare(lastEndKey, file.endKey) < 0 {
-			lastEndKey = file.endKey
+		} else {
+			// the next file is overlapped with this backup file set, so add the file
+			// into the set.
+			thisBackupFileSet.SSTFiles = append(thisBackupFileSet.SSTFiles, file.backupFileSet.SSTFiles...)
+			if thisBackupFileSet.TableID != file.backupFileSet.TableID || !thisBackupFileSet.RewriteRules.Equal(file.backupFileSet.RewriteRules) {
+				log.Panic("the overlapped SST must have the same table id and rewrite rules",
+					zap.Int64("set table id", thisBackupFileSet.TableID),
+					zap.Int64("file table id", file.backupFileSet.TableID),
+					zap.Reflect("set rewrite rule", thisBackupFileSet.RewriteRules),
+					zap.Reflect("file rewrite rule", file.backupFileSet.RewriteRules),
+				)
+			}
+			// update lastEndKey if file.endKey is larger
+			if bytes.Compare(lastEndKey, file.endKey) < 0 {
+				lastEndKey = file.endKey
+			}
 		}
-		thisBatchBackupFileSet = append(thisBatchBackupFileSet, file.backupFileSet)
 	}
+	// add the set into the batch set.
+	if thisBackupFileSet != nil {
+		thisBatchBackupFileSet = append(thisBatchBackupFileSet, *thisBackupFileSet)
+		thisBackupFileSet = nil
+	}
+	// output the last batch backup file set
 	if len(thisBatchBackupFileSet) > 0 {
-		batchBackupFileSets = append(batchBackupFileSets, thisBatchBackupFileSet)
+		fn(thisBatchBackupFileSet)
+		thisBatchBackupFileSet = nil
 	}
-	return batchBackupFileSets, nil
+	return nil
 }
 
 func getKeyRangeForBackupFileSet(backupFileSet BackupFileSet) ([]byte, []byte, error) {
