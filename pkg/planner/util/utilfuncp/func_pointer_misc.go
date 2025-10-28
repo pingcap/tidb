@@ -453,7 +453,7 @@ func CloneConstantsForPlanCache(constants, cloned []*expression.Constant) []*exp
 	return cloned
 }
 
-// CloneForPlanCache is used clone scalar functions for plan cache
+// CloneForPlanCache is used to clone expression for plan cache
 func CloneForPlanCache[T expression.Expression](expr, cloned []T) []T {
 	if expr == nil {
 		return nil
