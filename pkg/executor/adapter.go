@@ -112,6 +112,60 @@ type recordSet struct {
 	once       sync.Once
 }
 
+type fastPointGetRecordSet struct {
+	sctx     sessionctx.Context
+	fields   []*resolve.ResultField
+	executor exec.Executor
+}
+
+func (a *fastPointGetRecordSet) Fields() []*resolve.ResultField {
+	return a.fields
+}
+
+func (a *fastPointGetRecordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		err = util2.GetRecoverError(r)
+		logutil.Logger(ctx).Warn("execute sql panic", zap.Stack("stack"))
+	}()
+
+	if a.executor.RuntimeStats() != nil {
+		start := time.Now()
+		defer func() { a.executor.RuntimeStats().Record(time.Since(start), req.NumRows()) }()
+	}
+	err = a.executor.Next(ctx, req)
+	if err != nil {
+		return err
+	}
+	numRows := req.NumRows()
+	if numRows == 0 {
+		a.sctx.GetSessionVars().LastFoundRows = a.sctx.GetSessionVars().StmtCtx.FoundRows()
+		return nil
+	}
+	a.sctx.GetSessionVars().StmtCtx.AddFoundRows(uint64(numRows))
+	return nil
+}
+
+func (a *fastPointGetRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	if alloc == nil {
+		return exec.NewFirstChunk(a.executor)
+	}
+
+	return alloc.Alloc(a.executor.RetFieldTypes(), a.executor.InitCap(), a.executor.MaxChunkSize())
+}
+
+func (a *fastPointGetRecordSet) Close() error {
+	var err error
+	if a.executor != nil {
+		err = exec.Close(a.executor)
+		a.executor = nil
+	}
+	return err
+}
+
 func (a *recordSet) Fields() []*resolve.ResultField {
 	if len(a.fields) == 0 {
 		a.fields = colNames2ResultFields(a.schema, a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
@@ -322,37 +376,9 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 
-	var executor exec.Executor
-	useMaxTS := startTs == math.MaxUint64
-
-	// try to reuse point get executor
-	// We should only use the cached the executor when the startTS is MaxUint64
-	if a.PsStmt.PointGet.Executor != nil && useMaxTS {
-		exec, ok := a.PsStmt.PointGet.Executor.(*PointGetExecutor)
-		if !ok {
-			logutil.Logger(ctx).Error("invalid executor type, not PointGetExecutor for point get path")
-			a.PsStmt.PointGet.Executor = nil
-		} else {
-			// CachedPlan type is already checked in last step
-			pointGetPlan := a.Plan.(*plannercore.PointGetPlan)
-			exec.Init(pointGetPlan)
-			a.PsStmt.PointGet.Executor = exec
-			executor = exec
-		}
-	}
-
-	if executor == nil {
-		b := newExecutorBuilder(a.Ctx, a.InfoSchema)
-		executor = b.build(a.Plan)
-		if b.err != nil {
-			return nil, b.err
-		}
-		pointExecutor, ok := executor.(*PointGetExecutor)
-
-		// Don't cache the executor for non point-get (table dual) or partitioned tables
-		if ok && useMaxTS && pointExecutor.partitionDefIdx == nil {
-			a.PsStmt.PointGet.Executor = pointExecutor
-		}
+	executor, err := buildPreparedPointGetExecutor(ctx, a.Ctx, a.PsStmt, a.Plan, startTs, a.InfoSchema)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if err = exec.Open(ctx, executor); err != nil {
@@ -381,6 +407,106 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		stmt:       a,
 		txnStartTS: startTs,
 	}, nil
+}
+
+// TryFastExecutePreparedPointGet try fast execute a prepared point get statement.
+func TryFastExecutePreparedPointGet(ctx context.Context, sctx sessionctx.Context, preparedStmt *plannercore.PlanCacheStmt, binaryArgs any) (sqlexec.RecordSet, error) {
+	if preparedStmt.StmtPlan.Plan == nil ||
+		!variable.EnableFastPath.Load() {
+		return nil, nil
+	}
+	params, ok := binaryArgs.([]expression.Expression)
+	if !ok {
+		return nil, nil
+	}
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	vars := sctx.GetSessionVars()
+	if len(preparedStmt.Params) != len(params) ||
+		!plannercore.IsAutoCommitTxn(vars) ||
+		vars.StmtCtx.IsStaleness ||
+		vars.TxnCtx.IsStaleness ||
+		vars.TxnReadTS.PeakTxnReadTS() != 0 ||
+		preparedStmt.SchemaVersion != is.SchemaMetaVersion() {
+		return nil, nil
+	}
+
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmtCtx.IsReadOnly = preparedStmt.PreparedAst.IsReadOnly
+	stmtCtx.Priority = kv.PriorityHigh
+	stmtCtx.EnablePlanCache()
+
+	// rebuild plan.
+	if err := plannercore.SetParameterValuesIntoSCtx(sctx.GetPlanCtx(), false, preparedStmt.Params, params); err != nil {
+		return nil, errors.Trace(err)
+	}
+	plan, ok, err := plannercore.AdjustCachedPlan(ctx, sctx, preparedStmt.StmtPlan.Plan, &stmtCtx.StmtHints, false, true, "", is, preparedStmt)
+	if err != nil || !ok {
+		return nil, errors.Trace(err)
+	}
+	if err = sessiontxn.AdviseOptimizeWithPlanAndThenWarmUp(sctx, plan); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	startTs, err := sessiontxn.GetTxnManager(sctx).GetStmtReadTS()
+	if err != nil {
+		return nil, err
+	}
+
+	executor, err := buildPreparedPointGetExecutor(ctx, sctx, preparedStmt, plan, startTs, is)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err = exec.Open(ctx, executor); err != nil {
+		terror.Log(exec.Close(executor))
+		return nil, err
+	}
+	if len(preparedStmt.StmtPlan.Fields) == 0 {
+		preparedStmt.StmtPlan.Fields = colNames2ResultFields(executor.Schema(), plan.OutputNames(), sctx.GetSessionVars().CurrentDB)
+	}
+
+	return &fastPointGetRecordSet{
+		sctx:     sctx,
+		fields:   preparedStmt.StmtPlan.Fields,
+		executor: executor,
+	}, nil
+}
+
+func buildPreparedPointGetExecutor(ctx context.Context, sctx sessionctx.Context,
+	preparedStmt *plannercore.PlanCacheStmt, plan base.Plan, startTs uint64, is infoschema.InfoSchema) (exec.Executor, error) {
+	var executor exec.Executor
+	useMaxTS := startTs == math.MaxUint64
+
+	// try to reuse point get executor
+	// We should only use the cached the executor when the startTS is MaxUint64
+	if preparedStmt.PointGet.Executor != nil && useMaxTS {
+		exec, ok := preparedStmt.PointGet.Executor.(*PointGetExecutor)
+		if !ok {
+			logutil.Logger(ctx).Error("invalid executor type, not PointGetExecutor for point get path")
+			preparedStmt.PointGet.Executor = nil
+		} else {
+			// CachedPlan type is already checked in last step
+			pointGetPlan := plan.(*plannercore.PointGetPlan)
+			exec.Init(pointGetPlan)
+			preparedStmt.PointGet.Executor = exec
+			executor = exec
+		}
+	}
+
+	if executor == nil {
+		b := newExecutorBuilder(sctx, is)
+		executor = b.build(plan)
+		if b.err != nil {
+			return nil, b.err
+		}
+		pointExecutor, ok := executor.(*PointGetExecutor)
+
+		// Don't cache the executor for non point-get (table dual) or partitioned tables
+		if ok && useMaxTS && pointExecutor.partitionDefIdx == nil {
+			preparedStmt.PointGet.Executor = pointExecutor
+		}
+	}
+	return executor, nil
 }
 
 // OriginText returns original statement as a string.
@@ -1473,7 +1599,9 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.updatePrevStmt()
 	a.recordLastQueryInfo(err)
 	a.recordAffectedRows2Metrics()
-	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
+	if !a.isPreparedStmt {
+		a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
+	}
 	executeDuration := sessVars.GetExecuteDuration()
 	if sessVars.InRestrictedSQL {
 		executor_metrics.SessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())

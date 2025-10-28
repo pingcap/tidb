@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -149,6 +150,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// schema version like prepared plan cache key
 		stmt.PointGet.Executor = nil
 		stmt.PointGet.ColumnInfos = nil
+		stmt.StmtPlan.Reset()
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// Example:
@@ -218,12 +220,23 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	var cacheKey, binding, reason string
 	var cacheable bool
 	if stmtCtx.UseCache() {
-		cacheKey, binding, cacheable, reason, err = NewPlanCacheKey(sctx, stmt)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !cacheable {
-			stmtCtx.SetSkipPlanCache(reason)
+		if stmt.StmtPlan.Plan != nil && stmt.PreparedAst.IsReadOnly && variable.EnableFastPath.Load() {
+			plan, ok, err := AdjustCachedPlan(ctx, sctx, stmt.StmtPlan.Plan, stmt.StmtPlan.StmtHints, isNonPrepared, true, binding, is, stmt)
+			if err != nil {
+				return nil, nil, err
+			}
+			if ok {
+				return plan, plan.OutputNames(), nil
+			}
+			stmt.StmtPlan.Reset()
+		} else {
+			cacheKey, binding, cacheable, reason, err = NewPlanCacheKey(sctx, stmt)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !cacheable {
+				stmtCtx.SetSkipPlanCache(reason)
+			}
 		}
 	}
 
@@ -232,8 +245,12 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		cachedVal, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
 		skipPrivCheck := stmt.PointGet.Executor != nil // this case is specially handled
 		if hit {
-			if plan, names, ok, err := adjustCachedPlan(ctx, sctx, cachedVal, isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
-				return plan, names, err
+			if plan, ok, err := AdjustCachedPlan(ctx, sctx, cachedVal.Plan, cachedVal.stmtHints, isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
+				switch v := plan.(type) {
+				case *PointGetPlan, *BatchPointGetPlan:
+					stmt.StmtPlan.SetCachedPlan(v, cachedVal.stmtHints)
+				}
+				return plan, cachedVal.OutputColumns, err
 			}
 		}
 	}
@@ -263,18 +280,18 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 	return nil, false
 }
 
-func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, skipPrivCheck bool,
-	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
-	[]*types.FieldName, bool, error) {
+// AdjustCachedPlan adjusts the cached plan.
+func AdjustCachedPlan(ctx context.Context, sctx sessionctx.Context, plan base.Plan, stmtHints *hint.StmtHints, isNonPrepared, skipPrivCheck bool,
+	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	if !skipPrivCheck { // keep the prior behavior
 		if err := checkPreparedPriv(ctx, sctx, stmt, is); err != nil {
-			return nil, nil, false, err
+			return nil, false, err
 		}
 	}
-	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
-		return nil, nil, false, nil
+	if !RebuildPlan4CachedPlan(plan) {
+		return nil, false, nil
 	}
 	sessVars.FoundInPlanCache = true
 	if len(bindSQL) > 0 { // We're using binding, set this to true.
@@ -286,8 +303,8 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *P
 		core_metrics.GetPlanCacheHitCounter(isNonPrepared).Inc()
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-	stmtCtx.StmtHints = *cachedVal.stmtHints
-	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
+	stmtCtx.StmtHints = *stmtHints
+	return plan, true, nil
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement

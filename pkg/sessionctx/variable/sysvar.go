@@ -3632,6 +3632,15 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableFastPath, Value: BoolToOnOff(DefTiDBEnableFastPath), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			EnableFastPath.Store(TiDBOptOn(val))
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableFastPath.Load()), nil
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

@@ -129,8 +129,9 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	prepared := &ast.Prepared{
-		Stmt:     paramStmt,
-		StmtType: ast.GetStmtLabel(paramStmt),
+		Stmt:       paramStmt,
+		StmtType:   ast.GetStmtLabel(paramStmt),
+		IsReadOnly: ast.IsReadOnly(paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
@@ -552,6 +553,7 @@ type PlanCacheStmt struct {
 	Params      []ast.ParamMarkerExpr
 
 	PointGet PointGetExecutorCache
+	StmtPlan CacheStmtPlan
 
 	// below fields are for PointGet short path
 	SchemaVersion int64
@@ -589,6 +591,26 @@ type PlanCacheStmt struct {
 	// dbName and tbls are used to add metadata lock.
 	dbName []model.CIStr
 	tbls   []table.Table
+}
+
+// CacheStmtPlan stores the cached plan, hints and result fields.
+type CacheStmtPlan struct {
+	Plan      base.Plan
+	StmtHints *hint.StmtHints
+	Fields    []*resolve.ResultField
+}
+
+// SetCachedPlan sets the cached plan.
+func (c *CacheStmtPlan) SetCachedPlan(plan base.Plan, hints *hint.StmtHints) {
+	c.Plan = plan
+	c.StmtHints = hints
+}
+
+// Reset resets the cached plan.
+func (c *CacheStmtPlan) Reset() {
+	c.Plan = nil
+	c.StmtHints = nil
+	c.Fields = nil
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.

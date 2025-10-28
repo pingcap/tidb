@@ -1259,6 +1259,8 @@ const (
 	TiDBProcedureLastErrorSQL = "sp_last_error_sql"
 	// TiDBEnableDutySeparationMode indicates if enable the mode of duty separation.
 	TiDBEnableDutySeparationMode = "tidb_enable_duty_separation_mode"
+	// TiDBEnableFastPath indicates whether to enable the fast path, for performance testing.
+	TiDBEnableFastPath = "tidb_enable_fast_path"
 )
 
 // TiDB intentional limits
@@ -1628,6 +1630,7 @@ const (
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBLoadBindingTimeout                         = 200
+	DefTiDBEnableFastPath                             = true // enable by default for testing.
 )
 
 // Process global variables.
@@ -1751,6 +1754,7 @@ var (
 
 	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	EnableFastPath            = atomic.NewBool(DefTiDBEnableFastPath)
 )
 
 var (

@@ -83,8 +83,6 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		partitionNames:     p.PartitionNames,
 	}
 
-	e.SetInitCap(1)
-	e.SetMaxChunkSize(1)
 	e.Init(p)
 
 	e.snapshot, err = b.getSnapshot()
@@ -225,6 +223,8 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
 	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
 	e.BaseExecutor = exec.NewBaseExecutor(e.Ctx(), p.Schema(), p.ID())
+	e.SetInitCap(1)
+	e.SetMaxChunkSize(1)
 	e.indexUsageReporter = buildIndexUsageReporter(e.Ctx(), p, false)
 }
 

@@ -2033,16 +2033,25 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
-		if preparedCore, ok := execStmt.PrepStmt.(*plannercore.PlanCacheStmt); ok {
-			preparedCore.InUse = true
-			defer func() { preparedCore.InUse = false }()
-		}
 		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
 			args, err := expression.ExecBinaryParam(s.GetSessionVars().StmtCtx.TypeCtx(), binParam)
 			if err != nil {
 				return nil, err
 			}
 			execStmt.BinaryArgs = args
+		}
+		if preparedCore, ok := execStmt.PrepStmt.(*plannercore.PlanCacheStmt); ok {
+			preparedCore.InUse = true
+			defer func() { preparedCore.InUse = false }()
+
+			rs, err := executor.TryFastExecutePreparedPointGet(ctx, s, preparedCore, execStmt.BinaryArgs)
+			if err != nil {
+				return nil, err
+			}
+			if rs != nil {
+				s.txn.changeToInvalid()
+				return rs, nil
+			}
 		}
 	}
 
