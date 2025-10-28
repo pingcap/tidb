@@ -1302,12 +1302,19 @@ func (w *worker) queryAnalyzeStatusSince(startTS uint64, dbName, tblName string)
 	}
 	defer w.sessPool.Put(sessCtx)
 
-	exec := sessCtx.GetRestrictedSQLExecutor()
 	startTimeStr := time.Now().UTC().Format(time.DateTime)
 	if startTS > 0 {
 		startTimeStr = model.TSConvert2Time(startTS).UTC().Format(time.DateTime)
 	}
 	kctx := kv.WithInternalSourceType(w.ctx, kv.InternalTxnStats)
+
+	// set session time zone to UTC to match the time format in `startTimeStr`
+	originalTimeZone := sessCtx.GetSessionVars().TimeZone
+	sessCtx.GetSessionVars().TimeZone = time.UTC
+	defer func() {
+		sessCtx.GetSessionVars().TimeZone = originalTimeZone
+	}()
+	exec := sessCtx.GetRestrictedSQLExecutor()
 	rows, _, chkErr := exec.ExecRestrictedSQL(kctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
 		"SELECT state FROM mysql.analyze_jobs WHERE table_schema = %? AND table_name = %? AND start_time >= %?", dbName, tblName, startTimeStr)
 	if chkErr != nil {
