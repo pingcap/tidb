@@ -14,7 +14,11 @@
 
 package sem
 
-import "github.com/pingcap/tidb/pkg/sessionctx/variable"
+import (
+	"strings"
+
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+)
 
 // EnableFromPathForTest enables SEM v2 in test using a configuration file.
 func EnableFromPathForTest(configPath string) (func(), error) {
@@ -47,4 +51,13 @@ func EnableFromPathForTest(configPath string) (func(), error) {
 			variable.SetSysVar(name, value)
 		}
 	}, nil
+}
+
+// AddRestrictedPrivilegesForTest adds restricted privileges for test.
+func AddRestrictedPrivilegesForTest(privilege string) {
+	if sem == nil {
+		return
+	}
+
+	sem.restrictedPrivileges[strings.ToUpper(privilege)] = struct{}{}
 }
