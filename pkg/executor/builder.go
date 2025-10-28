@@ -87,6 +87,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
@@ -1439,6 +1440,23 @@ func (b *executorBuilder) buildUnionScanExec(v *physicalop.PhysicalUnionScan) ex
 	return b.buildUnionScanFromReader(reader, v)
 }
 
+func collectColIdxFromByItems(byItems []*plannerutil.ByItems, cols []*model.ColumnInfo) ([]int, error) {
+	var colIdxs []int
+	for _, item := range byItems {
+		col, ok := item.Expr.(*expression.Column)
+		if !ok {
+			return nil, errors.Errorf("Not support non-column in orderBy pushed down")
+		}
+		for i, c := range cols {
+			if c.ID == col.ID {
+				colIdxs = append(colIdxs, i)
+				break
+			}
+		}
+	}
+	return colIdxs, nil
+}
+
 // buildUnionScanFromReader builds union scan executor from child executor.
 // Note that this function may be called by inner workers of index lookup join concurrently.
 // Be careful to avoid data race.
@@ -1488,6 +1506,15 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
+		colIdxes, err := collectColIdxFromByItems(x.byItems, x.columns)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		us.usedIndex = colIdxes
+		if len(us.usedIndex) > 0 {
+			us.needExtraSorting = true
+		}
 		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -1496,11 +1523,21 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
-		for _, ic := range x.index.Columns {
-			for i, col := range x.columns {
-				if col.Name.L == ic.Name.L {
-					us.usedIndex = append(us.usedIndex, i)
-					break
+		colIdxes, err := collectColIdxFromByItems(x.byItems, x.columns)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		us.usedIndex = colIdxes
+		if len(us.usedIndex) > 0 {
+			us.needExtraSorting = true
+		} else {
+			for _, ic := range x.index.Columns {
+				for i, col := range x.columns {
+					if col.Name.L == ic.Name.L {
+						us.usedIndex = append(us.usedIndex, i)
+						break
+					}
 				}
 			}
 		}
@@ -1512,11 +1549,21 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
-		for _, ic := range x.index.Columns {
-			for i, col := range x.columns {
-				if col.Name.L == ic.Name.L {
-					us.usedIndex = append(us.usedIndex, i)
-					break
+		colIdxes, err := collectColIdxFromByItems(x.byItems, x.columns)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		us.usedIndex = colIdxes
+		if len(us.usedIndex) > 0 {
+			us.needExtraSorting = true
+		} else {
+			for _, ic := range x.index.Columns {
+				for i, col := range x.columns {
+					if col.Name.L == ic.Name.L {
+						us.usedIndex = append(us.usedIndex, i)
+						break
+					}
 				}
 			}
 		}
@@ -1530,19 +1577,13 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 		if len(x.byItems) != 0 {
 			us.keepOrder = x.keepOrder
 			us.desc = x.byItems[0].Desc
-			for _, item := range x.byItems {
-				c, ok := item.Expr.(*expression.Column)
-				if !ok {
-					b.err = errors.Errorf("Not support non-column in orderBy pushed down")
-					return nil
-				}
-				for i, col := range x.columns {
-					if col.ID == c.ID {
-						us.usedIndex = append(us.usedIndex, i)
-						break
-					}
-				}
+			colIdxes, err := collectColIdxFromByItems(x.byItems, x.columns)
+			if err != nil {
+				b.err = err
+				return nil
 			}
+			us.usedIndex = colIdxes
+			us.needExtraSorting = true
 		}
 		us.partitionIDMap = x.partitionIDMap
 		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)
@@ -3876,6 +3917,21 @@ func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec
 	return gather
 }
 
+// assertByItemsAreColumns asserts that all expressions in ByItems are Column types.
+// This function is used to validate PhysicalIndexScan and PhysicalTableScan ByItems.
+func assertByItemsAreColumns(byItems []*plannerutil.ByItems) {
+	intest.AssertFunc(func() bool {
+		for _, byItem := range byItems {
+			_, ok := byItem.Expr.(*expression.Column)
+			if !ok {
+				return false
+			}
+		}
+		return true
+	},
+		"The executor only supports Column type in ByItems")
+}
+
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *physicalop.PhysicalTableReader) exec.Executor {
@@ -3918,6 +3974,7 @@ func (b *executorBuilder) buildTableReader(v *physicalop.PhysicalTableReader) ex
 		b.err = err
 		return nil
 	}
+	assertByItemsAreColumns(ts.ByItems)
 	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
 		b.err = err
@@ -3929,6 +3986,8 @@ func (b *executorBuilder) buildTableReader(v *physicalop.PhysicalTableReader) ex
 	}
 
 	ret.ranges = ts.Ranges
+	ret.groupedRanges = ts.GroupedRanges
+	ret.groupByColIdxs = ts.GroupByColIdxs
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -4134,6 +4193,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *physicalop.PhysicalIndexRead
 		colLens:                    is.IdxColLens,
 		plans:                      v.IndexPlans,
 		outputColumns:              v.OutputColumns,
+		groupedRanges:              is.GroupedRanges,
 	}
 
 	for _, col := range v.OutputColumns {
@@ -4149,6 +4209,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *physicalop.PhysicalIndexRead
 
 func (b *executorBuilder) buildIndexReader(v *physicalop.PhysicalIndexReader) exec.Executor {
 	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
+	assertByItemsAreColumns(is.ByItems)
 	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
 		return nil
@@ -4215,20 +4276,77 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan)
 	return tableReq, tbl, err
 }
 
+func buildIndexLookUpPushDownDAGReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan, planUnNatureOrders map[int]int) (dagReq *tipb.DAGRequest, err error) {
+	indexReq, err := builder.ConstructDAGReqForUnNatureOrderPlans(ctx, plans, planUnNatureOrders, kv.TiKV)
+	if err != nil {
+		return nil, err
+	}
+
+	idxScan := plans[0].(*physicalop.PhysicalIndexScan)
+	intermediateOutputOffsets, err := buildIndexScanOutputOffsets(idxScan, columns, handleLen)
+	if err != nil {
+		return nil, err
+	}
+
+	var intermediateOutputIndex uint32
+	found := false
+	for i, e := range indexReq.Executors {
+		if e.Tp == tipb.ExecType_TypeIndexLookUp {
+			intermediateOutputIndex = uint32(i)
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return nil, errors.New("IndexLookUp executor not found")
+	}
+
+	indexReq.IntermediateOutputChannels = []*tipb.IntermediateOutputChannel{
+		{
+			ExecutorIdx:   intermediateOutputIndex,
+			OutputOffsets: intermediateOutputOffsets,
+		},
+	}
+
+	outputOffsetsLen := plans[len(plans)-1].Schema().Len()
+	indexReq.OutputOffsets = make([]uint32, outputOffsetsLen)
+	for i := range outputOffsetsLen {
+		indexReq.OutputOffsets[i] = uint32(i)
+	}
+	return indexReq, nil
+}
+
 // buildIndexReq is designed to create a DAG for index request.
-// If len(ByItems) != 0 means index request should return related columns
-// to sort result rows in TiDB side for partition tables.
 func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	indexReq, err := builder.ConstructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, err
 	}
 
-	indexReq.OutputOffsets = []uint32{}
 	idxScan := plans[0].(*physicalop.PhysicalIndexScan)
-	if len(idxScan.ByItems) != 0 {
-		schema := idxScan.Schema()
-		for _, item := range idxScan.ByItems {
+	outputOffsets, err := buildIndexScanOutputOffsets(idxScan, columns, handleLen)
+	if err != nil {
+		return nil, err
+	}
+	indexReq.OutputOffsets = outputOffsets
+	return indexReq, nil
+}
+
+// buildIndexReqOutputOffsets builds the output offsets for indexScan rows
+// If len(ByItems) != 0 means index request should return related columns
+// to sort result rows in TiDB side for partition tables.
+func buildIndexScanOutputOffsets(p *physicalop.PhysicalIndexScan, columns []*model.IndexColumn, handleLen int) ([]uint32, error) {
+	estCap := len(p.ByItems) + handleLen
+	needExtraOutputCol := p.NeedExtraOutputCol()
+	if needExtraOutputCol {
+		estCap++
+	}
+
+	outputOffsets := make([]uint32, 0, estCap)
+	if len(p.ByItems) != 0 {
+		schema := p.Schema()
+		for _, item := range p.ByItems {
 			c, ok := item.Expr.(*expression.Column)
 			if !ok {
 				return nil, errors.Errorf("Not support non-column in orderBy pushed down")
@@ -4236,7 +4354,7 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 			find := false
 			for i, schemaColumn := range schema.Columns {
 				if schemaColumn.ID == c.ID {
-					indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
+					outputOffsets = append(outputOffsets, uint32(i))
 					find = true
 					break
 				}
@@ -4248,14 +4366,14 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 	}
 
 	for i := range handleLen {
-		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
+		outputOffsets = append(outputOffsets, uint32(len(columns)+i))
 	}
 
-	if idxScan.NeedExtraOutputCol() {
+	if needExtraOutputCol {
 		// need add one more column for pid or physical table id
-		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+handleLen))
+		outputOffsets = append(outputOffsets, uint32(len(columns)+handleLen))
 	}
-	return indexReq, err
+	return outputOffsets, nil
 }
 
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
@@ -4266,7 +4384,14 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalInd
 	} else {
 		handleLen = 1
 	}
-	indexReq, err := buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
+
+	var indexReq *tipb.DAGRequest
+	var err error
+	if v.IndexLookUpPushDown {
+		indexReq, err = buildIndexLookUpPushDownDAGReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans, v.IndexPlansUnNatureOrders)
+	} else {
+		indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -4316,6 +4441,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalInd
 		PushedLimit:                v.PushedLimit,
 		idxNetDataSize:             v.GetAvgTableRowSize(),
 		avgRowSize:                 v.GetAvgTableRowSize(),
+		groupedRanges:              is.GroupedRanges,
+		indexLookUpPushDown:        v.IndexLookUpPushDown,
 	}
 
 	if v.ExtraHandleCol != nil {
@@ -4340,6 +4467,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *physicalop.PhysicalIndexLook
 		b.Ti.UseTableLookUp.Store(true)
 	}
 	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
+	assertByItemsAreColumns(is.ByItems)
 	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
 		return nil
@@ -4352,6 +4480,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *physicalop.PhysicalIndexLook
 	}
 
 	ts := v.TablePlans[0].(*physicalop.PhysicalTableScan)
+	assertByItemsAreColumns(ts.ByItems)
 
 	ret.ranges = is.Ranges
 	executor_metrics.ExecutorCounterIndexLookUpExecutor.Inc()
@@ -4511,6 +4640,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMerge
 		b.Ti.UseTableLookUp.Store(true)
 	}
 	ts := v.TablePlans[0].(*physicalop.PhysicalTableScan)
+	assertByItemsAreColumns(ts.ByItems)
 	if err := b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil
@@ -4526,13 +4656,16 @@ func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMerge
 	hasGlobalIndex := false
 	for i := range v.PartialPlans {
 		if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok {
+			assertByItemsAreColumns(is.ByItems)
 			ret.ranges = append(ret.ranges, is.Ranges)
 			sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 			if is.Index.Global {
 				hasGlobalIndex = true
 			}
 		} else {
-			ret.ranges = append(ret.ranges, v.PartialPlans[i][0].(*physicalop.PhysicalTableScan).Ranges)
+			partialTS := v.PartialPlans[i][0].(*physicalop.PhysicalTableScan)
+			assertByItemsAreColumns(partialTS.ByItems)
+			ret.ranges = append(ret.ranges, partialTS.Ranges)
 			if ret.table.Meta().IsCommonHandle {
 				tblInfo := ret.table.Meta()
 				sctx.IndexNames = append(sctx.IndexNames, tblInfo.Name.O+":"+tables.FindPrimaryIndex(tblInfo).Name.O)
@@ -5021,10 +5154,14 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 
 	tbInfo := e.table.Meta()
 	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		e.kvRanges, err = buildKvRangesForIndexJoin(e.dctx, e.rctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
+		kvRange, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
 		}
+		e.groupedKVRanges = []*kvRangesWithPhysicalTblID{{
+			PhysicalTableID: getPhysicalTableID(e.table),
+			KeyRanges:       kvRange,
+		}}
 		err = e.open(ctx)
 		return e, err
 	}

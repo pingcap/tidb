@@ -30,6 +30,7 @@ import (
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	dxfstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -167,10 +168,18 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	return nil
 }
 
+// Accepted implements Collector.Accepted interface.
+func (s *importStepExecutor) Accepted(bytes int64) {
+	s.summary.Bytes.Add(bytes)
+	metering.NewRecorder(s.store, metering.TaskTypeImportInto, s.taskID).
+		RecordReadDataBytes(uint64(bytes))
+}
+
 // Processed implements Collector.Processed interface.
 func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
-	s.summary.Bytes.Add(bytes)
 	s.summary.RowCnt.Add(rowCnt)
+	metering.NewRecorder(s.store, metering.TaskTypeImportInto, s.taskID).
+		RecordWriteDataBytes(uint64(bytes))
 }
 
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
@@ -357,6 +366,7 @@ type mergeSortStepExecutor struct {
 	// 	max(max-merged-files * max-file-size / max-part-num(10000), min-part-size)
 	dataKVPartSize  int64
 	indexKVPartSize int64
+	store           tidbkv.Storage
 
 	summary execute.SubtaskSummary
 }
@@ -370,8 +380,8 @@ func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
 	}
 	m.sortStore = store
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan)
-	m.dataKVPartSize = max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
-	m.indexKVPartSize = max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
+	m.dataKVPartSize = max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/external.MaxUploadPartCount))
+	m.indexKVPartSize = max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/external.MaxUploadPartCount))
 
 	m.logger.Info("merge sort partSize",
 		zap.String("data-kv", units.BytesSize(float64(m.dataKVPartSize))),
@@ -407,9 +417,13 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		mu.Lock()
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
+		metering.NewRecorder(m.store, metering.TaskTypeImportInto, subtask.TaskID).
+			RecordPutRequestCount(summary.PutRequestCount)
 	}
 	onReaderClose := func(summary *external.ReaderSummary) {
 		m.summary.GetReqCnt.Add(summary.GetRequestCount)
+		metering.NewRecorder(m.store, metering.TaskTypeImportInto, subtask.TaskID).
+			RecordGetRequestCount(summary.GetRequestCount)
 	}
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
@@ -566,6 +580,8 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			MemCapacity:   e.GetResource().Mem.Capacity(),
 			OnReaderClose: func(summary *external.ReaderSummary) {
 				e.summary.GetReqCnt.Add(summary.GetRequestCount)
+				metering.NewRecorder(e.store, metering.TaskTypeImportInto, subtask.TaskID).
+					RecordGetRequestCount(summary.GetRequestCount)
 			},
 		},
 		TS: sm.TS,
@@ -730,6 +746,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
+			store:    store,
 		}, nil
 	case proto.ImportStepWriteAndIngest:
 		return &writeAndIngestStepExecutor{

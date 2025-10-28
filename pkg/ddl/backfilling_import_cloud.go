@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -75,7 +76,7 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
 	e.metric = metrics.RegisterLightningCommonMetricsForDDL(e.job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, e.metric)
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, false, e.taskConcurrency)
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, hasUniqueIndex(e.indexes), false, e.taskConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -135,6 +136,8 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			OnDup:         engineapi.OnDuplicateKeyError,
 			OnReaderClose: func(summary *external.ReaderSummary) {
 				e.summary.GetReqCnt.Add(summary.GetRequestCount)
+				metering.NewRecorder(e.store, metering.TaskTypeAddIndex, subtask.TaskID).
+					RecordGetRequestCount(summary.GetRequestCount)
 			},
 		},
 		TS: sm.TS,
@@ -163,6 +166,15 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		return err
 	}
 	return kv.ErrKeyExists
+}
+
+func hasUniqueIndex(idxs []*model.IndexInfo) bool {
+	for _, idx := range idxs {
+		if idx.Unique {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *cloudImportExecutor) Cleanup(ctx context.Context) error {

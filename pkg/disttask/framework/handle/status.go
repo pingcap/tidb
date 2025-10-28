@@ -24,16 +24,19 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/tidbvar"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 )
 
 // GetScheduleStatus returns the schedule status.
 func GetScheduleStatus(ctx context.Context) (*schstatus.Status, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	manager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
@@ -54,10 +57,7 @@ func GetScheduleStatus(ctx context.Context) (*schstatus.Status, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	requiredNodes := calculateRequiredNodes(tasks, nodeCPU)
-	// make sure 1 node exist for DXF owner and works as a reserved node, to make
-	// small tasks more responsive.
-	requiredNodes = max(requiredNodes, 1)
+	requiredNodes := CalculateRequiredNodes(tasks, nodeCPU)
 	status := &schstatus.Status{
 		Version:   schstatus.Version1,
 		TaskQueue: schstatus.TaskQueue{ScheduledCount: len(tasks)},
@@ -132,10 +132,10 @@ func GetBusyNodes(ctx context.Context, manager *storage.TaskManager) ([]schstatu
 	return busyNodes, nil
 }
 
-// this function simulates how scheduler and balancer schedules tasks, and
-// calculates the required node count to run the tasks.
+// CalculateRequiredNodes simulates how scheduler and balancer schedules tasks,
+// and calculates the required node count to run the tasks.
 // 'tasks' must be ordered by its rank, see TaskBase for more info about task rank.
-func calculateRequiredNodes(tasks []*proto.TaskBase, cpuCount int) int {
+func CalculateRequiredNodes(tasks []*proto.TaskBase, cpuCount int) int {
 	availResources := make([]int, 0, len(tasks))
 	// for each task, at most MaxNodeCount subtasks can be run in parallel, and
 	// on each node, each task can have at most 1 subtask running. we will try to
@@ -159,7 +159,9 @@ func calculateRequiredNodes(tasks []*proto.TaskBase, cpuCount int) int {
 			availResources = append(availResources, cpuCount-t.Concurrency)
 		}
 	}
-	return len(availResources)
+	// make sure 1 node exist for DXF owner and works as a reserved node, to make
+	// small tasks more responsive.
+	return max(len(availResources), 1)
 }
 
 // GetScheduleFlags returns the schedule flags, such as pause-scale-in flag.
@@ -178,6 +180,7 @@ func GetScheduleFlags(ctx context.Context, manager *storage.TaskManager) (map[sc
 
 func getPauseScaleInFlag(ctx context.Context, manager *storage.TaskManager) (*schstatus.TTLFlag, error) {
 	flag := &schstatus.TTLFlag{}
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err := manager.WithNewSession(func(se sessionctx.Context) error {
 		rs, err2 := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `SELECT VARIABLE_VALUE from mysql.tidb WHERE VARIABLE_NAME = %?`,
 			tidbvar.DXFSchedulePauseScaleIn)

@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -93,6 +94,8 @@ const (
 	HintOrderIndex = "order_index"
 	// HintNoOrderIndex is hint enforce using some indexes and not keep the index's order.
 	HintNoOrderIndex = "no_order_index"
+	// HintIndexLookUpPushDown is hint to enforce index lookup push down.
+	HintIndexLookUpPushDown = "index_lookup_pushdown"
 	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
 	HintAggToCop = "agg_to_cop"
 	// HintReadFromStorage is hint enforce some tables read from specific type of storage.
@@ -124,6 +127,9 @@ const (
 	HintNoIndexMerge = "no_index_merge"
 	// HintMaxExecutionTime specifies the max allowed execution time in milliseconds
 	HintMaxExecutionTime = "max_execution_time"
+
+	// HintWriteSlowLog is a SQL hint used to explicitly trigger writing a statement into the slow log.
+	HintWriteSlowLog = "write_slow_log"
 
 	// HintFlagSemiJoinRewrite corresponds to HintSemiJoinRewrite.
 	HintFlagSemiJoinRewrite uint64 = 1 << iota
@@ -221,6 +227,7 @@ type StmtHints struct {
 	ResourceGroup string
 	// Do not store plan in either plan cache.
 	IgnorePlanCache bool
+	WriteSlowLog    bool
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
@@ -268,6 +275,7 @@ func (sh *StmtHints) Clone() *StmtHints {
 		ForceNthPlan:                   sh.ForceNthPlan,
 		ResourceGroup:                  sh.ResourceGroup,
 		IgnorePlanCache:                sh.IgnorePlanCache,
+		WriteSlowLog:                   sh.WriteSlowLog,
 		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
 		HasReplicaReadHint:             sh.HasReplicaReadHint,
@@ -400,6 +408,8 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			setVarsOffs = append(setVarsOffs, i)
 		case HintIgnorePlanCache:
 			stmtHints.IgnorePlanCache = true
+		case HintWriteSlowLog:
+			stmtHints.WriteSlowLog = true
 		}
 	}
 	stmtHints.OriginalTableHints = hints
@@ -570,10 +580,11 @@ type HintedTable struct {
 
 // HintedIndex indicates which index this hint should take effect on.
 type HintedIndex struct {
-	DBName     ast.CIStr      // the database name
-	TblName    ast.CIStr      // the table name
-	Partitions []ast.CIStr    // partition information
-	IndexHint  *ast.IndexHint // the original parser index hint structure
+	DBName         ast.CIStr      // the database name
+	TblName        ast.CIStr      // the table name
+	Partitions     []ast.CIStr    // partition information
+	IndexHint      *ast.IndexHint // the original parser index hint structure
+	PushDownLookUp bool           // whether to push down the index lookup
 	// Matched indicates whether this index hint
 	// has been successfully applied to a DataSource.
 	// If an HintedIndex is not Matched after building
@@ -588,10 +599,18 @@ func (hint *HintedIndex) Match(dbName, tblName ast.CIStr) bool {
 			hint.DBName.L == "*") // for universal bindings, e.g. *.t
 }
 
+// ShouldPushDownIndexLookUp returns whether the hint indicates to push down index lookup.
+func (hint *HintedIndex) ShouldPushDownIndexLookUp() bool {
+	return hint.IndexHint.HintType == ast.HintUse && hint.PushDownLookUp
+}
+
 // HintTypeString returns the string representation of the hint type.
 func (hint *HintedIndex) HintTypeString() string {
 	switch hint.IndexHint.HintType {
 	case ast.HintUse:
+		if hint.PushDownLookUp {
+			return HintIndexLookUpPushDown
+		}
 		return HintUseIndex
 	case ast.HintIgnore:
 		return HintIgnoreIndex
@@ -761,7 +780,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
-			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
@@ -816,12 +835,13 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			preferAggType |= PreferStreamAgg
 		case HintAggToCop:
 			preferAggToCop = true
-		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex:
+		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
 				dbName = ast.NewCIStr(currentDB)
 			}
 			var hintType ast.IndexHintType
+			var pushDownLookUp bool
 			switch hint.HintName.L {
 			case HintUseIndex:
 				hintType = ast.HintUse
@@ -833,6 +853,20 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				hintType = ast.HintOrderIndex
 			case HintNoOrderIndex:
 				hintType = ast.HintNoOrderIndex
+			case HintIndexLookUpPushDown:
+				inapplicableMsg := ""
+				switch {
+				case !kerneltype.IsClassic():
+					inapplicableMsg = "only classic kernel type is supported"
+				case len(hint.Indexes) == 0:
+					inapplicableMsg = "the index names should be specified"
+				}
+				if inapplicableMsg != "" {
+					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, " + inapplicableMsg)
+					continue
+				}
+				hintType = ast.HintUse
+				pushDownLookUp = true
 			}
 			indexHintList = append(indexHintList, HintedIndex{
 				DBName:     dbName,
@@ -843,6 +877,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 					HintType:   hintType,
 					HintScope:  ast.HintForScan,
 				},
+				PushDownLookUp: pushDownLookUp,
 			})
 		case HintReadFromStorage:
 			switch hint.HintData.(ast.CIStr).L {

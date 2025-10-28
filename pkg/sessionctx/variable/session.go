@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
@@ -45,6 +46,7 @@ import (
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1201,6 +1203,10 @@ type SessionVars struct {
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
 
+	// SlowLogRules holds the set of user-defined rules that determine whether a SQL execution should be logged in the slow log.
+	// This allows flexible and fine-grained control over slow logging beyond the traditional single-threshold approach.
+	SlowLogRules *slowlogrule.SessionSlowLogRules
+
 	// EnableFastAnalyze indicates whether to take fast analyze.
 	EnableFastAnalyze bool
 
@@ -1502,6 +1508,13 @@ type SessionVars struct {
 	// When it is false, ANALYZE reads the latest data.
 	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
 	EnableAnalyzeSnapshot bool
+
+	// EnableDDLAnalyze is a sysVar to indicate create index or reorg index with embedded analyze.
+	EnableDDLAnalyze bool
+
+	// EnableDDLAnalyzeExecOpt is a internal flag to notify internal session whether we do ddl analyze.
+	// It is not controlled by user behavior, and is always default off.
+	EnableDDLAnalyzeExecOpt bool
 
 	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
 	// when > 0: it's the selectivity for the expression.
@@ -2332,6 +2345,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
 		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
+		SkipMissingPartitionStats:     vardef.DefTiDBSkipMissingPartitionStats,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
@@ -2339,7 +2353,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            vardef.DefIndexLookupConcurrency,
-		indexSerialScanConcurrency:        vardef.DefIndexSerialScanConcurrency,
 		indexLookupJoinConcurrency:        vardef.DefIndexLookupJoinConcurrency,
 		hashJoinConcurrency:               vardef.DefTiDBHashJoinConcurrency,
 		projectionConcurrency:             vardef.DefTiDBProjectionConcurrency,
@@ -2384,6 +2397,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.StatsLoadSyncWait.Store(vardef.StatsLoadSyncWait.Load())
 	vars.UseHashJoinV2 = joinversion.IsOptimizedVersion(vardef.DefTiDBHashJoinVersion)
+	vars.SlowLogRules = slowlogrule.NewSessionSlowLogRules(nil)
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
@@ -2462,8 +2476,33 @@ func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
 	s.EnablePseudoForOutdatedStats = val
 }
 
-// GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
+// GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead with adjusted.
 func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
+	// For test purpose, you can enable this failpoint to get the unadjusted replica read.
+	failpoint.Inject("GetReplicaReadUnadjusted", func(_ failpoint.Value) {
+		failpoint.Return(s.replicaRead)
+	})
+	// Replica read only works for read-only statements.
+	if !s.StmtCtx.IsReadOnly {
+		if s.StmtCtx.HasReplicaReadHint {
+			const warnMsg = "Ignore replica read hint for non-read-only statement"
+			existWarnings := s.StmtCtx.GetWarnings()
+			hasWarning := false
+			for _, warn := range existWarnings {
+				if warn.Err.Error() == warnMsg {
+					hasWarning = true
+					break
+				}
+			}
+			if !hasWarning {
+				s.StmtCtx.AppendWarning(errors.New(warnMsg))
+			}
+		}
+		return kv.ReplicaReadLeader
+	}
+	if s.StmtCtx.RCCheckTS || s.RcWriteCheckTS {
+		return kv.ReplicaReadLeader
+	}
 	if s.StmtCtx.HasReplicaReadHint {
 		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
@@ -3099,9 +3138,6 @@ type Concurrency struct {
 	// Only meaningful for dynamic pruned partition table.
 	indexMergeIntersectionConcurrency int
 
-	// indexSerialScanConcurrency is the number of concurrent index serial scan worker.
-	indexSerialScanConcurrency int
-
 	// ExecutorConcurrency is the number of concurrent worker for all executors.
 	ExecutorConcurrency int
 
@@ -3170,11 +3206,6 @@ func (c *Concurrency) SetStreamAggConcurrency(n int) {
 // SetIndexMergeIntersectionConcurrency set the number of concurrent intersection process worker.
 func (c *Concurrency) SetIndexMergeIntersectionConcurrency(n int) {
 	c.indexMergeIntersectionConcurrency = n
-}
-
-// SetIndexSerialScanConcurrency set the number of concurrent index serial scan worker.
-func (c *Concurrency) SetIndexSerialScanConcurrency(n int) {
-	c.indexSerialScanConcurrency = n
 }
 
 // IndexLookupConcurrency return the number of concurrent index lookup worker.
@@ -3265,12 +3296,6 @@ func (c *Concurrency) IndexMergeIntersectionConcurrency() int {
 		return c.indexMergeIntersectionConcurrency
 	}
 	return c.ExecutorConcurrency
-}
-
-// IndexSerialScanConcurrency return the number of concurrent index serial scan worker.
-// This option is not sync with ExecutorConcurrency since it's used by Analyze table.
-func (c *Concurrency) IndexSerialScanConcurrency() int {
-	return c.indexSerialScanConcurrency
 }
 
 // UnionConcurrency return the num of concurrent union worker.

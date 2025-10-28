@@ -1119,7 +1119,7 @@ func TestMaxSQLLength(t *testing.T) {
 
 	// Test the original value and modify it.
 	maxSQLLength := ssMap.maxSQLLength()
-	require.Equal(t, 4096, maxSQLLength)
+	require.Equal(t, 32768, maxSQLLength)
 
 	// Create a long SQL
 	length := maxSQLLength * 10
@@ -1145,8 +1145,8 @@ func TestMaxSQLLength(t *testing.T) {
 	require.Equal(t, 100, ssMap.maxSQLLength())
 	require.Nil(t, ssMap.SetMaxSQLLength(10))
 	require.Equal(t, 10, ssMap.maxSQLLength())
-	require.Nil(t, ssMap.SetMaxSQLLength(4096))
-	require.Equal(t, 4096, ssMap.maxSQLLength())
+	require.Nil(t, ssMap.SetMaxSQLLength(32768))
+	require.Equal(t, 32768, ssMap.maxSQLLength())
 }
 
 // Test AddStatement and SetMaxStmtCount parallel.

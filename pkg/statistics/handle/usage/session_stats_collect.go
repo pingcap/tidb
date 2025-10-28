@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -46,9 +47,18 @@ var (
 	// dumpStatsMaxDuration is the max duration since last update.
 	dumpStatsMaxDuration = 5 * time.Minute
 
+	// colStatsUsageLastUsedThrottleInterval is the minimum interval to update last_used_at when it already exists (non-NULL).
+	// This throttles frequent timestamp-only updates while allowing immediate NULL-to-value transitions.
+	colStatsUsageLastUsedThrottleInterval = 12 * time.Hour
+
 	// batchInsertSize is the batch size used by internal SQL to insert values to stats usage table.
-	batchInsertSize = 8192
+	batchInsertSize = 2048
 )
+
+// TimeCostRecorderForTest can collect per-batch timings when provided in tests.
+type TimeCostRecorderForTest interface {
+	Record(duration time.Duration)
+}
 
 // needDumpStatsDelta checks whether to dump stats delta.
 // 1. If the table doesn't exist or is a mem table or system table, then return false.
@@ -324,46 +334,72 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 	defer func() {
 		s.SessionStatsUsage().Merge(colMap)
 	}()
-	type pair struct {
-		lastUsedAt string
-		tblColID   model.TableItemID
-	}
-	pairs := make([]pair, 0, len(colMap))
+	pairs := make([]ColStatsUsageEntry, 0, len(colMap))
 	for id, t := range colMap {
-		pairs = append(pairs, pair{tblColID: id, lastUsedAt: t.UTC().Format(types.TimeFormat)})
+		pairs = append(pairs, ColStatsUsageEntry{TableID: id.TableID, ColumnID: id.ID, LastUsedAt: t.UTC().Format(types.TimeFormat)})
 	}
-	slices.SortFunc(pairs, func(i, j pair) int {
-		if i.tblColID.TableID == j.tblColID.TableID {
-			return cmp.Compare(i.tblColID.ID, j.tblColID.ID)
-		}
-		return cmp.Compare(i.tblColID.TableID, j.tblColID.TableID)
-	})
-	// Use batch insert to reduce cost.
-	for i := 0; i < len(pairs); i += batchInsertSize {
-		end := min(i+batchInsertSize, len(pairs))
-		sql := new(strings.Builder)
-		sqlescape.MustFormatSQL(sql, "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ")
-		for j := i; j < end; j++ {
-			// Since we will use some session from session pool to execute the insert statement, we pass in UTC time here and covert it
-			// to the session's time zone when executing the insert statement. In this way we can make the stored time right.
-			sqlescape.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", pairs[j].tblColID.TableID, pairs[j].tblColID.ID, pairs[j].lastUsedAt)
-			if j < end-1 {
-				sqlescape.MustFormatSQL(sql, ",")
-			}
-		}
-		sqlescape.MustFormatSQL(sql, " ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN VALUES(last_used_at) ELSE GREATEST(last_used_at, VALUES(last_used_at)) END")
-		if err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-			_, _, err := utilstats.ExecRows(sctx, sql.String())
-			return err
-		}); err != nil {
-			return errors.Trace(err)
-		}
+	if err := DumpColStatsUsageEntries(s.statsHandle.SPool(), pairs, nil); err != nil {
+		return errors.Trace(err)
+	}
+	for id := range colMap {
+		delete(colMap, id)
+	}
+	return nil
+}
 
-		for j := i; j < end; j++ {
-			delete(colMap, pairs[j].tblColID)
+// DumpColStatsUsageEntries batches and executes the insert/update for column_stats_usage.
+func DumpColStatsUsageEntries(pool syssession.Pool, entries []ColStatsUsageEntry, rec TimeCostRecorderForTest) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	// sort entries to ensure consistent order and reduce deadlock chance
+	slices.SortFunc(entries, func(a, b ColStatsUsageEntry) int {
+		if a.TableID == b.TableID {
+			return cmp.Compare(a.ColumnID, b.ColumnID)
+		}
+		return cmp.Compare(a.TableID, b.TableID)
+	})
+	for i := 0; i < len(entries); i += batchInsertSize {
+		end := min(i+batchInsertSize, len(entries))
+		batch := entries[i:end]
+		if err := utilstats.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
+			// build simple INSERT ... VALUES with threshold gating in ON DUPLICATE KEY UPDATE
+			thresholdMinutes := int(colStatsUsageLastUsedThrottleInterval / time.Minute)
+			sql := new(strings.Builder)
+			sqlescape.MustFormatSQL(sql, "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ")
+			for j := range batch {
+				// Since we will use some session from session pool to execute the insert statement, we pass in UTC time here and covert it
+				// to the session's time zone when executing the insert statement. In this way we can make the stored time right.
+				sqlescape.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", batch[j].TableID, batch[j].ColumnID, batch[j].LastUsedAt)
+				if j < len(batch)-1 {
+					sqlescape.MustFormatSQL(sql, ",")
+				}
+			}
+			sqlescape.MustFormatSQL(sql, " ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL OR TIMESTAMPDIFF(MINUTE, last_used_at, VALUES(last_used_at)) >= %? THEN VALUES(last_used_at) ELSE last_used_at END", thresholdMinutes)
+			start := time.Now()
+			if _, _, err := utilstats.ExecRows(sctx, sql.String()); err != nil {
+				return err
+			}
+			dur := time.Since(start)
+			statslogutil.StatsSampleLogger().Debug("column_stats_usage: upsert batch done",
+				zap.Int("batchSize", len(batch)),
+				zap.Duration("duration", dur))
+			if rec != nil {
+				rec.Record(dur)
+			}
+			return nil
+		}); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// ColStatsUsageEntry represents one (table_id, column_id, last_used_at) item to persist.
+type ColStatsUsageEntry struct {
+	LastUsedAt string
+	TableID    int64
+	ColumnID   int64
 }
 
 // NewSessionStatsItem allocates a stats collector for a session.
