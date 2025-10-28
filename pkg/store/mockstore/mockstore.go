@@ -205,11 +205,24 @@ func WithMockTiFlash(nodes int) MockTiKVStoreOption {
 	)
 }
 
+func enableKeyspaceLevelGCIfNotSet(meta *keyspacepb.KeyspaceMeta) {
+	if meta.Config == nil {
+		meta.Config = make(map[string]string, 1)
+	}
+	if _, ok := meta.Config[pd.KeyspaceConfigGCManagementType]; !ok {
+		meta.Config[pd.KeyspaceConfigGCManagementType] = pd.KeyspaceConfigGCManagementTypeKeyspaceLevel
+	}
+}
+
 // WithCurrentKeyspaceMeta lets user set the keyspace meta.
+// Note that keyspaces created in the mock store will all have keyspace level GC enabled by default, as it's the only
+// allowed mode for keyspaces in next gen. To specify unified GC mode for special test purposes, explicitly set it
+// in the `Config` field of the keyspace meta.
 func WithCurrentKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta) MockTiKVStoreOption {
 	return func(c *mockOptions) {
 		c.keyspaceSpecified = true
 		if keyspaceMeta != nil {
+			enableKeyspaceLevelGCIfNotSet(keyspaceMeta)
 			c.clusterKeyspaces = []*keyspacepb.KeyspaceMeta{keyspaceMeta}
 			c.currentKeyspaceID = keyspaceMeta.Id
 		} else {
@@ -221,11 +234,17 @@ func WithCurrentKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta) MockTiKVStor
 
 // WithKeyspacesAndCurrentKeyspaceID specifies a list of keyspaces in the cluster, and ID of the keyspace that
 // the user will be in. It's useful when the test needs to operate other keyspaces.
+// Note that keyspaces created in the mock store will all have keyspace level GC enabled by default, as it's the only
+// allowed mode for keyspaces in next gen. To specify unified GC mode for special test purposes, explicitly set it
+// in the `Config` field of the keyspace meta.
 func WithKeyspacesAndCurrentKeyspaceID(clusterKeyspaces []*keyspacepb.KeyspaceMeta, currentKeyspaceID uint32) MockTiKVStoreOption {
 	return func(c *mockOptions) {
 		c.keyspaceSpecified = true
 		c.clusterKeyspaces = clusterKeyspaces
 		c.currentKeyspaceID = currentKeyspaceID
+		for _, meta := range c.clusterKeyspaces {
+			enableKeyspaceLevelGCIfNotSet(meta)
+		}
 	}
 }
 
@@ -267,8 +286,7 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 				Id:   constants.MaxKeyspaceID - 1,
 				Name: keyspace.System,
 			}
-			opt.clusterKeyspaces = []*keyspacepb.KeyspaceMeta{meta}
-			opt.currentKeyspaceID = meta.Id
+			WithCurrentKeyspaceMeta(meta)(&opt)
 		}
 	}
 
