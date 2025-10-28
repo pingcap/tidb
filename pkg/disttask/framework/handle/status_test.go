@@ -29,6 +29,8 @@ func TestCalculateRequiredNodes(t *testing.T) {
 		params   [][]int
 		expected int
 	}{
+		// no task
+		{cpuCount: 8, params: [][]int{}, expected: 1},
 		// single task cases
 		{cpuCount: 8, params: [][]int{{1, 1}}, expected: 1},
 		{cpuCount: 8, params: [][]int{{1, 3}}, expected: 3},
@@ -67,7 +69,7 @@ func TestCalculateRequiredNodes(t *testing.T) {
 				}
 				tasks = append(tasks, task)
 			}
-			require.Equal(t, c.expected, calculateRequiredNodes(tasks, c.cpuCount))
+			require.Equal(t, c.expected, CalculateRequiredNodes(tasks, c.cpuCount))
 		})
 	}
 }

@@ -35,7 +35,6 @@ go_library(
         "plan_cacheable_checker.go",
         "plan_clone_utils.go",
         "plan_cost_ver1.go",
-        "plan_to_pb.go",
         "planbuilder.go",
         "point_get_plan.go",
         "preprocess.go",
