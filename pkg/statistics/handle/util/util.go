@@ -81,7 +81,7 @@ func CallWithSCtx(pool syssession.Pool, f func(sctx sessionctx.Context) error, f
 	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
 	return pool.WithSession(func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
-			if _, err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
+			if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
 				return errors.Trace(err)
 			}
 
@@ -100,118 +100,80 @@ func CallWithSCtx(pool syssession.Pool, f func(sctx sessionctx.Context) error, f
 }
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
-// It returns a restore function that can be invoked to restore the original session variables.
-func UpdateSCtxVarsForStats(sctx sessionctx.Context) (func(), error) {
+func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	// async merge global stats
-	// capture previous values so we can restore later
-	sv := sctx.GetSessionVars()
-	prev := struct {
-		AnalyzeSkipColumnTypes           map[string]struct{}
-		PartitionPruneMode               string
-		AnalyzePartitionConcurrency      int
-		AnalyzeVersion                   int
-		AnalyzePartitionMergeConcurrency int
-		EnableAsyncMergeGlobalStats      bool
-		EnableHistoricalStats            bool
-		EnableAnalyzeSnapshot            bool
-		SkipMissingPartitionStats        bool
-	}{
-		AnalyzeSkipColumnTypes:           sv.AnalyzeSkipColumnTypes,
-		PartitionPruneMode:               sv.PartitionPruneMode.Load(),
-		AnalyzePartitionConcurrency:      sv.AnalyzePartitionConcurrency,
-		AnalyzePartitionMergeConcurrency: sv.AnalyzePartitionMergeConcurrency,
-		AnalyzeVersion:                   sv.AnalyzeVersion,
-		EnableAsyncMergeGlobalStats:      sv.EnableAsyncMergeGlobalStats,
-		EnableHistoricalStats:            sv.EnableHistoricalStats,
-		EnableAnalyzeSnapshot:            sv.EnableAnalyzeSnapshot,
-		SkipMissingPartitionStats:        sv.SkipMissingPartitionStats,
-	}
-
-	restore := func() {
-		sv.EnableAsyncMergeGlobalStats = prev.EnableAsyncMergeGlobalStats
-		sv.AnalyzePartitionConcurrency = prev.AnalyzePartitionConcurrency
-		sv.AnalyzeVersion = prev.AnalyzeVersion
-		sv.EnableHistoricalStats = prev.EnableHistoricalStats
-		sv.PartitionPruneMode.Store(prev.PartitionPruneMode)
-		sv.EnableAnalyzeSnapshot = prev.EnableAnalyzeSnapshot
-		sv.AnalyzeSkipColumnTypes = prev.AnalyzeSkipColumnTypes
-		sv.SkipMissingPartitionStats = prev.SkipMissingPartitionStats
-		sv.AnalyzePartitionMergeConcurrency = prev.AnalyzePartitionMergeConcurrency
-	}
-
-	enableAsyncMergeGlobalStats, err := sv.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableAsyncMergeGlobalStats)
+	enableAsyncMergeGlobalStats, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableAsyncMergeGlobalStats)
 	if err != nil {
-		return restore, err
+		return err
 	}
-	sv.EnableAsyncMergeGlobalStats = variable.TiDBOptOn(enableAsyncMergeGlobalStats)
+	sctx.GetSessionVars().EnableAsyncMergeGlobalStats = variable.TiDBOptOn(enableAsyncMergeGlobalStats)
 
 	// concurrency of save stats to storage
-	analyzePartitionConcurrency, err := sv.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzePartitionConcurrency)
+	analyzePartitionConcurrency, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzePartitionConcurrency)
 	if err != nil {
-		return restore, err
+		return err
 	}
 	c, err := strconv.ParseInt(analyzePartitionConcurrency, 10, 64)
 	if err != nil {
-		return restore, err
+		return err
 	}
-	sv.AnalyzePartitionConcurrency = int(c)
+	sctx.GetSessionVars().AnalyzePartitionConcurrency = int(c)
 
 	// analyzer version
-	verInString, err := sv.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeVersion)
+	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeVersion)
 	if err != nil {
-		return restore, err
+		return err
 	}
 	ver, err := strconv.ParseInt(verInString, 10, 64)
 	if err != nil {
-		return restore, err
+		return err
 	}
-	sv.AnalyzeVersion = int(ver)
+	sctx.GetSessionVars().AnalyzeVersion = int(ver)
 
 	// enable historical stats
-	val, err := sv.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
 	if err != nil {
-		return restore, err
+		return err
 	}
-	sv.EnableHistoricalStats = variable.TiDBOptOn(val)
+	sctx.GetSessionVars().EnableHistoricalStats = variable.TiDBOptOn(val)
 
 	// partition mode
-	pruneMode, err := sv.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBPartitionPruneMode)
+	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBPartitionPruneMode)
 	if err != nil {
-		return restore, err
+		return err
 	}
-	sv.PartitionPruneMode.Store(pruneMode)
+	sctx.GetSessionVars().PartitionPruneMode.Store(pruneMode)
 
 	// enable analyze snapshot
-	analyzeSnapshot, err := sv.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableAnalyzeSnapshot)
+	analyzeSnapshot, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableAnalyzeSnapshot)
 	if err != nil {
-		return restore, err
+		return err
 	}
-	sv.EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
+	sctx.GetSessionVars().EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
 
 	// enable skip column types
-	val, err = sv.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
 	if err != nil {
-		return restore, err
+		return err
 	}
-	sv.AnalyzeSkipColumnTypes = variable.ParseAnalyzeSkipColumnTypes(val)
+	sctx.GetSessionVars().AnalyzeSkipColumnTypes = variable.ParseAnalyzeSkipColumnTypes(val)
 
 	// skip missing partition stats
-	val, err = sv.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBSkipMissingPartitionStats)
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBSkipMissingPartitionStats)
 	if err != nil {
-		return restore, err
+		return err
 	}
-	sv.SkipMissingPartitionStats = variable.TiDBOptOn(val)
-	verInString, err = sv.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBMergePartitionStatsConcurrency)
+	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
+	verInString, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBMergePartitionStatsConcurrency)
 	if err != nil {
-		return restore, err
+		return err
 	}
 	ver, err = strconv.ParseInt(verInString, 10, 64)
 	if err != nil {
-		return restore, err
+		return err
 	}
-	sv.AnalyzePartitionMergeConcurrency = int(ver)
-
-	return restore, nil
+	sctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver)
+	return nil
 }
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
