@@ -2752,6 +2752,14 @@ var defaultSysVars = []*SysVar{
 		GenerateBinaryPlan.Store(TiDBOptOn(val))
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableStatsUpdateDuringDDL, Value: BoolToOnOff(DefTiDBEnableStatsUpdateDuringDDL), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			if TiDBOptOn(val) && s.AnalyzeVersion == 1 {
+				return errors.New("tidb_stats_update_during_ddl can only be enabled with tidb_analyze_version 2")
+			}
+			s.EnableDDLAnalyze = TiDBOptOn(val)
+			return nil
+		}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDefaultStrMatchSelectivity, Value: strconv.FormatFloat(DefTiDBDefaultStrMatchSelectivity, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1,
 		SetSession: func(s *SessionVars, val string) error {
 			s.DefaultStrMatchSelectivity = tidbOptFloat64(val, DefTiDBDefaultStrMatchSelectivity)

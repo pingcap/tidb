@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -2009,16 +2010,20 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
+		SessionVars:         make(map[string]string, 2),
 	}
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	job.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(ctx))
+	job.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
 	err = checkMultiSchemaInfo(info, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
+	setNeedAnalyze(info)
 	return e.DoDDLJob(ctx, job)
 }
 
@@ -3322,6 +3327,8 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
+	jobW.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(sctx))
+	jobW.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
@@ -3422,6 +3429,8 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
+	jobW.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(sctx))
+	jobW.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
@@ -4790,15 +4799,16 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) *model.Job {
 	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		BinlogInfo: &model.HistoryInfo{},
-		Priority:   ctx.GetSessionVars().DDLReorgPriority,
-		Charset:    charset,
-		Collate:    collate,
-		SQLMode:    ctx.GetSessionVars().SQLMode,
+		SchemaID:    schema.ID,
+		TableID:     t.Meta().ID,
+		SchemaName:  schema.Name.L,
+		TableName:   t.Meta().Name.L,
+		BinlogInfo:  &model.HistoryInfo{},
+		Priority:    ctx.GetSessionVars().DDLReorgPriority,
+		Charset:     charset,
+		Collate:     collate,
+		SQLMode:     ctx.GetSessionVars().SQLMode,
+		SessionVars: make(map[string]string),
 	}
 	return job
 }
@@ -4903,6 +4913,8 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddIndex
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
+	job.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(ctx))
+	job.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
 
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
@@ -6890,4 +6902,18 @@ func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
 	}
 	logutil.DDLLogger().Info("system variable tidb_scatter_region not found, use default value")
 	return variable.DefTiDBScatterRegion
+}
+
+func getEnableDDLAnalyze(sctx sessionctx.Context) string {
+	if val, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBEnableStatsUpdateDuringDDL); ok {
+		return val
+	}
+	return variable.BoolToOnOff(variable.DefTiDBEnableStatsUpdateDuringDDL)
+}
+
+func getAnalyzeVersion(sctx sessionctx.Context) string {
+	if val, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBAnalyzeVersion); ok {
+		return val
+	}
+	return strconv.Itoa(variable.DefTiDBAnalyzeVersion)
 }
