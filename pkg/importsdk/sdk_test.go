@@ -714,5 +714,4 @@ func (s *mockGCSSuite) TestCreateTableMetaByName() {
 
 	err = importSDK.CreateSchemaAndTableByName(context.Background(), "db1", "tb1")
 	s.NoError(err)
-
 }
