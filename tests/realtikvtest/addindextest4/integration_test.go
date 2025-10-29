@@ -222,7 +222,6 @@ func TestAddIndexShowAnalyzeProgress(t *testing.T) {
 }
 
 func TestAnalyzeTimeout(t *testing.T) {
-	t.Skip("debug ci")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
