@@ -392,19 +392,25 @@ func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 	}
 	if sf.hashcode != nil && fun.hashcode != nil {
 		if intest.InTest {
-			assertCheckHashCode(sf)
-			assertCheckHashCode(fun)
+			copyhashcode := reHashCodeForTest(sf)
+			copyfunhashcode := reHashCodeForTest(fun)
+			intest.Assert(bytes.Equal(sf.hashcode, fun.hashcode) == bytes.Equal(copyfunhashcode, copyhashcode),
+				" HashCode should be stable and consistent")
 		}
 		return bytes.Equal(sf.hashcode, fun.hashcode)
 	}
 	return sf.Function.equal(ctx, fun.Function)
 }
 
-func assertCheckHashCode(sf *ScalarFunction) {
-	intest.Assert(intest.InTest)
+func reHashCodeForTest(sf *ScalarFunction) (origin []byte) {
 	copyhashcode := make([]byte, len(sf.hashcode))
 	copy(copyhashcode, sf.hashcode)
 	ReHashCode(sf)
+	return copyhashcode
+}
+func assertCheckHashCode(sf *ScalarFunction) {
+	intest.Assert(intest.InTest)
+	copyhashcode := reHashCodeForTest(sf)
 	intest.Assert(bytes.Equal(sf.hashcode, copyhashcode), "HashCode should not change after ReHashCode is called")
 }
 
