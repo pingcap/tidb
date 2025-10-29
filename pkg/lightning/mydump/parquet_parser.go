@@ -612,19 +612,19 @@ func NewParquetParser(
 // SampleStatisticsFromParquet samples row size of the parquet file.
 func SampleStatisticsFromParquet(
 	ctx context.Context,
-	fileMeta SourceFileMeta,
+	path string,
 	store storage.ExternalStorage,
 ) (
 	rowCount int64,
 	avgRowSize float64,
 	err error,
 ) {
-	r, err := store.Open(ctx, fileMeta.Path, nil)
+	r, err := store.Open(ctx, path, nil)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	parser, err := NewParquetParser(ctx, store, r, fileMeta.Path, ParquetFileMeta{})
+	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{})
 	if err != nil {
 		return 0, 0, err
 	}
