@@ -15,6 +15,7 @@
 package addindextest_test
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -225,6 +226,26 @@ func TestAddIndexShowAnalyzeProgress(t *testing.T) {
 	})
 	tk1.MustExec("alter table t modify column b char(16);")
 	require.True(t, analyzed)
+
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec("create table t (a int, b int, key idx_b(b));")
+	tk1.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+	beginRs = tk1.MustQuery("select now();").Rows()
+	begin = beginRs[0][0].(string)
+	jobID = int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if jobID == 0 && job.Type == model.ActionModifyColumn {
+			jobID = job.ID
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", func(err *error) {
+		*err = errors.New("mock err")
+	})
+	tk1.MustExec("alter table t modify column b char(16);")
+	require.True(t, analyzed)
+	showRs := tk1.MustQuery(fmt.Sprintf("admin show ddl jobs where job_id = %d", jobID)).Rows()
+	show := showRs[0][12].(string)
+	require.Contains(t, show, "analyze_failed")
 }
 
 func TestAnalyzeTimeout(t *testing.T) {

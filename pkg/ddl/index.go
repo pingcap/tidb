@@ -1184,18 +1184,21 @@ SwitchIndexState:
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
-			done, timedOut := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
 			failpoint.InjectCall("analyzeTableDone", job)
-			if done || timedOut {
+			if done || timedOut || failed {
 				if done {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
 				}
 				if timedOut {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
 				}
+				if failed {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
+				}
 				checkAndMarkNonRevertible(job)
 			}
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout:
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			// Set column index flag.
 			for _, indexInfo := range allIndexInfos {
 				AddIndexColumnFlag(tblInfo, indexInfo)
@@ -1350,18 +1353,18 @@ func (w *worker) queryAnalyzeStatusSince(startTS uint64, dbName, tblName string)
 //	done: whether the caller should consider analyze finished (true) and continue DDL;
 //	timedOut: whether the analyze has exceeded cumulative timeout and caller should proceed with timeout handling;
 //	proceed: whether the caller should proceed to start ANALYZE locally (true for unknown status).
-func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, status analyzeStatus, cumulativeTimeout time.Duration) (done bool, timedOut bool, proceed bool) {
+func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, status analyzeStatus, cumulativeTimeout time.Duration) (done, timedOut, failed, proceed bool) {
 	switch status {
 	case analyzeFinished:
 		logutil.DDLLogger().Info("analyze already finished by other owner", zap.Int64("jobID", job.ID), zap.String("db", dbName), zap.String("table", tblName))
 		w.ddlCtx.clearAnalyzeStartTime(job.ID)
 		w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
-		return true, false, false
+		return true, false, false, false
 	case analyzeFailed:
 		logutil.DDLLogger().Warn("analyze previously failed on another owner, continue finishing DDL", zap.Int64("jobID", job.ID), zap.String("db", dbName), zap.String("table", tblName))
 		w.ddlCtx.clearAnalyzeStartTime(job.ID)
 		w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
-		return true, false, false
+		return true, false, true, false
 	case analyzeRunning:
 		// If analyze is running, respect cumulative timeout. If expired, return timeout to let caller proceed.
 		if start, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); ok {
@@ -1369,7 +1372,7 @@ func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, s
 				logutil.DDLLogger().Warn("analyze table is running but exceeded cumulative timeout, proceeding to finish DDL", zap.Int64("jobID", job.ID), zap.Duration("elapsed", time.Since(start)))
 				w.ddlCtx.clearAnalyzeStartTime(job.ID)
 				w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
-				return false, true, false
+				return false, true, false, false
 			}
 		} else {
 			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
@@ -1379,23 +1382,23 @@ func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, s
 			logutil.DDLLogger().Info("analyze table after create index context done", zap.Int64("jobID", job.ID), zap.Error(w.ctx.Err()))
 			w.ddlCtx.clearAnalyzeStartTime(job.ID)
 			w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
-			return true, false, false
+			return true, false, false, false
 		case <-time.After(10 * time.Second):
-			return false, false, false
+			return false, false, false, false
 		}
 	default:
 		// analyzeUnknown: caller should proceed to start ANALYZE locally.
-		return false, false, true
+		return false, false, false, true
 	}
 }
 
 // analyzeTableAfterCreateIndex analyzes the table after creating index.
-func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) (done bool, timedOut bool) {
+func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) (done, timedOut, failed bool) {
 	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
 	if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.NeedAnalyze {
 		// If the job is a multi-schema-change job,
 		// we only analyze the table once after all schema changes are done.
-		return true, false
+		return true, false, false
 	}
 
 	cumulativeTimeout, found := w.ddlCtx.getAnalyzeCumulativeTimeout(job.ID)
@@ -1418,21 +1421,21 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 			status = analyzeUnknown
 		}
 
-		done, timedOut, proceed := w.analyzeStatusDecision(job, dbName, tblName, status, cumulativeTimeout)
-		if done || timedOut {
-			return done, timedOut
+		done, timedOut, failed, proceed := w.analyzeStatusDecision(job, dbName, tblName, status, cumulativeTimeout)
+		if done || timedOut || failed {
+			return done, timedOut, failed
 		}
 		if !proceed {
 			// We decided not to proceed to start ANALYZE locally (i.e. it's running and we waited),
 			// so simply return and retry later.
-			return false, false
+			return false, false, false
 		}
 
 		if _, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); !ok {
 			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
 		}
 
-		doneCh = make(chan struct{})
+		doneCh = make(chan error)
 		eg := util.NewErrorGroupWithRecover()
 		eg.Go(func() error {
 			sessCtx, err := w.sessPool.Get()
@@ -1456,6 +1459,7 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 			}
 			failpoint.InjectCall("beforeAnalyzeTable")
 			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
+			failpoint.InjectCall("afterAnalyzeTable", &err)
 			if err != nil {
 				logutil.DDLLogger().Warn("analyze table failed",
 					zap.Int64("jobID", job.ID),
@@ -1464,6 +1468,7 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 					zap.Error(err),
 					zap.Stack("stack"))
 				// We can continue to finish the job even if analyze table failed.
+				doneCh <- err
 			}
 			failpoint.InjectCall("afterAnalyzeTable")
 			return nil
@@ -1471,17 +1476,17 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 		w.ddlCtx.setAnalyzeDoneCh(job.ID, doneCh)
 	}
 	select {
-	case <-doneCh:
+	case err := <-doneCh:
 		logutil.DDLLogger().Info("analyze table after create index done", zap.Int64("jobID", job.ID))
 		w.ddlCtx.clearAnalyzeStartTime(job.ID)
 		w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
-		return true, false
+		return true, false, err != nil
 	case <-w.ctx.Done():
 		logutil.DDLLogger().Info("analyze table after create index context done",
 			zap.Int64("jobID", job.ID), zap.Error(w.ctx.Err()))
 		w.ddlCtx.clearAnalyzeStartTime(job.ID)
 		w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
-		return true, false
+		return true, false, false
 	case <-time.After(10 * time.Second):
 		if start, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); ok {
 			if time.Since(start) > cumulativeTimeout {
@@ -1490,12 +1495,12 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 				// Do not persist job here. Let the caller mark AnalyzeStateTimeout and persist.
 				w.ddlCtx.clearAnalyzeStartTime(job.ID)
 				w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
-				return false, true
+				return false, true, false
 			}
 		} else {
 			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
 		}
-		return false, false
+		return false, false, false
 	}
 }
 
