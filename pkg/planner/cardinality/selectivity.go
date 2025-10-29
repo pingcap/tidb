@@ -1189,7 +1189,7 @@ func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increa
 	if newRows < 0 {
 		newRows = min(notNullCount, realtimeRowCount)
 	}
-	// if no NDV - derive an NDV using sqrt
+	// if no NDV - derive an NDV using sqrt, this could happen for unanalyzed tables
 	if ndv <= 0 {
 		ndv = math.Sqrt(max(notNullCount, realtimeRowCount))
 	} else {
