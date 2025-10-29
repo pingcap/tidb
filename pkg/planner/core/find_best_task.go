@@ -153,14 +153,6 @@ func enumeratePhysicalPlans4TaskHelper(
 		}
 	}
 
-	defer func() {
-		if returnedTask != nil && !returnedTask.Invalid() {
-			if warn := recordWarnings(baseLP.Self(), prop, addEnforcer); warn != nil {
-				returnedTask.AppendWarning(warn)
-			}
-		}
-	}()
-
 	for _, pp := range physicalPlans {
 		childTasks, err = iteration(iterObj, pp, childTasks, prop)
 		if err != nil {
@@ -233,6 +225,12 @@ func enumeratePhysicalPlans4TaskHelper(
 	if !hintTask.Invalid() {
 		return hintTask, true, nil
 	}
+	// hintTask is invalid, it means there is no hint or hint is not applicable.
+	// So we may need to record warning.
+	if warn := recordWarnings(baseLP.Self(), prop, addEnforcer); warn != nil {
+		returnedTask.AppendWarning(warn)
+	}
+
 	if !normalPreferTask.Invalid() {
 		return normalPreferTask, false, nil
 	}
