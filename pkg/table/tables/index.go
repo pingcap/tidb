@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -45,7 +44,6 @@ type index struct {
 	// the collation global variable is initialized *after* `NewIndex()`.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
-	ectx                *exprstatic.ExprContext
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
@@ -64,11 +62,6 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
-		ectx: exprstatic.NewExprContext(
-			exprstatic.WithEvalCtx(
-				exprstatic.NewEvalContext(
-					exprstatic.WithSQLMode(
-						mysql.ModeStrictAllTables | mysql.ModeStrictTransTables)))),
 	}
 	return index
 }
@@ -90,7 +83,7 @@ func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) erro
 		if !idxCol.UseChangingType || tblCol.ChangingFieldType == nil {
 			continue
 		}
-		indexedValues[i], err = table.CastColumnValueToType(c.ectx, indexedValues[i], tblCol.ChangingFieldType, true, false)
+		indexedValues[i], err = table.CastColumnValueWithStrictMode(indexedValues[i], tblCol.ChangingFieldType)
 		if err != nil {
 			return err
 		}
