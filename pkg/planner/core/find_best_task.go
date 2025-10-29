@@ -222,19 +222,28 @@ func enumeratePhysicalPlans4TaskHelper(
 		}
 	}
 
-	if !hintTask.Invalid() {
-		return hintTask, true, nil
-	}
-	// hintTask is invalid, it means there is no hint or hint is not applicable.
-	// So we may need to record warning.
-	if warn := recordWarnings(baseLP.Self(), prop, addEnforcer); warn != nil {
-		returnedTask.AppendWarning(warn)
+	if err != nil {
+		return nil, false, err
 	}
 
-	if !normalPreferTask.Invalid() {
-		return normalPreferTask, false, nil
+	hintCanWork = false
+	if !hintTask.Invalid() {
+		returnedTask = hintTask
+		hintCanWork = true
+	} else if !normalPreferTask.Invalid() {
+		returnedTask = normalPreferTask
+	} else if !normalIterTask.Invalid() {
+		returnedTask = normalIterTask
 	}
-	return normalIterTask, false, nil
+
+	if !hintCanWork && returnedTask != nil && !returnedTask.Invalid() {
+		// It means there is no hint or hint is not applicable.
+		// So record hint warning if necessary.
+		if warn := recordWarnings(baseLP.Self(), prop, addEnforcer); warn != nil {
+			returnedTask.AppendWarning(warn)
+		}
+	}
+	return returnedTask, hintCanWork, nil
 }
 
 // TODO: remove the taskTypeSatisfied function, it is only used to check the task type in the root, cop, mpp task.
