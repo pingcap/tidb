@@ -150,7 +150,9 @@ func TestASCII(t *testing.T) {
 		{"你好", "gbk", 196},
 		{"你好", "", 228},
 		{"世界", "gbk", 202},
-		{"世界", "", 228},
+		{"abc", "gb18030", 97},
+		{"你好", "gb18030", 196},
+		{"世界", "gb18030", 202},
 	}
 
 	for _, c := range tbl {
@@ -1255,6 +1257,7 @@ func TestHexFunc(t *testing.T) {
 		{0x12, false, false, "12"},
 		{nil, true, false, ""},
 		{errors.New("must err"), false, true, ""},
+		{"🀁", false, false, "F09F8081"},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Hex, primitiveValsToConstants(ctx, []any{c.arg})...)
@@ -1282,6 +1285,7 @@ func TestHexFunc(t *testing.T) {
 		{"你好", "gbk", "C4E3BAC3", 0},
 		{"一忒(๑•ㅂ•)و✧", "", "E4B880E5BF9228E0B991E280A2E38582E280A229D988E29CA7", 0},
 		{"一忒(๑•ㅂ•)و✧", "gbk", "", errno.ErrInvalidCharacterString},
+		{"🀁", "gb18030", "9438E131", 0},
 	}
 	for _, c := range strCases {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
@@ -1804,6 +1808,55 @@ func TestInstr(t *testing.T) {
 		require.NoError(t, err)
 		require.Equalf(t, c["Want"][0], got, "[%d]: args: %v", i, c["Args"])
 	}
+}
+
+func TestLabelAccessible(t *testing.T) {
+	ctx := createContext(t)
+	tbl := []struct {
+		Args []any
+		Want any
+	}{
+		{[]any{nil, nil}, nil},
+		{[]any{nil, "30:E:R80"}, nil},
+		{[]any{"30:E:R80", nil}, nil},
+		{[]any{"30:E:R80", "30:E:R60"}, 0},
+		{[]any{"30:E:R80", "30:E:R80"}, 1},
+		{[]any{"30:E:R80", "10:E:R80"}, 0},
+		{[]any{"30:E:R80", "40:E:R80"}, 1},
+		{[]any{"30:E:R80", "40:M,E:R80"}, 1},
+		{[]any{"30:E:R80", "40:M,P,Q,E:R80"}, 1},
+		{[]any{"30:E:R80", "40:M,E:R80,R60"}, 1},
+		{[]any{"30:E:R80", "40:M,E:R70,R60"}, 0},
+		{[]any{"30:E:R80", "30"}, 0},
+		{[]any{"30:E:R80", "30:E"}, 0},
+		{[]any{"30:E:R80", ""}, 0},
+		{[]any{"20", "30:E:R80"}, 1},
+		{[]any{"20:E", "30:E:R80"}, 1},
+		{[]any{"20:E,M", "30:E:R80"}, 0},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+	la := funcs[ast.LabelAceesible]
+	for i, c := range Dtbl {
+		f, err := la.getFunction(ctx, datumsToConstants(c["Args"]))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		got, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		require.Equalf(t, c["Want"][0], got, "[%d]: args: %v", i, c["Args"])
+	}
+
+	// level should be integer
+	datums := types.MakeDatums("20,10:E", "30:E:R80")
+	f, _ := la.getFunction(ctx, datumsToConstants(datums))
+	_, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.Error(t, err)
+
+	datums = types.MakeDatums("", "30:E:R80")
+	f, _ = la.getFunction(ctx, datumsToConstants(datums))
+	got, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.Equal(t, got.GetInt64(), int64(1))
+	require.NoError(t, err)
 }
 
 func TestLoadFile(t *testing.T) {

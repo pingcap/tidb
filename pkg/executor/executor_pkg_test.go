@@ -189,6 +189,7 @@ func TestAggPartialResultMapperB(t *testing.T) {
 	// in 1.21, the load factor of map is 6 rather than 6.5 and the go team refused to backport to 1.21.
 	// https://github.com/golang/go/issues/65706
 	// in 1.23, it has problem.
+	// in 1.24, golang use swiss table to refactor map https://go.dev/blog/swisstable
 	if strings.Contains(runtime.Version(), `go1.21`) {
 		cases = []testCase{
 			{
@@ -232,6 +233,8 @@ func TestAggPartialResultMapperB(t *testing.T) {
 				expectedGrowing: true,
 			},
 		}
+	} else if strings.Contains(runtime.Version(), `go1.24`) {
+		cases = []testCase{}
 	} else {
 		cases = []testCase{
 			{
