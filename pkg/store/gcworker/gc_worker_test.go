@@ -1521,10 +1521,25 @@ func TestResolveLocksWithKeyspaces(t *testing.T) {
 		require.Equal(t, int64(10), counter.Load())
 	})
 
-	testUnifiedGCInLargeAmountOfKeyspacesImpl := func(t *testing.T, startID uint32, count uint32, step uint32) {
+	testUnifiedGCInMultiBatchesOfKeyspacesImpl := func(t *testing.T, startID uint32, count uint32, step uint32, loadBatchSize int, expectedBatchCount int) {
 		if kerneltype.IsNextGen() {
 			t.Skip()
 		}
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/overrideLoadKeyspacesBatchSize", fmt.Sprintf("return(%d)", loadBatchSize)))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/overrideLoadKeyspacesBatchSize"))
+		}()
+
+		// Retrieve the actual batch count of loading all keyspaces, for ensuring that the failpoint
+		// `overrideLoadKeyspacesBatchSize` actually takes effect.
+		loadKeyspacesBatchCount := 0
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/gcworker/getLoadKeyspacesBatchCount", func(v int) {
+			loadKeyspacesBatchCount += v
+		}))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/getLoadKeyspacesBatchCount"))
+		}()
 
 		keyspaces := make([]*keyspacepb.KeyspaceMeta, 0, count)
 		splitKeys := make([]string, 0, count*2+3)
@@ -1562,22 +1577,28 @@ func TestResolveLocksWithKeyspaces(t *testing.T) {
 		ranges := collectAndMergeRanges(t, ch)
 		require.Equal(t, expectedRanges, ranges)
 		require.Equal(t, int64(expectedScanLocksCount), counter.Load())
+
+		require.Equal(t, expectedBatchCount, loadKeyspacesBatchCount)
 	}
 
-	t.Run("UnifiedGCInLargeAmountOfKeyspaces_1_to_180", func(t *testing.T) {
-		testUnifiedGCInLargeAmountOfKeyspacesImpl(t, 1, 180, 1)
+	t.Run("UnifiedGCInMultiBatchesOfKeyspaces_8", func(t *testing.T) {
+		// Load keyspaces batches: [1,2,3], [4,5,6], [7,8], []
+		testUnifiedGCInMultiBatchesOfKeyspacesImpl(t, 1, 8, 1, 3, 4)
 	})
 
-	t.Run("UnifiedGCInLargeAmountOfKeyspaces_0xffff00_to_0xffffff_step2", func(t *testing.T) {
-		testUnifiedGCInLargeAmountOfKeyspacesImpl(t, 0xffff00, 128, 2)
+	t.Run("UnifiedGCInMultiBatchesOfKeyspaces_Last8_Step2", func(t *testing.T) {
+		// Load keyspaces batches: [(MaxKeyspaceID)-14,-12,-10], [-8,-6,-4], [-2,0]
+		testUnifiedGCInMultiBatchesOfKeyspacesImpl(t, constants.MaxKeyspaceID-14, 8, 2, 3, 3)
 	})
 
-	t.Run("UnifiedGCInLargeAmountOfKeyspaces_MultipleOfBatchSize", func(t *testing.T) {
-		testUnifiedGCInLargeAmountOfKeyspacesImpl(t, 1, loadAllKeyspacesForUnifiedGCBatchSize*2, 1)
+	t.Run("UnifiedGCInMultiBatchesOfKeyspaces_MultipleOfBatchSize", func(t *testing.T) {
+		// Load keyspaces batches: [1,2,3], [4,5,6], []
+		testUnifiedGCInMultiBatchesOfKeyspacesImpl(t, 1, 6, 1, 3, 3)
 	})
 
-	t.Run("UnifiedGCInLargeAmountOfKeyspaces_MultipleOfBatchSizeToEnd", func(t *testing.T) {
-		testUnifiedGCInLargeAmountOfKeyspacesImpl(t, constants.MaxKeyspaceID-loadAllKeyspacesForUnifiedGCBatchSize*2+1, loadAllKeyspacesForUnifiedGCBatchSize*2, 1)
+	t.Run("UnifiedGCInMultiBatchesOfKeyspaces_MultipleOfBatchSizeToEnd", func(t *testing.T) {
+		// Load keyspaces batches: [(MaxKeyspaceID)-5,-4,-3], [-2,-1,0]
+		testUnifiedGCInMultiBatchesOfKeyspacesImpl(t, constants.MaxKeyspaceID-5, 6, 1, 3, 2)
 	})
 }
 
