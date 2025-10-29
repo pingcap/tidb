@@ -109,17 +109,37 @@ func (f *Fragment) MemoryUsage() (sum int64) {
 // flipCTEReader fix the plan tree. In the func generateTasksForCTEReader, we create the plan tree like ParentPlan->CTEConsumer->ExchangeReceiver.
 // The CTEConsumer has no real meaning in MPP's execution. We prune it to make the plan become ParentPlan->ExchangeReceiver.
 // But the Receiver needs a schema since itself doesn't hold the schema. So the final plan become ParentPlan->ExchangeReceiver->CTEConsumer.
-func (f *Fragment) flipCTEReader(currentPlan base.PhysicalPlan) {
+func (e *mppTaskGenerator) replaceCTEReader(currentPlan base.PhysicalPlan) {
 	newChildren := make([]base.PhysicalPlan, len(currentPlan.Children()))
 	for i := range currentPlan.Children() {
 		child := currentPlan.Children()[i]
 		newChildren[i] = child
 		if cteR, ok := child.(*PhysicalCTE); ok {
-			receiver := cteR.Children()[0]
-			newChildren[i] = receiver
+			group := e.CTEGroups[cteR.CTE.IDForStorage]
+			inconsistenceNullable := false
+			for i, col := range cteR.Schema().Columns {
+				if mysql.HasNotNullFlag(col.RetType.GetFlag()) != mysql.HasNotNullFlag(group.CTEStorage.Children()[0].Schema().Columns[i].RetType.GetFlag()) {
+					inconsistenceNullable = true
+					break
+				}
+			}
+			if !inconsistenceNullable {
+				newChildren[i] = cteR.source
+				continue
+			}
+
+			cols := group.CTEStorage.Children()[0].Schema().Clone().Columns
+			for i, col := range cols {
+				col.Index = i
+			}
+			proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteR.SCtx(), cteR.StatsInfo(), 0, nil)
+			proj.SetSchema(cteR.Schema())
+			proj.SetChildren(cteR.source)
+			cteR.source.SetSchema(group.CTEStorage.sink.Schema())
+			newChildren[i] = proj
 		} else if _, ok := child.(*PhysicalExchangeReceiver); !ok {
 			// The receiver is the leaf of the fragment though it has child, we need break it.
-			f.flipCTEReader(child)
+			e.replaceCTEReader(child)
 		}
 	}
 	currentPlan.SetChildren(newChildren...)
@@ -418,14 +438,12 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		for _, r := range f.ExchangeReceivers {
 			childrenTasks = append(childrenTasks, r.Tasks...)
 		}
-		cteProducerTasks := make([]*kv.MPPTask, 0)
+		cteProducerTasks := make([]*kv.MPPTask, 0, 4)
 		for _, cteR := range f.CTEReaders {
-			child := cteR.Children()[0]
-			if _, ok := child.(*PhysicalProjection); ok {
-				child = child.Children()[0]
-			}
-			cteProducerTasks = append(cteProducerTasks, child.(*PhysicalExchangeReceiver).Tasks...)
-			childrenTasks = append(childrenTasks, child.(*PhysicalExchangeReceiver).Tasks...)
+			cteID := cteR.CTE.IDForStorage
+			cteGroup := e.CTEGroups[cteID]
+			cteProducerTasks = append(cteProducerTasks, cteGroup.StorageTasks...)
+			childrenTasks = append(childrenTasks, cteGroup.StorageTasks...)
 		}
 		if f.singleton && len(childrenTasks) > 0 {
 			childrenTasks = childrenTasks[0:1]
@@ -441,10 +459,14 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		}
 	}
 	for _, cteR := range f.CTEReaders {
-		e.addReaderTasksForCTEStorage(cteR.CTE.IDForStorage, tasks...)
+		cteID := cteR.CTE.IDForStorage
+		cteGroup := e.CTEGroups[cteID]
+		for _, frag := range cteGroup.StorageFragments {
+			frag.Sink.AppendTargetTasks(tasks)
+		}
 	}
 	f.Sink.SetSelfTasks(tasks)
-	f.flipCTEReader(f.Sink)
+	e.replaceCTEReader(f.Sink)
 	return tasks, nil
 }
 
@@ -454,8 +476,8 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (err error) {
 	group := e.CTEGroups[cteReader.CTE.IDForStorage]
 	if group.StorageFragments == nil {
-		group.CTEStorage.StorageSender.SetChildren(group.CTEStorage.Children()...)
-		group.StorageTasks, group.StorageFragments, err = e.generateMPPTasksForExchangeSender(group.CTEStorage.StorageSender)
+		group.CTEStorage.sink.SetChildren(group.CTEStorage.Children()...)
+		group.StorageTasks, group.StorageFragments, err = e.generateMPPTasksForExchangeSender(group.CTEStorage.sink)
 		if err != nil {
 			return err
 		}
@@ -463,33 +485,11 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 	receiver := cteReader.readerReceiver
 	receiver.Tasks = group.StorageTasks
 	e.fragMap[receiver] = group.StorageFragments
+	cteReader.source.Tasks = group.StorageTasks
+	cteReader.source.frags = group.StorageFragments
 	cteReader.SetChildren(receiver)
 	receiver.SetChildren(group.CTEStorage.Children()[0])
-	inconsistenceNullable := false
-	for i, col := range cteReader.Schema().Columns {
-		if mysql.HasNotNullFlag(col.RetType.GetFlag()) != mysql.HasNotNullFlag(group.CTEStorage.Children()[0].Schema().Columns[i].RetType.GetFlag()) {
-			inconsistenceNullable = true
-			break
-		}
-	}
-	if inconsistenceNullable {
-		cols := group.CTEStorage.Children()[0].Schema().Clone().Columns
-		for i, col := range cols {
-			col.Index = i
-		}
-		proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.SCtx(), cteReader.StatsInfo(), 0, nil)
-		proj.SetSchema(cteReader.Schema().Clone())
-		proj.SetChildren(receiver)
-		cteReader.SetChildren(proj)
-	}
 	return nil
-}
-
-func (e *mppTaskGenerator) addReaderTasksForCTEStorage(storageID int, tasks ...*kv.MPPTask) {
-	group := e.CTEGroups[storageID]
-	for _, frag := range group.StorageFragments {
-		frag.Sink.AppendTargetTasks(tasks)
-	}
 }
 
 // single physical table means a table without partitions or a single partition in a partition table.
