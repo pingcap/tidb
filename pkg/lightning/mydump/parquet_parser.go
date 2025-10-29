@@ -63,7 +63,7 @@ type innerReader[T parquet.ColumnTypes] interface {
 	ReadBatchInPage(batchSize int64, values []T, defLvls, repLvls []int16) (int64, int, error)
 }
 
-type columnDumper interface {
+type iterator interface {
 	SetReader(colReader file.ColumnChunkReader)
 
 	Next(*types.Datum) bool
@@ -88,9 +88,9 @@ type columnIterator[T parquet.ColumnTypes, R innerReader[T]] struct {
 	setter setter[T]
 }
 
-// newGeneralColumnDumper creates a new generic column dumper
-// The dumper should not be used in parallel.
-func newGeneralColumnDumper[T parquet.ColumnTypes, R innerReader[T]](
+// newColumnIterator creates a new generic column iterator
+// The iterator should not be used in parallel.
+func newColumnIterator[T parquet.ColumnTypes, R innerReader[T]](
 	batchSize int, getter setter[T],
 ) *columnIterator[T, R] {
 	return &columnIterator[T, R]{
@@ -102,83 +102,83 @@ func newGeneralColumnDumper[T parquet.ColumnTypes, R innerReader[T]](
 	}
 }
 
-// SetReader sets the column reader for the dumper.
+// SetReader sets the column reader for the iterator.
 // Remember to call Close() before setting a new reader.
-func (dump *columnIterator[T, R]) SetReader(colReader file.ColumnChunkReader) {
-	dump.baseReader = colReader
-	dump.reader, _ = colReader.(R)
+func (it *columnIterator[T, R]) SetReader(colReader file.ColumnChunkReader) {
+	it.baseReader = colReader
+	it.reader, _ = colReader.(R)
 }
 
-func (dump *columnIterator[T, R]) Close() error {
-	if dump.baseReader == nil {
+func (it *columnIterator[T, R]) Close() error {
+	if it.baseReader == nil {
 		return nil
 	}
 
-	err := dump.baseReader.Close()
-	dump.baseReader = nil
+	err := it.baseReader.Close()
+	it.baseReader = nil
 	return err
 }
 
-func (dump *columnIterator[T, R]) readNextBatch() int {
+func (it *columnIterator[T, R]) readNextBatch() int {
 	// ReadBatchInPage reads a batch of values from the current page.
 	// And the values returned may be shallow copies from the internal page buffer.
-	dump.levelsBuffered, dump.valuesBuffered, _ = dump.reader.ReadBatchInPage(
-		dump.batchSize,
-		dump.values,
-		dump.defLevels,
-		dump.repLevels,
+	it.levelsBuffered, it.valuesBuffered, _ = it.reader.ReadBatchInPage(
+		it.batchSize,
+		it.values,
+		it.defLevels,
+		it.repLevels,
 	)
 
-	dump.valueOffset = 0
-	dump.levelOffset = 0
-	return int(dump.levelsBuffered)
+	it.valueOffset = 0
+	it.levelOffset = 0
+	return int(it.levelsBuffered)
 }
 
 // Next reads the next value with proper level handling.
-func (dump *columnIterator[T, R]) Next(d *types.Datum) bool {
-	if dump.levelOffset == dump.levelsBuffered {
-		if !dump.baseReader.HasNext() {
+func (it *columnIterator[T, R]) Next(d *types.Datum) bool {
+	if it.levelOffset == it.levelsBuffered {
+		if !it.baseReader.HasNext() {
 			return false
 		}
-		dump.readNextBatch()
-		if dump.levelsBuffered == 0 {
+		it.readNextBatch()
+		if it.levelsBuffered == 0 {
 			return false
 		}
 	}
 
 	// Check definition level for NULL handling
-	defLevel := dump.defLevels[dump.levelOffset]
-	dump.levelOffset++
+	defLevel := it.defLevels[it.levelOffset]
+	it.levelOffset++
 
-	if defLevel < dump.baseReader.Descriptor().MaxDefinitionLevel() {
+	if defLevel < it.baseReader.Descriptor().MaxDefinitionLevel() {
 		d.SetNull()
 		return true
 	}
 
-	value := dump.values[dump.valueOffset]
-	dump.valueOffset++
-	dump.setter(value, d)
+	value := it.values[it.valueOffset]
+	it.valueOffset++
+	it.setter(value, d)
 	return true
 }
 
-func createColumnDumper(tp parquet.Type, converted *convertedType, loc *time.Location, batchSize int) columnDumper {
+func createColumnIterator(tp parquet.Type, converted *convertedType, loc *time.Location, batchSize int) iterator {
 	switch tp {
 	case parquet.Types.Boolean:
-		return newGeneralColumnDumper[bool, *file.BooleanColumnChunkReader](batchSize, getBoolDataSetter)
+		return newColumnIterator[bool, *file.BooleanColumnChunkReader](batchSize, getBoolDataSetter)
 	case parquet.Types.Int32:
-		return newGeneralColumnDumper[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Setter(converted, loc))
+		return newColumnIterator[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Setter(converted, loc))
 	case parquet.Types.Int64:
-		return newGeneralColumnDumper[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Setter(converted, loc))
+		return newColumnIterator[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Setter(converted, loc))
 	case parquet.Types.Float:
-		return newGeneralColumnDumper[float32, *file.Float32ColumnChunkReader](batchSize, setFloat32Data)
+		return newColumnIterator[float32, *file.Float32ColumnChunkReader](batchSize, setFloat32Data)
 	case parquet.Types.Double:
-		return newGeneralColumnDumper[float64, *file.Float64ColumnChunkReader](batchSize, setFloat64Data)
+		return newColumnIterator[float64, *file.Float64ColumnChunkReader](batchSize, setFloat64Data)
 	case parquet.Types.Int96:
-		return newGeneralColumnDumper[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Setter(converted, loc))
+		return newColumnIterator[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Setter(converted, loc))
 	case parquet.Types.ByteArray:
-		return newGeneralColumnDumper[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getByteArraySetter(converted))
+		return newColumnIterator[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getByteArraySetter(converted))
 	case parquet.Types.FixedLenByteArray:
-		return newGeneralColumnDumper[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](batchSize, getFixedLenByteArraySetter(converted))
+		return newColumnIterator[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](batchSize, getFixedLenByteArraySetter(converted))
 	default:
 		return nil
 	}
@@ -280,7 +280,7 @@ type ParquetParser struct {
 
 	alloc memory.Allocator
 
-	dumpers []columnDumper
+	iterators []iterator
 
 	rowPool *zeropool.Pool[[]types.Datum]
 
@@ -304,14 +304,14 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 	pp.curRowGroup, pp.totalRowGroup, pp.totalRows = -1, pp.readers[0].NumRowGroups(), int(meta.NumRows)
 
 	numCols := meta.Schema.NumColumns()
-	pp.dumpers = make([]columnDumper, numCols)
+	pp.iterators = make([]iterator, numCols)
 
 	if loc == nil {
 		loc = timeutil.SystemLocation()
 	}
 	for i := range numCols {
-		pp.dumpers[i] = createColumnDumper(meta.Schema.Column(i).PhysicalType(), &pp.colTypes[i], loc, 128)
-		if pp.dumpers[i] == nil {
+		pp.iterators[i] = createColumnIterator(meta.Schema.Column(i).PhysicalType(), &pp.colTypes[i], loc, 128)
+		if pp.iterators[i] == nil {
 			return errors.Errorf("unsupported parquet type %s", meta.Schema.Column(i).PhysicalType().String())
 		}
 	}
@@ -319,10 +319,10 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 	return nil
 }
 
-// resetDumpers is used to reclaim the memory used by the column reader.
-func (pp *ParquetParser) resetDumpers() error {
+// resetIterators is used to reclaim the memory used by the column reader.
+func (pp *ParquetParser) resetIterators() error {
 	var err error
-	for _, d := range pp.dumpers {
+	for _, d := range pp.iterators {
 		err2 := d.Close()
 		if err2 != nil && err == nil {
 			err = err2
@@ -339,7 +339,7 @@ func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
 	// Move to next row group
 	if pp.readRowInGroup == pp.totalRowsInGroup {
 		if pp.curRowGroup >= 0 {
-			if err := pp.resetDumpers(); err != nil {
+			if err := pp.resetIterators(); err != nil {
 				return err
 			}
 		}
@@ -348,20 +348,20 @@ func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
 			return io.EOF
 		}
 
-		for c := range len(pp.dumpers) {
+		for c := range len(pp.iterators) {
 			rowGroup := pp.readers[c].RowGroup(pp.curRowGroup)
 			colReader, err := rowGroup.Column(c)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			pp.dumpers[c].SetReader(colReader)
+			pp.iterators[c].SetReader(colReader)
 		}
 		pp.readRowInGroup, pp.totalRowsInGroup = 0, int(pp.readers[0].MetaData().RowGroups[pp.curRowGroup].NumRows)
 	}
 
 	// Read in this group
-	for col, dumper := range pp.dumpers {
-		if ok := dumper.Next(&row[col]); !ok {
+	for col, iter := range pp.iterators {
+		if ok := iter.Next(&row[col]); !ok {
 			return errors.New("error get data")
 		}
 	}
@@ -412,7 +412,7 @@ func (pp *ParquetParser) Close() error {
 		}
 	}()
 
-	if err := pp.resetDumpers(); err != nil {
+	if err := pp.resetIterators(); err != nil {
 		pp.logger.Warn("Close parquet parser get error", zap.Error(err))
 	}
 	for _, r := range pp.readers {
