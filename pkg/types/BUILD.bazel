@@ -46,6 +46,7 @@ go_library(
     ],
     deps = [
         "//pkg/errno",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
         "//pkg/parser/model",

@@ -51,7 +51,7 @@ type index struct {
 // NeedRestoredData checks whether the index columns needs restored data.
 func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
 	for _, idxCol := range idxCols {
-		if model.ColumnNeedRestoredData(idxCol, colInfos) {
+		if types.ColumnNeedRestoredData(idxCol, colInfos) {
 			return true
 		}
 	}
