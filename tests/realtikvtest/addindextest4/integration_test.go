@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -42,8 +43,10 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=on;")
-	tk.MustExec("set @@global.tidb_enable_dist_task=on;")
+	if kerneltype.IsClassic() {
+		tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=on;")
+		tk.MustExec("set @@global.tidb_enable_dist_task=on;")
+	}
 
 	createTables := []string{
 		"create table t (id int, b int, c int, primary key(id) clustered);",
@@ -108,6 +111,9 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 }
 
 func TestFixAdminAlterDDLJobs(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
