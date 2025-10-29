@@ -705,7 +705,7 @@ type candidatePath struct {
 	matchPropResult   property.PhysicalPropMatchResult
 
 	forIndexJoin  bool // indicate this path is used for index join.
-	usedIndexCols int  // how many index columns are used in access conditions.
+	indexJoinCols int  // how many index columns are used in access conditions in this IndexJoin.
 }
 
 func compareBool(l, r bool) int {
@@ -1319,15 +1319,15 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	return candidate
 }
 
-func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, usedIndexCols int) *candidatePath {
-	candidate := &candidatePath{path: path, forIndexJoin: true, usedIndexCols: usedIndexCols}
+func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int) *candidatePath {
+	candidate := &candidatePath{path: path, forIndexJoin: true, indexJoinCols: indexJoinCols}
 	candidate.matchPropResult = property.PropNotMatched
 	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 	candidate.indexCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
 	// AccessConds could miss some predicates since the DataSource can't see join predicates.
 	// For example, `where t1.a=t2.a and t2.b=1`, `t1=a=t2.a` is not pushed down to t2's accessConds since it's a join
 	// predicate. We need to set columns used as join keys to accessCondsColMap/indexCondsColMap manually.
-	for i := range usedIndexCols {
+	for i := range indexJoinCols {
 		candidate.accessCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
 		candidate.indexCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
 	}
@@ -1507,7 +1507,7 @@ func (c *candidatePath) equalPredicateCount() int {
 		// For example, for "where t1.a=t2.a and t2.b=1" and index "idx(t2, a, b)", since the DataSource of t2 can't
 		// see the join key "t1.a=t2.a", it only considers "t2.b=1" as access condition, so its EqOrInCondCount is 0,
 		// but actually it should be 2.
-		return c.usedIndexCols
+		return c.indexJoinCols
 	}
 
 	// Exit if this isn't a DNF condition or has no access conditions
