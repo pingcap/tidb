@@ -867,14 +867,13 @@ func (s *propOuterJoinConstSolver) solve(keepJoinKey bool, joinConds, filterCond
 func (s *propOuterJoinConstSolver) extractColumns(joinConds, filterConds []Expression) {
 	mp := GetUniqueIDToColumnMap()
 	defer PutUniqueIDToColumnMap(mp)
-	for _, cond := range joinConds {
-		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
-		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
-		s.insertCols(mp)
-		clear(mp)
-	}
-	for _, cond := range filterConds {
-		s.filterConds = append(s.filterConds, SplitCNFItems(cond)...)
+	s.extractColumnsInternal(mp, s.joinConds, joinConds)
+	s.extractColumnsInternal(mp, s.filterConds, filterConds)
+}
+
+func (s *propOuterJoinConstSolver) extractColumnsInternal(mp map[int64]*Column, splitConds, conds []Expression) {
+	for _, cond := range conds {
+		splitConds = append(splitConds, SplitCNFItems(cond)...)
 		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
 		s.insertCols(mp)
 		clear(mp)
