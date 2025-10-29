@@ -139,9 +139,8 @@ func enumeratePhysicalPlans4TaskHelper(
 	physicalPlans []base.PhysicalPlan,
 	prop *property.PhysicalProperty,
 	addEnforcer bool,
-) (returnedTask base.Task, hintCanWork bool, err error) {
+) (base.Task, bool, error) {
 	var normalIterTask, normalPreferTask, hintTask = base.InvalidTask, base.InvalidTask, base.InvalidTask
-	returnedTask = base.InvalidTask
 	initState := &enumerateState{}
 	_, baseLP, childLen, iteration, iterObj := prepareIterationDownElems(super)
 	childTasks := make([]base.Task, 0, childLen)
@@ -154,6 +153,7 @@ func enumeratePhysicalPlans4TaskHelper(
 		}
 	}
 
+	var err error
 	for _, pp := range physicalPlans {
 		childTasks, err = iteration(iterObj, pp, childTasks, prop)
 		if err != nil {
@@ -227,7 +227,8 @@ func enumeratePhysicalPlans4TaskHelper(
 		return nil, false, err
 	}
 
-	hintCanWork = false
+	returnedTask := base.InvalidTask
+	var hintCanWork bool
 	if !hintTask.Invalid() {
 		returnedTask = hintTask
 		hintCanWork = true
