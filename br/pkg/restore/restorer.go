@@ -257,43 +257,41 @@ func (s *BatchRestorer) WaitUntilFinish() error {
 }
 
 func (s *BatchRestorer) GoRestore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error {
-	cctx, cancel := context.WithCancel(s.ectx)
-	defer cancel()
-	if err := GroupOverlappedBackupFileSetsIter(cctx, s.regionClient, slices.Concat(batchFileSets...), func(batchSet BatchBackupFileSet) {
-		s.workerPool.ApplyOnErrorGroup(s.eg, func() (restoreErr error) {
-			fileStart := time.Now()
-			defer func() {
-				if restoreErr == nil {
-					log.Info("import sst files done",
-						zap.Duration("take", time.Since(fileStart)))
-					for _, sets := range batchSet {
-						for _, f := range sets.SSTFiles {
-							onProgress(int64(f.TotalKvs))
+	s.workerPool.ApplyOnErrorGroup(s.eg, func() error {
+		return GroupOverlappedBackupFileSetsIter(s.ectx, s.regionClient, slices.Concat(batchFileSets...), func(batchSet BatchBackupFileSet) {
+			s.workerPool.ApplyOnErrorGroup(s.eg, func() (restoreErr error) {
+				fileStart := time.Now()
+				defer func() {
+					if restoreErr == nil {
+						log.Info("import sst files done",
+							zap.Duration("take", time.Since(fileStart)))
+						for _, sets := range batchSet {
+							for _, f := range sets.SSTFiles {
+								onProgress(int64(f.TotalKvs))
+							}
+						}
+					}
+				}()
+				err := s.batchFileImporter.Import(s.ectx, batchSet...)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if s.checkpointRunner != nil {
+					// The checkpoint shows this ranges of files has been restored into
+					// the table corresponding to the table-id.
+					for _, set := range batchSet {
+						for _, f := range set.SSTFiles {
+							if err := checkpoint.AppendRangesForRestore(s.ectx, s.checkpointRunner,
+								checkpoint.NewCheckpointFileItem(set.TableID, f.GetName())); err != nil {
+								return errors.Trace(err)
+							}
 						}
 					}
 				}
-			}()
-			err := s.batchFileImporter.Import(cctx, batchSet...)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if s.checkpointRunner != nil {
-				// The checkpoint shows this ranges of files has been restored into
-				// the table corresponding to the table-id.
-				for _, set := range batchSet {
-					for _, f := range set.SSTFiles {
-						if err := checkpoint.AppendRangesForRestore(cctx, s.checkpointRunner,
-							checkpoint.NewCheckpointFileItem(set.TableID, f.GetName())); err != nil {
-							return errors.Trace(err)
-						}
-					}
-				}
-			}
-			return nil
+				return nil
+			})
 		})
-	}); err != nil {
-		return errors.Trace(err)
-	}
+	})
 	return nil
 }
 
