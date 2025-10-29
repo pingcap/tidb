@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -827,6 +828,12 @@ func checkModifyColumnData(
 	oldCol, changingCol *model.ColumnInfo,
 	checkValueRange bool,
 ) (checked bool, err error) {
+	startTime := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("checkModifyColumnData",
+			zap.Duration("takeTime", time.Since(startTime)),
+		)
+	}()
 	// Get sessionctx from context resource pool.
 	var sctx sessionctx.Context
 	sctx, err = w.sessPool.Get()
