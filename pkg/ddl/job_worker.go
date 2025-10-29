@@ -202,6 +202,10 @@ type ReorgContext struct {
 	resourceGroupName string
 	cloudStorageURI   string
 	analyzeDone       chan struct{}
+	// analyzeStartTime records when the analyze for a job was started.
+	analyzeStartTime time.Time
+	// analyzeCumulativeTimeout stores the computed cumulative timeout for analyze
+	analyzeCumulativeTimeout time.Duration
 }
 
 // NewReorgContext returns a new ddl job context.
