@@ -488,12 +488,7 @@ func (s *propConstSolver) solve(keepJoinKey bool, conditions []Expression) []Exp
 func (s *propConstSolver) extractColumns(conditions []Expression) {
 	mp := GetUniqueIDToColumnMap()
 	defer PutUniqueIDToColumnMap(mp)
-	for _, cond := range conditions {
-		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
-		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
-		s.insertCols(mp)
-		clear(mp)
-	}
+	s.conditions = s.extractColumnsInternal(mp, s.conditions, conditions)
 }
 
 // PropagateConstantForJoin propagate constants for inner joins.
@@ -629,6 +624,16 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 		return con, true
 	}
 	return nil, false
+}
+
+func (s *basePropConstSolver) extractColumnsInternal(mp map[int64]*Column, splitConds []Expression, conds []Expression) []Expression {
+	for _, cond := range conds {
+		splitConds = append(splitConds, SplitCNFItems(cond)...)
+		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
+		s.insertCols(mp)
+		clear(mp)
+	}
+	return splitConds
 }
 
 // pickEQCondsOnOuterCol picks constant equal expression from specified conditions.
@@ -869,16 +874,6 @@ func (s *propOuterJoinConstSolver) extractColumns(joinConds, filterConds []Expre
 	defer PutUniqueIDToColumnMap(mp)
 	s.joinConds = s.extractColumnsInternal(mp, s.joinConds, joinConds)
 	s.filterConds = s.extractColumnsInternal(mp, s.filterConds, filterConds)
-}
-
-func (s *propOuterJoinConstSolver) extractColumnsInternal(mp map[int64]*Column, splitConds []Expression, conds []Expression) []Expression {
-	for _, cond := range conds {
-		splitConds = append(splitConds, SplitCNFItems(cond)...)
-		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
-		s.insertCols(mp)
-		clear(mp)
-	}
-	return splitConds
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
