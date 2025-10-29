@@ -19,11 +19,16 @@ go_library(
 go_test(
     name = "traceevent_test",
     timeout = "short",
-    srcs = ["traceevent_test.go"],
+    srcs = [
+        "integration_test.go",
+        "traceevent_test.go",
+    ],
     embed = [":traceevent"],
     flaky = True,
     deps = [
         "//pkg/config/kerneltype",
+        "//pkg/kv",
+        "//pkg/session",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//trace",
         "@org_uber_go_zap//:zap",
