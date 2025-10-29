@@ -28,4 +28,3 @@ func init() {
 	util.ApplyPredicateSimplificationForJoin = applyPredicateSimplificationForJoin
 	util.SetPredicatePushDownFlag = setPredicatePushDownFlag
 }
-
