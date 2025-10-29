@@ -189,6 +189,9 @@ func createColumnDumper(tp parquet.Type, converted *convertedType, loc *time.Loc
 type convertedType struct {
 	converted   schema.ConvertedType
 	decimalMeta schema.DecimalMetadata
+
+	// See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#temporal-types
+	IsAdjustedToUTC bool
 }
 
 // parquetFileWrapper is a wrapper for storage.ReadSeekCloser
@@ -561,8 +564,14 @@ func NewParquetParser(
 		logicalType := desc.LogicalType()
 		if logicalType.IsValid() {
 			colTypes[i].converted, colTypes[i].decimalMeta = logicalType.ToConvertedType()
+			if t, ok := logicalType.(*schema.TimeLogicalType); ok {
+				colTypes[i].IsAdjustedToUTC = t.IsAdjustedToUTC()
+			} else {
+				colTypes[i].IsAdjustedToUTC = true
+			}
 		} else {
 			colTypes[i].converted = desc.ConvertedType()
+			colTypes[i].IsAdjustedToUTC = true
 			pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode)
 			colTypes[i].decimalMeta = pnode.DecimalMetadata()
 		}

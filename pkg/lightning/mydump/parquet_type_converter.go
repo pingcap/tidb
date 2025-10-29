@@ -102,7 +102,10 @@ func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] 
 	case schema.ConvertedTypes.TimeMillis:
 		return func(val int32, d *types.Datum) {
 			// Convert milliseconds to time.Time
-			t := time.UnixMilli(int64(val)).In(loc)
+			t := time.UnixMilli(int64(val))
+			if converted.IsAdjustedToUTC {
+				t = t.In(loc)
+			}
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
 			d.SetMysqlTime(mysqlTime)
 		}
@@ -134,21 +137,30 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 	case schema.ConvertedTypes.TimeMicros:
 		return func(val int64, d *types.Datum) {
 			// Convert microseconds to time.Time
-			t := time.UnixMicro(val).In(loc)
+			t := time.UnixMicro(val)
+			if converted.IsAdjustedToUTC {
+				t = t.In(loc)
+			}
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
 			d.SetMysqlTime(mysqlTime)
 		}
 	case schema.ConvertedTypes.TimestampMillis:
 		return func(val int64, d *types.Datum) {
 			// Convert milliseconds to time.Time
-			t := time.UnixMilli(val).In(loc)
+			t := time.UnixMilli(val)
+			if converted.IsAdjustedToUTC {
+				t = t.In(loc)
+			}
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
 			d.SetMysqlTime(mysqlTime)
 		}
 	case schema.ConvertedTypes.TimestampMicros:
 		return func(val int64, d *types.Datum) {
 			// Convert microseconds to time.Time
-			t := time.UnixMicro(val).In(loc)
+			t := time.UnixMicro(val)
+			if converted.IsAdjustedToUTC {
+				t = t.In(loc)
+			}
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
 			d.SetMysqlTime(mysqlTime)
 		}
@@ -161,7 +173,7 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 	return nil
 }
 
-func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location) {
+func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location, adjustToUTC bool) {
 	// FYI: https://github.com/apache/spark/blob/d66a4e82eceb89a274edeb22c2fb4384bed5078b/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/parquet/ParquetWriteSupport.scala#L171-L178
 	// INT96 timestamp layout
 	// --------------------------
@@ -176,14 +188,17 @@ func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location) {
 	//   julian day - 2440588 (Julian Day of the Unix epoch 1970-01-01 00:00:00)
 	// As julian day is decoded as uint32, so if user store a date before 1970-01-01, the converted time will be wrong
 	// and possibly to be truncated.
-	t := val.ToTime().In(loc)
+	t := val.ToTime()
+	if adjustToUTC {
+		t = t.In(loc)
+	}
 	mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
 	d.SetMysqlTime(mysqlTime)
 }
 
-func getInt96Setter(_ *convertedType, loc *time.Location) setter[parquet.Int96] {
+func getInt96Setter(converted *convertedType, loc *time.Location) setter[parquet.Int96] {
 	return func(val parquet.Int96, d *types.Datum) {
-		setInt96Data(val, d, loc)
+		setInt96Data(val, d, loc, converted.IsAdjustedToUTC)
 	}
 }
 
