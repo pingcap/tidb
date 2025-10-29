@@ -140,7 +140,7 @@ func enumeratePhysicalPlans4TaskHelper(
 	prop *property.PhysicalProperty,
 	addEnforcer bool,
 ) (returnedTask base.Task, hintCanWork bool, err error) {
-	var normalIterTask, normalPreferTask, hintTask = base.InvalidTask, base.InvalidTask, base.InvalidTask
+	var normalIterTask, normalPreferTask, hintTask, returnedTask = base.InvalidTask, base.InvalidTask, base.InvalidTask, base.InvalidTask
 	initState := &enumerateState{}
 	_, baseLP, childLen, iteration, iterObj := prepareIterationDownElems(super)
 	childTasks := make([]base.Task, 0, childLen)
