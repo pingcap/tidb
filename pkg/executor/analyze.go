@@ -89,6 +89,7 @@ const (
 // It will collect all the sample task and run them concurrently.
 func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	defer func() {
+		// NOTE: auto-analyze always runs with InRestrictedSQL set to true.
 		if !e.Ctx().GetSessionVars().InRestrictedSQL {
 			if err != nil {
 				metrics.ManualAnalyzeCounter.WithLabelValues("failed").Inc()
