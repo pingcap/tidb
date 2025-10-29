@@ -25,32 +25,39 @@ type PhysicalCTESink struct {
 	DuplicatedSourceNum uint32
 }
 
+// Init only assigns type and context.
 func (p PhysicalCTESink) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTESink {
 	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypePhysicalCTESink, &p, 0)
 	p.SetStats(stats)
 	return &p
 }
 
+// GetCompressionMode returns the compression mode of this operator.
 func (p *PhysicalCTESink) GetCompressionMode() vardef.ExchangeCompressionMode {
 	return p.CompressionMode
 }
 
+// GetSelfTasks returns the tasks held by this operator.
 func (p *PhysicalCTESink) GetSelfTasks() []*kv.MPPTask {
 	return p.Tasks
 }
 
+// SetSelfTasks sets the tasks held by this operator.
 func (p *PhysicalCTESink) SetSelfTasks(tasks []*kv.MPPTask) {
 	p.Tasks = tasks
 }
 
+// SetTargetTasks sets the target tasks of this operator.
 func (p *PhysicalCTESink) SetTargetTasks(tasks []*kv.MPPTask) {
 	p.TargetTasks = tasks
 }
 
+// AppendTargetTasks appends target tasks to this operator.
 func (p *PhysicalCTESink) AppendTargetTasks(tasks []*kv.MPPTask) {
 	p.TargetTasks = append(p.TargetTasks, tasks...)
 }
 
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalCTESink) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	np := new(PhysicalCTESink)
 	np.SetSCtx(newCtx)
@@ -64,6 +71,7 @@ func (p *PhysicalCTESink) Clone(newCtx base.PlanContext) (base.PhysicalPlan, err
 	return np, nil
 }
 
+// ToPB implements the base.PhysicalPlan.<3rd> interface.
 func (p *PhysicalCTESink) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	childPb, err := p.Children()[0].ToPB(ctx, storeType)
 	if err != nil {

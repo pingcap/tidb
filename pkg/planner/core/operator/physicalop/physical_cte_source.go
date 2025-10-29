@@ -24,6 +24,7 @@ type PhysicalCTESource struct {
 	DuplicatedSourceNum uint32
 }
 
+// Init only assigns type and context.
 func (p PhysicalCTESource) Init(ctx base.PlanContext, stats *property.StatsInfo, schema *expression.Schema) *PhysicalCTESource {
 	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypePhysicalCTESource, &p, 0)
 	p.SetStats(stats)
@@ -44,7 +45,8 @@ func (p *PhysicalCTESource) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	return np, nil
 }
 
-func (p *PhysicalCTESource) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
+// ToPB implements the base.PhysicalPlan.<3rd> interface.
+func (p *PhysicalCTESource) ToPB(*base.BuildPBContext, kv.StoreType) (*tipb.Executor, error) {
 	cteSource := &tipb.CTESource{
 		CteId:        uint32(p.IDForStorage),
 		CteSinkNum:   p.DuplicatedSinkNum,
