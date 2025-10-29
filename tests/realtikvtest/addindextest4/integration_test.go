@@ -271,7 +271,7 @@ func TestAnalyzeTimeout(t *testing.T) {
 	}()
 
 	analyzedNotify := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", func(*error) {
 		// wait an extra second because analyze start_time is compared at second granularity
 		time.Sleep(1 * time.Second)
 		close(analyzedNotify)

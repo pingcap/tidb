@@ -1356,6 +1356,7 @@ func (w *worker) queryAnalyzeStatusSince(startTS uint64, dbName, tblName string)
 //
 //	done: whether the caller should consider analyze finished (true) and continue DDL;
 //	timedOut: whether the analyze has exceeded cumulative timeout and caller should proceed with timeout handling;
+//	failed: whether the analyze has failed;
 //	proceed: whether the caller should proceed to start ANALYZE locally (true for unknown status).
 func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, status analyzeStatus, cumulativeTimeout time.Duration) (done, timedOut, failed, proceed bool) {
 	switch status {
@@ -1474,7 +1475,6 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 				// We can continue to finish the job even if analyze table failed.
 				doneCh <- err
 			}
-			failpoint.InjectCall("afterAnalyzeTable")
 			return nil
 		})
 		w.ddlCtx.setAnalyzeDoneCh(job.ID, doneCh)
