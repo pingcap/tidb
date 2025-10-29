@@ -83,25 +83,25 @@ type enumerateState struct {
 	limitCopExist bool
 }
 
-// Why argument of physicalPlans is a slice of slice:
-// In the logic of the following function, if `preferTask` is not nil, the function will skip cost comparison and return preferTask directly,
-// for example, to forcibly select a plan specified by a hint.
-// By splitting the physical plans into multiple slices, preferTask only takes effect within its own slice,
-// while the final plan is chosen based on cost comparison among the best plans from all slices.
-// For example, when comparing a limit pushdown plan with a non-pushdown limit plan, the optimizer should always prefer the limit pushdown plan.
-// However, the limit pushdown plan still needs to be compared by cost against the TopN plan to decide which one should be selected in the end.
+// The reason the physical plan is a slice of slices is to allow preferring a specific type of plan within a slice,
+// while still performing cost comparison between slices.
+// There are three types of task in the following code: hintTask, normalPreferTask, and normalIterTask.
+// The purpose of hintTask is to always have the highest priority, both **within and across slices**,
+// meaning it will always be chosen if available, regardless of cost comparison.
+// For non-hint tasks, i.e., normalIterTask and normalPreferTask, normalPreferTask has the highest priority **within** a slice.
+// normalIterTask has the lowest priority and always depends on cost comparison to choose the least expensive task.
 func enumeratePhysicalPlans4Task(
 	super base.LogicalPlan,
-	physicalPlans [][]base.PhysicalPlan,
+	physicalPlansSlice [][]base.PhysicalPlan,
 	prop *property.PhysicalProperty,
 	addEnforcer bool,
 ) (base.Task, bool, error) {
-	if len(physicalPlans) == 0 {
+	if len(physicalPlansSlice) == 0 {
 		return base.InvalidTask, false, nil
 	}
 
 	var normalTask, hintTask = base.InvalidTask, base.InvalidTask
-	for _, ops := range physicalPlans {
+	for _, ops := range physicalPlansSlice {
 		if len(ops) == 0 {
 			continue
 		}
@@ -139,8 +139,7 @@ func enumeratePhysicalPlans4TaskHelper(
 	physicalPlans []base.PhysicalPlan,
 	prop *property.PhysicalProperty,
 	addEnforcer bool,
-) (base.Task, bool, error) {
-	var err error
+) (returnedTask base.Task, hintCanWork bool, err error) {
 	var normalIterTask, normalPreferTask, hintTask = base.InvalidTask, base.InvalidTask, base.InvalidTask
 	initState := &enumerateState{}
 	_, baseLP, childLen, iteration, iterObj := prepareIterationDownElems(super)
@@ -153,6 +152,14 @@ func enumeratePhysicalPlans4TaskHelper(
 			fd = logicalPlan.ExtractFD()
 		}
 	}
+
+	defer func() {
+		if returnedTask != nil && !returnedTask.Invalid() {
+			if warn := recordWarnings(baseLP.Self(), prop, addEnforcer); warn != nil {
+				returnedTask.AppendWarning(warn)
+			}
+		}
+	}()
 
 	for _, pp := range physicalPlans {
 		childTasks, err = iteration(iterObj, pp, childTasks, prop)
@@ -226,17 +233,9 @@ func enumeratePhysicalPlans4TaskHelper(
 	if !hintTask.Invalid() {
 		return hintTask, true, nil
 	}
-
-	if !normalIterTask.Invalid() || !normalPreferTask.Invalid() {
-		if warn := recordWarnings(baseLP.Self(), prop, addEnforcer); warn != nil {
-			normalIterTask.AppendWarning(warn)
-		}
-	}
-
 	if !normalPreferTask.Invalid() {
 		return normalPreferTask, false, nil
 	}
-
 	return normalIterTask, false, nil
 }
 
