@@ -77,6 +77,8 @@ const (
 	smallConcPerCore       = 20
 )
 
+var liteWorkerFallbackHook atomic.Pointer[func()]
+
 // CopClient is coprocessor client.
 type CopClient struct {
 	kv.RequestTypeSupportedChecker
@@ -838,6 +840,22 @@ func init() {
 	finCopResp = &copResponse{}
 }
 
+// SetLiteWorkerFallbackHookForTest installs a hook invoked when the lite worker falls back to the concurrent worker.
+// Production code should not rely on this hook.
+func SetLiteWorkerFallbackHookForTest(hook func()) {
+	if hook != nil {
+		liteWorkerFallbackHook.Store(&hook)
+		return
+	}
+	liteWorkerFallbackHook.Store(nil)
+}
+
+func triggerLiteWorkerFallbackHook() {
+	if hookPtr := liteWorkerFallbackHook.Load(); hookPtr != nil && *hookPtr != nil {
+		(*hookPtr)()
+	}
+}
+
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
@@ -1178,7 +1196,7 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.Logger(ctx).Error("copIteratorWork meet panic",
+			logutil.Logger(ctx).Warn("copIteratorWork meet panic",
 				zap.Any("r", r),
 				zap.Stack("stack trace"))
 			resp = &copResponse{err: util2.GetRecoverError(r)}
@@ -1223,6 +1241,7 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 }
 
 func (w *liteCopIteratorWorker) runWorkerConcurrently(it *copIterator) {
+	triggerLiteWorkerFallbackHook()
 	taskCh := make(chan *copTask, 1)
 	worker := w.worker
 	worker.taskCh = taskCh
@@ -1290,7 +1309,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.BgLogger().Error("copIteratorWork meet panic",
+			logutil.BgLogger().Warn("copIteratorWork meet panic",
 				zap.Any("r", r),
 				zap.Stack("stack trace"))
 			resp := &copResponse{err: util2.GetRecoverError(r)}
@@ -1421,6 +1440,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		req.ReplicaReadType = options.GetTiKVReplicaReadType(kv.ReplicaReadFollower)
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
+
+	failpoint.InjectCall("onBeforeSendReqCtx", req)
 	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
 		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
 	err = derr.ToTiDBErr(err)
@@ -1450,7 +1471,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	}
 
 	var result *copTaskResult
-	if worker.req.Paging.Enable {
+	if worker.req.Paging.Enable ||
+		copResp.GetRange() != nil { // For next-gen, the storage may return paging range even if paging is not enabled.
 		result, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
 	} else {
 		// Handles the response for non-paging copTask.

@@ -46,6 +46,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -389,7 +390,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 		*tiFlashStores = stores
 		logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)))
 	}
-	progress, err := is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, *tiFlashStores)
+	progress, _, err := is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, *tiFlashStores)
 	if err != nil {
 		return 0, err
 	}
@@ -577,9 +578,9 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 	if cli == nil {
 		return
 	}
-	err := util.DeleteKeyFromEtcd(is.minStartTSPath, cli, serverinfo.KeyOpDefaultRetryCnt, serverinfo.KeyOpDefaultTimeout)
+	err := etcd.DeleteKeyFromEtcd(is.minStartTSPath, cli, serverinfo.KeyOpDefaultRetryCnt, serverinfo.KeyOpDefaultTimeout)
 	if err != nil {
-		logutil.BgLogger().Error("remove minStartTS failed", zap.Error(err))
+		logutil.BgLogger().Warn("remove minStartTS failed", zap.Error(err))
 	}
 }
 
@@ -595,7 +596,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage, session *concurrency.Se
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
-		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
+		logutil.BgLogger().Warn("update minStartTS failed", zap.Error(err))
 		return
 	}
 	now := oracle.GetTimeFromTS(currentVer.Ver)
@@ -644,7 +645,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage, session *concurrency.Se
 
 	err = is.storeMinStartTS(context.Background(), session)
 	if err != nil {
-		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
+		logutil.BgLogger().Warn("update minStartTS failed", zap.Error(err))
 	}
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("final minStartTS", is.minStartTS))
 }
@@ -820,10 +821,10 @@ func SyncTiFlashTableSchema(ctx context.Context, tableID int64) error {
 }
 
 // CalculateTiFlashProgress calculates TiFlash replica progress
-func CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pdhttp.StoreInfo) (float64, error) {
+func CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pdhttp.StoreInfo) (fullReplicaProgress float64, oneReplicaProgress float64, err error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 	return is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, tiFlashStores)
 }

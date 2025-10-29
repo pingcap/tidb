@@ -139,6 +139,12 @@ func (c *jobContext) cleanStepCtx() {
 	c.stepCtx = nil // unset stepCtx for the next step initialization
 }
 
+// genReorgTimeoutErr generates a reorganization timeout error.
+func (c *jobContext) genReorgTimeoutErr() error {
+	c.reorgTimeoutOccurred = true
+	return dbterror.ErrWaitReorgTimeout
+}
+
 func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
 	return &asAutoIDRequirement{
 		store:     c.store,
@@ -195,6 +201,11 @@ type ReorgContext struct {
 
 	resourceGroupName string
 	cloudStorageURI   string
+	analyzeDone       chan struct{}
+	// analyzeStartTime records when the analyze for a job was started.
+	analyzeStartTime time.Time
+	// analyzeCumulativeTimeout stores the computed cumulative timeout for analyze
+	analyzeCumulativeTimeout time.Duration
 }
 
 // NewReorgContext returns a new ddl job context.
@@ -893,12 +904,6 @@ func (w *worker) runOneJobStep(
 							return
 						case model.JobStateDone, model.JobStateSynced:
 							return
-						case model.JobStateRunning:
-							if latestJob.IsAlterable() {
-								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrency())
-								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSize())
-								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeed())
-							}
 						}
 					}
 				}

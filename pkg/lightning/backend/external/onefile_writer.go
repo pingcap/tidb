@@ -46,6 +46,14 @@ var (
 	DefaultOneWriterBlockSize = int(defaultOneWriterMemSizeLimit)
 )
 
+const (
+	// MaxUploadPartCount defines the divisor used when calculating the size of each uploaded part.
+	// Setting it from 10000 to 5000 increases the part size so that the total number of parts stays well below
+	// the S3 multipart upload limit of 10,000 parts, to avoiding the error "TotalPartsExceeded: exceeded total allowed configured MaxUploadParts (10000)".
+	MaxUploadPartCount = 5000
+	logPartNumInterval = 999 // log the part num every 999 parts.
+)
+
 // OneFileWriter is used to write data into external storage
 // with only one file for data and stat.
 type OneFileWriter struct {
@@ -57,6 +65,7 @@ type OneFileWriter struct {
 	// Statistic information per writer.
 	totalSize uint64
 	totalCnt  uint64
+	putReqCnt uint64
 	rc        *rangePropertiesCollector
 
 	// file information.
@@ -68,7 +77,7 @@ type OneFileWriter struct {
 	dataWriter     storage.ExternalFileWriter
 	statWriter     storage.ExternalFileWriter
 
-	onClose OnCloseFunc
+	onClose OnWriterCloseFunc
 	closed  bool
 
 	// for duplicate detection.
@@ -87,9 +96,10 @@ type OneFileWriter struct {
 	minKey []byte
 	maxKey []byte
 
-	logger       *zap.Logger
-	partSize     int64
-	writtenBytes int64
+	logger           *zap.Logger
+	partSize         int64
+	writtenBytes     int64
+	lastLogWriteSize uint64
 }
 
 // lazyInitWriter inits the underlying dataFile/statFile path, dataWriter/statWriter
@@ -102,14 +112,18 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 	dataFile := filepath.Join(w.getPartitionedPrefix(), "one-file")
 	dataWriter, err := w.store.Create(ctx, dataFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
-		PartSize:    w.partSize})
+		PartSize:    w.partSize,
+		OnUpload:    func() { w.putReqCnt++ },
+	})
 	if err != nil {
 		return err
 	}
 	statFile := filepath.Join(w.getPartitionedPrefix()+statSuffix, "one-file")
 	statWriter, err := w.store.Create(ctx, statFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
-		PartSize:    MinUploadPartSize})
+		PartSize:    MinUploadPartSize,
+		OnUpload:    func() { w.putReqCnt++ },
+	})
 	if err != nil {
 		w.logger.Info("create stat writer failed", zap.Error(err))
 		_ = dataWriter.Close(ctx)
@@ -155,6 +169,17 @@ func (w *OneFileWriter) InitPartSizeAndLogger(ctx context.Context, partSize int6
 
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
+	defer func() {
+		if (w.totalSize-w.lastLogWriteSize)/uint64(w.partSize) >= logPartNumInterval {
+			w.logger.Info("one file writer progress",
+				zap.String("writerID", w.writerID),
+				zap.Int64("partSize", w.partSize),
+				zap.Uint64("totalSize", w.totalSize),
+				zap.Uint64("estimatePartNum", w.totalSize/uint64(w.partSize)),
+			)
+			w.lastLogWriteSize = w.totalSize
+		}
+	}()
 	if w.onDup != engineapi.OnDuplicateKeyIgnore {
 		// must be Record or Remove right now
 		return w.handleDupAndWrite(ctx, idxKey, idxVal)
@@ -303,6 +328,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		TotalCnt:           w.totalCnt,
 		MultipleFilesStats: mStats,
 		ConflictInfo:       conflictInfo,
+		PutRequestCount:    w.putReqCnt,
 	})
 	w.totalCnt = 0
 	w.totalSize = 0

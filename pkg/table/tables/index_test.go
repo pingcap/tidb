@@ -293,7 +293,6 @@ func TestTableOperationsInDDLDropIndexWriteOnly(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, key a(a), key(b))")
 	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
 	// use MDL to block drop index DDL in `StateWriteOnly`
-	tk.MustExec("set @@global.tidb_enable_metadata_lock='ON'")
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t order by a asc").Check(testkit.Rows("1 1", "2 2", "3 3"))
 	tk2 := testkit.NewTestKit(t, store)

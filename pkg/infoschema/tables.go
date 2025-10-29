@@ -222,6 +222,8 @@ const (
 	TableTiDBPlanCache = "TIDB_PLAN_CACHE"
 	// TableKeyspaceMeta is the table to show the keyspace meta.
 	TableKeyspaceMeta = "KEYSPACE_META"
+	// TableSchemataExtensions is the table to show read only status of database.
+	TableSchemataExtensions = "SCHEMATA_EXTENSIONS"
 )
 
 const (
@@ -351,6 +353,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBStatementsStats:             autoid.InformationSchemaDBID + 98,
 	ClusterTableTiDBStatementsStats:      autoid.InformationSchemaDBID + 99,
 	TableKeyspaceMeta:                    autoid.InformationSchemaDBID + 100,
+	TableSchemataExtensions:              autoid.InformationSchemaDBID + 101,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -880,6 +883,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "CLUSTERED", tp: mysql.TypeVarchar, size: 64},
 	{name: "IS_GLOBAL", tp: mysql.TypeLonglong, size: 21},
+	{name: "PREDICATE", tp: mysql.TypeVarchar, size: 1024},
 }
 
 var slowQueryCols = []columnInfo{

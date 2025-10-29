@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -37,7 +37,7 @@ type hashJoinInfo struct {
 	ctx                   sessionctx.Context
 	schema                *expression.Schema
 	leftExec, rightExec   exec.Executor
-	joinType              logicalop.JoinType
+	joinType              base.JoinType
 	rightAsBuildSide      bool
 	buildKeys             []*expression.Column
 	probeKeys             []*expression.Column
@@ -48,6 +48,7 @@ type hashJoinInfo struct {
 	lUsedInOtherCondition []int
 	rUsedInOtherCondition []int
 	equalConditions       []*expression.ScalarFunction
+	fileNamePrefixForTest string
 }
 
 func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
@@ -61,6 +62,7 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 			OtherCondition:  info.otherCondition,
 			partitionNumber: 4,
 		},
+		FileNamePrefixForTest: info.fileNamePrefixForTest,
 	}
 	e.HashJoinCtxV2.SessCtx = info.ctx
 	e.HashJoinCtxV2.JoinType = info.joinType
@@ -142,16 +144,6 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 	}
 
 	return e
-}
-
-func buildDataSource(sortCase *testutil.SortCase, schema *expression.Schema) *testutil.MockDataSource {
-	opt := testutil.MockDataSourceParameters{
-		DataSchema: schema,
-		Rows:       sortCase.Rows,
-		Ctx:        sortCase.Ctx,
-		Ndvs:       sortCase.Ndvs,
-	}
-	return testutil.BuildMockDataSource(opt)
 }
 
 func generateCMPFunc(fieldTypes []*types.FieldType) func(chunk.Row, chunk.Row) int {

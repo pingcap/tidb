@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -65,7 +66,6 @@ func TestAddIndexMergeProcess(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t add index idx(c1);")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	require.True(t, backfillDone)
 	require.True(t, runDML)
 	require.NoError(t, checkErr)
@@ -414,6 +414,9 @@ func TestAddIndexMergeDoubleDelete(t *testing.T) {
 }
 
 func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

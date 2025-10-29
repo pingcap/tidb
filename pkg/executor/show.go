@@ -988,7 +988,7 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue
 		}
-		if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) {
+		if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) || v.InternalSessionVariable {
 			continue
 		}
 		value, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v.Name)
@@ -1259,6 +1259,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		}
 		if idxInfo.FullTextInfo != nil {
 			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
+		}
+		if idxInfo.ConditionExprString != "" {
+			fmt.Fprintf(buf, " WHERE %s", idxInfo.ConditionExprString)
 		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
@@ -2456,7 +2459,13 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 		return
 	}
 
-	result.AppendTime(14, runInfo.UpdateTime)
+	// update time of run info comes from subtask summary, but checksum step don't
+	// have period updated summary.
+	updateTime := runInfo.UpdateTime
+	if updateTime.IsZero() {
+		updateTime = info.UpdateTime
+	}
+	result.AppendTime(14, updateTime)
 	result.AppendString(15, proto.Step2Str(proto.ImportInto, runInfo.Step))
 	result.AppendString(16, runInfo.ProcessedSize())
 	result.AppendString(17, runInfo.TotalSize())

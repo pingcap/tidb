@@ -1,6 +1,11 @@
 # See the OWNERS docs at https://www.kubernetes.dev/docs/guide/owners/#owners_aliases
 # The members of 'sig-community-*' are synced from memberships defined in repository: https://github.com/pingcap/community.
 aliases:
+  sig-approvers-stats:
+    - mjonss
+    - 0xPoe
+    - time-and-fate
+    - terry1purcell
   sig-critical-approvers-tidb-server:
     - yudongusa
     - BenMeadowcroft
@@ -127,6 +132,7 @@ aliases:
   sig-community-reviewers:
     - CabinfeverB
     - ChenPeng2013
+    - King-Dylan
     - LittleFall
     - MoCuishle28
     - RidRisR
@@ -144,8 +150,8 @@ aliases:
     - fzzf678
     - gengliqi
     - ghazalfamilyusa
+    - henrybw
     - iamxy
-    - joechenrh
     - js00070
     - lamxTyler
     - longfangsong
@@ -158,6 +164,7 @@ aliases:
     - spongedu
     - tangwz
     - tsthght
+    - wddevries
     - xzhangxian1008
     - yibin87
     - zhangjinpeng1987
@@ -181,10 +188,10 @@ aliases:
     - GMHDBJD
     - IANTHEREAL
     - JmPotato
-    - King-Dylan
     - Leavrth
     - Little-Wallace
     - MyonKeminta
+    - OliverS929
     - Reminiscent
     - SunRunAway
     - Tammyxia
@@ -230,6 +237,7 @@ aliases:
     - jackysp
     - jiyfhust
     - joccau
+    - joechenrh
     - july2993
     - kennytm
     - lance6716

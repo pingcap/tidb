@@ -201,6 +201,23 @@ func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter f
 	}
 }
 
+// ExtractAllColumnsFromExpressionsInUsedSlices is the same as ExtractColumns. but it can reuse the memory.
+func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, filter func(*Column) bool, exprs ...Expression) []*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	for _, expr := range exprs {
+		reuse = extractColumnsSlices(reuse, expr, filter)
+	}
+	slices.SortFunc(reuse, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
+	reuse = slices.CompactFunc(reuse, func(a, b *Column) bool {
+		return a.UniqueID == b.UniqueID
+	})
+	return reuse
+}
+
 // ExtractAllColumnsFromExpressions is the same as ExtractColumnsFromExpressions. But this will not remove duplicates.
 func ExtractAllColumnsFromExpressions(exprs []Expression, filter func(*Column) bool) []*Column {
 	if len(exprs) == 0 {
@@ -553,6 +570,13 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				var e Expression
 				var err error
 				if v.FuncName.L == ast.Cast {
+					// If the newArg is a ScalarFunction(cast), BuildCastFunctionWithCheck will modify the newArg.RetType,
+					// So we need to deep copy RetType.
+					// TODO: Expression interface needs a deep copy method.
+					if newArgFunc, ok := newArg.(*ScalarFunction); ok {
+						newArgFunc.RetType = newArgFunc.RetType.DeepCopy()
+						newArg = newArgFunc
+					}
 					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, v.Function.IsExplicitCharset())
 					terror.Log(err)
 				} else {

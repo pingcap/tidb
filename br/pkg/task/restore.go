@@ -16,7 +16,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
@@ -1135,10 +1134,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	schemaVersionPair := snapclient.SchemaVersionPairT{}
 	if loadStatsPhysical || loadSysTablePhysical {
-		upstreamClusterVersion, err := semver.NewVersion(backupMeta.ClusterVersion)
-		if err != nil {
+		upstreamClusterVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
+		if upstreamClusterVersion == nil {
 			log.Warn("The cluster version from backupmeta is invalid. Fallback to logically load system tables.",
-				zap.String("backupmeta cluster version", backupMeta.ClusterVersion), zap.Error(err))
+				zap.String("backupmeta cluster version", backupMeta.ClusterVersion))
 			loadStatsPhysical = false
 			loadSysTablePhysical = false
 		} else {
@@ -1152,10 +1151,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			loadStatsPhysical = false
 			loadSysTablePhysical = false
 		} else {
-			downstreamClusterVersion, err := semver.NewVersion(downstreamClusterVersionStr)
-			if err != nil {
+			downstreamClusterVersion := version.NormalizeBackupVersion(downstreamClusterVersionStr)
+			if downstreamClusterVersion == nil {
 				log.Warn("The downstream cluster version is invalid. Fallback to logically load system tables.",
-					zap.String("downstream cluster version", downstreamClusterVersionStr), zap.Error(err))
+					zap.String("downstream cluster version", downstreamClusterVersionStr))
 				loadStatsPhysical = false
 				loadSysTablePhysical = false
 			} else {
@@ -1410,6 +1409,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		loadStatsPhysical = false
 	}
 	tables = client.CleanTablesIfTemporarySystemTablesRenamed(loadStatsPhysical, loadSysTablePhysical, tables)
+	preAllocRange, err := client.GetPreAllocedTableIDRange()
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
 	var restoreSchedulersFunc pdutil.UndoFunc
@@ -1417,11 +1420,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if (isFullRestore(cmdName) && !cfg.ExplicitFilter) || client.IsIncremental() {
 		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
 	} else {
-		var preAllocRange [2]int64
-		preAllocRange, err = client.GetPreAllocedTableIDRange()
-		if err != nil {
-			return errors.Trace(err)
-		}
 		if isPiTR && cfg.tableMappingManager != nil {
 			cfg.tableMappingManager.SetPreallocatedRange(preAllocRange[0], preAllocRange[1])
 		}
@@ -1650,6 +1648,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
+	compactProtectStartKey, compactProtectEndKey := encodeCompactAndCheckKey(mgr.GetStorage().GetCodec(), preAllocRange)
 	rtCtx := snapclient.RestoreTablesContext{
 		LogProgress:    cfg.LogProgress,
 		SplitSizeBytes: kvConfigs.MergeRegionSize.Value,
@@ -1663,6 +1662,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 		CreatedTables:            createdTables,
 		CheckpointSetWithTableID: checkpointSetWithTableID,
+
+		CompactProtectStartKey: compactProtectStartKey,
+		CompactProtectEndKey:   compactProtectEndKey,
 
 		Glue: g,
 	}
@@ -2383,6 +2385,12 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 	}
 
 	return
+}
+
+func encodeCompactAndCheckKey(codec tikv.Codec, preAlloced [2]int64) ([]byte, []byte) {
+	checkStartKey := tablecodec.EncodeTablePrefix(preAlloced[0])
+	checkEndKey := tablecodec.EncodeTablePrefix(preAlloced[1])
+	return codec.EncodeRange(checkStartKey, checkEndKey)
 }
 
 func rewriteKeyRanges(preAlloced [2]int64) [][2]kv.Key {

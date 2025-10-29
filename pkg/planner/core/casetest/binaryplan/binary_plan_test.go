@@ -69,6 +69,7 @@ func simplifyAndCheckBinaryPlan(t *testing.T, pb *tipb.ExplainData) {
 		}
 	}
 }
+
 func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
 	// Prepare the slow log
 	originCfg := config.GetGlobalConfig()
@@ -76,6 +77,7 @@ func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	newCfg.Log.SlowQueryFile = f.Name()
+	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		config.StoreGlobalConfig(originCfg)

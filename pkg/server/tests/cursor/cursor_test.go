@@ -167,8 +167,11 @@ func TestCursorFetchExecuteCheck(t *testing.T) {
 }
 
 func TestConcurrentExecuteAndFetch(t *testing.T) {
-	runTestConcurrentExecuteAndFetch(t, false)
-	runTestConcurrentExecuteAndFetch(t, true)
+	for i, v := range []bool{false, true} {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			runTestConcurrentExecuteAndFetch(t, v)
+		})
+	}
 }
 
 func runTestConcurrentExecuteAndFetch(t *testing.T, lazy bool) {
