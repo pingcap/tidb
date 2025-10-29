@@ -256,8 +256,7 @@ type Plan struct {
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
 
-	// Location is used to convert time type for parquet, as we assume that time stored
-	// in parquet is always adjusted to UTC, see
+	// Location is used to convert time type for parquet, see
 	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
 	Location *time.Location
 
