@@ -9,11 +9,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 5,
-=======
-    shard_count = 7,
->>>>>>> 6dc2c5b63fe (ddl: add timeout mechanism for add index analyze (#64096))
     deps = [
         "//pkg/config",
         "//pkg/ddl",
