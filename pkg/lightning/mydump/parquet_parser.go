@@ -58,28 +58,23 @@ func estimateRowSize(row []types.Datum) int {
 	return length
 }
 
+// innerReader defines the interface for reading value with given type T from parquet column reader.
 type innerReader[T parquet.ColumnTypes] interface {
-	Type() parquet.Type
-	Descriptor() *schema.Column
-
 	ReadBatchInPage(batchSize int64, values []T, defLvls, repLvls []int16) (int64, int, error)
-	HasNext() bool
-
-	Close() error
 }
 
 type columnDumper interface {
-	Type() parquet.Type
 	SetReader(colReader file.ColumnChunkReader)
 
 	Next(*types.Datum) bool
-	ReadNextBatch() int
 
 	Close() error
 }
 
 type generalColumnDumper[T parquet.ColumnTypes, R innerReader[T]] struct {
-	reader         R
+	baseReader file.ColumnChunkReader
+	reader     R
+
 	batchSize      int64
 	valueOffset    int
 	valuesBuffered int
@@ -89,8 +84,6 @@ type generalColumnDumper[T parquet.ColumnTypes, R innerReader[T]] struct {
 	defLevels      []int16
 	repLevels      []int16
 	values         []T
-
-	closed bool
 
 	setter setter[T]
 }
@@ -106,35 +99,29 @@ func newGeneralColumnDumper[T parquet.ColumnTypes, R innerReader[T]](
 		repLevels: make([]int16, batchSize),
 		values:    make([]T, batchSize),
 		setter:    getter,
-		closed:    true,
 	}
 }
 
 // SetReader sets the column reader for the dumper.
 // Remember to call Close() before setting a new reader.
 func (dump *generalColumnDumper[T, R]) SetReader(colReader file.ColumnChunkReader) {
-	dump.reader, _ = colReader.(R)
-	dump.closed = false
-}
-
-func (dump *generalColumnDumper[T, R]) Type() parquet.Type {
-	return dump.reader.Type()
+	dump.baseReader = colReader
+	dump.reader = colReader.(R) //nolint: errcheck
 }
 
 func (dump *generalColumnDumper[T, R]) Close() error {
-	if dump.closed {
+	if dump.baseReader == nil {
 		return nil
 	}
 
-	err := dump.reader.Close()
-	dump.closed = true
+	err := dump.baseReader.Close()
+	dump.baseReader = nil
 	return err
 }
 
-func (dump *generalColumnDumper[T, R]) ReadNextBatch() int {
+func (dump *generalColumnDumper[T, R]) readNextBatch() int {
 	// ReadBatchInPage reads a batch of values from the current page.
 	// And the values returned may be shallow copies from the internal page buffer.
-	//nolint: errcheck
 	dump.levelsBuffered, dump.valuesBuffered, _ = dump.reader.ReadBatchInPage(
 		dump.batchSize,
 		dump.values,
@@ -147,13 +134,13 @@ func (dump *generalColumnDumper[T, R]) ReadNextBatch() int {
 	return int(dump.levelsBuffered)
 }
 
-// Next reads the next value with proper level handling
+// Next reads the next value with proper level handling.
 func (dump *generalColumnDumper[T, R]) Next(d *types.Datum) bool {
 	if dump.levelOffset == dump.levelsBuffered {
-		if !dump.reader.HasNext() {
+		if !dump.baseReader.HasNext() {
 			return false
 		}
-		dump.ReadNextBatch()
+		dump.readNextBatch()
 		if dump.levelsBuffered == 0 {
 			return false
 		}
@@ -163,7 +150,7 @@ func (dump *generalColumnDumper[T, R]) Next(d *types.Datum) bool {
 	defLevel := dump.defLevels[dump.levelOffset]
 	dump.levelOffset++
 
-	if defLevel < dump.reader.Descriptor().MaxDefinitionLevel() {
+	if defLevel < dump.baseReader.Descriptor().MaxDefinitionLevel() {
 		d.SetNull()
 		return true
 	}
@@ -324,6 +311,9 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 	}
 	for i := range numCols {
 		pp.dumpers[i] = createColumnDumper(meta.Schema.Column(i).PhysicalType(), &pp.colTypes[i], loc, 128)
+		if pp.dumpers[i] == nil {
+			return errors.Errorf("unsupported parquet type %s", meta.Schema.Column(i).PhysicalType().String())
+		}
 	}
 
 	return nil
