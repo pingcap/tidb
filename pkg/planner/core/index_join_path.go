@@ -296,7 +296,7 @@ func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPath
 		return true
 	}
 
-	// reuse Skyling pruning to compare the index join paths.
+	// reuse Skyline pruning to compare the index join paths.
 	prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64} // default property without any requirement
 	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
 
