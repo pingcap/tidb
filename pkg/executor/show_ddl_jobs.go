@@ -307,6 +307,8 @@ func showCommentsFromJob(job *model.Job) string {
 	var labels []string
 	if m.AnalyzeState == model.AnalyzeStateRunning {
 		labels = append(labels, "analyzing")
+	} else if m.AnalyzeState == model.AnalyzeStateTimeout {
+		labels = append(labels, "analyze_timeout")
 	}
 	isAddingIndex := job.Type == model.ActionAddIndex ||
 		job.Type == model.ActionAddPrimaryKey

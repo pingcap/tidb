@@ -16,6 +16,7 @@ package metricscommon
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -26,6 +27,19 @@ var constLabels prometheus.Labels
 // GetConstLabels returns constant labels for metrics.
 func GetConstLabels() prometheus.Labels {
 	return constLabels
+}
+
+// GetMergedConstLabels merges input constant labels with package-level constant labels.
+func GetMergedConstLabels(in prometheus.Labels) prometheus.Labels {
+	res := constLabels
+	if len(in) > 0 {
+		res = make(prometheus.Labels, len(constLabels)+len(in))
+		// merge in and constLabels, but constLabels defined in this package has
+		// higher priority.
+		maps.Copy(res, in)
+		maps.Copy(res, constLabels)
+	}
+	return res
 }
 
 // SetConstLabels sets constant labels for metrics.
@@ -79,4 +93,10 @@ func NewHistogramVec(opts prometheus.HistogramOpts, labelNames []string) *promet
 func NewSummaryVec(opts prometheus.SummaryOpts, labelNames []string) *prometheus.SummaryVec {
 	opts.ConstLabels = constLabels
 	return prometheus.NewSummaryVec(opts, labelNames)
+}
+
+// NewDesc wraps a prometheus.NewDesc.
+func NewDesc(fqName, help string, variableLabels []string, inConstLbls prometheus.Labels) *prometheus.Desc {
+	cstLabels := GetMergedConstLabels(inConstLbls)
+	return prometheus.NewDesc(fqName, help, variableLabels, cstLabels)
 }

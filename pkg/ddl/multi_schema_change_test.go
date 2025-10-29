@@ -577,13 +577,13 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAlterIndex(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set sql_mode='';") // disable lossy ddl optimization
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test;")
-	tk2.MustExec("set sql_mode='';") // disable lossy ddl optimization
 
 	// unsupported ddl operations
 	{

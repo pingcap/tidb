@@ -504,6 +504,74 @@ func (dc *ddlCtx) getAnalyzeDoneCh(jobID int64) chan struct{} {
 	return ctx.analyzeDone
 }
 
+// setAnalyzeStartTime sets the analyze start time for a given job ID.
+func (dc *ddlCtx) setAnalyzeStartTime(jobID int64, t time.Time) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		ctx = NewReorgContext()
+		dc.jobCtx.jobCtxMap[jobID] = ctx
+	}
+	ctx.analyzeStartTime = t
+}
+
+// getAnalyzeStartTime returns the analyze start time for a given job ID. If not set, returns zero time and false.
+func (dc *ddlCtx) getAnalyzeStartTime(jobID int64) (time.Time, bool) {
+	dc.jobCtx.RLock()
+	defer dc.jobCtx.RUnlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		return time.Time{}, false
+	}
+	t := ctx.analyzeStartTime
+	return t, !t.IsZero()
+}
+
+// clearAnalyzeStartTime clears the analyze start time for a given job ID.
+func (dc *ddlCtx) clearAnalyzeStartTime(jobID int64) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	if ctx, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
+		ctx.analyzeStartTime = time.Time{}
+	}
+}
+
+// setAnalyzeCumulativeTimeout sets the computed cumulative timeout for analyze for a given job ID.
+func (dc *ddlCtx) setAnalyzeCumulativeTimeout(jobID int64, dur time.Duration) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		ctx = NewReorgContext()
+		dc.jobCtx.jobCtxMap[jobID] = ctx
+	}
+	ctx.analyzeCumulativeTimeout = dur
+}
+
+// getAnalyzeCumulativeTimeout returns the stored analyze cumulative timeout and true if set.
+func (dc *ddlCtx) getAnalyzeCumulativeTimeout(jobID int64) (time.Duration, bool) {
+	dc.jobCtx.RLock()
+	defer dc.jobCtx.RUnlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		return 0, false
+	}
+	if ctx.analyzeCumulativeTimeout == 0 {
+		return 0, false
+	}
+	return ctx.analyzeCumulativeTimeout, true
+}
+
+// clearAnalyzeCumulativeTimeout clears the stored analyze cumulative timeout for a given job ID.
+func (dc *ddlCtx) clearAnalyzeCumulativeTimeout(jobID int64) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	if ctx, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
+		ctx.analyzeCumulativeTimeout = 0
+	}
+}
+
 func (dc *ddlCtx) removeJobCtx(job *model.Job) {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
