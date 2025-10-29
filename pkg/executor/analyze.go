@@ -109,6 +109,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	}
 	warnLockedTableMsg(sessionVars, needAnalyzeTableCnt, skippedTables)
 
+	if len(tasks) == 0 {
+		return nil
+	}
 	tableAndPartitionIDs := make([]int64, 0, len(tasks))
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
