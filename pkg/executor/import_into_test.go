@@ -159,7 +159,6 @@ func TestNextGenS3ExternalID(t *testing.T) {
 				})
 				tk.MustMatchErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=abc'", `(?i).*Feature 'IMPORT INTO .*external.*' is not supported when security enhanced mode is enabled`)
 			})
-
 		}
 	})
 
