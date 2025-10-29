@@ -395,7 +395,7 @@ func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 			copyhashcode := reHashCodeForTest(sf)
 			copyfunhashcode := reHashCodeForTest(fun)
 			intest.Assert(bytes.Equal(sf.hashcode, fun.hashcode) == bytes.Equal(copyfunhashcode, copyhashcode),
-				" HashCode should be stable and consistent")
+				"HashCode should be stable and consistent")
 		}
 		return bytes.Equal(sf.hashcode, fun.hashcode)
 	}
