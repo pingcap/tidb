@@ -166,7 +166,8 @@ func NeedsMerge(left, right *RangeStats, splitSizeBytes, splitKeyCount uint64) b
 		// Trim the keyspace prefix.
 		_, innerKey, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
 		if err != nil {
-			return 0, 0, false, err
+			// Not a V2 (keyspaced) key.
+			return tablecodec.DecodeKeyHead(key)
 		}
 		return tablecodec.DecodeKeyHead(innerKey)
 	}
