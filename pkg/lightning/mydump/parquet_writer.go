@@ -122,6 +122,9 @@ func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int)
 		vals, defLevel := pc.Gen(rows)
 
 		switch w := cw.(type) {
+		case *file.Int96ColumnChunkWriter:
+			buf, _ := vals.([]parquet.Int96)
+			_, err = w.WriteBatch(buf, defLevel, nil)
 		case *file.Int64ColumnChunkWriter:
 			buf, _ := vals.([]int64)
 			_, err = w.WriteBatch(buf, defLevel, nil)

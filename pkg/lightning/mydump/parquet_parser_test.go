@@ -148,6 +148,15 @@ func TestParquetVariousTypes(t *testing.T) {
 			},
 		},
 		{
+			Name:      "timestampmicros2",
+			Type:      parquet.Types.Int96,
+			Converted: schema.ConvertedTypes.None,
+			Gen: func(_ int) (any, []int16) {
+				// also 2020-10-29T09:27:52.356956Z, but stored in Int96
+				return []parquet.Int96{newInt96(1603963672356956)}, []int16{1}
+			},
+		},
+		{
 			Name:      "decimal1",
 			Type:      parquet.Types.Int32,
 			Converted: schema.ConvertedTypes.Decimal,
@@ -202,19 +211,24 @@ func TestParquetVariousTypes(t *testing.T) {
 	require.NoError(t, err)
 	defer reader.Close()
 
-	require.Len(t, reader.colNames, 9)
+	require.Len(t, reader.colNames, 10)
 	require.NoError(t, reader.ReadRow())
 
 	// TODO(joechenrh): for now we don't find a simple way to convert int directly
 	// to decimal datum, so here we just check the string values.
 	// Remember to also update the expected values below if the implementation changes.
 	expectedStringValues := []string{
-		"2020-10-29", "1970-01-01 17:26:15.123Z", "1970-01-01 17:26:15.123456Z",
-		"2020-10-29 09:27:52.356Z", "2020-10-29 09:27:52.356956Z",
+		"2020-10-29",
+		"1970-01-01 17:26:15.123Z",
+		"1970-01-01 17:26:15.123456Z",
+		"2020-10-29 09:27:52.356Z",
+		"2020-10-29 09:27:52.356956Z",
+		"2020-10-29 09:27:52.356956Z",
 		"-123456.78", "0.0456", "1234567890123456.78", "-0.0001",
 	}
 	expectedTypes := []byte{
-		mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
+		mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeTimestamp,
+		mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
 		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
 	}
 	bctx := exprstatic.NewExprContext(

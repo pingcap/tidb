@@ -15,6 +15,7 @@
 package mydump
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/big"
 	"strings"
@@ -173,6 +174,17 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 	}
 
 	return nil
+}
+
+// newInt96 is a utility function to create a parquet.Int96 for test,
+// where microseconds is the number of microseconds since Unix epoch.
+func newInt96(microseconds int64) parquet.Int96 {
+	day := uint32(microseconds/(86400*1e6) + 2440588)
+	nanoOfDay := uint64(microseconds % (86400 * 1e6) * 1e3)
+	var b [12]byte
+	binary.LittleEndian.PutUint64(b[:8], nanoOfDay)
+	binary.LittleEndian.PutUint32(b[8:], day)
+	return parquet.Int96(b)
 }
 
 func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location, adjustToUTC bool) {
