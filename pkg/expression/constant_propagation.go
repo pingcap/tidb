@@ -867,17 +867,18 @@ func (s *propOuterJoinConstSolver) solve(keepJoinKey bool, joinConds, filterCond
 func (s *propOuterJoinConstSolver) extractColumns(joinConds, filterConds []Expression) {
 	mp := GetUniqueIDToColumnMap()
 	defer PutUniqueIDToColumnMap(mp)
-	s.extractColumnsInternal(mp, s.joinConds, joinConds)
-	s.extractColumnsInternal(mp, s.filterConds, filterConds)
+	s.joinConds = s.extractColumnsInternal(mp, s.joinConds, joinConds)
+	s.filterConds = s.extractColumnsInternal(mp, s.filterConds, filterConds)
 }
 
-func (s *propOuterJoinConstSolver) extractColumnsInternal(mp map[int64]*Column, splitConds, conds []Expression) {
+func (s *propOuterJoinConstSolver) extractColumnsInternal(mp map[int64]*Column, splitConds []Expression, conds []Expression) []Expression {
 	for _, cond := range conds {
 		splitConds = append(splitConds, SplitCNFItems(cond)...)
 		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
 		s.insertCols(mp)
 		clear(mp)
 	}
+	return splitConds
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
