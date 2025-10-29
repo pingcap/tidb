@@ -1190,7 +1190,6 @@ func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increa
 		newRows = min(notNullCount, realtimeRowCount)
 	}
 	// if no NDV - derive an NDV using sqrt
-	// if the Hist is empty and the value can't hit any values in TopN - derive an NDV using sqrt
 	if ndv <= 0 {
 		ndv = math.Sqrt(max(notNullCount, realtimeRowCount))
 	} else {
