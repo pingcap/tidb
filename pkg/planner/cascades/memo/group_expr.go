@@ -312,10 +312,10 @@ func ExhaustPhysicalPlans4GroupExpression(e *GroupExpression, prop *property.Phy
 		panic("unreachable")
 	}
 
-	if len(ops) > 0 && err != nil {
-		return [][]base.PhysicalPlan{ops}, hintCanWork, nil
+	if len(ops) == 0 || err != nil {
+		return nil, hintCanWork, err
 	}
-	return nil, hintCanWork, err
+	return [][]base.PhysicalPlan{ops}, hintCanWork, nil
 }
 
 // FindBestTask implements LogicalPlan.<3rd> interface, it's used to override the wrapped logicalPlans.

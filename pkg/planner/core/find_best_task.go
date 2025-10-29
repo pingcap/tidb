@@ -110,7 +110,7 @@ func enumeratePhysicalPlans4Task(
 			return nil, false, curErr
 		}
 
-		if curHintCanWork || !hintTask.Invalid() {
+		if curHintCanWork {
 			if hintTask.Invalid() {
 				hintTask = curTask
 			} else if curIsBetter, err := compareTaskCost(curTask, hintTask); err != nil {
