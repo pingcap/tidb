@@ -21,7 +21,6 @@ go_library(
         "//pkg/store/mockstore/unistore/tikv",
         "//pkg/tablecodec",
         "//pkg/util/codec",
-        "//pkg/util/slice",
         "//pkg/util/topsql/state",
         "@com_github_asaskevich_govalidator//:govalidator",
         "@com_github_golang_protobuf//proto",
