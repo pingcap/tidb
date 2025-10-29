@@ -264,9 +264,11 @@ func TestAnalyzeTimeout(t *testing.T) {
 		}
 	})
 
-	oldCum := ddl.DefaultCumulativeTimeout
-	ddl.DefaultCumulativeTimeout = 2 * time.Second
-	defer func() { ddl.DefaultCumulativeTimeout = oldCum }()
+	oldInterval := ddl.DefaultAnalyzeCheckInterval
+	ddl.DefaultAnalyzeCheckInterval = 10 * time.Millisecond
+	defer func() {
+		ddl.DefaultAnalyzeCheckInterval = oldInterval
+	}()
 
 	analyzedNotify := make(chan struct{})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", func() {
@@ -276,8 +278,9 @@ func TestAnalyzeTimeout(t *testing.T) {
 	})
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
-		time.Sleep(ddl.DefaultCumulativeTimeout + 10*time.Second)
+		time.Sleep(100 * time.Millisecond)
 	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAnalyzeTimeout", "return(1)")
 
 	tk1.MustExec("alter table t_timeout modify column b char(16);")
 

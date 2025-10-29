@@ -103,6 +103,10 @@ var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
 // exported for testing.
 var DefaultCumulativeTimeout = 1 * time.Minute
 
+// DefaultAnalyzeCheckInterval is the interval for checking analyze status.
+// exported for testing.
+var DefaultAnalyzeCheckInterval = 10 * time.Second
+
 func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
@@ -1383,7 +1387,7 @@ func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, s
 			w.ddlCtx.clearAnalyzeStartTime(job.ID)
 			w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
 			return true, false, false, false
-		case <-time.After(10 * time.Second):
+		case <-time.After(DefaultAnalyzeCheckInterval):
 			return false, false, false, false
 		}
 	default:
@@ -1487,7 +1491,10 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 		w.ddlCtx.clearAnalyzeStartTime(job.ID)
 		w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
 		return true, false, false
-	case <-time.After(10 * time.Second):
+	case <-time.After(DefaultAnalyzeCheckInterval):
+		failpoint.Inject("mockAnalyzeTimeout", func(val failpoint.Value) {
+			cumulativeTimeout = time.Duration(val.(int)) * time.Millisecond
+		})
 		if start, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); ok {
 			if time.Since(start) > cumulativeTimeout {
 				logutil.DDLLogger().Warn("analyze table after create index exceed cumulative timeout, proceeding to finish DDL",
