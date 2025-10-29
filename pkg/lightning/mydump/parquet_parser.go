@@ -106,7 +106,7 @@ func newGeneralColumnDumper[T parquet.ColumnTypes, R innerReader[T]](
 // Remember to call Close() before setting a new reader.
 func (dump *generalColumnDumper[T, R]) SetReader(colReader file.ColumnChunkReader) {
 	dump.baseReader = colReader
-	dump.reader = colReader.(R) //nolint: errcheck
+	dump.reader, _ = colReader.(R)
 }
 
 func (dump *generalColumnDumper[T, R]) Close() error {

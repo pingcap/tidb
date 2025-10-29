@@ -95,7 +95,7 @@ func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] 
 	case schema.ConvertedTypes.Date:
 		return func(val int32, d *types.Datum) {
 			// Convert days since Unix epoch to time.Time
-			t := time.Unix(int64(val)*86400, 0).In(loc)
+			t := time.Unix(int64(val)*86400, 0)
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeDate, 0)
 			d.SetMysqlTime(mysqlTime)
 		}
