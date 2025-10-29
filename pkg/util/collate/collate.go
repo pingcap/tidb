@@ -19,12 +19,14 @@ import (
 	"fmt"
 	"slices"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -360,6 +362,36 @@ func CollationToProto(c string) int32 {
 		zap.String("default collation", mysql.DefaultCollationName),
 	)
 	return v
+}
+
+func compareCommon(a, b string, keyFunc func(rune) uint32) int {
+	a = truncateTailingSpace(a)
+	b = truncateTailingSpace(b)
+
+	r1, r2 := rune(0), rune(0)
+	ai, bi := 0, 0
+	r1Len, r2Len := 0, 0
+	for ai < len(a) && bi < len(b) {
+		r1, r1Len = utf8.DecodeRune(hack.Slice(a[ai:]))
+		r2, r2Len = utf8.DecodeRune(hack.Slice(b[bi:]))
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+		invalid1 := r1 == utf8.RuneError && r1Len == 1
+		invalid2 := r2 == utf8.RuneError && r2Len == 1
+		if invalid1 || invalid2 {
+			return 0
+		}
+
+		ai = ai + r1Len
+		bi = bi + r2Len
+
+		cmp := int(keyFunc(r1)) - int(keyFunc(r2))
+		if cmp != 0 {
+			return sign(cmp)
+		}
+	}
+	return sign((len(a) - ai) - (len(b) - bi))
 }
 
 // CanUseRawMemAsKey returns true if current collator can use the original raw memory as the key
