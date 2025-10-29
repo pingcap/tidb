@@ -90,23 +90,24 @@ func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] 
 	switch converted.converted {
 	case schema.ConvertedTypes.Decimal:
 		return func(val int32, d *types.Datum) {
+			// TODO(joechenrh): don't convert to string here
 			setDecimalFromIntImpl(int64(val), d, converted)
 		}
 	case schema.ConvertedTypes.Date:
 		return func(val int32, d *types.Datum) {
 			// Convert days since Unix epoch to time.Time
-			t := time.Unix(int64(val)*86400, 0)
+			t := time.Unix(int64(val)*86400, 0).In(time.UTC)
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeDate, 0)
 			d.SetMysqlTime(mysqlTime)
 		}
 	case schema.ConvertedTypes.TimeMillis:
 		return func(val int32, d *types.Datum) {
 			// Convert milliseconds to time.Time
-			t := time.UnixMilli(int64(val))
+			t := time.UnixMilli(int64(val)).In(time.UTC)
 			if converted.IsAdjustedToUTC {
 				t = t.In(loc)
 			}
-			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
+			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
 			d.SetMysqlTime(mysqlTime)
 		}
 	case schema.ConvertedTypes.Int32, schema.ConvertedTypes.Uint32,
@@ -137,35 +138,36 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 	case schema.ConvertedTypes.TimeMicros:
 		return func(val int64, d *types.Datum) {
 			// Convert microseconds to time.Time
-			t := time.UnixMicro(val)
+			t := time.UnixMicro(val).In(time.UTC)
 			if converted.IsAdjustedToUTC {
 				t = t.In(loc)
 			}
-			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
+			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
 			d.SetMysqlTime(mysqlTime)
 		}
 	case schema.ConvertedTypes.TimestampMillis:
 		return func(val int64, d *types.Datum) {
 			// Convert milliseconds to time.Time
-			t := time.UnixMilli(val)
+			t := time.UnixMilli(val).In(time.UTC)
 			if converted.IsAdjustedToUTC {
 				t = t.In(loc)
 			}
-			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
+			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
 			d.SetMysqlTime(mysqlTime)
 		}
 	case schema.ConvertedTypes.TimestampMicros:
 		return func(val int64, d *types.Datum) {
 			// Convert microseconds to time.Time
-			t := time.UnixMicro(val)
+			t := time.UnixMicro(val).In(time.UTC)
 			if converted.IsAdjustedToUTC {
 				t = t.In(loc)
 			}
-			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
+			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
 			d.SetMysqlTime(mysqlTime)
 		}
 	case schema.ConvertedTypes.Decimal:
 		return func(val int64, d *types.Datum) {
+			// TODO(joechenrh): don't convert to string here
 			setDecimalFromIntImpl(val, d, converted)
 		}
 	}
@@ -188,11 +190,11 @@ func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location, adjustT
 	//   julian day - 2440588 (Julian Day of the Unix epoch 1970-01-01 00:00:00)
 	// As julian day is decoded as uint32, so if user store a date before 1970-01-01, the converted time will be wrong
 	// and possibly to be truncated.
-	t := val.ToTime()
+	t := val.ToTime().In(time.UTC)
 	if adjustToUTC {
 		t = t.In(loc)
 	}
-	mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
+	mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
 	d.SetMysqlTime(mysqlTime)
 }
 

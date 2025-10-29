@@ -24,6 +24,9 @@ import (
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -117,7 +120,7 @@ func TestParquetVariousTypes(t *testing.T) {
 			Type:      parquet.Types.Int32,
 			Converted: schema.ConvertedTypes.TimeMillis,
 			Gen: func(_ int) (any, []int16) {
-				return []int32{62775123}, []int16{1} // 17:26:15.123
+				return []int32{62775123}, []int16{1} // 1970-01-01 17:26:15.123Z
 			},
 		},
 		{
@@ -125,7 +128,7 @@ func TestParquetVariousTypes(t *testing.T) {
 			Type:      parquet.Types.Int64,
 			Converted: schema.ConvertedTypes.TimeMicros,
 			Gen: func(_ int) (any, []int16) {
-				return []int64{62775123456}, []int16{1} // 17:26:15.123456
+				return []int64{62775123456}, []int16{1} // 1970-01-01 17:26:15.123456Z
 			},
 		},
 		{
@@ -200,18 +203,40 @@ func TestParquetVariousTypes(t *testing.T) {
 	defer reader.Close()
 
 	require.Len(t, reader.colNames, 9)
-
 	require.NoError(t, reader.ReadRow())
-	rowValue := []string{
-		"2020-10-29", "1970-01-01 17:26:15", "1970-01-01 17:26:15", "2020-10-29 09:27:52", "2020-10-29 09:27:52",
+
+	// TODO(joechenrh): for now we don't find a simple way to convert int directly
+	// to decimal datum, so here we just check the string values.
+	// Remember to also update the expected values below if the implementation changes.
+	expectedStringValues := []string{
+		"2020-10-29", "1970-01-01 17:26:15.123Z", "1970-01-01 17:26:15.123456Z",
+		"2020-10-29 09:27:52.356Z", "2020-10-29 09:27:52.356956Z",
 		"-123456.78", "0.0456", "1234567890123456.78", "-0.0001",
 	}
+	expectedTypes := []byte{
+		mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
+		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+	}
+	bctx := exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(
+			exprstatic.NewEvalContext(
+				exprstatic.WithLocation(
+					time.UTC))))
+
 	row := reader.lastRow.Row
-	require.Len(t, rowValue, len(row))
-	for i := range row {
-		s, err := row[i].ToString()
+	require.Len(t, expectedStringValues, len(row))
+
+	// Convert the expected string values to datum
+	// to check the parquet type converter output.
+	for i, s := range expectedStringValues {
+		tp := types.NewFieldType(expectedTypes[i])
+		if expectedTypes[i] == mysql.TypeTimestamp {
+			tp.SetDecimal(6)
+		}
+		expectedDatum, err := table.CastColumnValueToType(
+			bctx, types.NewStringDatum(s), tp, true, false)
 		require.NoError(t, err)
-		assert.Equal(t, s, rowValue[i])
+		require.Equal(t, expectedDatum, row[i])
 	}
 
 	pc = []ParquetColumn{
@@ -369,7 +394,7 @@ func TestHiveParquetParser(t *testing.T) {
 	require.NoError(t, err)
 	r, err := store.Open(context.TODO(), name, nil)
 	require.NoError(t, err)
-	reader, err := NewParquetParser(context.TODO(), store, r, name, ParquetFileMeta{})
+	reader, err := NewParquetParser(context.TODO(), store, r, name, ParquetFileMeta{Loc: time.UTC})
 	require.NoError(t, err)
 	defer reader.Close()
 	// UTC+0:00

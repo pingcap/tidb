@@ -16,7 +16,6 @@ package mydump
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -37,9 +36,10 @@ import (
 
 const (
 	// defaultBufSize specifies the default size of skip buffer.
-	// Skip buffer is used when reading data from the cloud. If there is a gap between the current
-	// read position and the last read position, these data is stored in this buffer to avoid
-	// potentially reopening the underlying file when the gap size is less than the buffer size.
+	// Skip buffer is used when reading data from the cloud.If there is a gap
+	// between the current read position and the last read position, these
+	// data is stored in this buffer to avoid potentially reopening the
+	// underlying file when the gap size is less than the buffer size.
 	defaultBufSize = 64 * 1024
 )
 
@@ -71,7 +71,7 @@ type columnDumper interface {
 	Close() error
 }
 
-type generalColumnDumper[T parquet.ColumnTypes, R innerReader[T]] struct {
+type columnIterator[T parquet.ColumnTypes, R innerReader[T]] struct {
 	baseReader file.ColumnChunkReader
 	reader     R
 
@@ -92,8 +92,8 @@ type generalColumnDumper[T parquet.ColumnTypes, R innerReader[T]] struct {
 // The dumper should not be used in parallel.
 func newGeneralColumnDumper[T parquet.ColumnTypes, R innerReader[T]](
 	batchSize int, getter setter[T],
-) *generalColumnDumper[T, R] {
-	return &generalColumnDumper[T, R]{
+) *columnIterator[T, R] {
+	return &columnIterator[T, R]{
 		batchSize: int64(batchSize),
 		defLevels: make([]int16, batchSize),
 		repLevels: make([]int16, batchSize),
@@ -104,12 +104,12 @@ func newGeneralColumnDumper[T parquet.ColumnTypes, R innerReader[T]](
 
 // SetReader sets the column reader for the dumper.
 // Remember to call Close() before setting a new reader.
-func (dump *generalColumnDumper[T, R]) SetReader(colReader file.ColumnChunkReader) {
+func (dump *columnIterator[T, R]) SetReader(colReader file.ColumnChunkReader) {
 	dump.baseReader = colReader
 	dump.reader, _ = colReader.(R)
 }
 
-func (dump *generalColumnDumper[T, R]) Close() error {
+func (dump *columnIterator[T, R]) Close() error {
 	if dump.baseReader == nil {
 		return nil
 	}
@@ -119,7 +119,7 @@ func (dump *generalColumnDumper[T, R]) Close() error {
 	return err
 }
 
-func (dump *generalColumnDumper[T, R]) readNextBatch() int {
+func (dump *columnIterator[T, R]) readNextBatch() int {
 	// ReadBatchInPage reads a batch of values from the current page.
 	// And the values returned may be shallow copies from the internal page buffer.
 	dump.levelsBuffered, dump.valuesBuffered, _ = dump.reader.ReadBatchInPage(
@@ -135,7 +135,7 @@ func (dump *generalColumnDumper[T, R]) readNextBatch() int {
 }
 
 // Next reads the next value with proper level handling.
-func (dump *generalColumnDumper[T, R]) Next(d *types.Datum) bool {
+func (dump *columnIterator[T, R]) Next(d *types.Datum) bool {
 	if dump.levelOffset == dump.levelsBuffered {
 		if !dump.baseReader.HasNext() {
 			return false
@@ -219,7 +219,7 @@ func (pf *parquetFileWrapper) readNBytes(p []byte) (int, error) {
 	return n, nil
 }
 
-// ReadAt implemement ReaderAt interface
+// ReadAt implement ReaderAt interface
 func (pf *parquetFileWrapper) ReadAt(p []byte, off int64) (int, error) {
 	// We want to minimize the number of Seek call as much as possible,
 	// since the underlying reader may require reopening the file.
@@ -255,11 +255,8 @@ func (*parquetFileWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
-func (pf *parquetFileWrapper) Open(name string) (parquet.ReaderAtSeeker, error) {
-	if len(name) == 0 {
-		name = pf.path
-	}
-	reader, err := pf.store.Open(pf.ctx, name, nil)
+func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeeker, error) {
+	reader, err := pf.store.Open(pf.ctx, pf.path, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -268,7 +265,7 @@ func (pf *parquetFileWrapper) Open(name string) (parquet.ReaderAtSeeker, error) 
 		ReadSeekCloser: reader,
 		store:          pf.store,
 		ctx:            pf.ctx,
-		path:           name,
+		path:           pf.path,
 		skipBuf:        make([]byte, defaultBufSize),
 	}
 	return newPf, nil
@@ -290,11 +287,11 @@ type ParquetParser struct {
 	curRowGroup   int
 	totalRowGroup int
 
-	curRowInGroup    int   // number of rows read in current group
+	readRowInGroup   int   // number of rows read in current group
 	totalRowsInGroup int   // total rows in current group
 	totalRows        int   // total rows in this file
-	totalRowsRead    int64 // total rows read
-	totalBytesRead   int   // total bytes read, estimated by all the read datum.
+	totalReadRows    int64 // total rows read
+	totalReadBytes   int   // total bytes read, estimated by all the read datum.
 
 	lastRow Row
 	logger  log.Logger
@@ -335,12 +332,12 @@ func (pp *ParquetParser) resetDumpers() error {
 	return err
 }
 
-// ReadRows read several rows internally and store them in the row buffer.
+// readSingleRow read one row internally and store them in the row buffer.
 // The data read is shallow copied from the internal buffer of parquet reader,
-// so it's only valid before the next ReadRows call.
-func (pp *ParquetParser) readSingleRows(row []types.Datum) error {
+// so copy it if you need to keep the data before the next read.
+func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
 	// Move to next row group
-	if pp.curRowInGroup == pp.totalRowsInGroup {
+	if pp.readRowInGroup == pp.totalRowsInGroup {
 		if pp.curRowGroup >= 0 {
 			if err := pp.resetDumpers(); err != nil {
 				return err
@@ -359,7 +356,7 @@ func (pp *ParquetParser) readSingleRows(row []types.Datum) error {
 			}
 			pp.dumpers[c].SetReader(colReader)
 		}
-		pp.curRowInGroup, pp.totalRowsInGroup = 0, int(pp.readers[0].MetaData().RowGroups[pp.curRowGroup].NumRows)
+		pp.readRowInGroup, pp.totalRowsInGroup = 0, int(pp.readers[0].MetaData().RowGroups[pp.curRowGroup].NumRows)
 	}
 
 	// Read in this group
@@ -369,15 +366,15 @@ func (pp *ParquetParser) readSingleRows(row []types.Datum) error {
 		}
 	}
 
-	pp.totalBytesRead += estimateRowSize(row)
-	pp.totalRowsRead++
-	pp.curRowInGroup++
+	pp.totalReadBytes += estimateRowSize(row)
+	pp.totalReadRows++
+	pp.readRowInGroup++
 	return nil
 }
 
 // Pos returns the currently row number of the parquet file
 func (pp *ParquetParser) Pos() (pos int64, rowID int64) {
-	return pp.totalRowsRead, pp.lastRow.RowID
+	return pp.totalReadRows, pp.lastRow.RowID
 }
 
 // SetPos implements the Parser interface.
@@ -391,7 +388,7 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 	// For now it's ok, since only UTs use this interface
 	toRead := pos - pp.lastRow.RowID
 	for range toRead {
-		if err := pp.readSingleRows(row); err != nil {
+		if err := pp.readSingleRow(row); err != nil {
 			return err
 		}
 	}
@@ -403,7 +400,7 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 // ScannedPos implements the Parser interface.
 // For parquet we use the size of all read datum to estimate the scanned position.
 func (pp *ParquetParser) ScannedPos() (int64, error) {
-	return int64(pp.totalBytesRead), nil
+	return int64(pp.totalReadBytes), nil
 }
 
 // Close closes the parquet file of the parser.
@@ -434,7 +431,7 @@ func (pp *ParquetParser) ReadRow() error {
 	pp.lastRow.Length = 0
 
 	row := pp.rowPool.Get()
-	if err := pp.readSingleRows(row); err != nil {
+	if err := pp.readSingleRow(row); err != nil {
 		pp.rowPool.Put(row)
 		return err
 	}
@@ -527,11 +524,6 @@ func NewParquetParser(
 	meta ParquetFileMeta,
 ) (*ParquetParser, error) {
 	logger := log.Wrap(logutil.Logger(ctx))
-	logger.Info("Get memory usage of parquet reader",
-		zap.String("file", path),
-		zap.String("memory usage", fmt.Sprintf("%d MB", meta.MemoryUsage>>20)),
-	)
-
 	wrapper, ok := r.(*parquetFileWrapper)
 	if !ok {
 		wrapper = &parquetFileWrapper{
@@ -582,7 +574,7 @@ func NewParquetParser(
 	for i := 1; i < fileSchema.NumColumns(); i++ {
 		var newWrapper parquet.ReaderAtSeeker
 		// Open file for each column.
-		newWrapper, err = wrapper.Open("")
+		newWrapper, err = wrapper.Open()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
