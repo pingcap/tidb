@@ -191,7 +191,7 @@ func TestAddIndexShowAnalyzeProgress(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("drop table if exists t;")
 	tk1.MustExec("create table t (a int, b int, key idx_b(b));")
 	tk1.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
 	tk1.MustExec("set @@tidb_stats_update_during_ddl = 1;")
