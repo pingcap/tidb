@@ -215,12 +215,15 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 		frag.Sink.SetTargetTasks([]*kv.MPPTask{tidbTask})
 		frag.IsRoot = true
 	}
+	e.fixDuplicatedTimesForCTE(e.frags)
 	return e.frags, nil
 }
 
-// for the task without table scan, we construct tasks according to the children's tasks.
-// That's for avoiding assigning to the failed node repeatly. We assumes that the chilren node must be workable.
-func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask, cteProducerTasks []*kv.MPPTask) []*kv.MPPTask {
+// constructMPPTasksByChildrenTaskNodes is used for the fragments without table scan.
+// It generates the task for the current fragment by collecting the nodes address of the child tasks.
+// i.e. If one of its child fragment is executed on node 1,3 and another child fragment is executed on node 2,4,
+// then the current fragment will be executed on node 1,2,3,4.
+func (e *mppTaskGenerator) constructMPPTasksByChildrenTaskNodes(tasks []*kv.MPPTask, cteProducerTasks []*kv.MPPTask) []*kv.MPPTask {
 	addressMap := make(map[string]struct{})
 	newTasks := make([]*kv.MPPTask, 0, len(tasks))
 	cteAddrMap := make(map[string]struct{})
@@ -269,15 +272,16 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask,
 // after untwist, there will be two plans in `forest` slice:
 // - ExchangeSender -> Projection (c1) -> TableScan(t)
 // - ExchangeSender -> Projection (c2) -> TableScan(s)
-func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPlan, forest *[]*PhysicalExchangeSender) error {
+func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(forest []base.MPPSink, stack ...base.PhysicalPlan) ([]base.MPPSink, error) {
 	cur := stack[len(stack)-1]
+	var err error
 	switch x := cur.(type) {
 	case *PhysicalTableScan, *PhysicalExchangeReceiver, *PhysicalCTE: // This should be the leave node.
 		p, err := stack[0].Clone(e.ctx.GetPlanCtx())
 		if err != nil {
-			return errors.Trace(err)
+			return forest, errors.Trace(err)
 		}
-		*forest = append(*forest, p.(*PhysicalExchangeSender))
+		forest = append(forest, p.(base.MPPSink))
 		for i := 1; i < len(stack); i++ {
 			if _, ok := stack[i].(*PhysicalUnionAll); ok {
 				continue
@@ -287,7 +291,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 			}
 			ch, err := stack[i].Clone(e.ctx.GetPlanCtx())
 			if err != nil {
-				return errors.Trace(err)
+				return forest, errors.Trace(err)
 			}
 			if join, ok := p.(*PhysicalHashJoin); ok {
 				join.SetChild(1-join.InnerChildIdx, ch)
@@ -301,16 +305,16 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 		}
 	case *PhysicalHashJoin:
 		stack = append(stack, x.Children()[1-x.InnerChildIdx])
-		err := e.untwistPlanAndRemoveUnionAll(stack, forest)
+		forest, err = e.untwistPlanAndRemoveUnionAll(forest, stack...)
 		stack = stack[:len(stack)-1]
-		return errors.Trace(err)
+		return forest, errors.Trace(err)
 	case *PhysicalUnionAll:
 		for _, ch := range x.Children() {
 			stack = append(stack, ch)
-			err := e.untwistPlanAndRemoveUnionAll(stack, forest)
+			forest, err = e.untwistPlanAndRemoveUnionAll(forest, stack...)
 			stack = stack[:len(stack)-1]
 			if err != nil {
-				return errors.Trace(err)
+				return forest, errors.Trace(err)
 			}
 		}
 	case *PhysicalSequence:
@@ -327,27 +331,28 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 			}
 		}
 		stack = append(stack, x.Children()[lastChildIdx])
-		err := e.untwistPlanAndRemoveUnionAll(stack, forest)
+
+		forest, err = e.untwistPlanAndRemoveUnionAll(forest, stack...)
 		stack = stack[:len(stack)-1]
 		if err != nil {
-			return err
+			return forest, err
 		}
 	default:
 		if len(cur.Children()) != 1 {
-			return errors.Trace(errors.New("unexpected plan " + cur.ExplainID().String()))
+			return forest, errors.Trace(errors.New("unexpected plan " + cur.ExplainID().String()))
 		}
 		ch := cur.Children()[0]
 		stack = append(stack, ch)
-		err := e.untwistPlanAndRemoveUnionAll(stack, forest)
+		forest, err := e.untwistPlanAndRemoveUnionAll(forest, stack...)
 		stack = stack[:len(stack)-1]
-		return errors.Trace(err)
+		return forest, errors.Trace(err)
 	}
-	return nil
+	return forest, nil
 }
 
-func (e *mppTaskGenerator) buildFragments(s *PhysicalExchangeSender) ([]*Fragment, error) {
-	forest := make([]*PhysicalExchangeSender, 0, 1)
-	err := e.untwistPlanAndRemoveUnionAll([]base.PhysicalPlan{s}, &forest)
+func (e *mppTaskGenerator) buildFragments(s base.MPPSink) ([]*Fragment, error) {
+	forest := make([]base.MPPSink, 0, 1)
+	forest, err := e.untwistPlanAndRemoveUnionAll(forest, s)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -363,7 +368,7 @@ func (e *mppTaskGenerator) buildFragments(s *PhysicalExchangeSender) ([]*Fragmen
 	return fragments, nil
 }
 
-func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchangeSender) ([]*kv.MPPTask, []*Fragment, error) {
+func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s base.MPPSink) ([]*kv.MPPTask, []*Fragment, error) {
 	if cached, ok := e.cache[s.ID()]; ok {
 		return cached.tasks, cached.frags, nil
 	}
@@ -425,7 +430,7 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		if f.singleton && len(childrenTasks) > 0 {
 			childrenTasks = childrenTasks[0:1]
 		}
-		tasks = e.constructMPPTasksByChildrenTasks(childrenTasks, cteProducerTasks)
+		tasks = e.constructMPPTasksByChildrenTaskNodes(childrenTasks, cteProducerTasks)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)

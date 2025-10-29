@@ -137,6 +137,20 @@ func (p *PhysicalCTE) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) 
 		}
 		cloned.readerReceiver = clonedReceiver.(*PhysicalExchangeReceiver)
 	}
+	if p.sink != nil {
+		clonedSink, err := p.sink.Clone(newCtx)
+		if err != nil {
+			return nil, err
+		}
+		cloned.sink = clonedSink.(*PhysicalCTESink)
+	}
+	if p.source != nil {
+		clonedSource, err := p.source.Clone(newCtx)
+		if err != nil {
+			return nil, err
+		}
+		cloned.source = clonedSource.(*PhysicalCTESource)
+	}
 	return cloned, nil
 }
 

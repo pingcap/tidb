@@ -5,7 +5,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -21,6 +23,12 @@ type PhysicalCTESink struct {
 	// The DuplicatedSinkNum is used to indicate how many times the CTE sink has been copied.
 	DuplicatedSinkNum   uint32
 	DuplicatedSourceNum uint32
+}
+
+func (p PhysicalCTESink) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTESink {
+	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypePhysicalCTESink, &p, 0)
+	p.SetStats(stats)
+	return &p
 }
 
 func (p *PhysicalCTESink) GetCompressionMode() vardef.ExchangeCompressionMode {

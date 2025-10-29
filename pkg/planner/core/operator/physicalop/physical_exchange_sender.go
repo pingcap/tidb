@@ -33,12 +33,14 @@ import (
 // PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing.
 type PhysicalExchangeSender struct {
 	BasePhysicalPlan
-
+	// TargetTasks are the tasks that this fragment will send data to.
+	// Tasks held by itself will send data to the TargetTasks.
 	TargetTasks          []*kv.MPPTask
 	TargetCTEReaderTasks [][]*kv.MPPTask
 	ExchangeType         tipb.ExchangeType
 	HashCols             []*property.MPPPartitionColumn
-	// Tasks is the mpp task for current PhysicalExchangeSender.
+	// Tasks record actual tasks that this fragment has.
+	// It will tell which nodes this fragment is running on.
 	Tasks           []*kv.MPPTask
 	CompressionMode vardef.ExchangeCompressionMode
 }
