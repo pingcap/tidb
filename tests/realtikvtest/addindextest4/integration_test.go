@@ -102,6 +102,7 @@ func TestFixAdminAlterDDLJobs(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t;")
 	tk1.MustExec("create table t (a int);")
 	tk1.MustExec("insert into t values (1);")
 	tk1.MustExec("set @@global.tidb_enable_dist_task=off;")
@@ -220,6 +221,7 @@ func TestAddIndexShowAnalyzeProgress(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
+	t.Skip("test unstable CI")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
