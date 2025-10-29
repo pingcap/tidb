@@ -1493,7 +1493,9 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 		return true, false, false
 	case <-time.After(DefaultAnalyzeCheckInterval):
 		failpoint.Inject("mockAnalyzeTimeout", func(val failpoint.Value) {
-			cumulativeTimeout = time.Duration(val.(int)) * time.Millisecond
+			if v, ok := val.(int); ok {
+				cumulativeTimeout = time.Duration(v) * time.Millisecond
+			}
 		})
 		if start, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); ok {
 			if time.Since(start) > cumulativeTimeout {
