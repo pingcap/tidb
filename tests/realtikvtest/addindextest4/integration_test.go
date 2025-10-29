@@ -221,7 +221,6 @@ func TestAddIndexShowAnalyzeProgress(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
-	t.Skip("test unstable CI")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
