@@ -1240,11 +1240,11 @@ func (w *GCWorker) resolveLocks(
 	// Failpoint to override the batch size for faster test
 	loadKeyspacesBatchSize := uint32(loadAllKeyspacesForUnifiedGCBatchSize)
 	failpoint.Inject("overrideLoadKeyspacesBatchSize", func(val failpoint.Value) {
-		if v, ok := val.(int); ok {
-			loadKeyspacesBatchSize = uint32(v)
-		} else {
+		v, ok := val.(int)
+		if !ok {
 			panic(fmt.Sprintf("invalid argument for failpoint overrideLoadKeyspacesBatchSize: expected integer, got %T: %v", val, val))
 		}
+		loadKeyspacesBatchSize = uint32(v)
 	})
 
 	// Counter for tests to check how many batches was done during resolving locks.
