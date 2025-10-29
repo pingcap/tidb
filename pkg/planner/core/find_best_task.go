@@ -140,10 +140,12 @@ func enumeratePhysicalPlans4TaskHelper(
 	prop *property.PhysicalProperty,
 	addEnforcer bool,
 ) (base.Task, bool, error) {
+	var err error
 	var normalIterTask, normalPreferTask, hintTask = base.InvalidTask, base.InvalidTask, base.InvalidTask
 	initState := &enumerateState{}
 	_, baseLP, childLen, iteration, iterObj := prepareIterationDownElems(super)
 	childTasks := make([]base.Task, 0, childLen)
+
 	var fd *funcdep.FDSet
 	if addEnforcer && len(physicalPlans) != 0 {
 		switch logicalPlan := baseLP.Self().(type) {
@@ -153,7 +155,6 @@ func enumeratePhysicalPlans4TaskHelper(
 		}
 	}
 
-	var err error
 	for _, pp := range physicalPlans {
 		childTasks, err = iteration(iterObj, pp, childTasks, prop)
 		if err != nil {
@@ -221,10 +222,6 @@ func enumeratePhysicalPlans4TaskHelper(
 				normalIterTask = curTask
 			}
 		}
-	}
-
-	if err != nil {
-		return nil, false, err
 	}
 
 	returnedTask := base.InvalidTask
