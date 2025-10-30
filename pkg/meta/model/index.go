@@ -195,6 +195,8 @@ func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexC
 }
 
 // GetIdxChangingFieldType gets the field type of index column.
+// Since both old/new type may coexist in one column during modify column,
+// we need to get the correct type for index column.
 func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
 	if idxCol.UseChangingType && col.ChangingFieldType != nil {
 		return col.ChangingFieldType
