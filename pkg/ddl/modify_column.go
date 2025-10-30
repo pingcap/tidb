@@ -475,6 +475,7 @@ func rollbackModifyColumnJobWithIndexReorg(
 	for _, idx := range changingIdxInfos {
 		args.IndexIDs = append(args.IndexIDs, idx.ID)
 	}
+	args.IndexIDs = append(args.IndexIDs, getIngestTempIndexIDs(job, changingIdxInfos)...)
 	removeOldIndexes(tblInfo, changingIdxInfos)
 
 	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
@@ -1111,6 +1112,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
+			removedIdxIDs = append(removedIdxIDs, getIngestTempIndexIDs(job, changingIdxs)...)
 			analyzed := job.ReorgMeta.AnalyzeState == model.AnalyzeStateDone
 			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
 			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
@@ -1178,6 +1180,7 @@ func (w *worker) doModifyColumnIndexReorg(
 		for _, idx := range oldIdxInfos {
 			removedIdxIDs = append(removedIdxIDs, idx.ID)
 		}
+		removedIdxIDs = append(removedIdxIDs, getIngestTempIndexIDs(job, changingIdxInfos)...)
 		removeOldIndexes(tblInfo, oldIdxInfos)
 		oldCol.ChangingFieldType = nil
 		oldCol.DelFlag(mysql.PreventNullInsertFlag)
