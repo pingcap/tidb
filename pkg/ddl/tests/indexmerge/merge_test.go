@@ -172,7 +172,6 @@ func TestAddIndexMergeIndexUntouchedValue(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1, 'a', 'a')")
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
 	var checkErrs []error
 	var runInsert bool
