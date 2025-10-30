@@ -4123,7 +4123,7 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 		ColName:     model.ExtraPhysTblIDName,
 		OrigColName: model.ExtraPhysTblIDName,
 	}))
-	ds.TblCols = append(ds.TblCols, pidCol)
+	ds.AppendTableCol(pidCol)
 	return pidCol
 }
 
@@ -4600,6 +4600,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		Columns:                make([]*model.ColumnInfo, 0, countCnt),
 		PartitionNames:         tn.PartitionNames,
 		TblCols:                make([]*expression.Column, 0, countCnt),
+		TblColsByID:            make(map[int64]*expression.Column, countCnt),
 		PreferPartitions:       make(map[int][]ast.CIStr),
 		IS:                     b.is,
 		IsForUpdateRead:        b.isForUpdateRead,
@@ -4629,7 +4630,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			handleCols = util.NewIntHandleCols(newCol)
 		}
 		schema.Append(newCol)
-		ds.TblCols = append(ds.TblCols, newCol)
+		ds.AppendTableCol(newCol)
 	}
 	// We append an extra handle column to the schema when the handle
 	// column is not the primary key of "ds".
@@ -4648,7 +4649,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				ColName:     model.ExtraHandleName,
 				OrigColName: model.ExtraHandleName,
 			})
-			ds.TblCols = append(ds.TblCols, extraCol)
+			ds.AppendTableCol(extraCol)
 		}
 	}
 	ds.HandleCols = handleCols

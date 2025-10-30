@@ -420,7 +420,7 @@ func indexContainsOtherReorg(
 		if tblCol.ID == currentChangingCol.ID {
 			continue // ignore current changing column.
 		}
-		if tblCol.ChangeStateInfo != nil {
+		if idxCol.UseChangingType || tblCol.ChangeStateInfo != nil {
 			return true
 		}
 	}
@@ -475,13 +475,12 @@ func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.Inde
 	return indexInfos
 }
 
-func getRollbackIndexIDs(job *model.Job, tblInfo *model.TableInfo, colID int64) []int64 {
-	hasTempIndexes := job.ReorgMeta.ReorgTp.NeedMergeProcess()
+func getRelatedIndexIDs(tblInfo *model.TableInfo, colID int64, needTempIndex bool) []int64 {
 	var idxIDs []int64
 	for _, idx := range tblInfo.Indices {
 		if idx.HasColumnInIndexColumns(tblInfo, colID) {
 			idxIDs = append(idxIDs, idx.ID)
-			if hasTempIndexes {
+			if needTempIndex {
 				idxIDs = append(idxIDs, tablecodec.TempIndexPrefix|idx.ID)
 			}
 		}
@@ -925,11 +924,14 @@ func markOldIndexesRemoving(oldIdxs []*model.IndexInfo, changingIdxs []*model.In
 	}
 }
 
+// markOldObjectRemoving changes the names of the old and new indexes/columns to mark them as removing and public respectively.
 func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
-	publicName := newColName
-	removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
-	renameColumnTo(oldCol, oldIdxs, removingName)
-	renameColumnTo(changingCol, changingIdxs, publicName)
+	if oldCol.ID != changingCol.ID {
+		publicName := newColName
+		removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
+		renameColumnTo(oldCol, oldIdxs, removingName)
+		renameColumnTo(changingCol, changingIdxs, publicName)
+	}
 
 	markOldIndexesRemoving(oldIdxs, changingIdxs)
 }
@@ -960,7 +962,9 @@ func renameColumnTo(col *model.ColumnInfo, idxInfos []*model.IndexInfo, newName 
 }
 
 func updateObjectState(col *model.ColumnInfo, idxs []*model.IndexInfo, state model.SchemaState) {
-	col.State = state
+	if col != nil {
+		col.State = state
+	}
 	for _, idx := range idxs {
 		idx.State = state
 	}
@@ -1242,12 +1246,6 @@ func modifyColsFromNull2NotNull(
 	defer w.sessPool.Put(sctx)
 
 	skipCheck := false
-	failpoint.Inject("skipMockContextDoExec", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) {
-			skipCheck = true
-		}
-	})
 	if !skipCheck {
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
 		err = checkForNullValue(ctx, sctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newCol, cols...)

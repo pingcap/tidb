@@ -873,6 +873,10 @@ type SessionVars struct {
 	// LastCommitTS is the commit_ts of the last successful transaction in this session.
 	LastCommitTS uint64
 
+	// PrevTraceID stores the trace ID of the previous statement for chaining.
+	// This allows trace events to link statements together via prev_trace_id field.
+	PrevTraceID []byte
+
 	// TxnReadTS is used for staleness transaction, it provides next staleness transaction startTS.
 	TxnReadTS *TxnReadTS
 

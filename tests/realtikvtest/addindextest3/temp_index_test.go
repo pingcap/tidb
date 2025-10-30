@@ -30,6 +30,7 @@ func TestMergeTempIndexBasic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode=''")
 
 	testCases := []struct {
 		name          string

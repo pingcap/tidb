@@ -17,6 +17,7 @@ package metrics
 import (
 	"sync"
 
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	timermetrics "github.com/pingcap/tidb/pkg/timer/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -95,7 +96,7 @@ func InitMetrics() {
 	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
-	InitDistTaskMetrics()
+	dxfmetric.InitDistTaskMetrics()
 	InitResourceGroupMetrics()
 	InitGlobalSortMetrics()
 	InitInfoSchemaV2Metrics()
@@ -283,7 +284,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanReplayerTaskCounter)
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
-	prometheus.MustRegister(DistTaskUsedSlotsGauge)
+	dxfmetric.Register(prometheus.DefaultRegisterer)
+
 	prometheus.MustRegister(RunawayCheckerCounter)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageRate)
@@ -343,6 +345,18 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GlobalMemArbitratorRootPool)
 	prometheus.MustRegister(GlobalMemArbitratorEventCounter)
 	prometheus.MustRegister(GlobalMemArbitratorTaskExecCounter)
+}
+
+// Register registers custom collectors.
+func Register(cs ...prometheus.Collector) {
+	prometheus.MustRegister(cs...)
+}
+
+// Unregister unregisters custom collectors.
+func Unregister(cs ...prometheus.Collector) {
+	for _, c := range cs {
+		prometheus.Unregister(c)
+	}
 }
 
 var mode struct {

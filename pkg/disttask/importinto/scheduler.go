@@ -17,6 +17,7 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -51,6 +53,11 @@ import (
 )
 
 const (
+	// warningIndexCount is the threshold to log warning for too many indexes on
+	// the target table, it's known to be slow to import in this case.
+	// the value if chosen as most tables have less than 32 indexes, we can adjust
+	// it later if needed.
+	warningIndexCount      = 32
 	registerTaskTTL        = 10 * time.Minute
 	refreshTaskTTLInterval = 3 * time.Minute
 	registerTimeout        = 5 * time.Second
@@ -314,6 +321,9 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if err = sch.startJob(ctx, logger, taskMeta, jobStep); err != nil {
 			return nil, err
 		}
+		if importer.GetNumOfIndexGenKV(taskMeta.Plan.TableInfo) > warningIndexCount {
+			dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventTooManyIdx).Inc()
+		}
 	case proto.ImportStepMergeSort:
 		sortAndEncodeMeta, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
 		if err != nil {
@@ -391,6 +401,9 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	}
 
 	logger.Info("generate subtasks", zap.Int("subtask-count", len(metaBytes)))
+	if nextStep == proto.ImportStepMergeSort && len(metaBytes) > 0 {
+		dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventMergeSort).Inc()
+	}
 	return metaBytes, nil
 }
 
