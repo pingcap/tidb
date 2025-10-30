@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -44,14 +43,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -1067,12 +1064,20 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
-			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			if done {
-				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done || timedOut || failed {
+				if done {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				}
+				if timedOut {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
+				}
+				if failed {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
+				}
 				checkAndMarkNonRevertible(job)
 			}
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 			if tblInfo.TTLInfo != nil {
@@ -1276,12 +1281,20 @@ func (w *worker) doModifyColumnIndexReorg(
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
-			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			if done {
-				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done || timedOut || failed {
+				if done {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				}
+				if timedOut {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
+				}
+				if failed {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
+				}
 				checkAndMarkNonRevertible(job)
 			}
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 			oldTp := oldCol.FieldType
@@ -1357,7 +1370,7 @@ func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl
 		return true
 	}
 	logutil.DDLLogger().Info("skip analyze",
-		zap.Bool("tidb_enable_ddl_analyze", enableDDLAnalyze),
+		zap.Bool("tidb_stats_update_during_ddl", enableDDLAnalyze),
 		zap.Bool("is partitioned table", hasPartition),
 		zap.Int("affected indexes count", len(changingIdxes)),
 		zap.Int("tidb_analyze_version", analyzeVer))
@@ -1374,64 +1387,6 @@ func checkAndMarkNonRevertible(job *model.Job) {
 	// use the schema version generated once.
 	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
-	}
-}
-
-func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) bool {
-	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
-	if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.NeedAnalyze {
-		// If the job is a multi-schema-change job,
-		// we only analyze the table once after all schema changes are done.
-		return true
-	}
-	if doneCh == nil {
-		doneCh = make(chan struct{})
-		eg := util.NewErrorGroupWithRecover()
-		eg.Go(func() error {
-			sessCtx, err := w.sessPool.Get()
-			if err != nil {
-				return err
-			}
-			defer func() {
-				w.sessPool.Put(sessCtx)
-				close(doneCh)
-			}()
-			dbTable := fmt.Sprintf("`%s`.`%s`", dbName, tblName)
-
-			exec, ok := sessCtx.(sqlexec.RestrictedSQLExecutor)
-			if !ok {
-				return errors.Errorf("not restricted SQL executor: %T", sessCtx)
-			}
-			// internal sql may not init the analysis related variable correctly.
-			err = statsutil.UpdateSCtxVarsForStats(sessCtx)
-			if err != nil {
-				return err
-			}
-			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
-			if err != nil {
-				logutil.DDLLogger().Warn("analyze table failed",
-					zap.Int64("jobID", job.ID),
-					zap.String("db", dbName),
-					zap.String("table", tblName),
-					zap.Error(err),
-					zap.Stack("stack"))
-				// We can continue to finish the job even if analyze table failed.
-			}
-			return nil
-		})
-		w.ddlCtx.setAnalyzeDoneCh(job.ID, doneCh)
-	}
-	select {
-	case <-doneCh:
-		logutil.DDLLogger().Info("analyze table after create index done", zap.Int64("jobID", job.ID))
-		return true
-	case <-w.ctx.Done():
-		logutil.DDLLogger().Info("analyze table after create index context done",
-			zap.Int64("jobID", job.ID), zap.Error(w.ctx.Err()))
-		return true
-	case <-time.After(10 * time.Second):
-		logutil.DDLLogger().Info("analyze table after create index timeout check", zap.Int64("jobID", job.ID))
-		return false
 	}
 }
 
