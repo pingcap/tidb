@@ -739,9 +739,8 @@ func (c *Column) GetRaw(rowID int) []byte {
 func (c *Column) GetRawLength(rowID int) int {
 	if c.isFixed() {
 		return len(c.elemBuf)
-	} else {
-		return int(c.offsets[rowID+1] - c.offsets[rowID])
 	}
+	return int(c.offsets[rowID+1] - c.offsets[rowID])
 }
 
 // SetRaw sets the raw bytes for the rowIdx-th element.

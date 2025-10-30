@@ -328,7 +328,7 @@ func (b *rowTableBuilder) processOneRestoredChunk(chk *chunk.Chunk, hashJoinCtx 
 	rowNum := chk.NumRows()
 	for i := range rowNum {
 		if i%200 == 0 {
-			err := checkSQLKiller(&hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringRestoreBuild")
+			err = checkSQLKiller(&hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringRestoreBuild")
 			if err != nil {
 				return err
 			}
