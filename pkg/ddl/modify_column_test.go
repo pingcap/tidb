@@ -1297,7 +1297,7 @@ func TestModifyColumnWithDifferentCollation(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(_ *model.Job) {
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
-		// Test data consistency check during reorg.
+		// Test data consistency for insert/delete check during reorg.
 		err := tk2.ExecToErr(fmt.Sprintf("insert into t1 (c1, c2) values ('%d', 'space%d   ')", insertIdx, insertIdx))
 		if err != nil {
 			require.Contains(t, err.Error(), "data truncation error during modify column")
