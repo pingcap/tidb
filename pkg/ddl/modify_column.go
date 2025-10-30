@@ -1173,6 +1173,8 @@ func (w *worker) doModifyColumnIndexReorg(
 		for _, idx := range allIdxs {
 			if strings.HasPrefix(idx.Name.O, removingObjPrefix) {
 				oldIdxInfos = append(oldIdxInfos, idx)
+			} else {
+				changingIdxInfos = append(changingIdxInfos, idx)
 			}
 		}
 	} else {
