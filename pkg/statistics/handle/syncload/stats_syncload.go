@@ -17,6 +17,7 @@ package syncload
 import (
 	stderrors "errors"
 	"math/rand"
+	"reflect"
 	"runtime"
 	"sync"
 	"time"
@@ -177,31 +178,63 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	}
 	timer := time.NewTimer(sc.StatsLoad.Timeout)
 	defer timer.Stop()
-	for _, resultCh := range sc.StatsLoad.ResultCh {
-		select {
-		case result, ok := <-resultCh:
-			metrics.SyncLoadCounter.Inc()
-			if !ok {
-				return errors.New("sync load stats channel closed unexpectedly")
-			}
-			// this error is from statsSyncLoad.SendLoadRequests which start to task and send task into worker,
-			// not the stats loading error
-			if result.Err != nil {
-				errorMsgs = append(errorMsgs, result.Err.Error())
-			} else {
-				val := result.Val.(stmtctx.StatsLoadResult)
-				// this error is from the stats loading error
-				if val.HasError() {
-					errorMsgs = append(errorMsgs, val.ErrorMsg())
-				}
-				delete(resultCheckMap, val.Item)
-			}
-		case <-timer.C:
+
+	// Build select cases for concurrent waiting on all result channels
+	numChannels := len(sc.StatsLoad.ResultCh)
+	cases := make([]reflect.SelectCase, numChannels+1)
+
+	// Add all result channels to select cases
+	for i, resultCh := range sc.StatsLoad.ResultCh {
+		cases[i] = reflect.SelectCase{
+			Dir:  reflect.SelectRecv,
+			Chan: reflect.ValueOf(resultCh),
+		}
+	}
+
+	// Add timeout channel as the last case
+	cases[numChannels] = reflect.SelectCase{
+		Dir:  reflect.SelectRecv,
+		Chan: reflect.ValueOf(timer.C),
+	}
+
+	// Wait for all result channels concurrently
+	remaining := numChannels
+	for remaining > 0 {
+		chosen, value, ok := reflect.Select(cases)
+
+		// Check if timeout occurred
+		if chosen == numChannels {
 			metrics.SyncLoadCounter.Inc()
 			metrics.SyncLoadTimeoutCounter.Inc()
 			return errors.New("sync load stats timeout")
 		}
+
+		// Process result from a result channel
+		metrics.SyncLoadCounter.Inc()
+		if !ok {
+			return errors.New("sync load stats channel closed unexpectedly")
+		}
+
+		result := value.Interface().(singleflight.Result)
+		// this error is from statsSyncLoad.SendLoadRequests which start to task and send task into worker,
+		// not the stats loading error
+		if result.Err != nil {
+			errorMsgs = append(errorMsgs, result.Err.Error())
+		} else {
+			val := result.Val.(stmtctx.StatsLoadResult)
+			// this error is from the stats loading error
+			if val.HasError() {
+				errorMsgs = append(errorMsgs, val.ErrorMsg())
+			}
+			delete(resultCheckMap, val.Item)
+		}
+
+		// Mark this channel as done by setting it to nil
+		// reflect.Select will ignore nil channels
+		cases[chosen].Chan = reflect.Value{}
+		remaining--
 	}
+
 	if len(resultCheckMap) == 0 {
 		metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
 		return nil
