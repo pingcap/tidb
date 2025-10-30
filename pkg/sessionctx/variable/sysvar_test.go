@@ -1628,9 +1628,9 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 			vardef.DefTiDBTxnAssertionLevel,
 			func() string {
 				if kerneltype.IsNextGen() {
-					return vardef.AssertionStrictStr
+					return vardef.NormalizeTxnAssertionLevel("STRICT")
 				}
-				return vardef.AssertionFastStr
+				return vardef.NormalizeTxnAssertionLevel("FAST")
 			}(),
 		},
 		{
@@ -1945,4 +1945,62 @@ func TestTiDBOptSelectivityFactor(t *testing.T) {
 	require.NoError(t, err)
 	warn := vars.StmtCtx.GetWarnings()[0].Err
 	require.Equal(t, "[variable:1292]Truncated incorrect tidb_opt_selectivity_factor value: '1.1'", warn.Error())
+}
+
+func TestTxnAssertionLevelPossibleValues(t *testing.T) {
+	sv := GetSysVar(vardef.TiDBTxnAssertionLevel)
+	require.NotNil(t, sv)
+	require.ElementsMatch(t, vardef.TxnAssertionLevelValues(), sv.PossibleValues)
+}
+
+func TestNormalizeTxnAssertionLevelDefaultValue(t *testing.T) {
+	wantOff := vardef.NormalizeTxnAssertionLevel("off")
+
+	cases := []string{"", "   ", "weird", "FASTTT", "strictx"}
+	for _, in := range cases {
+		if got := vardef.NormalizeTxnAssertionLevel(in); got != wantOff {
+			t.Errorf("Normalize(%q) = %q, want %q", in, got, wantOff)
+		}
+	}
+}
+
+func TestTxnAssertionLevelSetSessionAffectsVars(t *testing.T) {
+	sv := &SessionVars{} // minimal: SetSession only writes AssertionLevel
+
+	// STRICT
+	err := GetSysVar(vardef.TiDBTxnAssertionLevel).SetSession(sv, "STRICT")
+	require.NoError(t, err)
+	require.Equal(t, AssertionLevelStrict, sv.AssertionLevel)
+
+	// FAST
+	err = GetSysVar(vardef.TiDBTxnAssertionLevel).SetSession(sv, "FAST")
+	require.NoError(t, err)
+	require.Equal(t, AssertionLevelFast, sv.AssertionLevel)
+
+	// OFF
+	err = GetSysVar(vardef.TiDBTxnAssertionLevel).SetSession(sv, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, AssertionLevelOff, sv.AssertionLevel)
+}
+
+func TestTxnAssertionLevelDefaultsByKernel(t *testing.T) {
+	// Use stub to test both bool values of isNextGen
+	orig := isNextGen
+	t.Cleanup(func() { isNextGen = orig })
+
+	// NextGen = true → uses vardef.GetDefaultTxnAssertionLevel()
+	isNextGen = func() bool { return true }
+	got := GlobalSystemVariableInitialValue(vardef.TiDBTxnAssertionLevel, "")
+	want := vardef.GetDefaultTxnAssertionLevel()
+	if got != want {
+		t.Fatalf("NextGen=true: TiDBTxnAssertionLevel got %q, want %q", got, want)
+	}
+
+	// NextGen = false → Normalize("FAST")
+	isNextGen = func() bool { return false }
+	got = GlobalSystemVariableInitialValue(vardef.TiDBTxnAssertionLevel, "")
+	want = vardef.NormalizeTxnAssertionLevel("FAST")
+	if got != want {
+		t.Fatalf("NextGen=false: TiDBTxnAssertionLevel got %q, want %q", got, want)
+	}
 }

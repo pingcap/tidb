@@ -1562,7 +1562,7 @@ const (
 	DefSysdateIsNow                                   = false
 	DefTiDBEnableParallelHashaggSpill                 = true
 	DefTiDBEnableMutationChecker                      = false
-	DefTiDBTxnAssertionLevel                          = AssertionOffStr
+	DefTiDBTxnAssertionLevel                          = assertionOffStr
 	DefTiDBIgnorePreparedCacheCloseStmt               = false
 	DefTiDBBatchPendingTiFlashCount                   = 4000
 	DefRCReadCheckTS                                  = false
@@ -2020,14 +2020,14 @@ const (
 	// Marker is a special log redact behavior
 	Marker = "MARKER"
 
-	// AssertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
+	// assertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
 	// even if the performance might be slowed down.
-	AssertionStrictStr = "STRICT"
-	// AssertionFastStr is a choice of variable TiDBTxnAssertionLevel that means assertions that doesn't affect
+	assertionStrictStr = "STRICT"
+	// assertionFastStr is a choice of variable TiDBTxnAssertionLevel that means assertions that doesn't affect
 	// performance should be performed.
-	AssertionFastStr = "FAST"
-	// AssertionOffStr is a choice of variable TiDBTxnAssertionLevel that means no assertion should be performed.
-	AssertionOffStr = "OFF"
+	assertionFastStr = "FAST"
+	// assertionOffStr is a choice of variable TiDBTxnAssertionLevel that means no assertion should be performed.
+	assertionOffStr = "OFF"
 	// OOMActionCancel constants represents the valid action configurations for OOMAction "CANCEL".
 	OOMActionCancel = "CANCEL"
 	// OOMActionLog constants represents the valid action configurations for OOMAction "LOG".
@@ -2212,7 +2212,28 @@ func SetEnableMDL(enabled bool) {
 // For classic, we use off to maintain compatibility.
 func GetDefaultTxnAssertionLevel() string {
 	if kerneltype.IsNextGen() {
-		return AssertionStrictStr
+		return assertionStrictStr
 	}
-	return AssertionOffStr
+	return assertionOffStr
+}
+
+// TxnAssertionLevelValues returns the allowed values for the
+// tidb_txn_assertion_level system variable in canonical form.
+func TxnAssertionLevelValues() []string {
+	return []string{assertionOffStr, assertionFastStr, assertionStrictStr}
+}
+
+// NormalizeTxnAssertionLevel canonicalizes a user-provided value of
+// tidb_txn_assertion_level to one of "OFF", "FAST", or "STRICT".
+// Invalid/empty values map to "OFF".
+func NormalizeTxnAssertionLevel(opt string) string {
+	s := strings.ToUpper(strings.TrimSpace(opt))
+	switch s {
+	case assertionStrictStr:
+		return assertionStrictStr
+	case assertionFastStr:
+		return assertionFastStr
+	default:
+		return assertionOffStr
+	}
 }
