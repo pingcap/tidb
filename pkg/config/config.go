@@ -335,6 +335,9 @@ type Config struct {
 
 	// MeteringConfigURI is the URI for metering configuration.
 	MeteringStorageURI string `toml:"metering-storage-uri" json:"metering-storage-uri"`
+
+	// CSE contains columnar-store related configuration.
+	CSE CSE `toml:"cse" json:"cse"`
 }
 
 // RUV2Config is the configuration for RU v2 weight calculation.
@@ -386,6 +389,32 @@ func DefaultRUV2Config() RUV2Config {
 		SessionParserTotal:      0.19230499,
 		TxnCnt:                  0.03013709,
 	}
+}
+
+// CSE is the config collection for the cloud storage engine.
+type CSE struct {
+	// EnableRegionClient indicates whether to enable region client.
+	EnableRegionClient     bool          `toml:"enable-region-client" json:"enable-region-client"`
+	ColumnarStoreType      string        `toml:"columnar-store-type" json:"columnar-store-type"`
+	ColumnarCollectTimeout time.Duration `toml:"columnar-collect-timeout" json:"columnar-collect-timeout"`
+}
+
+// IsTiFlashEnabled checks if TiFlash is enabled
+func (c *CSE) IsTiFlashEnabled() bool {
+	return c.ColumnarStoreType == "tiflash" || c.ColumnarStoreType == "both"
+}
+
+// IsColumnarStoreEnabled checks if Columnar store is enabled
+func (c *CSE) IsColumnarStoreEnabled() bool {
+	return c.ColumnarStoreType == "columnar" || c.ColumnarStoreType == "both"
+}
+
+// Valid checks if the Columnar store type is valid
+func (c *CSE) Valid() bool {
+	if c.ColumnarStoreType != "tiflash" && c.ColumnarStoreType != "columnar" && c.ColumnarStoreType != "both" {
+		return false
+	}
+	return true
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -1199,6 +1228,11 @@ var defaultConf = Config{
 	TiDBEnableExitCheck:                  false,
 	InMemSlowQueryTopNNum:                30,
 	InMemSlowQueryRecentNum:              500,
+	CSE: CSE{
+		EnableRegionClient:     false,
+		ColumnarStoreType:      "tiflash",
+		ColumnarCollectTimeout: 5 * time.Second,
+	},
 }
 
 var (
@@ -1535,6 +1569,9 @@ func (c *Config) Valid() error {
 		}
 	}
 
+	if !c.CSE.Valid() {
+		return fmt.Errorf("invalid columnar-store-type=%s, valid types=%v", c.CSE.ColumnarStoreType, []string{"tiflash", "columnar", "both"})
+	}
 	// test log level
 	l := zap.NewAtomicLevel()
 	return l.UnmarshalText([]byte(c.Log.Level))

@@ -20,7 +20,9 @@ import (
 	"cmp"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"strconv"
@@ -951,4 +953,48 @@ func SyncTableSchemaToTiFlash(statusAddress string, keyspaceID tikv.KeyspaceID, 
 		logutil.BgLogger().Error("close body failed", zap.Error(err))
 	}
 	return nil
+}
+
+// ColumnarStatusResp is the response from the TiKV's status API
+type ColumnarStatusResp struct {
+	Ready            uint `json:"ready"`
+	VectorIndexReady uint `json:"vector-index-ready"`
+	Total            uint `json:"total"`
+}
+
+// CollectColumnarStatus collects the columnar status from the TiKV's status API
+func CollectColumnarStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, indexID *int64) (ColumnarStatusResp, error) {
+	statURL := fmt.Sprintf("%s://%s/kvengine/columnar_status?keyspace_id=%d&table_id=%d",
+		util.InternalHTTPSchema(),
+		statusAddress,
+		keyspaceID,
+		tableID,
+	)
+	if indexID != nil {
+		statURL += fmt.Sprintf("&index_id=%d", *indexID)
+	}
+	var columnarStatus ColumnarStatusResp
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
+		}
+	}()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+	err = json.Unmarshal(body, &columnarStatus)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+	if columnarStatus.Ready != columnarStatus.Total {
+		logutil.BgLogger().Info("columnar status not ready", zap.Uint("ready", columnarStatus.Ready), zap.Uint("total", columnarStatus.Total))
+	}
+
+	return columnarStatus, nil
 }

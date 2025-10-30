@@ -58,3 +58,9 @@ func IsTiFlashWriteHTTPResp(store *pdhttp.MetaStore) bool {
 	}
 	return false
 }
+
+// IsTiFlashWriteNodeHTTPResp is kept for compatibility with callers that use
+// the old helper name.
+func IsTiFlashWriteNodeHTTPResp(store *pdhttp.MetaStore) bool {
+	return IsTiFlashWriteHTTPResp(store)
+}

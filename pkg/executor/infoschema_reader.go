@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -87,6 +88,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client/http"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
@@ -2797,6 +2799,14 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 		rows          [][]types.Datum
 		tiFlashStores map[int64]pd.StoreInfo
 	)
+	var tikvStores *map[int64]pdhttp.StoreInfo
+	enableColumnarStore := config.GetGlobalConfig().CSE.IsColumnarStoreEnabled()
+	if enableColumnarStore {
+		tikvStores = &map[int64]pdhttp.StoreInfo{}
+	} else {
+		tikvStores = nil
+	}
+	var globalCircuitBreakerTriggered bool
 	rs := e.is.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	for _, schema := range rs {
 		for _, tbl := range schema.TableInfos {
@@ -2804,20 +2814,44 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 				continue
 			}
 			var progress float64
-			if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-				for _, p := range pi.Definitions {
-					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
-					if err != nil {
-						logutil.BgLogger().Warn("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
-					}
-					progress += progressOfPartition
-				}
-				progress = progress / float64(len(pi.Definitions))
+			circuitBreakerProgress := 1.0
+			if !tbl.TiFlashReplica.Available {
+				circuitBreakerProgress = 0.0
+			}
+			// If the circuit breaker is triggered from previous table, set progress of this table directly.
+			if globalCircuitBreakerTriggered {
+				logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
+				progress = circuitBreakerProgress
 			} else {
-				var err error
-				progress, err = infosync.MustGetTiFlashProgress(tbl.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
-				if err != nil {
-					logutil.BgLogger().Warn("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
+				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+					for _, p := range pi.Definitions {
+						progressOfPartition, circuitBreakerTriggered, err := infosync.MustGetTiFlashProgressWithCircuitBreaker(p.ID, tbl.TiFlashReplica.Count, &tiFlashStores, tikvStores)
+						if err != nil {
+							logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
+						}
+						progress += progressOfPartition
+						if circuitBreakerTriggered {
+							globalCircuitBreakerTriggered = true
+							// If circuit breaker is triggered, break the loop for partitions.
+							break
+						}
+					}
+					if globalCircuitBreakerTriggered {
+						progress = circuitBreakerProgress
+						logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
+					} else {
+						progress = progress / float64(len(pi.Definitions))
+					}
+				} else {
+					var err error
+					progress, globalCircuitBreakerTriggered, err = infosync.MustGetTiFlashProgressWithCircuitBreaker(tbl.ID, tbl.TiFlashReplica.Count, &tiFlashStores, tikvStores)
+					if err != nil {
+						logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
+					}
+					if globalCircuitBreakerTriggered {
+						logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
+						progress = circuitBreakerProgress
+					}
 				}
 			}
 			progressString := types.TruncateFloatToString(progress, 2)

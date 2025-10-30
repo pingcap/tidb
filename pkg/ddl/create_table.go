@@ -598,6 +598,31 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 	return nil
 }
 
+func setTableDefaultReplicaNumForLocalIndex(store kv.Storage, tblInfo *model.TableInfo) error {
+	tiflashEnabled := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
+	if !tiflashEnabled {
+		return nil
+	}
+	replicas, err := infoschema.GetTiFlashStoreCount(store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if replicas == 0 {
+		return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("columnar store (TiFlash) must be deployed in the cluster in order to use columnar index like vector or fulltext"))
+	}
+
+	// Always set the TiFlashReplicaInfo.count to 1 which is default.
+	tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:          1,
+		LocationLabels: make([]string, 0),
+	}
+	err = infosync.ConfigureTiFlashPDForTable(tblInfo.ID, 1, &tblInfo.TiFlashReplica.LocationLabels)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tblInfo *model.TableInfo) error {
 	var hasColumnarIndex bool
 	for _, idx := range tblInfo.Indices {
@@ -617,19 +642,8 @@ func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, 
 	}
 
 	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
-		replicas, err := infoschema.GetTiFlashStoreCount(store)
-		if err != nil {
+		if err := setTableDefaultReplicaNumForLocalIndex(store, tblInfo); err != nil {
 			return errors.Trace(err)
-		}
-		if replicas == 0 {
-			return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
-		}
-
-		// Always try to set to 1 as the default replica count.
-		defaultReplicas := uint64(1)
-		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-			Count:          defaultReplicas,
-			LocationLabels: make([]string, 0),
 		}
 	}
 

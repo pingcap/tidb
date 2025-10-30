@@ -655,7 +655,7 @@ func (rc *SnapClient) registerWaitTiFlashReady(
 			var progress float64
 			if pi := tbl.Table.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
 				for _, p := range pi.Definitions {
-					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores, nil)
 					if err != nil {
 						log.Warn("failed to get progress for tiflash partition replica, retry it",
 							zap.Int64("tableID", tbl.Table.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
@@ -667,7 +667,7 @@ func (rc *SnapClient) registerWaitTiFlashReady(
 				progress = progress / float64(len(pi.Definitions))
 			} else {
 				var err error
-				progress, err = infosync.MustGetTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+				progress, err = infosync.MustGetTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores, nil)
 				if err != nil {
 					log.Warn("failed to get progress for tiflash replica, retry it",
 						zap.Int64("tableID", tbl.Table.ID), zap.Error(err))
