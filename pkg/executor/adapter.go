@@ -162,6 +162,7 @@ func (a *fastPointGetRecordSet) Close() error {
 	if a.executor != nil {
 		err = exec.Close(a.executor)
 		a.executor = nil
+		a.sctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
 	}
 	return err
 }
