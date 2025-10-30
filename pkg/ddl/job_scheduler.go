@@ -552,7 +552,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 // transitOneJobStepAndWaitSync runs one step of the DDL job, persist it and
 // waits for other TiDB node to synchronize.
 func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobContext, jobW *model.JobW) error {
-	failpoint.InjectCall("beforeRunOneJobStep")
+	failpoint.InjectCall("beforeRunOneJobStep", jobW.Job)
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it
 	// before run to maintain the 2-version invariant.

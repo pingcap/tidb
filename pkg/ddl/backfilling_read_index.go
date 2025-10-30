@@ -71,7 +71,7 @@ func newReadIndexExecutor(
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	jc *ReorgContext,
-	bcGetter func(context.Context) (ingest.BackendCtx, error),
+	bcGetter func(context.Context, bool) (ingest.BackendCtx, error),
 	cloudStorageURI string,
 	avgRowSize int,
 ) (r *readIndexExecutor, err error) {
@@ -89,11 +89,20 @@ func newReadIndexExecutor(
 		r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
 		ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
 	}
-	r.bc, err = bcGetter(ctx)
+	r.bc, err = bcGetter(ctx, hasUniqueIndex(indexes))
 	if err != nil {
 		return nil, err
 	}
 	return r, nil
+}
+
+func hasUniqueIndex(indexes []*model.IndexInfo) bool {
+	for _, idx := range indexes {
+		if idx.Unique {
+			return true
+		}
+	}
+	return false
 }
 
 func (*readIndexExecutor) Init(_ context.Context) error {

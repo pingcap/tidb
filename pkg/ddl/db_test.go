@@ -528,7 +528,7 @@ func TestIssue60047(t *testing.T) {
 
 	// parallel execute `insert ... on duplicate key update` and `alter table ... add column after ...`
 	var err error
-	hookFunc := func() {
+	hookFunc := func(job *model.Job) {
 		tk1 := testkit.NewTestKit(t, store)
 		tk1.MustExec("use test")
 		val := 30 + rand.Intn(60)

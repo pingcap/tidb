@@ -674,7 +674,7 @@ func getActualEndKey(
 		// and IndexMergeTmpWorker should still be finished in a bounded time.
 		return rangeEnd
 	}
-	if bfTp == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+	if bfTp == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
 		// Ingest worker uses coprocessor to read table data. It is fast enough,
 		// we don't need to get the actual end key of this range.
 		return rangeEnd
@@ -1021,7 +1021,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(reorgInfo.Job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
 		}
 	})
-	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
 		return dc.runAddIndexInLocalIngestMode(ctx, sessPool, t, reorgInfo)
 	}
 

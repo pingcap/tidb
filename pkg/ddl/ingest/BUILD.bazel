@@ -45,6 +45,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/dbterror",
         "//pkg/util/generic",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/size",
@@ -75,7 +76,7 @@ go_test(
     embed = [":ingest"],
     flaky = True,
     race = "on",
-    shard_count = 24,
+    shard_count = 26,
     deps = [
         "//pkg/config",
         "//pkg/ddl/ingest/testutil",

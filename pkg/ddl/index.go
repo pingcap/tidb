@@ -567,7 +567,7 @@ func onAlterIndexVisibility(jobCtx *jobContext, job *model.Job) (ver int64, _ er
 
 func setIndexVisibility(tblInfo *model.TableInfo, name pmodel.CIStr, invisible bool) {
 	for _, idx := range tblInfo.Indices {
-		if idx.Name.L == name.L || (isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == name.O) {
+		if idx.Name.L == name.L || (isTempIndex(idx, tblInfo) && getChangingIndexOriginName(idx) == name.O) {
 			idx.Invisible = invisible
 		}
 	}
@@ -987,21 +987,10 @@ SwitchIndexState:
 	switch allIndexInfos[0].State {
 	case model.StateNone:
 		// none -> delete only
-		var reorgTp model.ReorgType
-		reorgTp, err = pickBackfillType(job)
+		err = initForReorgIndexes(w, job, allIndexInfos)
 		if err != nil {
-			if !isRetryableJobError(err, job.ErrorCount) {
-				job.State = model.JobStateCancelled
-			}
+			job.State = model.JobStateCancelled
 			return ver, err
-		}
-		loadCloudStorageURI(w, job)
-		if reorgTp.NeedMergeProcess() {
-			// Increase telemetryAddIndexIngestUsage
-			telemetryAddIndexIngestUsage.Inc()
-			for _, indexInfo := range allIndexInfos {
-				indexInfo.BackfillState = model.BackfillStateRunning
-			}
 		}
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateDeleteOnly
@@ -1051,80 +1040,113 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		var done bool
-		if job.MultiSchemaInfo != nil {
-			done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, jobCtx, job, tbl, allIndexInfos)
-		} else {
+		switch job.ReorgMeta.AnalyzeState {
+		case model.AnalyzeStateNone:
+			// reorg the index data.
+			var done bool
 			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
-		}
-		if !done {
-			return ver, err
-		}
-
-		// Set column index flag.
-		for _, indexInfo := range allIndexInfos {
-			AddIndexColumnFlag(tblInfo, indexInfo)
-			if isPK {
-				if err = UpdateColsNull2NotNull(tblInfo, indexInfo); err != nil {
-					return ver, errors.Trace(err)
-				}
+			if !done {
+				return ver, err
 			}
-			indexInfo.State = model.StatePublic
-		}
-
-		// Inject the failpoint to prevent the progress of index creation.
-		failpoint.Inject("create-index-stuck-before-public", func(v failpoint.Value) {
-			if sigFile, ok := v.(string); ok {
-				for {
-					time.Sleep(1 * time.Second)
-					if _, err := os.Stat(sigFile); err != nil {
-						if os.IsNotExist(err) {
-							continue
-						}
-						failpoint.Return(ver, errors.Trace(err))
+			if checkAnalyzeNecessary(job, allIndexInfos, tblInfo) {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+			} else {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateRunning:
+			// after all old index data are reorged. re-analyze it.
+			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+			// Set column index flag.
+			for _, indexInfo := range allIndexInfos {
+				AddIndexColumnFlag(tblInfo, indexInfo)
+				if isPK {
+					if err = UpdateColsNull2NotNull(tblInfo, indexInfo); err != nil {
+						return ver, errors.Trace(err)
 					}
-					break
 				}
+				indexInfo.State = model.StatePublic
 			}
-		})
 
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StatePublic)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		a := &model.ModifyIndexArgs{
-			PartitionIDs: getPartitionIDs(tbl.Meta()),
-			OpType:       model.OpAddIndex,
-		}
-		for _, indexInfo := range allIndexInfos {
-			a.IndexArgs = append(a.IndexArgs, &model.IndexArg{
-				IndexID:  indexInfo.ID,
-				IfExist:  false,
-				IsGlobal: indexInfo.Global,
+			// Inject the failpoint to prevent the progress of index creation.
+			failpoint.Inject("create-index-stuck-before-public", func(v failpoint.Value) {
+				if sigFile, ok := v.(string); ok {
+					for {
+						time.Sleep(1 * time.Second)
+						if _, err := os.Stat(sigFile); err != nil {
+							if os.IsNotExist(err) {
+								continue
+							}
+							failpoint.Return(ver, errors.Trace(err))
+						}
+						break
+					}
+				}
 			})
-		}
-		job.FillFinishedArgs(a)
 
-		addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos)
-		err2 := asyncNotifyEvent(jobCtx, addIndexEvent, job, noSubJob, w.sess)
-		if err2 != nil {
-			return ver, errors.Trace(err2)
-		}
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StatePublic)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			ingest.LitBackCtxMgr.Unregister(job.ID)
+			a := &model.ModifyIndexArgs{
+				PartitionIDs: getPartitionIDs(tbl.Meta()),
+				OpType:       model.OpAddIndex,
+			}
+			for _, indexInfo := range allIndexInfos {
+				a.IndexArgs = append(a.IndexArgs, &model.IndexArg{
+					IndexID:  indexInfo.ID,
+					IfExist:  false,
+					IsGlobal: indexInfo.Global,
+				})
+			}
+			job.FillFinishedArgs(a)
+
+			analyzed := job.ReorgMeta.AnalyzeState == model.AnalyzeStateDone
+			addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos, analyzed)
+			err2 := asyncNotifyEvent(jobCtx, addIndexEvent, job, noSubJob, w.sess)
+			if err2 != nil {
+				return ver, errors.Trace(err2)
+			}
+
+			// Finish this job.
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
+				ingest.LitBackCtxMgr.Unregister(job.ID)
+			}
+			logutil.DDLLogger().Info("run add index job done",
+				zap.String("charset", job.Charset),
+				zap.String("collation", job.Collate))
 		}
-		logutil.DDLLogger().Info("run add index job done",
-			zap.String("charset", job.Charset),
-			zap.String("collation", job.Collate))
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", allIndexInfos[0].State)
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo) error {
+	if len(idxInfos) == 0 {
+		return nil
+	}
+	reorgTp, err := pickBackfillType(job)
+	if err != nil {
+		return err
+	}
+	loadCloudStorageURI(w, job)
+	if reorgTp.NeedMergeProcess() {
+		// Increase telemetryAddIndexIngestUsage
+		telemetryAddIndexIngestUsage.Inc()
+		for _, indexInfo := range idxInfos {
+			indexInfo.BackfillState = model.BackfillStateRunning
+		}
+	}
+	return nil
 }
 
 func checkIfTableReorgWorkCanSkip(
@@ -1286,16 +1308,16 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 	}
 	if ingest.LitInitialized {
 		if job.ReorgMeta.UseCloudStorage {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			return model.ReorgTypeLitMerge, nil
+			job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
+			return model.ReorgTypeIngest, nil
 		}
 		available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
 		if err != nil {
 			return model.ReorgTypeNone, err
 		}
 		if available {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			return model.ReorgTypeLitMerge, nil
+			job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
+			return model.ReorgTypeIngest, nil
 		}
 	}
 	// The lightning environment is unavailable, but we can still use the txn-merge backfill.
@@ -1309,22 +1331,6 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
 	jc.cloudStorageURI = variable.CloudStorageURI.Load()
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
-}
-
-func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
-	if job.MultiSchemaInfo.Revertible {
-		done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
-		if done {
-			job.MarkNonRevertible()
-			if err == nil {
-				ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
-			}
-		}
-		// We need another round to wait for all the others sub-jobs to finish.
-		return false, ver, err
-	}
-	return true, ver, err
 }
 
 func doReorgWorkForCreateIndex(
@@ -1355,10 +1361,10 @@ func doReorgWorkForCreateIndex(
 		if !skipReorg {
 			logutil.DDLLogger().Info("index backfill state running",
 				zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
-				zap.Bool("ingest mode", reorgTp == model.ReorgTypeLitMerge),
+				zap.Bool("ingest mode", reorgTp == model.ReorgTypeIngest),
 				zap.String("index", allIndexInfos[0].Name.O))
 			switch reorgTp {
-			case model.ReorgTypeLitMerge:
+			case model.ReorgTypeIngest:
 				if job.ReorgMeta.IsDistReorg {
 					done, ver, err = runIngestReorgJobDist(w, jobCtx, job, tbl, allIndexInfos)
 				} else {
@@ -1396,7 +1402,7 @@ func doReorgWorkForCreateIndex(
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateMerging
 		}
-		if reorgTp == model.ReorgTypeLitMerge {
+		if reorgTp == model.ReorgTypeIngest {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
 		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.
@@ -1418,7 +1424,8 @@ func doReorgWorkForCreateIndex(
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
 		}
-		return true, ver, err
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+		return true, ver, errors.Trace(err)
 	default:
 		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", allIndexInfos[0].BackfillState)
 	}
@@ -2417,7 +2424,7 @@ func (w *worker) addTableIndex(
 ) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
 			err := w.executeDistTask(ctx, t, reorgInfo)
 			if err != nil {
 				return err
@@ -3154,7 +3161,7 @@ func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName pmodel.CIStr) 
 	var normalIdxInfos, tempIdxInfos []changingIndex
 	for _, idxInfo := range tblInfo.Indices {
 		if pos := findIdxCol(idxInfo, colName); pos != -1 {
-			isTemp := isTempIdxInfo(idxInfo, tblInfo)
+			isTemp := isTempIndex(idxInfo, tblInfo)
 			r := changingIndex{IndexInfo: idxInfo, Offset: pos, isTemp: isTemp}
 			if isTemp {
 				tempIdxInfos = append(tempIdxInfos, r)
@@ -3179,7 +3186,18 @@ func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName pmodel.CIStr) 
 	return result
 }
 
-func isTempIdxInfo(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
+// isColumnarIndexColumn checks if any index contains the given column is a columnar index.
+func isColumnarIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool {
+	indexesToChange := FindRelatedIndexesToChange(tblInfo, col.Name)
+	for _, idx := range indexesToChange {
+		if idx.IndexInfo.VectorInfo != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func isTempIndex(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
 	for _, idxCol := range idxInfo.Columns {
 		if tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil {
 			return true
@@ -3201,7 +3219,9 @@ func renameIndexes(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
 	for _, idx := range tblInfo.Indices {
 		if idx.Name.L == from.L {
 			idx.Name = to
-		} else if isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == from.O {
+		} else if isTempIndex(idx, tblInfo) &&
+			(getChangingIndexOriginName(idx) == from.O ||
+				getRemovingObjOriginName(idx.Name.O) == from.O) {
 			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
 			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
 		}

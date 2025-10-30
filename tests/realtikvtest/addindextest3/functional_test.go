@@ -85,7 +85,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	job := &model.Job{ID: 1, ReorgMeta: &model.DDLReorgMeta{}}
+	job := &model.Job{Type: model.ActionAddIndex, ID: 1, ReorgMeta: &model.DDLReorgMeta{}}
 	bCtx, err := ingest.LitBackCtxMgr.Register(context.Background(), job, false, nil, discovery, "test", 1, 0, 0, 0)
 	require.NoError(t, err)
 	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}

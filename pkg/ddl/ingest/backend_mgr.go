@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -146,6 +147,12 @@ func (m *litBackendCtxMgr) Register(
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", job.ID), zap.Error(err))
 		return nil, err
 	}
+	intest.Assert(
+		job.Type == model.ActionAddPrimaryKey ||
+			job.Type == model.ActionAddIndex ||
+			job.Type == model.ActionModifyColumn,
+	)
+	intest.Assert(job.ReorgMeta != nil)
 	failpoint.Inject("beforeCreateLocalBackend", func() {
 		ResignOwnerForTest.Store(true)
 	})
@@ -201,7 +208,9 @@ func createLocalBackend(
 
 	ddllogutil.DDLIngestLogger().Info("create local backend for adding index",
 		zap.String("sortDir", cfg.LocalStoreDir),
-		zap.String("keyspaceName", cfg.KeyspaceName))
+		zap.String("keyspaceName", cfg.KeyspaceName),
+		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
+		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()))
 	return local.NewBackend(ctx, tls, *cfg, pdSvcDiscovery)
 }
 

@@ -191,7 +191,7 @@ func TestAddIngestRecorder(t *testing.T) {
 
 	// no add-index job, should ignore it
 	err = recorder.TryAddJob(fakeJob(
-		model.ReorgTypeLitMerge,
+		model.ReorgTypeIngest,
 		model.ActionDropIndex,
 		model.JobStateSynced,
 		100,
@@ -208,7 +208,7 @@ func TestAddIngestRecorder(t *testing.T) {
 
 	// no synced job, should ignore it
 	err = recorder.TryAddJob(fakeJob(
-		model.ReorgTypeLitMerge,
+		model.ReorgTypeIngest,
 		model.ActionAddIndex,
 		model.JobStateRollbackDone,
 		100,
@@ -227,7 +227,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		recorder := ingestrec.New()
 		// a normal ingest add index job
 		err = recorder.TryAddJob(fakeJob(
-			model.ReorgTypeLitMerge,
+			model.ReorgTypeIngest,
 			model.ActionAddIndex,
 			model.JobStateSynced,
 			1000,
@@ -249,7 +249,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		recorder := ingestrec.New()
 		// a normal ingest add primary index job
 		err = recorder.TryAddJob(fakeJob(
-			model.ReorgTypeLitMerge,
+			model.ReorgTypeIngest,
 			model.ActionAddPrimaryKey,
 			model.JobStateSynced,
 			1000,
@@ -270,7 +270,7 @@ func TestAddIngestRecorder(t *testing.T) {
 	{
 		// a sub job as add primary index job
 		err = recorder.TryAddJob(fakeJob(
-			model.ReorgTypeLitMerge,
+			model.ReorgTypeIngest,
 			model.ActionAddPrimaryKey,
 			model.JobStateDone,
 			1000,
@@ -368,7 +368,7 @@ func TestIndexesKind(t *testing.T) {
 
 	recorder := ingestrec.New()
 	err = recorder.TryAddJob(fakeJob(
-		model.ReorgTypeLitMerge,
+		model.ReorgTypeIngest,
 		model.ActionAddIndex,
 		model.JobStateSynced,
 		1000,
@@ -465,7 +465,7 @@ func TestRewriteTableID(t *testing.T) {
 
 	recorder := ingestrec.New()
 	err = recorder.TryAddJob(fakeJob(
-		model.ReorgTypeLitMerge,
+		model.ReorgTypeIngest,
 		model.ActionAddIndex,
 		model.JobStateSynced,
 		1000,
