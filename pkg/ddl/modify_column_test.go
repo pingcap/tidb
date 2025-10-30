@@ -851,6 +851,31 @@ func TestGetModifyColumnType(t *testing.T) {
 			index:      true,
 			tp:         ddl.ModifyTypeNoReorgWithCheck,
 		},
+		// different collation
+		{
+			beforeType: "char(20) collate utf8mb4_bin",
+			afterType:  "varchar(10) collate utf8_unicode_ci",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
+		{
+			beforeType: "char(20) collate utf8_unicode_ci",
+			afterType:  "varchar(10) collate utf8mb4_bin",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
+		{
+			beforeType: "varchar(20) collate utf8mb4_bin",
+			afterType:  "char(10) collate utf8_unicode_ci",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
+		{
+			beforeType: "varchar(20) collate utf8_unicode_ci",
+			afterType:  "char(10) collate utf8mb4_bin",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
 	}
 
 	var gotTp byte
@@ -862,12 +887,12 @@ func TestGetModifyColumnType(t *testing.T) {
 		tk.MustExec("drop table if exists t")
 		indexPart := ""
 		if tc.index {
-			indexPart = ", index idx_a(a)"
+			indexPart = ", index idx_a(a), primary key(p1, p2)"
 		}
-		tk.MustExec(fmt.Sprintf("create table t (a %s%s)", tc.beforeType, indexPart))
-		tk.MustExec("insert into t values ('1'), ('2'), ('3')")
+		tk.MustExec(fmt.Sprintf("create table t (p1 int, p2 int, a %s%s)", tc.beforeType, indexPart))
+		tk.MustExec("insert into t values (1, 1, '1'), (2, 2, '2'), (3, 3, '3')")
 		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", tc.afterType))
-		tk.MustExec("insert into t values ('4'), ('5'), ('6 ')")
+		tk.MustExec("insert into t values (4, 4, '4'), (5, 5, '5'), (6, 6, '6 ')")
 		tk.MustExec("admin check table t")
 		require.Equal(t, tc.tp, gotTp, "before type: %s, after type: %s", tc.beforeType, tc.afterType)
 	}
