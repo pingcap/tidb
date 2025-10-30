@@ -483,7 +483,7 @@ func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) *kv.ResourceGroup
 	return ctx.getResourceGroupTaggerForTopSQL()
 }
 
-func (dc *ddlCtx) setAnalyzeDoneCh(jobID int64, ch chan struct{}) {
+func (dc *ddlCtx) setAnalyzeDoneCh(jobID int64, ch chan error) {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
@@ -494,7 +494,7 @@ func (dc *ddlCtx) setAnalyzeDoneCh(jobID int64, ch chan struct{}) {
 	ctx.analyzeDone = ch
 }
 
-func (dc *ddlCtx) getAnalyzeDoneCh(jobID int64) chan struct{} {
+func (dc *ddlCtx) getAnalyzeDoneCh(jobID int64) chan error {
 	dc.jobCtx.RLock()
 	defer dc.jobCtx.RUnlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]

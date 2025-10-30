@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
-	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -287,14 +286,8 @@ func checkDataForModifyColumn(row []types.Datum, col *table.Column) error {
 		return nil
 	}
 
-	var strictCtx = exprstatic.NewExprContext(
-		exprstatic.WithEvalCtx(
-			exprstatic.NewEvalContext(
-				exprstatic.WithSQLMode(
-					mysql.ModeStrictAllTables | mysql.ModeStrictTransTables))))
-
 	data := row[col.Offset]
-	value, err := table.CastColumnValueToType(strictCtx, data, col.ChangingFieldType, false, false)
+	value, err := table.CastColumnValueWithStrictMode(data, col.ChangingFieldType)
 	if err != nil {
 		return err
 	}
