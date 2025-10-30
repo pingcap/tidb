@@ -2101,7 +2101,8 @@ func (b *PlanBuilder) addColumnsWithVirtualExprs(tbl *resolve.TableNameW, cols *
 	}
 
 	virtualExprs := columnSelector(columns)
-	relatedCols := make(map[int64]*expression.Column, len(tblInfo.Columns))
+	relatedCols := expression.GetUniqueIDToColumnMap()
+	defer expression.PutUniqueIDToColumnMap(relatedCols)
 	for len(virtualExprs) > 0 {
 		expression.ExtractColumnsMapFromExpressionsWithReusedMap(relatedCols, nil, virtualExprs...)
 		virtualExprs = virtualExprs[:0]
