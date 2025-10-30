@@ -2251,6 +2251,41 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
+		// Generate trace ID for point-get path (same as runStmt does)
+		prevTraceID := s.sessionVars.PrevTraceID
+		startTS := s.sessionVars.TxnCtx.StartTS
+		stmtCount := uint64(s.sessionVars.TxnCtx.StatementCount)
+		traceID := traceevent.GenerateTraceID(startTS, stmtCount)
+		ctx = trace.ContextWithTraceID(ctx, traceID)
+
+		// Store trace ID for next statement
+		s.sessionVars.PrevTraceID = traceID
+
+		// Emit stmt.start trace event (simplified for point-get fast path)
+		if traceevent.IsEnabled(traceevent.StmtLifecycle) {
+			fields := []zap.Field{
+				zap.Uint64("conn_id", s.sessionVars.ConnectionID),
+			}
+			// Include previous trace ID to create statement chain
+			if len(prevTraceID) > 0 {
+				fields = append(fields, zap.String("prev_trace_id", redact.Key(prevTraceID)))
+			}
+			traceevent.TraceEvent(ctx, traceevent.StmtLifecycle, "stmt.start", fields...)
+		}
+
+		// Defer stmt.finish trace event (simplified for point-get fast path)
+		defer func() {
+			if traceevent.IsEnabled(traceevent.StmtLifecycle) {
+				fields := []zap.Field{
+					zap.Uint64("conn_id", s.sessionVars.ConnectionID),
+				}
+				if err != nil {
+					fields = append(fields, zap.Error(err))
+				}
+				traceevent.TraceEvent(ctx, traceevent.StmtLifecycle, "stmt.finish", fields...)
+			}
+		}()
+
 		recordSet, err = stmt.PointGet(ctx)
 		s.setLastTxnInfoBeforeTxnEnd()
 		s.txn.changeToInvalid()
@@ -2379,8 +2414,10 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		r.Span.LogKV("sql", s.Text())
 	}
 
-	// Capture previous trace ID before generating new one (for statement chaining)
-	prevTraceID := trace.TraceIDFromContext(ctx)
+	// Capture previous trace ID from session variables (for statement chaining)
+	// We store it in session variables instead of context because the context
+	// is recreated for each statement and doesn't persist across executions
+	prevTraceID := se.sessionVars.PrevTraceID
 
 	// Inject trace ID into context for correlation across TiDB -> client-go -> TiKV
 	// This enables trace events to be correlated by trace_id field
@@ -2389,6 +2426,9 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	stmtCount := uint64(se.sessionVars.TxnCtx.StatementCount)
 	traceID := traceevent.GenerateTraceID(startTS, stmtCount)
 	ctx = trace.ContextWithTraceID(ctx, traceID)
+
+	// Store trace ID for next statement
+	se.sessionVars.PrevTraceID = traceID
 
 	// Emit stmt.start trace event
 	if traceevent.IsEnabled(traceevent.StmtLifecycle) {
