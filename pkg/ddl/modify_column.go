@@ -1155,6 +1155,8 @@ func (w *worker) doModifyColumnTypeWithData(
 	return ver, errors.Trace(err)
 }
 
+var startTime time.Time
+
 func (w *worker) doModifyColumnIndexReorg(
 	jobCtx *jobContext,
 	job *model.Job,
@@ -1163,6 +1165,9 @@ func (w *worker) doModifyColumnIndexReorg(
 	oldCol *model.ColumnInfo,
 	args *model.ModifyColumnArgs,
 ) (ver int64, err error) {
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
 	colName, pos := args.Column.Name, args.Position
 
 	allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
@@ -1203,6 +1208,10 @@ func (w *worker) doModifyColumnIndexReorg(
 		args.IndexIDs = rmIdxs
 		args.PartitionIDs = getPartitionIDs(tblInfo)
 		job.FillFinishedArgs(args)
+		logutil.DDLLogger().Info("doModifyColumnIndexReorg",
+			zap.Duration("takeTime", time.Since(startTime)),
+		)
+		startTime = time.Time{}
 		return ver, nil
 	}
 
