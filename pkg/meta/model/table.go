@@ -584,7 +584,7 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 
 // GetIdxChangingFieldType gets the field type of index column.
 func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
-	if idxCol.UsingChangingType && col.ChangingFieldType != nil {
+	if idxCol.UseChangingType && col.ChangingFieldType != nil {
 		return col.ChangingFieldType
 	}
 	return &col.FieldType
@@ -593,11 +593,7 @@ func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldT
 // ColumnNeedRestoredData checks whether a single index column needs restored data.
 func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
 	col := colInfos[idxCol.Offset]
-	colTp := &col.FieldType
-	if idxCol.UseChangingType && col.ChangingFieldType != nil {
-		colTp = col.ChangingFieldType
-	}
-	return types.NeedRestoredData(colTp)
+	return types.NeedRestoredData(GetIdxChangingFieldType(idxCol, col))
 }
 
 // TableNameInfo provides meta data describing a table name info.
