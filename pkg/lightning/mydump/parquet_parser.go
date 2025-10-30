@@ -43,6 +43,20 @@ const (
 	defaultBufSize = 64 * 1024
 )
 
+var (
+	unsupportedParquetTypes = map[schema.ConvertedType]struct{}{
+		schema.ConvertedTypes.Map:         {},
+		schema.ConvertedTypes.MapKeyValue: {},
+		schema.ConvertedTypes.List:        {},
+		schema.ConvertedTypes.Interval:    {},
+		schema.ConvertedTypes.NA:          {},
+	}
+
+	// readBatchSize is the number of rows to read in a single batch
+	// from parquet column reader. Modified in test.
+	readBatchSize = 128
+)
+
 func estimateRowSize(row []types.Datum) int {
 	length := 0
 	for _, v := range row {
@@ -66,7 +80,7 @@ type innerReader[T parquet.ColumnTypes] interface {
 type iterator interface {
 	SetReader(colReader file.ColumnChunkReader)
 
-	Next(*types.Datum) bool
+	Next(*types.Datum) error
 
 	Close() error
 }
@@ -119,10 +133,11 @@ func (it *columnIterator[T, R]) Close() error {
 	return err
 }
 
-func (it *columnIterator[T, R]) readNextBatch() int {
+func (it *columnIterator[T, R]) readNextBatch() error {
 	// ReadBatchInPage reads a batch of values from the current page.
 	// And the values returned may be shallow copies from the internal page buffer.
-	it.levelsBuffered, it.valuesBuffered, _ = it.reader.ReadBatchInPage(
+	var err error
+	it.levelsBuffered, it.valuesBuffered, err = it.reader.ReadBatchInPage(
 		it.batchSize,
 		it.values,
 		it.defLevels,
@@ -131,18 +146,18 @@ func (it *columnIterator[T, R]) readNextBatch() int {
 
 	it.valueOffset = 0
 	it.levelOffset = 0
-	return int(it.levelsBuffered)
+	return err
 }
 
 // Next reads the next value with proper level handling.
-func (it *columnIterator[T, R]) Next(d *types.Datum) bool {
+func (it *columnIterator[T, R]) Next(d *types.Datum) error {
 	if it.levelOffset == it.levelsBuffered {
-		if !it.baseReader.HasNext() {
-			return false
+		err := it.readNextBatch()
+		if err != nil {
+			return errors.Trace(err)
 		}
-		it.readNextBatch()
 		if it.levelsBuffered == 0 {
-			return false
+			return io.EOF
 		}
 	}
 
@@ -152,13 +167,13 @@ func (it *columnIterator[T, R]) Next(d *types.Datum) bool {
 
 	if defLevel < it.baseReader.Descriptor().MaxDefinitionLevel() {
 		d.SetNull()
-		return true
+		return nil
 	}
 
 	value := it.values[it.valueOffset]
 	it.valueOffset++
 	it.setter(value, d)
-	return true
+	return nil
 }
 
 func createColumnIterator(tp parquet.Type, converted *convertedType, loc *time.Location, batchSize int) iterator {
@@ -310,7 +325,8 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 		loc = timeutil.SystemLocation()
 	}
 	for i := range numCols {
-		pp.iterators[i] = createColumnIterator(meta.Schema.Column(i).PhysicalType(), &pp.colTypes[i], loc, 128)
+		pp.iterators[i] = createColumnIterator(
+			meta.Schema.Column(i).PhysicalType(), &pp.colTypes[i], loc, readBatchSize)
 		if pp.iterators[i] == nil {
 			return errors.Errorf("unsupported parquet type %s", meta.Schema.Column(i).PhysicalType().String())
 		}
@@ -361,8 +377,8 @@ func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
 
 	// Read in this group
 	for col, iter := range pp.iterators {
-		if ok := iter.Next(&row[col]); !ok {
-			return errors.New("error get data")
+		if err := iter.Next(&row[col]); err != nil {
+			return errors.Annotate(err, "parquet read column failed")
 		}
 	}
 
@@ -566,6 +582,10 @@ func NewParquetParser(
 			colTypes[i].IsAdjustedToUTC = true
 			pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode)
 			colTypes[i].decimalMeta = pnode.DecimalMetadata()
+		}
+
+		if _, ok := unsupportedParquetTypes[colTypes[i].converted]; ok {
+			return nil, errors.Errorf("unsupported parquet logical type %s", colTypes[i].converted.String())
 		}
 	}
 

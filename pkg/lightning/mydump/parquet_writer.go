@@ -72,7 +72,7 @@ func getStore(path string) (storage.ExternalStorage, error) {
 
 // WriteParquetFile writes a simple Parquet file with the specified columns and number of rows.
 // It's used for test and DON'T use this function to generate large Parquet files.
-func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int) error {
+func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int, addOpts ...parquet.WriterProperty) error {
 	s, err := getStore(path)
 	if err != nil {
 		return err
@@ -104,6 +104,7 @@ func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int)
 	}
 
 	node, _ := schema.NewGroupNode("schema", parquet.Repetitions.Required, fields, -1)
+	opts = append(opts, addOpts...)
 	props := parquet.NewWriterProperties(opts...)
 	pw := file.NewParquetWriter(wrapper, node, file.WithWriterProps(props))
 	//nolint: errcheck

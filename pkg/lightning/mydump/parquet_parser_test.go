@@ -17,11 +17,13 @@ package mydump
 import (
 	"context"
 	"io"
+	"math/rand"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/compress"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
@@ -438,4 +440,64 @@ func TestNsecOutSideRange(t *testing.T) {
 	// For nano sec out of 999999999, time will automatically execute a
 	// carry operation. i.e. 1000000000 nsec => 1 sec
 	require.Equal(t, a.Add(1*time.Second), b)
+}
+
+var randChars = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ")
+
+func randString() parquet.ByteArray {
+	lens := rand.Intn(64)
+	s := make([]byte, lens)
+	for i := range lens {
+		s[i] = randChars[rand.Intn(len(randChars))]
+	}
+	return s
+}
+
+func TestBasicReadFile(t *testing.T) {
+	rowCnt := 111
+	generated := make([]parquet.ByteArray, 0, rowCnt)
+
+	pc := []ParquetColumn{
+		{
+			Name:      "s",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.UTF8,
+			Gen: func(rows int) (any, []int16) {
+				data := make([]parquet.ByteArray, rows)
+				defLevels := make([]int16, rows)
+				for i := range rows {
+					s := randString()
+					data[i] = s
+					defLevels[i] = 1
+					generated = append(generated, s)
+				}
+				return data, defLevels
+			},
+		},
+	}
+
+	dir := t.TempDir()
+	fileName := "test123.parquet"
+	// Genearte small file with multiple pages.
+	// The number of rows in each page is not multiple of batch size.
+	WriteParquetFile(dir, fileName, pc, rowCnt,
+		parquet.WithDataPageSize(512),
+		parquet.WithBatchSize(20),
+		parquet.WithCompressionFor("s", compress.Codecs.Uncompressed),
+	)
+
+	readBatchSize = 32
+
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+	r, err := store.Open(context.TODO(), fileName, nil)
+	require.NoError(t, err)
+	reader, err := NewParquetParser(context.TODO(), store, r, fileName, ParquetFileMeta{})
+	require.NoError(t, err)
+	defer reader.Close()
+
+	for i := range rowCnt {
+		require.NoError(t, reader.ReadRow())
+		require.Equal(t, string(generated[i]), reader.lastRow.Row[0].GetString())
+	}
 }
