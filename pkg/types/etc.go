@@ -123,11 +123,7 @@ func IsNonBinaryStr(ft *FieldType) bool {
 // ColumnNeedRestoredData checks whether a single index column needs restored data.
 func ColumnNeedRestoredData(idxCol *model.IndexColumn, colInfos []*model.ColumnInfo) bool {
 	col := colInfos[idxCol.Offset]
-	colTp := &col.FieldType
-	if idxCol.UseChangingType && col.ChangingFieldType != nil {
-		colTp = col.ChangingFieldType
-	}
-	return NeedRestoredData(colTp)
+	return NeedRestoredData(model.GetIdxChangingFieldType(idxCol, col))
 }
 
 // NeedRestoredData returns if a type needs restored data.
