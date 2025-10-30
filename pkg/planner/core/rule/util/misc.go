@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 )
 
 // ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
@@ -182,5 +183,22 @@ var ApplyPredicateSimplificationForJoin func(sctx base.PlanContext, predicates [
 var ApplyPredicateSimplification func(sctx base.PlanContext, predicates []expression.Expression,
 	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
 
-// BuildKeyInfoPortal is a hook for other packages to build key info for logical plan.
-var BuildKeyInfoPortal func(lp base.LogicalPlan)
+var childSchemaSlicePool = zeropool.New[[]*expression.Schema](func() []*expression.Schema {
+	return make([]*expression.Schema, 0, 4)
+})
+
+// BuildKeyInfoPortal recursively calls base.LogicalPlan's BuildKeyInfo method.
+func BuildKeyInfoPortal(lp base.LogicalPlan) {
+	for _, child := range lp.Children() {
+		BuildKeyInfoPortal(child)
+	}
+	childSchema := childSchemaSlicePool.Get()
+	childSchema = slices.Grow(childSchema, len(lp.Children()))
+	defer func() {
+		childSchemaSlicePool.Put(childSchema[:0])
+	}()
+	for _, child := range lp.Children() {
+		childSchema = append(childSchema, child.Schema())
+	}
+	lp.BuildKeyInfo(lp.Schema(), childSchema)
+}

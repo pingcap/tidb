@@ -17,6 +17,9 @@ package addindextest_test
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -503,6 +506,47 @@ func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "1*return")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/afterSetTSBeforeImportEngine", "1*return")
 	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
+}
+
+func TestAddIndexTempDirDataRemoved(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("next-gen doesn't use local backend")
+	}
+	tempDir := t.TempDir()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempDir = tempDir
+	})
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1), (1), (1);")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockErrInMergeSSTs", "1*return(true)")
+	removeOnce := sync.Once{}
+	removed := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/beforeMergeSSTs", func() {
+		removeOnce.Do(func() {
+			var filesToRemove []string
+			filepath.WalkDir(tempDir, func(path string, d fs.DirEntry, err error) error {
+				if strings.HasSuffix(path, ".sst") {
+					filesToRemove = append(filesToRemove, path)
+				}
+				return nil
+			})
+			for _, f := range filesToRemove {
+				t.Log("removed " + f)
+				err := os.RemoveAll(f)
+				require.NoError(t, err)
+				removed = true
+			}
+		})
+	})
+
+	tk.MustExec("alter table t add index idx(a);")
+	require.True(t, removed)
 }
 
 func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
