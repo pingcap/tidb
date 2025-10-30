@@ -1356,7 +1356,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				once.Do(func() {
 					e.detectAndUpdateFormat(path)
 					sourceType = e.getSourceType()
-					compressionRatio, err2 = estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
+					compressionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
 				})
 				if err2 != nil {
 					return nil, err2

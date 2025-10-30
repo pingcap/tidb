@@ -479,7 +479,11 @@ func TestBasicReadFile(t *testing.T) {
 		parquet.WithCompressionFor("s", compress.Codecs.Uncompressed),
 	)
 
+	origBatchSize := readBatchSize
 	readBatchSize = 32
+	defer func() {
+		readBatchSize = origBatchSize
+	}()
 
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
