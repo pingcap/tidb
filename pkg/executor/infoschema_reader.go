@@ -88,7 +88,6 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client/http"
-	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
@@ -2799,10 +2798,10 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 		rows          [][]types.Datum
 		tiFlashStores map[int64]pd.StoreInfo
 	)
-	var tikvStores *map[int64]pdhttp.StoreInfo
+	var tikvStores *map[int64]pd.StoreInfo
 	enableColumnarStore := config.GetGlobalConfig().CSE.IsColumnarStoreEnabled()
 	if enableColumnarStore {
-		tikvStores = &map[int64]pdhttp.StoreInfo{}
+		tikvStores = &map[int64]pd.StoreInfo{}
 	} else {
 		tikvStores = nil
 	}
