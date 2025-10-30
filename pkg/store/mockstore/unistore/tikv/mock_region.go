@@ -17,6 +17,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	goerrors "errors"
 	"fmt"
 	"math"
@@ -414,6 +415,8 @@ func (rm *MockRegionManager) SplitArbitrary(keys ...[]byte) {
 		encKey := codec.EncodeBytes(nil, key)
 		splitKeys = append(splitKeys, encKey)
 	}
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 	if _, err := rm.splitKeys(splitKeys); err != nil {
 		panic(err)
 	}
@@ -582,6 +585,10 @@ func (rm *MockRegionManager) split(regionID, newRegionID uint64, key []byte, pee
 	old := rm.regions[regionID]
 	rm.mu.RUnlock()
 	oldRegion := old.meta
+	if bytes.Compare(oldRegion.StartKey, key) >= 0 || (len(oldRegion.EndKey) != 0 && bytes.Compare(key, oldRegion.EndKey) >= 0) {
+		return nil, errors.Errorf("split key is out of region range, region start key: %v, end key: %v, split key: %v",
+			hex.EncodeToString(oldRegion.StartKey), hex.EncodeToString(oldRegion.EndKey), hex.EncodeToString(key))
+	}
 	leftMeta := &metapb.Region{
 		Id:       oldRegion.Id,
 		StartKey: oldRegion.StartKey,

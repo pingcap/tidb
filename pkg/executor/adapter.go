@@ -82,6 +82,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
+	tikvtrace "github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -104,6 +105,10 @@ type recordSet struct {
 	lastErrs   []error
 	txnStartTS uint64
 	once       sync.Once
+	// traceID stores the trace ID for this statement execution.
+	// It's injected into the context during Next() to ensure trace correlation
+	// across TiDB -> client-go -> TiKV during lazy execution.
+	traceID []byte
 }
 
 func (a *recordSet) Fields() []*resolve.ResultField {
@@ -168,6 +173,15 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return err
 		}
+	}
+
+	// Inject trace ID into context for correlation during lazy execution.
+	// The trace ID was generated when the statement started executing, but the
+	// context passed to Next() doesn't have it (context is not stored in recordSet).
+	// We need to re-inject it here so that operations in executors (e.g., TiKV calls)
+	// can be correlated with this statement's trace ID.
+	if len(a.traceID) > 0 {
+		ctx = tikvtrace.ContextWithTraceID(ctx, a.traceID)
 	}
 
 	err = a.stmt.next(ctx, a.executor, req)
@@ -415,11 +429,15 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		}
 	}
 
+	// Extract trace ID from context to store in recordSet for lazy execution
+	traceID := tikvtrace.TraceIDFromContext(ctx)
+
 	return &recordSet{
 		executor:   executor,
 		schema:     executor.Schema(),
 		stmt:       a,
 		txnStartTS: startTs,
+		traceID:    traceID,
 	}, nil
 }
 
@@ -678,11 +696,15 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		txnStartTS = txn.StartTS()
 	}
 
+	// Extract trace ID from context to store in recordSet for lazy execution
+	traceID := tikvtrace.TraceIDFromContext(ctx)
+
 	return &recordSet{
 		executor:   e,
 		schema:     e.Schema(),
 		stmt:       a,
 		txnStartTS: txnStartTS,
+		traceID:    traceID,
 	}, nil
 }
 

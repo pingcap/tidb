@@ -148,6 +148,9 @@ const (
 	// TiDBGeneralLog is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
+	// TiDBTraceEvent controls the experimental trace event instrumentation.
+	TiDBTraceEvent = "tidb_trace_event"
+
 	// TiDBLogFileMaxDays is used to log every query in the server in info level.
 	TiDBLogFileMaxDays = "tidb_log_file_max_days"
 
@@ -1434,6 +1437,7 @@ const (
 	DefTiDBMemQuotaApplyCache               = 32 << 20 // 32MB.
 	DefTiDBMemQuotaBindingCache             = 64 << 20 // 64MB.
 	DefTiDBGeneralLog                       = false
+	DefTiDBTraceEvent                       = Off
 	DefTiDBPProfSQLCPU                      = 0
 	DefTiDBRetryLimit                       = 10
 	DefTiDBDisableTxnAutoRetry              = true
