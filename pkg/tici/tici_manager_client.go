@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/pd/client/constants"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -527,7 +528,12 @@ func CreateFulltextIndex(ctx context.Context, store kv.Storage, tblInfo *model.T
 	}
 	defer ticiManager.Close()
 	if store != nil {
-		ticiManager.SetKeyspaceID(uint32(store.GetCodec().GetKeyspaceID()))
+		keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
+		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+		ticiManager.SetKeyspaceID(keyspaceID)
 	}
 	return ticiManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
 }
