@@ -1615,7 +1615,7 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 			}
 			if types.NeedRestoredData(&col.FieldType) {
 				colIds = append(colIds, col.ID)
-				if collate.IsBinCollation(col.GetCollate()) {
+				if collate.IsBinCollation(model.GetIdxChangingFieldType(idxCol, col).GetCollate()) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
 				} else {
 					allRestoredData = append(allRestoredData, indexedValues[i])

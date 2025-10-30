@@ -473,8 +473,24 @@ func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.Inde
 	return indexInfos
 }
 
+<<<<<<< HEAD
 func buildRelatedIndexIDs(tblInfo *model.TableInfo, colID int64) []int64 {
 	var oldIdxIDs []int64
+=======
+func getIngestTempIndexIDs(job *model.Job, idxInfos []*model.IndexInfo) []int64 {
+	ids := make([]int64, 0, len(idxInfos))
+	if !job.ReorgMeta.ReorgTp.NeedMergeProcess() {
+		return ids
+	}
+	for _, idx := range idxInfos {
+		ids = append(ids, tablecodec.TempIndexPrefix|idx.ID)
+	}
+	return ids
+}
+
+func getRelatedIndexIDs(tblInfo *model.TableInfo, colID int64, needTempIndex bool) []int64 {
+	var idxIDs []int64
+>>>>>>> adf08267939 (modify column: fix insert failure during modify column with index only reorg (#64188))
 	for _, idx := range tblInfo.Indices {
 		if idx.HasColumnInIndexColumns(tblInfo, colID) {
 			oldIdxIDs = append(oldIdxIDs, idx.ID)
