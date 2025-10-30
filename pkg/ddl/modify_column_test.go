@@ -824,6 +824,31 @@ func TestGetModifyColumnType(t *testing.T) {
 			index:      true,
 			tp:         ddl.ModifyTypeNoReorgWithCheck,
 		},
+		// different collation
+		{
+			beforeType: "char(20) collate utf8mb4_bin",
+			afterType:  "varchar(10) collate utf8_unicode_ci",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
+		{
+			beforeType: "char(20) collate utf8_unicode_ci",
+			afterType:  "varchar(10) collate utf8mb4_bin",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
+		{
+			beforeType: "varchar(20) collate utf8mb4_bin",
+			afterType:  "char(10) collate utf8_unicode_ci",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
+		{
+			beforeType: "varchar(20) collate utf8_unicode_ci",
+			afterType:  "char(10) collate utf8mb4_bin",
+			index:      true,
+			tp:         ddl.ModifyTypeIndexReorg,
+		},
 	}
 
 	var gotTp byte
@@ -835,12 +860,12 @@ func TestGetModifyColumnType(t *testing.T) {
 		tk.MustExec("drop table if exists t")
 		indexPart := ""
 		if tc.index {
-			indexPart = ", index idx_a(a)"
+			indexPart = ", index idx_a(a), primary key(p1, p2)"
 		}
-		tk.MustExec(fmt.Sprintf("create table t (a %s%s)", tc.beforeType, indexPart))
-		tk.MustExec("insert into t values ('1'), ('2'), ('3')")
+		tk.MustExec(fmt.Sprintf("create table t (p1 int, p2 int, a %s%s)", tc.beforeType, indexPart))
+		tk.MustExec("insert into t values (1, 1, '1'), (2, 2, '2'), (3, 3, '3')")
 		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", tc.afterType))
-		tk.MustExec("insert into t values ('4'), ('5'), ('6 ')")
+		tk.MustExec("insert into t values (4, 4, '4'), (5, 5, '5'), (6, 6, '6 ')")
 		tk.MustExec("admin check table t")
 		require.Equal(t, tc.tp, gotTp, "before type: %s, after type: %s", tc.beforeType, tc.afterType)
 	}
@@ -1270,6 +1295,71 @@ func TestModifyStringColumn(t *testing.T) {
 			require.Equal(t, expectedReorgTp, reorgType)
 		} else {
 			require.Contains(t, err.Error(), "Data truncated for column 'a'")
+		}
+	}
+}
+
+func TestModifyColumnWithDifferentCollation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	runSingleTest := func(t *testing.T, oldColTp, newColTp string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec(fmt.Sprintf(`
+			CREATE TABLE t1 (
+			c1 int NOT NULL DEFAULT '1',
+			c2 int NOT NULL DEFAULT '1',
+			c3 %s,
+			PRIMARY KEY (c1, c2),
+			KEY i1 (c3)
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+		`, oldColTp))
+
+		for i := range 10 {
+			tk.MustExec(fmt.Sprintf("insert into t1 (c1, c3) values (%d, 'space%d ')", i, i))
+		}
+
+		insertIdx := 32
+		deleteIdx := 0
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(_ *model.Job) {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			// Test data consistency for insert/delete check during reorg.
+			err := tk2.ExecToErr(fmt.Sprintf("insert into t1 (c1, c3) values ('%d', 'space%d   ')", insertIdx, insertIdx))
+			if err != nil {
+				// The only possible error is data truncation error during modify column.
+				require.Contains(t, err.Error(), "data truncation error during modify column")
+			}
+			tk2.MustExec(fmt.Sprintf("delete from t1 where c1 = %d", deleteIdx))
+			deleteIdx++
+			insertIdx++
+		})
+
+		tk.MustExec(fmt.Sprintf("alter table t1 modify column c3 %s", newColTp))
+		require.True(t, deleteIdx > 0, "failpoint should be triggered")
+		tk.MustExec("admin check table t1;")
+	}
+
+	var (
+		oldTps []string
+		newTps []string
+	)
+	for _, tp := range []string{"char", "varchar"} {
+		for _, collation := range []string{"utf8mb4_bin", "utf8_unicode_ci", "utf8mb4_general_ci"} {
+			oldTps = append(oldTps, fmt.Sprintf("%s(32) collate %s", tp, collation))
+			newTps = append(newTps, fmt.Sprintf("%s(23) collate %s", tp, collation))
+		}
+	}
+
+	for i, oldColTp := range oldTps {
+		for j, newColTp := range newTps {
+			if i == j {
+				continue
+			}
+			t.Run(fmt.Sprintf("%s -> %s", oldColTp, newColTp), func(t *testing.T) {
+				runSingleTest(t, oldColTp, newColTp)
+			})
 		}
 	}
 }

@@ -2017,6 +2017,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
+	stmtExecInfo.MemArbitration = stmtCtx.MemTracker.MemArbitration().Seconds()
+
 	stmtsummaryv2.Add(stmtExecInfo)
 }
 

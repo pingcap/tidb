@@ -100,6 +100,7 @@ func InitMetrics() {
 	InitResourceGroupMetrics()
 	InitGlobalSortMetrics()
 	InitInfoSchemaV2Metrics()
+	InitMemoryMetrics()
 	timermetrics.InitTimerMetrics()
 
 	InitBRMetrics()
@@ -335,6 +336,15 @@ func RegisterMetrics() {
 	tikvmetrics.InitMetricsWithConstLabels(TiDB, TiKVClient, metricscommon.GetConstLabels())
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+
+	prometheus.MustRegister(GlobalMemArbitrationDuration)
+	prometheus.MustRegister(GlobalMemArbitratorWorkMode)
+	prometheus.MustRegister(GlobalMemArbitratorQuota)
+	prometheus.MustRegister(GlobalMemArbitratorWaitingTask)
+	prometheus.MustRegister(GlobalMemArbitratorRuntimeMemMagnifi)
+	prometheus.MustRegister(GlobalMemArbitratorRootPool)
+	prometheus.MustRegister(GlobalMemArbitratorEventCounter)
+	prometheus.MustRegister(GlobalMemArbitratorTaskExecCounter)
 }
 
 // Register registers custom collectors.

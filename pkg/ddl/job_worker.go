@@ -167,6 +167,8 @@ const (
 	generalWorker workerType = 0
 	// addIdxWorker is the worker who handles the operation of adding indexes.
 	addIdxWorker workerType = 1
+	// backgroundWorker is the worker that can use auto-scaled tidb-workers in next-gen.
+	backgroundWorker workerType = 2
 )
 
 // worker is used for handling DDL jobs.
@@ -240,6 +242,8 @@ func (w *worker) typeStr() string {
 		str = "general"
 	case addIdxWorker:
 		str = "add index"
+	case backgroundWorker:
+		str = "background"
 	default:
 		str = "unknown"
 	}
@@ -550,7 +554,7 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 		return txn, err
 	}
 	// Only general DDLs are allowed to be executed when TiKV is disk full.
-	if w.tp == addIdxWorker && job.IsRunning() {
+	if w.tp != generalWorker && job.IsRunning() {
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 	}
 	w.setDDLLabelForTopSQL(job.ID, job.Query)
@@ -912,7 +916,7 @@ func (w *worker) runOneJobStep(
 	}
 	// When upgrading from a version where the ReorgMeta fields did not exist in the DDL job information,
 	// the unmarshalled job will have a nil value for the ReorgMeta field.
-	if w.tp == addIdxWorker && job.ReorgMeta == nil {
+	if (w.tp == addIdxWorker || w.tp == backgroundWorker) && job.ReorgMeta == nil {
 		job.ReorgMeta = &model.DDLReorgMeta{}
 	}
 

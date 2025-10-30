@@ -1198,7 +1198,102 @@ var defaultSysVars = []*SysVar{
 			threshold := float64(bt) * vardef.GOGCTunerThreshold.Load()
 			gctuner.Tuning(uint64(threshold))
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
+			memory.AjustGlobalMemArbitratorLimit()
 			return nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMemArbitratorSoftLimit, Value: vardef.DefTiDBMemArbitratorSoftLimitText, Type: vardef.TypeStr,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			if normalizedValue == memory.ArbitratorSoftLimitModDisableName {
+				return normalizedValue, nil
+			}
+			if strings.ToLower(normalizedValue) == memory.ArbitratorSoftLimitModeAutoName {
+				return memory.ArbitratorSoftLimitModeAutoName, nil
+			}
+			if v, err := strconv.ParseInt(normalizedValue, 10, 64); err == nil {
+				if v > 1 {
+					return normalizedValue, nil
+				} else if v <= 0 {
+					return "", ErrTiDBMemArbitratorSoftLimit
+				}
+				// v == 1 is legal
+			}
+			floatValue, err := strconv.ParseFloat(normalizedValue, 64)
+			if err != nil {
+				return "", err
+			}
+			if floatValue > 0 && floatValue <= 1 {
+				return normalizedValue, nil
+			}
+			return "", ErrTiDBMemArbitratorSoftLimit
+		},
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return memory.GetGlobalMemArbitratorSoftLimitText(), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, str string) error {
+			memory.SetGlobalMemArbitratorSoftLimit(str)
+			return nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMemArbitratorMode, Value: vardef.DefTiDBMemArbitratorModeText, Type: vardef.TypeStr,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			normalizedValue = strings.ToLower(normalizedValue)
+			switch normalizedValue {
+			case memory.ArbitratorModeDisableName, memory.ArbitratorModeStandardName, memory.ArbitratorModePriorityName:
+				return normalizedValue, nil
+			default:
+				return "", fmt.Errorf("%s: %s; %s; %s;",
+					vardef.TiDBMemArbitratorMode,
+					memory.ArbitratorModeDisableName,
+					memory.ArbitratorModeStandardName,
+					memory.ArbitratorModePriorityName)
+			}
+		},
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return memory.GetGlobalMemArbitratorWorkModeText(), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, str string) error {
+			memory.SetGlobalMemArbitratorWorkMode(str)
+			return nil
+		},
+	},
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBMemArbitratorWaitAverse, Value: vardef.DefTiDBMemArbitratorWaitAverse, Type: vardef.TypeStr,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			if normalizedValue == "0" || normalizedValue == "1" || normalizedValue == "nolimit" {
+				return normalizedValue, nil
+			}
+			return "", ErrTiDBMemArbitratorWaitAverse
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			switch val {
+			case "0":
+				s.MemArbitrator.WaitAverse = MemArbitratorWaitAverseDisable
+			case "1":
+				s.MemArbitrator.WaitAverse = MemArbitratorWaitAverseEnable
+			default:
+				s.MemArbitrator.WaitAverse = MemArbitratorNolimit
+			}
+			return nil
+		},
+	},
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBMemArbitratorQueryReserved, Value: vardef.DefTiDBMemArbitratorQueryReservedText, Type: vardef.TypeStr,
+		IsHintUpdatableVerified: true,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			if normalizedValue == "0" {
+				return normalizedValue, nil
+			}
+			if v, err := strconv.ParseUint(normalizedValue, 10, 64); err == nil && int64(v) > 1 {
+				return normalizedValue, nil
+			}
+			return "", ErrTiDBMemArbitratorQueryReserved
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			intValue, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				s.MemArbitrator.QueryReserved = int64(intValue)
+				return nil
+			}
+			return err
 		},
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBServerMemoryLimitSessMinSize, Value: strconv.FormatUint(vardef.DefTiDBServerMemoryLimitSessMinSize, 10), Type: vardef.TypeStr,
