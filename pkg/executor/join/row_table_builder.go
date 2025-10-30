@@ -509,15 +509,17 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 	}
 }
 
-func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2, workerID int) error {
+func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2, workerID int) (err error) {
 	segs := make([]*rowTableSegment, b.partitionNumber)
 	for partIdx := range b.partitionNumber {
 		segs[partIdx] = newRowTableSegment()
 	}
 
 	defer func() {
-		for partIdx, seg := range segs {
-			hashJoinCtx.hashTableContext.appendRowSegment(workerID, partIdx, seg)
+		if err != nil {
+			for partIdx, seg := range segs {
+				hashJoinCtx.hashTableContext.appendRowSegment(workerID, partIdx, seg)
+			}
 		}
 	}()
 
@@ -526,7 +528,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 	rowTableMeta := hashJoinCtx.hashTableMeta
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
 		if logicalRowIndex%10 == 0 || logicalRowIndex == len(b.usedRows)-1 {
-			err := checkSQLKiller(&hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuild")
+			err = checkSQLKiller(&hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuild")
 			if err != nil {
 				return err
 			}
