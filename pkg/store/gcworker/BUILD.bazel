@@ -55,7 +55,11 @@ go_test(
     embed = [":gcworker"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 26,
+=======
+    shard_count = 35,
+>>>>>>> 993eabc3cc0 (gc_worker: Stablize TestResolveLocksWithKeyspaces (#64169))
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
