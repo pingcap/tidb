@@ -547,6 +547,25 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+// GetIdxChangingFieldType gets the field type of index column.
+// Since both old/new type may coexist in one column during modify column,
+// we need to get the correct type for index column.
+func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
+	if idxCol.UseChangingType && col.ChangingFieldType != nil {
+		return col.ChangingFieldType
+	}
+	return &col.FieldType
+}
+
+// ColumnNeedRestoredData checks whether a single index column needs restored data.
+func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
+	col := colInfos[idxCol.Offset]
+	return types.NeedRestoredData(GetIdxChangingFieldType(idxCol, col))
+}
+
+>>>>>>> adf08267939 (modify column: fix insert failure during modify column with index only reorg (#64188))
 // TableNameInfo provides meta data describing a table name info.
 type TableNameInfo struct {
 	ID   int64       `json:"id"`
