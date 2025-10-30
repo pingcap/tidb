@@ -798,10 +798,11 @@ func BuildRowcodecColInfoForIndexColumns(idxInfo *model.IndexInfo, tblInfo *mode
 	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
 	for _, idxCol := range idxInfo.Columns {
 		col := tblInfo.Columns[idxCol.Offset]
+		ft := model.GetIdxChangingFieldType(idxCol, col).Clone()
 		colInfo = append(colInfo, rowcodec.ColInfo{
 			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(ft.GetFlag()),
+			Ft:         ft,
 		})
 	}
 	return colInfo

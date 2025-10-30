@@ -582,6 +582,14 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 	return nil
 }
 
+// GetIdxChangingFieldType gets the field type of index column.
+func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
+	if idxCol.UsingChangingType && col.ChangingFieldType != nil {
+		return col.ChangingFieldType
+	}
+	return &col.FieldType
+}
+
 // ColumnNeedRestoredData checks whether a single index column needs restored data.
 func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
 	col := colInfos[idxCol.Offset]
