@@ -159,7 +159,7 @@ func TestModifyColumnOldColumnIDNotFound(t *testing.T) {
 			mockOwnerChange = true
 		}
 	})
-	tk.MustExec("alter table t modify column a tinyint;")
+	tk.MustExec("alter table t modify column a varchar(16);")
 	require.True(t, mockOwnerChange)
 }
 
