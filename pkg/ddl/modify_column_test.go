@@ -1302,36 +1302,64 @@ func TestModifyStringColumn(t *testing.T) {
 func TestModifyColumnWithDifferentCollation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`
-		CREATE TABLE t1 (
-		c1 int NOT NULL DEFAULT '1',
-		c2 char(23) collate utf8_unicode_ci,
-		c3 timestamp NOT NULL DEFAULT '2027-02-18 11:32:18',
-		PRIMARY KEY (c1, c3),
-		KEY i1 (c2)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-	`)
 
-	for i := range 16 {
-		tk.MustExec(fmt.Sprintf("insert into t1 (c1, c2) values (%d, 'text%d ')", i, i))
+	runSingleTest := func(t *testing.T, oldColTp, newColTp string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec(fmt.Sprintf(`
+			CREATE TABLE t1 (
+			c1 int NOT NULL DEFAULT '1',
+			c2 int NOT NULL DEFAULT '1',
+			c3 %s,
+			PRIMARY KEY (c1, c2),
+			KEY i1 (c3)
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+		`, oldColTp))
+
+		for i := range 10 {
+			tk.MustExec(fmt.Sprintf("insert into t1 (c1, c3) values (%d, 'space%d ')", i, i))
+		}
+
+		insertIdx := 32
+		deleteIdx := 0
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(_ *model.Job) {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			// Test data consistency for insert/delete check during reorg.
+			err := tk2.ExecToErr(fmt.Sprintf("insert into t1 (c1, c3) values ('%d', 'space%d   ')", insertIdx, insertIdx))
+			if err != nil {
+				// The only possible error is data truncation error during modify column.
+				require.Contains(t, err.Error(), "data truncation error during modify column")
+			}
+			tk2.MustExec(fmt.Sprintf("delete from t1 where c1 = %d", deleteIdx))
+			deleteIdx++
+			insertIdx++
+		})
+
+		tk.MustExec(fmt.Sprintf("alter table t1 modify column c3 %s", newColTp))
+		require.True(t, deleteIdx > 0, "failpoint should be triggered")
+		tk.MustExec("admin check table t1;")
 	}
 
-	insertIdx := 32
-	deleteIdx := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(_ *model.Job) {
-		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec("use test")
-		// Test data consistency for insert/delete check during reorg.
-		err := tk2.ExecToErr(fmt.Sprintf("insert into t1 (c1, c2) values ('%d', 'space%d   ')", insertIdx, insertIdx))
-		if err != nil {
-			require.Contains(t, err.Error(), "data truncation error during modify column")
+	var (
+		oldTps []string
+		newTps []string
+	)
+	for _, tp := range []string{"char", "varchar"} {
+		for _, collation := range []string{"utf8mb4_bin", "utf8_unicode_ci", "utf8mb4_general_ci"} {
+			oldTps = append(oldTps, fmt.Sprintf("%s(32) collate %s", tp, collation))
+			newTps = append(newTps, fmt.Sprintf("%s(23) collate %s", tp, collation))
 		}
-		tk2.MustExec(fmt.Sprintf("delete from t1 where c1 = %d", deleteIdx))
-		deleteIdx++
-		insertIdx++
-	})
+	}
 
-	tk.MustExec(`alter table t1 modify column c2 VARCHAR(32)`)
-	tk.MustExec("admin check table t1;")
+	for i, oldColTp := range oldTps {
+		for j, newColTp := range newTps {
+			if i == j {
+				continue
+			}
+			t.Run(fmt.Sprintf("%s -> %s", oldColTp, newColTp), func(t *testing.T) {
+				runSingleTest(t, oldColTp, newColTp)
+			})
+		}
+	}
 }
