@@ -297,8 +297,17 @@ func showCommentsFromJob(job *model.Job) string {
 		return ""
 	}
 	var labels []string
-	if m.AnalyzeState == model.AnalyzeStateRunning {
+	switch m.AnalyzeState {
+	case model.AnalyzeStateRunning:
 		labels = append(labels, "analyzing")
+<<<<<<< HEAD
+=======
+	case model.AnalyzeStateFailed:
+		labels = append(labels, "analyze_failed")
+	case model.AnalyzeStateTimeout:
+		labels = append(labels, "analyze_timeout")
+	default:
+>>>>>>> 9c63ff95d9a (ddl: show the failed analyze-status in admin show (#64167))
 	}
 	if job.Type == model.ActionAddIndex ||
 		job.Type == model.ActionAddPrimaryKey {

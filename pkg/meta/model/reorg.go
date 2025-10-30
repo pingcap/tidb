@@ -158,6 +158,13 @@ const (
 	AnalyzeStateSkipped = 2
 	// AnalyzeStateDone means the analyze process is done.
 	AnalyzeStateDone = 3
+<<<<<<< HEAD
+=======
+	// AnalyzeStateTimeout means the analyze process is timed out.
+	AnalyzeStateTimeout = 4
+	// AnalyzeStateFailed means the analyze process is failed.
+	AnalyzeStateFailed = 5
+>>>>>>> 9c63ff95d9a (ddl: show the failed analyze-status in admin show (#64167))
 )
 
 // ReorgType indicates which process is used for the data reorganization.

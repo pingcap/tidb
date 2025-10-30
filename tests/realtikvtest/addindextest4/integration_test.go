@@ -15,6 +15,7 @@
 package addindextest_test
 
 import (
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -218,8 +219,116 @@ func TestAddIndexShowAnalyzeProgress(t *testing.T) {
 	})
 	tk1.MustExec("alter table t modify column b char(16);")
 	require.True(t, analyzed)
+
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec("create table t (a int, b int, key idx_b(b));")
+	tk1.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+	beginRs = tk1.MustQuery("select now();").Rows()
+	begin = beginRs[0][0].(string)
+	jobID = int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if jobID == 0 && job.Type == model.ActionModifyColumn {
+			jobID = job.ID
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", func(err *error) {
+		*err = errors.New("mock err")
+	})
+	tk1.MustExec("alter table t modify column b char(16);")
+	require.True(t, analyzed)
+	showRs := tk1.MustQuery(fmt.Sprintf("admin show ddl jobs where job_id = %d", jobID)).Rows()
+	show := showRs[0][12].(string)
+	require.Contains(t, show, "analyze_failed")
 }
 
+<<<<<<< HEAD
+=======
+func TestAnalyzeTimeout(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t_timeout;")
+	tk1.MustExec("create table t_timeout (a int, b varchar(16), key idx_b(b));")
+	tk1.MustExec("insert into t_timeout values (1, '1'), (2, '2'), (3, '3');")
+	tk1.MustExec("set @@tidb_enable_ddl_analyze = 1;")
+
+	jobID := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if jobID == 0 && job.Type == model.ActionModifyColumn {
+			jobID = job.ID
+		}
+	})
+
+	oldInterval := ddl.DefaultAnalyzeCheckInterval
+	ddl.DefaultAnalyzeCheckInterval = 10 * time.Millisecond
+	defer func() {
+		ddl.DefaultAnalyzeCheckInterval = oldInterval
+	}()
+
+	analyzedNotify := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", func(*error) {
+		// wait an extra second because analyze start_time is compared at second granularity
+		time.Sleep(1 * time.Second)
+		close(analyzedNotify)
+	})
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
+		time.Sleep(100 * time.Millisecond)
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAnalyzeTimeout", "return(1)")
+
+	tk1.MustExec("alter table t_timeout modify column b char(16);")
+
+	require.Eventually(t, func() bool {
+		if jobID == 0 {
+			return false
+		}
+		rows := tk1.MustQuery(fmt.Sprintf("admin show ddl jobs where job_id = %d", jobID)).Rows()
+		if len(rows) == 0 {
+			return false
+		}
+		show := rows[0][12].(string)
+		return strings.Contains(show, "analyze_timeout")
+	}, 30*time.Second, 200*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		rows := tk1.MustQuery("show stats_meta where table_name = 't_timeout'").Rows()
+		return len(rows) > 0
+	}, time.Minute, 200*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-analyzedNotify:
+			return true
+		default:
+			return false
+		}
+	}, 30*time.Second, 200*time.Millisecond)
+
+	jobID = 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if jobID == 0 && job.Type == model.ActionAddIndex {
+			jobID = job.ID
+		}
+	})
+	tk1.MustExec("alter table t_timeout add index new_idx_b(b);")
+	require.Eventually(t, func() bool {
+		require.Greater(t, jobID, int64(0))
+		rows := tk1.MustQuery(fmt.Sprintf("admin show ddl jobs where job_id = %d", jobID)).Rows()
+		if len(rows) == 0 {
+			return false
+		}
+		show := rows[0][12].(string)
+		return strings.Contains(show, "analyze_timeout")
+	}, 30*time.Second, 200*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		rows := tk1.MustQuery("show stats_meta where table_name = 't_timeout'").Rows()
+		return len(rows) > 0
+	}, time.Minute, 200*time.Millisecond)
+}
+
+>>>>>>> 9c63ff95d9a (ddl: show the failed analyze-status in admin show (#64167))
 func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)

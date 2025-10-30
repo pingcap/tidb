@@ -1067,12 +1067,29 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
+<<<<<<< HEAD
 			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
 			if done {
 				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+=======
+			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done || timedOut || failed {
+				if done {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				}
+				if timedOut {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
+				}
+				if failed {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
+				}
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+>>>>>>> 9c63ff95d9a (ddl: show the failed analyze-status in admin show (#64167))
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 			if tblInfo.TTLInfo != nil {
@@ -1276,9 +1293,23 @@ func (w *worker) doModifyColumnIndexReorg(
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
+<<<<<<< HEAD
 			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
 			if done {
 				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+=======
+			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			if done || timedOut || failed {
+				if done {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				}
+				if timedOut {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
+				}
+				if failed {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
+				}
+>>>>>>> 9c63ff95d9a (ddl: show the failed analyze-status in admin show (#64167))
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
