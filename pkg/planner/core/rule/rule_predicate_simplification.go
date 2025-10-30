@@ -189,7 +189,7 @@ func applyPredicateSimplificationForJoin(sctx base.PlanContext, predicates []exp
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant, isDataSourcePushedDownConds bool,
 	vaildConstantPropagationExpressionFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
 	return applyPredicateSimplificationHelper(sctx, predicates, nil, nil,
-		false, isDataSourcePushedDownConds, propagateConstant, vaildConstantPropagationExpressionFunc)
+		false, propagateConstant, isDataSourcePushedDownConds, vaildConstantPropagationExpressionFunc)
 }
 
 func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expression.Expression,

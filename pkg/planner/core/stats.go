@@ -162,7 +162,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	if indexForce {
 		ds.SCtx().GetSessionVars().StmtCtx.SetIndexForce()
 	}
-	ds.PushedDownConds = ruleutil.ApplyPredicateSimplification(ds.SCtx(), ds.PushedDownConds, true, true, nil)
+	ds.PushedDownConds = ruleutil.ApplyPredicateSimplification(ds.SCtx(), ds.PushedDownConds, true, false, nil)
 	return ds.StatsInfo(), true, nil
 }
 
