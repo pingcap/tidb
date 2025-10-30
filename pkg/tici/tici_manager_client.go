@@ -556,7 +556,12 @@ func DropFullTextIndex(ctx context.Context, store kv.Storage, tableID int64, ind
 	}
 	defer ticiManager.Close()
 	if store != nil {
-		ticiManager.SetKeyspaceID(uint32(store.GetCodec().GetKeyspaceID()))
+		keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
+		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+		ticiManager.SetKeyspaceID(keyspaceID)
 	}
 	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
 }
