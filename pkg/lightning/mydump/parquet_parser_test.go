@@ -26,7 +26,6 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/compress"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -233,11 +232,6 @@ func TestParquetVariousTypes(t *testing.T) {
 		mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
 		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
 	}
-	bctx := exprstatic.NewExprContext(
-		exprstatic.WithEvalCtx(
-			exprstatic.NewEvalContext(
-				exprstatic.WithLocation(
-					time.UTC))))
 
 	row := reader.lastRow.Row
 	require.Len(t, expectedStringValues, len(row))
@@ -249,8 +243,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		if expectedTypes[i] == mysql.TypeTimestamp {
 			tp.SetDecimal(6)
 		}
-		expectedDatum, err := table.CastColumnValueToType(
-			bctx, types.NewStringDatum(s), tp, true, false)
+		expectedDatum, err := table.CastColumnValueWithStrictMode(types.NewStringDatum(s), tp)
 		require.NoError(t, err)
 		require.Equal(t, expectedDatum, row[i])
 	}

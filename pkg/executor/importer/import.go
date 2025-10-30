@@ -1220,8 +1220,12 @@ func estimateCompressionRatio(
 	if err != nil {
 		return 1.0, err
 	}
+	// No row in the file, use 2.0 as default compression ratio.
+	if rowSize == 0 || rows == 0 {
+		return 2.0, nil
+	}
 
-	compressionRatio := float64(fileSize) / (rowSize * float64(rows))
+	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
 	return compressionRatio, nil
 }
 
@@ -1311,7 +1315,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Type:        sourceType,
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
-		fileMeta.RealSize = int64(float64(fileMeta.RealSize) / compressionRatio)
+		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
 		totalSize = size
 	} else {
@@ -1365,7 +1369,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Type:        sourceType,
 				}
 				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
-				fileMeta.RealSize = int64(float64(fileMeta.RealSize) / compressionRatio)
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
