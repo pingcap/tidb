@@ -58,30 +58,6 @@ var ffiSysVars = []*SysVar{
 			}
 			return BoolToOnOff((*PDLocalCallVar).Load()), nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBXEnableTiKVLocalCallWithMemRing, Value: BoolToOnOff(DefTiDBXEnableLocalRPCWithMemRingOpt), Type: TypeBool,
-		SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
-			if TiDBOptOn(s) != tikvrpc.EnableTiKVLocalCallWithMem.Load() {
-				tikvrpc.EnableTiKVLocalCallWithMem.Store(TiDBOptOn(s))
-				logutil.BgLogger().Info("set enable local rpc with mem ring opt",
-					zap.String("variable", TiDBXEnableTiKVLocalCallWithMemRing),
-					zap.Bool("enable", TiDBOptOn(s)))
-			}
-			return nil
-		}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
-			return BoolToOnOff(tikvrpc.EnableTiKVLocalCallWithMem.Load()), nil
-		}},
-	{Scope: ScopeGlobal, Name: TiDBXEnableTiKVLocalCallWithReprC, Value: BoolToOnOff(DefTiDBXEnableLocalRPCWithReprC), Type: TypeBool,
-		SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
-			if TiDBOptOn(s) != tikvrpc.EnableTiKVLocalCallWithReprC.Load() {
-				tikvrpc.EnableTiKVLocalCallWithReprC.Store(TiDBOptOn(s))
-				logutil.BgLogger().Info("set enable local rpc with reprc opt",
-					zap.String("variable", TiDBXEnableTiKVLocalCallWithReprC),
-					zap.Bool("enable", TiDBOptOn(s)))
-			}
-			return nil
-		}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
-			return BoolToOnOff(tikvrpc.EnableTiKVLocalCallWithReprC.Load()), nil
-		}},
 }
 
 // PDLocalCallVar will be set by the upper package tidbx-server to point to pd-server's

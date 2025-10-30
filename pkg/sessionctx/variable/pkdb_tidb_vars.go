@@ -16,27 +16,21 @@ const (
 	TiDBXEnableTiKVLocalCall = "tidbx_enable_tikv_local_call"
 	// TiDBXEnablePDLocalCall indicates whether to use Inter-Process Call for PD.
 	TiDBXEnablePDLocalCall = "tidbx_enable_pd_local_call"
-	// TiDBXEnableTiKVLocalCallWithMemRing indicates whether to enable TiKV local calls with shared memory ring.
-	TiDBXEnableTiKVLocalCallWithMemRing = "tidbx_enable_tikv_local_call_with_mem"
-	// TiDBXEnableTiKVLocalCallWithReprC indicates whether to enable TiKV local calls with marshal reprc.
-	TiDBXEnableTiKVLocalCallWithReprC = "tidbx_enable_tikv_local_call_with_reprc"
 )
 
 // Default TiDB system variable values.
 const (
-	DefTiDBXEnableLocalRPCOpt            = false
-	DefTiDBXEnableScheduleLeaderRule     = false
-	DefTiDBEnableLabelSecurity           = false
-	DefTiDBEnableLoginHistory            = false
-	DefTiDBLoginHistoryRetainDuration    = time.Hour * 24 * 90 // default 90 days.
-	DefStoredProgramCacheSize            = 256
-	DefTiDBEnableProcedure               = false
-	DefTiDBEnableDutySeparationMode      = false
-	DefTiDBEnableUDVSubstitute           = false
-	DefTiDBEnableSPParamSubstitute       = false
-	DefTiDBCreateFromSelectUsingImport   = false
-	DefTiDBXEnableLocalRPCWithMemRingOpt = false
-	DefTiDBXEnableLocalRPCWithReprC      = false
+	DefTiDBXEnableLocalRPCOpt          = false
+	DefTiDBXEnableScheduleLeaderRule   = false
+	DefTiDBEnableLabelSecurity         = false
+	DefTiDBEnableLoginHistory          = false
+	DefTiDBLoginHistoryRetainDuration  = time.Hour * 24 * 90 // default 90 days.
+	DefStoredProgramCacheSize          = 256
+	DefTiDBEnableProcedure             = false
+	DefTiDBEnableDutySeparationMode    = false
+	DefTiDBEnableUDVSubstitute         = false
+	DefTiDBEnableSPParamSubstitute     = false
+	DefTiDBCreateFromSelectUsingImport = false
 )
 
 // UnspecifiedServerID indicates the unspecified server id.
