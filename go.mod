@@ -211,7 +211,7 @@ require (
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
-	google.golang.org/appengine v1.6.8 // indirect
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.60.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 )
 
@@ -361,14 +361,16 @@ require (
 )
 
 replace (
-	cloud.google.com/go/auth => cloud.google.com/go/auth v0.5.1
-	cloud.google.com/go/kms => cloud.google.com/go/kms v1.15.0
-	cloud.google.com/go/longrunning => cloud.google.com/go/longrunning v0.5.1
-	cloud.google.com/go/storage => cloud.google.com/go/storage v1.30.1
+	// cloud.google.com/go => cloud.google.com/go v0.112.2
+	// cloud.google.com/go/compute/metadata v0.3.0 => cloud.google.com/go/compute/metadata v0.3.0
+	cloud.google.com/go/iam => cloud.google.com/go/iam v1.1.7
+	cloud.google.com/go/kms => cloud.google.com/go/kms v1.15.8
+	cloud.google.com/go/pubsub => cloud.google.com/go/pubsub v1.37.0
+	cloud.google.com/go/storage => cloud.google.com/go/storage v1.39.1
 
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
-	google.golang.org/api => google.golang.org/api v0.128.0
+	google.golang.org/api => google.golang.org/api v0.170.0
 	google.golang.org/grpc => google.golang.org/grpc v1.63.2
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.

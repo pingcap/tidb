@@ -8976,13 +8976,13 @@ def go_deps():
         name = "com_google_cloud_go_auth",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/auth",
-        sha256 = "01f4a61a9926da73b2bea638168e21c1cc2ff66346881f07283e14204503e49b",
-        strip_prefix = "cloud.google.com/go/auth@v0.5.1",
+        sha256 = "4f1e639b7506a95b2d336869118e43b1bc527d954a6b5de87eb456976bcf27e2",
+        strip_prefix = "cloud.google.com/go/auth@v0.16.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/auth/com_google_cloud_go_auth-v0.5.1.zip",
-            "http://ats.apps.svc/gomod/cloud.google.com/go/auth/com_google_cloud_go_auth-v0.5.1.zip",
-            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/auth/com_google_cloud_go_auth-v0.5.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/auth/com_google_cloud_go_auth-v0.5.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/auth/com_google_cloud_go_auth-v0.16.0.zip",
+            "http://ats.apps.svc/gomod/cloud.google.com/go/auth/com_google_cloud_go_auth-v0.16.0.zip",
+            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/auth/com_google_cloud_go_auth-v0.16.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/auth/com_google_cloud_go_auth-v0.16.0.zip",
         ],
     )
     go_repository(
@@ -9626,13 +9626,13 @@ def go_deps():
         name = "com_google_cloud_go_iam",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/iam",
-        sha256 = "4d0c80cae20005a2beccf5ed7fbe4b938e73927f91ee141ecf11607c3e9d72e0",
-        strip_prefix = "cloud.google.com/go/iam@v1.5.0",
+        sha256 = "a4e11b559105ad686bd085ab5538701f89bf779381392aeb2d2803f470e1b16b",
+        strip_prefix = "cloud.google.com/go/iam@v1.1.7",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.5.0.zip",
-            "http://ats.apps.svc/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.5.0.zip",
-            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.5.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.5.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.1.7.zip",
+            "http://ats.apps.svc/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.1.7.zip",
+            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.1.7.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.1.7.zip",
         ],
     )
     go_repository(
@@ -9678,13 +9678,13 @@ def go_deps():
         name = "com_google_cloud_go_kms",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/kms",
-        sha256 = "0d220f626f59de4c45f7256527c81b5b01f28b81a7c9bce71fc7fb677f3ca9f3",
-        strip_prefix = "cloud.google.com/go/kms@v1.15.0",
+        sha256 = "492550f75abeb542395dfbc1afb41c4ceed4ea40ac7b51458cc870fb4adbd884",
+        strip_prefix = "cloud.google.com/go/kms@v1.15.8",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/kms/com_google_cloud_go_kms-v1.15.0.zip",
-            "http://ats.apps.svc/gomod/cloud.google.com/go/kms/com_google_cloud_go_kms-v1.15.0.zip",
-            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/kms/com_google_cloud_go_kms-v1.15.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/kms/com_google_cloud_go_kms-v1.15.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/kms/com_google_cloud_go_kms-v1.15.8.zip",
+            "http://ats.apps.svc/gomod/cloud.google.com/go/kms/com_google_cloud_go_kms-v1.15.8.zip",
+            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/kms/com_google_cloud_go_kms-v1.15.8.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/kms/com_google_cloud_go_kms-v1.15.8.zip",
         ],
     )
     go_repository(
@@ -9730,13 +9730,13 @@ def go_deps():
         name = "com_google_cloud_go_longrunning",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/longrunning",
-        sha256 = "b8ea9a94c0303a84caf2abdbef573cfafb55d56ec66716105f5aa9695626a496",
-        strip_prefix = "cloud.google.com/go/longrunning@v0.5.1",
+        sha256 = "793aedc4e397b15bf24d1953cb56f1f4ce78a1e109acad04b783e20e653993b2",
+        strip_prefix = "cloud.google.com/go/longrunning@v0.6.4",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.5.1.zip",
-            "http://ats.apps.svc/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.5.1.zip",
-            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.5.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.5.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.6.4.zip",
+            "http://ats.apps.svc/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.6.4.zip",
+            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.6.4.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.6.4.zip",
         ],
     )
     go_repository(
@@ -9977,13 +9977,13 @@ def go_deps():
         name = "com_google_cloud_go_pubsub",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/pubsub",
-        sha256 = "410fda1365ab7c0b0c8b7afbe6624b260cf3a2d717c74217440871b3dcac7849",
-        strip_prefix = "cloud.google.com/go/pubsub@v1.47.0",
+        sha256 = "c468d224c042a7e23b021ae1df3870f6aad4b7fb8982c02756e18ec7b7d80c2d",
+        strip_prefix = "cloud.google.com/go/pubsub@v1.37.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/pubsub/com_google_cloud_go_pubsub-v1.47.0.zip",
-            "http://ats.apps.svc/gomod/cloud.google.com/go/pubsub/com_google_cloud_go_pubsub-v1.47.0.zip",
-            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/pubsub/com_google_cloud_go_pubsub-v1.47.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/pubsub/com_google_cloud_go_pubsub-v1.47.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/pubsub/com_google_cloud_go_pubsub-v1.37.0.zip",
+            "http://ats.apps.svc/gomod/cloud.google.com/go/pubsub/com_google_cloud_go_pubsub-v1.37.0.zip",
+            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/pubsub/com_google_cloud_go_pubsub-v1.37.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/pubsub/com_google_cloud_go_pubsub-v1.37.0.zip",
         ],
     )
     go_repository(
@@ -10263,13 +10263,13 @@ def go_deps():
         name = "com_google_cloud_go_storage",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/storage",
-        sha256 = "d3702216afe89ee6a768eb302695d8ec64395c30a13fd0dc855acc9e30d4aad8",
-        strip_prefix = "cloud.google.com/go/storage@v1.30.1",
+        sha256 = "d2296c14f33f75e11ac4f525a8280d1f828a00460ca7c15d32c6fa18f25c68a1",
+        strip_prefix = "cloud.google.com/go/storage@v1.39.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/storage/com_google_cloud_go_storage-v1.30.1.zip",
-            "http://ats.apps.svc/gomod/cloud.google.com/go/storage/com_google_cloud_go_storage-v1.30.1.zip",
-            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/storage/com_google_cloud_go_storage-v1.30.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/storage/com_google_cloud_go_storage-v1.30.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/storage/com_google_cloud_go_storage-v1.39.1.zip",
+            "http://ats.apps.svc/gomod/cloud.google.com/go/storage/com_google_cloud_go_storage-v1.39.1.zip",
+            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/storage/com_google_cloud_go_storage-v1.39.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/storage/com_google_cloud_go_storage-v1.39.1.zip",
         ],
     )
     go_repository(
@@ -11381,13 +11381,13 @@ def go_deps():
         name = "org_golang_google_api",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/api",
-        sha256 = "1c7547012d828329aa90dc77bfa7d826184b14229cc72c93eeca50cb9882158d",
-        strip_prefix = "google.golang.org/api@v0.128.0",
+        sha256 = "bb1337b6f4ee56bbb7bac672bf52d5904bdfe6d162a552264b5e89643330d566",
+        strip_prefix = "google.golang.org/api@v0.170.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/api/org_golang_google_api-v0.128.0.zip",
-            "http://ats.apps.svc/gomod/google.golang.org/api/org_golang_google_api-v0.128.0.zip",
-            "https://cache.hawkingrei.com/gomod/google.golang.org/api/org_golang_google_api-v0.128.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/api/org_golang_google_api-v0.128.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/api/org_golang_google_api-v0.170.0.zip",
+            "http://ats.apps.svc/gomod/google.golang.org/api/org_golang_google_api-v0.170.0.zip",
+            "https://cache.hawkingrei.com/gomod/google.golang.org/api/org_golang_google_api-v0.170.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/api/org_golang_google_api-v0.170.0.zip",
         ],
     )
     go_repository(
@@ -11433,13 +11433,13 @@ def go_deps():
         name = "org_golang_google_genproto_googleapis_bytestream",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/genproto/googleapis/bytestream",
-        sha256 = "cab1c8c198b4c5a226590e8b5b1b847e505a7aaf10a0145ce8c29951eca86b6a",
-        strip_prefix = "google.golang.org/genproto/googleapis/bytestream@v0.0.0-20230530153820-e85fd2cbaebc",
+        sha256 = "ab36a9d9a64c04f92b23000537bf5103173d641bd193610b39e091e3c1a8bd9f",
+        strip_prefix = "google.golang.org/genproto/googleapis/bytestream@v0.0.0-20240311132316-a219d84964c2",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/genproto/googleapis/bytestream/org_golang_google_genproto_googleapis_bytestream-v0.0.0-20230530153820-e85fd2cbaebc.zip",
-            "http://ats.apps.svc/gomod/google.golang.org/genproto/googleapis/bytestream/org_golang_google_genproto_googleapis_bytestream-v0.0.0-20230530153820-e85fd2cbaebc.zip",
-            "https://cache.hawkingrei.com/gomod/google.golang.org/genproto/googleapis/bytestream/org_golang_google_genproto_googleapis_bytestream-v0.0.0-20230530153820-e85fd2cbaebc.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/genproto/googleapis/bytestream/org_golang_google_genproto_googleapis_bytestream-v0.0.0-20230530153820-e85fd2cbaebc.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/genproto/googleapis/bytestream/org_golang_google_genproto_googleapis_bytestream-v0.0.0-20240311132316-a219d84964c2.zip",
+            "http://ats.apps.svc/gomod/google.golang.org/genproto/googleapis/bytestream/org_golang_google_genproto_googleapis_bytestream-v0.0.0-20240311132316-a219d84964c2.zip",
+            "https://cache.hawkingrei.com/gomod/google.golang.org/genproto/googleapis/bytestream/org_golang_google_genproto_googleapis_bytestream-v0.0.0-20240311132316-a219d84964c2.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/genproto/googleapis/bytestream/org_golang_google_genproto_googleapis_bytestream-v0.0.0-20240311132316-a219d84964c2.zip",
         ],
     )
     go_repository(
@@ -12148,13 +12148,13 @@ def go_deps():
         name = "tech_einride_go_aip",
         build_file_proto_mode = "disable_global",
         importpath = "go.einride.tech/aip",
-        sha256 = "97ff424939162cb2b729abba44c79a745fa3530fe133739874af0f4c62bfd336",
-        strip_prefix = "go.einride.tech/aip@v0.68.1",
+        sha256 = "d3e11dca3b1aba4fed53d90c0a984eacf3aa3e47ef12b2e445ff8d5d185fe9db",
+        strip_prefix = "go.einride.tech/aip@v0.66.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.einride.tech/aip/tech_einride_go_aip-v0.68.1.zip",
-            "http://ats.apps.svc/gomod/go.einride.tech/aip/tech_einride_go_aip-v0.68.1.zip",
-            "https://cache.hawkingrei.com/gomod/go.einride.tech/aip/tech_einride_go_aip-v0.68.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.einride.tech/aip/tech_einride_go_aip-v0.68.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/go.einride.tech/aip/tech_einride_go_aip-v0.66.0.zip",
+            "http://ats.apps.svc/gomod/go.einride.tech/aip/tech_einride_go_aip-v0.66.0.zip",
+            "https://cache.hawkingrei.com/gomod/go.einride.tech/aip/tech_einride_go_aip-v0.66.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/go.einride.tech/aip/tech_einride_go_aip-v0.66.0.zip",
         ],
     )
     go_repository(
