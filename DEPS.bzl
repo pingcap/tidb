@@ -7947,13 +7947,13 @@ def go_deps():
         name = "com_github_stretchr_testify",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/stretchr/testify",
-        sha256 = "09514f56a6c9f50a61ad14a9d4a66bcfefa53a184e87c9534a14db71874faa6a",
-        strip_prefix = "github.com/stretchr/testify@v1.11.0",
+        sha256 = "36c87573527a97ce97fc15ce2a101e65e5ebb350db142d09f633580cb8d5c839",
+        strip_prefix = "github.com/stretchr/testify@v1.10.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/stretchr/testify/com_github_stretchr_testify-v1.11.0.zip",
-            "http://ats.apps.svc/gomod/github.com/stretchr/testify/com_github_stretchr_testify-v1.11.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/stretchr/testify/com_github_stretchr_testify-v1.11.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/stretchr/testify/com_github_stretchr_testify-v1.11.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/stretchr/testify/com_github_stretchr_testify-v1.10.0.zip",
+            "http://ats.apps.svc/gomod/github.com/stretchr/testify/com_github_stretchr_testify-v1.10.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/stretchr/testify/com_github_stretchr_testify-v1.10.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/stretchr/testify/com_github_stretchr_testify-v1.10.0.zip",
         ],
     )
     go_repository(
@@ -9626,13 +9626,13 @@ def go_deps():
         name = "com_google_cloud_go_iam",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/iam",
-        sha256 = "a4e11b559105ad686bd085ab5538701f89bf779381392aeb2d2803f470e1b16b",
-        strip_prefix = "cloud.google.com/go/iam@v1.1.7",
+        sha256 = "4d0c80cae20005a2beccf5ed7fbe4b938e73927f91ee141ecf11607c3e9d72e0",
+        strip_prefix = "cloud.google.com/go/iam@v1.5.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.1.7.zip",
-            "http://ats.apps.svc/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.1.7.zip",
-            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.1.7.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.1.7.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.5.0.zip",
+            "http://ats.apps.svc/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.5.0.zip",
+            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.5.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/iam/com_google_cloud_go_iam-v1.5.0.zip",
         ],
     )
     go_repository(
@@ -9730,13 +9730,13 @@ def go_deps():
         name = "com_google_cloud_go_longrunning",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/longrunning",
-        sha256 = "793aedc4e397b15bf24d1953cb56f1f4ce78a1e109acad04b783e20e653993b2",
-        strip_prefix = "cloud.google.com/go/longrunning@v0.6.4",
+        sha256 = "a6567373553e75e7cffb28ef455b328708c0a03a4a98d7826bc357c2a5b339cf",
+        strip_prefix = "cloud.google.com/go/longrunning@v0.6.6",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.6.4.zip",
-            "http://ats.apps.svc/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.6.4.zip",
-            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.6.4.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.6.4.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.6.6.zip",
+            "http://ats.apps.svc/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.6.6.zip",
+            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.6.6.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/longrunning/com_google_cloud_go_longrunning-v0.6.6.zip",
         ],
     )
     go_repository(

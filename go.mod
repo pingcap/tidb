@@ -361,15 +361,17 @@ require (
 )
 
 replace (
-	// cloud.google.com/go => cloud.google.com/go v0.112.2
-	// cloud.google.com/go/compute/metadata v0.3.0 => cloud.google.com/go/compute/metadata v0.3.0
-	cloud.google.com/go/iam => cloud.google.com/go/iam v1.1.7
+	// Following modules are replaced to use grpc v1.63.2.
+	// We can remove these replacements after upgrading grpc to > 1.65
 	cloud.google.com/go/kms => cloud.google.com/go/kms v1.15.8
 	cloud.google.com/go/pubsub => cloud.google.com/go/pubsub v1.37.0
 	cloud.google.com/go/storage => cloud.google.com/go/storage v1.39.1
 
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
+
+	// some test are flaky under v.1.11.0, downgrade to v1.10.0
+	github.com/stretchr/testify => github.com/stretchr/testify v1.10.0
 	google.golang.org/api => google.golang.org/api v0.170.0
 	google.golang.org/grpc => google.golang.org/grpc v1.63.2
 
