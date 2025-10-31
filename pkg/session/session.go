@@ -29,6 +29,7 @@ import (
 	"iter"
 	"math"
 	"math/rand"
+	"regexp"
 	"runtime/pprof"
 	"slices"
 	"strconv"
@@ -1901,6 +1902,12 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	logutil.Logger(ctx).Debug("parse", zap.String("sql", sql))
 	parseStartTime := time.Now()
 
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.sql_regexp",
+		func(cfg *traceevent.DumpTriggerConfig) bool {
+			match, err := regexp.MatchString(cfg.UserCommand.SQLRegexp, sql)
+			return err == nil && match
+		})
+
 	// Load the session variables to the context.
 	// This is necessary for the parser to get the current sql_mode.
 	if err := s.loadCommonGlobalVariablesIfNeeded(); err != nil {
@@ -2583,7 +2590,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		prevTraceID := s.sessionVars.PrevTraceID
 		startTS := s.sessionVars.TxnCtx.StartTS
 		stmtCount := uint64(s.sessionVars.TxnCtx.StatementCount)
-		traceID := traceevent.GenerateTraceID(startTS, stmtCount)
+		traceID := traceevent.GenerateTraceID(ctx, startTS, stmtCount)
 		ctx = trace.ContextWithTraceID(ctx, traceID)
 
 		// Store trace ID for next statement
@@ -2752,12 +2759,10 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	// The trace ID is generated from transaction start_ts and statement count
 	startTS := se.sessionVars.TxnCtx.StartTS
 	stmtCount := uint64(se.sessionVars.TxnCtx.StatementCount)
-	traceID := traceevent.GenerateTraceID(startTS, stmtCount)
+	traceID := traceevent.GenerateTraceID(ctx, startTS, stmtCount)
 	ctx = trace.ContextWithTraceID(ctx, traceID)
-
 	// Store trace ID for next statement
 	se.sessionVars.PrevTraceID = traceID
-
 	// Emit stmt.start trace event
 	if traceevent.IsEnabled(traceevent.StmtLifecycle) {
 		stmtCtx := se.sessionVars.StmtCtx

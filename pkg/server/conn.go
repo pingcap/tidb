@@ -110,6 +110,7 @@ import (
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -1071,6 +1072,9 @@ func (cc *clientConn) Run(ctx context.Context) {
 
 	parentCtx := ctx
 	var traceInfo *tracing.TraceInfo
+
+	trace := traceevent.NewTrace()
+
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
 	// the status to special values, for example: kill or graceful shutdown.
@@ -1159,10 +1163,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 			}
 		}
 
+		ctx = tracing.WithFlightRecorder(ctx, trace)
 		startTime := time.Now()
 		err = cc.dispatch(ctx, data)
 		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err != nil)
 		cc.chunkAlloc.Reset()
+		trace.Reset()
+
 		if err != nil {
 			cc.audit(context.Background(), plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {

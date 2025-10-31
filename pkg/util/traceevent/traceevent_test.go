@@ -16,6 +16,8 @@ package traceevent
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -258,7 +260,7 @@ func TestCategoryNames(t *testing.T) {
 		{TraceCategory(999), "unknown(999)"},
 	}
 	for _, tc := range cases {
-		require.Equal(t, tc.name, getCategoryName(tc.category))
+		require.Equal(t, tc.name, tc.category.String())
 	}
 }
 
@@ -350,4 +352,71 @@ func TestFlightRecorderCoolingOff(t *testing.T) {
 	DumpFlightRecorderToLogger("test-reason-3")
 	thirdDumpTime := lastDumpTime.Load()
 	require.Greater(t, thirdDumpTime, elevenSecondsAgo, "timestamp should update after cooling-off period")
+}
+
+func TestFlightRecorderConfig(t *testing.T) {
+	conf1 := `{
+    "enabled_categories": ["txn_2pc", "stmt_plan"],
+    "dump_trigger": {
+	"type": "sampling",
+	"sampling": 100
+    }
+}`
+	conf2 := `{
+    "enabled_categories": ["*"],
+    "dump_trigger": {
+"type": "sampling",
+"sampling": 1
+}
+}`
+
+	// 	conf3 := `{
+	//     "enabled_categories": ["txn_2pc", "stmt_plan"],
+	//     "dump_trigger": {
+	// 	"type": "user_command",
+	// 	"sampling": 5
+	//     }
+	// }`
+
+	conf4 := `{
+    "enabled_categories": ["stmt_lifecycle"],
+    "dump_trigger": {
+	"type": "user_command",
+	"user_command": {
+	    "type": "sql_regexp",
+	    "sql_regexp": "^select"
+	}
+    }
+}`
+
+	conf5 := `{
+    "enabled_categories": ["*"],
+    "dump_trigger": {
+	"type": "user_command",
+	"user_command": {
+	    "type": "stmt_label",
+	    "stmt_label": "CreateTable"
+	}
+    }
+}`
+
+	conf6 := `{
+    "enabled_categories": ["*"],
+    "dump_trigger": {
+        "type": "suspicious_event",
+        "suspicious_event": {
+            "type": "slow_query"
+        }
+    }
+}`
+
+	var b strings.Builder
+	for idx, conf := range []string{conf1, conf2, conf4, conf5, conf6} {
+		var value FlightRecorderConfig
+		err := json.Unmarshal([]byte(conf), &value)
+		require.NoError(t, err, idx)
+
+		err = value.Validate(&b)
+		require.NoError(t, err, idx)
+	}
 }

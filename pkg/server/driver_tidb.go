@@ -39,6 +39,7 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 )
 
 // TiDBDriver implements IDriver.
@@ -291,6 +292,11 @@ func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (resu
 		rs, err = tc.Session.ExecuteStmt(ctx, stmt)
 	}
 	if err != nil {
+		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event",
+			func(config *traceevent.DumpTriggerConfig) bool {
+				return config.Event.Type == "query_fail"
+			})
+
 		tc.Session.GetSessionVars().StmtCtx.AppendError(err)
 		return nil, err
 	}

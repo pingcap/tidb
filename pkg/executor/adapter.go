@@ -78,6 +78,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -1730,6 +1731,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if trace.IsEnabled() {
 		trace.Log(a.GoCtx, "details", slowLog)
 	}
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.suspicious_event",
+		func(config *traceevent.DumpTriggerConfig) bool {
+			return config.Event.Type == "slow_query"
+		})
 
 	if !matchRules {
 		return
@@ -1934,6 +1939,21 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := sessVars.GetTotalCostDuration()
 	charset, collation := sessVars.GetCharsetInfo()
+
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.plan_digest",
+		func(config *traceevent.DumpTriggerConfig) bool {
+			return config.UserCommand.PlanDigest == digest.String()
+		})
+
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.stmt_label",
+		func(config *traceevent.DumpTriggerConfig) bool {
+			return config.UserCommand.StmtLabel == stmtCtx.StmtType
+		})
+
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.by_user",
+		func(config *traceevent.DumpTriggerConfig) bool {
+			return config.UserCommand.ByUser == userString
+		})
 
 	var prevSQL, prevSQLDigest string
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {

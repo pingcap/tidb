@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,6 +37,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
@@ -61,11 +63,14 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/printer"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/channelz/service"
 	static "sourcegraph.com/sourcegraph/appdash-data"
@@ -333,6 +338,7 @@ func (s *Server) startHTTPServer() {
 	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
 	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
+	router.HandleFunc("/debug/traceevent", traceeventHandler)
 
 	router.HandleFunc("/covdata", func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/zip")
@@ -732,4 +738,118 @@ func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHan
 	}
 
 	return optimizor.NewStatsPriorityQueueHandler(do)
+}
+
+// https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview?tab=t.0
+type Event struct {
+	Name     string          `json:"name"`
+	Phase    tracing.Phase   `json:"ph"`
+	Ts       int64           `json:"ts"` // microsecond
+	PID      uint32          `json:"pid"`
+	TID      uint32          `json:"tid"`
+	ID       uint64          `json:"id,omitempty"` // used by async / flow
+	Category string          `json:"cat,omitempty"`
+	Args     json.RawMessage `json:"args,omitempty"`
+}
+
+func traceeventHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+		return
+	}
+
+	var cfg traceevent.FlightRecorderConfig
+	cfg.Initialize()
+	body, _ := io.ReadAll(r.Body)
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &cfg); err != nil {
+			http.Error(w, fmt.Sprintf("decode json failed: %s", err.Error()), http.StatusBadRequest)
+			return
+		}
+	}
+
+	logutil.BgLogger().Info("http api /debug/traceevent called", zap.Any("config", cfg))
+	ch := make(chan []traceevent.Event, 256)
+	recorder, err := traceevent.StartHTTPFlightRecorder(ch, &cfg)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("validate config failed: %s", err.Error()), http.StatusBadRequest)
+		return
+	}
+	defer recorder.Close()
+
+	for {
+		select {
+		case events := <-ch:
+			res := convertTraceEvent(events)
+			fmt.Fprintf(w, "data: ")
+			enc := json.NewEncoder(w)
+			err := enc.Encode(res)
+			if err != nil {
+				logutil.BgLogger().Info("http api /debug/traceevent encode fail", zap.Error(err))
+			}
+			fmt.Fprintf(w, "\n\n")
+			flusher.Flush()
+
+		case <-r.Context().Done():
+			logutil.BgLogger().Info("http api /debug/traceevent client disconnected")
+			return
+		}
+	}
+}
+
+func convertTraceEvent(events []traceevent.Event) []Event {
+	var tid uint32
+	res := make([]Event, 0, len(events))
+	for _, event := range events {
+		e := Event{
+			Name:     event.Name,
+			Phase:    event.Phase,
+			Ts:       event.Timestamp.UnixMicro(),
+			PID:      0,
+			Category: event.Category.String(),
+		}
+		if len(event.TraceID) == 20 {
+			if tid == 0 {
+				tid = *((*uint32)(unsafe.Pointer(&event.TraceID[16])))
+			} else {
+				val := *((*uint32)(unsafe.Pointer(&event.TraceID[16])))
+				if tid != val {
+					logutil.BgLogger().Info("wrong traceid",
+						zap.Uint32("expect", tid),
+						zap.Uint32("get", val))
+				}
+			}
+		} else if len(event.TraceID) > 0 {
+			logutil.BgLogger().Info("wrong traceid format",
+				zap.String("trace_id", string(event.TraceID)))
+		}
+		if len(event.Fields) > 0 {
+			cfg := zap.NewProductionEncoderConfig()
+			cfg.LevelKey = ""
+			cfg.MessageKey = ""
+			enc := zapcore.NewJSONEncoder(cfg)
+			fields := event.Fields
+			if len(event.TraceID) > 0 {
+				fields = append(event.Fields, zap.String("trace_id", hex.EncodeToString(event.TraceID)))
+			}
+			buf, _ := enc.EncodeEntry(
+				zapcore.Entry{},
+				fields,
+			)
+			e.Args = buf.Bytes()
+		}
+		res = append(res, e)
+	}
+	if tid == 0 {
+		logutil.BgLogger().Info("wrong traceid")
+	}
+	for i := 0; i < len(res); i++ {
+		res[i].TID = tid
+	}
+	return res
 }
