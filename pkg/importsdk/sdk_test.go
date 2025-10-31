@@ -658,37 +658,37 @@ func (s *mockGCSSuite) TestScanLimitation() {
 
 func (s *mockGCSSuite) TestCreateTableMetaByName() {
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1-schema-create.sql"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1-schema-create.sql"},
 		Content:     []byte("CREATE DATABASE IF NOT EXISTS db1;\n"),
 	})
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1-schema-create.sql"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1-schema-create.sql"},
 		Content:     []byte("CREATE DATABASE IF NOT EXISTS db2;\n"),
 	})
 	// table1 in db1
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1.tb1-schema.sql"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1.tb1-schema.sql"},
 		Content:     []byte("CREATE TABLE IF NOT EXISTS db1.tb1 (a INT, b VARCHAR(10));\n"),
 	})
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1.tb1.001.sql"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1.tb1.001.sql"},
 		Content:     []byte("INSERT INTO db1.tb1 VALUES (1,'a'),(2,'b');\n"),
 	})
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1.tb1.002.sql"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1.tb1.002.sql"},
 		Content:     []byte("INSERT INTO db1.tb1 VALUES (3,'c'),(4,'d');\n"),
 	})
 	// table2 in db2
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1.tb2-schema.sql"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1.tb2-schema.sql"},
 		Content:     []byte("CREATE TABLE IF NOT EXISTS db2.tb2 (x INT, y VARCHAR(10));\n"),
 	})
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1.tb2.001.sql"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1.tb2.001.sql"},
 		Content:     []byte("INSERT INTO db2.tb2 VALUES (5,'e'),(6,'f');\n"),
 	})
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1.tb2.002.sql"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1.tb2.002.sql"},
 		Content:     []byte("INSERT INTO db2.tb2 VALUES (7,'g'),(8,'h');\n"),
 	})
 
@@ -705,7 +705,7 @@ func (s *mockGCSSuite) TestCreateTableMetaByName() {
 
 	importSDK, err := NewImportSDK(
 		context.Background(),
-		fmt.Sprintf("gs://dumpling?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
+		fmt.Sprintf("gs://specific-table-test?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
 		db,
 		WithConcurrency(1),
 	)
