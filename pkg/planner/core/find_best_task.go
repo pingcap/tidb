@@ -1227,7 +1227,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 				}
 			}
-			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
+			if len(c.path.AccessConds) > 0 && !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
 				preferredPaths = append(preferredPaths, c)
 				hasRangeScanPath = true
 			}
