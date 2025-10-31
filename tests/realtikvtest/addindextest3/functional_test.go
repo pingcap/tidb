@@ -22,6 +22,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
@@ -162,6 +163,9 @@ func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
 }
 
 func TestAddIndexPresplitIndexRegions(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF and fast reorg are always enabled on nextgen")
+	}
 	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

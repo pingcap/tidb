@@ -86,6 +86,9 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 }
 
 func TestIngestError(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -134,6 +137,9 @@ func TestIngestError(t *testing.T) {
 }
 
 func TestAddIndexIngestPanic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -161,6 +167,9 @@ func TestAddIndexIngestPanic(t *testing.T) {
 }
 
 func TestAddIndexSetInternalSessions(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -417,6 +426,9 @@ func TestMultiSchemaAddIndexMerge(t *testing.T) {
 }
 
 func TestAddIndexIngestJobWriteConflict(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
@@ -450,6 +462,9 @@ func TestAddIndexIngestJobWriteConflict(t *testing.T) {
 }
 
 func TestAddIndexIngestPartitionCheckpoint(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)

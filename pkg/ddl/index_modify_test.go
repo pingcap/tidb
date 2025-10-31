@@ -1089,6 +1089,9 @@ func TestAddIndexWithDupIndex(t *testing.T) {
 }
 
 func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1849,6 +1852,9 @@ func TestAddColumnarIndexRollback(t *testing.T) {
 }
 
 func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)

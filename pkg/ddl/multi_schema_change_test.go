@@ -605,6 +605,9 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 }
 
 func TestMultiSchemaChangeMixCancelled(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -635,7 +638,6 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1;")
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustExec("insert into t values (1, 2, 3)")
 
@@ -853,6 +855,9 @@ func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
 }
 
 func TestMultiSchemaChangePollJobCount(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
