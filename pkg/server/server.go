@@ -79,6 +79,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	uatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -1251,8 +1252,8 @@ func (s *Server) GetStatusVars() map[uint64]map[string]string {
 			if client.tlsConn != nil {
 				connState := client.tlsConn.ConnectionState()
 				rs[pi.ID] = map[string]string{
-					"Tls_cipher":  tls.CipherSuiteName(connState.CipherSuite),
-					"Tls_version": tls.VersionName(connState.Version),
+					"Ssl_cipher":  tls.CipherSuiteName(connState.CipherSuite),
+					"Ssl_version": tlsutil.VersionName(connState.Version),
 				}
 			}
 		}
