@@ -105,7 +105,7 @@ func TestDefaultValue(t *testing.T) {
 	require.Equal(t, mysql.TypeLonglong, extraPhysTblIDCol.GetType())
 }
 
-func TestColIdxsByName(t *testing.T) {
+func TestColIdxMapping(t *testing.T) {
 	const numCols int64 = 10
 	colInfos := make([]*ColumnInfo, 0, numCols)
 	names := make([]string, 0, numCols)
