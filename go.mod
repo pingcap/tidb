@@ -361,22 +361,24 @@ require (
 )
 
 replace (
-	// Following modules are replaced to use grpc v1.63.2.
-	// We can remove these replacements after upgrading grpc to > 1.65
-	cloud.google.com/go/kms => cloud.google.com/go/kms v1.15.8
-	cloud.google.com/go/pubsub => cloud.google.com/go/pubsub v1.37.0
-	cloud.google.com/go/storage => cloud.google.com/go/storage v1.39.1
-
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 
-	// some test are flaky under v.1.11.0, downgrade to v1.10.0
+	// some test are flaky under v.1.11.0, downgrade to v1.10.0, see https://github.com/pingcap/tidb/pull/63475
 	github.com/stretchr/testify => github.com/stretchr/testify v1.10.0
-	google.golang.org/api => google.golang.org/api v0.170.0
-	google.golang.org/grpc => google.golang.org/grpc v1.63.2
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
+)
+
+replace (
+	// Following modules are replaced to use grpc v1.63.2.
+	// We can remove these replacements after upgrading grpc to > 1.65
+	cloud.google.com/go/kms => cloud.google.com/go/kms v1.15.8
+	cloud.google.com/go/pubsub => cloud.google.com/go/pubsub v1.37.0
+	cloud.google.com/go/storage => cloud.google.com/go/storage v1.39.1
+	google.golang.org/api => google.golang.org/api v0.170.0
+	google.golang.org/grpc => google.golang.org/grpc v1.63.2
 )
