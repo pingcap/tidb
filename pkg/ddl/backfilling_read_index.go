@@ -152,9 +152,28 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	return r.bc.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
+<<<<<<< HEAD
 func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return &execute.SubtaskSummary{
 		RowCount: r.curRowCount.Load(),
+=======
+func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+	logutil.DDLLogger().Info("read index executor run subtask",
+		zap.Bool("use cloud", r.isGlobalSort()))
+
+	r.summaryMap.Store(subtask.ID, &readIndexSummary{
+		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
+	})
+	var err error
+	failpoint.InjectCall("beforeReadIndexStepExecRunSubtask", &err)
+	if err != nil {
+		return err
+	}
+
+	sm, err := decodeBackfillSubTaskMeta(ctx, r.cloudStorageURI, subtask.Meta)
+	if err != nil {
+		return err
+>>>>>>> 968e31fc3fe (ddl: cancel the job context before rolling back (#64130))
 	}
 }
 

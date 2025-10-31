@@ -15,6 +15,11 @@ go_library(
         "//pkg/util/memory",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
+<<<<<<< HEAD
+=======
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_tikv_client_go_v2//util",
+>>>>>>> 968e31fc3fe (ddl: cancel the job context before rolling back (#64130))
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
