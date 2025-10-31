@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -424,37 +425,45 @@ func (importer *SnapFileImporter) Import(
 		if errScanRegion != nil {
 			return errors.Trace(errScanRegion)
 		}
-
-		logutil.CL(ctx).Debug("scan regions", logutil.Key("start key", startKey), logutil.Key("end key", endKey), zap.Int("count", len(regionInfos)))
+		workerpoolsize := 1
+		if importer.mergeSst {
+			workerpoolsize = len(regionInfos)
+		}
+		workerpool := util.NewWorkerPool(uint(workerpoolsize), "restore region")
+		eg, ectx := errgroup.WithContext(ctx)
+		logutil.CL(ctx).Debug("scan regions", logutil.Key("start key", startKey), logutil.Key("end key", endKey), zap.Int("count", len(regionInfos)), zap.Int("pool size", workerpoolsize))
 		start := time.Now()
 		// Try to download and ingest the file in every region
 		for _, regionInfo := range regionInfos {
 			info := regionInfo
 			// Try to download file.
-			downloadMetas, errDownload := importer.download(ctx, info, backupFileSets, importer.cipher, importer.apiVersion)
-			if errDownload != nil {
-				logutil.CL(ctx).Warn("download file failed, retry later",
-					logutil.Region(info.Region),
-					logutil.Key("startKey", startKey),
-					logutil.Key("endKey", endKey),
-					logutil.ShortError(errDownload))
-				return errors.Trace(errDownload)
-			}
-			logutil.CL(ctx).Debug("download file done", zap.Stringer("take", time.Since(start)),
-				logutil.Key("start", startKey), logutil.Key("end", endKey))
-			start = time.Now()
-			if errIngest := importer.ingest(ctx, info, downloadMetas); errIngest != nil {
-				logutil.CL(ctx).Warn("ingest file failed, retry later",
-					logutil.Key("start", startKey),
-					logutil.Key("end", endKey),
-					logutil.SSTMetas(downloadMetas),
-					logutil.Region(info.Region),
-					zap.Error(errIngest))
-				return errors.Trace(errIngest)
-			}
-			logutil.CL(ctx).Debug("ingest file done", logutil.Key("start", startKey), logutil.Key("end", endKey), zap.Stringer("take", time.Since(start)))
+			workerpool.ApplyOnErrorGroup(eg, func() error {
+				downloadMetas, errDownload := importer.download(ectx, info, backupFileSets, importer.cipher, importer.apiVersion)
+				if errDownload != nil {
+					logutil.CL(ectx).Warn("download file failed, retry later",
+						logutil.Region(info.Region),
+						logutil.Key("startKey", startKey),
+						logutil.Key("endKey", endKey),
+						logutil.ShortError(errDownload))
+					return errors.Trace(errDownload)
+				}
+				logutil.CL(ectx).Debug("download file done", zap.Stringer("take", time.Since(start)),
+					logutil.Key("start", startKey), logutil.Key("end", endKey))
+				start = time.Now()
+				if errIngest := importer.ingest(ectx, info, downloadMetas); errIngest != nil {
+					logutil.CL(ectx).Warn("ingest file failed, retry later",
+						logutil.Key("start", startKey),
+						logutil.Key("end", endKey),
+						logutil.SSTMetas(downloadMetas),
+						logutil.Region(info.Region),
+						zap.Error(errIngest))
+					return errors.Trace(errIngest)
+				}
+				logutil.CL(ectx).Debug("ingest file done", logutil.Key("start", startKey), logutil.Key("end", endKey), zap.Stringer("take", time.Since(start)))
+				return nil
+			})
 		}
-		return nil
+		return eg.Wait()
 	}, utils.NewImportSSTBackoffStrategy())
 	if err != nil {
 		logutil.CL(ctx).Error("import sst file failed after retry, stop the whole progress", restore.ZapBatchBackupFileSet(backupFileSets), zap.Error(err))
