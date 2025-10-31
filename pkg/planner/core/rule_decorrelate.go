@@ -612,15 +612,12 @@ func isJoinKeyUniqueKey(apply *logicalop.LogicalApply, plan base.LogicalPlan) bo
 	}
 
 	// Use PKOrUK from DataSource Schema directly
-	dsSchema := ds.Schema()
-	pkOrUK := dsSchema.PKOrUK
-
-	if len(pkOrUK) == 0 {
+	if len(ds.Schema().PKOrUK) == 0 {
 		return false
 	}
 
 	// Check if join keys form a unique key
-	for _, keyInfo := range pkOrUK {
+	for _, keyInfo := range ds.Schema().PKOrUK {
 		allMatch := true
 		for _, keyCol := range keyInfo {
 			found := false
