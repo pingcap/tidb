@@ -1216,6 +1216,11 @@ func estimateCompressionRatio(
 	if tp != mydump.SourceTypeParquet {
 		return 1.0, nil
 	}
+	failpoint.Inject("skipEstimateCompressionForParquet", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(2.0, nil)
+		}
+	})
 	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
 	if err != nil {
 		return 1.0, err
