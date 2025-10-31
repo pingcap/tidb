@@ -246,6 +246,46 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 			apply.SetChildren(outerPlan, innerPlan)
 			return s.optimize(ctx, p, groupByColumn)
 		} else if m, ok := innerPlan.(*logicalop.LogicalMaxOneRow); ok {
+			// Check if MaxOneRow's child is Limit or TopN, and if we can remove it for LeftOuterJoin
+			// Also handle the case where there's a Projection between MaxOneRow and Limit: MaxOneRow -> Projection -> Limit
+			if apply.JoinType == base.LeftOuterJoin {
+				mChild := m.Children()[0]
+				var removePlan base.LogicalPlan
+				var canRemove bool
+
+				if li, ok := mChild.(*logicalop.LogicalLimit); ok {
+					// Limit with non-0 offset cannot be removed, but we still check for redundant MaxOneRow
+					if li.Offset != 0 {
+						canRemove = false
+					} else {
+						// Check if join key is unique key
+						removePlan = li.Children()[0]
+						if s.isJoinKeyUniqueKey(apply, removePlan) {
+							canRemove = true
+						}
+					}
+				} else if proj, ok := mChild.(*logicalop.LogicalProjection); ok {
+					// Check if Projection's child is Limit: MaxOneRow -> Projection -> Limit
+					if li, ok := proj.Children()[0].(*logicalop.LogicalLimit); ok {
+						// Limit with non-0 offset cannot be removed, but we still check for redundant MaxOneRow
+						if li.Offset != 0 {
+							canRemove = false
+						} else {
+							// Check if join key is unique key
+							removePlan = li.Children()[0]
+							if s.isJoinKeyUniqueKey(apply, removePlan) {
+								canRemove = true
+							}
+						}
+					}
+				}
+				// If LIMIT can be removed (join key is unique key), remove it and re-enter decorrelate solver
+				if canRemove {
+					apply.SetChildren(outerPlan, removePlan)
+					return s.optimize(ctx, p, groupByColumn)
+				}
+			}
+			// If child is already MaxOneRow, remove redundant wrapper
 			if m.Children()[0].MaxOneRow() {
 				innerPlan = m.Children()[0]
 				apply.SetChildren(outerPlan, innerPlan)
@@ -468,6 +508,139 @@ NoOptimize:
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*DecorrelateSolver) Name() string {
 	return "decorrelate"
+}
+
+// isJoinKeyUniqueKey checks if join key is unique key.
+// Returns true if the join key forms a unique key constraint.
+func (s *DecorrelateSolver) isJoinKeyUniqueKey(apply *logicalop.LogicalApply, plan base.LogicalPlan) bool {
+	var hasMultiRowOperator func(base.LogicalPlan) bool
+	hasMultiRowOperator = func(p base.LogicalPlan) bool {
+		// Check if current node is a JOIN (excluding the outer Apply which is already a Join)
+		// todo: in/exists can also been evaluated to one row, but we don't handle it yet.
+		if _, ok := p.(*logicalop.LogicalJoin); ok {
+			return true
+		}
+		// Check if current node is UNION ALL
+		if _, ok := p.(*logicalop.LogicalUnionAll); ok {
+			return true
+		}
+		// Recursively check children
+		for _, child := range p.Children() {
+			if hasMultiRowOperator(child) {
+				return true
+			}
+		}
+		return false
+	}
+	if hasMultiRowOperator(plan) {
+		return false
+	}
+
+	// Extract join keys from Selection conditions and their children recursively
+	// Join conditions may be pushed down to DataSource or nested in child Selection nodes
+	innerJoinKeys := make([]*expression.Column, 0)
+
+	// Recursively extract all conditions from Selection nodes and their children
+	var extractConditions func(base.LogicalPlan)
+	extractConditions = func(p base.LogicalPlan) {
+		if sel, ok := p.(*logicalop.LogicalSelection); ok {
+			// Check conditions directly on Selection
+			for _, cond := range sel.Conditions {
+				if decExpr := apply.DeCorColFromEqExpr(cond); decExpr != nil {
+					if sf, ok := decExpr.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
+						args := sf.GetArgs()
+						if len(args) == 2 {
+							if innerCol, ok := args[1].(*expression.Column); ok {
+								if sel.Schema().Contains(innerCol) {
+									innerJoinKeys = append(innerJoinKeys, innerCol)
+								}
+							}
+						}
+					}
+				}
+			}
+			// Continue to check children recursively
+		} else if ds, ok := p.(*logicalop.DataSource); ok {
+			// Check conditions in DataSource (PushedDownConds may contain join key conditions)
+			for _, cond := range ds.PushedDownConds {
+				if decExpr := apply.DeCorColFromEqExpr(cond); decExpr != nil {
+					if sf, ok := decExpr.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
+						args := sf.GetArgs()
+						if len(args) == 2 {
+							if innerCol, ok := args[1].(*expression.Column); ok {
+								if ds.Schema().Contains(innerCol) {
+									innerJoinKeys = append(innerJoinKeys, innerCol)
+								}
+							}
+						}
+					}
+				}
+			}
+			// Stop recursion at DataSource
+			return
+		}
+		// Continue recursion for other nodes
+		for _, child := range p.Children() {
+			extractConditions(child)
+		}
+	}
+
+	extractConditions(plan)
+	if len(innerJoinKeys) == 0 {
+		return false
+	}
+
+	// Find the underlying DataSource to get PKOrUK
+	var ds *logicalop.DataSource
+	var findDataSource func(base.LogicalPlan)
+	findDataSource = func(p base.LogicalPlan) {
+		if ds != nil {
+			return
+		}
+		if datasource, ok := p.(*logicalop.DataSource); ok {
+			ds = datasource
+			return
+		}
+		for _, child := range p.Children() {
+			findDataSource(child)
+		}
+	}
+	findDataSource(plan)
+
+	if ds == nil {
+		return false
+	}
+
+	// Use PKOrUK from DataSource Schema directly
+	dsSchema := ds.Schema()
+	pkOrUK := dsSchema.PKOrUK
+
+	if len(pkOrUK) == 0 {
+		return false
+	}
+
+	// Check if join keys form a unique key
+	for _, keyInfo := range pkOrUK {
+		allMatch := true
+		for _, keyCol := range keyInfo {
+			found := false
+			for _, joinKey := range innerJoinKeys {
+				if keyCol.ID == joinKey.ID && keyCol.ID != 0 {
+					found = true
+					break
+				}
+			}
+			if !found {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch && len(keyInfo) == len(innerJoinKeys) && len(keyInfo) > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Return true if we should skip decorrelation for LeftOuterApply + Projection.

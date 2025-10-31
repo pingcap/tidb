@@ -1,0 +1,201 @@
+[
+  {
+    "Name": "TestDecorrelateLimitOptimization",
+    "Cases": [
+      {
+        "SQL": "EXPLAIN SELECT e.name, e.salary , ( select salary FROM employees e2 WHERE e2.id = e.id LIMIT 1 OFFSET 0 ) AS avg_dept_salary FROM employees e WHERE e.dept_id > 1",
+        "Plan": [
+          "MergeJoin_15 4166.67 root  left outer join, left side:TableReader_26, left key:test.employees.id, right key:test.employees.id",
+          "├─TableReader_28(Build) 10000.00 root  data:TableFullScan_27",
+          "│ └─TableFullScan_27 10000.00 cop[tikv] table:e2 keep order:true, stats:pseudo",
+          "└─TableReader_26(Probe) 3333.33 root  data:Selection_25",
+          "  └─Selection_25 3333.33 cop[tikv]  gt(test.employees.dept_id, 1)",
+          "    └─TableFullScan_24 10000.00 cop[tikv] table:e keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT e.name, e.salary , ( select salary FROM employees e2 WHERE e2.id = e.id LIMIT 1 OFFSET 1 ) AS avg_dept_salary FROM employees e WHERE e.dept_id > 1",
+        "Plan": [
+          "Projection_14 3333.33 root  test.employees.name, test.employees.salary, test.employees.salary",
+          "└─Apply_18 3333.33 root  CARTESIAN left outer join, left side:TableReader_21",
+          "  ├─TableReader_21(Build) 3333.33 root  data:Selection_20",
+          "  │ └─Selection_20 3333.33 cop[tikv]  gt(test.employees.dept_id, 1)",
+          "  │   └─TableFullScan_19 10000.00 cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─Limit_22(Probe) 3333.33 root  offset:1, count:1",
+          "    └─TableReader_28 666.67 root  data:Limit_27",
+          "      └─Limit_27 666.67 cop[tikv]  offset:0, count:2",
+          "        └─TableRangeScan_26 666.67 cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT e.name, e.salary, ( SELECT e2.salary FROM employees e2 WHERE e2.dept_id = e.dept_id LIMIT 1 OFFSET 0) AS avg_dept_salary FROM employees e WHERE e.dept_id = 1",
+        "Plan": [
+          "Projection_14 10.00 root  test.employees.name, test.employees.salary, test.employees.salary",
+          "└─Apply_18 10.00 root  CARTESIAN left outer join, left side:TableReader_21",
+          "  ├─TableReader_21(Build) 10.00 root  data:Selection_20",
+          "  │ └─Selection_20 10.00 cop[tikv]  eq(test.employees.dept_id, 1)",
+          "  │   └─TableFullScan_19 10000.00 cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─Limit_22(Probe) 10.00 root  offset:0, count:1",
+          "    └─TableReader_29 10.00 root  data:Limit_28",
+          "      └─Limit_28 10.00 cop[tikv]  offset:0, count:1",
+          "        └─Selection_27 10.00 cop[tikv]  eq(test.employees.dept_id, test.employees.dept_id)",
+          "          └─TableFullScan_26 10000.00 cop[tikv] table:e2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT e.id, e.name, e.salary, (SELECT en.note FROM employees e2 JOIN employee_notes en ON en.employee_id = e2.id WHERE e2.id = e.id ORDER BY en.created_at DESC LIMIT 1) AS latest_note FROM employees e",
+        "Plan": [
+          "Apply_24 10000.00 root  CARTESIAN left outer join, left side:TableReader_26",
+          "├─TableReader_26(Build) 10000.00 root  data:TableFullScan_25",
+          "│ └─TableFullScan_25 10000.00 cop[tikv] table:e keep order:false, stats:pseudo",
+          "└─TopN_29(Probe) 10000.00 root  test.employee_notes.created_at:desc, offset:0, count:1",
+          "  └─IndexHashJoin_49 124875.00 root  inner join, inner:IndexLookUp_72, outer key:test.employees.id, inner key:test.employee_notes.employee_id, equal cond:eq(test.employees.id, test.employee_notes.employee_id)",
+          "    ├─TableReader_74(Build) 10000.00 root  data:TableRangeScan_73",
+          "    │ └─TableRangeScan_73 10000.00 cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo",
+          "    └─IndexLookUp_72(Probe) 12487.50 root  ",
+          "      ├─Selection_71(Build) 12487.50 cop[tikv]  eq(test.employee_notes.employee_id, test.employees.id), not(isnull(test.employee_notes.employee_id))",
+          "      │ └─IndexRangeScan_69 12500000.00 cop[tikv] table:en, index:idx_employee_id(employee_id) range: decided by [eq(test.employee_notes.employee_id, test.employees.id)], keep order:false, stats:pseudo",
+          "      └─TableRowIDScan_70(Probe) 12487.50 cop[tikv] table:en keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT e.name, e.salary,(SELECT en.note FROM employees e2 JOIN employee_notes en ON en.employee_id = e2.id LEFT JOIN employees e3 ON e3.id = e2.dept_id WHERE e2.id = e.id LIMIT 1) AS note_multi_join FROM employees e",
+        "Plan": [
+          "Projection_24 10000.00 root  test.employees.name, test.employees.salary, test.employee_notes.note",
+          "└─Apply_28 10000.00 root  CARTESIAN left outer join, left side:TableReader_30",
+          "  ├─TableReader_30(Build) 10000.00 root  data:TableFullScan_29",
+          "  │ └─TableFullScan_29 10000.00 cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─Limit_33(Probe) 10000.00 root  offset:0, count:1",
+          "    └─IndexJoin_39 10000.00 root  inner join, inner:TableReader_69, outer key:test.employee_notes.employee_id, inner key:test.employees.id, equal cond:eq(test.employee_notes.employee_id, test.employees.id)",
+          "      ├─IndexLookUp_66(Build) 8919.00 root  ",
+          "      │ ├─Selection_65(Build) 8919.00 cop[tikv]  eq(test.employee_notes.employee_id, test.employees.id)",
+          "      │ │ └─IndexFullScan_63 8919000.00 cop[tikv] table:en, index:idx_employee_id(employee_id) keep order:false, stats:pseudo",
+          "      │ └─TableRowIDScan_64(Probe) 8919.00 cop[tikv] table:en keep order:false, stats:pseudo",
+          "      └─TableReader_69(Probe) 8.92 root  data:Selection_68",
+          "        └─Selection_68 8.92 cop[tikv]  eq(test.employees.id, test.employees.id)",
+          "          └─TableRangeScan_67 8919.00 cop[tikv] table:e2 range: decided by [test.employee_notes.employee_id], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT e.name, e.salary,(SELECT e2.salary FROM employees e2 INNER JOIN employee_notes en ON en.employee_id = e2.id WHERE e2.id = e.id LIMIT 1) AS salary_inner_join FROM employees e",
+        "Plan": [
+          "Projection_20 10000.00 root  test.employees.name, test.employees.salary, test.employees.salary",
+          "└─Apply_24 10000.00 root  CARTESIAN left outer join, left side:TableReader_26",
+          "  ├─TableReader_26(Build) 10000.00 root  data:TableFullScan_25",
+          "  │ └─TableFullScan_25 10000.00 cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─Limit_29(Probe) 10000.00 root  offset:0, count:1",
+          "    └─IndexJoin_35 10000.00 root  inner join, inner:TableReader_59, outer key:test.employee_notes.employee_id, inner key:test.employees.id, equal cond:eq(test.employee_notes.employee_id, test.employees.id)",
+          "      ├─IndexReader_56(Build) 8919.00 root  index:Selection_55",
+          "      │ └─Selection_55 8919.00 cop[tikv]  eq(test.employee_notes.employee_id, test.employees.id)",
+          "      │   └─IndexFullScan_54 8919000.00 cop[tikv] table:en, index:idx_employee_id(employee_id) keep order:false, stats:pseudo",
+          "      └─TableReader_59(Probe) 8.92 root  data:Selection_58",
+          "        └─Selection_58 8.92 cop[tikv]  eq(test.employees.id, test.employees.id)",
+          "          └─TableRangeScan_57 8919.00 cop[tikv] table:e2 range: decided by [test.employee_notes.employee_id], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT e.name, e.salary, (SELECT AVG(e2.salary)  FROM employees e2  WHERE e2.id = e.id  GROUP BY e2.dept_id  HAVING AVG(e2.salary) > 1000  LIMIT 1) AS avg_salary_having FROM employees e",
+        "Plan": [
+          "MergeJoin_17 10000.00 root  left outer join, left side:TableReader_27, left key:test.employees.id, right key:test.employees.id",
+          "├─Projection_28(Build) 8000.00 root  cast(test.employees.salary, decimal(14,6) BINARY)->Column#16, test.employees.id",
+          "│ └─TableReader_32 8000.00 root  data:Selection_31",
+          "│   └─Selection_31 8000.00 cop[tikv]  gt(cast(test.employees.salary, decimal(14,6) BINARY), 1000)",
+          "│     └─TableFullScan_30 10000.00 cop[tikv] table:e2 keep order:true, stats:pseudo",
+          "└─TableReader_27(Probe) 10000.00 root  data:TableFullScan_26",
+          "  └─TableFullScan_26 10000.00 cop[tikv] table:e keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT e.name, e.salary, (SELECT count(e2.dept_id)  FROM employees e2  WHERE e2.id = e.id limit 1) AS distinct_dept_id FROM employees e",
+        "Plan": [
+          "Projection_14 12500.00 root  test.employees.name, test.employees.salary, if(isnull(test.employees.dept_id), 0, 1)->Column#16",
+          "└─MergeJoin_17 12500.00 root  left outer join, left side:TableReader_27, left key:test.employees.id, right key:test.employees.id",
+          "  ├─TableReader_29(Build) 10000.00 root  data:TableFullScan_28",
+          "  │ └─TableFullScan_28 10000.00 cop[tikv] table:e2 keep order:true, stats:pseudo",
+          "  └─TableReader_27(Probe) 10000.00 root  data:TableFullScan_26",
+          "    └─TableFullScan_26 10000.00 cop[tikv] table:e keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT e.name, e.salary,(SELECT e2.salary FROM employees e2 WHERE e2.id = e.id AND e2.dept_id IN (     SELECT dept_id     FROM employees e3     WHERE e3.id = e.id     LIMIT 1 ) LIMIT 1) AS salary_nested FROM employees e",
+        "Plan": [
+          "Projection_22 10000.00 root  test.employees.name, test.employees.salary, test.employees.salary",
+          "└─Apply_26 10000.00 root  CARTESIAN left outer join, left side:TableReader_28",
+          "  ├─TableReader_28(Build) 10000.00 root  data:TableFullScan_27",
+          "  │ └─TableFullScan_27 10000.00 cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─Limit_31(Probe) 10000.00 root  offset:0, count:1",
+          "    └─HashJoin_46 10000.00 root  inner join, equal:[eq(test.employees.dept_id, test.employees.dept_id)]",
+          "      ├─HashAgg_64(Build) 10000.00 root  group by:test.employees.dept_id, funcs:firstrow(test.employees.dept_id)->test.employees.dept_id",
+          "      │ └─Selection_68 8000.00 root  not(isnull(test.employees.dept_id))",
+          "      │   └─Limit_70 10000.00 root  offset:0, count:1",
+          "      │     └─TableReader_76 1000.00 root  data:Limit_75",
+          "      │       └─Limit_75 1000.00 cop[tikv]  offset:0, count:1",
+          "      │         └─TableRangeScan_74 1000.00 cop[tikv] table:e3 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo",
+          "      └─TableReader_61(Probe) 79920.00 root  data:Selection_60",
+          "        └─Selection_60 79920.00 cop[tikv]  not(isnull(test.employees.dept_id))",
+          "          └─TableRangeScan_59 8000.00 cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT e.name, e.salary,(SELECT e2.salary FROM employees e2 WHERE e2.id = e.id AND EXISTS (     SELECT 1     FROM employee_notes en     WHERE en.employee_id = e2.id ) LIMIT 1) AS salary_exists FROM employees e",
+        "Plan": [
+          "MergeJoin_17 10000.00 root  left outer join, left side:TableReader_27, left key:test.employees.id, right key:test.employees.id",
+          "├─MergeJoin_28(Build) 8000.00 root  semi join, left side:TableReader_36, left key:test.employees.id, right key:test.employee_notes.employee_id",
+          "│ ├─IndexReader_38(Build) 9990.00 root  index:IndexFullScan_37",
+          "│ │ └─IndexFullScan_37 9990.00 cop[tikv] table:en, index:idx_employee_id(employee_id) keep order:true, stats:pseudo",
+          "│ └─TableReader_36(Probe) 10000.00 root  data:TableFullScan_35",
+          "│   └─TableFullScan_35 10000.00 cop[tikv] table:e2 keep order:true, stats:pseudo",
+          "└─TableReader_27(Probe) 10000.00 root  data:TableFullScan_26",
+          "  └─TableFullScan_26 10000.00 cop[tikv] table:e keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT e.name, e.salary, (SELECT e2.salary  FROM employees e2  WHERE e2.id = e.id  ORDER BY e2.dept_id, e2.salary DESC  LIMIT 1) AS salary_order_multi FROM employees e",
+        "Plan": [
+          "MergeJoin_15 12500.00 root  left outer join, left side:TableReader_25, left key:test.employees.id, right key:test.employees.id",
+          "├─TableReader_27(Build) 10000.00 root  data:TableFullScan_26",
+          "│ └─TableFullScan_26 10000.00 cop[tikv] table:e2 keep order:true, stats:pseudo",
+          "└─TableReader_25(Probe) 10000.00 root  data:TableFullScan_24",
+          "  └─TableFullScan_24 10000.00 cop[tikv] table:e keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT e.name, e.salary,  (SELECT DISTINCT e2.dept_id   FROM employees e2   WHERE e2.id = e.id   LIMIT 1) AS distinct_dept_id FROM employees e",
+        "Plan": [
+          "Projection_11 10000.00 root  test.employees.name, test.employees.salary, test.employees.dept_id",
+          "└─Apply_15 10000.00 root  CARTESIAN left outer join, left side:TableReader_17",
+          "  ├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
+          "  │ └─TableFullScan_16 10000.00 cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─HashAgg_20(Probe) 80000.00 root  group by:test.employees.dept_id, funcs:firstrow(test.employees.dept_id)->test.employees.dept_id",
+          "    └─TableReader_28 10000.00 root  data:TableRangeScan_27",
+          "      └─TableRangeScan_27 10000.00 cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT e.name, e.salary, (SELECT ROW_NUMBER() OVER (ORDER BY e2.salary DESC)  FROM employees e2  WHERE e2.id = e.id  LIMIT 1) AS row_num FROM employees e",
+        "Plan": [
+          "Projection_14 10000.00 root  test.employees.name, test.employees.salary, Column#17",
+          "└─Apply_18 10000.00 root  CARTESIAN left outer join, left side:TableReader_20",
+          "  ├─TableReader_20(Build) 10000.00 root  data:TableFullScan_19",
+          "  │ └─TableFullScan_19 10000.00 cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─Window_22(Probe) 100000.00 root  row_number()->Column#17 over(order by test.employees.salary desc rows between current row and current row)",
+          "    └─Sort_25 10000.00 root  test.employees.salary:desc",
+          "      └─TableReader_24 10000.00 root  data:TableRangeScan_23",
+          "        └─TableRangeScan_23 10000.00 cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT e.name, e.salary, (SELECT DISTINCT e2.dept_id  FROM employees e2  WHERE e2.id = e.id  LIMIT 1) AS distinct_dept_id FROM employees e",
+        "Plan": [
+          "Projection_11 10000.00 root  test.employees.name, test.employees.salary, test.employees.dept_id",
+          "└─Apply_15 10000.00 root  CARTESIAN left outer join, left side:TableReader_17",
+          "  ├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
+          "  │ └─TableFullScan_16 10000.00 cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─HashAgg_20(Probe) 80000.00 root  group by:test.employees.dept_id, funcs:firstrow(test.employees.dept_id)->test.employees.dept_id",
+          "    └─TableReader_28 10000.00 root  data:TableRangeScan_27",
+          "      └─TableRangeScan_27 10000.00 cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]

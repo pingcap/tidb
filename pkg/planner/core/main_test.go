@@ -36,6 +36,7 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
 	testDataMap.LoadTestSuiteData("testdata", "plan_cache_suite")
+	testDataMap.LoadTestSuiteData("testdata", "decorrelate_limit_suite", true)
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
@@ -71,4 +72,12 @@ func GetIndexMergeSuiteData() testdata.TestData {
 
 func GetRuntimeFilterGeneratorData() testdata.TestData {
 	return testDataMap["runtime_filter_generator_suite"]
+}
+
+func GetDecorrelateLimitSuiteData() testdata.TestData {
+	return testDataMap["decorrelate_limit_suite"]
+}
+
+func GetCascadesSuiteData() testdata.TestData {
+	return testDataMap["cascades_suite"]
 }
