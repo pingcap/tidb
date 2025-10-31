@@ -428,15 +428,15 @@ lightning_web: ## Build Lightning web UI
 
 .PHONY: build_br
 build_br: ## Build BR (backup and restore) tool
-	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
+	$(GOBUILD_TOOLS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 
 .PHONY: build_lightning_for_web
 build_lightning_for_web:
-	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) lightning/cmd/tidb-lightning/main.go
+	$(GOBUILD_TOOLS) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) lightning/cmd/tidb-lightning/main.go
 
 .PHONY: build_lightning
 build_lightning: ## Build TiDB Lightning data import tool
-	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
+	$(GOBUILD_TOOLS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
 
 .PHONY: build_lightning-ctl
 build_lightning-ctl: ## Build TiDB Lightning control tool
@@ -549,6 +549,9 @@ gen_mock: mockgen
 # cgo enabled on regular builds is performance.
 ifeq ("$(GOOS)", "freebsd")
         GOBUILD  = CGO_ENABLED=0 GO111MODULE=on go build -trimpath -ldflags '$(LDFLAGS)'
+        GOBUILD_TOOLS  = CGO_ENABLED=0 $(GOBUILD_NO_TAGS)
+else 
+        GOBUILD_TOOLS  = CGO_ENABLED=1 $(GOBUILD_NO_TAGS)
 endif
 
 # TODO: adjust bins when br integraion tests reformat.
