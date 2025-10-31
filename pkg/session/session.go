@@ -2110,7 +2110,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.sessionVars)
 		if err == nil && prepareStmt.PreparedAst != nil {
-			stmtLabel = ast.GetStmtLabel(prepareStmt.PreparedAst.Stmt)
+			stmtLabel = prepareStmt.PreparedAst.StmtType
 		}
 	}
 	if stmtLabel == "" {

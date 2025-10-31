@@ -119,7 +119,7 @@ func (ctx *MutateContext) GetReservedRowIDAlloc() (*stmtctx.ReservedRowIDAlloc, 
 
 // GetStatisticsSupport implements the MutateContext interface.
 func (ctx *MutateContext) GetStatisticsSupport() (tblctx.StatisticsSupport, bool) {
-	if ctx.vars().TxnCtx != nil {
+	if ctx.vars().TxnCtx != nil && ctx.vars().StmtCtx != nil {
 		return ctx, true
 	}
 	return nil, false
@@ -129,8 +129,8 @@ func (ctx *MutateContext) GetStatisticsSupport() (tblctx.StatisticsSupport, bool
 func (ctx *MutateContext) UpdatePhysicalTableDelta(
 	physicalTableID int64, delta int64, count int64,
 ) {
-	if txnCtx := ctx.vars().TxnCtx; txnCtx != nil {
-		txnCtx.UpdateDeltaForTable(physicalTableID, delta, count)
+	if stmtCtx := ctx.vars().StmtCtx; stmtCtx != nil {
+		stmtCtx.UpdateDeltaForTable(physicalTableID, delta, count)
 	}
 }
 

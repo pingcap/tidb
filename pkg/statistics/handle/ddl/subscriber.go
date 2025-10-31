@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/history"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
@@ -413,7 +414,7 @@ func updateGlobalTableStats4DropPartition(
 		ctx,
 		sctx,
 		startTS,
-		storage.NewDeltaUpdate(globalTableInfo.ID, variable.TableDelta{Count: count, Delta: delta}, isLocked),
+		storage.NewDeltaUpdate(globalTableInfo.ID, stmtctx.TableDelta{Count: count, Delta: delta}, isLocked),
 	))
 }
 
@@ -595,7 +596,7 @@ func updateGlobalTableStats4TruncatePartition(
 		ctx,
 		sctx,
 		startTS,
-		storage.NewDeltaUpdate(globalTableInfo.ID, variable.TableDelta{Count: count, Delta: delta}, isLocked),
+		storage.NewDeltaUpdate(globalTableInfo.ID, stmtctx.TableDelta{Count: count, Delta: delta}, isLocked),
 	)
 	if err != nil {
 		fields := truncatePartitionsLogFields(

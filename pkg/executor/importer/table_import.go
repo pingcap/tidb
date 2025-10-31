@@ -968,9 +968,7 @@ func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, 
 		return err
 	}
 	sessionVars := se.GetSessionVars()
-	sessionVars.TxnCtxMu.Lock()
-	defer sessionVars.TxnCtxMu.Unlock()
-	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected))
+	sessionVars.StmtCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected))
 	se.StmtCommit(ctx)
 	return se.CommitTxn(ctx)
 }
