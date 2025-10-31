@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/pd/client/constants"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -72,6 +74,7 @@ type ManagerCtx struct {
 	ctx        context.Context
 	cancel     context.CancelFunc // cancel is used to cancel the context when the manager is closed
 	wg         sync.WaitGroup     // wg is used to wait for goroutines to finish
+	keyspaceID atomic.Uint32
 }
 
 // MetaServiceElectionKey is the election path used for meta service leader election.
@@ -184,6 +187,15 @@ func (t *ManagerCtx) checkMetaClient() error {
 	return nil
 }
 
+// SetKeyspaceID configures the keyspace id carried in TiCI requests.
+func (t *ManagerCtx) SetKeyspaceID(keyspaceID uint32) {
+	t.keyspaceID.Store(keyspaceID)
+}
+
+func (t *ManagerCtx) getKeyspaceID() uint32 {
+	return t.keyspaceID.Load()
+}
+
 // CreateFulltextIndex creates fulltext index on TiCI.
 func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
 	tableInfoJSON, err := json.Marshal(tblInfo)
@@ -194,6 +206,7 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 		DatabaseName: schemaName,
 		TableInfo:    tableInfoJSON,
 		IndexId:      indexInfo.ID,
+		KeyspaceId:   t.getKeyspaceID(),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -215,8 +228,9 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 // DropFullTextIndex drop full text index on TiCI.
 func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int64) error {
 	req := &DropIndexRequest{
-		TableId: tableID,
-		IndexId: indexID,
+		TableId:    tableID,
+		IndexId:    indexID,
+		KeyspaceId: t.getKeyspaceID(),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -252,6 +266,7 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 		TidbTaskId: tidbTaskID,
 		TableId:    tableID,
 		IndexIds:   indexIDs,
+		KeyspaceId: t.getKeyspaceID(),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -306,6 +321,7 @@ func (t *ManagerCtx) FinishPartitionUpload(
 			EndKey:   upperBound,
 		},
 		StorageUri: storageURI,
+		KeyspaceId: t.getKeyspaceID(),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -338,6 +354,7 @@ func (t *ManagerCtx) FinishIndexUpload(
 	req := &FinishImportIndexUploadRequest{
 		TidbTaskId: tidbTaskID,
 		Status:     ErrorCode_SUCCESS,
+		KeyspaceId: t.getKeyspaceID(),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -359,6 +376,7 @@ func (t *ManagerCtx) FinishIndexUpload(
 
 // AbortIndexUpload notifies TiCI that the job has failed and the related TiCI job should be aborted.
 // TiCI will clean up all the related data belonging to the tidbTaskID.
+// It is not currently being called by TiDB, but rather reserved for future use, if any.
 func (t *ManagerCtx) AbortIndexUpload(
 	ctx context.Context,
 	tidbTaskID string,
@@ -368,6 +386,7 @@ func (t *ManagerCtx) AbortIndexUpload(
 		TidbTaskId:   tidbTaskID,
 		Status:       ErrorCode_UNKNOWN_ERROR,
 		ErrorMessage: errMsg,
+		KeyspaceId:   t.getKeyspaceID(),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -492,7 +511,7 @@ func ModelIndexToTiCIIndexInfo(indexInfo *model.IndexInfo, tblInfo *model.TableI
 }
 
 // CreateFulltextIndex create fulltext index on TiCI.
-func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
+func CreateFulltextIndex(ctx context.Context, store kv.Storage, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
 	failpoint.Inject("MockCreateTiCIIndexSuccess", func(val failpoint.Value) {
 		if x := val.(bool); x {
 			failpoint.Return(nil)
@@ -508,11 +527,19 @@ func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInf
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
 	defer ticiManager.Close()
+	if store != nil {
+		keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
+		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+		ticiManager.SetKeyspaceID(keyspaceID)
+	}
 	return ticiManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
 }
 
 // DropFullTextIndex drop fulltext index on TiCI.
-func DropFullTextIndex(ctx context.Context, tableID int64, indexID int64) error {
+func DropFullTextIndex(ctx context.Context, store kv.Storage, tableID int64, indexID int64) error {
 	failpoint.Inject("MockDropTiCIIndexSuccess", func(val failpoint.Value) {
 		if x := val.(bool); x {
 			failpoint.Return(nil)
@@ -528,5 +555,13 @@ func DropFullTextIndex(ctx context.Context, tableID int64, indexID int64) error 
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
 	defer ticiManager.Close()
+	if store != nil {
+		keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
+		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+		ticiManager.SetKeyspaceID(keyspaceID)
+	}
 	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
 }

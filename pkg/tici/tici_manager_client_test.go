@@ -67,29 +67,40 @@ func newTestTiCIManagerCtx(mockClient MetaServiceClient) *ManagerCtx {
 	}
 }
 
+// Add generic helper to match keyspace id on pointer request types.
+// This expects the type argument to be a pointer type (e.g. *CreateIndexRequest)
+// that implements GetKeyspaceId() uint32.
+func matchKeyspace[T interface{ GetKeyspaceId() uint32 }](expect uint32) func(T) bool {
+	return func(req T) bool {
+		return req.GetKeyspaceId() == expect
+	}
+}
+
 func TestCreateFulltextIndex(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
+	keyspaceID := uint32(123)
+	ctx.SetKeyspaceID(keyspaceID)
 	tblInfo := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("c"), FieldType: types.FieldType{}}}, Version: 1}
 	indexInfo := &model.IndexInfo{ID: 2, Name: ast.NewCIStr("idx"), Columns: []*model.IndexColumn{{Offset: 0}}, Unique: true}
 	schemaName := "testdb"
 
 	mockClient.
-		On("CreateIndex", mock.Anything, mock.Anything).
+		On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
 		Return(&CreateIndexResponse{Status: ErrorCode_SUCCESS, IndexId: "2"}, nil).
 		Once()
 	err := ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName)
 	assert.NoError(t, err)
 
 	mockClient.
-		On("CreateIndex", mock.Anything, mock.Anything).
+		On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
 		Return(&CreateIndexResponse{Status: ErrorCode_UNKNOWN_ERROR, IndexId: "2", ErrorMessage: "fail"}, nil).
 		Once()
 	err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName)
 	require.ErrorContains(t, err, "fail")
 
 	mockClient.
-		On("CreateIndex", mock.Anything, mock.Anything).
+		On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
 		Return(&CreateIndexResponse{}, errors.New("rpc error")).
 		Once()
 	err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName)
@@ -99,12 +110,14 @@ func TestCreateFulltextIndex(t *testing.T) {
 func TestGetImportStoragePrefix(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
+	keyspaceID := uint32(456)
+	ctx.SetKeyspaceID(keyspaceID)
 	taskID := "tidb-task-123"
 	tblID := int64(1)
 	indexIDs := []int64{2, 3}
 
 	mockClient.
-		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID))).
 		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "/s3/path?endpoint=http://127.0.0.1"}, nil).
 		Once()
 	path, jobID, err := ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexIDs)
@@ -113,14 +126,14 @@ func TestGetImportStoragePrefix(t *testing.T) {
 	assert.Equal(t, "/s3/path?endpoint=http://127.0.0.1", path)
 
 	mockClient.
-		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID))).
 		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
 	_, _, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexIDs)
 	assert.Error(t, err)
 
 	mockClient.
-		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID))).
 		Return(&GetImportStoragePrefixResponse{}, errors.New("rpc error")).
 		Once()
 	_, _, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexIDs)
@@ -130,26 +143,28 @@ func TestGetImportStoragePrefix(t *testing.T) {
 func TestFinishPartitionUpload(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
+	keyspaceID := uint32(789)
+	ctx.SetKeyspaceID(keyspaceID)
 	taskID := "tidb-task-123"
 	lower, upper := []byte("a"), []byte("z")
 
 	// 1st call – success
 	mockClient.
-		On("FinishImportPartitionUpload", mock.Anything, mock.Anything).
+		On("FinishImportPartitionUpload", mock.Anything, mock.MatchedBy(matchKeyspace[*FinishImportPartitionUploadRequest](keyspaceID))).
 		Return(&FinishImportResponse{Status: ErrorCode_SUCCESS}, nil).
 		Once()
 	assert.NoError(t, ctx.FinishPartitionUpload(context.Background(), taskID, lower, upper, "/s3/path"))
 
 	// 2nd call – business error from TiCI
 	mockClient.
-		On("FinishImportPartitionUpload", mock.Anything, mock.Anything).
+		On("FinishImportPartitionUpload", mock.Anything, mock.MatchedBy(matchKeyspace[*FinishImportPartitionUploadRequest](keyspaceID))).
 		Return(&FinishImportResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
 	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), taskID, lower, upper, "/s3/path"))
 
 	// 3rd call – RPC error
 	mockClient.
-		On("FinishImportPartitionUpload", mock.Anything, mock.Anything).
+		On("FinishImportPartitionUpload", mock.Anything, mock.MatchedBy(matchKeyspace[*FinishImportPartitionUploadRequest](keyspaceID))).
 		Return(&FinishImportResponse{}, errors.New("rpc error")).
 		Once()
 	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), taskID, lower, upper, "/s3/path"))
@@ -160,24 +175,26 @@ func TestFinishPartitionUpload(t *testing.T) {
 func TestFinishIndexUpload(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
+	keyspaceID := uint32(321)
+	ctx.SetKeyspaceID(keyspaceID)
 	taskID := "tidb-task-123"
 
 	mockClient.
-		On("FinishImportIndexUpload", mock.Anything, mock.Anything).
+		On("FinishImportIndexUpload", mock.Anything, mock.MatchedBy(matchKeyspace[*FinishImportIndexUploadRequest](keyspaceID))).
 		Return(&FinishImportResponse{Status: ErrorCode_SUCCESS}, nil).
 		Once()
 	err := ctx.FinishIndexUpload(context.Background(), taskID)
 	assert.NoError(t, err)
 
 	mockClient.
-		On("FinishImportIndexUpload", mock.Anything, mock.Anything).
+		On("FinishImportIndexUpload", mock.Anything, mock.MatchedBy(matchKeyspace[*FinishImportIndexUploadRequest](keyspaceID))).
 		Return(&FinishImportResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
 	err = ctx.FinishIndexUpload(context.Background(), taskID)
 	assert.Error(t, err)
 
 	mockClient.
-		On("FinishImportIndexUpload", mock.Anything, mock.Anything).
+		On("FinishImportIndexUpload", mock.Anything, mock.MatchedBy(matchKeyspace[*FinishImportIndexUploadRequest](keyspaceID))).
 		Return(&FinishImportResponse{}, errors.New("rpc error")).
 		Once()
 	err = ctx.FinishIndexUpload(context.Background(), taskID)

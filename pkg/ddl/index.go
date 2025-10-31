@@ -892,7 +892,7 @@ func onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver int64, err e
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			err = tici.CreateFulltextIndex(jobCtx.stepCtx, tblInfo, indexInfo, job.SchemaName)
+			err = tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName)
 			if err != nil {
 				if !isRetryableJobError(err, job.ErrorCount) {
 					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
@@ -1878,7 +1878,7 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		if isFullTextIndex {
 			// Drop full text index on TiCI.
 			for _, indexID := range indexIDs {
-				if err := tici.DropFullTextIndex(jobCtx.stepCtx, tblInfo.ID, indexID); err != nil {
+				if err := tici.DropFullTextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo.ID, indexID); err != nil {
 					logutil.DDLLogger().Warn("run drop column index but droping index on TiCI failed", zap.Error(err))
 				}
 			}
