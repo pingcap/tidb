@@ -199,8 +199,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 				continue
 			}
 			delete(ds.ColIdxsByName, ds.Columns[i].Name.L)
-			for i := i + 1; i < len(ds.Columns); i++ {
-				ds.ColIdxsByName[ds.Columns[i].Name.L] = i - 1
+			for j := i + 1; j < len(ds.Columns); j++ {
+				ds.ColIdxsByName[ds.Columns[j].Name.L] = j - 1
 			}
 			// TODO: investigate why we cannot use slices.Delete for these two:
 			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
