@@ -704,8 +704,7 @@ type candidatePath struct {
 	indexCondsColMap  util.Col2Len // indexCondsColMap maps Column.UniqueID to column length for the columns in AccessConds and indexFilters.
 	matchPropResult   property.PhysicalPropMatchResult
 
-	forIndexJoin  bool // indicate this path is used for index join.
-	indexJoinCols int  // how many index columns are used in access conditions in this IndexJoin.
+	indexJoinCols int // how many index columns are used in access conditions in this IndexJoin.
 }
 
 func compareBool(l, r bool) int {
@@ -1320,7 +1319,7 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 }
 
 func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int) *candidatePath {
-	candidate := &candidatePath{path: path, forIndexJoin: true, indexJoinCols: indexJoinCols}
+	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols}
 	candidate.matchPropResult = property.PropNotMatched
 	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 	candidate.indexCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
@@ -1501,7 +1500,7 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 }
 
 func (c *candidatePath) equalPredicateCount() int {
-	if c.forIndexJoin {
+	if c.indexJoinCols > 0 { // this candidate path is for Index Join
 		// Specially handle indexes under Index Join, since these indexes can't see the join key themselves, we can't
 		// use path.EqOrInCondCount here.
 		// For example, for "where t1.a=t2.a and t2.b=1" and index "idx(t2, a, b)", since the DataSource of t2 can't
