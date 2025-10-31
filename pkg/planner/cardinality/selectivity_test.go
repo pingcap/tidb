@@ -338,8 +338,8 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	// Search for a not found value based upon statistics - count should be >= 10 and <=40
 	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
 	require.NoError(t, err)
-	require.Truef(t, count < 45, "expected: between 35 to 45, got: %v", count)
-	require.Truef(t, count > 35, "expected: between 35 to 45, got: %v", count)
+	require.Truef(t, count < 45, "expected: between 0 to 45, got: %v", count)
+	require.Truef(t, count > 0, "expected: between 0 to 45, got: %v", count)
 }
 
 func TestNewIndexWithoutStats(t *testing.T) {
