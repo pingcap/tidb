@@ -255,7 +255,11 @@ func (sdk *ImportSDK) CreateSchemaAndTableByName(ctx context.Context, schema, ta
 				sdk.config.concurrency,
 			)
 
-			err := importer.Run(ctx, []*mydump.MDDatabaseMeta{dbMeta})
+			err := importer.Run(ctx, []*mydump.MDDatabaseMeta{{
+				Name:       dbMeta.Name,
+				SchemaFile: dbMeta.SchemaFile,
+				Tables:     []*mydump.MDTableMeta{tblMeta},
+			}})
 			if err != nil {
 				return errors.Annotatef(err, "creating schema and table failed (source=%s, concurrency=%d, schema=%s, table=%s)", sdk.sourcePath, sdk.config.concurrency, schema, table)
 			}

@@ -662,7 +662,7 @@ func (s *mockGCSSuite) TestCreateTableMetaByName() {
 		Content:     []byte("CREATE DATABASE IF NOT EXISTS db1;\n"),
 	})
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db2-schema-create.sql"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1-schema-create.sql"},
 		Content:     []byte("CREATE DATABASE IF NOT EXISTS db2;\n"),
 	})
 	// table1 in db1
@@ -680,15 +680,15 @@ func (s *mockGCSSuite) TestCreateTableMetaByName() {
 	})
 	// table2 in db2
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db2.tb2-schema.sql"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1.tb2-schema.sql"},
 		Content:     []byte("CREATE TABLE IF NOT EXISTS db2.tb2 (x INT, y VARCHAR(10));\n"),
 	})
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db2.tb2.001.sql"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1.tb2.001.sql"},
 		Content:     []byte("INSERT INTO db2.tb2 VALUES (5,'e'),(6,'f');\n"),
 	})
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db2.tb2.002.sql"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "dumpling", Name: "db1.tb2.002.sql"},
 		Content:     []byte("INSERT INTO db2.tb2 VALUES (7,'g'),(8,'h');\n"),
 	})
 
