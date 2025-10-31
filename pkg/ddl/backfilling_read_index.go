@@ -194,6 +194,10 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
 	})
 	var err error
+	failpoint.InjectCall("beforeReadIndexStepExecRunSubtask", &err)
+	if err != nil {
+		return err
+	}
 
 	var (
 		accessRec = &recording.AccessStats{}
