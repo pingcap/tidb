@@ -15,6 +15,11 @@
 package collate
 
 import (
+<<<<<<< HEAD
+=======
+	"unicode/utf8"
+
+>>>>>>> fa0106d6c46 (util/collate: fix the issue that '�'(\uFFFD) was treated as invalid sequence (#64165))
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -23,6 +28,7 @@ type generalCICollator struct {
 
 // Compare implements Collator interface.
 func (*generalCICollator) Compare(a, b string) int {
+<<<<<<< HEAD
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
 	r1, r2 := rune(0), rune(0)
@@ -37,6 +43,9 @@ func (*generalCICollator) Compare(a, b string) int {
 		}
 	}
 	return sign((len(a) - ai) - (len(b) - bi))
+=======
+	return compareCommon(a, b, convertRuneGeneralCI)
+>>>>>>> fa0106d6c46 (util/collate: fix the issue that '�'(\uFFFD) was treated as invalid sequence (#64165))
 }
 
 // Key implements Collator interface.
@@ -50,7 +59,20 @@ func (*generalCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	i := 0
 	r := rune(0)
 	for i < len(str) {
+<<<<<<< HEAD
 		r, i = decodeRune(str, i)
+=======
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+		r, rLen = utf8.DecodeRuneInString(str[i:])
+		invalid := r == utf8.RuneError && rLen == 1
+		if invalid {
+			return buf
+		}
+
+		i = i + rLen
+>>>>>>> fa0106d6c46 (util/collate: fix the issue that '�'(\uFFFD) was treated as invalid sequence (#64165))
 		u16 := convertRuneGeneralCI(r)
 		buf = append(buf, byte(u16>>8), byte(u16))
 	}
@@ -79,15 +101,15 @@ func (p *ciPattern) DoMatch(str string) bool {
 	})
 }
 
-func convertRuneGeneralCI(r rune) uint16 {
+func convertRuneGeneralCI(r rune) uint32 {
 	if r > 0xFFFF {
 		return 0xFFFD
 	}
 	plane := planeTable[r>>8]
 	if plane == nil {
-		return uint16(r)
+		return uint32(r)
 	}
-	return plane[r&0xFF]
+	return uint32(plane[r&0xFF])
 }
 
 var (

@@ -125,3 +125,76 @@ select * from t61085 where a = cast(0x41414180424242 as char charset gbk);
 a
 AAA
 DROP TABLE t61085;
+create table a (id bigint primary key, name varchar(10) collate utf8mb4_general_ci, key(name));
+insert into a values (1, 'A�B');
+select hex(weight_string(name)) from a;
+hex(weight_string(name))
+0041FFFD0042
+select name, hex(weight_string(name)) from a where id = 1;
+name	hex(weight_string(name))
+A�B	0041FFFD0042
+select * from a where name = (select name from a where id = 1);
+id	name
+1	A�B
+delete from a where id = 1;
+DROP TABLE IF EXISTS t_fffd;
+CREATE TABLE t_fffd (
+id INT PRIMARY KEY AUTO_INCREMENT,
+c_utf8mb4_general_ci VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+c_utf8mb4_unicode_ci VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+c_utf8mb4_bin VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,
+INDEX idx_general (c_utf8mb4_general_ci),
+INDEX idx_unicode (c_utf8mb4_unicode_ci),
+INDEX idx_bin (c_utf8mb4_bin)
+);
+INSERT INTO t_fffd (c_utf8mb4_general_ci, c_utf8mb4_unicode_ci, c_utf8mb4_bin)
+VALUES ('a�b', '�', 'test�string');
+SELECT * FROM t_fffd ORDER BY id;
+id	c_utf8mb4_general_ci	c_utf8mb4_unicode_ci	c_utf8mb4_bin
+1	a�b	�	test�string
+EXPLAIN SELECT id FROM t_fffd WHERE c_utf8mb4_general_ci = 'a�b';
+id	estRows	task	access object	operator info
+IndexReader_10	10.00	root		index:Projection_6
+└─Projection_6	10.00	cop[tikv]		new_character_set.t_fffd.id
+  └─IndexRangeScan_9	10.00	cop[tikv]	table:t_fffd, index:idx_general(c_utf8mb4_general_ci)	range:["\x00A\xff\xfd\x00B","\x00A\xff\xfd\x00B"], keep order:false, stats:pseudo
+SELECT id FROM t_fffd WHERE c_utf8mb4_general_ci = 'a�b';
+id
+1
+EXPLAIN SELECT id FROM t_fffd WHERE c_utf8mb4_unicode_ci = '�';
+id	estRows	task	access object	operator info
+IndexReader_10	10.00	root		index:Projection_6
+└─Projection_6	10.00	cop[tikv]		new_character_set.t_fffd.id
+  └─IndexRangeScan_9	10.00	cop[tikv]	table:t_fffd, index:idx_unicode(c_utf8mb4_unicode_ci)	range:["\r\xc6","\r\xc6"], keep order:false, stats:pseudo
+SELECT id FROM t_fffd WHERE c_utf8mb4_unicode_ci = '�';
+id
+1
+EXPLAIN SELECT id FROM t_fffd WHERE c_utf8mb4_bin = 'test�string';
+id	estRows	task	access object	operator info
+IndexReader_10	10.00	root		index:Projection_6
+└─Projection_6	10.00	cop[tikv]		new_character_set.t_fffd.id
+  └─IndexRangeScan_9	10.00	cop[tikv]	table:t_fffd, index:idx_bin(c_utf8mb4_bin)	range:["test�string","test�string"], keep order:false, stats:pseudo
+SELECT id FROM t_fffd WHERE c_utf8mb4_bin = 'test�string';
+id
+1
+UPDATE t_fffd SET c_utf8mb4_general_ci = 'X�Y' WHERE c_utf8mb4_general_ci = 'a�b';
+UPDATE t_fffd SET c_utf8mb4_unicode_ci = 'UPDATED�' WHERE c_utf8mb4_unicode_ci = '�';
+UPDATE t_fffd SET c_utf8mb4_bin = 'bin�updated' WHERE c_utf8mb4_bin = 'test�string';
+SELECT * FROM t_fffd ORDER BY id;
+id	c_utf8mb4_general_ci	c_utf8mb4_unicode_ci	c_utf8mb4_bin
+1	X�Y	UPDATED�	bin�updated
+DELETE FROM t_fffd WHERE c_utf8mb4_general_ci = 'X�Y';
+SELECT COUNT(*) FROM t_fffd;
+COUNT(*)
+0
+INSERT INTO t_fffd (c_utf8mb4_general_ci, c_utf8mb4_unicode_ci, c_utf8mb4_bin)
+VALUES ('another�row', 'multi�char', 'end�case');
+SELECT * FROM t_fffd ORDER BY id;
+id	c_utf8mb4_general_ci	c_utf8mb4_unicode_ci	c_utf8mb4_bin
+2	another�row	multi�char	end�case
+SELECT id FROM t_fffd WHERE c_utf8mb4_bin = 'end�case';
+id
+2
+SELECT id FROM t_fffd WHERE c_utf8mb4_unicode_ci = 'multi�char';
+id
+2
+DROP TABLE t_fffd;
