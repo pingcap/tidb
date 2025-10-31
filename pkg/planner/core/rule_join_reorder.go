@@ -150,6 +150,18 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 					}
 				}
 			}
+		} else if join.JoinType == base.InnerJoin {
+			// For inner joins, also check if left side has table expressions
+			// If so, and this is not a cartesian join, don't reorder to preserve index join opportunity
+			// Only apply this optimization when hash join cost factor > 1 (indicating preference for index joins)
+			if len(join.EqualConditions) > 0 && p.SCtx().GetSessionVars().HashJoinCostFactor > 1 {
+				for _, lhs := range lhsGroup {
+					if isTableExpressionPlan(lhs) {
+						noExpand = true
+						break
+					}
+				}
+			}
 		}
 		if noExpand {
 			return &joinGroupResult{
@@ -192,6 +204,18 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 				if affectedGroups > 1 {
 					noExpand = true
 					break
+				}
+			}
+		} else if join.JoinType == base.InnerJoin {
+			// For inner joins, also check if right side has table expressions
+			// If so, and this is not a cartesian join, don't reorder to preserve index join opportunity
+			// Only apply this optimization when hash join cost factor > 1 (indicating preference for index joins)
+			if len(join.EqualConditions) > 0 && p.SCtx().GetSessionVars().HashJoinCostFactor > 1 {
+				for _, rhs := range rhsGroup {
+					if isTableExpressionPlan(rhs) {
+						noExpand = true
+						break
+					}
 				}
 			}
 		}
