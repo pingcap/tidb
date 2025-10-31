@@ -594,6 +594,9 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 
 		// If the column is analyzed we refresh the map for the possible change.
 		if colHist.StatsAvailable() {
+			statslogutil.StatsLogger().Info("stat cache map insert col 5",
+				zap.Int64("tableID", tbl.PhysicalID),
+				zap.Int64("colID", item.ID))
 			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, true)
 		}
 		// All the objects shares the same stats version. Update it here.
@@ -601,6 +604,9 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 			tbl.StatsVer = statistics.Version0
 		}
 		// we have to refresh the map for the possible change to ensure that the map information is not missing.
+		statslogutil.StatsLogger().Info("stat cache map insert col 6",
+			zap.Int64("tableID", tbl.PhysicalID),
+			zap.Int64("colID", item.ID))
 		tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.StatsAvailable())
 	} else if item.IsIndex && idxHist != nil {
 		index := tbl.GetIdx(item.ID)

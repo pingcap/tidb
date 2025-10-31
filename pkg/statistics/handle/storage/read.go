@@ -400,6 +400,9 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 		if histID != colInfo.ID {
 			continue
 		}
+		statslogutil.StatsLogger().Info("stat cache map insert col 4",
+			zap.Int64("tableID", table.PhysicalID),
+			zap.Int64("colID", histID))
 		table.ColAndIdxExistenceMap.InsertCol(histID, statsVer != statistics.Version0 || distinct > 0 || nullCount > 0)
 		// All the objects in the table shares the same stats version.
 		// Update here.

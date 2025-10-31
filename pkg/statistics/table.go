@@ -25,9 +25,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
@@ -1096,6 +1098,9 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 		// We would not collect stats for the hidden column and we won't use the hidden column to estimate.
 		// Thus we don't create pseudo stats for it.
 		if col.State == model.StatePublic && !col.Hidden {
+			statslogutil.StatsLogger().Info("stat cache map insert col 1",
+				zap.Int64("tableID", tblInfo.ID),
+				zap.Int64("colID", col.ID))
 			t.ColAndIdxExistenceMap.InsertCol(col.ID, false)
 			if allowFillHistMeta {
 				t.columns[col.ID] = &Column{

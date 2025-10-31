@@ -328,6 +328,9 @@ func (s *StatsCacheImpl) Get(tableID int64) (*statistics.Table, bool) {
 
 // Put puts this table stats into the cache.
 func (s *StatsCacheImpl) Put(id int64, t *statistics.Table) {
+	statslogutil.StatsLogger().Info("stat cache put",
+		zap.Int64("tableID", id),
+		zap.Int("column number", t.ColNum()))
 	s.Load().put(id, t)
 }
 
