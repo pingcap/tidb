@@ -12,11 +12,7 @@ go_test(
     shard_count = 3,
     deps = [
         "//pkg/config",
-<<<<<<< HEAD
-=======
         "//pkg/config/kerneltype",
-        "//pkg/ddl",
->>>>>>> bdd2b6f2845 (dxf/ddl: always enable DXF and fast reorg in nextgen (#64179))
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/meta/model",

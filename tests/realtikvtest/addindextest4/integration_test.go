@@ -21,11 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
->>>>>>> bdd2b6f2845 (dxf/ddl: always enable DXF and fast reorg in nextgen (#64179))
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
