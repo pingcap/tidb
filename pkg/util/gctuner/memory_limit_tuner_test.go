@@ -195,8 +195,6 @@ func TestIssue48741(t *testing.T) {
 		// Try to trigger GC by 1GB * 80% = 800MB (tidb_server_memory_limit * tidb_server_memory_limit_gc_trigger)
 		gcNum := getMemoryLimitGCTotal()
 		memory810mb := allocator.alloc(810 << 20)
-
-		time.Sleep(100 * time.Millisecond)
 		require.Eventually(t,
 			// Wait for the GC triggered by memory810mb
 			func() bool {

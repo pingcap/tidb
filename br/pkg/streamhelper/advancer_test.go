@@ -624,8 +624,6 @@ func TestCheckPointLagged(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	c.advanceClusterTimeBy(3 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
-
-	time.Sleep(100 * time.Millisecond)
 	// after some times, the isPaused will be set and ticks are skipped
 	require.Eventually(t, func() bool {
 		return assert.NoError(t, adv.OnTick(ctx))
@@ -651,16 +649,12 @@ func TestCheckPointResume(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	c.advanceClusterTimeBy(2 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
-
-	time.Sleep(100 * time.Millisecond)
 	require.Eventually(t, func() bool {
 		return assert.NoError(t, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)
 	//now the checkpoint issue is fixed and resumed
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.ResumeTask(ctx)
-
-	time.Sleep(100 * time.Millisecond)
 	require.Eventually(t, func() bool {
 		return assert.NoError(t, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)
@@ -698,7 +692,6 @@ func TestUnregisterAfterPause(t *testing.T) {
 	env.putTask()
 
 	// wait for the task to be added
-	time.Sleep(100 * time.Millisecond)
 	require.Eventually(t, func() bool {
 		return adv.HasTask()
 	}, 5*time.Second, 100*time.Millisecond)
