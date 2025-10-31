@@ -119,7 +119,7 @@ func TestColIdxsByName(t *testing.T) {
 		names = append(names, name.L)
 	}
 
-	colIdxsByName := GetColIdxsByName(colInfos)
+	colIdxsByName := GetColIdxMapping(colInfos)
 	for _, name := range names {
 		i, found := colIdxsByName[name]
 		require.True(t, found)

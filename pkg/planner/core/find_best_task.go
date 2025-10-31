@@ -2060,7 +2060,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// On this way, it's double read case.
 		ts := physicalop.PhysicalTableScan{
 			Columns:         sliceutil.DeepClone(ds.Columns),
-			ColIdxsByName:   model.GetColIdxsByName(ds.Columns),
+			ColIdxsByName:   model.GetColIdxMapping(ds.Columns),
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
 			DBName:          ds.DBName,

@@ -314,9 +314,9 @@ func NewExtraPhysTblIDColInfo() *ColumnInfo {
 	return colInfo
 }
 
-// GetColIdxsByName builds a map of column names to their corresponding offsets
+// GetColIdxMapping builds a map of column names to their corresponding offsets
 // into the given slice of column infos.
-func GetColIdxsByName(colInfos []*ColumnInfo) map[string]int {
+func GetColIdxMapping(colInfos []*ColumnInfo) map[string]int {
 	colIdxsByName := make(map[string]int, len(colInfos))
 	for i, info := range colInfos {
 		colIdxsByName[info.Name.L] = i
