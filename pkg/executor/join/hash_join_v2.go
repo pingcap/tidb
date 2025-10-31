@@ -487,7 +487,13 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 		}
 	}()
 
+	// When error happens, hasErr will be set to true.
+	// However, we should not directly exit the function, as we must
+	// call `fetcherAndWorkerSyncer.Done()` in `splitPartitionAndAppendToRowTableForRestoreImpl`
+	// fetcherAndWorkerSyncer is a counter for synchronizing, it should be `Done` for `chunkNum`.
+	// When `hasErr` is set, `splitPartitionAndAppendToRowTableForRestoreImpl` could exit early.
 	hasErr := false
+
 	chunkNum := inDisk.NumChunks()
 	for i := range chunkNum {
 		_, ok := <-syncCh
@@ -511,7 +517,13 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 		}
 	}()
 
+	// When error happens, hasErr will be set to true.
+	// However, we should not directly exit the function, as we must
+	// call `fetcherAndWorkerSyncer.Done()` in `splitPartitionAndAppendToRowTableImpl`
+	// fetcherAndWorkerSyncer is a counter for synchronizing, it should be `Done` for `chunkNum`.
+	// When `hasErr` is set, `splitPartitionAndAppendToRowTableImpl` could exit early.
 	hasErr := false
+
 	for chk := range srcChkCh {
 		err := b.splitPartitionAndAppendToRowTableImpl(typeCtx, chk, fetcherAndWorkerSyncer, hasErr, &cost)
 		if err != nil {
