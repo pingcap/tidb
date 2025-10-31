@@ -266,6 +266,10 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 					}
 				} else if proj, ok := mChild.(*logicalop.LogicalProjection); ok {
 					// Check if Projection's child is Limit: MaxOneRow -> Projection -> Limit
+					// This pattern occurs when subqueries contain some clauses like ORDER BY or HAVING clauses that require projection.
+					// Examples:
+					//   - HAVING clause: SELECT ... (SELECT AVG(...) FROM ... GROUP BY ... HAVING ... LIMIT 1)
+					//   - ORDER BY clause: SELECT ... (SELECT ... FROM ... ORDER BY ... LIMIT 1)
 					if li, ok := proj.Children()[0].(*logicalop.LogicalLimit); ok {
 						// Limit with non-0 offset cannot be removed, but we still check for redundant MaxOneRow
 						if li.Offset != 0 {
@@ -510,18 +514,36 @@ func (*DecorrelateSolver) Name() string {
 	return "decorrelate"
 }
 
+// extractJoinKeyFromCondition extracts the inner join key column from an equality condition.
+// It checks if the condition is of the form "outer_col = inner_col" where outer_col is a correlated column
+// from the Apply operator. Returns the inner column if it belongs to the given schema, otherwise returns nil.
+func extractJoinKeyFromCondition(apply *logicalop.LogicalApply, cond expression.Expression, schema *expression.Schema) *expression.Column {
+	decExpr := apply.DeCorColFromEqExpr(cond)
+	if decExpr == nil {
+		return nil
+	}
+	sf, ok := decExpr.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.EQ {
+		return nil
+	}
+	args := sf.GetArgs()
+	if len(args) != 2 {
+		return nil
+	}
+	innerCol, ok := args[1].(*expression.Column)
+	if !ok || !schema.Contains(innerCol) {
+		return nil
+	}
+	return innerCol
+}
+
 // isJoinKeyUniqueKey checks if join key is unique key.
 // Returns true if the join key forms a unique key constraint.
 func isJoinKeyUniqueKey(apply *logicalop.LogicalApply, plan base.LogicalPlan) bool {
 	var hasMultiRowOperator func(base.LogicalPlan) bool
 	hasMultiRowOperator = func(p base.LogicalPlan) bool {
-		// Check if current node is a JOIN (excluding the outer Apply which is already a Join)
-		// todo: in/exists can also been evaluated to one row, but we don't handle it yet.
-		if _, ok := p.(*logicalop.LogicalJoin); ok {
-			return true
-		}
-		// Check if current node is UNION ALL
-		if _, ok := p.(*logicalop.LogicalUnionAll); ok {
+		// Use centralized function to check if operator can generate multiple rows
+		if logicalop.CanGenerateMultipleRows(p) {
 			return true
 		}
 		// Recursively check children
@@ -546,34 +568,16 @@ func isJoinKeyUniqueKey(apply *logicalop.LogicalApply, plan base.LogicalPlan) bo
 		if sel, ok := p.(*logicalop.LogicalSelection); ok {
 			// Check conditions directly on Selection
 			for _, cond := range sel.Conditions {
-				if decExpr := apply.DeCorColFromEqExpr(cond); decExpr != nil {
-					if sf, ok := decExpr.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
-						args := sf.GetArgs()
-						if len(args) == 2 {
-							if innerCol, ok := args[1].(*expression.Column); ok {
-								if sel.Schema().Contains(innerCol) {
-									innerJoinKeys = append(innerJoinKeys, innerCol)
-								}
-							}
-						}
-					}
+				if innerCol := extractJoinKeyFromCondition(apply, cond, sel.Schema()); innerCol != nil {
+					innerJoinKeys = append(innerJoinKeys, innerCol)
 				}
 			}
 			// Continue to check children recursively
 		} else if ds, ok := p.(*logicalop.DataSource); ok {
 			// Check conditions in DataSource (PushedDownConds may contain join key conditions)
 			for _, cond := range ds.PushedDownConds {
-				if decExpr := apply.DeCorColFromEqExpr(cond); decExpr != nil {
-					if sf, ok := decExpr.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
-						args := sf.GetArgs()
-						if len(args) == 2 {
-							if innerCol, ok := args[1].(*expression.Column); ok {
-								if ds.Schema().Contains(innerCol) {
-									innerJoinKeys = append(innerJoinKeys, innerCol)
-								}
-							}
-						}
-					}
+				if innerCol := extractJoinKeyFromCondition(apply, cond, ds.Schema()); innerCol != nil {
+					innerJoinKeys = append(innerJoinKeys, innerCol)
 				}
 			}
 			// Stop recursion at DataSource
@@ -629,7 +633,7 @@ func isJoinKeyUniqueKey(apply *logicalop.LogicalApply, plan base.LogicalPlan) bo
 				break
 			}
 		}
-		if allMatch && len(keyInfo) == len(innerJoinKeys) && len(keyInfo) > 0 {
+		if allMatch && len(keyInfo) > 0 {
 			return true
 		}
 	}
