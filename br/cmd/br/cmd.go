@@ -130,6 +130,16 @@ func calculateMemoryLimit(memleft uint64) uint64 {
 	//  * f(4GB) = 256MB
 	//  * f(+inf) -> 512MB
 	memreserved := halfGiB / (1 + fourGiB/(memleft|1))
+
+	// Prevent uint64 underflow when memreserved >= memleft
+	// This can happen when available memory is very low (< 256MB)
+	if memreserved >= memleft {
+		log.Warn("insufficient memory left for BR, using minimum limit",
+			zap.Uint64("memleft", memleft),
+			zap.Uint64("memreserved", memreserved))
+		return quarterGiB // Return minimum limit (256 MB)
+	}
+
 	// 0     memused          memtotal-memreserved  memtotal
 	// +--------+--------------------+----------------+
 	//          ^            br mem upper limit
