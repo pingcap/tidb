@@ -30,10 +30,10 @@ var versionString = map[uint16]string{
 	tls.VersionTLS13: "TLSv1.3",
 }
 
-// VersionName is like `tls.VersionName()`, but tries to match the names in MySQL/OpenSSL
+// VersionName is like `tls.VersionName()` from crypto/tls, but tries to match the names in MySQL/OpenSSL
 func VersionName(version uint16) string {
 	if tlsVersion, tlsVersionKnown := versionString[version]; tlsVersionKnown {
 		return tlsVersion
 	}
-	return ""
+	return tls.VersionName(version)
 }
