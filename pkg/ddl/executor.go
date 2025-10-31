@@ -1782,6 +1782,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				switch constr.Option.Tp {
 				case ast.IndexTypeFulltext:
 					err = e.createFulltextIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+				case ast.IndexTypeHybrid:
+					err = e.createHybridIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 				default:
 					err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 				}
@@ -4721,6 +4723,60 @@ func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	return errors.Trace(err)
 }
 
+func (e *executor) createHybridIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tblInfo := t.Meta()
+	if err := checkTableTypeForFulltextIndex(tblInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
+	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, model.ColumnarIndexTypeHybrid, ifNotExists)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(indexName.L) == 0 {
+		return nil
+	}
+	if _, err := buildHybridInfoWithCheck(indexPartSpecifications, indexOption, tblInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+	if _, _, err := buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeHybrid); err != nil {
+		return errors.Trace(err)
+	}
+
+	sessionVars := ctx.GetSessionVars()
+	if _, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, indexName.String(), &indexOption.Comment, dbterror.ErrTooLongTableComment); err != nil {
+		return errors.Trace(err)
+	}
+
+	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
+	job.Version = model.GetJobVerInUse()
+	job.Type = model.ActionAddHybridIndex
+
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			IndexName:               indexName,
+			IndexPartSpecifications: indexPartSpecifications,
+			IndexOption:             indexOption,
+		}},
+		OpType: model.OpAddIndex,
+	}
+
+	err = e.doDDLJob2(ctx, job, args)
+	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	return errors.Trace(err)
+}
+
 func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType, ifNotExists bool) (ast.CIStr, []*model.ColumnInfo, error) {
 	// Deal with anonymous index.
@@ -4924,6 +4980,8 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is not supported")
 	case ast.IndexKeyTypeColumnar:
 		switch indexOption.Tp {
+		case ast.IndexTypeHybrid:
+			return e.createHybridIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
 		case ast.IndexTypeFulltext:
 			return e.createFulltextIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
 		default:

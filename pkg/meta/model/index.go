@@ -15,6 +15,7 @@
 package model
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -172,6 +173,260 @@ type FullTextIndexInfo struct {
 	// TODO: Add other options
 }
 
+// HybridIndexInfo is the information of HYBRID index of a column.
+type HybridIndexInfo struct {
+	FullText []*HybridFullTextSpec `json:"fulltext,omitempty"`
+	Vector   []*HybridVectorSpec   `json:"vector,omitempty"`
+	Inverted []*HybridInvertedSpec `json:"inverted,omitempty"`
+	Sort     *HybridSortSpec       `json:"sort,omitempty"`
+}
+
+// HybridFullTextSpec describes the configuration for a fulltext segment in a hybrid index.
+type HybridFullTextSpec struct {
+	Columns   []string                 `json:"columns"`
+	IndexInfo *HybridFulltextIndexInfo `json:"index_info"`
+}
+
+// HybridFulltextIndexInfo includes analyzer and tokenizer information for the fulltext component.
+type HybridFulltextIndexInfo struct {
+	Analyzer     *HybridFulltextAnalyzer  `json:"analyzer,omitempty"`
+	Tokenizer    *HybridFulltextTokenizer `json:"tokenizer,omitempty"`
+	TokenFilters []string                 `json:"token_filter,omitempty"`
+}
+
+// HybridFulltextAnalyzer describes the analyzer configuration for the fulltext component.
+type HybridFulltextAnalyzer struct {
+	Type   string         `json:"type"`
+	Params map[string]any `json:"params,omitempty"`
+}
+
+// HybridFulltextTokenizer describes the tokenizer configuration for the fulltext component.
+type HybridFulltextTokenizer struct {
+	Type    string         `json:"type"`
+	Options map[string]any `json:"options,omitempty"`
+}
+
+// HybridVectorSpec describes the configuration for a vector segment in a hybrid index.
+type HybridVectorSpec struct {
+	Columns   []string               `json:"columns"`
+	IndexInfo *HybridVectorIndexInfo `json:"index_info"`
+}
+
+// HybridVectorIndexInfo describes the configuration of a vector index inside the hybrid index.
+type HybridVectorIndexInfo struct {
+	DistanceMetric string            `json:"distance_metric,omitempty"`
+	Dimension      *uint64           `json:"dimension,omitempty"`
+	Options        map[string]string `json:"options,omitempty"`
+}
+
+// HybridInvertedSpec describes the configuration for an inverted segment in a hybrid index.
+type HybridInvertedSpec struct {
+	Columns []string       `json:"columns,omitempty"`
+	Params  map[string]any `json:"params,omitempty"`
+}
+
+// HybridSortSpec describes the order definition of the hybrid index.
+type HybridSortSpec struct {
+	Columns    []string `json:"columns,omitempty"`
+	Directions []string `json:"directions,omitempty"`
+}
+
+// Clone clones HybridIndexInfo.
+func (info *HybridIndexInfo) Clone() *HybridIndexInfo {
+	if info == nil {
+		return nil
+	}
+	cloned := &HybridIndexInfo{}
+	if len(info.FullText) > 0 {
+		cloned.FullText = make([]*HybridFullTextSpec, len(info.FullText))
+		for i, ft := range info.FullText {
+			if ft == nil {
+				continue
+			}
+			cloned.FullText[i] = ft.Clone()
+		}
+	}
+	if len(info.Vector) > 0 {
+		cloned.Vector = make([]*HybridVectorSpec, len(info.Vector))
+		for i, v := range info.Vector {
+			if v == nil {
+				continue
+			}
+			cloned.Vector[i] = v.Clone()
+		}
+	}
+	if len(info.Inverted) > 0 {
+		cloned.Inverted = make([]*HybridInvertedSpec, len(info.Inverted))
+		for i, inv := range info.Inverted {
+			if inv == nil {
+				continue
+			}
+			cloned.Inverted[i] = inv.Clone()
+		}
+	}
+	if info.Sort != nil {
+		cloned.Sort = info.Sort.Clone()
+	}
+	return cloned
+}
+
+// Clone clones HybridFullTextSpec.
+func (c *HybridFullTextSpec) Clone() *HybridFullTextSpec {
+	if c == nil {
+		return nil
+	}
+	cloned := &HybridFullTextSpec{}
+	if len(c.Columns) > 0 {
+		cloned.Columns = append([]string(nil), c.Columns...)
+	}
+	if c.IndexInfo != nil {
+		cloned.IndexInfo = c.IndexInfo.Clone()
+	}
+	return cloned
+}
+
+// Clone clones HybridFulltextIndexInfo.
+func (info *HybridFulltextIndexInfo) Clone() *HybridFulltextIndexInfo {
+	if info == nil {
+		return nil
+	}
+	cloned := &HybridFulltextIndexInfo{}
+	if info.Analyzer != nil {
+		cloned.Analyzer = info.Analyzer.Clone()
+	}
+	if info.Tokenizer != nil {
+		cloned.Tokenizer = info.Tokenizer.Clone()
+	}
+	if len(info.TokenFilters) > 0 {
+		cloned.TokenFilters = append([]string(nil), info.TokenFilters...)
+	}
+	return cloned
+}
+
+// Clone clones HybridFulltextAnalyzer.
+func (cfg *HybridFulltextAnalyzer) Clone() *HybridFulltextAnalyzer {
+	if cfg == nil {
+		return nil
+	}
+	cloned := &HybridFulltextAnalyzer{Type: cfg.Type}
+	if len(cfg.Params) > 0 {
+		cloned.Params = cloneInterfaceMap(cfg.Params)
+	}
+	return cloned
+}
+
+// Clone clones HybridFulltextTokenizer.
+func (cfg *HybridFulltextTokenizer) Clone() *HybridFulltextTokenizer {
+	if cfg == nil {
+		return nil
+	}
+	cloned := &HybridFulltextTokenizer{Type: cfg.Type}
+	if len(cfg.Options) > 0 {
+		cloned.Options = cloneInterfaceMap(cfg.Options)
+	}
+	return cloned
+}
+
+// Clone clones HybridVectorSpec.
+func (c *HybridVectorSpec) Clone() *HybridVectorSpec {
+	if c == nil {
+		return nil
+	}
+	cloned := &HybridVectorSpec{}
+	if len(c.Columns) > 0 {
+		cloned.Columns = append([]string(nil), c.Columns...)
+	}
+	if c.IndexInfo != nil {
+		cloned.IndexInfo = c.IndexInfo.Clone()
+	}
+	return cloned
+}
+
+// Clone clones HybridVectorIndexInfo.
+func (info *HybridVectorIndexInfo) Clone() *HybridVectorIndexInfo {
+	if info == nil {
+		return nil
+	}
+	cloned := &HybridVectorIndexInfo{
+		DistanceMetric: info.DistanceMetric,
+	}
+	if info.Dimension != nil {
+		dim := *info.Dimension
+		cloned.Dimension = &dim
+	}
+	if len(info.Options) > 0 {
+		cloned.Options = make(map[string]string, len(info.Options))
+		for k, v := range info.Options {
+			cloned.Options[k] = v
+		}
+	}
+	return cloned
+}
+
+// Clone clones HybridInvertedSpec.
+func (c *HybridInvertedSpec) Clone() *HybridInvertedSpec {
+	if c == nil {
+		return nil
+	}
+	cloned := &HybridInvertedSpec{}
+	if len(c.Columns) > 0 {
+		cloned.Columns = append([]string(nil), c.Columns...)
+	}
+	if len(c.Params) > 0 {
+		cloned.Params = cloneInterfaceMap(c.Params)
+	}
+	return cloned
+}
+
+// Clone clones HybridSortSpec.
+func (opt *HybridSortSpec) Clone() *HybridSortSpec {
+	if opt == nil {
+		return nil
+	}
+	cloned := &HybridSortSpec{}
+	if len(opt.Columns) > 0 {
+		cloned.Columns = append([]string(nil), opt.Columns...)
+	}
+	if len(opt.Directions) > 0 {
+		cloned.Directions = append([]string(nil), opt.Directions...)
+	}
+	return cloned
+}
+
+func cloneInterfaceMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = deepCloneInterface(v)
+	}
+	return dst
+}
+
+func deepCloneInterface(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return cloneInterfaceMap(val)
+	case []any:
+		if len(val) == 0 {
+			return []any{}
+		}
+		res := make([]any, len(val))
+		for i, elem := range val {
+			res[i] = deepCloneInterface(elem)
+		}
+		return res
+	case json.RawMessage:
+		if val == nil {
+			return json.RawMessage(nil)
+		}
+		return append(json.RawMessage(nil), val...)
+	default:
+		return val
+	}
+}
+
 // ColumnarIndexType is the type of columnar index.
 type ColumnarIndexType uint8
 
@@ -184,6 +439,8 @@ const (
 	ColumnarIndexTypeVector
 	// ColumnarIndexTypeFulltext is the fulltext index type.
 	ColumnarIndexTypeFulltext
+	// ColumnarIndexTypeHybrid is the hybrid index type.
+	ColumnarIndexTypeHybrid
 )
 
 // SQLName returns the SQL keyword name of the columnar index. Used in log messages or error messages.
@@ -195,6 +452,8 @@ func (c ColumnarIndexType) SQLName() string {
 		return "inverted index"
 	case ColumnarIndexTypeFulltext:
 		return "fulltext index"
+	case ColumnarIndexTypeHybrid:
+		return "hybrid index"
 	default:
 		return "columnar index"
 	}
@@ -211,7 +470,7 @@ type IndexInfo struct {
 	State         SchemaState        `json:"state"`
 	BackfillState BackfillState      `json:"backfill_state"`
 	Comment       string             `json:"comment"`         // Comment
-	Tp            ast.IndexType      `json:"index_type"`      // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
+	Tp            ast.IndexType      `json:"index_type"`      // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext, Hybrid
 	Unique        bool               `json:"is_unique"`       // Whether the index is unique.
 	Primary       bool               `json:"is_primary"`      // Whether the index is primary key.
 	Invisible     bool               `json:"is_invisible"`    // Whether the index is invisible.
@@ -220,6 +479,7 @@ type IndexInfo struct {
 	VectorInfo    *VectorIndexInfo   `json:"vector_index"`    // VectorInfo is the vector index information.
 	InvertedInfo  *InvertedIndexInfo `json:"inverted_index"`  // InvertedInfo is the inverted index information.
 	FullTextInfo  *FullTextIndexInfo `json:"full_text_index"` // FullTextInfo is the FULLTEXT index information.
+	HybridInfo    *HybridIndexInfo   `json:"hybrid_index"`    // HybridInfo is the HYBRID index information.
 }
 
 // Hash64 implement HashEquals interface.
@@ -252,6 +512,9 @@ func (index *IndexInfo) Clone() *IndexInfo {
 	ni.Columns = make([]*IndexColumn, len(index.Columns))
 	for i := range index.Columns {
 		ni.Columns[i] = index.Columns[i].Clone()
+	}
+	if index.HybridInfo != nil {
+		ni.HybridInfo = index.HybridInfo.Clone()
 	}
 	return &ni
 }
@@ -297,7 +560,7 @@ func (index *IndexInfo) IsColumnarIndex() bool {
 // IsFulltextIndexOnTiCI checks whether the index is a fulltext index.
 // Fulltext index only exists in TiCI, no actual index data need to be written to KV layer.
 func (index *IndexInfo) IsFulltextIndexOnTiCI() bool {
-	return index.FullTextInfo != nil
+	return index.FullTextInfo != nil || index.HybridInfo != nil
 }
 
 // GetColumnarIndexType returns the type of columnar index.
@@ -310,6 +573,9 @@ func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
 	}
 	if index.FullTextInfo != nil {
 		return ColumnarIndexTypeFulltext
+	}
+	if index.HybridInfo != nil {
+		return ColumnarIndexTypeHybrid
 	}
 	return ColumnarIndexTypeNA
 }

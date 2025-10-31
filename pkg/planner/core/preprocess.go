@@ -1174,9 +1174,13 @@ func checkIndexOptions(isColumnar bool, indexOptions *ast.IndexOption) error {
 	if indexOptions == nil {
 		return nil
 	}
+	if indexOptions.TiCIParameter != "" &&
+		indexOptions.Tp != ast.IndexTypeFulltext && indexOptions.Tp != ast.IndexTypeHybrid {
+		return dbterror.ErrUnsupportedIndexType.FastGen("PARAMETER is only supported for FULLTEXT/HYBRID INDEX")
+	}
 	if isColumnar {
 		switch indexOptions.Tp {
-		case ast.IndexTypeVector, ast.IndexTypeInverted:
+		case ast.IndexTypeVector, ast.IndexTypeInverted, ast.IndexTypeHybrid:
 			// Accepted
 		case ast.IndexTypeFulltext:
 			if indexOptions.ParserName.L != "" && model.GetFullTextParserTypeBySQLName(indexOptions.ParserName.L) == model.FullTextParserTypeInvalid {
@@ -1245,6 +1249,7 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		stmt.KeyType = ast.IndexKeyTypeColumnar
 		stmt.IndexOption.Tp = ast.IndexTypeVector
 	}
+
 	// Rewrite CREATE FULLTEXT INDEX into CREATE COLUMNAR INDEX
 	if stmt.KeyType == ast.IndexKeyTypeFulltext {
 		if stmt.IndexOption.Tp != ast.IndexTypeInvalid {
@@ -1253,6 +1258,19 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		}
 		stmt.KeyType = ast.IndexKeyTypeColumnar
 		stmt.IndexOption.Tp = ast.IndexTypeFulltext
+	}
+
+	// Rewrite CREATE HYBRID INDEX into CREATE COLUMNAR INDEX
+	if stmt.KeyType == ast.IndexKeyTypeHybrid {
+		if stmt.IndexOption == nil {
+			stmt.IndexOption = &ast.IndexOption{}
+		}
+		if stmt.IndexOption.Tp != ast.IndexTypeInvalid {
+			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for HYBRID INDEX", stmt.IndexOption.Tp)
+			return
+		}
+		stmt.KeyType = ast.IndexKeyTypeColumnar
+		stmt.IndexOption.Tp = ast.IndexTypeHybrid
 	}
 
 	p.err = checkIndexOptions(stmt.KeyType == ast.IndexKeyTypeColumnar, stmt.IndexOption)
@@ -1272,6 +1290,8 @@ func (p *preprocessor) checkConstraintGrammar(stmt *ast.Constraint) {
 		stmt.Tp = ast.ConstraintColumnar
 		stmt.Option.Tp = ast.IndexTypeVector
 	}
+
+	// Rewrite FULLTEXT INDEX into COLUMNAR INDEX
 	if stmt.Tp == ast.ConstraintFulltext {
 		if stmt.Option.Tp != ast.IndexTypeInvalid {
 			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for FULLTEXT INDEX", stmt.Option.Tp)
@@ -1279,6 +1299,19 @@ func (p *preprocessor) checkConstraintGrammar(stmt *ast.Constraint) {
 		}
 		stmt.Tp = ast.ConstraintColumnar
 		stmt.Option.Tp = ast.IndexTypeFulltext
+	}
+
+	// Rewrite HYBRID INDEX into COLUMNAR INDEX
+	if stmt.Tp == ast.ConstraintHybrid {
+		if stmt.Option == nil {
+			stmt.Option = &ast.IndexOption{}
+		}
+		if stmt.Option.Tp != ast.IndexTypeInvalid {
+			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for HYBRID INDEX", stmt.Option.Tp)
+			return
+		}
+		stmt.Tp = ast.ConstraintColumnar
+		stmt.Option.Tp = ast.IndexTypeHybrid
 	}
 
 	p.err = checkIndexOptions(stmt.Tp == ast.ConstraintColumnar, stmt.Option)

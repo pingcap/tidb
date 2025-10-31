@@ -43,7 +43,7 @@ const (
 func GetFulltextIndexes(tbl *model.TableInfo) []*model.IndexInfo {
 	var result []*model.IndexInfo
 	for _, idx := range tbl.Indices {
-		if idx.FullTextInfo != nil {
+		if idx.IsFulltextIndexOnTiCI() {
 			result = append(result, idx)
 		}
 	}

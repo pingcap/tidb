@@ -1228,6 +1228,8 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			fmt.Fprintf(buf, "  VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.FullTextInfo != nil {
 			fmt.Fprintf(buf, "  FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.HybridInfo != nil {
+			fmt.Fprintf(buf, "  HYBRID INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.InvertedInfo != nil {
 			fmt.Fprintf(buf, "  COLUMNAR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else {
@@ -1259,6 +1261,15 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		}
 		if idxInfo.FullTextInfo != nil {
 			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
+		}
+		if idxInfo.HybridInfo != nil {
+			paramLiteral, err := hybridParameterJSONForShow(tableInfo, idxInfo)
+			if err != nil {
+				return err
+			}
+			if len(paramLiteral) > 0 {
+				fmt.Fprintf(buf, " PARAMETER '%s'", format.OutputFormat(paramLiteral))
+			}
 		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
@@ -2784,4 +2795,94 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 		return err
 	}
 	return fn(sysCtx)
+}
+
+func hybridParameterJSONForShow(tableInfo *model.TableInfo, idxInfo *model.IndexInfo) (string, error) {
+	info := idxInfo.HybridInfo
+	if info == nil {
+		return "", nil
+	}
+	_ = tableInfo
+
+	clone := info.Clone()
+	if clone == nil {
+		return "", nil
+	}
+
+	pruneEmptyFullText := func(list []*model.HybridFullTextSpec) []*model.HybridFullTextSpec {
+		if len(list) == 0 {
+			return nil
+		}
+		filtered := make([]*model.HybridFullTextSpec, 0, len(list))
+		for _, item := range list {
+			if item == nil {
+				continue
+			}
+			if len(item.Columns) == 0 {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		if len(filtered) == 0 {
+			return nil
+		}
+		return filtered
+	}
+
+	pruneEmptyVector := func(list []*model.HybridVectorSpec) []*model.HybridVectorSpec {
+		if len(list) == 0 {
+			return nil
+		}
+		filtered := make([]*model.HybridVectorSpec, 0, len(list))
+		for _, item := range list {
+			if item == nil {
+				continue
+			}
+			if len(item.Columns) == 0 {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		if len(filtered) == 0 {
+			return nil
+		}
+		return filtered
+	}
+
+	pruneEmptyInverted := func(list []*model.HybridInvertedSpec) []*model.HybridInvertedSpec {
+		if len(list) == 0 {
+			return nil
+		}
+		filtered := make([]*model.HybridInvertedSpec, 0, len(list))
+		for _, item := range list {
+			if item == nil {
+				continue
+			}
+			if len(item.Columns) == 0 && len(item.Params) == 0 {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		if len(filtered) == 0 {
+			return nil
+		}
+		return filtered
+	}
+
+	clone.FullText = pruneEmptyFullText(clone.FullText)
+	clone.Vector = pruneEmptyVector(clone.Vector)
+	clone.Inverted = pruneEmptyInverted(clone.Inverted)
+	if clone.Sort != nil && len(clone.Sort.Columns) == 0 {
+		clone.Sort = nil
+	}
+
+	if len(clone.FullText) == 0 && len(clone.Vector) == 0 && len(clone.Inverted) == 0 && clone.Sort == nil {
+		return "", nil
+	}
+
+	bytes, err := gjson.Marshal(clone)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return string(bytes), nil
 }
