@@ -260,7 +260,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 					} else {
 						// Check if join key is unique key
 						removePlan = li.Children()[0]
-						if s.isJoinKeyUniqueKey(apply, removePlan) {
+						if isJoinKeyUniqueKey(apply, removePlan) {
 							canRemove = true
 						}
 					}
@@ -273,7 +273,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 						} else {
 							// Check if join key is unique key
 							removePlan = li.Children()[0]
-							if s.isJoinKeyUniqueKey(apply, removePlan) {
+							if isJoinKeyUniqueKey(apply, removePlan) {
 								canRemove = true
 							}
 						}
@@ -512,7 +512,7 @@ func (*DecorrelateSolver) Name() string {
 
 // isJoinKeyUniqueKey checks if join key is unique key.
 // Returns true if the join key forms a unique key constraint.
-func (s *DecorrelateSolver) isJoinKeyUniqueKey(apply *logicalop.LogicalApply, plan base.LogicalPlan) bool {
+func isJoinKeyUniqueKey(apply *logicalop.LogicalApply, plan base.LogicalPlan) bool {
 	var hasMultiRowOperator func(base.LogicalPlan) bool
 	hasMultiRowOperator = func(p base.LogicalPlan) bool {
 		// Check if current node is a JOIN (excluding the outer Apply which is already a Join)
