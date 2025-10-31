@@ -440,8 +440,13 @@ func (w *worker) runReorgJob(
 			w.mergeWarningsIntoJob(job)
 
 			rc.resetWarnings()
+<<<<<<< HEAD
 			jobCtx.reorgTimeoutOccurred = true
 			return dbterror.ErrWaitReorgTimeout
+=======
+			failpoint.InjectCall("onRunReorgJobTimeout")
+			return jobCtx.genReorgTimeoutErr()
+>>>>>>> 968e31fc3fe (ddl: cancel the job context before rolling back (#64130))
 		}
 	}
 }
