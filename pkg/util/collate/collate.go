@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -372,8 +371,8 @@ func compareCommon(a, b string, keyFunc func(rune) uint32) int {
 	ai, bi := 0, 0
 	r1Len, r2Len := 0, 0
 	for ai < len(a) && bi < len(b) {
-		r1, r1Len = utf8.DecodeRune(hack.Slice(a[ai:]))
-		r2, r2Len = utf8.DecodeRune(hack.Slice(b[bi:]))
+		r1, r1Len = utf8.DecodeRuneInString(a[ai:])
+		r2, r2Len = utf8.DecodeRuneInString(b[bi:])
 		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
 		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
 		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
@@ -383,15 +382,15 @@ func compareCommon(a, b string, keyFunc func(rune) uint32) int {
 			return 0
 		}
 
-		ai = ai + r1Len
-		bi = bi + r2Len
+		ai += r1Len
+		bi += r2Len
 
-		cmp := int(keyFunc(r1)) - int(keyFunc(r2))
+		cmp := cmp.Compare(keyFunc(r1), keyFunc(r2))
 		if cmp != 0 {
-			return sign(cmp)
+			return cmp
 		}
 	}
-	return sign((len(a) - ai) - (len(b) - bi))
+	return cmp.Compare(len(a)-ai, len(b)-bi)
 }
 
 // CanUseRawMemAsKey returns true if current collator can use the original raw memory as the key
