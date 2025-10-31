@@ -965,15 +965,13 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
-			var unsignedIntHandle bool
-			if c.path.IsIntHandlePath && ds.tableInfo.PKIsHandle {
-				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
-					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+			if len(c.path.AccessConds) > 0 {
+				var unsignedIntHandle bool
+				if c.path.IsIntHandlePath && ds.tableInfo.PKIsHandle {
+					if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+						unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+					}
 				}
-			}
-			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-			indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-			if indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp) {
 				if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
