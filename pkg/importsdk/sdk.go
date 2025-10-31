@@ -234,6 +234,7 @@ func (sdk *ImportSDK) CreateSchemasAndTables(ctx context.Context) error {
 	return nil
 }
 
+// CreateSchemaAndTableByName creates specific table and database schema from source
 func (sdk *ImportSDK) CreateSchemaAndTableByName(ctx context.Context, schema, table string) error {
 	dbMetas := sdk.loader.GetDatabases()
 	// Find the specific table
