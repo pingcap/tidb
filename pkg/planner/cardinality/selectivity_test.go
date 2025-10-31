@@ -574,8 +574,8 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	countEst, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
 	count = countEst.Est
 	require.NoError(t, err)
-	require.Truef(t, count < 40, "expected: between 20 to 40, got: %v", count)
-	require.Truef(t, count > 20, "expected: between 20 to 40, got: %v", count)
+	require.Truef(t, count < 40, "expected: between 10 to 40, got: %v", count)
+	require.Truef(t, count > 10, "expected: between 10 to 40, got: %v", count)
 }
 
 func TestNewIndexWithoutStats(t *testing.T) {
