@@ -442,6 +442,13 @@ func estimateRowCountWithUniformDistribution(
 		} else {
 			histNDV = math.Sqrt(max(stats.TotalRowCount(), float64(realtimeRowCount)))
 		}
+		// If topN represents all NDV values, the NDV should be relatively small.
+		// Small NDV could cause extremely inaccurate result, use `outOfRangeBetweenRate` to smooth the result.
+		// For example, TopN = {(value:1, rows: 10000), (2, 10000), (3, 10000)} and newRows = 15000, we should assume most
+		// newly added rows are 1, 2 or 3. Then for an out-of-range estimation like `where col=9999`, the result should be
+		// close to 0, but if we still use the original NDV, the result could be extremely large: 15000/3 = 5000.
+		// See #64137 for a concrete example.
+		histNDV = max(histNDV, float64(outOfRangeBetweenRate)) // avoid inaccurate estimate caused by small NDV
 		// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
 		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
 		totalRowCount := min(stats.TotalRowCount(), float64(realtimeRowCount)-stats.TotalRowCount())
