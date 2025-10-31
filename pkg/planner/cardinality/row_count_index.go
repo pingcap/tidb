@@ -413,8 +413,8 @@ func estimateRowCountWithUniformDistribution(
 	histNDV := float64(histogram.NDV - int64(topN.Num()))
 	notNullCount := histogram.NotNullCount()
 
-	// Branch 1: all NDV's are in TopN, and no histograms.
-	if histNDV <= 0 || notNullCount == 0 {
+	var avgRowEstimate float64
+	if histNDV <= 0 || notNullCount == 0 { // Branch 1: all NDV's are in TopN, and no histograms.
 		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
 		// This can happen when sampling collects fewer than all NDV.
 		if histNDV > 0 && modifyCount == 0 {
@@ -434,6 +434,7 @@ func estimateRowCountWithUniformDistribution(
 		if modifyCount == 0 {
 			return 0
 		}
+<<<<<<< HEAD
 		// ELSE calculate an approximate estimate based upon newly inserted rows.
 		//
 		// Reset to the original NDV, or if no NDV - derive an NDV using sqrt
@@ -446,10 +447,13 @@ func estimateRowCountWithUniformDistribution(
 		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
 		totalRowCount := min(stats.TotalRowCount(), float64(realtimeRowCount)-stats.TotalRowCount())
 		return max(1, totalRowCount/histNDV)
+=======
+		avgRowEstimate = outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
+	} else { // Branch 2: some NDV's are in histograms
+		// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
+		avgRowEstimate = notNullCount / histNDV
+>>>>>>> a2d42842d2e (planner: set an lower-bound for NDV used in out-of-range estimation for EQ conditions when the Histogram is empty (#64139))
 	}
-	// branch 2: some NDV's are in histograms
-	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
-	avgRowEstimate := notNullCount / histNDV
 
 	return avgRowEstimate
 }
