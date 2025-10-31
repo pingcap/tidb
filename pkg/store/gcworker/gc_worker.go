@@ -1237,9 +1237,26 @@ func (w *GCWorker) resolveLocks(
 	isNullKeyspace := w.store == nil || w.store.GetCodec().GetKeyspace() == nil
 	var keyspaceBatch []*keyspacepb.KeyspaceMeta
 
+	// Failpoint to override the batch size for faster test
+	loadKeyspacesBatchSize := uint32(loadAllKeyspacesForUnifiedGCBatchSize)
+	failpoint.Inject("overrideLoadKeyspacesBatchSize", func(val failpoint.Value) {
+		v, ok := val.(int)
+		if !ok {
+			panic(fmt.Sprintf("invalid argument for failpoint overrideLoadKeyspacesBatchSize: expected integer, got %T: %v", val, val))
+		}
+		loadKeyspacesBatchSize = uint32(v)
+	})
+
+	// Counter for tests to check how many batches was done during resolving locks.
+	loadKeyspacesBatchCount := 0
+	defer func() {
+		failpoint.InjectCall("getLoadKeyspacesBatchCount", loadKeyspacesBatchCount)
+	}()
+
 	if isNullKeyspace {
 		var err error
-		keyspaceBatch, err = w.pdClient.GetAllKeyspaces(ctx, 0, loadAllKeyspacesForUnifiedGCBatchSize)
+		keyspaceBatch, err = w.pdClient.GetAllKeyspaces(ctx, 0, loadKeyspacesBatchSize)
+		loadKeyspacesBatchCount++
 		if err != nil {
 			return err
 		}
@@ -1355,7 +1372,8 @@ func (w *GCWorker) resolveLocks(
 			break
 		}
 		var err error
-		keyspaceBatch, err = w.pdClient.GetAllKeyspaces(ctx, nextKeyspaceID, loadAllKeyspacesForUnifiedGCBatchSize)
+		keyspaceBatch, err = w.pdClient.GetAllKeyspaces(ctx, nextKeyspaceID, loadKeyspacesBatchSize)
+		loadKeyspacesBatchCount++
 		if err != nil {
 			return err
 		}
