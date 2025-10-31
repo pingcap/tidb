@@ -591,22 +591,19 @@ func isJoinKeyUniqueKey(apply *logicalop.LogicalApply, plan base.LogicalPlan) bo
 	}
 
 	// Find the underlying DataSource to get PKOrUK
-	var ds *logicalop.DataSource
-	var findDataSource func(base.LogicalPlan)
-	findDataSource = func(p base.LogicalPlan) {
-		if ds != nil {
-			return
-		}
-		if datasource, ok := p.(*logicalop.DataSource); ok {
-			ds = datasource
-			return
+	var findDataSource func(base.LogicalPlan) *logicalop.DataSource
+	findDataSource = func(p base.LogicalPlan) *logicalop.DataSource {
+		if ds, ok := p.(*logicalop.DataSource); ok {
+			return ds
 		}
 		for _, child := range p.Children() {
-			findDataSource(child)
+			if ds := findDataSource(child); ds != nil {
+				return ds
+			}
 		}
+		return nil
 	}
-	findDataSource(plan)
-
+	ds := findDataSource(plan)
 	if ds == nil {
 		return false
 	}
