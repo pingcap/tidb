@@ -516,7 +516,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 	}
 
 	defer func() {
-		if err != nil {
+		if err == nil {
 			for partIdx, seg := range segs {
 				hashJoinCtx.hashTableContext.appendRowSegment(workerID, partIdx, seg)
 			}
