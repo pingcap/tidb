@@ -41,6 +41,7 @@ func (*Planner) Run(planCtx PlanCtx, plan LogicalPlan, taskMgr *storage.TaskMana
 		planCtx.SessionCtx,
 		planCtx.TaskKey,
 		planCtx.TaskType,
+		planCtx.Keyspace,
 		planCtx.ThreadCnt,
 		targetScope,
 		planCtx.MaxNodeCnt,

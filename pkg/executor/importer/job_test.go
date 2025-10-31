@@ -35,6 +35,7 @@ func jobInfoEqual(t *testing.T, expected, got *importer.JobInfo) {
 	cloned := *expected
 	cloned.CreateTime = got.CreateTime
 	cloned.StartTime = got.StartTime
+	cloned.UpdateTime = got.UpdateTime
 	cloned.EndTime = got.EndTime
 	require.Equal(t, &cloned, got)
 }
@@ -91,7 +92,7 @@ func TestJobHappyPath(t *testing.T) {
 
 		// create job
 		jobID, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-			jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+			jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 		require.NoError(t, err)
 		jobInfo.ID = jobID
 		gotJobInfo, err := importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
@@ -180,7 +181,7 @@ func TestGetAndCancelJob(t *testing.T) {
 
 	// create job
 	jobID1, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	jobInfo.ID = jobID1
 	gotJobInfo, err := importer.GetJob(ctx, conn, jobID1, jobInfo.CreatedBy, false)
@@ -217,7 +218,7 @@ func TestGetAndCancelJob(t *testing.T) {
 
 	// create another job
 	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	jobInfo.ID = jobID2
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID2, jobInfo.CreatedBy, false)
@@ -310,12 +311,12 @@ func TestGetJobInfoNullField(t *testing.T) {
 	}
 	// create jobs
 	jobID1, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	require.NoError(t, importer.StartJob(ctx, conn, jobID1, importer.JobStepImporting))
 	require.NoError(t, importer.FailJob(ctx, conn, jobID1, "failed", mockSummary(0)))
 	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	gotJobInfos, err := importer.GetAllViewableJobs(ctx, conn, "", true)
 	require.NoError(t, err)

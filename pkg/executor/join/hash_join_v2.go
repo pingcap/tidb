@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -53,7 +53,19 @@ var (
 	DisableHashJoinV2 = "set tidb_hash_join_version = " + joinversion.HashJoinVersionLegacy
 	// HashJoinV2Strings is used for test
 	HashJoinV2Strings = []string{DisableHashJoinV2, EnableHashJoinV2}
+	// fakeSel is used when chunk does not have sel field
+	fakeSel []int
+	// the length of fakeSelLength, default max_chunk_size is 1024,
+	// we set fakeSel size to 4*max_chunk_size so it should be enough for most cases
+	fakeSelLength = 4096
 )
+
+func init() {
+	fakeSel = make([]int, fakeSelLength)
+	for i := range fakeSel {
+		fakeSel[i] = i
+	}
+}
 
 type hashTableContext struct {
 	// rowTables is used during split partition stage, each buildWorker has
@@ -638,6 +650,8 @@ type HashJoinV2Exec struct {
 	IsGA bool
 
 	isMemoryClearedForTest bool
+
+	FileNamePrefixForTest string
 }
 
 func (e *HashJoinV2Exec) isAllMemoryClearedForTest() bool {
@@ -734,7 +748,7 @@ func (e *HashJoinV2Exec) OpenSelf() error {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 	}
 	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
-	e.spillHelper = newHashJoinSpillHelper(e, int(e.partitionNumber), e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes())
+	e.spillHelper = newHashJoinSpillHelper(e, int(e.partitionNumber), e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes(), e.FileNamePrefixForTest)
 	e.maxSpillRound = 1
 
 	if vardef.EnableTmpStorageOnOOM.Load() && e.partitionNumber > 1 {
@@ -762,10 +776,10 @@ func (e *HashJoinV2Exec) OpenSelf() error {
 }
 
 func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
-	if fetcher.JoinType == logicalop.LeftOuterJoin && fetcher.RightAsBuildSide {
+	if fetcher.JoinType == base.LeftOuterJoin && fetcher.RightAsBuildSide {
 		return true
 	}
-	if fetcher.JoinType == logicalop.RightOuterJoin && !fetcher.RightAsBuildSide {
+	if fetcher.JoinType == base.RightOuterJoin && !fetcher.RightAsBuildSide {
 		return true
 	}
 	return false
@@ -773,13 +787,13 @@ func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
 
 func (e *HashJoinV2Exec) canSkipProbeIfHashTableIsEmpty() bool {
 	switch e.JoinType {
-	case logicalop.InnerJoin:
+	case base.InnerJoin:
 		return true
-	case logicalop.LeftOuterJoin:
+	case base.LeftOuterJoin:
 		return !e.RightAsBuildSide
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		return e.RightAsBuildSide
-	case logicalop.SemiJoin:
+	case base.SemiJoin:
 		return e.RightAsBuildSide
 	default:
 		return false

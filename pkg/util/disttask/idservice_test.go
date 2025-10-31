@@ -17,22 +17,22 @@ package disttaskutil
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/stretchr/testify/require"
 )
 
 // This testCase show GenerateExecID only generate string by input parametas
 func TestGenServerID(t *testing.T) {
 	var str string
-	serverIO := GenerateExecID(&infosync.ServerInfo{StaticServerInfo: infosync.StaticServerInfo{IP: "", Port: 0}})
+	serverIO := GenerateExecID(&serverinfo.ServerInfo{StaticInfo: serverinfo.StaticInfo{IP: "", Port: 0}})
 	require.Equal(t, serverIO, ":0")
-	serverIO = GenerateExecID(&infosync.ServerInfo{StaticServerInfo: infosync.StaticServerInfo{IP: "10.124.122.25", Port: 3456}})
+	serverIO = GenerateExecID(&serverinfo.ServerInfo{StaticInfo: serverinfo.StaticInfo{IP: "10.124.122.25", Port: 3456}})
 	require.Equal(t, serverIO, "10.124.122.25:3456")
-	serverIO = GenerateExecID(&infosync.ServerInfo{StaticServerInfo: infosync.StaticServerInfo{IP: "10.124", Port: 3456}})
+	serverIO = GenerateExecID(&serverinfo.ServerInfo{StaticInfo: serverinfo.StaticInfo{IP: "10.124", Port: 3456}})
 	require.Equal(t, serverIO, "10.124:3456")
-	serverIO = GenerateExecID(&infosync.ServerInfo{StaticServerInfo: infosync.StaticServerInfo{IP: str, Port: 65537}})
+	serverIO = GenerateExecID(&serverinfo.ServerInfo{StaticInfo: serverinfo.StaticInfo{IP: str, Port: 65537}})
 	require.Equal(t, serverIO, ":65537")
 	// IPv6 testcase
-	serverIO = GenerateExecID(&infosync.ServerInfo{StaticServerInfo: infosync.StaticServerInfo{IP: "ABCD:EF01:2345:6789:ABCD:EF01:2345:6789", Port: 65537}})
+	serverIO = GenerateExecID(&serverinfo.ServerInfo{StaticInfo: serverinfo.StaticInfo{IP: "ABCD:EF01:2345:6789:ABCD:EF01:2345:6789", Port: 65537}})
 	require.Equal(t, serverIO, "[ABCD:EF01:2345:6789:ABCD:EF01:2345:6789]:65537")
 }

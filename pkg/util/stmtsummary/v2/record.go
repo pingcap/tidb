@@ -159,7 +159,13 @@ type StmtRecord struct {
 	PlanCacheUnqualifiedCount      int64  `json:"plan_cache_unqualified_count"`
 	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
 
+	SumMemArbitration float64 `json:"sum_mem_arbitration"`
+	MaxMemArbitration float64 `json:"max_mem_arbitration"`
+
 	stmtsummary.StmtNetworkTrafficSummary
+
+	StorageKV  bool `json:"storage_kv"`  // query read from TiKV
+	StorageMPP bool `json:"storage_mpp"` // query read from TiFlash
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -396,6 +402,11 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	if info.MemMax > r.MaxMem {
 		r.MaxMem = info.MemMax
 	}
+
+	r.SumMemArbitration += info.MemArbitration
+	if info.MemArbitration > r.MaxMemArbitration {
+		r.MaxMemArbitration = info.MemArbitration
+	}
 	r.SumDisk += info.DiskMax
 	if info.DiskMax > r.MaxDisk {
 		r.MaxDisk = info.DiskMax
@@ -432,6 +443,9 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.StmtNetworkTrafficSummary.Add(info.TiKVExecDetails)
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail)
+
+	r.StorageKV = info.StmtCtx.IsTiKV.Load()
+	r.StorageMPP = info.StmtCtx.IsTiFlash.Load()
 }
 
 // Merge merges the statistics of another StmtRecord to this StmtRecord.
@@ -612,7 +626,7 @@ func maxSQLLength() uint32 {
 	if GlobalStmtSummary != nil {
 		return GlobalStmtSummary.MaxSQLLength()
 	}
-	return 4096
+	return 32768
 }
 
 // GenerateStmtExecInfo4Test generates a new StmtExecInfo for testing purposes.
@@ -641,7 +655,6 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 			MaxWaitTime:       1500,
 		},
 		ExecDetail: execdetails.ExecDetails{
-			BackoffTime:  80,
 			RequestCount: 10,
 			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime: 100,
@@ -670,16 +683,17 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 					ResolveLockTime: 2000,
 				},
 			},
-			ScanDetail: &util.ScanDetail{
-				TotalKeys:                 1000,
-				ProcessedKeys:             500,
-				RocksdbDeleteSkippedCount: 100,
-				RocksdbKeySkippedCount:    10,
-				RocksdbBlockCacheHitCount: 10,
-				RocksdbBlockReadCount:     10,
-				RocksdbBlockReadByte:      1000,
-			},
-			DetailsNeedP90: execdetails.DetailsNeedP90{
+			CopExecDetails: execdetails.CopExecDetails{
+				BackoffTime: 80,
+				ScanDetail: &util.ScanDetail{
+					TotalKeys:                 1000,
+					ProcessedKeys:             500,
+					RocksdbDeleteSkippedCount: 100,
+					RocksdbKeySkippedCount:    10,
+					RocksdbBlockCacheHitCount: 10,
+					RocksdbBlockReadCount:     10,
+					RocksdbBlockReadByte:      1000,
+				},
 				TimeDetail: util.TimeDetail{
 					ProcessTime: 500,
 					WaitTime:    50,
@@ -699,6 +713,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		TiKVExecDetails:   &util.ExecDetails{},
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
 		LazyInfo:          &mockLazyInfo{},
+		MemArbitration:    22222,
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo

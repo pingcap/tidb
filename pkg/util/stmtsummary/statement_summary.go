@@ -240,6 +240,11 @@ type stmtSummaryStats struct {
 	planCacheUnqualifiedCount int64
 	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
 
+	storageKV  bool // query read from TiKV
+	storageMPP bool // query read from TiFlash
+
+	sumMemArbitration float64
+	maxMemArbitration float64
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -260,6 +265,7 @@ type StmtExecInfo struct {
 	CopTasks       *execdetails.CopTasksSummary
 	ExecDetail     execdetails.ExecDetails
 	MemMax         int64
+	MemArbitration float64
 	DiskMax        int64
 	StartTime      time.Time
 	IsInternal     bool
@@ -311,7 +317,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 		optHistoryEnabled:      atomic2.NewBool(true),
 		optRefreshInterval:     atomic2.NewInt64(1800),
 		optHistorySize:         atomic2.NewInt32(24),
-		optMaxSQLLength:        atomic2.NewInt32(4096),
+		optMaxSQLLength:        atomic2.NewInt32(32768),
 		other:                  ssbde,
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
@@ -875,6 +881,12 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 	if sei.MemMax > ssStats.maxMem {
 		ssStats.maxMem = sei.MemMax
 	}
+
+	ssStats.sumMemArbitration += sei.MemArbitration
+	if sei.MemArbitration > ssStats.maxMemArbitration {
+		ssStats.maxMemArbitration = sei.MemArbitration
+	}
+
 	ssStats.sumDisk += sei.DiskMax
 	if sei.DiskMax > ssStats.maxDisk {
 		ssStats.maxDisk = sei.DiskMax
@@ -912,6 +924,9 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 
 	// request-units
 	ssStats.StmtRUSummary.Add(sei.RUDetail)
+
+	ssStats.storageKV = sei.StmtCtx.IsTiKV.Load()
+	ssStats.storageMPP = sei.StmtCtx.IsTiFlash.Load()
 }
 
 func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64, warningCount int, affectedRows uint64) {

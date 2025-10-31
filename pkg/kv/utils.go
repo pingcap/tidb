@@ -19,6 +19,8 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 )
 
 // IncInt64 increases the value for key k in kv store by step.
@@ -83,4 +85,14 @@ func WalkMemBuffer(memBuf Retriever, f func(k Key, v []byte) error) error {
 	}
 
 	return nil
+}
+
+// IsUserKS checks if the store is running on a user keyspace.
+func IsUserKS(store Storage) bool {
+	return kerneltype.IsNextGen() && store.GetKeyspace() != keyspace.System
+}
+
+// IsSystemKS checks if the store is running on the SYSTEM keyspace.
+func IsSystemKS(store Storage) bool {
+	return kerneltype.IsNextGen() && store.GetKeyspace() == keyspace.System
 }

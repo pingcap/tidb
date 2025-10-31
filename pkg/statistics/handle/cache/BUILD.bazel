@@ -45,6 +45,7 @@ go_test(
     ],
     embed = [":cache"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/config",
         "//pkg/statistics",

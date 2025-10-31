@@ -652,26 +652,87 @@ func TestSequenceRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
-func TestDropIndexRestore(t *testing.T) {
-	sourceSQL := "drop index if exists idx on t"
+func TestIfExistsRestore(t *testing.T) {
 	cases := []struct {
-		flags     format.RestoreFlags
-		expectSQL string
+		sourceSQL          string
+		expectedNormalSQL  string
+		expectedSpecialSQL string
 	}{
-		{format.DefaultRestoreFlags, "DROP INDEX IF EXISTS `idx` ON `t`"},
-		{format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "DROP INDEX /*T! IF EXISTS  */`idx` ON `t`"},
+		{
+			"drop index if exists idx on t",
+			"DROP INDEX IF EXISTS `idx` ON `t`",
+			"DROP INDEX /*T! IF EXISTS  */`idx` ON `t`",
+		},
+		{
+			"create unique index if not exists idx on t(c)",
+			"CREATE UNIQUE INDEX IF NOT EXISTS `idx` ON `t` (`c`)",
+			"CREATE UNIQUE INDEX /*T! IF NOT EXISTS  */`idx` ON `t` (`c`)",
+		},
+		{
+			"alter table t add column if not exists c int",
+			"ALTER TABLE `t` ADD COLUMN IF NOT EXISTS `c` INT",
+			"ALTER TABLE `t` ADD COLUMN /*T! IF NOT EXISTS  */`c` INT",
+		},
+		{
+			"alter table t drop column if exists c",
+			"ALTER TABLE `t` DROP COLUMN IF EXISTS `c`",
+			"ALTER TABLE `t` DROP COLUMN /*T! IF EXISTS  */`c`",
+		},
+		{
+			"alter table t add key if not exists idx2(c2), add vector index if not exists idx3(c3), add columnar index if not exists idx4(c4)",
+			"ALTER TABLE `t` ADD INDEX IF NOT EXISTS `idx2`(`c2`), ADD VECTOR INDEX IF NOT EXISTS `idx3`(`c3`), ADD COLUMNAR INDEX IF NOT EXISTS `idx4`(`c4`)",
+			"ALTER TABLE `t` ADD INDEX/*T!  IF NOT EXISTS */ `idx2`(`c2`), ADD VECTOR INDEX/*T!  IF NOT EXISTS */ `idx3`(`c3`), ADD COLUMNAR INDEX/*T!  IF NOT EXISTS */ `idx4`(`c4`)",
+		},
+		{
+			"alter table t add foreign key if not exists fk(c) references t2(c)",
+			"ALTER TABLE `t` ADD CONSTRAINT `fk` FOREIGN KEY IF NOT EXISTS (`c`) REFERENCES `t2`(`c`)",
+			"ALTER TABLE `t` ADD CONSTRAINT `fk` FOREIGN KEY /*T! IF NOT EXISTS  */(`c`) REFERENCES `t2`(`c`)",
+		},
+		{
+			"alter table t drop index if exists idx",
+			"ALTER TABLE `t` DROP INDEX IF EXISTS `idx`",
+			"ALTER TABLE `t` DROP INDEX /*T! IF EXISTS  */`idx`",
+		},
+		//// FIXME: this is supported in AST but not in the parser. skip this for now.
+		// {
+		// 	"alter table t drop foreign key if exists fk",
+		// 	"ALTER TABLE `t` DROP FOREIGN KEY IF EXISTS `fk`",
+		// 	"ALTER TABLE `t` DROP FOREIGN KEY /*T! IF EXISTS  */`fk`",
+		// },
+		{
+			"alter table t change column if exists c c2 int",
+			"ALTER TABLE `t` CHANGE COLUMN IF EXISTS `c` `c2` INT",
+			"ALTER TABLE `t` CHANGE COLUMN /*T! IF EXISTS  */`c` `c2` INT",
+		},
+		{
+			"alter table t modify column if exists c int",
+			"ALTER TABLE `t` MODIFY COLUMN IF EXISTS `c` INT",
+			"ALTER TABLE `t` MODIFY COLUMN /*T! IF EXISTS  */`c` INT",
+		},
+		{
+			"alter table t add partition if not exists (partition p1 values less than (10))",
+			"ALTER TABLE `t` ADD PARTITION IF NOT EXISTS (PARTITION `p1` VALUES LESS THAN (10))",
+			"ALTER TABLE `t` ADD PARTITION/*T!  IF NOT EXISTS */ (PARTITION `p1` VALUES LESS THAN (10))",
+		},
+		{
+			"alter table t drop partition if exists p1, p2",
+			"ALTER TABLE `t` DROP PARTITION IF EXISTS `p1`,`p2`",
+			"ALTER TABLE `t` DROP PARTITION /*T! IF EXISTS  */`p1`,`p2`",
+		},
+	}
+
+	normalCases := make([]NodeRestoreTestCase, len(cases))
+	specialCases := make([]NodeRestoreTestCase, len(cases))
+	for i, ca := range cases {
+		normalCases[i] = NodeRestoreTestCase{ca.sourceSQL, ca.expectedNormalSQL}
+		specialCases[i] = NodeRestoreTestCase{ca.sourceSQL, ca.expectedSpecialSQL}
 	}
 
 	extractNodeFunc := func(node Node) Node {
 		return node
 	}
-
-	for _, ca := range cases {
-		testCases := []NodeRestoreTestCase{
-			{sourceSQL, ca.expectSQL},
-		}
-		runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, ca.flags)
-	}
+	runNodeRestoreTestWithFlags(t, normalCases, "%s", extractNodeFunc, format.DefaultRestoreFlags)
+	runNodeRestoreTestWithFlags(t, specialCases, "%s", extractNodeFunc, format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment)
 }
 
 func TestAlterDatabaseRestore(t *testing.T) {

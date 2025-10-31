@@ -39,6 +39,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xitongsys/parquet-go/parquet"
 	"github.com/xitongsys/parquet-go/writer"
+	"go.uber.org/atomic"
 )
 
 type testMydumpLoaderSuite struct {
@@ -1179,13 +1180,9 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 	err = store.WriteFile(ctx, fileName, bf.Bytes())
 	require.NoError(t, err)
 
-	rowSize, err := md.SampleParquetRowSize(ctx, md.SourceFileMeta{
+	rowCount, rowSize, err := md.SampleParquetRowSize(ctx, md.SourceFileMeta{
 		Path: fileName,
 	}, store)
-	require.NoError(t, err)
-	rowCount, err := md.ReadParquetFileRowCountByFile(ctx, store, md.SourceFileMeta{
-		Path: fileName,
-	})
 	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
 	require.InDelta(t, totalRowSize, int64(rowSize*float64(rowCount)), float64(totalRowSize)/10)
@@ -1205,7 +1202,9 @@ func TestSetupOptions(t *testing.T) {
 }
 
 func TestParallelProcess(t *testing.T) {
+	var totalSize atomic.Int64
 	hdl := func(ctx context.Context, f md.RawFile) (string, error) {
+		totalSize.Add(f.Size)
 		return strings.ToLower(f.Path), nil
 	}
 
@@ -1220,16 +1219,20 @@ func TestParallelProcess(t *testing.T) {
 
 	oneTest := func(length int, concurrency int) {
 		original := make([]md.RawFile, length)
+		totalSize = *atomic.NewInt64(0)
 		for i := range length {
-			original[i] = md.RawFile{Path: randomString()}
+			original[i] = md.RawFile{Path: randomString(), Size: int64(rand.Intn(1000))}
 		}
 
 		res, err := md.ParallelProcess(context.Background(), original, concurrency, hdl)
 		require.NoError(t, err)
 
+		oneTotalSize := int64(0)
 		for i, s := range original {
 			require.Equal(t, strings.ToLower(s.Path), res[i])
+			oneTotalSize += s.Size
 		}
+		require.Equal(t, oneTotalSize, totalSize.Load())
 	}
 
 	oneTest(10, 0)

@@ -20,7 +20,7 @@ type Permission string
 
 // StrongConsistency is a marker interface that indicates the storage is strong consistent
 // over its `Read`, `Write` and `WalkDir` APIs.
-type StrongConsisency interface {
+type StrongConsistency interface {
 	MarkStrongConsistency()
 }
 
@@ -105,6 +105,7 @@ type Writer interface {
 type WriterOption struct {
 	Concurrency int
 	PartSize    int64
+	OnUpload    func()
 }
 
 type ReaderOption struct {

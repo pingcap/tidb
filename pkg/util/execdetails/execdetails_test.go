@@ -29,7 +29,6 @@ import (
 func TestString(t *testing.T) {
 	detail := &ExecDetails{
 		CopTime:      time.Second + 3*time.Millisecond,
-		BackoffTime:  time.Second,
 		RequestCount: 1,
 		LockKeysDetail: &util.LockKeysDetails{
 			TotalTime:   time.Second,
@@ -192,20 +191,22 @@ func TestString(t *testing.T) {
 				ResolveLockTime: 1000000000, // 10^9 ns = 1s
 			},
 		},
-		ScanDetail: &util.ScanDetail{
-			ProcessedKeys:             10,
-			TotalKeys:                 100,
-			RocksdbDeleteSkippedCount: 1,
-			RocksdbKeySkippedCount:    1,
-			RocksdbBlockCacheHitCount: 1,
-			RocksdbBlockReadCount:     1,
-			RocksdbBlockReadByte:      100,
-			RocksdbBlockReadDuration:  time.Millisecond,
-		},
-		DetailsNeedP90: DetailsNeedP90{TimeDetail: util.TimeDetail{
-			ProcessTime: 2*time.Second + 5*time.Millisecond,
-			WaitTime:    time.Second,
-		}},
+		CopExecDetails: CopExecDetails{
+			BackoffTime: time.Second,
+			ScanDetail: &util.ScanDetail{
+				ProcessedKeys:             10,
+				TotalKeys:                 100,
+				RocksdbDeleteSkippedCount: 1,
+				RocksdbKeySkippedCount:    1,
+				RocksdbBlockCacheHitCount: 1,
+				RocksdbBlockReadCount:     1,
+				RocksdbBlockReadByte:      100,
+				RocksdbBlockReadDuration:  time.Millisecond,
+			},
+			TimeDetail: util.TimeDetail{
+				ProcessTime: 2*time.Second + 5*time.Millisecond,
+				WaitTime:    time.Second,
+			}},
 	}
 	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 LockKeys_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: " +
 		"1 Get_commit_ts_time: 1 Get_latest_ts_time: 1 Commit_backoff_time: 1 " +

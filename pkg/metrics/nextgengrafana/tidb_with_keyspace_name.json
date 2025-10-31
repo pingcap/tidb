@@ -11406,6 +11406,117 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+          "description": "KV request wait duration caused by Resource Control (RU). This shows the time a request waits in TiDB client before being sent to TiKV due to RU token bucket throttling.",
+          "editable": true,
+          "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "grid": {},
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 0,
+            "y": 22
+          },
+          "hiddenSeries": false,
+          "id": 9999,
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": true,
+            "max": true,
+            "min": true,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 2,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.11",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (instance, resource_group, le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{instance}}-{{resource_group}}-99",
+              "refId": "A",
+              "step": 40
+            },
+            {
+              "expr": "histogram_quantile(0.9, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (instance, resource_group, le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{instance}}-{{resource_group}}-90",
+              "refId": "B",
+              "step": 40
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Successful KV Request Wait Duration",
+          "tooltip": {
+            "msResolution": true,
+            "shared": true,
+            "sort": 0,
+            "value_type": "cumulative"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "s",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB loading region cache durations",
           "fieldConfig": {
             "defaults": {},
@@ -19756,7 +19867,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "decimals": 2,
-          "description": "kv storage garbage collection time durations",
+          "description": "Transaction GC durations per stage or in total. Note that the minimum bucket is 1s, and it might be not accurate when the values are sparse.",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -19800,10 +19911,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_gc_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le))",
+              "expr": "histogram_quantile(1, sum(rate(tidb_tikvclient_gc_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (stage, le))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "99",
+              "legendFormat": "{{stage}}",
               "refId": "A"
             }
           ],
@@ -19811,7 +19922,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Duration 99",
+          "title": "GC Duration By Stage",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -20390,10 +20501,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(tidb_tikvclient_range_task_stats{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type!~\".*pipelined-dml.*\"}) by (type, result)",
+              "expr": "sum(tidb_tikvclient_range_task_stats{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=~\"resolve-locks-runner.*\"}) by (type, result)",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{type}}-{{result}}",
+              "legendFormat": "{{type}}_{{result}}",
               "refId": "A",
               "step": 40
             }
@@ -20402,7 +20513,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Delete Range Task Status",
+          "title": "Resolve Locks Range Tasks Status",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -20493,10 +20604,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_tikvclient_range_task_push_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type!~\".*pipelined-dml.*\"}[1m])) by (le, instance))",
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_tikvclient_range_task_push_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=~\"resolve-locks-runner.*\"}[1m])) by (le, instance, type))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{instance}}",
+              "legendFormat": "{{type}}_{{instance}}",
               "refId": "A",
               "step": 10
             }
@@ -20505,7 +20616,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Push Task Duration 95",
+          "title": "Resolve Locks Range Tasks Push Task Duration 95",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -24835,6 +24946,14 @@
               "legendFormat": "{{type}}-50",
               "range": true,
               "refId": "D"
+            },
+            {
+              "expr": "sum(rate(tidb_global_sort_merge_sort_write_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\"}[1m]))/1024.0/1024.0",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "merge-sort",
+              "range": true,
+              "refId": "E"
             }
           ],
           "thresholds": [],
@@ -25047,6 +25166,14 @@
               "legendFormat": "{{type}}-50",
               "range": true,
               "refId": "D"
+            },
+            {
+              "expr": "sum(rate(tidb_global_sort_merge_sort_read_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\"}[1m]))/1024.0/1024.0",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "merge-sort",
+              "range": true,
+              "refId": "E"
             }
           ],
           "thresholds": [],

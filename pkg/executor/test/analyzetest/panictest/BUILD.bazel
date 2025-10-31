@@ -8,6 +8,7 @@ go_test(
         "panic_test.go",
     ],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/config",
         "//pkg/testkit",

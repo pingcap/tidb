@@ -170,13 +170,13 @@ func (c *TestDXFContext) ScaleOut(nodeNum int) {
 // ScaleOutBy scales out a tidb node by id, and set it as owner if required.
 func (c *TestDXFContext) ScaleOutBy(id string, owner bool) {
 	c.T.Logf("scale out node of id = %s, owner = %t", id, owner)
-	exeMgr, err := taskexecutor.NewManager(c.Ctx, id, c.TaskMgr, proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB))
+	exeMgr, err := taskexecutor.NewManager(c.Ctx, c.Store, id, c.TaskMgr, proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB))
 	require.NoError(c.T, err)
 	require.NoError(c.T, exeMgr.InitMeta())
 	require.NoError(c.T, exeMgr.Start())
 	var schMgr *scheduler.Manager
 	if owner {
-		schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, id, proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB))
+		schMgr = scheduler.NewManager(c.Ctx, c.Store, c.TaskMgr, id, proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB))
 		schMgr.Start()
 	}
 	node := &tidbNode{
@@ -306,8 +306,7 @@ func (c *TestDXFContext) GetRandNodeIDs(limit int) map[string]struct{} {
 	if len(c.mu.nodes) == 0 {
 		return nil
 	}
-	cloneSlice := make([]*tidbNode, len(c.mu.nodes))
-	copy(cloneSlice, c.mu.nodes)
+	cloneSlice := slices.Clone(c.mu.nodes)
 	rand.Shuffle(len(cloneSlice), func(i, j int) {
 		cloneSlice[i], cloneSlice[j] = cloneSlice[j], cloneSlice[i]
 	})
@@ -359,7 +358,7 @@ func (c *TestDXFContext) electIfNeeded() {
 	ownerNode := c.mu.nodes[newOwnerIdx]
 	c.mu.ownerIndices[ownerNode.id] = newOwnerIdx
 	nodeRes := proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB)
-	ownerNode.schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, ownerNode.id, nodeRes)
+	ownerNode.schMgr = scheduler.NewManager(c.Ctx, c.Store, c.TaskMgr, ownerNode.id, nodeRes)
 	ownerNode.schMgr.Start()
 	ownerNode.owner = true
 	c.mu.Unlock()

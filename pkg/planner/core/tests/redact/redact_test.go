@@ -39,7 +39,7 @@ func TestRedactExplain(t *testing.T) {
 	// ---------------------------------------------------------------------------
 	// tidb_redact_log=MARKER
 	// ---------------------------------------------------------------------------
-	tk.MustExec("set session tidb_redact_log=MARKER")
+	tk.MustExec("set global tidb_redact_log=MARKER")
 	// in multi-value
 	tk.MustQuery("explain format='brief' select 1 from t left join tlist on tlist.a=t.a where t.a in (12, 13)").
 		Check(testkit.Rows(
@@ -112,7 +112,7 @@ func TestRedactExplain(t *testing.T) {
 	// ---------------------------------------------------------------------------
 	// tidb_redact_log=ON
 	// ---------------------------------------------------------------------------
-	tk.MustExec("set session tidb_redact_log=ON")
+	tk.MustExec("set global tidb_redact_log=ON")
 	// in multi-value
 	tk.MustQuery("explain format='brief' select 1 from t left join tlist on tlist.a=t.a where t.a in (12, 13)").
 		Check(testkit.Rows(
@@ -192,7 +192,7 @@ func TestRedactForRangeInfo(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int, b int, c int, index idx(a, b))")
-	tk.MustExec("set session tidb_redact_log=ON")
+	tk.MustExec("set global tidb_redact_log=ON")
 	tk.MustQuery("explain format='brief' select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a where t2.b in (10, 20, 30)").Check(
 		testkit.Rows(
 			"IndexJoin 37.46 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
@@ -218,14 +218,14 @@ func TestJoinNotSupportedByTiFlash(t *testing.T) {
 
 	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('dayofmonth', 'tiflash', '');")
 	tk.MustExec("admin reload expr_pushdown_blacklist;")
-	tk.MustExec("set session tidb_redact_log=ON")
+	tk.MustExec("set global tidb_redact_log=ON")
 	tk.MustQuery("explain format = 'brief' select * from table_1 a left join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > 100").Check(testkit.Rows(
 		"MergeJoin 2.00 root  left outer join, left side:IndexReader, left key:test.table_1.id, right key:test.table_1.id, left cond:gt(dayofmonth(test.table_1.datetime_col), ?)",
 		"├─IndexReader(Build) 2.00 root  index:IndexFullScan",
 		"│ └─IndexFullScan 2.00 cop[tikv] table:b, index:idx(id, bit_col, datetime_col) keep order:true",
 		"└─IndexReader(Probe) 2.00 root  index:IndexFullScan",
 		"  └─IndexFullScan 2.00 cop[tikv] table:a, index:idx(id, bit_col, datetime_col) keep order:true"))
-	tk.MustExec("set session tidb_redact_log=MARKER")
+	tk.MustExec("set global tidb_redact_log=MARKER")
 	tk.MustQuery("explain format = 'brief' select * from table_1 a left join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > 100").Check(testkit.Rows(
 		"MergeJoin 2.00 root  left outer join, left side:IndexReader, left key:test.table_1.id, right key:test.table_1.id, left cond:gt(dayofmonth(test.table_1.datetime_col), ‹100›)",
 		"├─IndexReader(Build) 2.00 root  index:IndexFullScan",
@@ -249,7 +249,7 @@ func TestRedactTiFlash(t *testing.T) {
 	testkit.SetTiFlashReplica(t, dom, "test", "first_range_d64")
 
 	tk.MustExec(`set @@tidb_max_tiflash_threads=20`)
-	tk.MustExec("set session tidb_redact_log=ON")
+	tk.MustExec("set global tidb_redact_log=ON")
 	tk.MustQuery("explain format='brief' select *, first_value(v) over (partition by p order by o range between 3 preceding and 0 following) as a from test.first_range;").Check(testkit.Rows(
 		"TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
 		"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -258,7 +258,7 @@ func TestRedactTiFlash(t *testing.T) {
 		"      └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 20",
 		"        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
 		"          └─TableFullScan 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
-	tk.MustExec("set session tidb_redact_log=MARKER")
+	tk.MustExec("set global tidb_redact_log=MARKER")
 	tk.MustQuery("explain format='brief' select *, first_value(v) over (partition by p order by o range between 3 preceding and 0 following) as a from test.first_range;").Check(testkit.Rows(
 		"TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
 		"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",

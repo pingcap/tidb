@@ -23,7 +23,9 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -38,6 +40,38 @@ var (
 	MinUploadPartSize int64 = 5 * units.MiB
 )
 
+var _ execute.Collector = &mergeCollector{}
+
+// mergeCollector collects the bytes and row count in merge step.
+type mergeCollector struct {
+	summary *execute.SubtaskSummary
+	counter prometheus.Counter
+}
+
+// NewMergeCollector creates a new merge collector.
+func NewMergeCollector(ctx context.Context, summary *execute.SubtaskSummary) *mergeCollector {
+	var counter prometheus.Counter
+	if me, ok := metric.GetCommonMetric(ctx); ok {
+		counter = me.BytesCounter.WithLabelValues(metric.StateMerged)
+	}
+	return &mergeCollector{
+		summary: summary,
+		counter: counter,
+	}
+}
+
+func (*mergeCollector) Accepted(_ int64) {}
+
+func (c *mergeCollector) Processed(bytes, rowCnt int64) {
+	if c.summary != nil {
+		c.summary.Bytes.Add(bytes)
+		c.summary.RowCnt.Add(rowCnt)
+	}
+	if c.counter != nil {
+		c.counter.Add(float64(bytes))
+	}
+}
+
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
 func MergeOverlappingFiles(
@@ -47,7 +81,8 @@ func MergeOverlappingFiles(
 	partSize int64,
 	newFilePrefix string,
 	blockSize int,
-	onClose OnCloseFunc,
+	onWriterClose OnWriterCloseFunc,
+	onReaderClose OnReaderCloseFunc,
 	collector execute.Collector,
 	concurrency int,
 	checkHotspot bool,
@@ -77,10 +112,12 @@ func MergeOverlappingFiles(
 				newFilePrefix,
 				uuid.New().String(),
 				blockSize,
-				onClose,
+				onWriterClose,
+				onReaderClose,
 				collector,
 				checkHotspot,
 				onDup,
+				len(dataFilesSlice),
 			)
 		})
 	}
@@ -143,10 +180,12 @@ func mergeOverlappingFilesInternal(
 	newFilePrefix string,
 	writerID string,
 	blockSize int,
-	onClose OnCloseFunc,
+	onWriterClose OnWriterCloseFunc,
+	onReaderClose OnReaderCloseFunc,
 	collector execute.Collector,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
+	fileGroupNum int,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.String("writer-id", writerID),
@@ -157,7 +196,7 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, fileGroupNum)
 	if err != nil {
 		return err
 	}
@@ -166,12 +205,15 @@ func mergeOverlappingFilesInternal(
 		if err != nil {
 			logutil.Logger(ctx).Warn("close iterator failed", zap.Error(err))
 		}
+		onReaderClose(&ReaderSummary{
+			GetRequestCount: uint64(iter.ReloadCount()),
+		})
 	}()
 
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(defaultOneWriterMemSizeLimit).
 		SetBlockSize(blockSize).
-		SetOnCloseFunc(onClose).
+		SetOnCloseFunc(onWriterClose).
 		SetOnDup(onDup).
 		BuildOneFile(store, newFilePrefix, writerID)
 	writer.InitPartSizeAndLogger(ctx, partSize)
@@ -198,7 +240,7 @@ func mergeOverlappingFilesInternal(
 		}
 
 		if collector != nil {
-			collector.Add(int64(len(key)+len(value)), 1)
+			collector.Processed(int64(len(key)+len(value)), 1)
 		}
 	}
 	return iter.Error()

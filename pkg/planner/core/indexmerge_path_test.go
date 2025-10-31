@@ -56,7 +56,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	require.NoError(t, err)
 	is := domain.InfoSchema()
 	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
-	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO(), nil))
 	require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 	stmt, err := par.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
@@ -83,7 +83,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	idxCols, ok := core.PrepareIdxColsAndUnwrapArrayType(
 		tbl.Meta(),
 		tbl.Meta().FindIndexByName("a_domains_b"),
-		ds.TblCols,
+		ds.TblColsByID,
 		true,
 	)
 	require.True(t, ok)

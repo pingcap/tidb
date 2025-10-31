@@ -20,6 +20,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/badger"
@@ -135,8 +136,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 
 func getTestPointRange(tableID int64, handle int64) kv.KeyRange {
 	startKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(handle))
-	endKey := make([]byte, len(startKey))
-	copy(endKey, startKey)
+	endKey := slices.Clone(startKey)
 	convertToPrefixNext(endKey)
 	return kv.KeyRange{
 		StartKey: startKey,
@@ -166,15 +166,7 @@ func convertToPrefixNext(key []byte) []byte {
 // return whether these two keys are equal.
 func isPrefixNext(key []byte, expected []byte) bool {
 	key = convertToPrefixNext(key)
-	if len(key) != len(expected) {
-		return false
-	}
-	for i := range key {
-		if key[i] != expected[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(key, expected)
 }
 
 // return a dag context according to dagReq and key ranges.
@@ -411,7 +403,7 @@ func TestMppExecutor(t *testing.T) {
 
 	dagCtx := newDagContext(t, store, []kv.KeyRange{getTestPointRange(tableID, 1)},
 		dagRequest, dagRequestStartTs)
-	_, _, _, rowCount, _, err := buildAndRunMPPExecutor(dagCtx, dagRequest, 0)
+	_, _, _, _, rowCount, _, err := buildAndRunMPPExecutor(dagCtx, dagRequest, 0)
 	require.Equal(t, rowCount[0], int64(1))
 	require.NoError(t, err)
 }
@@ -615,7 +607,7 @@ func BenchmarkExecutors(b *testing.B) {
 			// })
 			b.Run(fmt.Sprintf("(row=%d, limit=%d)", row, lim), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
-					_, _, _, _, _, err := buildAndRunMPPExecutor(dagCtx, dagReq, 0)
+					_, _, _, _, _, _, err := buildAndRunMPPExecutor(dagCtx, dagReq, 0)
 					if err != nil {
 						b.Fatal(err)
 					}

@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -53,8 +53,9 @@ type LogicalPlan struct {
 	JobID             int64
 	Plan              importer.Plan
 	Stmt              string
-	EligibleInstances []*infosync.ServerInfo
+	EligibleInstances []*serverinfo.ServerInfo
 	ChunkMap          map[int32][]importer.Chunk
+	Logger            *zap.Logger
 
 	// summary for next step
 	summary importer.StepSummary
@@ -294,7 +295,7 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 	if err != nil {
 		return nil, err
 	}
-	controller, err := importer.NewLoadDataController(plan, tbl, astArgs)
+	controller, err := importer.NewLoadDataController(plan, tbl, astArgs, importer.WithLogger(p.Logger))
 	if err != nil {
 		return nil, err
 	}
@@ -343,14 +344,14 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 	return importSpecs, nil
 }
 
-func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
+func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat, concurrency int) bool {
 	failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
 		in := val.(string)
 		if in == kvGroup || in == "*" {
 			failpoint.Return(false)
 		}
 	})
-	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	return external.GetMaxOverlappingTotal(stats) <= external.GetAdjustedMergeSortOverlapThreshold(concurrency)
 }
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
@@ -368,7 +369,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 		return nil, err
 	}
 	for kvGroup, kvMeta := range kvMetas {
-		if !p.Plan.ForceMergeStep && skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
+		if !p.Plan.ForceMergeStep && skipMergeSort(kvGroup, kvMeta.MultipleFilesStats, planCtx.ThreadCnt) {
 			logutil.Logger(planCtx.Ctx).Info("skip merge sort for kv group",
 				zap.Int64("task-id", planCtx.TaskID),
 				zap.String("kv-group", kvGroup))
@@ -586,10 +587,10 @@ func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan, store st
 	for kvGroup, kvMeta := range kvMetasOfEncodeStep {
 		// only part of kv files are merge sorted. we need to merge kv metas that
 		// are not merged into the kvMetasOfMergeSort.
-		if !p.Plan.ForceMergeStep && skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
+		if !p.Plan.ForceMergeStep && skipMergeSort(kvGroup, kvMeta.MultipleFilesStats, planCtx.ThreadCnt) {
 			if _, ok := kvMetasOfMergeSort[kvGroup]; ok {
 				// this should not happen, because we only generate merge sort
-				// subtasks for those kv groups with MaxOverlappingTotal > MergeSortOverlapThreshold
+				// subtasks for those kv groups with MaxOverlappingTotal > mergeSortOverlapThreshold
 				logutil.Logger(planCtx.Ctx).Error("kv group of encode step conflict with merge sort step")
 				return nil, errors.New("kv group of encode step conflict with merge sort step")
 			}

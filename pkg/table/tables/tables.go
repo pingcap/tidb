@@ -72,12 +72,11 @@ type TableCommon struct {
 	fullHiddenColsAndVisibleColumns []*table.Column
 	writableConstraints             []*table.Constraint
 
-	indices                 []table.Index
-	meta                    *model.TableInfo
-	allocs                  autoid.Allocators
-	sequence                *sequenceCommon
-	dependencyColumnOffsets []int
-	Constraints             []*table.Constraint
+	indices     []table.Index
+	meta        *model.TableInfo
+	allocs      autoid.Allocators
+	sequence    *sequenceCommon
+	Constraints []*table.Constraint
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
@@ -253,11 +252,6 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	if tblInfo.IsSequence() {
 		t.sequence = &sequenceCommon{meta: tblInfo.Sequence}
 	}
-	for _, col := range cols {
-		if col.ChangeStateInfo != nil {
-			t.dependencyColumnOffsets = append(t.dependencyColumnOffsets, col.ChangeStateInfo.DependencyColumnOffset)
-		}
-	}
 	t.ResetColumnsCache()
 }
 
@@ -281,6 +275,26 @@ func initTableIndices(t *TableCommon) error {
 			return true
 		})
 		t.indices = append(t.indices, idx)
+	}
+	return nil
+}
+
+// checkDataForModifyColumn checks if the data can be stored in the column with changingType.
+// It's used to prevent illegal data being inserted if we want to skip reorg.
+func checkDataForModifyColumn(row []types.Datum, col *table.Column) error {
+	if col.ChangingFieldType == nil {
+		return nil
+	}
+
+	data := row[col.Offset]
+	value, err := table.CastColumnValueWithStrictMode(data, col.ChangingFieldType)
+	if err != nil {
+		return err
+	}
+
+	// For the case from VARCHAR -> CHAR
+	if col.ChangingFieldType.GetType() == mysql.TypeString && value.GetString() != data.GetString() {
+		return errors.New("data truncation error during modify column")
 	}
 	return nil
 }
@@ -447,6 +461,10 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	for _, col := range t.Columns {
 		var value types.Datum
 		var err error
+		if err := checkDataForModifyColumn(newData, col); err != nil {
+			return err
+		}
+
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
@@ -484,9 +502,8 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		checkRowBuffer.AddColVal(value)
 	}
 	// check data constraint
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	if constraints := t.WritableConstraint(); len(constraints) > 0 {
-		if err := table.CheckRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
+		if err := table.CheckRowConstraint(sctx.GetExprCtx(), constraints, checkRowBuffer.GetRowToCheck(), t.Meta()); err != nil {
 			return err
 		}
 	}
@@ -497,6 +514,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	}
 
 	key := t.RecordKey(h)
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
 	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
 	if err != nil {
@@ -772,6 +790,10 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	defer memBuffer.Cleanup(sh)
 
 	for _, col := range t.Columns {
+		if err := checkDataForModifyColumn(r, col); err != nil {
+			return nil, err
+		}
+
 		var value types.Datum
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			continue
@@ -822,8 +844,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			encodeRowBuffer.AddColVal(col.ID, value)
 		}
 	}
-	// check data constraint
-	if err = table.CheckRowConstraintWithDatum(evalCtx, t.WritableConstraint(), r); err != nil {
+	if err = table.CheckRowConstraintWithDatum(sctx.GetExprCtx(), t.WritableConstraint(), r, t.meta); err != nil {
 		return nil, err
 	}
 	key := t.RecordKey(recordID)
@@ -1151,6 +1172,7 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return err
 	}
+	failpoint.InjectCall("duringTableCommonRemoveRecord", t.meta)
 
 	tc := ctx.GetExprCtx().GetEvalCtx().TypeCtx()
 	if ctx.EnableMutationChecker() {
@@ -1463,11 +1485,6 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 		return true
 	}
 	return false
-}
-
-// canSkipUpdateBinlog checks whether the column can be skipped or not.
-func (t *TableCommon) canSkipUpdateBinlog(col *table.Column) bool {
-	return col.IsVirtualGenerated()
 }
 
 // FindIndexByColName returns a public table index containing only one column named `name`.

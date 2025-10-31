@@ -33,11 +33,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client/http"
@@ -82,10 +82,10 @@ func setUpRPCService(t *testing.T, dom *domain.Domain, addr string) (*grpc.Serve
 
 	// Fix issue 9836
 	sm := &testkit.MockSessionManager{
-		PS:    make([]*util.ProcessInfo, 1),
+		PS:    make([]*sessmgr.ProcessInfo, 1),
 		SerID: 1,
 	}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",

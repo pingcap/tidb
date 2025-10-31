@@ -25,6 +25,7 @@ go_library(
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
     ],
 )
 
@@ -33,6 +34,7 @@ go_test(
     timeout = "short",
     srcs = ["session_pool_test.go"],
     flaky = True,
+    shard_count = 2,
     deps = [
         ":session",
         "//pkg/testkit",

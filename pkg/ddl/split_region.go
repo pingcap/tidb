@@ -31,6 +31,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// GlobalScatterGroupID is used to indicate the global scatter group ID.
+const GlobalScatterGroupID int64 = -1
+
 func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatterScope string) {
 	// Max partition count is 8192, should we sample and just choose some partitions to split?
 	var regionIDs []uint64
@@ -78,7 +81,7 @@ func getScatterConfig(scope string, tableID int64) (scatter bool, tID int64) {
 	case vardef.ScatterTable:
 		return true, tableID
 	case vardef.ScatterGlobal:
-		return true, -1
+		return true, GlobalScatterGroupID
 	default:
 		return false, tableID
 	}

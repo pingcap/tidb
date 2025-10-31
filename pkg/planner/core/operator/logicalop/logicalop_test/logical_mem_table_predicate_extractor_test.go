@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -44,7 +44,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool) {
+func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessionapi.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool) {
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 

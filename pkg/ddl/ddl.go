@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -482,6 +483,95 @@ func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) *kv.ResourceGroup
 	return ctx.getResourceGroupTaggerForTopSQL()
 }
 
+func (dc *ddlCtx) setAnalyzeDoneCh(jobID int64, ch chan error) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		ctx = NewReorgContext()
+		dc.jobCtx.jobCtxMap[jobID] = ctx
+	}
+	ctx.analyzeDone = ch
+}
+
+func (dc *ddlCtx) getAnalyzeDoneCh(jobID int64) chan error {
+	dc.jobCtx.RLock()
+	defer dc.jobCtx.RUnlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		return nil
+	}
+	return ctx.analyzeDone
+}
+
+// setAnalyzeStartTime sets the analyze start time for a given job ID.
+func (dc *ddlCtx) setAnalyzeStartTime(jobID int64, t time.Time) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		ctx = NewReorgContext()
+		dc.jobCtx.jobCtxMap[jobID] = ctx
+	}
+	ctx.analyzeStartTime = t
+}
+
+// getAnalyzeStartTime returns the analyze start time for a given job ID. If not set, returns zero time and false.
+func (dc *ddlCtx) getAnalyzeStartTime(jobID int64) (time.Time, bool) {
+	dc.jobCtx.RLock()
+	defer dc.jobCtx.RUnlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		return time.Time{}, false
+	}
+	t := ctx.analyzeStartTime
+	return t, !t.IsZero()
+}
+
+// clearAnalyzeStartTime clears the analyze start time for a given job ID.
+func (dc *ddlCtx) clearAnalyzeStartTime(jobID int64) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	if ctx, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
+		ctx.analyzeStartTime = time.Time{}
+	}
+}
+
+// setAnalyzeCumulativeTimeout sets the computed cumulative timeout for analyze for a given job ID.
+func (dc *ddlCtx) setAnalyzeCumulativeTimeout(jobID int64, dur time.Duration) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		ctx = NewReorgContext()
+		dc.jobCtx.jobCtxMap[jobID] = ctx
+	}
+	ctx.analyzeCumulativeTimeout = dur
+}
+
+// getAnalyzeCumulativeTimeout returns the stored analyze cumulative timeout and true if set.
+func (dc *ddlCtx) getAnalyzeCumulativeTimeout(jobID int64) (time.Duration, bool) {
+	dc.jobCtx.RLock()
+	defer dc.jobCtx.RUnlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		return 0, false
+	}
+	if ctx.analyzeCumulativeTimeout == 0 {
+		return 0, false
+	}
+	return ctx.analyzeCumulativeTimeout, true
+}
+
+// clearAnalyzeCumulativeTimeout clears the stored analyze cumulative timeout for a given job ID.
+func (dc *ddlCtx) clearAnalyzeCumulativeTimeout(jobID int64) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	if ctx, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
+		ctx.analyzeCumulativeTimeout = 0
+	}
+}
+
 func (dc *ddlCtx) removeJobCtx(job *model.Job) {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
@@ -610,12 +700,12 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 			// Try sending the event to the channel with a backoff strategy to avoid blocking indefinitely.
 			// Since most unit tests don't consume events, we make a few attempts and then give up rather
 			// than blocking the DDL job forever on a full channel.
-			for range 10 {
+			for range 3 {
 				select {
 				case ch <- e:
 					break forLoop
 				default:
-					time.Sleep(time.Microsecond * 10)
+					time.Sleep(time.Microsecond * 2)
 				}
 			}
 			logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
@@ -672,8 +762,9 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		schemaVerSyncer = schemaver.NewMemSyncer()
 		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
-		id = globalOwnerManager.ID()
-		manager = globalOwnerManager.OwnerManager()
+		ownerMgr := getOwnerManager(opt.Store)
+		id = ownerMgr.ID()
+		manager = ownerMgr.OwnerManager()
 		schemaVerSyncer = schemaver.NewEtcdSyncer(etcdCli, id)
 		serverStateSyncer = serverstate.NewEtcdSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
@@ -784,7 +875,9 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
-	d.detectAndUpdateJobVersion()
+	if kerneltype.IsClassic() {
+		d.detectAndUpdateJobVersion()
+	}
 	campaignOwner := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()
 	if startMode == Upgrade {
 		if !campaignOwner {
@@ -1134,7 +1227,7 @@ func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 
 // SwitchMDL enables MDL or disable MDL.
 func (d *ddl) SwitchMDL(enable bool) error {
-	isEnableBefore := vardef.EnableMDL.Load()
+	isEnableBefore := vardef.IsMDLEnabled()
 	if isEnableBefore == enable {
 		return nil
 	}
@@ -1158,7 +1251,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 		return errors.New("please wait for all jobs done")
 	}
 
-	vardef.EnableMDL.Store(enable)
+	vardef.SetEnableMDL(enable)
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		oldEnable, _, err := m.GetMetadataLock()
@@ -1182,7 +1275,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 // It should be called before any DDL that could break data consistency.
 // This provides a safe window for async commit and 1PC to commit with an old schema.
 func delayForAsyncCommit() {
-	if vardef.EnableMDL.Load() {
+	if vardef.IsMDLEnabled() {
 		// If metadata lock is enabled. The transaction of DDL must begin after
 		// pre-write of the async commit transaction, then the commit ts of DDL
 		// must be greater than the async commit transaction. In this case, the

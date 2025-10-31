@@ -16,6 +16,7 @@ package stmtctx
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"maps"
@@ -33,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/types"
@@ -67,12 +68,6 @@ func AllocateTaskID() uint64 {
 
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn = contextutil.SQLWarn
-
-type jsonSQLWarn struct {
-	Level  string        `json:"level"`
-	SQLErr *terror.Error `json:"err,omitempty"`
-	Msg    string        `json:"msg,omitempty"`
-}
 
 // ReferenceCount indicates the reference count of StmtCtx.
 type ReferenceCount int32
@@ -143,7 +138,7 @@ type stmtCtxMu struct {
 	foundRows uint64
 
 	/*
-		following variables are ported from 'COPY_INFO' struct of MySQL server source,
+		These variables serve a similar purpose to those in MySQL's `COPY_INFO`,
 		they are used to count rows for INSERT/REPLACE/UPDATE queries:
 		  If a row is inserted then the copied variable is incremented.
 		  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
@@ -249,8 +244,11 @@ type StatementContext struct {
 	hint.StmtHints
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
-	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
+	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage,
+	// and it can be handled by the DDL worker.
+	// we will use this field to skip connections which are doing DDL when reporting
+	// the min start TS to PD.
+	IsDDLJobInQueue        atomic.Bool
 	DDLJobID               int64
 	InInsertStmt           bool
 	InUpdateStmt           bool
@@ -262,7 +260,6 @@ type StatementContext struct {
 	ExplainFormat          string
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
-	InPreparedPlanBuilding bool
 	InShowWarning          bool
 
 	contextutil.PlanCacheTracker
@@ -309,11 +306,13 @@ type StatementContext struct {
 	Priority     mysql.PriorityEnum
 	NotFillCache bool
 	MemTracker   *memory.Tracker
+	MemSensitive bool // whether this statement is memory sensitive
 	DiskTracker  *disk.Tracker
 	// per statement resource group name
 	// hint /* +ResourceGroup(name) */ can change the statement group name
 	ResourceGroupName   string
 	RunawayChecker      resourcegroup.RunawayChecker
+	IsTiKV              atomic2.Bool
 	IsTiFlash           atomic2.Bool
 	RuntimeStatsColl    *execdetails.RuntimeStatsColl
 	IndexUsageCollector *indexusage.StmtIndexUsageCollector
@@ -329,6 +328,15 @@ type StatementContext struct {
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
+
+	// ExecRetryCount records the number of retries for executing the statement.
+	// It is set after ExecStmt execution and currently only used in the Slow Log phase
+	// after LogSlowQuery is called.
+	ExecRetryCount uint64
+	// ExecSuccess indicates whether the statement execution succeeded.
+	// It is set after ExecStmt execution and currently only used in the Slow Log phase
+	// after LogSlowQuery is called.
+	ExecSuccess bool
 
 	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.
@@ -1493,4 +1501,22 @@ func (r StatsLoadResult) ErrorMsg() string {
 	b.WriteString(", err:")
 	b.WriteString(r.Error.Error())
 	return b.String()
+}
+
+type stmtLabelKeyType struct{}
+
+var stmtLabelKey stmtLabelKeyType
+
+// WithStmtLabel sets the label for the statement node.
+func WithStmtLabel(ctx context.Context, label string) context.Context {
+	return context.WithValue(ctx, stmtLabelKey, label)
+}
+
+// GetStmtLabel returns the label for the statement node.
+// context with stmtLabelKey will return the label if it exists.
+func GetStmtLabel(ctx context.Context, node ast.StmtNode) string {
+	if val := ctx.Value(stmtLabelKey); val != nil {
+		return val.(string)
+	}
+	return ast.GetStmtLabel(node)
 }

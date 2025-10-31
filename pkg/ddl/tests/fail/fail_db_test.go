@@ -18,22 +18,20 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
-	"github.com/pingcap/tidb/pkg/ddl/testutil"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -55,14 +53,14 @@ func createFailDBSuite(t *testing.T) (s *failedSuite) {
 func createFailDBSuiteWithLease(t *testing.T, lease time.Duration) (s *failedSuite) {
 	s = new(failedSuite)
 	var err error
-	s.store, err = mockstore.NewMockStore(
+	s.store, err = teststore.NewMockStoreWithoutBootstrap(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
 	)
 	require.NoError(t, err)
-	session.SetSchemaLease(lease)
+	vardef.SetSchemaLease(lease)
 	s.dom, err = session.BootstrapSession(s.store)
 	require.NoError(t, err)
 
@@ -158,20 +156,6 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustExec("drop database cancel_job_db")
 }
 
-// TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of executor.go when
-// doing the operation of 'modify column'.
-func TestInitializeOffsetAndState(t *testing.T) {
-	s := createFailDBSuite(t)
-	tk := testkit.NewTestKit(t, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int)")
-	defer tk.MustExec("drop table t")
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/uninitializedOffsetAndState", `return(true)`))
-	tk.MustExec("ALTER TABLE t MODIFY COLUMN b int FIRST;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/uninitializedOffsetAndState"))
-}
-
 func TestUpdateHandleFailed(t *testing.T) {
 	s := createFailDBSuite(t)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/errorUpdateReorgHandle", `1*return`))
@@ -215,6 +199,9 @@ func TestAddIndexFailed(t *testing.T) {
 
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	if kerneltype.IsNextGen() {
+		tableStart = s.store.GetCodec().EncodeKey(tableStart)
+	}
 	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
 
 	tk.MustExec("alter table t add index idx_b(b)")
@@ -317,23 +304,6 @@ func TestGenGlobalIDFail(t *testing.T) {
 	tk.MustExec("admin check table t2")
 }
 
-// TestRunDDLJobPanicEnableClusteredIndex tests recover panic with cluster index when run ddl job panic.
-func TestRunDDLJobPanicEnableClusteredIndex(t *testing.T) {
-	s := createFailDBSuite(t)
-	testAddIndexWorkerNum(t, s, func(tk *testkit.TestKit) {
-		tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
-		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
-	})
-}
-
-// TestRunDDLJobPanicDisableClusteredIndex tests recover panic without cluster index when run ddl job panic.
-func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
-	s := createFailDBSuite(t)
-	testAddIndexWorkerNum(t, s, func(tk *testkit.TestKit) {
-		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
-	})
-}
-
 // TestRunDDLJobPanicEnableFastCreateTable tests recover panic with fast create table when run ddl job panic.
 func TestRunDDLJobPanicEnableFastCreateTable(t *testing.T) {
 	s := createFailDBSuite(t)
@@ -345,79 +315,6 @@ func TestRunDDLJobPanicEnableFastCreateTable(t *testing.T) {
 	_, err := tk.Exec("create table t(c1 int, c2 int)")
 	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
-}
-
-func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.TestKit)) {
-	if vardef.EnableDistTask.Load() {
-		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
-	}
-
-	tk := testkit.NewTestKit(t, s.store)
-	tk.MustExec("create database if not exists test_db")
-	tk.MustExec("use test_db")
-	tk.MustExec("drop table if exists test_add_index")
-
-	test(tk)
-
-	done := make(chan error, 1)
-	start := -10
-
-	// first add some rows
-	for i := start; i < 4090; i += 100 {
-		dml := "insert into test_add_index values"
-		end := i + 100
-		for k := i; k < end; k++ {
-			dml += fmt.Sprintf("(%d, %d, %d)", k, k, k)
-			if k != end-1 {
-				dml += ","
-			}
-		}
-		tk.MustExec(dml)
-	}
-
-	is := s.dom.InfoSchema()
-	schemaName := ast.NewCIStr("test_db")
-	tableName := ast.NewCIStr("test_add_index")
-	tbl, err := is.TableByName(context.Background(), schemaName, tableName)
-	require.NoError(t, err)
-
-	splitCount := 100
-	// Split table to multi region.
-	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
-	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), splitCount)
-
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	originDDLAddIndexWorkerCnt := vardef.GetDDLReorgWorkerCounter()
-	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
-	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
-	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
-	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum", `return(true)`))
-
-	testutil.SessionExecInGoroutine(s.store, "test_db", "create index c3_index on test_add_index (c3)", done)
-	checkNum := 0
-
-	running := true
-	for running {
-		select {
-		case err = <-done:
-			require.NoError(t, err)
-			running = false
-		case wg := <-ddl.TestCheckWorkerNumCh:
-			lastSetWorkerCnt = int32(rand.Intn(8) + 8)
-			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
-			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
-			checkNum++
-			wg.Done()
-		}
-	}
-
-	require.Greater(t, checkNum, 1)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum"))
-	tk.MustExec("admin check table test_add_index")
-	tk.MustExec("drop table test_add_index")
 }
 
 // TestRunDDLJobPanic tests recover panic when run ddl job panic.
@@ -503,7 +400,7 @@ func TestModifyColumn(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("admin check table t")
 	tk.MustExec("insert into t values(111, 222, 333)")
-	tk.MustGetErrMsg("alter table t change column a aa tinyint after c", "[types:1690]constant 222 overflows tinyint")
+	tk.MustGetErrMsg("alter table t change column a aa tinyint after c", "[types:1265]Data truncated for column 'a', value is '222'")
 	tk.MustExec("alter table t change column a aa mediumint after c")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
@@ -521,9 +418,9 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 2")
 	tk.MustGetErrMsg("alter table t1 modify column a mediumint", "[ddl:8200]Unsupported modify column: table is partition table")
 	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual, c int generated always as (a+1) stored)")
-	tk.MustGetErrMsg("alter table t2 modify column b mediumint", "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
-	tk.MustGetErrMsg("alter table t2 modify column c mediumint", "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
-	tk.MustGetErrMsg("alter table t2 modify column a mediumint generated always as(id+1) stored", "[ddl:8200]Unsupported modify column: newCol IsGenerated true, oldCol IsGenerated false")
+	tk.MustGetErrMsg("alter table t2 modify column b mediumint", "[ddl:8200]Unsupported modify column: old column is generated")
+	tk.MustGetErrMsg("alter table t2 modify column c mediumint", "[ddl:8200]Unsupported modify column: old column is generated")
+	tk.MustGetErrMsg("alter table t2 modify column a mediumint generated always as(id+1) stored", "[ddl:8200]Unsupported modify column: new column is generated")
 	tk.MustGetErrMsg("alter table t2 modify column a mediumint", "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
 
 	// Test multiple rows of data.

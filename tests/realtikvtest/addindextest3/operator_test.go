@@ -25,6 +25,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -115,7 +116,7 @@ func TestBackfillOperators(t *testing.T) {
 		ctx := context.Background()
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx)
 		src := testutil.NewOperatorTestSource(opTasks...)
-		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, 0, nil, nil)
+		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, 0, nil, nil, &execute.TestCollector{})
 		sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
 		operator.Compose[ddl.TableScanTask](src, scanOp)
@@ -160,7 +161,7 @@ func TestBackfillOperators(t *testing.T) {
 		}
 		pTbl := tbl.(table.PhysicalTable)
 		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
+		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, false, 0)
 		require.NoError(t, err)
 		defer bd.Close()
 		bcCtx, err := ingest.NewBackendCtxBuilder(ctx, store, realJob).Build(cfg, bd)
@@ -188,7 +189,7 @@ func TestBackfillOperators(t *testing.T) {
 		results := sink.Collect()
 		cnt := 0
 		for _, rs := range results {
-			cnt += rs.Added
+			cnt += rs.RowCnt
 		}
 		require.Len(t, keys, 10)
 		require.Len(t, values, 10)
@@ -210,7 +211,7 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	ctx := context.Background()
 	opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx)
 	defer cancel()
-	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, false, 0)
 	require.NoError(t, err)
 	defer bd.Close()
 	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, store, realJob).Build(cfg, bd)
@@ -250,7 +251,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 	regionCnt := 10
 	tbl, idxInfo, startKey, endKey, _ := prepare(t, tk, dom, regionCnt)
 	sessPool := newSessPoolForTest(t, store)
-	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, false, 0)
 	require.NoError(t, err)
 	defer bd.Close()
 	bcCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
@@ -355,7 +356,9 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 	tk.MustExec("drop database if exists op;")
 	tk.MustExec("create database op;")
 	tk.MustExec("use op;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
 
 	tk.MustExec("create table t(a int primary key, b int, index idx(b));")
 	for i := range regionCnt {
@@ -418,7 +421,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 	{
 		ctx := context.Background()
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx)
-		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, nil, 2, 0, nil, nil)
+		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, nil, 2, 0, nil, nil, &execute.TestCollector{})
 
 		scanOp.Open()
 		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(2))
@@ -437,7 +440,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx)
 		pTbl := tbl.(table.PhysicalTable)
 		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
+		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, false, 0)
 		require.NoError(t, err)
 		defer bd.Close()
 		bcCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)

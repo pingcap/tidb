@@ -19,7 +19,6 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/pingcap/errors"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -69,10 +69,9 @@ type byteReader struct {
 		reloadCnt int
 	}
 
-	logger *zap.Logger
-	// monitor the speed of reading from external storage
-	readDurHist  prometheus.Observer
-	readRateHist prometheus.Observer
+	logger               *zap.Logger
+	mergeSortReadCounter prometheus.Counter
+	requestCnt           atomic.Int64
 }
 
 func openStoreReaderAndSeek(
@@ -113,6 +112,8 @@ func newByteReader(
 	}
 	r.curBuf = [][]byte{r.smallBuf}
 	r.logger = logutil.Logger(r.ctx)
+	// When the storage reader is open, a GET request has been made.
+	r.requestCnt.Add(1)
 	return r, r.reload()
 }
 
@@ -192,6 +193,7 @@ func (r *byteReader) switchToConcurrentReader() error {
 		fileSize,
 		readerFields.concurrency,
 		readerFields.bufSizePerConc,
+		&r.requestCnt,
 	)
 	if err != nil {
 		return err
@@ -279,16 +281,13 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 }
 
 func (r *byteReader) reload() error {
-	if r.readDurHist != nil && r.readRateHist != nil {
-		startTime := time.Now()
+	if r.mergeSortReadCounter != nil {
 		defer func() {
-			readSecond := time.Since(startTime).Seconds()
-			size := 0
+			sz := 0
 			for _, b := range r.curBuf {
-				size += len(b)
+				sz += len(b)
 			}
-			r.readDurHist.Observe(readSecond)
-			r.readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
+			r.mergeSortReadCounter.Add(float64(sz))
 		}()
 	}
 	to := r.concurrentReader.expected

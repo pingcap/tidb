@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -70,11 +70,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
+	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -82,6 +82,7 @@ import (
 const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
+	removingObjPrefix     = "_Tombstone$_"
 	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
@@ -1131,7 +1132,7 @@ func (e *executor) createTableWithInfoJob(
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 		SessionVars:         make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.CreateTableArgs{
 		TableInfo:      tbInfo,
 		OnExistReplace: cfg.OnExist == OnExistReplace,
@@ -1157,47 +1158,6 @@ func getSharedInvolvingSchemaInfo(info *model.TableInfo) []model.InvolvingSchema
 		})
 	}
 	return ret
-}
-
-func (e *executor) createTableWithInfoPost(
-	ctx sessionctx.Context,
-	tbInfo *model.TableInfo,
-	schemaID int64,
-	scatterScope string,
-) error {
-	var err error
-	var partitions []model.PartitionDefinition
-	if pi := tbInfo.GetPartitionInfo(); pi != nil {
-		partitions = pi.Definitions
-	}
-	preSplitAndScatter(ctx, e.store, tbInfo, partitions, scatterScope)
-	if tbInfo.AutoIncID > 1 {
-		// Default tableAutoIncID base is 0.
-		// If the first ID is expected to greater than 1, we need to do rebase.
-		newEnd := tbInfo.AutoIncID - 1
-		var allocType autoid.AllocatorType
-		if tbInfo.SepAutoInc() {
-			allocType = autoid.AutoIncrementType
-		} else {
-			allocType = autoid.RowIDAllocType
-		}
-		if err = e.handleAutoIncID(tbInfo, schemaID, newEnd, allocType); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	// For issue https://github.com/pingcap/tidb/issues/46093
-	if tbInfo.AutoIncIDExtra != 0 {
-		if err = e.handleAutoIncID(tbInfo, schemaID, tbInfo.AutoIncIDExtra-1, autoid.RowIDAllocType); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	if tbInfo.AutoRandID > 1 {
-		// Default tableAutoRandID base is 0.
-		// If the first ID is expected to greater than 1, we need to do rebase.
-		newEnd := tbInfo.AutoRandID - 1
-		err = e.handleAutoIncID(tbInfo, schemaID, newEnd, autoid.AutoRandomType)
-	}
-	return err
 }
 
 func (e *executor) CreateTableWithInfo(
@@ -1226,12 +1186,12 @@ func (e *executor) CreateTableWithInfo(
 		}
 	} else {
 		var scatterScope string
-		if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
+		if val, ok := jobW.GetSystemVars(vardef.TiDBScatterRegion); ok {
 			scatterScope = val
 		}
-		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, scatterScope)
-	}
 
+		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
+	}
 	return errors.Trace(err)
 }
 
@@ -1255,7 +1215,7 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 
 	var err error
 
@@ -1322,13 +1282,11 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 	var scatterScope string
-	if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
+	if val, ok := jobW.GetSystemVars(vardef.TiDBScatterRegion); ok {
 		scatterScope = val
 	}
 	for _, tblArgs := range args.Tables {
-		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, scatterScope); err != nil {
-			return errors.Trace(err)
-		}
+		preSplitAndScatterTable(ctx, e.store, tblArgs.TableInfo, scatterScope)
 	}
 
 	return nil
@@ -1409,6 +1367,14 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	} else {
 		go preSplit()
 	}
+}
+
+func preSplitAndScatterTable(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, scatterScope string) {
+	var partitions []model.PartitionDefinition
+	if pi := tbInfo.GetPartitionInfo(); pi != nil {
+		partitions = pi.Definitions
+	}
+	preSplitAndScatter(ctx, store, tbInfo, partitions, scatterScope)
 }
 
 func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
@@ -1539,19 +1505,6 @@ func checkCharsetAndCollation(cs string, co string) error {
 	}
 	if co != "" {
 		if _, err := collate.GetCollationByName(co); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-// handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
-// For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
-func (e *executor) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd int64, tp autoid.AllocatorType) error {
-	allocs := autoid.NewAllocatorsFromTblInfo(e.getAutoIDRequirement(), schemaID, tbInfo)
-	if alloc := allocs.Get(tp); alloc != nil {
-		err := alloc.Rebase(context.Background(), newEnd, false)
-		if err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -2024,16 +1977,20 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
+		SessionVars:         make(map[string]string, 2),
 	}
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(ctx))
+	job.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
 	err = checkMultiSchemaInfo(info, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
+	setNeedAnalyze(info)
 	return e.DoDDLJob(ctx, job)
 }
 
@@ -2196,7 +2153,7 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if bdrRole == string(ast.BDRRolePrimary) && deniedByBDRWhenAddColumn(specNewColumn.Options) {
+	if bdrRole == string(ast.BDRRolePrimary) && deniedByBDRWhenAddColumn(specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
 		return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 	}
 
@@ -2293,7 +2250,7 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TablePartitionArgs{
 		PartInfo: partInfo,
 	}
@@ -2456,7 +2413,7 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return err
 	}
@@ -2525,7 +2482,7 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2594,7 +2551,7 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2806,7 +2763,7 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TruncateTableArgs{
 		OldPartitionIDs: pids,
 		// job submitter will fill new partition IDs.
@@ -3337,6 +3294,8 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
+	jobW.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(sctx))
+	jobW.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
@@ -3403,7 +3362,7 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, tbl, ctx)
 	if err != nil {
 		return err
 	}
@@ -3437,6 +3396,8 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
+	jobW.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(sctx))
+	jobW.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
@@ -4310,7 +4271,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TruncateTableArgs{
 		FKCheck:         fkCheck,
 		OldPartitionIDs: oldPartitionIDs,
@@ -4682,7 +4643,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		OpType: model.OpAddIndex,
 	}
 
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return err
 	}
@@ -4851,15 +4812,16 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) *model.Job {
 	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		BinlogInfo: &model.HistoryInfo{},
-		Priority:   ctx.GetSessionVars().DDLReorgPriority,
-		Charset:    charset,
-		Collate:    collate,
-		SQLMode:    ctx.GetSessionVars().SQLMode,
+		SchemaID:    schema.ID,
+		TableID:     t.Meta().ID,
+		SchemaName:  schema.Name.L,
+		TableName:   t.Meta().Name.L,
+		BinlogInfo:  &model.HistoryInfo{},
+		Priority:    ctx.GetSessionVars().DDLReorgPriority,
+		Charset:     charset,
+		Collate:     collate,
+		SQLMode:     ctx.GetSessionVars().SQLMode,
+		SessionVars: make(map[string]string),
 	}
 	return job
 }
@@ -4970,12 +4932,21 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddIndex
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
+	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(ctx))
+	job.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
 
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	var conditionString string
+	if indexOption != nil {
+		conditionString, err = CheckAndBuildIndexConditionString(tblInfo, indexOption.Condition)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			Unique:                  unique,
@@ -4985,6 +4956,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			HiddenCols:              hiddenCols,
 			Global:                  global,
 			SplitOpt:                splitOpt,
+			ConditionString:         conditionString,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -4996,111 +4968,6 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return nil
 	}
 	return errors.Trace(err)
-}
-
-// GetDXFDefaultMaxNodeCntAuto calcuates a default max node count for distributed task execution.
-func GetDXFDefaultMaxNodeCntAuto(store kv.Storage) int {
-	tikvStore, ok := store.(tikv.Storage)
-	if !ok {
-		logutil.DDLLogger().Warn("not an TiKV or TiFlash store instance", zap.String("type", fmt.Sprintf("%T", store)))
-		return 0
-	}
-	pdClient := tikvStore.GetRegionCache().PDClient()
-	if pdClient == nil {
-		logutil.DDLLogger().Warn("pd unavailable when get default max node count")
-		return 0
-	}
-	stores, err := pdClient.GetAllStores(context.Background())
-	if err != nil {
-		logutil.DDLLogger().Warn("get all stores failed when get default max node count", zap.Error(err))
-		return 0
-	}
-	return max(3, len(stores)/3)
-}
-
-func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
-	m := NewDDLReorgMeta(sctx)
-
-	setReorgParam := func() {
-		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
-			m.SetConcurrency(variable.TidbOptInt(sv, 0))
-		}
-		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgBatchSize); ok {
-			m.SetBatchSize(variable.TidbOptInt(sv, 0))
-		}
-		m.SetMaxWriteSpeed(int(vardef.DDLReorgMaxWriteSpeed.Load()))
-	}
-	setDistTaskParam := func() error {
-		m.IsDistReorg = vardef.EnableDistTask.Load()
-		m.IsFastReorg = vardef.EnableFastReorg.Load()
-		m.TargetScope = dxfhandle.GetTargetScope()
-		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
-			m.MaxNodeCount = variable.TidbOptInt(sv, 0)
-			if m.MaxNodeCount == -1 { // -1 means calculate automatically
-				m.MaxNodeCount = GetDXFDefaultMaxNodeCntAuto(sctx.GetStore())
-			}
-		}
-		if hasSysDB(job) {
-			if m.IsDistReorg {
-				logutil.DDLLogger().Info("cannot use distributed task execution on system DB",
-					zap.Stringer("job", job))
-			}
-			m.IsDistReorg = false
-			m.IsFastReorg = false
-			failpoint.Inject("reorgMetaRecordFastReorgDisabled", func(_ failpoint.Value) {
-				LastReorgMetaFastReorgDisabled = true
-			})
-		}
-		if m.IsDistReorg && !m.IsFastReorg {
-			return dbterror.ErrUnsupportedDistTask
-		}
-		return nil
-	}
-
-	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		setReorgParam()
-		err := setDistTaskParam()
-		if err != nil {
-			return err
-		}
-	case model.ActionReorganizePartition,
-		model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning,
-		model.ActionModifyColumn:
-		setReorgParam()
-	case model.ActionMultiSchemaChange:
-		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			switch sub.Type {
-			case model.ActionAddIndex, model.ActionAddPrimaryKey:
-				setReorgParam()
-				err := setDistTaskParam()
-				if err != nil {
-					return err
-				}
-			case model.ActionReorganizePartition,
-				model.ActionRemovePartitioning,
-				model.ActionAlterTablePartitioning,
-				model.ActionModifyColumn:
-				setReorgParam()
-			}
-		}
-	default:
-		return nil
-	}
-	job.ReorgMeta = m
-	logutil.DDLLogger().Info("initialize reorg meta",
-		zap.String("jobSchema", job.SchemaName),
-		zap.String("jobTable", job.TableName),
-		zap.Stringer("jobType", job.Type),
-		zap.Bool("enableDistTask", m.IsDistReorg),
-		zap.Bool("enableFastReorg", m.IsFastReorg),
-		zap.String("targetScope", m.TargetScope),
-		zap.Int("maxNodeCount", m.MaxNodeCount),
-		zap.Int("concurrency", m.GetConcurrency()),
-		zap.Int("batchSize", m.GetBatchSize()),
-	)
-	return nil
 }
 
 func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, error) {
@@ -5770,6 +5637,7 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,
 		TableID:        args.TableID,
+		SchemaName:     schema.Name.O,
 		Type:           model.ActionAlterTableMode,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
@@ -6643,7 +6511,7 @@ func (e *executor) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, c
 		return errors.Trace(err)
 	}
 	// check if the expression is bool type
-	if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx().GetEvalCtx(), constraintInfo, tblInfo); err != nil {
+	if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx(), constraintInfo, tblInfo); err != nil {
 		return err
 	}
 	job := &model.Job{
@@ -6778,6 +6646,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, jobW)
 	}
+	e.checkInvolvingSchemaInfoInTest(job)
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	e.deliverJobTask(jobW)
@@ -6813,7 +6682,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	failpoint.InjectCall("waitJobSubmitted")
 
 	sessVars := ctx.GetSessionVars()
-	sessVars.StmtCtx.IsDDLJobInQueue = true
+	sessVars.StmtCtx.IsDDLJobInQueue.Store(true)
 
 	ddlAction := job.Type
 	if result.merged {
@@ -7083,16 +6952,15 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,
 		TableID:        args.TableID,
+		SchemaName:     args.InvolvedDB,
 		Type:           model.ActionRefreshMeta,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
-				// For RefreshMeta, the table/schema might not exist anymore.
-				// Since we can't determine the exact target, use model.InvolvingAll to block concurrent DDLs as a safe default.
-				Database: model.InvolvingAll,
-				Table:    model.InvolvingAll,
+				Database: args.InvolvedDB,
+				Table:    args.InvolvedTable,
 			},
 		},
 	}
@@ -7102,12 +6970,25 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 }
 
 func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
-	var scatterScope string
-	val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion)
-	if !ok {
-		logutil.DDLLogger().Info("won't scatter region since system variable didn't set")
-	} else {
-		scatterScope = val
+	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion); ok {
+		return val
 	}
-	return scatterScope
+	logutil.DDLLogger().Info("system variable tidb_scatter_region not found, use default value")
+	return vardef.DefTiDBScatterRegion
+}
+
+func getEnableDDLAnalyze(sctx sessionctx.Context) string {
+	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBEnableDDLAnalyze); ok {
+		return val
+	}
+	logutil.DDLLogger().Info("system variable tidb_enable_ddl_analyze not found, use default value")
+	return variable.BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze)
+}
+
+func getAnalyzeVersion(sctx sessionctx.Context) string {
+	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBAnalyzeVersion); ok {
+		return val
+	}
+	logutil.DDLLogger().Info("system variable tidb_analyze_version not found, use default value")
+	return strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
 }
