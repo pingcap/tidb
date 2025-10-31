@@ -2106,6 +2106,7 @@ func TestIssue64137(t *testing.T) {
         select 1 as a, num+1 as num from cte where num < 10000
     ) select a from cte) tt;`) // insert 10000 rows with a=1
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustQuery(`select count(1) from t`).Check(testkit.Rows("10000"))
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`show stats_topn where is_index=1`).Check(testkit.Rows("test t  a 1 1 10000")) // 1 topN value with count 10000
 
