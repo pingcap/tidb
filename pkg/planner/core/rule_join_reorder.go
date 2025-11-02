@@ -142,7 +142,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 
 			// Check if any of the left group tables are table expressions
 			// If so, and this is not a cartesian join, don't reorder
-			if !noExpand && len(join.EqualConditions) > 0 {
+			if !noExpand && len(join.EqualConditions) > 0 && p.SCtx().GetSessionVars().HashJoinCostFactor > 1 {
 				for _, lhs := range lhsGroup {
 					if isTableExpressionPlan(lhs) {
 						noExpand = true
