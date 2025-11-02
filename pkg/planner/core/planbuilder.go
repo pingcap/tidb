@@ -1211,6 +1211,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	var err error
 	// Inverted Index can not be used as access path index.
 	invertedIndexes := make(map[string]struct{})
+	hasTiCIIndex := false
 
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
@@ -1247,8 +1248,21 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				publicPaths = append(publicPaths, path)
 				continue
 			}
+			hasTiCIIndex = hasTiCIIndex || index.IsFulltextIndexOnTiCI()
 			path := &util.AccessPath{Index: index}
 			publicPaths = append(publicPaths, path)
+		}
+	}
+	var ticiIndexPaths []*util.AccessPath = nil
+	if hasTiCIIndex {
+		// FTS_MATCH_XXX can only be executed in TiCI engine.
+		// So we need to store it here and try to add it later if the USE_INDEX hint delete any of them.
+		// The removal of the unhinted TiCI index paths will be done after we dicide the availabilty of each index.
+		ticiIndexPaths = make([]*util.AccessPath, 0, len(publicPaths))
+		for _, path := range publicPaths {
+			if path.Index != nil && path.Index.IsFulltextIndexOnTiCI() {
+				ticiIndexPaths = append(ticiIndexPaths, path)
+			}
 		}
 	}
 
@@ -1373,17 +1387,33 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	// If all available paths are Multi-Valued Index, it's possible that the only multi-valued index is inapplicable,
+	// If all available paths are Multi-Valued Index, TiCI Index or other special indexes, it's possible that the only special index is inapplicable,
 	// so that the table paths are still added here to avoid failing to find any physical plan.
-	allMVIIndexPath := true
+	allUndeterminedPath := true
 	for _, availablePath := range available {
-		if !isMVIndexPath(availablePath) {
-			allMVIIndexPath = false
+		if !availablePath.IsUndetermined() {
+			allUndeterminedPath = false
 			break
 		}
 	}
-	if allMVIIndexPath {
+	if allUndeterminedPath {
 		available = append(available, tablePath)
+	}
+	if hasTiCIIndex {
+		// Following previous comments, we add back the unhinted TiCI index paths.
+		// And remove them later after we dicide the availabilty of each index.
+		tiCIIndexMap := make(map[int64]*util.AccessPath)
+		for _, path := range ticiIndexPaths {
+			tiCIIndexMap[path.Index.ID] = path
+		}
+		for _, path := range available {
+			if path.Index != nil && path.Index.IsFulltextIndexOnTiCI() {
+				delete(tiCIIndexMap, path.Index.ID)
+			}
+		}
+		for _, path := range tiCIIndexMap {
+			available = append(available, path)
+		}
 	}
 
 	return available, nil
