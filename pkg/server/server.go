@@ -1243,6 +1243,7 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	}
 }
 
+// GetStatusVars is getting the per process status variables from the server
 func (s *Server) GetStatusVars() map[uint64]map[string]string {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()

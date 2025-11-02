@@ -207,3 +207,7 @@ func (msm *MockSessionManager) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL)
 	}
 	msm.mu.Unlock()
 }
+
+func (msm *MockSessionManager) GetStatusVars() map[uint64]map[string]string {
+	return map[uint64]map[string]string{}
+}
