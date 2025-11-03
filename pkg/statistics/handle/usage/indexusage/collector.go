@@ -15,6 +15,7 @@
 package indexusage
 
 import (
+	"github.com/pingcap/tidb/pkg/metrics"
 	"sync"
 	"time"
 
@@ -274,7 +275,7 @@ func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, sample Sa
 	} else {
 		sample.QueryTotal = 0
 	}
-
+	scanMetrics(sample)
 	s.sessionCollector.Update(tableID, indexID, sample)
 }
 
@@ -284,4 +285,57 @@ func (s *StmtIndexUsageCollector) Reset() {
 	defer s.Unlock()
 
 	clear(s.recordedIndex)
+}
+
+func scanMetrics(sample Sample) {
+	scanCountLabel := getScanCountLabel(sample.RowAccessTotal)
+	scanSelectivityLabel := getScanSelectivityLabel(sample)
+	// TODO: using selectivity to judge full-scan might be inaccurate since the table is constantly changing.
+	// TODO: judge full-scan according to the execution plan directly.
+	if scanSelectivityLabel == "100%" {
+		metrics.PlanFullScanCounter.WithLabelValues(scanCountLabel).Inc()
+	}
+	metrics.PlanScanRowsCounter.WithLabelValues(scanCountLabel).Inc()
+	metrics.PlanScanSelectivityCounter.WithLabelValues(scanSelectivityLabel).Inc()
+	metrics.PlanKVReqCounter.WithLabelValues(getKVReqLabel(sample.KvReqTotal)).Inc()
+}
+
+func getKVReqLabel(kvReq uint64) string {
+	if kvReq < 100 {
+		return "0-100"
+	} else if kvReq < 1000 {
+		return "100-1000"
+	} else if kvReq < 10000 {
+		return "1000-10000"
+	} else {
+		return "10000+"
+	}
+}
+
+func getScanSelectivityLabel(sample Sample) string {
+	if sample.PercentageAccess[0] > 0 || sample.PercentageAccess[1] > 0 {
+		return "0-1%"
+	} else if sample.PercentageAccess[2] > 0 {
+		return "1-10%"
+	} else if sample.PercentageAccess[3] > 0 || sample.PercentageAccess[4] > 0 {
+		return "10-50%"
+	} else if sample.PercentageAccess[5] > 0 {
+		return "50-100%"
+	} else {
+		return "100%"
+	}
+}
+
+func getScanCountLabel(scanRows uint64) string {
+	if scanRows < 1000 {
+		return "0-1000"
+	} else if scanRows < 10000 {
+		return "1000-10000"
+	} else if scanRows < 100000 {
+		return "10000-100000"
+	} else if scanRows < 1000000 {
+		return "100000-1000000"
+	} else {
+		return "1000000+"
+	}
 }

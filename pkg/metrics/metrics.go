@@ -298,6 +298,11 @@ func RegisterMetrics() {
 	prometheus.MustRegister(MergeSortWriteBytes)
 	prometheus.MustRegister(MergeSortReadBytes)
 
+	prometheus.MustRegister(PlanFullScanCounter)
+	prometheus.MustRegister(PlanScanRowsCounter)
+	prometheus.MustRegister(PlanScanSelectivityCounter)
+	prometheus.MustRegister(PlanKVReqCounter)
+
 	prometheus.MustRegister(InfoSchemaV2CacheCounter)
 	prometheus.MustRegister(InfoSchemaV2CacheMemUsage)
 	prometheus.MustRegister(InfoSchemaV2CacheMemLimit)

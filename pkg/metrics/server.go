@@ -76,6 +76,12 @@ var (
 	MemoryLimit                     prometheus.Gauge
 	InternalSessions                prometheus.Gauge
 	ActiveUser                      prometheus.Gauge
+
+	// metrics for Optimizer Plan Quality
+	PlanFullScanCounter        *prometheus.CounterVec
+	PlanKVReqCounter           *prometheus.CounterVec
+	PlanScanRowsCounter        *prometheus.CounterVec
+	PlanScanSelectivityCounter *prometheus.CounterVec
 )
 
 // InitServerMetrics initializes server metrics.
@@ -422,6 +428,38 @@ func InitServerMetrics() {
 			Name:      "active_users",
 			Help:      "The total count of active user.",
 		})
+
+	PlanFullScanCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_full_scan_total",
+			Help:      "Counter of table or index full scan.",
+		}, []string{LblType})
+
+	PlanScanRowsCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_scan_rows_total",
+			Help:      "Counter of table or index scans with different scan rows.",
+		}, []string{LblType})
+
+	PlanScanSelectivityCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_scan_selectivity_total",
+			Help:      "Counter of table or index scans with different scan selectivity.",
+		}, []string{LblType})
+
+	PlanKVReqCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_kv_request_total",
+			Help:      "Counter of index scans with different kv request count.",
+		}, []string{LblType})
 }
 
 // ExecuteErrorToLabel converts an execute error to label.
