@@ -234,3 +234,15 @@ func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) 
 	}
 	return cfg.Config.ParseFromFlags(flags)
 }
+
+type ChecksumWithPitrIdMapConfig struct {
+	task.RestoreConfig
+}
+
+func (cfg *ChecksumWithPitrIdMapConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
+	cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return cfg.RestoreConfig.ParseFromFlags(flags, false)
+}

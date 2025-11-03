@@ -35,7 +35,7 @@ import (
 // Split the pitr_id_map data into 512 KiB chunks to avoid one kv entry size too large.
 const PITRIdMapBlockSize int = 524288
 
-func pitrIDMapsFilename(clusterID, restoredTS uint64) string {
+func PitrIDMapsFilename(clusterID, restoredTS uint64) string {
 	return fmt.Sprintf("pitr_id_maps/pitr_id_map.cluster_id:%d.restored_ts:%d", clusterID, restoredTS)
 }
 
@@ -96,7 +96,7 @@ func (rc *LogClient) saveIDMap2Storage(
 	dbMaps []*backuppb.PitrDBMap,
 ) error {
 	clusterID := rc.GetClusterID(ctx)
-	metaFileName := pitrIDMapsFilename(clusterID, rc.restoreTS)
+	metaFileName := PitrIDMapsFilename(clusterID, rc.restoreTS)
 	metaWriter := metautil.NewMetaWriter(storage, metautil.MetaFileSize, false, metaFileName, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		m.ClusterId = clusterID
@@ -178,7 +178,7 @@ func (rc *LogClient) loadSchemasMapFromStorage(
 	restoredTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
 	clusterID := rc.GetClusterID(ctx)
-	metaFileName := pitrIDMapsFilename(clusterID, restoredTS)
+	metaFileName := PitrIDMapsFilename(clusterID, restoredTS)
 	exist, err := storage.FileExists(ctx, metaFileName)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to check filename:%s ", metaFileName)
