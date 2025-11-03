@@ -117,8 +117,9 @@ func (e *mppTaskGenerator) replaceCTEReader(currentPlan base.PhysicalPlan) {
 		if cteR, ok := child.(*PhysicalCTE); ok {
 			group := e.CTEGroups[cteR.CTE.IDForStorage]
 			inconsistenceNullable := false
+			CTEStorageSchema := group.CTEStorage.Children()[0].Schema()
 			for i, col := range cteR.Schema().Columns {
-				if mysql.HasNotNullFlag(col.RetType.GetFlag()) != mysql.HasNotNullFlag(group.CTEStorage.Children()[0].Schema().Columns[i].RetType.GetFlag()) {
+				if mysql.HasNotNullFlag(col.RetType.GetFlag()) != mysql.HasNotNullFlag(CTEStorageSchema.Columns[i].RetType.GetFlag()) {
 					inconsistenceNullable = true
 					break
 				}
@@ -128,7 +129,7 @@ func (e *mppTaskGenerator) replaceCTEReader(currentPlan base.PhysicalPlan) {
 				continue
 			}
 
-			cols := group.CTEStorage.Children()[0].Schema().Clone().Columns
+			cols := CTEStorageSchema.Clone().Columns
 			for i, col := range cols {
 				col.Index = i
 			}
@@ -665,34 +666,27 @@ func partitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []
 	return ret, nil
 }
 
-type cteHelper struct {
-	cteMap map[int]struct {
-		sinks   []*PhysicalCTESink
-		sources []*PhysicalCTESource
-	}
-}
-
-func (e *mppTaskGenerator) traverseFragForCTE(p base.PhysicalPlan, cteMap map[int]struct {
+type ctePair struct {
 	sinks   []*PhysicalCTESink
 	sources []*PhysicalCTESource
-}) {
+}
+
+type cteHelper struct {
+	cteMap map[int]ctePair
+}
+
+func (e *mppTaskGenerator) traverseFragForCTE(p base.PhysicalPlan, cteMap map[int]ctePair) {
 	switch x := p.(type) {
 	case *PhysicalCTESink:
 		if _, ok := cteMap[x.IDForStorage]; !ok {
-			cteMap[x.IDForStorage] = struct {
-				sinks   []*PhysicalCTESink
-				sources []*PhysicalCTESource
-			}{sinks: make([]*PhysicalCTESink, 0, 1), sources: make([]*PhysicalCTESource, 0, 1)}
+			cteMap[x.IDForStorage] = ctePair{sinks: make([]*PhysicalCTESink, 0, 1), sources: make([]*PhysicalCTESource, 0, 1)}
 		}
 		cteHelper := cteMap[x.IDForStorage]
 		cteHelper.sinks = append(cteHelper.sinks, x)
 		cteMap[x.IDForStorage] = cteHelper
 	case *PhysicalCTESource:
 		if _, ok := cteMap[x.IDForStorage]; !ok {
-			cteMap[x.IDForStorage] = struct {
-				sinks   []*PhysicalCTESink
-				sources []*PhysicalCTESource
-			}{sinks: make([]*PhysicalCTESink, 0, 1), sources: make([]*PhysicalCTESource, 0, 1)}
+			cteMap[x.IDForStorage] = ctePair{sinks: make([]*PhysicalCTESink, 0, 1), sources: make([]*PhysicalCTESource, 0, 1)}
 		}
 		cteHelper := cteMap[x.IDForStorage]
 		cteHelper.sources = append(cteHelper.sources, x)
@@ -709,10 +703,7 @@ func (e *mppTaskGenerator) traverseFragForCTE(p base.PhysicalPlan, cteMap map[in
 func (e *mppTaskGenerator) fixDuplicatedTimesForCTE(frags []*Fragment) {
 	// We need to fix the duplicated times for CTE, because the CTE may be used in multiple fragments.
 	// The CTE should only be executed once, so we need to set the times to 1.
-	cteMap := make(map[int]struct {
-		sinks   []*PhysicalCTESink
-		sources []*PhysicalCTESource
-	})
+	cteMap := make(map[int]ctePair)
 
 	for _, f := range frags {
 		e.traverseFragForCTE(f.Sink, cteMap)

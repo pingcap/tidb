@@ -47,7 +47,7 @@ type PhysicalCTE struct {
 	readerReceiver *PhysicalExchangeReceiver
 	StorageSender  *PhysicalExchangeSender
 
-	sink   *PhysicalCTESink
+	sink   *PhysicalCTESink // CTESource -> CTESink
 	source *PhysicalCTESource
 }
 
