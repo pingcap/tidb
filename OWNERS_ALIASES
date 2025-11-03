@@ -82,6 +82,7 @@ aliases:
     - D3Hunter
   sig-approvers-parser:
     - bb7133
+    - Benjamin2037
     - BornChanger
     - D3Hunter
   sig-approvers-resourcemanager:
