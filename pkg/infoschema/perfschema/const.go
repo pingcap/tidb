@@ -573,6 +573,7 @@ const tableSessionAccountConnectAttrs = "CREATE TABLE IF NOT EXISTS " + tableNam
 	"ATTR_VALUE varchar(1024) COLLATE utf8mb4_bin DEFAULT NULL," +
 	"ORDINAL_POSITION int DEFAULT NULL);"
 
+// tableStatusByConnection contains the column name definitions for the table status_by_connection
 const tableStatusByConnection = "CREATE TABLE IF NOT EXISTS " + tableNameStatusByConnection + " (" +
 	"CONNECTION_ID bigint unsigned NOT NULL," +
 	"VARIABLE_NAME varchar(64) NOT NULL," +
