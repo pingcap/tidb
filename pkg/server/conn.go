@@ -1244,7 +1244,7 @@ func (cc *clientConn) addConnMetrics() {
 			tlsutil.VersionName(connState.Version),
 		).Inc()
 		metrics.TLSCipher.WithLabelValues(
-			tls.CipherSuiteName(connState.CipherSuite),
+			tlsutil.CipherSuiteName(connState.CipherSuite),
 		).Inc()
 	}
 }

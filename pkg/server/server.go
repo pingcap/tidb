@@ -1253,7 +1253,7 @@ func (s *Server) GetStatusVars() map[uint64]map[string]string {
 			if client.tlsConn != nil {
 				connState := client.tlsConn.ConnectionState()
 				rs[pi.ID] = map[string]string{
-					"Ssl_cipher":  tls.CipherSuiteName(connState.CipherSuite),
+					"Ssl_cipher":  tlsutil.CipherSuiteName(connState.CipherSuite),
 					"Ssl_version": tlsutil.VersionName(connState.Version),
 				}
 			}

@@ -20,7 +20,6 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/util"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 )
 
@@ -146,7 +145,7 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]any, error) {
 
 	// `vars` may be nil in unit tests.
 	if vars != nil && vars.TLSConnectionState != nil {
-		statusVars["Ssl_cipher"] = util.TLSCipher2String(vars.TLSConnectionState.CipherSuite)
+		statusVars["Ssl_cipher"] = tlsutil.CipherSuiteName(vars.TLSConnectionState.CipherSuite)
 		statusVars["Ssl_cipher_list"] = tlsSupportedCiphers
 		// tls.VerifyClientCertIfGiven == SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE
 		statusVars["Ssl_verify_mode"] = 0x01 | 0x04
@@ -159,7 +158,7 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]any, error) {
 func init() {
 	var ciphersBuffer bytes.Buffer
 	for _, v := range tlsCiphers {
-		ciphersBuffer.WriteString(util.TLSCipher2String(v))
+		ciphersBuffer.WriteString(tlsutil.CipherSuiteName(v))
 		ciphersBuffer.WriteString(":")
 	}
 	tlsSupportedCiphers = ciphersBuffer.String()
