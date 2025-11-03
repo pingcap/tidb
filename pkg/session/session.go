@@ -1897,16 +1897,21 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	return []sqlexec.RecordSet{rs}, err
 }
 
+type sqlRegexp struct {
+	regexp string
+}
+
+func (s sqlRegexp) sqlRegexpDumpTriggerCheck(cfg *traceevent.DumpTriggerConfig) bool {
+	match, err := regexp.MatchString(cfg.UserCommand.SQLRegexp, s.regexp)
+	return err == nil && match
+}
+
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
 	logutil.Logger(ctx).Debug("parse", zap.String("sql", sql))
 	parseStartTime := time.Now()
 
-	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.sql_regexp",
-		func(cfg *traceevent.DumpTriggerConfig) bool {
-			match, err := regexp.MatchString(cfg.UserCommand.SQLRegexp, sql)
-			return err == nil && match
-		})
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.sql_regexp", sqlRegexp{sql}.sqlRegexpDumpTriggerCheck)
 
 	// Load the session variables to the context.
 	// This is necessary for the parser to get the current sql_mode.

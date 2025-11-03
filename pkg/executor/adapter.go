@@ -1682,6 +1682,10 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 	return nil
 }
 
+func slowQueryDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.Event.Type == "slow_query"
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -1731,10 +1735,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if trace.IsEnabled() {
 		trace.Log(a.GoCtx, "details", slowLog)
 	}
-	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.suspicious_event",
-		func(config *traceevent.DumpTriggerConfig) bool {
-			return config.Event.Type == "slow_query"
-		})
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.suspicious_event", slowQueryDumpTriggerCheck)
 
 	if !matchRules {
 		return
@@ -1912,6 +1913,30 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 	return
 }
 
+type digestAlias struct {
+	*parser.Digest
+}
+
+func (digest digestAlias) planDigestDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.PlanDigest == digest.Digest.String()
+}
+
+type stmtLabelAlias struct {
+	label string
+}
+
+func (s stmtLabelAlias) stmtLabelDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.StmtLabel == s.label
+}
+
+type userAtlas struct {
+	user string
+}
+
+func (u userAtlas) byUserDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.ByUser == u.user
+}
+
 // SummaryStmt collects statements for information_schema.statements_summary
 func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -1940,20 +1965,10 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	costTime := sessVars.GetTotalCostDuration()
 	charset, collation := sessVars.GetCharsetInfo()
 
-	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.plan_digest",
-		func(config *traceevent.DumpTriggerConfig) bool {
-			return config.UserCommand.PlanDigest == digest.String()
-		})
-
-	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.stmt_label",
-		func(config *traceevent.DumpTriggerConfig) bool {
-			return config.UserCommand.StmtLabel == stmtCtx.StmtType
-		})
-
-	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.by_user",
-		func(config *traceevent.DumpTriggerConfig) bool {
-			return config.UserCommand.ByUser == userString
-		})
+	// Not using closure to avoid unnecessary memory allocation.
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.plan_digest", digestAlias{digest}.planDigestDumpTriggerCheck)
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.stmt_label", stmtLabelAlias{stmtCtx.StmtType}.stmtLabelDumpTriggerCheck)
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.by_user", userAtlas{userString}.byUserDumpTriggerCheck)
 
 	var prevSQL, prevSQLDigest string
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {

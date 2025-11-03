@@ -849,7 +849,7 @@ func convertTraceEvent(events []traceevent.Event) []Event {
 	if tid == 0 {
 		logutil.BgLogger().Info("wrong traceid")
 	}
-	for i := 0; i < len(res); i++ {
+	for i := range res {
 		res[i].TID = tid
 	}
 	return res
