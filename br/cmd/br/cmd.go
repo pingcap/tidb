@@ -125,6 +125,11 @@ func DefineCommonFlags(cmd *cobra.Command) {
 }
 
 func calculateMemoryLimit(memleft uint64) uint64 {
+	// Special case: if no memory left, return 0
+	if memleft == 0 {
+		return 0
+	}
+
 	// memreserved = f(memleft) = 512MB * memleft / (memleft + 4GB)
 	//  * f(0) = 0
 	//  * f(4GB) = 256MB
@@ -134,10 +139,11 @@ func calculateMemoryLimit(memleft uint64) uint64 {
 	// Prevent uint64 underflow when memreserved >= memleft
 	// This can happen when available memory is very low (< 256MB)
 	if memreserved >= memleft {
-		log.Warn("insufficient memory left for BR, using minimum limit",
+		log.Warn("insufficient memory left for BR, capping to available",
 			zap.Uint64("memleft", memleft),
 			zap.Uint64("memreserved", memreserved))
-		return quarterGiB // Return minimum limit (256 MB)
+		// Return available memory instead of forcing a minimum
+		return memleft
 	}
 
 	// 0     memused          memtotal-memreserved  memtotal
