@@ -17,6 +17,7 @@ package benchdaily
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"reflect"
@@ -41,6 +42,7 @@ type BenchResult struct {
 }
 
 func benchmarkResultToJSON(name string, r testing.BenchmarkResult) BenchResult {
+	fmt.Println(name, " ", r.String())
 	return BenchResult{
 		Name:        name,
 		NsPerOp:     r.NsPerOp(),
