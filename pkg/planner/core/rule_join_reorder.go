@@ -34,17 +34,56 @@ func isTableExpressionPlan(plan base.LogicalPlan) bool {
 		return false
 	}
 
-	switch plan.(type) {
+	switch p := plan.(type) {
 	case *logicalop.LogicalTableDual:
 		return false // TableDual is a special case
 	case *logicalop.DataSource:
 		return false // Base table
-	case *logicalop.LogicalSelection, *logicalop.LogicalProjection:
-		return true // These are typically table expressions
+	case *logicalop.LogicalSelection:
+		// Recursively check the child
+		if len(p.Children()) > 0 {
+			return isTableExpressionPlan(p.Children()[0])
+		}
+		return false
+	case *logicalop.LogicalProjection:
+		// Recursively check the child
+		if len(p.Children()) > 0 {
+			return isTableExpressionPlan(p.Children()[0])
+		}
+		return false
+	case *logicalop.LogicalJoin:
+		// Left outer joins are table expressions
+		if p.JoinType == base.LeftOuterJoin {
+			return true
+		}
+		// For inner joins, recursively check if they contain table expressions
+		for _, child := range p.Children() {
+			if isTableExpressionPlan(child) {
+				return true
+			}
+		}
+		return false
 	default:
-		// Other types like subqueries, CTEs, etc. are likely table expressions
+		// Other types like subqueries, CTEs, aggregations etc. - conservatively assume they are table expressions
 		return true
 	}
+}
+
+// hasConnectingEqualConditions checks if the equal conditions connect left schema to right schema
+func hasConnectingEqualConditions(eqConds []*expression.ScalarFunction, leftSchema, rightSchema *expression.Schema) bool {
+	for _, eqCond := range eqConds {
+		args := eqCond.GetArgs()
+		if len(args) == 2 {
+			lCol, lOk := args[0].(*expression.Column)
+			rCol, rOk := args[1].(*expression.Column)
+			if lOk && rOk &&
+				((leftSchema.Contains(lCol) && rightSchema.Contains(rCol)) ||
+					(leftSchema.Contains(rCol) && rightSchema.Contains(lCol))) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // extractJoinGroup extracts all the join nodes connected with continuous
@@ -140,25 +179,27 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 				}
 			}
 
-			// Check if any of the left group tables are table expressions
-			// If so, and this is not a cartesian join, don't reorder
+			// Check if the left child is a table expression
+			// If so, and we have join predicates connecting left to right, don't reorder
 			if !noExpand && len(join.EqualConditions) > 0 && p.SCtx().GetSessionVars().HashJoinCostFactor > 1 {
-				for _, lhs := range lhsGroup {
-					if isTableExpressionPlan(lhs) {
+				leftSchema := join.Children()[0].Schema()
+				rightSchema := join.Children()[1].Schema()
+				if hasConnectingEqualConditions(join.EqualConditions, leftSchema, rightSchema) {
+					if isTableExpressionPlan(join.Children()[0]) {
 						noExpand = true
-						break
 					}
 				}
 			}
 		} else if join.JoinType == base.InnerJoin {
-			// For inner joins, also check if left side has table expressions
-			// If so, and this is not a cartesian join, don't reorder to preserve index join opportunity
+			// For inner joins, also check if left child is a table expression
+			// If so, and we have join predicates connecting left to right, don't reorder to preserve index join opportunity
 			// Only apply this optimization when hash join cost factor > 1 (indicating preference for index joins)
 			if len(join.EqualConditions) > 0 && p.SCtx().GetSessionVars().HashJoinCostFactor > 1 {
-				for _, lhs := range lhsGroup {
-					if isTableExpressionPlan(lhs) {
+				leftSchema := join.Children()[0].Schema()
+				rightSchema := join.Children()[1].Schema()
+				if hasConnectingEqualConditions(join.EqualConditions, leftSchema, rightSchema) {
+					if isTableExpressionPlan(join.Children()[0]) {
 						noExpand = true
-						break
 					}
 				}
 			}
@@ -207,14 +248,15 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 				}
 			}
 		} else if join.JoinType == base.InnerJoin {
-			// For inner joins, also check if right side has table expressions
-			// If so, and this is not a cartesian join, don't reorder to preserve index join opportunity
+			// For inner joins, also check if right child is a table expression
+			// If so, and we have join predicates connecting left to right, don't reorder to preserve index join opportunity
 			// Only apply this optimization when hash join cost factor > 1 (indicating preference for index joins)
 			if len(join.EqualConditions) > 0 && p.SCtx().GetSessionVars().HashJoinCostFactor > 1 {
-				for _, rhs := range rhsGroup {
-					if isTableExpressionPlan(rhs) {
+				leftSchema := join.Children()[0].Schema()
+				rightSchema := join.Children()[1].Schema()
+				if hasConnectingEqualConditions(join.EqualConditions, leftSchema, rightSchema) {
+					if isTableExpressionPlan(join.Children()[1]) {
 						noExpand = true
-						break
 					}
 				}
 			}
