@@ -152,8 +152,9 @@ type jobScheduler struct {
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
 	generalDDLWorkerPool *workerPool
-	bgJobWorkerPool      *workerPool
-	seqAllocator         atomic.Uint64
+	// bgJobWorkerPool is only used in the next-gen kernel. NOTE: Need to check it is not nil before use.
+	bgJobWorkerPool *workerPool
+	seqAllocator    atomic.Uint64
 
 	// those fields are shared with 'ddl' instance
 	// TODO ddlCtx is too large for here, we should remove dependency on it.
@@ -666,6 +667,9 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 }
 
 func (s *jobScheduler) workerPoolExhausted() bool {
+	if s.bgJobWorkerPool == nil {
+		return s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0
+	}
 	return s.generalDDLWorkerPool.available() == 0 &&
 		s.reorgWorkerPool.available() == 0 &&
 		s.bgJobWorkerPool.available() == 0
