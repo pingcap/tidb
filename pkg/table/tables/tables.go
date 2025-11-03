@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
-	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -287,20 +286,14 @@ func checkDataForModifyColumn(row []types.Datum, col *table.Column) error {
 		return nil
 	}
 
-	var strictCtx = exprstatic.NewExprContext(
-		exprstatic.WithEvalCtx(
-			exprstatic.NewEvalContext(
-				exprstatic.WithSQLMode(
-					mysql.ModeStrictAllTables | mysql.ModeStrictTransTables))))
-
 	data := row[col.Offset]
-	value, err := table.CastColumnValueToType(strictCtx, data, col.ChangingFieldType, false, false)
+	value, err := table.CastColumnValueWithStrictMode(data, col.ChangingFieldType)
 	if err != nil {
 		return err
 	}
 
 	// For the case from VARCHAR -> CHAR
-	if col.ChangingFieldType.GetType() == mysql.TypeVarString && value.GetString() != data.GetString() {
+	if col.ChangingFieldType.GetType() == mysql.TypeString && value.GetString() != data.GetString() {
 		return errors.New("data truncation error during modify column")
 	}
 	return nil

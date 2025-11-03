@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -330,10 +331,13 @@ func CastValue(sctx variable.SessionVarsProvider, val types.Datum, col *model.Co
 	return castColumnValue(sc.TypeCtx(), sc.ErrCtx(), vars.SQLMode, val, &col.FieldType, col.Name.O, vars.ConnectionID, returnErr, forceIgnoreTruncate)
 }
 
-// CastColumnValueToType casts a value based on column type with expression BuildContext
-func CastColumnValueToType(ctx expression.BuildContext, val types.Datum, tp *types.FieldType, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
-	evalCtx := ctx.GetEvalCtx()
-	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, tp, "", ctx.ConnectionID(), returnErr, forceIgnoreTruncate)
+var strictCtx = types.NewContext(types.StrictFlags, time.UTC, context.IgnoreWarn)
+
+// CastColumnValueWithStrictMode casts a value based on column type with strict flags.
+// Currently, it is used for inplace modify column without row reorg.
+func CastColumnValueWithStrictMode(val types.Datum, tp *types.FieldType) (casted types.Datum, err error) {
+	// The sql mode passed in is not used.
+	return castColumnValue(strictCtx, errctx.StrictNoWarningContext, mysql.ModeNone, val, tp, "", 0, true, false)
 }
 
 // CastColumnValue casts a value based on column type with expression BuildContext
