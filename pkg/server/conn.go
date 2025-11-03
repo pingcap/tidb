@@ -1238,13 +1238,15 @@ func errStrForLog(err error, redactMode string) string {
 
 // Per connection metrics
 func (cc *clientConn) addConnMetrics() {
-	connState := cc.tlsConn.ConnectionState()
-	metrics.TLSVersion.WithLabelValues(
-		tlsutil.VersionName(connState.Version),
-	).Inc()
-	metrics.TLSCipher.WithLabelValues(
-		tls.CipherSuiteName(connState.CipherSuite),
-	).Inc()
+	if cc.tlsConn != nil {
+		connState := cc.tlsConn.ConnectionState()
+		metrics.TLSVersion.WithLabelValues(
+			tlsutil.VersionName(connState.Version),
+		).Inc()
+		metrics.TLSCipher.WithLabelValues(
+			tls.CipherSuiteName(connState.CipherSuite),
+		).Inc()
+	}
 }
 
 // Per query metrics
