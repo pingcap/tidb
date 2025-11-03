@@ -76,7 +76,7 @@ func RunChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWithRewriteR
 }
 
 func RunUpstreamChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWithPitrIdMapConfig) error {
-	c := &checksumTableCtx{cfg: cfg.Config}
+	c := &checksumTableCtx{cfg: ChecksumWithRewriteRulesConfig{Config: cfg.Config}}
 	if err := c.init(ctx, g); err != nil {
 		return errors.Trace(err)
 	}

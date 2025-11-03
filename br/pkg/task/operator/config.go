@@ -16,6 +16,7 @@ import (
 
 const (
 	flagTableConcurrency = "table-concurrency"
+	flagRestoredTS       = "restored-ts"
 	flagStorePatterns    = "stores"
 	flagTTL              = "ttl"
 	flagSafePoint        = "safepoint"
@@ -225,6 +226,7 @@ type ChecksumWithRewriteRulesConfig struct {
 func DefineFlagsForChecksumTableConfig(f *pflag.FlagSet) {
 	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
+	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
 }
 
 func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
@@ -244,5 +246,9 @@ func (cfg *ChecksumWithPitrIdMapConfig) ParseFromFlags(flags *pflag.FlagSet) (er
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return cfg.RestoreConfig.ParseFromFlags(flags, false)
+	cfg.RestoreTS, err = flags.GetUint64(flagRestoredTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return cfg.Config.ParseFromFlags(flags)
 }

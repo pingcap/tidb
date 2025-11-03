@@ -38,6 +38,7 @@ func newOperatorCommand() *cobra.Command {
 	cmd.AddCommand(newForceFlushCommand())
 	cmd.AddCommand(newChecksumCommand())
 	cmd.AddCommand(newPitrChecksumCommand())
+	cmd.AddCommand(newUpstreamChecksumCommand())
 	return cmd
 }
 
@@ -159,15 +160,15 @@ func newPitrChecksumCommand() *cobra.Command {
 	return cmd
 }
 
-func newChecksumCommand() *cobra.Command {
+func newUpstreamChecksumCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "checksum",
+		Use:   "checksum-upstream",
 		Short: "calculate the checksum",
 		Long: "Calculate the checksum of the current cluster (specified by `-u`). " +
 			"This can be used when you have the checksum of upstream elsewhere",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := operator.ChecksumWithRewriteRulesConfig{}
+			cfg := operator.ChecksumWithPitrIdMapConfig{}
 			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
 				return err
 			}
