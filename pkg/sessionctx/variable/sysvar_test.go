@@ -1648,6 +1648,16 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 				return vardef.On
 			}(),
 		},
+		{
+			vardef.PluginAuditLogBufferSize,
+			strconv.Itoa(config.GetGlobalConfig().Instance.PluginAuditLogBufferSize),
+			strconv.Itoa(config.GetGlobalConfig().Instance.PluginAuditLogBufferSize),
+		},
+		{
+			vardef.PluginAuditLogFlushInterval,
+			strconv.Itoa(config.GetGlobalConfig().Instance.PluginAuditLogFlushInterval),
+			strconv.Itoa(config.GetGlobalConfig().Instance.PluginAuditLogFlushInterval),
+		},
 	}
 	for _, v := range vars {
 		initVal := GlobalSystemVariableInitialValue(v.name, v.val)
