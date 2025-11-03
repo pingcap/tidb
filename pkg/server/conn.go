@@ -1069,6 +1069,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 		close(cc.quit)
 	}()
 
+	cc.addConnMetrics()
+
 	parentCtx := ctx
 	var traceInfo *tracing.TraceInfo
 	// Usually, client connection status changes between [dispatching] <=> [reading].
@@ -1166,7 +1168,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		if err != nil {
 			cc.audit(context.Background(), plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
-				cc.addMetrics(data[0], startTime, nil)
+				cc.addQueryMetrics(data[0], startTime, nil)
 				server_metrics.DisconnectNormal.Inc()
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
@@ -1210,7 +1212,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			err1 := cc.writeError(ctx, err)
 			terror.Log(err1)
 		}
-		cc.addMetrics(data[0], startTime, err)
+		cc.addQueryMetrics(data[0], startTime, err)
 		cc.pkt.SetSequence(0)
 		cc.pkt.SetCompressedSequence(0)
 	}
@@ -1234,7 +1236,19 @@ func errStrForLog(err error, redactMode string) string {
 	return ret
 }
 
-func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
+// Per connection metrics
+func (cc *clientConn) addConnMetrics() {
+	connState := cc.tlsConn.ConnectionState()
+	metrics.TLSVersion.WithLabelValues(
+		tlsutil.VersionName(connState.Version),
+	).Inc()
+	metrics.TLSCipher.WithLabelValues(
+		tls.CipherSuiteName(connState.CipherSuite),
+	).Inc()
+}
+
+// Per query metrics
+func (cc *clientConn) addQueryMetrics(cmd byte, startTime time.Time, err error) {
 	if cmd == mysql.ComQuery && cc.ctx.Value(sessionctx.LastExecuteDDL) != nil {
 		// Don't take DDL execute time into account.
 		// It's already recorded by other metrics in ddl package.
