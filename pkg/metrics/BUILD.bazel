@@ -14,6 +14,7 @@ go_library(
         "import.go",
         "infoschema.go",
         "log_backup.go",
+        "memory.go",
         "meta.go",
         "metrics.go",
         "owner.go",

@@ -148,6 +148,9 @@ const (
 	// TiDBGeneralLog is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
+	// TiDBTraceEvent controls the experimental trace event instrumentation.
+	TiDBTraceEvent = "tidb_trace_event"
+
 	// TiDBLogFileMaxDays is used to log every query in the server in info level.
 	TiDBLogFileMaxDays = "tidb_log_file_max_days"
 
@@ -1150,7 +1153,7 @@ const (
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableDDLAnalyze indicates whether ddl(create/reorg index) is with embedded index analyze.
-	TiDBEnableDDLAnalyze = "tidb_enable_ddl_analyze"
+	TiDBEnableDDLAnalyze = "tidb_stats_update_during_ddl"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
 	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
 	// TiDBEnableTmpStorageOnOOM controls whether to enable the temporary storage for some operators
@@ -1174,6 +1177,14 @@ const (
 	TiDBServerMemoryLimitSessMinSize = "tidb_server_memory_limit_sess_min_size"
 	// TiDBServerMemoryLimitGCTrigger indicates the gc percentage of the TiDBServerMemoryLimit.
 	TiDBServerMemoryLimitGCTrigger = "tidb_server_memory_limit_gc_trigger"
+	// TiDBMemArbitratorSoftLimit indicates the soft memory quota limit of the global memory arbitrator
+	TiDBMemArbitratorSoftLimit = "tidb_mem_arbitrator_soft_limit"
+	// TiDBMemArbitratorMode indicates work modes of the global memory arbitrator
+	TiDBMemArbitratorMode = "tidb_mem_arbitrator_mode"
+	// TiDBMemArbitratorQueryReserved indicates the memory quota query needs to subscribe from the global memory arbitrator before execution
+	TiDBMemArbitratorQueryReserved = "tidb_mem_arbitrator_query_reserved"
+	// TiDBMemArbitratorWaitAverse indicates whether the query is wait averse
+	TiDBMemArbitratorWaitAverse = "tidb_mem_arbitrator_wait_averse"
 	// TiDBEnableGOGCTuner is to enable GOGC tuner. it can tuner GOGC
 	TiDBEnableGOGCTuner = "tidb_enable_gogc_tuner"
 	// TiDBGOGCTunerThreshold is to control the threshold of GOGC tuner.
@@ -1434,6 +1445,7 @@ const (
 	DefTiDBMemQuotaApplyCache               = 32 << 20 // 32MB.
 	DefTiDBMemQuotaBindingCache             = 64 << 20 // 64MB.
 	DefTiDBGeneralLog                       = false
+	DefTiDBTraceEvent                       = Off
 	DefTiDBPProfSQLCPU                      = 0
 	DefTiDBRetryLimit                       = 10
 	DefTiDBDisableTxnAutoRetry              = true
@@ -1728,6 +1740,10 @@ const (
 	DefTiDBLoadBindingTimeout                         = 200
 	DefTiDBEnableBindingUsage                         = true
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
+	DefTiDBMemArbitratorSoftLimitText                 = memory.ArbitratorSoftLimitModDisableName
+	DefTiDBMemArbitratorModeText                      = memory.ArbitratorModeDisableName
+	DefTiDBMemArbitratorQueryReservedText             = "0"
+	DefTiDBMemArbitratorWaitAverse                    = "0"
 )
 
 // Process global variables.
