@@ -334,9 +334,9 @@ func (c *SuspiciousEventConfig) Validate(b *strings.Builder) error {
 // DumpTriggerConfig is the configuration for dump trigger.
 type DumpTriggerConfig struct {
 	Type        string                 `json:"type"`
-	Sampling    int                    `json:"sampling", omitempty`
-	Event       *SuspiciousEventConfig `json:"suspicious_event", omitempty`
-	UserCommand *UserCommandConfig     `json:"user_command",omitempty`
+	Sampling    int                    `json:"sampling,omitempty"`
+	Event       *SuspiciousEventConfig `json:"suspicious_event,omitempty"`
+	UserCommand *UserCommandConfig     `json:"user_command,omitempty"`
 }
 
 // Validate validates the DumpTriggerConfig.
