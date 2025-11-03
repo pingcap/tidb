@@ -444,12 +444,20 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 }
 
 func TestStatsAnalyzedInDDL(t *testing.T) {
+<<<<<<< HEAD
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("set session tidb_stats_update_during_ddl = 1")
 	// test normal table
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+=======
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("set session tidb_stats_update_during_ddl = 1")
+		// test normal table
+		testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+>>>>>>> 1cc2a48d78b (planner: update embedded analyze variable name (#64154))
 
 	// insert data
 	for i := range 50 {

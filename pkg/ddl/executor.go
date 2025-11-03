@@ -6932,7 +6932,12 @@ func getEnableDDLAnalyze(sctx sessionctx.Context) string {
 	if val, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBEnableStatsUpdateDuringDDL); ok {
 		return val
 	}
+<<<<<<< HEAD
 	return variable.BoolToOnOff(variable.DefTiDBEnableStatsUpdateDuringDDL)
+=======
+	logutil.DDLLogger().Info("system variable tidb_stats_update_during_ddl not found, use default value")
+	return variable.BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze)
+>>>>>>> 1cc2a48d78b (planner: update embedded analyze variable name (#64154))
 }
 
 func getAnalyzeVersion(sctx sessionctx.Context) string {
