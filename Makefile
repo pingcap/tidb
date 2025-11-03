@@ -51,7 +51,7 @@ precheck: fmt bazel_prepare
 
 .PHONY: check
 check: ## Run comprehensive code quality checks
-check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license check_abi
+check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license bazel_check_abi
 
 .PHONY: fmt
 fmt: ## Format Go code using gofmt
@@ -840,7 +840,7 @@ bazel_sync:
 bazel_mirror_upload:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror -- --mirror --upload
 
-.PHONY: check_abi
-check_abi:
+.PHONY: bazel_check_abi
+bazel_check_abi:
 	@echo "check ABI compatibility"
-	./tools/check/check-abi.sh
+	./tools/check/bazel-check-abi.sh

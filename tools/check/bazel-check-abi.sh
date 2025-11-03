@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-GOROOT=$(go env GOROOT)
+GOROOT=$(bazel run @io_bazel_rules_go//go -- env GOROOT)
 
 gosrc_md5=()
 gosrc_md5+=("${GOROOT}/src/internal/runtime/maps/map.go a29531cd3447fd3c90ceabfde5a08921")
