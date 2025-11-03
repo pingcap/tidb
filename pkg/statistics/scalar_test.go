@@ -16,7 +16,9 @@ package statistics
 
 import (
 	"math"
+	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -261,5 +263,89 @@ func TestEnumRangeValues(t *testing.T) {
 		str, err := types.DatumsToString(vals, true)
 		require.NoError(t, err)
 		require.Equal(t, test.res, str)
+	}
+}
+func generateTestCases() [][8]byte {
+	var testCases [][8]byte
+	rand.Seed(time.Now().UnixNano())
+	for i := 0; i < 100; i++ {
+		testCase := [8]byte{}
+		for j := 0; j < 8; j++ {
+			testCase[j] = byte(rand.Intn(256)) // Random byte value
+		}
+		testCases = append(testCases, testCase)
+	}
+	return testCases
+}
+
+func BenchmarkConvertBytesToScalar_Length0(b *testing.B) {
+	testCases := generateTestCases()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		convertBytesToScalar(testCases[i%len(testCases)][:0])
+	}
+}
+
+func BenchmarkConvertBytesToScalar_Length1(b *testing.B) {
+	testCases := generateTestCases()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		convertBytesToScalar(testCases[i%len(testCases)][:1])
+	}
+}
+
+func BenchmarkConvertBytesToScalar_Length2(b *testing.B) {
+	testCases := generateTestCases()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		convertBytesToScalar(testCases[i%len(testCases)][:2])
+	}
+}
+
+func BenchmarkConvertBytesToScalar_Length3(b *testing.B) {
+	testCases := generateTestCases()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		convertBytesToScalar(testCases[i%len(testCases)][:3])
+	}
+}
+
+func BenchmarkConvertBytesToScalar_Length4(b *testing.B) {
+	testCases := generateTestCases()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		convertBytesToScalar(testCases[i%len(testCases)][:4])
+	}
+}
+
+func BenchmarkConvertBytesToScalar_Length5(b *testing.B) {
+	testCases := generateTestCases()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		convertBytesToScalar(testCases[i%len(testCases)][:5])
+	}
+}
+
+func BenchmarkConvertBytesToScalar_Length6(b *testing.B) {
+	testCases := generateTestCases()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		convertBytesToScalar(testCases[i%len(testCases)][:6])
+	}
+}
+
+func BenchmarkConvertBytesToScalar_Length7(b *testing.B) {
+	testCases := generateTestCases()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		convertBytesToScalar(testCases[i%len(testCases)][:7])
+	}
+}
+
+func BenchmarkConvertBytesToScalar_Length8(b *testing.B) {
+	testCases := generateTestCases()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		convertBytesToScalar(testCases[i%len(testCases)][:8])
 	}
 }
