@@ -425,7 +425,7 @@ const (
 )
 
 // PreAllocForSerializedKeyBuffer estimates key length
-func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps []*types.FieldType, usedRows []int, filterVector []bool, nullVector []bool, serializeModes []SerializeMode, serializedKeysVectorBuffer [][]byte, isFirst bool, memoryUsagePerRow *[]int64) error {
+func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps []*types.FieldType, usedRows []int, filterVector []bool, nullVector []bool, serializeModes []SerializeMode, serializedKeysVectorBuffer [][]byte, memoryUsagePerRow *[]int64) error {
 	rowNum := len(usedRows)
 	if cap((*memoryUsagePerRow)) < rowNum {
 		(*memoryUsagePerRow) = make([]int64, rowNum)
@@ -580,24 +580,16 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 		}
 	}
 
-	if isFirst {
-		totalMemUsage := int64(0)
-		for _, usage := range *memoryUsagePerRow {
-			totalMemUsage += usage
-		}
-		continuousMem := make([]byte, totalMemUsage)
-		start := int64(0)
-		for i := range serializedKeysVectorBuffer {
-			rowLen := (*memoryUsagePerRow)[i]
-			serializedKeysVectorBuffer[i] = continuousMem[start : start : start+rowLen]
-			start += rowLen
-		}
-	} else {
-		for i := range serializedKeysVectorBuffer {
-			if int64(cap(serializedKeysVectorBuffer[i])) < (*memoryUsagePerRow)[i] {
-				serializedKeysVectorBuffer[i] = make([]byte, 0, (*memoryUsagePerRow)[i])
-			}
-		}
+	totalMemUsage := int64(0)
+	for _, usage := range *memoryUsagePerRow {
+		totalMemUsage += usage
+	}
+	continuousMem := make([]byte, totalMemUsage)
+	start := int64(0)
+	for i := range serializedKeysVectorBuffer {
+		rowLen := (*memoryUsagePerRow)[i]
+		serializedKeysVectorBuffer[i] = continuousMem[start : start : start+rowLen]
+		start += rowLen
 	}
 	return nil
 }
