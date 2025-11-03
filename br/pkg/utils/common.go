@@ -16,6 +16,7 @@ package utils
 import (
 	"context"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 )
@@ -37,4 +38,11 @@ func GenGlobalIDs(ctx context.Context, n int, storage kv.Storage) ([]int64, erro
 		})
 
 	return ids, err
+}
+
+func IsNextGenRestore(keyspaceName string) bool {
+	// If the keyspace name is not empty, it means the restore is for the next-gen TiDB.
+	// if using nextGen br + no keyspacename, we may panic during download/ingest ssts.
+	// if using classical br + keyspacename, we may consume more disk when download 3 peers.
+	return kerneltype.IsNextGen() && len(keyspaceName) > 0
 }
