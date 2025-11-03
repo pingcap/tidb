@@ -657,40 +657,26 @@ func (s *mockGCSSuite) TestScanLimitation() {
 }
 
 func (s *mockGCSSuite) TestCreateTableMetaByName() {
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1-schema-create.sql"},
-		Content:     []byte("CREATE DATABASE IF NOT EXISTS db1;\n"),
-	})
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1-schema-create.sql"},
-		Content:     []byte("CREATE DATABASE IF NOT EXISTS db2;\n"),
-	})
-	// table1 in db1
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1.tb1-schema.sql"},
-		Content:     []byte("CREATE TABLE IF NOT EXISTS db1.tb1 (a INT, b VARCHAR(10));\n"),
-	})
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1.tb1.001.sql"},
-		Content:     []byte("INSERT INTO db1.tb1 VALUES (1,'a'),(2,'b');\n"),
-	})
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1.tb1.002.sql"},
-		Content:     []byte("INSERT INTO db1.tb1 VALUES (3,'c'),(4,'d');\n"),
-	})
-	// table2 in db2
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1.tb2-schema.sql"},
-		Content:     []byte("CREATE TABLE IF NOT EXISTS db2.tb2 (x INT, y VARCHAR(10));\n"),
-	})
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1.tb2.001.sql"},
-		Content:     []byte("INSERT INTO db2.tb2 VALUES (5,'e'),(6,'f');\n"),
-	})
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: "db1.tb2.002.sql"},
-		Content:     []byte("INSERT INTO db2.tb2 VALUES (7,'g'),(8,'h');\n"),
-	})
+	for i := 0; i != 2; i++ {
+		s.server.CreateObject(fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("db%d-schema-create.sql", i)},
+			Content:     []byte(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS db%d;\n", i)),
+		})
+		for j := 0; j != 2; j++ {
+			s.server.CreateObject(fakestorage.Object{
+				ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("db%d.tb%d-schema.sql", i, j)},
+				Content:     []byte(fmt.Sprintf("CREATE TABLE IF NOT EXISTS db%d.tb%d (a INT, b VARCHAR(10));\n", i, j)),
+			})
+			s.server.CreateObject(fakestorage.Object{
+				ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("db%d.tb%d.001.sql", i, j)},
+				Content:     []byte(fmt.Sprintf("INSERT INTO db%d.tb%d VALUES (1,'a'),(2,'b');\n", i, j)),
+			})
+			s.server.CreateObject(fakestorage.Object{
+				ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("db%d.tb%d.002.sql", i, j)},
+				Content:     []byte(fmt.Sprintf("INSERT INTO db%d.tb%d VALUES (3,'c'),(4,'d');\n", i, j)),
+			})
+		}
+	}
 
 	db, mock, err := sqlmock.New()
 	s.NoError(err)
