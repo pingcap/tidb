@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -35,31 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
-
-func findEvent(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.ActionType) *notifier.SchemaChangeEvent {
-	// Find the target event.
-	for {
-		event := <-eventCh
-		if event.GetType() == eventType {
-			return event
-		}
-	}
-}
-
-func findEventWithTimeout(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.ActionType, timeout int) *notifier.SchemaChangeEvent {
-	ticker := time.NewTicker(time.Second * time.Duration(timeout))
-	// Find the target event.
-	for {
-		select {
-		case event := <-eventCh:
-			if event.GetType() == eventType {
-				return event
-			}
-		case <-ticker.C:
-			return nil
-		}
-	}
-}
 
 func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -127,7 +101,7 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	tk.MustExec("alter table t1 add index idx (a)")
 
 	// Find the add index event.
-	addIndexEvent := findEvent(handle.DDLEventCh(), model.ActionAddIndex)
+	addIndexEvent := statstestutil.FindEvent(handle.DDLEventCh(), model.ActionAddIndex)
 
 	// Handle the add index event.
 	err = statstestutil.HandleDDLEventWithTxn(handle, addIndexEvent)
@@ -201,7 +175,7 @@ func TestTruncateTable(t *testing.T) {
 	testKit.MustExec("truncate table t")
 
 	// Find the truncate table partition event.
-	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
+	truncateTableEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionTruncateTable)
 
 	// Handle the truncate table event.
 	err = statstestutil.HandleDDLEventWithTxn(h, truncateTableEvent)
@@ -263,7 +237,7 @@ func testTruncatePartitionedTable(
 	testKit.MustExec("truncate table t")
 
 	// Find the truncate table partition event.
-	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
+	truncateTableEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionTruncateTable)
 
 	// Handle the truncate table event.
 	err = statstestutil.HandleDDLEventWithTxn(h, truncateTableEvent)
@@ -315,7 +289,7 @@ func TestDropTable(t *testing.T) {
 	testKit.MustExec("drop table t")
 
 	// Find the drop table partition event.
-	dropTableEvent := findEvent(h.DDLEventCh(), model.ActionDropTable)
+	dropTableEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionDropTable)
 
 	// Handle the drop table event.
 	err = statstestutil.HandleDDLEventWithTxn(h, dropTableEvent)
@@ -377,7 +351,7 @@ func testDropPartitionedTable(
 	testKit.MustExec("drop table t")
 
 	// Find the drop table partition event.
-	dropTableEvent := findEvent(h.DDLEventCh(), model.ActionDropTable)
+	dropTableEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionDropTable)
 
 	// Handle the drop table event.
 	err = statstestutil.HandleDDLEventWithTxn(h, dropTableEvent)
@@ -431,7 +405,7 @@ func TestTruncateTablePartition(t *testing.T) {
 	testKit.MustExec("alter table t truncate partition p0")
 
 	// Find the truncate table partition event.
-	truncateTablePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
+	truncateTablePartitionEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
 
 	// Handle the truncate table partition event.
 	err = statstestutil.HandleDDLEventWithTxn(h, truncateTablePartitionEvent)
@@ -490,7 +464,7 @@ func TestDropTablePartition(t *testing.T) {
 	testKit.MustExec("alter table t drop partition p0")
 
 	// Find the drop table partition event.
-	dropTablePartitionEvent := findEvent(h.DDLEventCh(), model.ActionDropTablePartition)
+	dropTablePartitionEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionDropTablePartition)
 
 	// Handle the drop table partition event.
 	err = statstestutil.HandleDDLEventWithTxn(h, dropTablePartitionEvent)
@@ -555,7 +529,7 @@ func TestExchangeTablePartition(t *testing.T) {
 	testKit.MustExec("alter table t1 exchange partition p0 with table t2")
 
 	// Find the exchange table partition event.
-	exchangeTablePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
+	exchangeTablePartitionEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
 
 	// Handle the exchange table partition event.
 	err = statstestutil.HandleDDLEventWithTxn(h, exchangeTablePartitionEvent)
@@ -617,7 +591,7 @@ func TestReorganizeTablePartition(t *testing.T) {
 	testKit.MustExec("alter table t reorganize partition p0 into (partition p0 values less than (5), partition p2 values less than (10))")
 
 	// Find the reorganize table partition event.
-	reorganizeTablePartitionEvent := findEvent(h.DDLEventCh(), model.ActionReorganizePartition)
+	reorganizeTablePartitionEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionReorganizePartition)
 
 	// Handle the reorganize table partition event.
 	err = statstestutil.HandleDDLEventWithTxn(h, reorganizeTablePartitionEvent)
@@ -676,7 +650,7 @@ func TestAlterTablePartitioning(t *testing.T) {
 	testKit.MustExec("alter table t partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
 
 	// Find the alter table partitioning event.
-	alterTablePartitioningEvent := findEvent(h.DDLEventCh(), model.ActionAlterTablePartitioning)
+	alterTablePartitioningEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionAlterTablePartitioning)
 
 	// Handle the alter table partitioning event.
 	err = statstestutil.HandleDDLEventWithTxn(h, alterTablePartitioningEvent)
@@ -735,7 +709,7 @@ func TestRemovePartitioning(t *testing.T) {
 	testKit.MustExec("alter table t remove partitioning")
 
 	// Find the remove partitioning event.
-	removePartitioningEvent := findEvent(h.DDLEventCh(), model.ActionRemovePartitioning)
+	removePartitioningEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionRemovePartitioning)
 
 	// Handle the remove partitioning event.
 	err = statstestutil.HandleDDLEventWithTxn(h, removePartitioningEvent)
@@ -805,7 +779,7 @@ func TestDropSchemaEventWithDynamicPartition(t *testing.T) {
 	testKit.MustExec("drop database test")
 
 	// Find the drop schema event.
-	dropSchemaEvent := findEvent(h.DDLEventCh(), model.ActionDropSchema)
+	dropSchemaEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionDropSchema)
 	require.NotNil(t, dropSchemaEvent)
 
 	// Handle the drop schema event.
@@ -859,7 +833,7 @@ func TestDropSchemaEventWithStaticPartition(t *testing.T) {
 	testKit.MustExec("drop database test")
 
 	// Find the drop schema event.
-	dropSchemaEvent := findEvent(h.DDLEventCh(), model.ActionDropSchema)
+	dropSchemaEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionDropSchema)
 	require.NotNil(t, dropSchemaEvent)
 
 	// Handle the drop schema event.
@@ -917,7 +891,7 @@ func TestVectorIndexTriggerAutoAnalyze(t *testing.T) {
 
 	tk.MustExec("alter table t add vector index vecIdx1((vec_cosine_distance(d))) USING HNSW;")
 
-	addIndexEvent := findEventWithTimeout(h.DDLEventCh(), model.ActionAddColumnarIndex, 1)
+	addIndexEvent := statstestutil.FindEventWithTimeout(h.DDLEventCh(), model.ActionAddColumnarIndex, 1)
 	// No event is found
 	require.Nil(t, addIndexEvent)
 }
@@ -1005,7 +979,7 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1AndStaticPartition(t *testin
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
-	addIndexEvent1 := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	addIndexEvent1 := statstestutil.FindEvent(h.DDLEventCh(), model.ActionAddIndex)
 	require.NotNil(t, addIndexEvent1)
 	require.NoError(t, statsutil.CallWithSCtx(
 		h.SPool(),
@@ -1014,7 +988,7 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1AndStaticPartition(t *testin
 			return nil
 		}, statsutil.FlagWrapTxn),
 	)
-	addIndexEvent2 := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	addIndexEvent2 := statstestutil.FindEvent(h.DDLEventCh(), model.ActionAddIndex)
 	require.NotNil(t, addIndexEvent2)
 	require.NoError(t, statsutil.CallWithSCtx(
 		h.SPool(),
@@ -1075,7 +1049,7 @@ func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
 	testKit.MustExec("alter table t add index idx(c1, c2)")
 
 	// Find the create index event.
-	addIndexEvent := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	addIndexEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionAddIndex)
 	tblInfo, idxInfo, analyzed := addIndexEvent.GetAddIndexInfo()
 	require.Equal(t, tableInfo.ID, tblInfo.ID)
 	require.Equal(t, analyzed, true)
@@ -1098,7 +1072,7 @@ func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
 	testKit.MustExec("alter table t modify c1 varchar(10)")
 
 	// Find the modify column event.
-	modifyColumnEvent := findEvent(h.DDLEventCh(), model.ActionModifyColumn)
+	modifyColumnEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionModifyColumn)
 	tblInfo, columnInfo, analyzed := modifyColumnEvent.GetModifyColumnInfo()
 	require.Equal(t, tableInfo.ID, tblInfo.ID)
 	require.Equal(t, analyzed, true)
