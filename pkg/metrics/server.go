@@ -76,6 +76,13 @@ var (
 	MemoryLimit                     prometheus.Gauge
 	InternalSessions                prometheus.Gauge
 	ActiveUser                      prometheus.Gauge
+
+	// metrics for Optimizer Plan Quality
+	PlanTableFullScanCounter   *prometheus.CounterVec
+	PlanKVReqCounter           *prometheus.CounterVec
+	PlanScanRowsCounter        *prometheus.CounterVec
+	PlanScanSelectivityCounter *prometheus.CounterVec
+	PlanJoinRowsCounter        *prometheus.CounterVec
 )
 
 // InitServerMetrics initializes server metrics.
@@ -422,6 +429,46 @@ func InitServerMetrics() {
 			Name:      "active_users",
 			Help:      "The total count of active user.",
 		})
+
+	PlanTableFullScanCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_table_full_scan_total",
+			Help:      "Counter of table or index full scan.",
+		}, []string{LblRange})
+
+	PlanScanRowsCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_scan_rows_total",
+			Help:      "Counter of table or index scans with different scan rows.",
+		}, []string{LblRange})
+
+	PlanScanSelectivityCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_scan_selectivity_total",
+			Help:      "Counter of table or index scans with different scan selectivity.",
+		}, []string{LblRange})
+
+	PlanKVReqCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_kv_request_total",
+			Help:      "Counter of index scans with different kv request count.",
+		}, []string{LblOperator, LblRange})
+
+	PlanJoinRowsCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_join_rows_total",
+			Help:      "Counter of joins with different join output rows.",
+		}, []string{LblRange})
 }
 
 // ExecuteErrorToLabel converts an execute error to label.
