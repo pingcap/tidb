@@ -3768,6 +3768,7 @@ func TestTruncateNumberOfPhases(t *testing.T) {
 	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
 }
 
+// Test for issue 64176.
 func TestExchangeTiDBRowID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3792,17 +3793,9 @@ func TestExchangeTiDBRowID(t *testing.T) {
 		"6 6 3"))
 
 	tk.MustExec(`alter table tp exchange partition p0 with table t`)
-	// Non-partitioned table correctly reloads the full table, including asking for new auto ids!
 	tk.MustExec(`insert into t values (8,8)`)
-	// This will fail, since it will use _tidb_rowid = 4
-	// TODO: FIXME!!!
-	// Partitioned table does not reload new auto ids!!!!
+	// This failed before, since it will use _tidb_rowid = 4
 	tk.MustExec(`insert into tp values (8,8)`)
-	// These would happen instead:
-	//tk.MustContainErrMsg(`insert into tp values (8,8)`, "[kv:1062]Duplicate entry '4' for key")
-	//tk.MustContainErrMsg(`insert into tp values (8,8)`, "[kv:1062]Duplicate entry '5' for key")
-	//tk.MustContainErrMsg(`insert into tp values (8,8)`, "[kv:1062]Duplicate entry '6' for key")
-	//tk.MustExec(`insert into tp values (8,8)`)
 
 	tk.MustQuery(`select *, _tidb_rowid from tp`).Sort().Check(testkit.Rows(""+
 		"10 10 4",
@@ -3817,6 +3810,4 @@ func TestExchangeTiDBRowID(t *testing.T) {
 		"4 4 2",
 		"6 6 3",
 		"8 8 30001"))
-	// TODO: FIXME: This happens instead:
-		//"8 8 7"))
 }
