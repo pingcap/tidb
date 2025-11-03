@@ -506,7 +506,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 
 	// Perform region detection and validation
-	detectedRegion := region
+	var detectedRegion string
 	if len(qs.Provider) == 0 || qs.Provider == "aws" {
 		// For AWS provider, detect the actual bucket region
 		// In AWS SDK v2, GetBucketRegion has a simpler signature

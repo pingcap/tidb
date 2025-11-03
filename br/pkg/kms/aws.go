@@ -4,7 +4,6 @@ package kms
 
 import (
 	"context"
-
 	"errors"
 
 	"github.com/aws/aws-sdk-go-v2/aws"

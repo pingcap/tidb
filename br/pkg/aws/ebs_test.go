@@ -119,9 +119,8 @@ func (e *EC2Session) testWaitSnapshotsCreated(snapIDMap map[string]string, mockO
 	if len(uncompletedSnapshots) > 0 {
 		// In real implementation this would loop and wait
 		// For tests with pending snapshots, this should loop indefinitely
-		for {
-			// Infinite loop to simulate waiting - will be interrupted by test timeout
-		}
+		// to simulate waiting - will be interrupted by test timeout
+		<-make(chan struct{})
 	}
 
 	return totalVolumeSize, nil

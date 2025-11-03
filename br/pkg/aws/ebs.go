@@ -209,7 +209,7 @@ func (e *EC2Session) createSnapshotsWithRetry(ctx context.Context, input *ec2.Cr
 			continue
 		}
 		if err != nil {
-			return nil, errors.Annotatef(err, "failed to create snapshot for request %s", input)
+			return nil, errors.Annotatef(err, "failed to create snapshot for request %v", input)
 		}
 		return res, nil
 	}
