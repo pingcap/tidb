@@ -158,7 +158,7 @@ const (
 	transitionStaleTaskToPausedSQLTemplate = `
 		UPDATE %s.%s
 		SET status = 'paused'
-		WHERE id = %%? AND status IN ('running', 'resetting') AND last_heartbeat_time = %%?`
+		WHERE id = %%? AND status IN ('running', 'resetting')`
 )
 
 // TaskStatus represents the current state of a restore task
@@ -841,12 +841,12 @@ func (r *Registry) transitionStaleTaskToPaused(ctx context.Context, taskID uint6
 
 		// We need to parse the heartbeat time string back to time.Time for the SQL query
 		// The expectedHeartbeatTime comes from MySQL's time format
-		expectedTime, parseErr := time.Parse("2006-01-02 15:04:05", expectedHeartbeatTime)
-		if parseErr != nil {
-			return errors.Annotatef(parseErr, "failed to parse expected heartbeat time: %s", expectedHeartbeatTime)
-		}
+		// expectedTime, parseErr := time.Parse("2006-01-02 15:04:05", expectedHeartbeatTime)
+		// if parseErr != nil {
+		// return errors.Annotatef(parseErr, "failed to parse expected heartbeat time: %s", expectedHeartbeatTime)
+		// }
 
-		_, _, updateErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, updateSQL, taskID, expectedTime)
+		_, _, updateErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, updateSQL, taskID)
 		if updateErr != nil {
 			return errors.Annotate(updateErr, "failed to transition stale task to paused")
 		}
