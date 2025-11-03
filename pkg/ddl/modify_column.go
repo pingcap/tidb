@@ -1374,7 +1374,7 @@ func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl
 		return true
 	}
 	logutil.DDLLogger().Info("skip analyze",
-		zap.Bool("tidb_enable_ddl_analyze", enableDDLAnalyze),
+		zap.Bool("tidb_stats_update_during_ddl", enableDDLAnalyze),
 		zap.Bool("is partitioned table", hasPartition),
 		zap.Int("affected indexes count", len(changingIdxes)),
 		zap.Int("tidb_analyze_version", analyzeVer))
