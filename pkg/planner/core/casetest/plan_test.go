@@ -459,9 +459,11 @@ func TestOuterJoinElimination(t *testing.T) {
 		// test subqueries in the select list with no_decorrelate_in_select=OFF
 		testKit.MustExec("set @@tidb_opt_enable_no_decorrelate_in_select=OFF")
 		testKit.MustHavePlan("select t1a.a, if(exists(select 1 from t2_uk t2b where t2b.a = t1a.a), 1, 0) as founda from t1 t1a left join t2_pk t2 on t1a.a = t2.a", "Join")
+		testKit.MustHavePlan("select t1a.a, group_concat((select t2b.b from t2_uk t2b where t2b.a = t1a.a)) as result from t1 t1a left join t2_pk t2 on t1a.a = t2.a group by t1a.a", "Join")
 		// test subqueries in the select list with no_decorrelate_in_select=ON
 		testKit.MustExec("set @@tidb_opt_enable_no_decorrelate_in_select=ON")
 		testKit.MustNotHavePlan("select t1a.a, if(exists(select 1 from t2_uk t2b where t2b.a = t1a.a), 1, 0) as founda from t1 t1a left join t2_pk t2 on t1a.a = t2.a", "Join")
+		testKit.MustNotHavePlan("select t1a.a, (select group_concat(t2b.b) from t2_uk t2b where t2b.a = t1a.a) as result from t1 t1a left join t2_pk t2 on t1a.a = t2.a group by t1a.a", "Join")
 		// next query correlates on t2, so outer join elimination can't be applied
 		testKit.MustHavePlan("select t1a.a, if(exists(select 1 from t2_uk t2b where t2b.a = t2.a), 1, 0) as founda from t1 t1a left join t2_pk t2 on t1a.a = t2.a", "Join")
 	})
