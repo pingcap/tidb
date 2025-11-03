@@ -3767,3 +3767,56 @@ func TestTruncateNumberOfPhases(t *testing.T) {
 	dom.Reload()
 	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
 }
+
+func TestExchangeTiDBRowID(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, primary key (a) nonclustered)`)
+	tk.MustExec(`create table tp (a int, b int, primary key (a) nonclustered) partition by hash (a) partitions 2`)
+
+	tk.MustExec(`insert into t values (2,2),(4,4),(6,6)`)
+	tk.MustExec(`insert into tp values (2,2),(4,4),(6,6)`)
+	tk.MustExec(`insert into t select a + 8, b + 8 from t`)
+
+	tk.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows(""+
+		"10 10 4",
+		"12 12 5",
+		"14 14 6",
+		"2 2 1",
+		"4 4 2",
+		"6 6 3"))
+	tk.MustQuery(`select *, _tidb_rowid from tp`).Sort().Check(testkit.Rows(""+
+		"2 2 1",
+		"4 4 2",
+		"6 6 3"))
+
+	tk.MustExec(`alter table tp exchange partition p0 with table t`)
+	// Non-partitioned table correctly reloads the full table, including asking for new auto ids!
+	tk.MustExec(`insert into t values (8,8)`)
+	// This will fail, since it will use _tidb_rowid = 4
+	// TODO: FIXME!!!
+	// Partitioned table does not reload new auto ids!!!!
+	tk.MustExec(`insert into tp values (8,8)`)
+	// These would happen instead:
+	//tk.MustContainErrMsg(`insert into tp values (8,8)`, "[kv:1062]Duplicate entry '4' for key")
+	//tk.MustContainErrMsg(`insert into tp values (8,8)`, "[kv:1062]Duplicate entry '5' for key")
+	//tk.MustContainErrMsg(`insert into tp values (8,8)`, "[kv:1062]Duplicate entry '6' for key")
+	//tk.MustExec(`insert into tp values (8,8)`)
+
+	tk.MustQuery(`select *, _tidb_rowid from tp`).Sort().Check(testkit.Rows(""+
+		"10 10 4",
+		"12 12 5",
+		"14 14 6",
+		"2 2 1",
+		"4 4 2",
+		"6 6 3",
+		"8 8 30001"))
+	tk.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows(""+
+		"2 2 1",
+		"4 4 2",
+		"6 6 3",
+		"8 8 30001"))
+	// TODO: FIXME: This happens instead:
+		//"8 8 7"))
+}
