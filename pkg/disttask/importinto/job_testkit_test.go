@@ -17,10 +17,13 @@ package importinto_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -32,13 +35,18 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/atomic"
 )
 
@@ -56,6 +64,27 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		t.Skip("This test is only for nextgen")
 	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 10})
+	defer cluster.Terminate(t)
+	keyspaceIDs := map[string]uint32{
+		keyspace.System: 1,
+		"ks":            2,
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/injectETCDCli",
+		func(cliP **clientv3.Client, ks string) {
+			id, ok := keyspaceIDs[ks]
+			require.True(t, ok)
+			// one client per ks
+			*cliP = cluster.Client(int(id - 1))
+			// we will close the client.
+			cluster.TakeClient(int(id - 1))
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: id, Name: ks})
+			require.NoError(t, err)
+			etcd.SetEtcdCliByNamespace(*cliP, keyspace.MakeKeyspaceEtcdNamespace(codec))
+		},
+	)
 	require.NoError(t, kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{}))
 	sysKSStore, _ := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
 	sysKSTK := testkit.NewTestKit(t, sysKSStore)
@@ -93,7 +122,7 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		taskMgr := storage.NewTaskManager(getPoolFn(currKSStore))
 		storage.SetTaskManager(taskMgr)
 		sysKSTaskMgr := taskMgr
-		if keyspace.IsRunningOnUser() {
+		if kv.IsUserKS(currKSStore) {
 			sysKSTaskMgr = storage.NewTaskManager(getPoolFn(sysKSStore))
 			storage.SetDXFSvcTaskMgr(sysKSTaskMgr)
 		}
@@ -140,6 +169,8 @@ func TestSubmitTaskNextgen(t *testing.T) {
 }
 
 func TestGetTaskImportedRows(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -149,25 +180,37 @@ func TestGetTaskImportedRows(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 
-	mgr := storage.NewTaskManager(pool)
-	storage.SetTaskManager(mgr)
-	manager, err := storage.GetTaskManager()
-	require.NoError(t, err)
+	manager := storage.NewTaskManager(pool)
+	storage.SetTaskManager(manager)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
 
 	// local sort
 	taskMeta := importinto.TaskMeta{
 		Plan: importer.Plan{},
+		Summary: importer.Summary{
+			EncodeSummary: importer.StepSummary{
+				Bytes:  10000,
+				RowCnt: 1000,
+			},
+			IngestSummary: importer.StepSummary{
+				Bytes:  10000,
+				RowCnt: 1000,
+			},
+		},
 	}
+
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	importStepSummaries := []*execute.SubtaskSummary{
 		{
-			RowCnt: *atomic.NewInt64(1),
+			RowCnt: *atomic.NewInt64(300),
+			Bytes:  *atomic.NewInt64(4000),
 		},
 		{
-			RowCnt: *atomic.NewInt64(2),
+			RowCnt: *atomic.NewInt64(400),
+			Bytes:  *atomic.NewInt64(4000),
 		},
 	}
 	for _, m := range importStepSummaries {
@@ -177,26 +220,38 @@ func TestGetTaskImportedRows(t *testing.T) {
 
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepImport)
 
-	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, 111)
+	loc := tk.Session().GetSessionVars().Location()
+
+	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, loc, 111)
 	require.NoError(t, err)
-	require.EqualValues(t, 3, runInfo.ImportRows)
+	require.EqualValues(t, 700, runInfo.ImportRows)
+	require.Equal(t, "80", runInfo.Percent())
 
 	// global sort
 	taskMeta = importinto.TaskMeta{
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
+		Summary: importer.Summary{
+			IngestSummary: importer.StepSummary{
+				Bytes:  10000,
+				RowCnt: 1000,
+			},
+		},
 	}
+
 	bytes, err = json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	ingestStepSummaries := []*execute.SubtaskSummary{
 		{
-			RowCnt: *atomic.NewInt64(11),
+			RowCnt: *atomic.NewInt64(100),
+			Bytes:  *atomic.NewInt64(1000),
 		},
 		{
-			RowCnt: *atomic.NewInt64(22),
+			RowCnt: *atomic.NewInt64(200),
+			Bytes:  *atomic.NewInt64(2000),
 		},
 	}
 	for _, m := range ingestStepSummaries {
@@ -205,7 +260,218 @@ func TestGetTaskImportedRows(t *testing.T) {
 	}
 
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
-	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, 222)
+	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, tk.Session().GetSessionVars().Location(), 222)
 	require.NoError(t, err)
-	require.EqualValues(t, 33, runInfo.ImportRows)
+	require.EqualValues(t, 300, runInfo.ImportRows)
+	require.Equal(t, "30", runInfo.Percent())
+}
+
+func TestShowImportProgress(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	fmap := plannercore.ImportIntoFieldMap
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+
+	manager := storage.NewTaskManager(pool)
+	storage.SetTaskManager(manager)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+
+	// global sort
+	taskMeta := importinto.TaskMeta{
+		Plan: importer.Plan{
+			CloudStorageURI: "s3://test-bucket/test-path",
+		},
+		Summary: importer.Summary{
+			EncodeSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
+			MergeSummary:  importer.StepSummary{Bytes: 0, RowCnt: 0},
+			IngestSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
+			ImportedRows:  100,
+		},
+	}
+
+	bytes, err := json.Marshal(taskMeta)
+	require.NoError(t, err)
+
+	conn := tk.Session().GetSQLExecutor()
+	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
+		"root", "", &importer.ImportParameters{}, 1000)
+	require.NoError(t, err)
+
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
+	require.NoError(t, err)
+
+	subtasks := []struct {
+		summary execute.SubtaskSummary
+		state   proto.SubtaskState
+	}{
+		{
+			execute.SubtaskSummary{
+				RowCnt: *atomic.NewInt64(20),
+				Bytes:  *atomic.NewInt64(200),
+				Progresses: []execute.Progress{
+					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 20, Bytes: 200, UpdateTime: time.Unix(1002, 0)},
+				},
+			},
+			proto.SubtaskStateRunning,
+		},
+		{
+			execute.SubtaskSummary{
+				RowCnt: *atomic.NewInt64(30),
+				Bytes:  *atomic.NewInt64(300),
+				Progresses: []execute.Progress{
+					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1000, 0)},
+					{RowCnt: 15, Bytes: 150, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 30, Bytes: 300, UpdateTime: time.Unix(1002, 0)},
+				},
+			},
+			proto.SubtaskStateSucceed,
+		},
+		{
+			execute.SubtaskSummary{
+				RowCnt: *atomic.NewInt64(0),
+				Bytes:  *atomic.NewInt64(0),
+			},
+			proto.SubtaskStateSucceed,
+		},
+	}
+
+	checkShowInfo := func(step, processed, total, percent, speed, eta string, imported int64) {
+		rs := tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+		require.Equal(t, rs[0][fmap["CurStep"]], step)
+		require.Equal(t, rs[0][fmap["CurStepProcessedSize"]], processed)
+		require.Equal(t, rs[0][fmap["CurStepTotalSize"]], total)
+		require.Equal(t, rs[0][fmap["CurStepProgressPct"]], percent)
+		require.Equal(t, rs[0][fmap["CurStepSpeed"]], speed)
+		require.Equal(t, rs[0][fmap["CurStepETA"]], eta)
+
+		importedRows, err := strconv.Atoi(rs[0][fmap["ImportedRows"]].(string))
+		require.NoError(t, err)
+		require.EqualValues(t, importedRows, imported)
+	}
+
+	// Init step
+	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepGlobalSorting))
+	checkShowInfo("init", "0B", "0B", "N/A", "0B/s", "N/A", 0)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockSpeedDuration", "return(5000)")
+
+	// Encode step
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
+	for _, s := range subtasks {
+		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepEncodeAndSort,
+			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
+	}
+
+	loc := tk.Session().GetSessionVars().Location()
+
+	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, loc, jobID)
+	require.NoError(t, err)
+	require.EqualValues(t, 1000, runInfo.Total)
+	require.EqualValues(t, 500, runInfo.Processed)
+	checkShowInfo("encode", "500B", "1000B", "50", "100B/s", "00:00:05", 0)
+
+	// Merge step
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepMergeSort)
+
+	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, loc, jobID)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, runInfo.Total)
+	require.EqualValues(t, 0, runInfo.Processed)
+	checkShowInfo("merge-sort", "0B", "0B", "0", "0B/s", "N/A", 0)
+
+	// Ingest step
+	for _, s := range subtasks {
+		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepWriteAndIngest,
+			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockSpeedDuration", "return(10000)")
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
+	checkShowInfo("ingest", "500B", "1000B", "50", "50B/s", "00:00:10", 50)
+
+	// Post-process step
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepPostProcess)
+	checkShowInfo("post-process", "0B", "0B", "N/A", "0B/s", "N/A", 100)
+}
+
+func TestShowImportGroup(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+
+	manager := storage.NewTaskManager(pool)
+	storage.SetTaskManager(manager)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+
+	conn := tk.Session().GetSQLExecutor()
+
+	// No groups at start
+	rs := tk.MustQuery(`show import group "group2"`).Rows()
+	require.Len(t, rs, 0)
+	rs = tk.MustQuery(`show import groups`).Rows()
+	require.Len(t, rs, 0)
+
+	importJobs := []struct {
+		SchemaName string
+		TableName  string
+		TableID    int64
+		GroupKey   string
+	}{
+		{"test", "t1", 1, "group1"},
+		{"test", "t2", 2, "group1"},
+		{"test", "t3", 3, "group2"},
+		{"test", "t4", 4, ""}, // not displayed in show import groups
+	}
+
+	for _, job := range importJobs {
+		jobID, err := importer.CreateJob(ctx, conn, job.SchemaName, job.TableName, job.TableID,
+			"root", job.GroupKey, &importer.ImportParameters{}, 1000)
+		require.NoError(t, err)
+
+		taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
+		require.NoError(t, err)
+
+		switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
+		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepEncodeAndSort,
+			"", nil, proto.ImportInto, 11)
+	}
+
+	rs = tk.MustQuery("show import groups").Sort().Rows()
+	require.Len(t, rs, 2)
+	require.Equal(t, "group1", rs[0][0])
+	require.Equal(t, "2", rs[0][1])
+	require.Equal(t, "group2", rs[1][0])
+	require.Equal(t, "1", rs[1][1])
+
+	rs = tk.MustQuery(`show import group "nonexist"`).Rows()
+	require.Len(t, rs, 0)
+
+	rs = tk.MustQuery(`show import group "group2"`).Rows()
+	require.Len(t, rs, 1)
+	require.Equal(t, "group2", rs[0][0])
+	require.Equal(t, "1", rs[0][1])
+}
+
+func TestFormatTime(t *testing.T) {
+	require.Equal(t, "1 d 00:00:00", importinto.FormatSecondAsTime(86400))
+	require.Equal(t, "2 d 00:00:01", importinto.FormatSecondAsTime(172801))
+	require.Equal(t, "23:59:59", importinto.FormatSecondAsTime(86399))
+	require.Equal(t, "00:59:59", importinto.FormatSecondAsTime(3599))
+	require.Equal(t, "08:00:00", importinto.FormatSecondAsTime(28800))
 }

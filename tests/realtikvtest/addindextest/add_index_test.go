@@ -15,12 +15,11 @@
 package addindextest
 
 import (
+	"sync"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -107,7 +105,9 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 	tk.MustExec("drop database if exists fk_index;")
 	tk.MustExec("create database fk_index;")
 	tk.MustExec("use fk_index;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	}
 	tk.MustExec("create table employee (id bigint auto_increment key, pid bigint)")
 	tk.MustExec("insert into employee (id) values (1),(2),(3),(4),(5),(6),(7),(8)")
 	for range 14 {
@@ -156,7 +156,9 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 	tk.MustExec("drop database if exists small;")
 	tk.MustExec("create database small;")
 	tk.MustExec("use small;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	}
 	tk.MustExec("create table t (a bigint, b int, primary key (a) clustered)")
 	tk.MustExec("insert into t values (-9223372036854775808, 1),(-9223372036854775807, 1)")
 	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
@@ -167,7 +169,9 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	}
 	tk.MustExec("create table t(a int DEFAULT '-13202', b varchar(221) NOT NULL DEFAULT 'duplicatevalue', " +
 		"c int NOT NULL DEFAULT '0');")
 
@@ -188,21 +192,24 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec("use test")
-	ingest.MockDMLExecutionStateBeforeImport = func() {
-		tk3.MustExec("replace INTO t VALUES (-18585,'duplicatevalue',4);")
-		tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
-	}
-	ddl.MockDMLExecutionStateBeforeMerge = func() {
-		tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
-		tk3.MustExec("replace into t values (-18585,'duplicatevalue',0);")
-	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport", "1*return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge", "return(true)"))
+	beforeIngestOnce := sync.Once{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/beforeBackendIngest", func() {
+		beforeIngestOnce.Do(func() {
+			tk3.MustExec("replace INTO t VALUES (-18585,'duplicatevalue',4);")
+			tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
+		})
+	})
+	beforeMergeOnce := sync.Once{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBackfillMerge", func() {
+		beforeMergeOnce.Do(func() {
+			tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
+			tk3.MustExec("replace into t values (-18585,'duplicatevalue',0);")
+		})
+	})
+
 	tk.MustExec("alter table t add unique index idx(b);")
 	tk.MustExec("admin check table t;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge"))
 }
 
 func TestAddIndexOnGB18030Bin(t *testing.T) {

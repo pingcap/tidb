@@ -638,8 +638,7 @@ func (col *Column) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.Vect
 func (col *Column) Clone() Expression {
 	newCol := *col
 	if col.hashcode != nil {
-		newCol.hashcode = make([]byte, len(col.hashcode))
-		copy(newCol.hashcode, col.hashcode)
+		newCol.hashcode = slices.Clone(col.hashcode)
 	}
 	return &newCol
 }
@@ -769,39 +768,15 @@ func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.Index
 	return nil
 }
 
-// IndexInfo2PrefixCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
-// together with a []int containing their lengths.
-// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be only the 1st corresponding *Column and its length.
-// TODO: Use a struct to represent {*Column, int}. And merge IndexInfo2PrefixCols and IndexInfo2Cols.
-func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	retCols := make([]*Column, 0, len(index.Columns))
-	lengths := make([]int, 0, len(index.Columns))
-	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
-		if col == nil {
-			return retCols, lengths
-		}
-		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
-			lengths = append(lengths, types.UnspecifiedLength)
-		} else {
-			lengths = append(lengths, c.Length)
-		}
-	}
-	return retCols, lengths
-}
-
-// IndexInfo2Cols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
-// together with a []int containing their lengths.
-// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be [col1, nil, col2].
-func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo, onlyPrefixCols bool) ([]*Column, []int) {
 	retCols := make([]*Column, 0, len(index.Columns))
 	lens := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
 		col := IndexCol2Col(colInfos, cols, c)
 		if col == nil {
+			if onlyPrefixCols {
+				return retCols, lens
+			}
 			retCols = append(retCols, col)
 			lens = append(lens, types.UnspecifiedLength)
 			continue
@@ -814,6 +789,23 @@ func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.I
 		}
 	}
 	return retCols, lens
+}
+
+// IndexInfo2PrefixCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
+// together with a []int containing their lengths.
+// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
+// the return value will be only the 1st corresponding *Column and its length.
+// TODO: Use a struct to represent {*Column, int}.
+func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+	return indexInfo2ColsImpl(colInfos, cols, index, true)
+}
+
+// IndexInfo2Cols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
+// together with a []int containing their lengths.
+// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
+// the return value will be [col1, nil, col2].
+func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+	return indexInfo2ColsImpl(colInfos, cols, index, false)
 }
 
 // FindPrefixOfIndex will find columns in index by checking the unique id.
@@ -867,8 +859,7 @@ func (col *Column) Repertoire() Repertoire {
 
 // SortColumns sort columns based on UniqueID.
 func SortColumns(cols []*Column) []*Column {
-	sorted := make([]*Column, len(cols))
-	copy(sorted, cols)
+	sorted := slices.Clone(cols)
 	slices.SortFunc(sorted, func(i, j *Column) int {
 		return cmp.Compare(i.UniqueID, j.UniqueID)
 	})
@@ -877,12 +868,9 @@ func SortColumns(cols []*Column) []*Column {
 
 // InColumnArray check whether the col is in the cols array
 func (col *Column) InColumnArray(cols []*Column) bool {
-	for _, c := range cols {
-		if col.EqualColumn(c) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(cols, func(c *Column) bool {
+		return col.EqualColumn(c)
+	})
 }
 
 // GcColumnExprIsTidbShard check whether the expression is tidb_shard()

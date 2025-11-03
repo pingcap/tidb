@@ -57,6 +57,7 @@ const (
 	s3ProviderOption     = "s3.provider"
 	s3RoleARNOption      = "s3.role-arn"
 	s3ExternalIDOption   = "s3." + S3ExternalID
+	s3ProfileOption      = "s3.profile"
 	notFound             = "NotFound"
 	noSuchBucket         = "NoSuchBucket"
 	noSuchKey            = "NoSuchKey"
@@ -72,6 +73,7 @@ const (
 	defaultRegion = "us-east-1"
 	// to check the cloud type by endpoint tag.
 	domainAliyun = "aliyuncs.com"
+	domainAWS    = "amazonaws.com"
 )
 
 var permissionCheckFn = map[Permission]func(context.Context, S3API, *backuppb.S3) error{
@@ -178,6 +180,7 @@ type S3BackendOptions struct {
 	UseAccelerateEndpoint bool   `json:"use-accelerate-endpoint" toml:"use-accelerate-endpoint"`
 	RoleARN               string `json:"role-arn" toml:"role-arn"`
 	ExternalID            string `json:"external-id" toml:"external-id"`
+	Profile               string `json:"profile" toml:"profile"`
 	ObjectLockEnabled     bool   `json:"object-lock-enabled" toml:"object-lock-enabled"`
 }
 
@@ -195,17 +198,15 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 			return errors.Errorf("host not found in endpoint")
 		}
 	}
-	// In some cases, we need to set ForcePathStyle to false.
-	// Refer to: https://rclone.org/s3/#s3-force-path-style
-	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" ||
-		options.UseAccelerateEndpoint {
-		options.ForcePathStyle = false
-	}
-	if options.AccessKey == "" && options.SecretAccessKey != "" {
-		return errors.Annotate(berrors.ErrStorageInvalidConfig, "access_key not found")
-	}
-	if options.AccessKey != "" && options.SecretAccessKey == "" {
-		return errors.Annotate(berrors.ErrStorageInvalidConfig, "secret_access_key not found")
+
+	// When not using a profile, if either key is provided, both must be provided
+	if options.Profile == "" {
+		if options.AccessKey == "" && options.SecretAccessKey != "" {
+			return errors.Annotate(berrors.ErrStorageInvalidConfig, "access_key not found")
+		}
+		if options.AccessKey != "" && options.SecretAccessKey == "" {
+			return errors.Annotate(berrors.ErrStorageInvalidConfig, "secret_access_key not found")
+		}
 	}
 
 	s3.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
@@ -222,7 +223,30 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	s3.RoleArn = options.RoleARN
 	s3.ExternalId = options.ExternalID
 	s3.Provider = options.Provider
+	s3.Profile = options.Profile
+
 	return nil
+}
+
+// setForcePathStyle only set ForcePathStyle to False, which means use virtual-hosted-style path.
+func (options *S3BackendOptions) setForcePathStyle(rawURL string) {
+	// In some cases, we need to set ForcePathStyle to false.
+	// Refer to: https://rclone.org/s3/#s3-force-path-style
+	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" ||
+		options.UseAccelerateEndpoint || useVirtualHostStyleForAWSS3(options, rawURL) {
+		options.ForcePathStyle = false
+	}
+}
+
+func useVirtualHostStyleForAWSS3(opts *S3BackendOptions, rawURL string) bool {
+	// If user has explicitly specified ForcePathStyle, use the specified value
+	if rawURL == "" ||
+		strings.Contains(rawURL, "force-path-style") ||
+		strings.Contains(rawURL, "force_path_style") {
+		return false
+	}
+
+	return opts.Provider == "aws" || strings.Contains(opts.Endpoint, domainAWS) || opts.RoleARN != ""
 }
 
 // defineS3Flags defines the command line flags for S3BackendOptions.
@@ -239,6 +263,8 @@ func defineS3Flags(flags *pflag.FlagSet) {
 	flags.String(s3ProviderOption, "", "(experimental) Set the S3 provider, e.g. aws, alibaba, ceph")
 	flags.String(s3RoleARNOption, "", "(experimental) Set the ARN of the IAM role to assume when accessing AWS S3")
 	flags.String(s3ExternalIDOption, "", "(experimental) Set the external ID when assuming the role to access AWS S3")
+	flags.String(s3ProfileOption, "", "(experimental) Set the AWS profile to use for AWS S3 authentication. "+
+		"Command line options take precedence over profile settings")
 }
 
 // parseFromFlags parse S3BackendOptions from command line flags.
@@ -282,6 +308,11 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	options.Profile, err = flags.GetString(s3ProfileOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
@@ -397,6 +428,24 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		s3Opts = append(s3Opts, func(o *s3.Options) {
 			o.BaseEndpoint = aws.String(qs.Endpoint)
 		})
+	}
+	if opts.HTTPClient != nil {
+		s3Opts = append(s3Opts, func(o *s3.Options) {
+			o.HTTPClient = opts.HTTPClient
+		})
+	}
+	// When using a profile, let AWS SDK handle credentials through the profile
+	// Don't call autoNewCred as it interferes with profile-based authentication
+	if qs.Profile == "" {
+		cred, err := autoNewCred(&qs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if cred != nil {
+			s3Opts = append(s3Opts, func(o *s3.Options) {
+				o.Credentials = cred
+			})
+		}
 	}
 
 	// Handle role assumption if specified
@@ -1242,7 +1291,17 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
+	var onFlush func()
+	if option != nil {
+		onFlush = option.OnUpload
+		if onFlush != nil {
+			// Total number of PUT operations for an multi-part uploaded file = total file size / part-size + 2. For details, see
+			// https://repost.aws/questions/QUXmwDga0VRvSOOjYWMfor-w/are-we-billed-a-put-request-for-each-part-with-s3-multipart-upload-or-only-once-for-the-final-merged-file
+			onFlush() // Initiate: PUT
+			onFlush() // Complete: PUT
+		}
+	}
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, onFlush)
 	return uploaderWriter, nil
 }
 

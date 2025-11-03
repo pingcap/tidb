@@ -33,7 +33,9 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
 	"github.com/pingcap/tidb/pkg/util/tikvutil"
@@ -49,6 +51,10 @@ const (
 	MaxLogFileSize = 4096 // MB
 	// MaxTxnEntrySize is the max value of TxnEntrySizeLimit.
 	MaxTxnEntrySizeLimit = 120 * 1024 * 1024 // 120MB
+	// MaxPluginAuditLogBufferSize is the max buffer size for plugin audit log.
+	MaxPluginAuditLogBufferSize = 100 * 1024 * 1024
+	// MaxPluginAuditLogFlushInterval is the max time interval to flush plugin audit log.
+	MaxPluginAuditLogFlushInterval = 3600
 	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
 	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
@@ -92,6 +98,10 @@ const (
 	DefMemoryUsageAlarmRatio = 0.8
 	// DefTempDir is the default temporary directory path for TiDB.
 	DefTempDir = "/tmp/tidb"
+	// DefPluginAuditLogBufferSize is the default buffer size for plugin audit log.
+	DefPluginAuditLogBufferSize = 0
+	// DefPluginAuditLogFlushInterval is the default time interval to flush plugin audit log.
+	DefPluginAuditLogFlushInterval = 30
 	// DefAuthTokenRefreshInterval is the default time interval to refresh tidb auth token.
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
@@ -275,6 +285,8 @@ type Config struct {
 	// InitializeSQLFile is a file that will be executed after first bootstrap only.
 	// It can be used to set GLOBAL system variable values
 	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
+	// Standby is the config for standby mode.
+	Standby Standby `toml:"standby" json:"standby"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -313,6 +325,9 @@ type Config struct {
 	InMemSlowQueryTopNNum int `toml:"in-mem-slow-query-topn-num" json:"in-mem-slow-query-topn-num"`
 	// InMemSlowQueryRecentNum indicates the number of recent slow queries stored in memory.
 	InMemSlowQueryRecentNum int `toml:"in-mem-slow-query-recent-num" json:"in-mem-slow-query-recent-num"`
+
+	// MeteringConfigURI is the URI for metering configuration.
+	MeteringStorageURI string `toml:"metering-storage-uri" json:"metering-storage-uri"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -341,6 +356,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
 		ZoneLabel:             c.Labels["zone"],
+		EnableAsyncBatchGet:   c.Performance.EnableAsyncBatchGet,
 	}
 }
 
@@ -526,6 +542,24 @@ type Instance struct {
 	// StmtSummaryFileMaxBackups indicates the maximum number of files written
 	// by stmtsummary when StmtSummaryEnablePersistent is true.
 	StmtSummaryFileMaxBackups int `toml:"tidb_stmt_summary_file_max_backups" json:"tidb_stmt_summary_file_max_backups"`
+	// StmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
+	StmtSummaryMaxStmtCount uint64 `toml:"tidb_stmt_summary_max_stmt_count" json:"tidb_stmt_summary_max_stmt_count"`
+	// ServerMemoryLimit indicates the memory limit of the tidb-server instance.
+	ServerMemoryLimit string `toml:"tidb_server_memory_limit" json:"tidb_server_memory_limit"`
+	// MemArbitratorMode indicates the work mode of the global memory arbitrator of the tidb-server instance.
+	MemArbitratorMode string `toml:"tidb_mem_arbitrator_mode" json:"tidb_mem_arbitrator_mode"`
+	// MemArbitratorSoftLimit indicates the memory resource soft limit of the tidb-server instance.
+	MemArbitratorSoftLimit string `toml:"tidb_mem_arbitrator_soft_limit" json:"tidb_mem_arbitrator_soft_limit"`
+	// ServerMemoryLimitGCTrigger indicates the gc percentage of the ServerMemoryLimit.
+	ServerMemoryLimitGCTrigger string `toml:"tidb_server_memory_limit_gc_trigger" json:"tidb_server_memory_limit_gc_trigger"`
+	// InstancePlanCacheMaxMemSize indicates the maximum memory size of instance plan cache.
+	InstancePlanCacheMaxMemSize string `toml:"tidb_instance_plan_cache_max_size" json:"tidb_instance_plan_cache_max_size"`
+	// StatsCacheMemQuota records stats cache quota.
+	StatsCacheMemQuota uint64 `toml:"tidb_stats_cache_mem_quota" json:"tidb_stats_cache_mem_quota"`
+	// MemQuotaBindingCache indicates the memory quota for the bind cache.
+	MemQuotaBindingCache uint64 `toml:"tidb_mem_quota_binding_cache" json:"tidb_mem_quota_binding_cache"`
+	// SchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
+	SchemaCacheSize string `toml:"tidb_schema_cache_size" json:"tidb_schema_cache_size"`
 
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
@@ -540,6 +574,10 @@ type Instance struct {
 	EnableCollectExecutionInfo AtomicBool `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
 	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
+	// PluginAuditLogBufferSize is the buffer size (in bytes) of plugin audit log, default is 0(buffer disabled)
+	PluginAuditLogBufferSize int `toml:"plugin_audit_log_buffer_size" json:"plugin_audit_log_buffer_size"`
+	// PluginAuditLogFlushInterval is the flush interval (in seconds) of plugin audit log, it works only when PluginAuditLogBufferSize is greater than 0.
+	PluginAuditLogFlushInterval int `toml:"plugin_audit_log_flush_interval" json:"plugin_audit_log_flush_interval"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
 	MaxConnections       uint32     `toml:"max_connections" json:"max_connections"`
 	TiDBEnableDDL        AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
@@ -596,6 +634,8 @@ type Security struct {
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
+	// SEMConfig represents the path to the SEM configuration file.
+	SEMConfig string `toml:"sem-config" json:"sem-config"`
 	// Allow automatic TLS certificate generation
 	AutoTLS         bool   `toml:"auto-tls" json:"auto-tls"`
 	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
@@ -728,7 +768,13 @@ type Performance struct {
 	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
 
+	// Deprecated: this config has been deprecated. It has no effect.
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
+
+	// SkipInitStats determines whether to skip initializing statistics when TiDB starts.
+	// It is primarily intended for internal use cases in TiDB Cloud and may cause issues if enabled on a standard cluster.
+	// See: https://github.com/pingcap/tidb/issues/63103
+	SkipInitStats bool `toml:"skip-init-stats" json:"skip-init-stats"`
 
 	// LiteInitStats indicates whether to use the lite version of stats.
 	// 1. Basic stats meta data is loaded.(count, modify count, etc.)
@@ -748,6 +794,9 @@ type Performance struct {
 
 	// Deprecated: this config will not have any effect
 	ProjectionPushDown bool `toml:"projection-push-down" json:"projection-push-down"`
+
+	// EnableAsyncBatchGet indicates whether to use async API when sending batch-get requests.
+	EnableAsyncBatchGet bool `toml:"enable-async-batch-get" json:"enable-async-batch-get"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -836,11 +885,15 @@ func (config *TrxSummary) Valid() error {
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
+	pessimisticAutoCommit := false
+	if kerneltype.IsNextGen() {
+		pessimisticAutoCommit = true
+	}
 	return PessimisticTxn{
 		MaxRetryCount:                     256,
 		DeadlockHistoryCapacity:           10,
 		DeadlockHistoryCollectRetryable:   false,
-		PessimisticAutoCommit:             *NewAtomicBool(false),
+		PessimisticAutoCommit:             *NewAtomicBool(pessimisticAutoCommit),
 		ConstraintCheckInPlacePessimistic: true,
 	}
 }
@@ -879,6 +932,20 @@ type Experimental struct {
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
+}
+
+// Standby is the config for standby mode.
+type Standby struct {
+	// StandByMode indicates whether to enable the standby mode.
+	StandByMode bool `toml:"standby-mode" json:"standby-mode"`
+	// MaxIdleSeconds specifies the maximum idle time in seconds before tidb exits.
+	MaxIdleSeconds uint `toml:"max-idle-seconds" json:"max-idle-seconds"`
+	// ActivationTimeout specifies the maximum allowed time for tidb to activate from standby mode.
+	ActivationTimeout uint `toml:"activation-timeout" json:"activation-timeout"`
+	// EnableZeroBackend is used to control the behavior of standby idle watcher.
+	// When it is enabled, the idle watcher will not wait for session migration
+	// and will not consider client interactive connections.
+	EnableZeroBackend bool `toml:"enable-zero-backend" json:"enable-zero-backend"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -954,6 +1021,8 @@ var defaultConf = Config{
 		EnableCollectExecutionInfo:  *NewAtomicBool(true),
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
+		PluginAuditLogBufferSize:    0,
+		PluginAuditLogFlushInterval: 30,
 		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBEnableStatsOwner:        *NewAtomicBool(true),
@@ -1001,10 +1070,12 @@ var defaultConf = Config{
 		EnableStatsCacheMemQuota:          true,
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
+		SkipInitStats:                     false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
 		// Deprecated: Stats are always initialized concurrently.
 		ConcurrentlyInitStats: true,
+		EnableAsyncBatchGet:   true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -1042,6 +1113,7 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
+		SEMConfig:                   "",
 		AutoTLS:                     false,
 		RSAKeySize:                  4096,
 		AuthTokenJWKS:               "",
@@ -1300,7 +1372,7 @@ func (c *Config) Load(confFile string) error {
 
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
-	if err := naming.Check(c.KeyspaceName); err != nil {
+	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
 		return errors.Annotate(err, "invalid keyspace name")
 	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
@@ -1334,7 +1406,12 @@ func (c *Config) Valid() error {
 	if c.TableColumnCountLimit < DefTableColumnCountLimit || c.TableColumnCountLimit > DefMaxOfTableColumnCountLimit {
 		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
 	}
-
+	if c.Instance.PluginAuditLogBufferSize < 0 || c.Instance.PluginAuditLogBufferSize > MaxPluginAuditLogBufferSize {
+		return fmt.Errorf("plugin-audit-log-buffer-size should be [%d, %d]", 0, MaxPluginAuditLogBufferSize)
+	}
+	if c.Instance.PluginAuditLogFlushInterval <= 0 || c.Instance.PluginAuditLogFlushInterval > MaxPluginAuditLogFlushInterval {
+		return fmt.Errorf("plugin-audit-log-flush-interval should be [%d, %d]", 1, MaxPluginAuditLogFlushInterval)
+	}
 	// txn-local-latches
 	if err := c.TxnLocalLatches.Valid(); err != nil {
 		return err
@@ -1468,6 +1545,14 @@ func init() {
 
 func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 	conf := defaultConf
+	if intest.InTest && kerneltype.IsNextGen() {
+		// In test mode, without reading a config file, we still assume the `GetGlobalConfig()` returns
+		// a valid config file. However, the "valid" nextgen config file should always have a keyspace name.
+		// So we set the keyspace name to "SYSTEM" here for test.
+		//
+		// Didn't use `keyspace.SYSTEM` to avoid cyclic dependency.
+		conf.KeyspaceName = "SYSTEM"
+	}
 	StoreGlobalConfig(&conf)
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true

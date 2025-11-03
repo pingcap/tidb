@@ -18,10 +18,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -39,6 +40,9 @@ var (
 // CreateStoreAndBootstrap creates a mock store and bootstrap it.
 func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 	testenv.SetGOMAXPROCSForTest()
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+	}
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	dom, err := BootstrapSession(store)
@@ -49,7 +53,7 @@ func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 var sessionKitIDGenerator atomicutil.Uint64
 
 // CreateSessionAndSetID creates a session and set connection ID.
-func CreateSessionAndSetID(t *testing.T, store kv.Storage) sessiontypes.Session {
+func CreateSessionAndSetID(t *testing.T, store kv.Storage) sessionapi.Session {
 	se, err := CreateSession4Test(store)
 	se.SetConnectionID(sessionKitIDGenerator.Inc())
 	require.NoError(t, err)
@@ -57,7 +61,7 @@ func CreateSessionAndSetID(t *testing.T, store kv.Storage) sessiontypes.Session 
 }
 
 // MustExec executes a sql statement and asserts no error occurs.
-func MustExec(t *testing.T, se sessiontypes.Session, sql string, args ...any) {
+func MustExec(t *testing.T, se sessionapi.Session, sql string, args ...any) {
 	rs, err := exec(se, sql, args...)
 	require.NoError(t, err)
 	if rs != nil {
@@ -66,13 +70,13 @@ func MustExec(t *testing.T, se sessiontypes.Session, sql string, args ...any) {
 }
 
 // MustExecToRecodeSet executes a sql statement and asserts no error occurs.
-func MustExecToRecodeSet(t *testing.T, se sessiontypes.Session, sql string, args ...any) sqlexec.RecordSet {
+func MustExecToRecodeSet(t *testing.T, se sessionapi.Session, sql string, args ...any) sqlexec.RecordSet {
 	rs, err := exec(se, sql, args...)
 	require.NoError(t, err)
 	return rs
 }
 
-func exec(se sessiontypes.Session, sql string, args ...any) (sqlexec.RecordSet, error) {
+func exec(se sessionapi.Session, sql string, args ...any) (sqlexec.RecordSet, error) {
 	ctx := context.Background()
 	if len(args) == 0 {
 		rs, err := se.Execute(ctx, sql)

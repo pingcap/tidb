@@ -26,7 +26,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -69,7 +71,12 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, false, plan.Detached)
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
-	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+	if kerneltype.IsNextGen() {
+		require.Equal(t, config.DefaultBatchSize, plan.MaxEngineSize)
+	} else {
+		require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+	}
+
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
 	plan.initDefaultOptions(context.Background(), 10, nil)
@@ -292,6 +299,9 @@ func TestGetLocalBackendCfg(t *testing.T) {
 }
 
 func TestSupportedSuffixForServerDisk(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("nextgen doesn't support import from server disk")
+	}
 	username, err := user.Current()
 	require.NoError(t, err)
 	if username.Name == "root" {
@@ -472,5 +482,13 @@ func TestParseFileType(t *testing.T) {
 			actual := parseFileType(tc.path)
 			require.Equal(t, tc.expected, actual)
 		})
+	}
+}
+
+func TestGetDefMaxEngineSize(t *testing.T) {
+	if kerneltype.IsClassic() {
+		require.Equal(t, config.ByteSize(500*units.GiB), getDefMaxEngineSize())
+	} else {
+		require.Equal(t, config.ByteSize(100*units.GiB), getDefMaxEngineSize())
 	}
 }

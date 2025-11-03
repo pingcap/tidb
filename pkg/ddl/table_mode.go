@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 // onAlterTableMode should only be called by alterTableMode, will call updateVersionAndTableInfo
@@ -86,4 +87,14 @@ func validateTableMode(origin, target model.TableMode) bool {
 		return false
 	}
 	return true
+}
+
+// AlterTableMode creates a DDL job for alter table mode.
+func AlterTableMode(de Executor, sctx sessionctx.Context, mode model.TableMode, schemaID, tableID int64) error {
+	args := &model.AlterTableModeArgs{
+		TableMode: mode,
+		SchemaID:  schemaID,
+		TableID:   tableID,
+	}
+	return de.AlterTableMode(sctx, args)
 }

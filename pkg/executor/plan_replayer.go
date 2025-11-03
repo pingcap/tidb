@@ -23,7 +23,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -33,10 +32,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"go.uber.org/zap"
@@ -365,40 +364,18 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 }
 
 func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
-	unLoadVars := make([]string, 0)
+	var unLoadVars []string
 	for _, zipFile := range z.File {
 		if strings.Compare(zipFile.Name, domain.PlanReplayerVariablesFile) == 0 {
-			varMap := make(map[string]string)
 			v, err := zipFile.Open()
 			if err != nil {
 				return errors.AddStack(err)
 			}
 			//nolint: errcheck,all_revive,revive
 			defer v.Close()
-			_, err = toml.NewDecoder(v).Decode(&varMap)
+			unLoadVars, err = config.LoadConfig(ctx, v)
 			if err != nil {
 				return errors.AddStack(err)
-			}
-			vars := ctx.GetSessionVars()
-			for name, value := range varMap {
-				sysVar := variable.GetSysVar(name)
-				if sysVar == nil {
-					unLoadVars = append(unLoadVars, name)
-					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
-					continue
-				}
-				sVal, err := sysVar.Validate(vars, value, vardef.ScopeSession)
-				if err != nil {
-					unLoadVars = append(unLoadVars, name)
-					logutil.BgLogger().Warn(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
-					continue
-				}
-				err = vars.SetSystemVar(name, sVal)
-				if err != nil {
-					unLoadVars = append(unLoadVars, name)
-					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
-					continue
-				}
 			}
 		}
 	}

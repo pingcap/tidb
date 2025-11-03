@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -43,8 +43,8 @@ type DeleteExec struct {
 	tblID2Table  map[int64]table.Table
 
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
-	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
-	tblColPosInfos plannercore.TblColPosInfoSlice
+	// the columns ordinals is present in ordinal range format, @see physicalop.TblColPosInfos
+	tblColPosInfos physicalop.TblColPosInfoSlice
 	memTracker     *memory.Tracker
 	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
 	fkChecks map[int64][]*FKCheckExec
@@ -63,7 +63,7 @@ func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.deleteSingleTableByChunk(ctx)
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPosInfo, isExtraHandle bool, row []types.Datum) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *physicalop.TblColPosInfo, isExtraHandle bool, row []types.Datum) error {
 	end := len(row)
 	if isExtraHandle {
 		end--
@@ -170,7 +170,7 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 	return nil
 }
 
-func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
+func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []physicalop.TblColPosInfo, joinedRow []types.Datum) error {
 	// iterate all the joined tables, and got the corresponding rows in joinedRow.
 	var totalMemDelta int64
 	for i := range colPosInfos {
@@ -268,7 +268,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 	return nil
 }
 
-func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *plannercore.TblColPosInfo) error {
+func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *physicalop.TblColPosInfo) error {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
@@ -345,7 +345,7 @@ func (e *DeleteExec) HasFKCascades() bool {
 
 type handleInfoPair struct {
 	handleVal []types.Datum
-	posInfo   *plannercore.TblColPosInfo
+	posInfo   *physicalop.TblColPosInfo
 }
 
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.

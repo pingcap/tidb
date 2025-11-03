@@ -4,6 +4,8 @@ go_library(
     name = "execdetails",
     srcs = [
         "execdetails.go",
+        "runtime_stats.go",
+        "tiflash_stats.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/execdetails",

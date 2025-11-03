@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/stretchr/testify/require"
 )
 
@@ -85,6 +87,35 @@ func TestSQLModeVar(t *testing.T) {
 	sqlMode, err = mysql.GetSQLMode(val)
 	require.NoError(t, err)
 	require.Equal(t, sqlMode, vars.SQLMode)
+}
+
+func TestTiDBTraceEventSysVar(t *testing.T) {
+	prevCategories := traceevent.GetEnabledCategories()
+	prevMode := traceevent.CurrentMode()
+	traceevent.SetCategories(traceevent.AllCategories)
+	_, _ = traceevent.SetMode(traceevent.ModeOff)
+	t.Cleanup(func() {
+		traceevent.SetCategories(prevCategories)
+		_, _ = traceevent.SetMode(prevMode)
+	})
+
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(vardef.TiDBTraceEvent)
+
+	require.Equal(t, traceevent.ModeOff, traceevent.CurrentMode())
+	require.Equal(t, traceevent.AllCategories, traceevent.GetEnabledCategories())
+
+	if kerneltype.IsClassic() {
+		err := sv.SetGlobal(context.Background(), vars, vardef.On)
+		require.Error(t, err)
+		return
+	}
+
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, "baSe"))
+	require.Equal(t, traceevent.ModeBase, traceevent.CurrentMode())
+
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, "FulL"))
+	require.Equal(t, traceevent.ModeFull, traceevent.CurrentMode())
 }
 
 func TestMaxExecutionTime(t *testing.T) {
@@ -1035,7 +1066,7 @@ func TestTiDBServerMemoryLimit2(t *testing.T) {
 		val, err = mock.GetGlobalSysVar(vardef.TiDBServerMemoryLimit)
 		require.NoError(t, err)
 		require.Equal(t, "75%", val)
-		require.Equal(t, memory.ServerMemoryLimit.Load(), total/100*75)
+		require.Equal(t, memory.ServerMemoryLimit.Load(), total*75/100)
 	}
 	// Test can't obtain physical memory
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/GetMemTotalError", `return(true)`))
@@ -1595,7 +1626,12 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		{
 			vardef.TiDBTxnAssertionLevel,
 			vardef.DefTiDBTxnAssertionLevel,
-			vardef.AssertionFastStr,
+			func() string {
+				if kerneltype.IsNextGen() {
+					return vardef.AssertionStrictStr
+				}
+				return vardef.AssertionFastStr
+			}(),
 		},
 		{
 			vardef.TiDBEnableMutationChecker,
@@ -1605,12 +1641,17 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		{
 			vardef.TiDBPessimisticTransactionFairLocking,
 			BoolToOnOff(vardef.DefTiDBPessimisticTransactionFairLocking),
-			vardef.On,
+			func() string {
+				if kerneltype.IsNextGen() {
+					return vardef.Off
+				}
+				return vardef.On
+			}(),
 		},
 	}
 	for _, v := range vars {
 		initVal := GlobalSystemVariableInitialValue(v.name, v.val)
-		require.Equal(t, v.initVal, initVal)
+		require.Equal(t, v.initVal, initVal, v.name)
 	}
 }
 
@@ -1879,4 +1920,29 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTiDBOptSelectivityFactor(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	require.NotEqual(t, 0.8, val)
+
+	// set valid value
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBOptSelectivityFactor, "0.7"))
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	require.NotEqual(t, 0.7, val)
+
+	// set invalid value
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBOptSelectivityFactor, "1.1")
+	require.NoError(t, err)
+	_, err = mock.GetGlobalSysVar(vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_opt_selectivity_factor value: '1.1'", warn.Error())
 }

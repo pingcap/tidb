@@ -132,7 +132,7 @@ type StagingHandle int
 
 var (
 	// InvalidStagingHandle is an invalid handler, MemBuffer will check handler to ensure safety.
-	InvalidStagingHandle StagingHandle = 0
+	InvalidStagingHandle StagingHandle
 	// LastActiveStagingHandle is an special handler which always point to the last active staging buffer.
 	LastActiveStagingHandle StagingHandle = -1
 )
@@ -791,7 +791,6 @@ type ResourceGroupTagBuilder struct {
 	sqlDigest    *parser.Digest
 	planDigest   *parser.Digest
 	keyspaceName []byte
-	accessKey    []byte
 }
 
 // NewResourceGroupTagBuilder creates a new ResourceGroupTagBuilder.

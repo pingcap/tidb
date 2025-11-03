@@ -24,6 +24,7 @@ go_library(
         "//pkg/util/dbutil",
         "//pkg/util/hack",
         "//pkg/util/kvcache",
+        "//pkg/util/logutil",
         "//pkg/util/redact",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_google_uuid//:uuid",

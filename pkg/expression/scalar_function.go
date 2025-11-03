@@ -244,8 +244,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 			ctx.GetEvalCtx().AppendWarning(err)
 		}
 	}
-	funcArgs := make([]Expression, len(args))
-	copy(funcArgs, args)
+	funcArgs := slices.Clone(args)
 	switch funcName {
 	case ast.If, ast.Ifnull, ast.Nullif:
 		// Do nothing. Because it will call InferType4ControlFuncs.
@@ -355,13 +354,8 @@ func (sf *ScalarFunction) Clone() Expression {
 		Function: sf.Function.Clone(),
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
-	if sf.hashcode != nil {
-		c.hashcode = make([]byte, len(sf.hashcode))
-		copy(c.hashcode, sf.hashcode)
-	}
 	if sf.canonicalhashcode != nil {
-		c.canonicalhashcode = make([]byte, len(sf.canonicalhashcode))
-		copy(c.canonicalhashcode, sf.canonicalhashcode)
+		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)
 	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
@@ -386,13 +380,32 @@ func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 	if !ok {
 		return false
 	}
+	// If they are the same object, they must be equal.
+	if sf == fun {
+		return true
+	}
 	if sf.FuncName.L != fun.FuncName.L {
 		return false
 	}
 	if !sf.RetType.Equal(fun.RetType) {
 		return false
 	}
+	if sf.hashcode != nil && fun.hashcode != nil {
+		if intest.InTest {
+			assertCheckHashCode(sf)
+			assertCheckHashCode(fun)
+		}
+		return bytes.Equal(sf.hashcode, fun.hashcode)
+	}
 	return sf.Function.equal(ctx, fun.Function)
+}
+
+func assertCheckHashCode(sf *ScalarFunction) {
+	intest.Assert(intest.InTest)
+	copyhashcode := make([]byte, len(sf.hashcode))
+	copy(copyhashcode, sf.hashcode)
+	ReHashCode(sf)
+	intest.Assert(bytes.Equal(sf.hashcode, copyhashcode), "HashCode should not change after ReHashCode is called")
 }
 
 // IsCorrelated implements Expression interface.
@@ -564,6 +577,9 @@ func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (typ
 // HashCode implements Expression interface.
 func (sf *ScalarFunction) HashCode() []byte {
 	if len(sf.hashcode) > 0 {
+		if intest.InTest {
+			assertCheckHashCode(sf)
+		}
 		return sf.hashcode
 	}
 	ReHashCode(sf)
@@ -740,6 +756,23 @@ func ReHashCode(sf *ScalarFunction) {
 	if sf.FuncName.L == ast.Cast {
 		evalTp := sf.RetType.EvalType()
 		sf.hashcode = append(sf.hashcode, byte(evalTp))
+	}
+	if sf.FuncName.L == ast.Grouping {
+		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(sf.Function.(*BuiltinGroupingImplSig).GetGroupingMode()))
+		marks := sf.Function.(*BuiltinGroupingImplSig).GetMetaGroupingMarks()
+		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(marks)))
+		for _, mark := range marks {
+			sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(mark)))
+			// we need to sort map keys to ensure the hashcode is deterministic.
+			keys := make([]uint64, 0, len(mark))
+			for k := range mark {
+				keys = append(keys, k)
+			}
+			slices.Sort(keys)
+			for _, k := range keys {
+				sf.hashcode = codec.EncodeInt(sf.hashcode, int64(k))
+			}
+		}
 	}
 }
 

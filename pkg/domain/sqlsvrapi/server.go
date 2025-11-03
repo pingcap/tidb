@@ -16,6 +16,7 @@ package sqlsvrapi
 
 import (
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/util"
 )
 
@@ -24,4 +25,5 @@ import (
 type Server interface {
 	GetKSSessPool(targetKS string) (util.DestroyableSessionPool, error)
 	GetKSStore(targetKS string) (store kv.Storage, err error)
+	GetDDLOwnerMgr() owner.Manager
 }

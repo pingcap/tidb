@@ -81,161 +81,6 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "decimals": null,
-          "description": "1. CPU: CPU utilization for all TiDB instances.\n- CPU-Avg: avg(cpu utilization)\n- CPU-Delta: max(cpu utilization) - min(cpu utilization)\n- CPU-Max: max(cpu utilization)\n2. Max memory usage",
-          "editable": true,
-          "error": false,
-          "fieldConfig": {
-            "defaults": {},
-            "overrides": []
-          },
-          "fill": 1,
-          "fillGradient": 0,
-          "grid": {},
-          "gridPos": {
-            "h": 7,
-            "w": 8,
-            "x": 0,
-            "y": 22
-          },
-          "hiddenSeries": false,
-          "id": 23763572004,
-          "legend": {
-            "alignAsTable": true,
-            "avg": true,
-            "current": false,
-            "hideEmpty": true,
-            "hideZero": true,
-            "max": false,
-            "min": false,
-            "rightSide": true,
-            "show": true,
-            "total": false,
-            "values": true
-          },
-          "lines": true,
-          "linewidth": 1,
-          "links": [],
-          "nullPointMode": "null as zero",
-          "options": {
-            "alertThreshold": true
-          },
-          "percentage": false,
-          "pluginVersion": "8.0.7",
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [
-            {
-              "$$hashKey": "object:371",
-              "alias": "Mem-Max",
-              "yaxis": 2
-            }
-          ],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
-          "targets": [
-            {
-              "exemplar": true,
-              "expr": "avg(rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m]))",
-              "format": "time_series",
-              "hide": false,
-              "interval": "",
-              "intervalFactor": 2,
-              "legendFormat": "CPU-Avg",
-              "refId": "A",
-              "step": 30
-            },
-            {
-              "exemplar": true,
-              "expr": "max(rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m]))",
-              "hide": false,
-              "interval": "",
-              "intervalFactor": 1,
-              "legendFormat": "CPU-Max",
-              "refId": "C"
-            },
-            {
-              "exemplar": true,
-              "expr": "(max(rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m])) - min(rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m])))",
-              "hide": false,
-              "interval": "",
-              "legendFormat": "CPU-Delta",
-              "refId": "B"
-            },
-            {
-              "exemplar": true,
-              "expr": "max(tidb_server_maxprocs{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"})",
-              "format": "time_series",
-              "hide": false,
-              "interval": "",
-              "intervalFactor": 2,
-              "legendFormat": "CPU-Quota",
-              "refId": "D",
-              "step": 30
-            },
-            {
-              "exemplar": true,
-              "expr": "max(sum((process_resident_memory_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", job=~\"tidb\"})) by (instance))",
-              "hide": false,
-              "interval": "",
-              "legendFormat": "Mem-Max",
-              "refId": "E"
-            }
-          ],
-          "thresholds": [],
-          "timeFrom": null,
-          "timeRegions": [],
-          "timeShift": null,
-          "title": "TiDB CPU/Memory",
-          "tooltip": {
-            "msResolution": false,
-            "shared": true,
-            "sort": 0,
-            "value_type": "cumulative"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
-            "show": true,
-            "values": []
-          },
-          "yaxes": [
-            {
-              "$$hashKey": "object:208",
-              "decimals": null,
-              "format": "percentunit",
-              "label": "CPU (%)",
-              "logBase": 1,
-              "max": null,
-              "min": "0",
-              "show": true
-            },
-            {
-              "$$hashKey": "object:209",
-              "decimals": null,
-              "format": "bytes",
-              "label": "Memory",
-              "logBase": 1,
-              "max": null,
-              "min": "0",
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
-        },
-        {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
-          "datasource": "${DS_TEST-CLUSTER}",
-          "decimals": null,
           "description": "1. CPU: CPU utilization for all TiKV instances.\n- CPU-Avg: avg(cpu utilization)\n- CPU-Delta: max(cpu utilization) - min(cpu utilization)\n- CPU-Max: max(cpu utilization)\n2. Max memory usage",
           "editable": true,
           "error": false,
@@ -248,8 +93,8 @@
           "grid": {},
           "gridPos": {
             "h": 7,
-            "w": 8,
-            "x": 8,
+            "w": 12,
+            "x": 0,
             "y": 22
           },
           "hiddenSeries": false,
@@ -400,8 +245,8 @@
           "grid": {},
           "gridPos": {
             "h": 7,
-            "w": 8,
-            "x": 16,
+            "w": 12,
+            "x": 12,
             "y": 22
           },
           "hiddenSeries": false,
@@ -572,16 +417,6 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_server_packet_io_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"Out|write\"}[1m])) by (type)",
-              "format": "time_series",
-              "interval": "",
-              "intervalFactor": 1,
-              "legendFormat": "TiDB -> Client",
-              "refId": "A",
-              "step": 30
-            },
-            {
-              "exemplar": true,
               "expr": "sum(rate(tikv_engine_flow_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", db=\"kv\", type=~\"bytes_read|iter_bytes_read\"}[1m]))",
               "hide": false,
               "interval": "",
@@ -689,22 +524,6 @@
           "stack": false,
           "steppedLine": false,
           "targets": [
-            {
-              "exemplar": true,
-              "expr": "sum(rate(tidb_server_packet_io_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"In|read\"}[1m])) by (type)",
-              "hide": false,
-              "interval": "",
-              "legendFormat": "Client -> TiDB",
-              "refId": "C"
-            },
-            {
-              "exemplar": true,
-              "expr": "sum(rate(tidb_tikvclient_txn_write_size_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])) by (scope)",
-              "hide": false,
-              "interval": "",
-              "legendFormat": "TiDB -> TiKV: {{scope}}",
-              "refId": "D"
-            },
             {
               "exemplar": true,
               "expr": "sum(rate(tikv_engine_flow_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", db=\"kv\", type=\"wal_file_bytes\"}[1m]))",
@@ -930,46 +749,11 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "(sum(rate(pd_client_cmd_handle_cmds_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) / sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])))",
-              "hide": false,
-              "interval": "",
-              "legendFormat": "wait - avg",
-              "refId": "D"
-            },
-            {
-              "exemplar": true,
-              "expr": "(sum(rate(pd_client_request_handle_requests_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"tso\"}[1m])) / sum(rate(pd_client_request_handle_requests_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"tso\"}[1m])))",
-              "hide": false,
-              "interval": "",
-              "legendFormat": "rpc - avg",
-              "refId": "A"
-            },
-            {
-              "exemplar": true,
               "expr": "(sum(rate(pd_server_handle_tso_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) / sum(rate(pd_server_handle_tso_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])))",
               "hide": false,
               "interval": "",
               "legendFormat": "handle - avg",
               "refId": "F"
-            },
-            {
-              "exemplar": true,
-              "expr": "histogram_quantile(0.99, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) by (le))",
-              "format": "time_series",
-              "interval": "",
-              "intervalFactor": 2,
-              "legendFormat": "wait - 99",
-              "refId": "B"
-            },
-            {
-              "exemplar": true,
-              "expr": "histogram_quantile(0.99, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"tso\"}[1m])) by (le))",
-              "format": "time_series",
-              "hide": false,
-              "interval": "",
-              "intervalFactor": 2,
-              "legendFormat": "rpc - 99",
-              "refId": "E"
             },
             {
               "exemplar": true,

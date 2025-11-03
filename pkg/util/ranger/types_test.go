@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -152,7 +152,7 @@ func TestRange(t *testing.T) {
 		},
 	}
 	for _, v := range isPointTests {
-		ctx := core.MockContext()
+		ctx := coretestsdk.MockContext()
 		require.Equal(t, v.isPoint, v.ran.IsPoint(ctx.GetRangerCtx()))
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}
@@ -280,7 +280,7 @@ func buildRange(lowVals []int64, highVals []int64, lowExclude bool, highExclude 
 }
 
 func TestIntersectionList(t *testing.T) {
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer domain.GetDomain(ctx).StatsHandle().Close()
 
 	// First list of ranges representing: (a > 100) OR (a = 100 AND b > 0)
@@ -360,7 +360,7 @@ func TestIntersectionEmpty(t *testing.T) {
 		"[1,1] (5 1,5 +inf]":                    "<nil>",
 	}
 
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	actualResult := make(map[string]string)
 
 	for _, c := range cases {
@@ -415,7 +415,7 @@ func TestIntersectionSubset(t *testing.T) {
 	}
 
 	actualResult := make(map[string]string)
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 
 	for _, c := range cases {
 		range1 := buildRange(c.low1, c.high1, c.lowEx1, c.highEx1)
@@ -441,7 +441,7 @@ func TestIntersectionSubset(t *testing.T) {
 
 // Test intersections for overlapping ranges and not subset.
 func TestIntersectionOverlap(t *testing.T) {
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	type testCase struct {
 		range1         ranger.Range
 		range2         ranger.Range
