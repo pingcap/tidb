@@ -75,6 +75,31 @@ func RunChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWithRewriteR
 	return json.NewEncoder(os.Stdout).Encode(results)
 }
 
+func RunUpstreamChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWithPitrIdMapConfig) error {
+	c := &checksumTableCtx{cfg: cfg.Config}
+	if err := c.init(ctx, g); err != nil {
+		return errors.Trace(err)
+	}
+	curr, err := c.getTables(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	reqs, err := c.genUpstreamRequests(ctx, curr, cfg.RestoreTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	results, err := c.runChecksum(ctx, reqs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, result := range results {
+		log.Info("Checksum result", zap.String("db", result.DBName), zap.String("table", result.TableName), zap.Uint64("checksum", result.Checksum),
+			zap.Uint64("total_bytes", result.TotalBytes), zap.Uint64("total_kvs", result.TotalKVs))
+	}
+
+	return json.NewEncoder(os.Stdout).Encode(results)
+}
+
 func (c *checksumTableCtx) init(ctx context.Context, g glue.Glue) error {
 	cfg := c.cfg
 	var err error
@@ -319,15 +344,6 @@ func (c *checksumTableCtx) genRequests(ctx context.Context, bkup []*metautil.Tab
 	return
 }
 
-type ChecksumResult struct {
-	DBName    string `json:"db_name"`
-	TableName string `json:"table_name"`
-
-	Checksum   uint64 `json:"checksum"`
-	TotalBytes uint64 `json:"total_bytes"`
-	TotalKVs   uint64 `json:"total_kvs"`
-}
-
 func (c *checksumTableCtx) genRequestsWithIDMap(ctx context.Context, curr []tableInDB, idmaps []*backup.PitrDBMap, restoreTS uint64) (reqs []request, err error) {
 	router := make(map[string]map[string]map[int64]int64)
 	for _, dbidmap := range idmaps {
@@ -384,6 +400,34 @@ func (c *checksumTableCtx) genRequestsWithIDMap(ctx context.Context, curr []tabl
 		reqs = append(reqs, request{copReq: req, dbName: t.dbName, tableName: t.info.Name.L})
 	}
 	return
+}
+
+func (c *checksumTableCtx) genUpstreamRequests(ctx context.Context, curr []tableInDB, checksumTS uint64) (reqs []request, err error) {
+	for _, t := range curr {
+		rb := checksum.NewExecutorBuilder(t.info, checksumTS)
+		rb.SetConcurrency(c.cfg.ChecksumConcurrency)
+		rb.SetExplicitRequestSourceType(kvutil.ExplicitTypeBR)
+		req, err := rb.Build()
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to build checksum builder for table %s.%s", t.dbName, t.info.Name.L)
+		}
+		reqs = append(reqs, request{
+			copReq:    req,
+			dbName:    t.dbName,
+			tableName: t.info.Name.L,
+		})
+	}
+
+	return
+}
+
+type ChecksumResult struct {
+	DBName    string `json:"db_name"`
+	TableName string `json:"table_name"`
+
+	Checksum   uint64 `json:"checksum"`
+	TotalBytes uint64 `json:"total_bytes"`
+	TotalKVs   uint64 `json:"total_kvs"`
 }
 
 func (c *checksumTableCtx) runChecksum(ctx context.Context, reqs []request) ([]ChecksumResult, error) {
