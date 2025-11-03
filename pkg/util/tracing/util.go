@@ -101,6 +101,7 @@ type Sink interface {
 	Record(ctx context.Context, event Event)
 }
 
+// FlightRecorder defines the flight recorder interface.
 type FlightRecorder interface {
 	Sink
 	MarkDump()
@@ -110,14 +111,18 @@ type sinkKeyType struct{}
 
 var sinkKey sinkKeyType = struct{}{}
 
+// WithFlightRecorder creates a context with the given FlightRecorder.
 func WithFlightRecorder(ctx context.Context, sink FlightRecorder) context.Context {
 	return context.WithValue(ctx, sinkKey, sink)
 }
 
+// GetSink returns the Sink from the context.
 func GetSink(ctx context.Context) any {
 	return ctx.Value(sinkKey)
 }
 
+// ExtractTraceID returns the trace identifier from ctx if present.
+// It delegates to client-go's TraceIDFromContext implementation.
 func ExtractTraceID(ctx context.Context) []byte {
 	return extractTraceID(ctx)
 }
@@ -187,10 +192,12 @@ const (
 // AllCategories can be used to enable every known trace category.
 const AllCategories = traceCategorySentinel - 1
 
+// String returns the string representation of a TraceCategory.
 func (c TraceCategory) String() string {
 	return getCategoryName(c)
 }
 
+// ParseTraceCategory parses a trace category string representation and returns the corresponding TraceCategory.
 func ParseTraceCategory(category string) TraceCategory {
 	for i := 0; (1 << i) < traceCategorySentinel; i++ {
 		if getCategoryName(1<<i) == category {
@@ -228,8 +235,10 @@ func getCategoryName(category TraceCategory) string {
 // See https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU
 // for more details.
 
+// Phase represents the phase of an event.
 type Phase string
 
+// The value definition for Phase.
 const (
 	PhaseBegin      Phase = "B"
 	PhaseEnd        Phase = "E"
@@ -240,6 +249,7 @@ const (
 	PhaseInstant    Phase = "i"
 )
 
+// Event represents a traced event.
 type Event struct {
 	Timestamp time.Time
 	Name      string

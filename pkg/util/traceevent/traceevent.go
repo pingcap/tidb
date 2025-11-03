@@ -71,6 +71,7 @@ const (
 	// Used when client-go emits events with categories not yet mapped in adapter.go.
 	// This provides forward compatibility if client-go adds new categories.
 	UnknownClient = tracing.UnknownClient
+	// AllCategories can be used to enable every known trace category.
 	AllCategories = tracing.AllCategories
 )
 
@@ -208,8 +209,10 @@ func IsEnabled(category TraceCategory) bool {
 // Event Format (TEF) once the full design is finalized.
 type Event = tracing.Event
 
+// TraceCategory represents different trace event categories.
 type TraceCategory = tracing.TraceCategory
 
+// Sink records trace events.
 type Sink = tracing.Sink
 
 // SetSink replaces the global sink. Passing nil restores the default sink.
@@ -244,6 +247,7 @@ type Trace struct {
 
 var globalHTTPFlightRecorder atomic.Pointer[HTTPFlightRecorder]
 
+// HTTPFlightRecorder implements Sink interface.
 type HTTPFlightRecorder struct {
 	ch                   chan<- []Event
 	oldEnabledCategories uint64
@@ -253,6 +257,7 @@ type HTTPFlightRecorder struct {
 	triggerCanonicalName string
 }
 
+// UserCommandConfig is the configuration for DumpTriggerConfig of user command type.
 type UserCommandConfig struct {
 	Type       string `json:"type"`
 	SQLRegexp  string `json:"sql_regexp"`
@@ -262,6 +267,7 @@ type UserCommandConfig struct {
 	Table      string `json:"table"`
 }
 
+// Validate validates the UserCommandConfig.
 func (c *UserCommandConfig) Validate(b *strings.Builder) error {
 	if c == nil {
 		return fmt.Errorf("dump_trigger.user_command missing")
@@ -299,6 +305,7 @@ func (c *UserCommandConfig) Validate(b *strings.Builder) error {
 	return nil
 }
 
+// SuspiciousEventConfig is the configuration for suspicious event.
 type SuspiciousEventConfig struct {
 	Type string `json:"type"`
 	// SlowQuery
@@ -307,6 +314,7 @@ type SuspiciousEventConfig struct {
 	// RegionError
 }
 
+// Validate validates the suspicious event configuration.
 func (c *SuspiciousEventConfig) Validate(b *strings.Builder) error {
 	if c == nil {
 		return fmt.Errorf("dump_trigger.suspicious_event missing")
@@ -323,6 +331,7 @@ func (c *SuspiciousEventConfig) Validate(b *strings.Builder) error {
 	return nil
 }
 
+// DumpTriggerConfig is the configuration for dump trigger.
 type DumpTriggerConfig struct {
 	Type        string                 `json:"type"`
 	Sampling    int                    `json:"sampling", omitempty`
@@ -330,6 +339,8 @@ type DumpTriggerConfig struct {
 	UserCommand *UserCommandConfig     `json:"user_command",omitempty`
 }
 
+// Validate validates the DumpTriggerConfig.
+// When validate successfully, it returns nil, strings.Builder will contain the canonical name of the trigger.
 func (c *DumpTriggerConfig) Validate(b *strings.Builder) error {
 	if c == nil {
 		return fmt.Errorf("dump_trigger missing")
@@ -351,6 +362,7 @@ func (c *DumpTriggerConfig) Validate(b *strings.Builder) error {
 	return nil
 }
 
+// CheckFlightRecorderDumpTrigger checks if the flight recorder should dump based on the trigger name and configuration.
 func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, check func(*DumpTriggerConfig) bool) {
 	flightRecorder := globalHTTPFlightRecorder.Load()
 	if flightRecorder == nil {
@@ -372,6 +384,7 @@ func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, che
 	}
 }
 
+// FlightRecorderConfig represents the configuration for the flight recorder.
 // A example of flight recorder configuration in json:
 //
 //	{
@@ -401,16 +414,20 @@ type FlightRecorderConfig struct {
 	DumpTrigger       DumpTriggerConfig `json:"dump_trigger"`
 }
 
+// Initialize initializes the default flight recorder configuration.
+// It will dump all the events.
 func (c *FlightRecorderConfig) Initialize() {
 	c.EnabledCategories = []string{"*"}
 	c.DumpTrigger.Type = "sampling"
 	c.DumpTrigger.Sampling = 1
 }
 
+// Validate validates the flight recorder configuration.
 func (c *FlightRecorderConfig) Validate(b *strings.Builder) error {
 	return c.DumpTrigger.Validate(b)
 }
 
+// StartHTTPFlightRecorder starts the HTTP flight recorder.
 func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*HTTPFlightRecorder, error) {
 	var b strings.Builder
 	if err := config.Validate(&b); err != nil {
@@ -422,9 +439,8 @@ func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*
 		if str == "*" {
 			categories = tracing.AllCategories
 			break
-		} else {
-			categories |= tracing.ParseTraceCategory(str)
 		}
+		categories |= tracing.ParseTraceCategory(str)
 	}
 	ret := &HTTPFlightRecorder{
 		ch:                   ch,
@@ -440,12 +456,13 @@ func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*
 	return ret, nil
 }
 
+// Close closes the HTTP flight recorder.
 func (r *HTTPFlightRecorder) Close() {
 	enabledCategories.Store(r.oldEnabledCategories)
 	globalHTTPFlightRecorder.Store(nil)
 }
 
-func (r *HTTPFlightRecorder) Collect(events []Event) {
+func (r *HTTPFlightRecorder) collect(events []Event) {
 	select {
 	case r.ch <- slices.Clone(events):
 	default:
@@ -455,33 +472,37 @@ func (r *HTTPFlightRecorder) Collect(events []Event) {
 // Trace implement the FlightRecorder interface.
 var _ tracing.FlightRecorder = &Trace{}
 
+// NewTrace creates a new Trace.
 func NewTrace() *Trace {
 	return &Trace{
 		rand32: rand.Uint32(),
 	}
 }
 
+// Record implements the FlightRecorder interface.
 func (r *Trace) Record(_ context.Context, event Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, event)
 }
 
+// MarkDump implements the FlightRecorder interface.
 func (r *Trace) MarkDump() {
 	r.keep = true
 }
 
+// Reset resets the Trace.
 func (r *Trace) Reset() {
-	x := globalHTTPFlightRecorder.Load()
-	if x != nil {
+	sink := globalHTTPFlightRecorder.Load()
+	if sink != nil {
 		if r.keep {
-			x.Collect(r.events)
+			sink.collect(r.events)
 		}
-		if x.Config.Type == "sampling" {
-			x.counter++
-			if x.counter >= x.Config.Sampling {
-				x.Collect(r.events)
-				x.counter = 0
+		if sink.Config.Type == "sampling" {
+			sink.counter++
+			if sink.counter >= sink.Config.Sampling {
+				sink.collect(r.events)
+				sink.counter = 0
 			}
 		}
 	}

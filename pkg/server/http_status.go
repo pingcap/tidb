@@ -740,7 +740,8 @@ func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHan
 	return optimizor.NewStatsPriorityQueueHandler(do)
 }
 
-// https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview?tab=t.0
+// Event defines the event structure for tracing.
+// See https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview?tab=t.0
 type Event struct {
 	Name     string          `json:"name"`
 	Phase    tracing.Phase   `json:"ph"`
