@@ -229,5 +229,5 @@ func (idx *Index) GetTopN() *TopN {
 
 // IsAnalyzed indicates whether the index is analyzed.
 func (idx *Index) IsAnalyzed() bool {
-	return idx.StatsVer != Version0
+	return IsAnalyzed(idx.StatsVer)
 }
