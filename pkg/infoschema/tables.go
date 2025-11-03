@@ -2893,6 +2893,7 @@ func FilterClusterServerInfo(serversInfo []ServerInfo, nodeTypes, addresses set.
 	return filterServers
 }
 
+// GetDataFromStatusByConn is getting the per-connection status for `performance_schema.status_by_connection`
 func GetDataFromStatusByConn(sctx sessionctx.Context) ([][]types.Datum, error) {
 	sm := sctx.GetSessionManager()
 	if sm == nil {
