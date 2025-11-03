@@ -11,6 +11,8 @@ go_library(
     deps = [
         "@com_github_opentracing_basictracer_go//:basictracer-go",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_tikv_client_go_v2//trace",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

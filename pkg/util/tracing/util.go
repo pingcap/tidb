@@ -241,12 +241,12 @@ const (
 )
 
 type Event struct {
-	Category TraceCategory
-	Name     string
-	Phase
 	Timestamp time.Time
-	TraceID   []byte
-	Fields    []zap.Field
+	Name      string
+	Phase
+	TraceID  []byte
+	Fields   []zap.Field
+	Category TraceCategory
 }
 
 // StartRegionEx returns Region together with the context.

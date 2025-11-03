@@ -11,6 +11,7 @@ go_library(
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/util/logutil",
+        "//pkg/util/tracing",
         "@com_github_tikv_client_go_v2//trace",
         "@org_uber_go_zap//:zap",
     ],

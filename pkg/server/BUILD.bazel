@@ -110,6 +110,7 @@ go_library(
         "//pkg/util/topsql",
         "//pkg/util/topsql/state",
         "//pkg/util/topsql/stmtstats",
+        "//pkg/util/traceevent",
         "//pkg/util/tracing",
         "//pkg/util/versioninfo",
         "@com_github_blacktear23_go_proxyprotocol//:go-proxyprotocol",
@@ -137,6 +138,7 @@ go_library(
         "@org_golang_google_grpc//peer",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )
 
