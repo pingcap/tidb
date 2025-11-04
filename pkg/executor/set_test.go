@@ -1001,14 +1001,14 @@ func TestPingKaiDBSetVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	// test tidb_enable_fast_path
-	tk.MustQuery("select @@global.tidb_enable_fast_path").Check(testkit.Rows("1")) // default value
-	tk.MustExec("set global tidb_enable_fast_path = 0")
-	tk.MustQuery("select @@global.tidb_enable_fast_path").Check(testkit.Rows("0"))
-	require.False(t, variable.EnableFastPath.Load())
-	tk.MustExec("set global tidb_enable_fast_path = 1")
-	tk.MustQuery("select @@global.tidb_enable_fast_path").Check(testkit.Rows("1"))
+	// test tidbx_fast_path
+	tk.MustQuery("select @@global.tidbx_fast_path").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set global tidbx_fast_path = 1")
+	tk.MustQuery("select @@global.tidbx_fast_path").Check(testkit.Rows("1"))
 	require.True(t, variable.EnableFastPath.Load())
+	tk.MustExec("set global tidbx_fast_path = 0")
+	tk.MustQuery("select @@global.tidbx_fast_path").Check(testkit.Rows("0"))
+	require.False(t, variable.EnableFastPath.Load())
 }
 
 func TestSetCollationAndCharset(t *testing.T) {

@@ -3402,8 +3402,16 @@ func TestBatchGetTypeForRowExpr(t *testing.T) {
 func TestPreparedPointGetFastPathBasic(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		if unistore.CheckResourceTagForTopSQLInGoTest {
+			// fast path won't set topsql tag, disable the check temporarily.
+			unistore.CheckResourceTagForTopSQLInGoTest = false
+			defer func() {
+				unistore.CheckResourceTagForTopSQLInGoTest = true
+			}()
+		}
+
 		dbt.MustExec("use test")
-		dbt.MustExec("set global tidb_enable_fast_path = 1")
+		dbt.MustExec("set global tidbx_fast_path = 1")
 
 		schemas := []string{
 			"create table t1 (id int key, b varchar(64))",

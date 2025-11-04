@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -249,7 +250,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if err := e.verifyTxnScope(); err != nil {
 		return err
 	}
-	setOptionForTopSQL(e.Ctx().GetSessionVars().StmtCtx, e.snapshot)
+	if !variable.EnableFastPath.Load() {
+		setOptionForTopSQL(e.Ctx().GetSessionVars().StmtCtx, e.snapshot)
+	}
 	return nil
 }
 

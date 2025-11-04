@@ -20,6 +20,8 @@ const (
 	TiDBXEnableTiKVLocalCallWithMemRing = "tidbx_enable_tikv_local_call_with_mem"
 	// TiDBXEnableTiKVLocalCallWithReprC indicates whether to enable TiKV local calls with marshal reprc.
 	TiDBXEnableTiKVLocalCallWithReprC = "tidbx_enable_tikv_local_call_with_reprc"
+	// TiDBXEnableFastPath indicates whether to enable the fast path, for performance testing.
+	TiDBXEnableFastPath = "tidbx_fast_path"
 )
 
 // Default TiDB system variable values.
@@ -37,6 +39,7 @@ const (
 	DefTiDBCreateFromSelectUsingImport   = false
 	DefTiDBXEnableLocalRPCWithMemRingOpt = false
 	DefTiDBXEnableLocalRPCWithReprC      = false
+	DefTiDBXFastPath                     = false
 )
 
 // UnspecifiedServerID indicates the unspecified server id.
@@ -55,4 +58,5 @@ var (
 	TiDBEnableProcedureValue   = atomic.NewBool(DefTiDBEnableProcedure)
 	AutomaticSPPrivileges      = atomic.NewBool(true)
 	EnableDutySeparationMode   = atomic.NewBool(DefTiDBEnableDutySeparationMode)
+	EnableFastPath             = atomic.NewBool(DefTiDBXFastPath)
 )

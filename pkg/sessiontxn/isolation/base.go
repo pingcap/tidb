@@ -492,7 +492,9 @@ func (p *baseTxnContextProvider) SetOptionsOnTxnActive(txn kv.Transaction) {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 		txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
 	}
-	txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+	if !variable.EnableFastPath.Load() {
+		txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+	}
 	txn.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 
 	if p.causalConsistencyOnly || !sessVars.GuaranteeLinearizability {

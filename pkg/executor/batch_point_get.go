@@ -102,7 +102,9 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	}
 	e.txn = txn
 
-	setOptionForTopSQL(e.Ctx().GetSessionVars().StmtCtx, e.snapshot)
+	if !variable.EnableFastPath.Load() {
+		setOptionForTopSQL(e.Ctx().GetSessionVars().StmtCtx, e.snapshot)
+	}
 	var batchGetter kv.BatchGetter = e.snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock

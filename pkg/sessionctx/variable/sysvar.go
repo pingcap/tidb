@@ -3632,9 +3632,16 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
-	{Scope: ScopeGlobal, Name: TiDBEnableFastPath, Value: BoolToOnOff(DefTiDBEnableFastPath), Type: TypeBool,
+	{Scope: ScopeGlobal, Name: TiDBXEnableFastPath, Value: BoolToOnOff(DefTiDBXFastPath), Type: TypeBool,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
-			EnableFastPath.Store(TiDBOptOn(val))
+			enabled := TiDBOptOn(val)
+			if enabled {
+				config.UpdateGlobal(func(conf *config.Config) {
+					// When enabling fast path, disable collecting execution info for better performance.
+					conf.Instance.EnableCollectExecutionInfo.Store(false)
+				})
+			}
+			EnableFastPath.Store(enabled)
 			return nil
 		},
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
