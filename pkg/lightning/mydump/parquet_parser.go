@@ -548,12 +548,13 @@ func NewParquetParser(
 		}
 	}
 
-	var allocator memory.Allocator
-	allocator = memory.NewGoAllocator()
-	if meta.MemoryPool != nil {
-		allocator = NewAppendOnlyAllocator(meta.MemoryPool, meta.MemoryUsage)
-	}
+	// var allocator memory.Allocator
+	// allocator = memory.NewGoAllocator()
+	// if meta.MemoryPool != nil {
+	// allocator = NewAppendOnlyAllocator(meta.MemoryPool, meta.MemoryUsage)
+	// }
 
+	allocator := memory.NewGoAllocator()
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
 	prop.BufferSize = 1024
