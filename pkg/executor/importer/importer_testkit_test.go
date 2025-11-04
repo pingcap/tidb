@@ -172,6 +172,9 @@ func TestVerifyChecksum(t *testing.T) {
 }
 
 func TestGetTargetNodeCpuCnt(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled in nextgen")
+	}
 	store, tm, ctx := testutil.InitTableTest(t)
 	tk := testkit.NewTestKit(t, store)
 

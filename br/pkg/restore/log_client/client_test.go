@@ -2165,7 +2165,7 @@ func TestRepairIngestIndex(t *testing.T) {
 			RowCount:   100,
 			RawArgs:    args,
 			ReorgMeta: &model.DDLReorgMeta{
-				ReorgTp: model.ReorgTypeLitMerge,
+				ReorgTp: model.ReorgTypeIngest,
 			},
 			BinlogInfo: &model.HistoryInfo{
 				TableInfo: &model.TableInfo{
@@ -2350,7 +2350,7 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			RowCount:   100,
 			RawArgs:    args,
 			ReorgMeta: &model.DDLReorgMeta{
-				ReorgTp: model.ReorgTypeLitMerge,
+				ReorgTp: model.ReorgTypeIngest,
 			},
 			BinlogInfo: &model.HistoryInfo{
 				TableInfo: &model.TableInfo{

@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -703,15 +702,6 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 		copy(resultProperties[leftLen+i], cols)
 	}
 	return resultProperties
-}
-
-// ExhaustPhysicalPlans implements the base.LogicalPlan.<14th> interface.
-// it can generates hash join, index join and sort merge join.
-// Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
-// If the hint is not matched, it will get other candidates.
-// If the hint is not figured, we will pick all candidates.
-func (p *LogicalJoin) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalJoin(p, prop)
 }
 
 // ExtractCorrelatedCols implements the base.LogicalPlan.<15th> interface.
