@@ -48,14 +48,13 @@ aliases:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
+    - OliverS929
   sig-approvers-domain:
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-ddl:
     - Benjamin2037
-    - tangenta
     - wjhuang2016
     - D3Hunter
     - gmhdbjd
@@ -63,49 +62,42 @@ aliases:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-dumpling:
     - Benjamin2037
     - gmhdbjd
-    - tangenta
+    - D3Hunter
   sig-approvers-infoschema:
     - wjhuang2016
-    - tangenta
     - D3Hunter
     - Benjamin2037
     - gmhdbjd
   sig-approvers-meta:
     - Benjamin2037
     - gmhdbjd
-    - tangenta
     - wjhuang2016
     - D3Hunter
   sig-approvers-owner:
     - Benjamin2037
-    - tangenta
     - wjhuang2016
     - D3Hunter
   sig-approvers-parser:
     - bb7133
+    - Benjamin2037
     - BornChanger
     - D3Hunter
-    - tangenta
   sig-approvers-resourcemanager:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-table:
     - Benjamin2037
     - cfzjywxk
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-lock:
     - Benjamin2037
-    - tangenta
     - wjhuang2016
   sig-approvers-tidb-binlog:
     - Benjamin2037
@@ -153,6 +145,7 @@ aliases:
     - iamxy
     - js00070
     - lamxTyler
+    - lance6716
     - longfangsong
     - lyzx2001
     - mengxin9014
@@ -161,6 +154,7 @@ aliases:
     - pingyu
     - shihongzhi
     - spongedu
+    - tangenta
     - tangwz
     - tsthght
     - wddevries
@@ -240,7 +234,6 @@ aliases:
     - joechenrh
     - july2993
     - kennytm
-    - lance6716
     - lcwangchao
     - leoppro
     - lichunzhu
@@ -269,7 +262,6 @@ aliases:
     - sticnarf
     - suzaku
     - sylzd
-    - tangenta
     - terry1purcell
     - tiancaiamao
     - time-and-fate
