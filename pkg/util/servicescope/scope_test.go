@@ -15,9 +15,11 @@
 package servicescope
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/time/rate"
 )
 
 func TestScope(t *testing.T) {
@@ -27,4 +29,49 @@ func TestScope(t *testing.T) {
 	require.NoError(t, CheckServiceScope("scope1"))
 	require.NoError(t, CheckServiceScope(""))
 	require.NoError(t, CheckServiceScope("-----"))
+}
+
+func runConcurrentTest(b *testing.B, limiter interface {
+	Allow() bool
+}, goroutines int) {
+	var wg sync.WaitGroup
+	startCh := make(chan struct{})
+
+	cnt := b.N / goroutines
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			<-startCh
+			for i := 0; i < cnt; i++ {
+				limiter.Allow()
+			}
+		}()
+	}
+
+	b.ResetTimer()
+	close(startCh)
+	wg.Wait()
+	b.StopTimer()
+}
+
+const limit = 10000
+
+func BenchmarkRateLimiterSimple(b *testing.B) {
+	b.ReportAllocs()
+	rl := rate.NewLimiter(rate.Limit(limit), limit)
+	runConcurrentTest(b, rl, 1)
+}
+
+func BenchmarkRateLimiterCurrency100(b *testing.B) {
+	b.ReportAllocs()
+	rl := rate.NewLimiter(rate.Limit(limit), limit)
+	runConcurrentTest(b, rl, 100)
+}
+
+func BenchmarkRateLimiterCurrency1000(b *testing.B) {
+	b.ReportAllocs()
+	rl := rate.NewLimiter(rate.Limit(limit), limit)
+	runConcurrentTest(b, rl, 1000)
 }
