@@ -58,6 +58,15 @@
           "Projection 0.00 root  1->Column#48, Column#46, Column#47, test.tad03b424.col_41",
           "└─TableDual 0.00 root  rows:0"
         ]
+      },
+      {
+        "SQL": "select * from t6 where  (a, b, c) in ((1, 1, 1), (2, 2, 2))",
+        "Plan": [
+          "IndexLookUp 1.00 root  ",
+          "├─IndexRangeScan(Build) 1.25 cop[tikv] table:t6, index:a(a, b) range:[1 1,1 1], [2 2,2 2], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 1.00 cop[tikv]  or(and(eq(test.t6.a, 1), and(eq(test.t6.b, 1), eq(test.t6.c, 1))), and(eq(test.t6.a, 2), and(eq(test.t6.b, 2), eq(test.t6.c, 2))))",
+          "  └─TableRowIDScan 1.25 cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ]
       }
     ]
   }

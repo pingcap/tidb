@@ -15,11 +15,13 @@
 package ddl_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,5 +53,100 @@ func TestDDLStatementsBackFill(t *testing.T) {
 		needReorg = false
 		tk.MustExec(tc.ddlSQL)
 		require.Equal(t, tc.expectedNeedReorg, needReorg, tc)
+	}
+}
+
+func TestPartialIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	// test validate column exists in create table
+	tk.MustExec("create table t (a int, b int, key(b) where a = 1);")
+	tk.MustGetDBError("create table t1 (a int, b int, key(b) where c = 1);",
+		dbterror.ErrUnsupportedAddPartialIndex)
+	tk.MustExec("drop table t;")
+
+	// test primary key is not allowed in partial index
+	tk.MustExec("create table t (a int, b int, key(b) where a = 1);")
+	tk.MustGetDBError("create table t2 (a int, b int, primary key(b) where a = 1);",
+		dbterror.ErrUnsupportedAddPartialIndex)
+	tk.MustExec("drop table t;")
+
+	checkColumnTypes := func(columnTypes []string, literals []string, shouldAllowed bool) {
+		for _, columnType := range columnTypes {
+			for _, literal := range literals {
+				tk.MustExec("drop table if exists t;")
+				sql := fmt.Sprintf("create table t (a %s, b int, key(b) where a = %s);", columnType, literal)
+				if shouldAllowed {
+					tk.MustExec(sql)
+					tk.MustExec("drop table t;")
+				} else {
+					tk.MustGetDBError(sql, dbterror.ErrUnsupportedAddPartialIndex)
+				}
+			}
+		}
+	}
+
+	// test create table type validation
+	differentTypeLiterals := [][]string{
+		{"1", "true", "1998"}, // int
+		{"'1'"},               // string with default collate
+		{"1.0"},               // float
+		{"b'101010'", "0x1234567890abcdef", "0b10"}, // binary literal
+		{"null"}, // null
+	}
+	differentColumnTypes := [][]string{
+		{"int", "bigint", "tinyint", "smallint", "year"},
+		{"char(25)", "varchar(123)", "text", "char(25) collate utf8mb4_general_ci", "char(25) collate utf8mb4_bin"},
+		{"float", "double"},
+		{"binary(25) collate binary", "varbinary(123)", "blob", "char(25) collate binary"},
+		{},
+	}
+	for i, columnTypes := range differentColumnTypes {
+		for j, literals := range differentTypeLiterals {
+			checkColumnTypes(columnTypes, literals, i == j)
+		}
+	}
+
+	// test comparing between time column and string constant is allowed.
+	timeColumnTypes := []string{"timestamp", "datetime", "date", "time"}
+	allowedLiterals := []string{"'2025-07-28 12:34:56'", "'2025-07-28'", "'12:34:56'"}
+	notAllowedLiterals := []string{"1", "1.0", "true", "null"}
+	checkColumnTypes(timeColumnTypes, allowedLiterals, true)
+	checkColumnTypes(timeColumnTypes, notAllowedLiterals, false)
+
+	// test comparing between enum/set column and int/string constant is allowed.
+	enumSetColumnTypes := []string{"enum('a', 'b', 'c')", "set('a', 'b', 'c')"}
+	allowedLiterals = []string{"1", "'1'", "'a'"}
+	notAllowedLiterals = []string{"1.0", "null"}
+	checkColumnTypes(enumSetColumnTypes, allowedLiterals, true)
+	checkColumnTypes(enumSetColumnTypes, notAllowedLiterals, false)
+
+	// test validate column exists in alter table
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("alter table t add index idx_b(b) where a = 1;")
+	tk.MustGetDBError("alter table t add index idx_b_2(b) where c = 1;",
+		dbterror.ErrUnsupportedAddPartialIndex)
+	tk.MustExec("drop table t;")
+
+	// test alter table type validation
+	for i, literals := range differentTypeLiterals {
+		for _, literal := range literals {
+			for j, columnTypes := range differentColumnTypes {
+				tk.MustExec("drop table if exists t;")
+				for _, columnType := range columnTypes {
+					sql := fmt.Sprintf("create table t (a %s, b int);", columnType)
+					tk.MustExec(sql)
+					sql = fmt.Sprintf("alter table t add index idx_b(b) where a = %s;", literal)
+					if i == j {
+						tk.MustExec(sql)
+					} else {
+						tk.MustGetDBError(sql, dbterror.ErrUnsupportedAddPartialIndex)
+					}
+					tk.MustExec("drop table t;")
+				}
+			}
+		}
 	}
 }

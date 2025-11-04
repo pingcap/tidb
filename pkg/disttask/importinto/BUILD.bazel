@@ -23,6 +23,7 @@ go_library(
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
+        "//pkg/disttask/framework/dxfmetric",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/metering",
         "//pkg/disttask/framework/planner",
