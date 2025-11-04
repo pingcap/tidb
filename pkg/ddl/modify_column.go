@@ -363,8 +363,9 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	if job.SchemaState == model.StateNone {
-		err := postCheckPartitionModifiableColumn(w, tblInfo, oldCol, args.Column)
+		err = postCheckPartitionModifiableColumn(w, tblInfo, oldCol, args.Column)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, err
 		}
 	}
