@@ -67,9 +67,8 @@ func IsNextGenRestore(keyspaceName string, checkRequirements bool) bool {
 
 		if checkRequirements {
 			log.Fatal(msg)
-		} else {
-			log.Warn(msg + " Skipping check due to --check-requirements=false.")
 		}
+		log.Warn(msg + " Skipping check due to --check-requirements=false.")
 
 	case kerneltype.IsNextGen():
 		// Next-Gen kernel requires keyspaceName to avoid SST ingest panic.
