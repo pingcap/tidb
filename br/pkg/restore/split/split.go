@@ -247,6 +247,7 @@ func PaginateScanRegion(
 			backoffer.Stat.ReduceRetry()
 		}
 		lastRegions = regions
+
 		if err = checkRegionConsistency(startKey, endKey, regions); err != nil {
 			log.Warn("failed to scan region, retrying",
 				logutil.ShortError(err),
@@ -254,7 +255,6 @@ func PaginateScanRegion(
 			return err
 		}
 		return nil
-
 	}, backoffer)
 
 	return lastRegions, err
