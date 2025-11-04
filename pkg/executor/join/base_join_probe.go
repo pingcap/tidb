@@ -324,14 +324,12 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 
 func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int, hashValueCol *chunk.Column, serializedKeysCol *chunk.Column) {
 	if cap(j.matchedRowsHeaders) >= logicalRowCount {
-		clear(j.matchedRowsHeaders[logicalRowCount:])
 		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRowCount]
 	} else {
 		j.matchedRowsHeaders = make([]taggedPtr, logicalRowCount)
 	}
 
 	if cap(j.matchedRowsHashValue) >= logicalRowCount {
-		clear(j.matchedRowsHashValue[logicalRowCount:])
 		j.matchedRowsHashValue = j.matchedRowsHashValue[:logicalRowCount]
 	} else {
 		j.matchedRowsHashValue = make([]uint64, logicalRowCount)
