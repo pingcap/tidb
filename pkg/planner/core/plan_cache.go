@@ -243,7 +243,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	paramTypes := parseParamTypes(sctx, params)
 	if stmtCtx.UseCache() {
 		cachedVal, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
-		skipPrivCheck := stmt.PointGet.Executor != nil // this case is specially handled
+		skipPrivCheck := stmt.PointGet.Executor != nil || variable.EnableFastPath.Load()
 		if hit {
 			if plan, ok, err := AdjustCachedPlan(ctx, sctx, cachedVal.Plan, cachedVal.stmtHints, isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
 				switch v := plan.(type) {
