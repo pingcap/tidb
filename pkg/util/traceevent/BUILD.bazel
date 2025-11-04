@@ -4,12 +4,12 @@ go_library(
     name = "traceevent",
     srcs = [
         "adapter.go",
+        "flightrecorder.go",
         "traceevent.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/traceevent",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/config/kerneltype",
         "//pkg/util/logutil",
         "//pkg/util/tracing",
         "@com_github_tikv_client_go_v2//trace",
@@ -21,6 +21,7 @@ go_test(
     name = "traceevent_test",
     timeout = "short",
     srcs = [
+        "flightrecorder_test.go",
         "integration_test.go",
         "traceevent_test.go",
     ],
@@ -30,6 +31,8 @@ go_test(
         "//pkg/config/kerneltype",
         "//pkg/kv",
         "//pkg/session",
+        "//pkg/testkit",
+        "//pkg/util/tracing",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//trace",
         "@org_uber_go_zap//:zap",

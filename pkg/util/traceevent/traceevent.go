@@ -20,14 +20,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/rand/v2"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/trace"
@@ -41,17 +39,6 @@ const (
 	ModeBase = "base"
 	// ModeFull enables both flight recorder and log emission.
 	ModeFull = "full"
-)
-
-// enabledCategories stores the currently enabled category mask.
-// recorderEnabled controls whether the flight recorder is active.
-// loggingEnabled controls whether the log sink emits logs.
-// lastDumpTime stores the Unix timestamp of the last flight recorder dump.
-var (
-	enabledCategories atomic.Uint64
-	recorderEnabled   atomic.Bool
-	loggingEnabled    atomic.Bool
-	lastDumpTime      atomic.Int64
 )
 
 const (
@@ -73,6 +60,15 @@ const (
 	UnknownClient = tracing.UnknownClient
 	// AllCategories can be used to enable every known trace category.
 	AllCategories = tracing.AllCategories
+)
+
+// recorderEnabled controls whether the flight recorder is active.
+// loggingEnabled controls whether the log sink emits logs.
+// lastDumpTime stores the Unix timestamp of the last flight recorder dump.
+var (
+	recorderEnabled atomic.Bool
+	loggingEnabled  atomic.Bool
+	lastDumpTime    atomic.Int64
 )
 
 // DefaultFlightRecorderCapacity controls the number of events retained in the in-memory recorder.
@@ -98,7 +94,6 @@ var flightRecorder = NewRingBufferSink(DefaultFlightRecorderCapacity)
 func init() {
 	defaultSink := &LogSink{}
 	eventSink.Store(sinkHolder{sink: defaultSink})
-	enabledCategories.Store(uint64(tracing.AllCategories))
 	recorderEnabled.Store(true) // base mode: recorder enabled
 	loggingEnabled.Store(false) // base mode: logging disabled
 
@@ -108,31 +103,19 @@ func init() {
 
 // Enable enables trace events for the specified categories.
 // Multiple categories can be combined with bitwise OR.
-func Enable(categories TraceCategory) {
-	for {
-		current := enabledCategories.Load()
-		next := current | uint64(categories)
-		if enabledCategories.CompareAndSwap(current, next) {
-			return
-		}
-	}
-}
+var Enable = tracing.Enable
+
+// IsEnabled returns whether the specified category is enabled.
+var IsEnabled = tracing.IsEnabled
 
 // Disable disables trace events for the specified categories.
-func Disable(categories TraceCategory) {
-	for {
-		current := enabledCategories.Load()
-		next := current &^ uint64(categories)
-		if enabledCategories.CompareAndSwap(current, next) {
-			return
-		}
-	}
-}
+var Disable = tracing.Disable
 
 // SetCategories sets the enabled categories to exactly the specified value.
-func SetCategories(categories TraceCategory) {
-	enabledCategories.Store(uint64(categories))
-}
+var SetCategories = tracing.SetCategories
+
+// GetEnabledCategories returns the currently enabled categories.
+var GetEnabledCategories = tracing.GetEnabledCategories
 
 // NormalizeMode converts a user-supplied tracing mode string into its canonical representation.
 func NormalizeMode(mode string) (string, error) {
@@ -188,22 +171,6 @@ func CurrentMode() string {
 	return ModeFull
 }
 
-// GetEnabledCategories returns the currently enabled categories.
-func GetEnabledCategories() TraceCategory {
-	return TraceCategory(enabledCategories.Load())
-}
-
-// IsEnabled returns whether the specified category is enabled.
-// This function is inline-friendly for hot paths.
-// Trace events only work for next-gen kernel.
-func IsEnabled(category TraceCategory) bool {
-	// Fast path: check kernel type first
-	if kerneltype.IsClassic() {
-		return false
-	}
-	return enabledCategories.Load()&uint64(category) != 0
-}
-
 // Event captures the raw information describing a trace event. This structure
 // is intentionally generic so that it can later be transformed into the Trace
 // Event Format (TEF) once the full design is finalized.
@@ -235,280 +202,6 @@ func CurrentSink() Sink {
 // FlightRecorder returns the always-on in-memory recorder.
 func FlightRecorder() *RingBufferSink {
 	return flightRecorder
-}
-
-// Trace implements Sink interface
-type Trace struct {
-	mu     sync.Mutex
-	events []Event
-	keep   bool
-	rand32 uint32
-}
-
-var globalHTTPFlightRecorder atomic.Pointer[HTTPFlightRecorder]
-
-// HTTPFlightRecorder implements Sink interface.
-type HTTPFlightRecorder struct {
-	ch                   chan<- []Event
-	oldEnabledCategories uint64
-	counter              int // used when dump trigger config is sampling
-	Config               *DumpTriggerConfig
-	// Or should it be a Set if we support trigger condition combination?
-	triggerCanonicalName string
-}
-
-// UserCommandConfig is the configuration for DumpTriggerConfig of user command type.
-type UserCommandConfig struct {
-	Type       string `json:"type"`
-	SQLRegexp  string `json:"sql_regexp"`
-	PlanDigest string `json:"plan_digest"`
-	StmtLabel  string `json:"stmt_label"`
-	ByUser     string `json:"by_user"`
-	Table      string `json:"table"`
-}
-
-// Validate validates the UserCommandConfig.
-func (c *UserCommandConfig) Validate(b *strings.Builder) error {
-	if c == nil {
-		return fmt.Errorf("dump_trigger.user_command missing")
-	}
-	b.WriteString(".user_command")
-	switch c.Type {
-	case "sql_regexp":
-		if c.SQLRegexp == "" {
-			return fmt.Errorf("dump_trigger.user_command.sql_regexp should not be empty")
-		}
-		b.WriteString(".sql_regexp")
-	case "plan_digest":
-		if c.PlanDigest == "" {
-			return fmt.Errorf("dump_trigger.user_command.plan_digest should not be empty")
-		}
-		b.WriteString(".plan_digest")
-	case "stmt_label":
-		if c.StmtLabel == "" {
-			return fmt.Errorf("dump_trigger.user_command.stmt_label should not be empty, should be something in https://github.com/pingcap/tidb/blob/adf08267939416d1b989e56dba6a6544bf34a8dd/pkg/parser/ast/ast.go#L160")
-		}
-		b.WriteString(".stmt_label")
-	case "by_user":
-		if c.ByUser == "" {
-			return fmt.Errorf("dump_trigger.user_command.by_user should not be empty")
-		}
-		b.WriteString(".by_user")
-	case "table":
-		if c.Table == "" {
-			return fmt.Errorf("dump_trigger.user_command.table should not be empty")
-		}
-		b.WriteString(".table")
-	default:
-		return fmt.Errorf("wrong dump_trigger.user_command.type")
-	}
-	return nil
-}
-
-// SuspiciousEventConfig is the configuration for suspicious event.
-type SuspiciousEventConfig struct {
-	Type string `json:"type"`
-	// SlowQuery
-	// QueryFail error code?
-	// ResolveLock?
-	// RegionError
-}
-
-// Validate validates the suspicious event configuration.
-func (c *SuspiciousEventConfig) Validate(b *strings.Builder) error {
-	if c == nil {
-		return fmt.Errorf("dump_trigger.suspicious_event missing")
-	}
-	b.WriteString(".suspicious_event")
-	switch c.Type {
-	case "slow_query":
-	case "query_fail":
-	case "resolve_lock":
-	case "region_error":
-	default:
-		return fmt.Errorf("wrong dump_trigger.suspicious_event.type")
-	}
-	return nil
-}
-
-// DumpTriggerConfig is the configuration for dump trigger.
-type DumpTriggerConfig struct {
-	Type        string                 `json:"type"`
-	Sampling    int                    `json:"sampling,omitempty"`
-	Event       *SuspiciousEventConfig `json:"suspicious_event,omitempty"`
-	UserCommand *UserCommandConfig     `json:"user_command,omitempty"`
-}
-
-// Validate validates the DumpTriggerConfig.
-// When validate successfully, it returns nil, strings.Builder will contain the canonical name of the trigger.
-func (c *DumpTriggerConfig) Validate(b *strings.Builder) error {
-	if c == nil {
-		return fmt.Errorf("dump_trigger missing")
-	}
-	b.WriteString("dump_trigger")
-	switch c.Type {
-	case "sampling":
-		if c.Sampling <= 0 {
-			return fmt.Errorf("wrong dump_trigger.sampling")
-		}
-		b.WriteString(".sampling")
-	case "suspicious_event":
-		return c.Event.Validate(b)
-	case "user_command":
-		return c.UserCommand.Validate(b)
-	default:
-		return fmt.Errorf("wrong dump_trigger.type")
-	}
-	return nil
-}
-
-// CheckFlightRecorderDumpTrigger checks if the flight recorder should dump based on the trigger name and configuration.
-func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, check func(*DumpTriggerConfig) bool) {
-	flightRecorder := globalHTTPFlightRecorder.Load()
-	if flightRecorder == nil {
-		return
-	}
-	// Sink should always be set, it should be a Trace object which implements MarkDump()
-	sink := tracing.GetSink(ctx)
-	if sink == nil {
-		return
-	}
-	raw, ok := sink.(tracing.FlightRecorder)
-	if !ok {
-		return
-	}
-	if flightRecorder.triggerCanonicalName == triggerName {
-		if check(flightRecorder.Config) {
-			raw.MarkDump()
-		}
-	}
-}
-
-// FlightRecorderConfig represents the configuration for the flight recorder.
-// A example of flight recorder configuration in json:
-//
-//	{
-//		"enabled_categories": ["general"],
-//		"dump_trigger": {
-//			"type": "sampling"
-//			"sampling": 100
-//			"suspicious_event":
-//			{
-//				"type": "long_txn",
-//				"long_txn": ...,
-//				"resolve_lock": ...,
-//				"slow query": ...,
-//				"error": ...,
-//			},
-//			"user_command" :  {
-//				"type": "sql_regexp",
-//				"sql_regexp": "select * from xx",
-//				"plan_digest": "42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772",
-//				"table": "test"
-//				"by_user": "root",
-//			}
-//		}
-//	}
-type FlightRecorderConfig struct {
-	EnabledCategories []string          `json:"enabled_categories"`
-	DumpTrigger       DumpTriggerConfig `json:"dump_trigger"`
-}
-
-// Initialize initializes the default flight recorder configuration.
-// It will dump all the events.
-func (c *FlightRecorderConfig) Initialize() {
-	c.EnabledCategories = []string{"*"}
-	c.DumpTrigger.Type = "sampling"
-	c.DumpTrigger.Sampling = 1
-}
-
-// Validate validates the flight recorder configuration.
-func (c *FlightRecorderConfig) Validate(b *strings.Builder) error {
-	return c.DumpTrigger.Validate(b)
-}
-
-// StartHTTPFlightRecorder starts the HTTP flight recorder.
-func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*HTTPFlightRecorder, error) {
-	var b strings.Builder
-	if err := config.Validate(&b); err != nil {
-		return nil, err
-	}
-
-	var categories TraceCategory
-	for _, str := range config.EnabledCategories {
-		if str == "*" {
-			categories = tracing.AllCategories
-			break
-		}
-		categories |= tracing.ParseTraceCategory(str)
-	}
-	ret := &HTTPFlightRecorder{
-		ch:                   ch,
-		oldEnabledCategories: enabledCategories.Load(),
-		Config:               &config.DumpTrigger,
-		triggerCanonicalName: b.String(),
-	}
-	logutil.BgLogger().Info("start http flight recorder",
-		zap.Stringer("category", categories),
-		zap.String("triggerCanonicalName", ret.triggerCanonicalName))
-	SetCategories(categories)
-	globalHTTPFlightRecorder.Store(ret)
-	return ret, nil
-}
-
-// Close closes the HTTP flight recorder.
-func (r *HTTPFlightRecorder) Close() {
-	enabledCategories.Store(r.oldEnabledCategories)
-	globalHTTPFlightRecorder.Store(nil)
-}
-
-func (r *HTTPFlightRecorder) collect(events []Event) {
-	select {
-	case r.ch <- slices.Clone(events):
-	default:
-	}
-}
-
-// Trace implement the FlightRecorder interface.
-var _ tracing.FlightRecorder = &Trace{}
-
-// NewTrace creates a new Trace.
-func NewTrace() *Trace {
-	return &Trace{
-		rand32: rand.Uint32(),
-	}
-}
-
-// Record implements the FlightRecorder interface.
-func (r *Trace) Record(_ context.Context, event Event) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = append(r.events, event)
-}
-
-// MarkDump implements the FlightRecorder interface.
-func (r *Trace) MarkDump() {
-	r.keep = true
-}
-
-// Reset resets the Trace.
-func (r *Trace) Reset() {
-	sink := globalHTTPFlightRecorder.Load()
-	if sink != nil {
-		if r.keep {
-			sink.collect(r.events)
-		}
-		if sink.Config.Type == "sampling" {
-			sink.counter++
-			if sink.counter >= sink.Config.Sampling {
-				sink.collect(r.events)
-				sink.counter = 0
-			}
-		}
-	}
-	r.keep = false
-	r.events = r.events[:0]
-	r.rand32 = rand.Uint32()
 }
 
 // TraceEvent records a trace event if the category is enabled.

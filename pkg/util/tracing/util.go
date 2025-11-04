@@ -18,10 +18,13 @@ import (
 	"context"
 	"runtime/trace"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	clienttrace "github.com/tikv/client-go/v2/trace"
 	"go.uber.org/zap"
 )
@@ -147,21 +150,73 @@ func StartRegion(ctx context.Context, regionType string) Region {
 		Region: r,
 		Span:   span1,
 	}
-	if tmp := GetSink(ctx); tmp != nil {
-		sink := tmp.(Sink)
-		event := Event{
-			Category:  General,
-			Name:      regionType,
-			Phase:     PhaseBegin,
-			Timestamp: time.Now(),
-			TraceID:   ExtractTraceID(ctx),
+	if IsEnabled(General) {
+		if tmp := GetSink(ctx); tmp != nil {
+			sink := tmp.(Sink)
+			event := Event{
+				Category:  General,
+				Name:      regionType,
+				Phase:     PhaseBegin,
+				Timestamp: time.Now(),
+				TraceID:   ExtractTraceID(ctx),
+			}
+			sink.Record(ctx, event)
+			ret.span.event = &event
+			ret.span.sink = sink
+			ret.span.ctx = ctx
 		}
-		sink.Record(ctx, event)
-		ret.span.event = &event
-		ret.span.sink = sink
-		ret.span.ctx = ctx
 	}
 	return ret
+}
+
+// enabledCategories stores the currently enabled category mask.
+var enabledCategories atomic.Uint64
+
+func init() {
+	enabledCategories.Store(uint64(AllCategories))
+}
+
+// Enable enables trace events for the specified categories.
+func Enable(categories TraceCategory) {
+	for {
+		current := enabledCategories.Load()
+		next := current | uint64(categories)
+		if enabledCategories.CompareAndSwap(current, next) {
+			return
+		}
+	}
+}
+
+// Disable disables trace events for the specified categories.
+func Disable(categories TraceCategory) {
+	for {
+		current := enabledCategories.Load()
+		next := current &^ uint64(categories)
+		if enabledCategories.CompareAndSwap(current, next) {
+			return
+		}
+	}
+}
+
+// SetCategories sets the enabled categories to exactly the specified value.
+func SetCategories(categories TraceCategory) {
+	enabledCategories.Store(uint64(categories))
+}
+
+// GetEnabledCategories returns the currently enabled categories.
+func GetEnabledCategories() TraceCategory {
+	return TraceCategory(enabledCategories.Load())
+}
+
+// IsEnabled returns whether the specified category is enabled.
+// This function is inline-friendly for hot paths.
+// Trace events only work for next-gen kernel.
+func IsEnabled(category TraceCategory) bool {
+	// Fast path: check kernel type first
+	if kerneltype.IsClassic() && !intest.InTest {
+		return false
+	}
+	return enabledCategories.Load()&uint64(category) != 0
 }
 
 // TraceCategory represents different trace event categories.
