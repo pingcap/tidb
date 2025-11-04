@@ -1685,16 +1685,17 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 }
 
 func (a *ExecStmt) planMetrics() {
-	if a.Ctx.GetSessionVars().InRestrictedSQL {
+	vars := a.Ctx.GetSessionVars()
+	var userString string
+	if vars.User != nil {
+		userString = vars.User.Username
+	}
+	if vars.InRestrictedSQL || userString == "" {
 		return // internal query
 	}
-	stmtCtx := a.Ctx.GetSessionVars().StmtCtx
+	stmtCtx := vars.StmtCtx
 	if stmtCtx.StmtType == "" {
 		stmtCtx.StmtType = stmtctx.GetStmtLabel(context.Background(), a.StmtNode)
-	}
-	if stmtCtx.StmtType != "Select" {
-		// TODO: support SQLs like `insert into t select ...` and `Execute`.
-		return
 	}
 	flat := getFlatPlan(stmtCtx)
 	if flat == nil {
