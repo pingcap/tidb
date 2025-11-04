@@ -94,9 +94,9 @@ require (
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20250928030846-9fd33ded6f2c
-	github.com/prometheus/client_golang v1.23.0
+	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
-	github.com/prometheus/common v0.65.0
+	github.com/prometheus/common v0.67.2
 	github.com/prometheus/prometheus v0.50.1
 	github.com/qri-io/jsonschema v0.2.1
 	github.com/robfig/cron/v3 v3.0.1
@@ -109,7 +109,7 @@ require (
 	github.com/spf13/pflag v1.0.7
 	github.com/spkg/bom v1.0.0
 	github.com/stathat/consistent v1.0.0
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.8-0.20251028065425-b7d4dfd8520e
 	github.com/tikv/pd/client v0.0.0-20250703091733-dfd345b89500
@@ -213,6 +213,7 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
+	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	golang.org/x/telemetry v0.0.0-20251008203120-078029d740a8 // indirect
 	golang.org/x/tools/godoc v0.1.0-deprecated // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
@@ -367,6 +368,7 @@ require (
 replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
+	github.com/stretchr/testify v1.11.1 => github.com/stretchr/testify v1.10.0
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
