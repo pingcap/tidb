@@ -45,6 +45,9 @@ func GetMemoryForWriter(encodeStep bool, parquetMemUsage, threadCnt, totalMem in
 		actualUsage := min(parquetMemUsage*threadCnt, upperLimit)
 		parserPercent := (actualUsage*100/totalMem + 9) / 10 * 10
 		writerPercent = (100 - parserPercent) / 2
+		if parserPercent <= 20 {
+			writerPercent = 50
+		}
 	}
 
 	// Use half of the remaining memory for writer

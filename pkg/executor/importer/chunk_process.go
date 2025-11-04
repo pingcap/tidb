@@ -179,6 +179,7 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 	for _, pair := range kvs.Pairs {
 		if tablecodec.IsRecordKey(pair.Key) {
 			b.dataKVs = append(b.dataKVs, pair)
+			b.groupChecksum.UpdateOneDataKV(pair)
 		} else {
 			indexID, err := tablecodec.DecodeIndexID(pair.Key)
 			if err != nil {
@@ -188,6 +189,7 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 				b.indexKVs[indexID] = make([]common.KvPair, 0, cap(b.dataKVs))
 			}
 			b.indexKVs[indexID] = append(b.indexKVs[indexID], pair)
+			b.groupChecksum.UpdateOneIndexKV(indexID, pair)
 		}
 	}
 
@@ -195,18 +197,6 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 	if b.bytesBuf == nil && kvs.BytesBuf != nil {
 		b.bytesBuf = kvs.BytesBuf
 		b.memBuf = kvs.MemBuf
-	}
-	return nil
-}
-
-func (b *encodedKVGroupBatch) updateChecksum() error {
-	for _, pair := range b.dataKVs {
-		b.groupChecksum.UpdateOneDataKV(pair)
-	}
-	for indexID, kvs := range b.indexKVs {
-		for _, pair := range kvs {
-			b.groupChecksum.UpdateOneIndexKV(indexID, pair)
-		}
 	}
 	return nil
 }
@@ -226,6 +216,8 @@ type chunkEncoder struct {
 	// total duration takes by read/encode.
 	readTotalDur   time.Duration
 	encodeTotalDur time.Duration
+
+	groupChecksum *verify.KVGroupChecksum
 }
 
 func newChunkEncoder(
@@ -239,14 +231,15 @@ func newChunkEncoder(
 	keyspace []byte,
 ) *chunkEncoder {
 	return &chunkEncoder{
-		chunkName: chunkName,
-		readFn:    readFn,
-		offset:    offset,
-		sendFn:    sendFn,
-		collector: collector,
-		logger:    logger,
-		encoder:   encoder,
-		keyspace:  keyspace,
+		chunkName:     chunkName,
+		readFn:        readFn,
+		offset:        offset,
+		sendFn:        sendFn,
+		collector:     collector,
+		logger:        logger,
+		encoder:       encoder,
+		keyspace:      keyspace,
+		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(keyspace),
 	}
 }
 
@@ -298,6 +291,8 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			}
 		}
 
+		p.groupChecksum.Add(kvGroupBatch.groupChecksum)
+
 		if err := p.sendFn(ctx, kvGroupBatch); err != nil {
 			return err
 		}
@@ -306,15 +301,9 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			p.collector.Add(delta, int64(rowCount))
 		}
 
-		rowBatchSize := MinDeliverRowCnt
-		if delta > int64(rowCount) {
-			avgRowSize := delta / int64(rowCount)
-			rowBatchSize = min(MinDeliverRowCnt, int(MinDeliverBytes)*3/2/int(avgRowSize))
-		}
-
 		// the ownership of rowBatch is transferred to the receiver of sendFn, we should
 		// not touch it anymore.
-		rowBatch = make([]*kv.Pairs, 0, rowBatchSize)
+		rowBatch = make([]*kv.Pairs, 0, MinDeliverRowCnt)
 		rowBatchByteSize = 0
 		rowCount = 0
 		readDur = 0
@@ -362,9 +351,11 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 }
 
 func (p *chunkEncoder) summaryFields() []zap.Field {
+	mergedChecksum := p.groupChecksum.MergedChecksum()
 	return []zap.Field{
 		zap.Duration("readDur", p.readTotalDur),
 		zap.Duration("encodeDur", p.encodeTotalDur),
+		zap.Object("checksum", &mergedChecksum),
 	}
 }
 
@@ -405,7 +396,7 @@ func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 	err2 := group.Wait()
 	// in some unit tests it's nil
 	if c := p.groupChecksum; c != nil {
-		c.Add(p.deliver.groupChecksum)
+		c.Add(p.enc.groupChecksum)
 	}
 	return err2
 }
@@ -431,7 +422,6 @@ func NewFileChunkProcessor(
 		kvBatch:       make(chan *encodedKVGroupBatch, maxKVQueueSize),
 		dataWriter:    dataWriter,
 		indexWriter:   indexWriter,
-		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(keyspace),
 	}
 	return &baseChunkProcessor{
 		sourceType: DataSourceTypeFile,
@@ -459,8 +449,6 @@ type dataDeliver struct {
 	indexWriter   backend.EngineWriter
 
 	deliverTotalDur time.Duration
-
-	groupChecksum *verify.KVGroupChecksum
 }
 
 func (p *dataDeliver) encodeDone() {
@@ -507,9 +495,6 @@ func (p *dataDeliver) deliverLoop(ctx context.Context) error {
 			return ctx.Err()
 		}
 
-		kvBatch.updateChecksum()
-		p.groupChecksum.Add(kvBatch.groupChecksum)
-
 		err := func() error {
 			p.diskQuotaLock.RLock()
 			defer p.diskQuotaLock.RUnlock()
@@ -552,9 +537,7 @@ func (p *dataDeliver) deliverLoop(ctx context.Context) error {
 }
 
 func (p *dataDeliver) summaryFields() []zap.Field {
-	mergedChecksum := p.groupChecksum.MergedChecksum()
 	return []zap.Field{
-		zap.Object("checksum", &mergedChecksum),
 		zap.Duration("deliverDur", p.deliverTotalDur),
 	}
 }
