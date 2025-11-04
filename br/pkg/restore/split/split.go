@@ -179,18 +179,10 @@ func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
 			"region %d's leader is nil", cur.Region.Id)
 	}
-	if cur.Leader.StoreId == 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-			"region %d's leader's store id is 0", cur.Region.Id)
-	}
 	for _, r := range regions[1:] {
 		if r.Leader == nil {
 			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
 				"region %d's leader is nil", r.Region.Id)
-		}
-		if r.Leader.StoreId == 0 {
-			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-				"region %d's leader's store id is 0", r.Region.Id)
 		}
 		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
 			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
@@ -255,7 +247,6 @@ func PaginateScanRegion(
 			backoffer.Stat.ReduceRetry()
 		}
 		lastRegions = regions
-
 		if err = checkRegionConsistency(startKey, endKey, regions); err != nil {
 			log.Warn("failed to scan region, retrying",
 				logutil.ShortError(err),
@@ -263,6 +254,7 @@ func PaginateScanRegion(
 			return err
 		}
 		return nil
+
 	}, backoffer)
 
 	return lastRegions, err
