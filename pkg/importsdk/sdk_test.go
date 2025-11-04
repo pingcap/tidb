@@ -657,7 +657,7 @@ func (s *mockGCSSuite) TestScanLimitation() {
 }
 
 func (s *mockGCSSuite) TestCreateTableMetaByName() {
-	for i := 0; i != 2; i++ {
+	for i := 0; i < 2; i++ {
 		s.server.CreateObject(fakestorage.Object{
 			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("db%d-schema-create.sql", i)},
 			Content:     []byte(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS db%d;\n", i)),
