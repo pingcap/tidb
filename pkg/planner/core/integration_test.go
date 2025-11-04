@@ -2450,7 +2450,6 @@ func queryPlanMetrics(t *testing.T, tk *testkit.TestKit, query string, expectedM
 	sort.Strings(actualMetrics)
 	sort.Strings(expectedMetrics)
 	require.Equal(t, expectedMetrics, actualMetrics, fmt.Sprintf("query: %v", query))
-	return
 }
 
 func TestPlanQualityMetrics(t *testing.T) {
