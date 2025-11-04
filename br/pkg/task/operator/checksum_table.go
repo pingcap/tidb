@@ -189,11 +189,7 @@ func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil
 	}
 }
 
-func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, restoredTS uint64) ([]*backup.PitrDBMap, error) {
-	clusterID := c.mgr.GetPDClient().GetClusterID(ctx)
-	if clusterID == 0 {
-		return nil, errors.Errorf("failed to get cluster id")
-	}
+func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, restoredTS uint64, clusterID uint64) ([]*backup.PitrDBMap, error) {
 	if len(c.cfg.Storage) > 0 {
 		_, stg, err := task.GetStorage(ctx, c.cfg.Storage, &c.cfg.Config)
 		if err != nil {
@@ -484,7 +480,7 @@ func RunPitrChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWithPitr
 	if err != nil {
 		return errors.Trace(err)
 	}
-	pitrIdMap, err := c.loadPitrIdMap(ctx, g, cfg.RestoreTS)
+	pitrIdMap, err := c.loadPitrIdMap(ctx, g, cfg.RestoreTS, cfg.UpstreamClusterID)
 	if err != nil {
 		return errors.Trace(err)
 	}
