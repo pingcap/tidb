@@ -22,10 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/errors"
@@ -35,6 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
+
+	// AWS SDK v2
+	awsV2 "github.com/aws/aws-sdk-go-v2/aws"
+	awsConfig "github.com/aws/aws-sdk-go-v2/config"
+	awsCreds "github.com/aws/aws-sdk-go-v2/credentials"
+	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // mockExtStore is only used for test.
@@ -286,12 +288,24 @@ func NewS3WithBucketAndPrefix(t *testing.T, bucketName, prefixName string) (*sto
 	err := backend.CreateBucket("test")
 	require.NoError(t, err)
 
-	config := aws.NewConfig()
-	config.WithEndpoint(ts.URL)
-	config.WithRegion("region")
-	config.WithCredentials(credentials.NewStaticCredentials("dummy-access", "dummy-secret", ""))
-	config.WithS3ForcePathStyle(true) // Removes need for subdomain
-	svc := s3.New(session.New(), config)
+	// Build AWS SDK v2 config pointing at the fake server.
+	cfg, err := awsConfig.LoadDefaultConfig(context.Background(),
+		awsConfig.WithRegion("region"),
+		awsConfig.WithEndpointResolverWithOptions(awsV2.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...interface{}) (awsV2.Endpoint, error) {
+				return awsV2.Endpoint{
+					URL:           ts.URL,
+					SigningRegion: "region",
+				}, nil
+			},
+		)),
+		awsConfig.WithCredentialsProvider(awsCreds.NewStaticCredentialsProvider("dummy-access", "dummy-secret", "")),
+	)
+	require.NoError(t, err)
+
+	svc := s3v2.NewFromConfig(cfg, func(o *s3v2.Options) {
+		o.UsePathStyle = true
+	})
 
 	st := storage.NewS3StorageForTest(svc, &backuppb.S3{
 		Region:       "region",

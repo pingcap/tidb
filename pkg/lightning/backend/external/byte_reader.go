@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -81,8 +80,10 @@ func openStoreReaderAndSeek(
 	initFileOffset uint64,
 	prefetchSize int,
 ) (storage.ExternalFileReader, error) {
+	// v2-compatible: avoid aws.Int64; use a local int64 variable to take address
+	start := int64(initFileOffset)
 	storageReader, err := store.Open(ctx, name, &storage.ReaderOption{
-		StartOffset:  aws.Int64(int64(initFileOffset)),
+		StartOffset:  &start,
 		PrefetchSize: prefetchSize,
 	})
 	if err != nil {

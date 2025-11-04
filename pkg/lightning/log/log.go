@@ -21,7 +21,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/pingcap/errors"
 	pclog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -193,16 +192,20 @@ func IsContextCanceledError(err error) bool {
 	if err == nil {
 		return false
 	}
-	err = errors.Cause(err)
-	if err == context.Canceled || status.Code(err) == codes.Canceled {
+	// First try to detect via errors.Is to handle wrapped errors (fmt.Errorf("%w", ...))
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	// Use pingcap/errors.Cause for errors wrapped by that package
+	cau := errors.Cause(err)
+	if cau == context.Canceled || status.Code(cau) == codes.Canceled {
 		return true
 	}
 
-	// see https://github.com/aws/aws-sdk-go/blob/9d1f49ba/aws/credentials/credentials.go#L246-L249
-	// 2 cases that have meet:
-	// 	awserr.New("RequestCanceled", "request context canceled", err) and the nested err is context.Canceled
-	// 	awserr.New( "MultipartUpload", "upload multipart failed", err) and the nested err is the upper one
-	if v, ok := err.(awserr.BatchedErrors); ok {
+	// Detect AWS-style batched errors (v1 or other implementations exposing OrigErrs).
+	// Use a small interface to avoid depending on the v1 awserr package.
+	type origErrs interface{ OrigErrs() []error }
+	if v, ok := err.(origErrs); ok {
 		return slices.ContainsFunc(v.OrigErrs(), IsContextCanceledError)
 	}
 	return false
