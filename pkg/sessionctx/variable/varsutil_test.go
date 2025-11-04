@@ -379,6 +379,10 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "leader-and-follower", val)
 	require.Equal(t, kv.ReplicaReadMixed, v.replicaRead)
 
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBTraceEvent)
+	require.NoError(t, err)
+	require.Equal(t, "BASE", val)
+
 	for _, c := range []struct {
 		a string
 		b string

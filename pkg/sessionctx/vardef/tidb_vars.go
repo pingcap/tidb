@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 )
@@ -1445,7 +1446,7 @@ const (
 	DefTiDBMemQuotaApplyCache               = 32 << 20 // 32MB.
 	DefTiDBMemQuotaBindingCache             = 64 << 20 // 64MB.
 	DefTiDBGeneralLog                       = false
-	DefTiDBTraceEvent                       = Off
+	DefTiDBTraceEvent                       = traceevent.ModeBase
 	DefTiDBPProfSQLCPU                      = 0
 	DefTiDBRetryLimit                       = 10
 	DefTiDBDisableTxnAutoRetry              = true
