@@ -218,15 +218,18 @@ func PaginateScanRegion(
 
 	var (
 		lastRegions []*RegionInfo
-		err         error
+		retryErr    error
 		backoffer   = NewWaitRegionOnlineBackoffer()
 	)
-	_ = utils.WithRetry(ctx, func() error {
+	retryErr = utils.WithRetry(ctx, func() error {
 		regions := make([]*RegionInfo, 0, 16)
 		scanStartKey := startKey
 		for {
-			var batch []*RegionInfo
-			if err != nil {
+			var (
+				batch []*RegionInfo
+				err   error
+			)
+			if retryErr != nil {
 				batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
 			} else {
 				batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit, opt.WithAllowFollowerHandle())
@@ -256,7 +259,7 @@ func PaginateScanRegion(
 		}
 		lastRegions = regions
 
-		if err = checkRegionConsistency(startKey, endKey, regions); err != nil {
+		if err := checkRegionConsistency(startKey, endKey, regions); err != nil {
 			log.Warn("failed to scan region, retrying",
 				logutil.ShortError(err),
 				zap.Int("regionLength", len(regions)))
@@ -265,7 +268,7 @@ func PaginateScanRegion(
 		return nil
 	}, backoffer)
 
-	return lastRegions, err
+	return lastRegions, retryErr
 }
 
 // checkPartRegionConsistency only checks the continuity of regions and the first region consistency.
