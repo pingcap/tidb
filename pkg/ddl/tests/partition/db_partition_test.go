@@ -3028,6 +3028,7 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 			" PARTITION `p1` VALUES LESS THAN (20),\n" +
 			" PARTITION `p2` VALUES LESS THAN (30),\n" +
 			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
 	tk.MustExec(`admin check table t`)
 	tk.MustExec(`alter table t modify b varchar(200) charset latin1`)
 	tk.MustExec(`admin check table t`)

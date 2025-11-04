@@ -362,6 +362,13 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify column in primary key")
 	}
 
+	if job.SchemaState == model.StateNone {
+		err := postCheckPartitionModifiableColumn(w, tblInfo, oldCol, args.Column)
+		if err != nil {
+			return ver, err
+		}
+	}
+
 	defer checkTableInfo(tblInfo)
 
 	if args.ModifyColumnType == ModifyTypeIndexReorg {
@@ -954,12 +961,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		if isNullToNotNullChange(oldCol, changingCol) {
 			oldCol.AddFlag(mysql.PreventNullInsertFlag)
 		}
-		// TODO: Should it be targetCol or changedCol?
-		// TODO: Fix in this PR!!!
-		err := postCheckPartitionModifiableColumn(w, tblInfo, oldCol, targetCol)
-		if err != nil {
-			return ver, err
-		}
 		// none -> delete only
 		updateObjectState(changingCol, changingIdxs, model.StateDeleteOnly)
 		job.ReorgMeta.Stage = model.ReorgStageModifyColumnUpdateColumn
@@ -1511,7 +1512,6 @@ func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col
 			}
 			return nil
 		}
-		// TODO: Handle column renames as well, i.e. update partitioning expression
 		partCols, err := extractPartitionColumns(tblInfo.Partition.Expr, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
@@ -1531,8 +1531,6 @@ func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col
 }
 
 func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
-	// TODO: update the partitioning columns with new names if column is renamed
-	// Would be an extension from MySQL which does not support it.
 	if col.Name.L != newCol.Name.L {
 		return dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
 	}
