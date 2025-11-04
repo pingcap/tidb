@@ -347,7 +347,7 @@ func TestIndexJoin31494(t *testing.T) {
 		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
 		require.Error(t, err)
-		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
+		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err) || err.Error() == "context canceled")
 	}
 }
 

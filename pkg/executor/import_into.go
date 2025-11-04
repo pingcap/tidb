@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	dxfstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -47,8 +48,6 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
-
-const unknownImportedRowCount = -1
 
 // ImportIntoExec represents a IMPORT INTO executor.
 type ImportIntoExec struct {
@@ -109,6 +108,12 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 		return err2
+	}
+	if kerneltype.IsNextGen() {
+		ksCodec := e.userSctx.GetStore().GetCodec().GetKeyspace()
+		if err2 := e.controller.CalResourceParams(ctx, ksCodec); err2 != nil {
+			return err2
+		}
 	}
 
 	// must use a new session to pre-check, else the stmt in show processlist will be changed.

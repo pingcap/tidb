@@ -41,6 +41,7 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/tls",
+        "//pkg/util/traceevent",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

@@ -23,10 +23,29 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"go.uber.org/zap"
 )
+
+// IsReadOnly check whether the ast.Node is a read only statement.
+func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
+	return IsReadOnlyInternal(node, vars, true)
+}
+
+// IsReadOnlyInternal is that If checkGlobalVars is true, false will be returned when there are updates to global variables.
+func IsReadOnlyInternal(node ast.Node, vars *variable.SessionVars, checkGlobalVars bool) bool {
+	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
+		prepareStmt, err := GetPreparedStmt(execStmt, vars)
+		if err != nil {
+			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
+			return false
+		}
+		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt, checkGlobalVars)
+	}
+	return ast.IsReadOnly(node, checkGlobalVars)
+}
 
 // AggregateFuncExtractor visits Expr tree.
 // It collects AggregateFuncExpr from AST Node.
@@ -83,55 +102,6 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 		a.windowFuncs = append(a.windowFuncs, v)
 	}
 	return n, true
-}
-
-// BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
-func BuildPhysicalJoinSchema(joinType logicalop.JoinType, join base.PhysicalPlan) *expression.Schema {
-	leftSchema := join.Children()[0].Schema()
-	switch joinType {
-	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
-		return leftSchema.Clone()
-	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
-		newSchema := leftSchema.Clone()
-		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
-		return newSchema
-	}
-	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
-	if joinType == logicalop.LeftOuterJoin {
-		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
-	} else if joinType == logicalop.RightOuterJoin {
-		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
-	}
-	return newSchema
-}
-
-// GetStatsInfo gets the statistics info from a physical plan tree.
-func GetStatsInfo(i any) map[string]uint64 {
-	if i == nil {
-		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
-		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
-		return nil
-	}
-	p := i.(base.Plan)
-	var physicalPlan base.PhysicalPlan
-	switch x := p.(type) {
-	case *Insert:
-		physicalPlan = x.SelectPlan
-	case *Update:
-		physicalPlan = x.SelectPlan
-	case *Delete:
-		physicalPlan = x.SelectPlan
-	case base.PhysicalPlan:
-		physicalPlan = x
-	}
-
-	if physicalPlan == nil {
-		return nil
-	}
-
-	statsInfos := make(map[string]uint64)
-	statsInfos = CollectPlanStatsVersion(physicalPlan, statsInfos)
-	return statsInfos
 }
 
 // extractStringFromStringSet helps extract string info from set.StringSet.

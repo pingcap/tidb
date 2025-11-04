@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/docker/go-units"
@@ -69,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -171,6 +173,12 @@ var (
 		maxWriteSpeedOption:   {},
 		cloudStorageURIOption: {},
 		threadOption:          {},
+	}
+
+	disallowedOptionsForSEM = map[string]struct{}{
+		maxEngineSizeOption:  {},
+		forceMergeStep:       {},
+		manualRecoveryOption: {},
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
@@ -551,8 +559,18 @@ func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
 	}, nil
 }
 
+// Option is used to set optional parameters for LoadDataController.
+type Option func(c *LoadDataController)
+
+// WithLogger sets the logger for LoadDataController.
+func WithLogger(logger *zap.Logger) Option {
+	return func(c *LoadDataController) {
+		c.logger = logger
+	}
+}
+
 // NewLoadDataController create new controller.
-func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*LoadDataController, error) {
+func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs, options ...Option) (*LoadDataController, error) {
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
@@ -562,6 +580,10 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 		logger:          logger,
 		ExecuteNodesCnt: 1,
 	}
+	for _, opt := range options {
+		opt(c)
+	}
+
 	if err := c.checkFieldParams(); err != nil {
 		return nil, err
 	}
@@ -669,6 +691,8 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if p.DataSourceType == DataSourceTypeQuery {
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
 		}
+	}
+	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		// we put the check here, not in planner, to make sure the cloud_storage_uri
 		// won't change in between.
 		if p.IsLocalSort() {
@@ -677,6 +701,14 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		for k := range disallowedOptionsOfNextGen {
 			if _, ok := specifiedOptions[k]; ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "nextgen kernel")
+			}
+		}
+	}
+
+	if sem.IsEnabled() {
+		for k := range disallowedOptionsForSEM {
+			if _, ok := specifiedOptions[k]; ok {
+				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "SEM enabled")
 			}
 		}
 	}
@@ -1238,7 +1270,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}()
 		size, err3 := fileReader.Seek(0, io.SeekEnd)
 		if err3 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "failed to read file size by seek")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err3), "failed to read file size by seek")
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
@@ -1267,26 +1299,29 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		allFiles := make([]mydump.RawFile, 0, 16)
 		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
-				// we have checked in LoadDataExec.Next
-				//nolint: errcheck
-				match, _ := filepath.Match(escapedPath, remotePath)
-				if !match {
-					return nil
-				}
-				// pick arbitrary one file to detect the format.
-				e.detectAndUpdateFormat(remotePath)
-				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
-				totalSize += size
 				return nil
 			}); err != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to walk dir")
 		}
 
 		var err error
-		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
+		var processedFiles []*mydump.SourceFileMeta
+		var once sync.Once
+		if processedFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
+				// we have checked in LoadDataExec.Next
+				//nolint: errcheck
+				match, _ := filepath.Match(escapedPath, f.Path)
+				if !match {
+					return nil, nil
+				}
 				path, size := f.Path, f.Size
+				// pick arbitrary one file to detect the format.
+				once.Do(func() {
+					e.detectAndUpdateFormat(path)
+					sourceType = e.getSourceType()
+				})
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
@@ -1299,6 +1334,13 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			}); err != nil {
 			return err
 		}
+		// filter unmatch files
+		for _, f := range processedFiles {
+			if f != nil {
+				dataFiles = append(dataFiles, f)
+				totalSize += f.FileSize
+			}
+		}
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
 		if err2 = e.checkNonCSVFormatOptions(); err2 != nil {
@@ -1309,20 +1351,47 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 
-	if kerneltype.IsNextGen() {
-		targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
-		if err != nil {
-			return err
-		}
-		failpoint.InjectCall("mockImportDataSize", &totalSize)
-		e.ThreadCnt = scheduler.CalcConcurrencyByDataSize(totalSize, targetNodeCPUCnt)
-		e.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(totalSize, targetNodeCPUCnt)
-		e.logger.Info("set import thread count for nextgen kernel",
-			zap.Int("thread count", e.ThreadCnt),
-			zap.Int("max node count", e.MaxNodeCnt),
-			zap.Int("target node cpu count", targetNodeCPUCnt),
-			zap.String("total file size", units.BytesSize(float64(totalSize))))
+	return nil
+}
+
+// CalResourceParams calculates resource related parameters according to the total
+// file size and target node cpu count.
+func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []byte) error {
+	start := time.Now()
+	targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
+	if err != nil {
+		return err
 	}
+	factors, err := handle.GetScheduleTuneFactors(ctx, e.Keyspace)
+	if err != nil {
+		return err
+	}
+	totalSize := e.TotalFileSize
+	failpoint.InjectCall("mockImportDataSize", &totalSize)
+	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
+	var indexSizeRatio float64
+	if numOfIndexGenKV > 0 {
+		indexSizeRatio, err = e.sampleIndexSizeRatio(ctx, ksCodec)
+		if err != nil {
+			e.logger.Warn("meet error when sampling index size ratio", zap.Error(err))
+		}
+	}
+	cal := scheduler.NewRCCalc(totalSize, targetNodeCPUCnt, indexSizeRatio, factors)
+	e.ThreadCnt = cal.CalcConcurrency()
+	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
+	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
+	e.logger.Info("auto calculate resource related params",
+		zap.Int("thread", e.ThreadCnt),
+		zap.Int("maxNode", e.MaxNodeCnt),
+		zap.Int("distsqlScanConcurrency", e.DistSQLScanConcurrency),
+		zap.Int("targetNodeCPU", targetNodeCPUCnt),
+		zap.String("totalFileSize", units.BytesSize(float64(totalSize))),
+		zap.Int("fileCount", len(e.dataFiles)),
+		zap.Int("numOfIndexGenKV", numOfIndexGenKV),
+		zap.Float64("indexSizeRatio", indexSizeRatio),
+		zap.Float64("amplifyFactor", factors.AmplifyFactor),
+		zap.Duration("costTime", time.Since(start)),
+	)
 	return nil
 }
 
@@ -1625,6 +1694,3 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 	}
 	return handle.GetCPUCountOfNode(ctx)
 }
-
-// TestSyncCh is used in unit test to synchronize the execution.
-var TestSyncCh = make(chan struct{})

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -34,9 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
-
-// For mpp err recovery, hold at most 4 * MaxChunkSize rows.
-const mppErrRecoveryHoldChkCap = 4
 
 func useMPPExecution(ctx sessionctx.Context, tr *physicalop.PhysicalTableReader) bool {
 	if !ctx.GetSessionVars().IsMPPAllowed() {
@@ -48,7 +44,7 @@ func useMPPExecution(ctx sessionctx.Context, tr *physicalop.PhysicalTableReader)
 
 func getMPPQueryID(ctx sessionctx.Context) uint64 {
 	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
-	mppQueryInfo.QueryID.CompareAndSwap(0, plannercore.AllocMPPQueryID())
+	mppQueryInfo.QueryID.CompareAndSwap(0, physicalop.AllocMPPQueryID())
 	return mppQueryInfo.QueryID.Load()
 }
 
@@ -97,9 +93,8 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		if !ok {
 			return errors.Errorf("unexpected plan type, expect: PhysicalExchangeSender, got: %s", e.originalPlan.TP())
 		}
-		if _, e.kvRanges, _, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is); err != nil {
-			return nil
-		}
+		_, e.kvRanges, _, err = physicalop.GenerateRootMPPTasks(e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is)
+		return err
 	}
 	planIDs := collectPlanIDs(e.originalPlan, nil)
 	if e.mppExec, err = mpp.NewExecutorWithRetry(ctx, e.Ctx(), e.memTracker, planIDs, e.originalPlan, e.startTS, e.mppQueryID, e.is); err != nil {
@@ -133,6 +128,10 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 // Close and release the used resources.
 func (e *MPPGather) Close() error {
 	if e.dummy {
+		if e.respIter != nil {
+			_ = e.respIter.Close()
+			return errors.Trace(errors.New("e.respIter != nil when e.dummy is set"))
+		}
 		return nil
 	}
 	if e.respIter != nil {

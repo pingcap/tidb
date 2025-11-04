@@ -89,6 +89,16 @@ lint:tools/bin/revive
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_resource_control.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_runtime.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_summary.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_summary.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/overview.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/overview_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/performance_overview.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/performance_overview_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_resource_control_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_runtime_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_summary_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_worker.json
 
 .PHONY: license
 license:
@@ -395,12 +405,14 @@ bench-daily:
 	go test github.com/pingcap/tidb/pkg/executor/test/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/tests/partition -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpcds -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpch -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/statistics -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/table/tables -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/util/codec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/util/ranger -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/util/rowcodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/util/benchdaily -run TestBenchDaily -bench Ignore \
 		-date `git log -n1 --date=unix --pretty=format:%cd` \
@@ -416,7 +428,7 @@ lightning_web: ## Build Lightning web UI
 
 .PHONY: build_br
 build_br: ## Build BR (backup and restore) tool
-	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 
 .PHONY: build_lightning_for_web
 build_lightning_for_web:
@@ -511,7 +523,8 @@ mock_s3iface: mockgen
 # mock interface for lightning and IMPORT INTO
 .PHONY: mock_lightning
 mock_lightning: mockgen
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter,ChunkFlushStatus > br/pkg/mock/backend.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter > br/pkg/mock/backend.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/common ChunkFlushStatus > br/pkg/mock/common.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
 	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
