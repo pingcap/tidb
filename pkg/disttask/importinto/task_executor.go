@@ -428,8 +428,6 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		partSize = m.indexKVPartSize
 	}
 
-	concurrency := int(m.GetResource().CPU.Capacity())
-
 	wctx := workerpool.NewContext(ctx)
 	op := external.NewMergeOperator(
 		wctx,
@@ -448,7 +446,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if err = external.MergeOverlappingFiles(
 		wctx,
 		sm.DataFiles,
-		concurrency,
+		subtask.Concurrency, // the concurrency used to split subtask
 		op,
 	); err != nil {
 		return errors.Trace(err)
