@@ -1693,11 +1693,7 @@ func (a *ExecStmt) planMetrics() {
 	if vars.InRestrictedSQL || userString == "" {
 		return // internal query
 	}
-	stmtCtx := vars.StmtCtx
-	if stmtCtx.StmtType == "" {
-		stmtCtx.StmtType = stmtctx.GetStmtLabel(context.Background(), a.StmtNode)
-	}
-	flat := getFlatPlan(stmtCtx)
+	flat := getFlatPlan(vars.StmtCtx)
 	if flat == nil {
 		return
 	}

@@ -193,8 +193,10 @@ func PlanMetrics(sctx sessionctx.Context, flatPlan *FlatPhysicalPlan) {
 func flatPlanMetrics(sctx sessionctx.Context, planTree FlatPlanTree) {
 	runtimeStats := sctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 	if runtimeStats == nil {
-		return
+		return // no runtime info, just return
 	}
+
+	// iterate all operators and record metrics
 	for _, node := range planTree {
 		var actRows int
 		if node.IsRoot {
@@ -211,6 +213,9 @@ func flatPlanMetrics(sctx sessionctx.Context, planTree FlatPlanTree) {
 			actRows = int(nodeRuntimeInfo.GetActRows())
 		}
 
+		// Record scan metrics for Index/TableScan and Batch/PointGet operators.
+		// Record join metrics for all Join operators.
+		// Record KV request metrics for IndexLookUp/IndexMerge and IndexJoin operators.
 		switch op := node.Origin.(type) {
 		case *physicalop.PhysicalIndexScan:
 			planScanMetric(op.SCtx(), op.Table, actRows, false)
@@ -257,7 +262,7 @@ func planCopKVRequestsMetric(sctx planctx.PlanContext, curOp *FlatOperator, plan
 }
 
 func planJoinMetric(sctx planctx.PlanContext, joinRows int) {
-	joinRowsLabel := getRowsLabel(joinRows)
+	joinRowsLabel := getRowsLabel(joinRows) // track the number of joins of different sizes.
 	incMetric(sctx, metrics.PlanJoinRowsCounter, joinRowsLabel)
 }
 
