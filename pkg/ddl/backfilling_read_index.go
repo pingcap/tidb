@@ -109,7 +109,7 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 			r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
 			ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
 		}
-		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.store, r.job, false, 0)
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.store, r.job, hasUniqueIndex(r.indexes), false, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -189,6 +189,11 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	r.summaryMap.Store(subtask.ID, &readIndexSummary{
 		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
 	})
+	var err error
+	failpoint.InjectCall("beforeReadIndexStepExecRunSubtask", &err)
+	if err != nil {
+		return err
+	}
 
 	sm, err := decodeBackfillSubTaskMeta(ctx, r.cloudStorageURI, subtask.Meta)
 	if err != nil {

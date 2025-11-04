@@ -124,8 +124,12 @@ func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
 	tk.MustExec("admin check table t;")
 	rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rs, 1)
-	require.Contains(t, rs[0][12], "ingest")
-	require.Contains(t, rs[0][12], "cloud")
+	if kerneltype.IsClassic() {
+		require.Contains(t, rs[0][12], "ingest")
+		require.Contains(t, rs[0][12], "cloud")
+	} else {
+		require.Equal(t, rs[0][12], "")
+	}
 	require.Equal(t, rs[0][7], strconv.Itoa(count))
 }
 
@@ -165,7 +169,9 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	}
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	cloudStorageURI = handle.GetCloudStorageURI(context.Background(), store) // path with cluster id
 	defer func() {
@@ -264,11 +270,18 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if kerneltype.IsNextGen() && tc.cloudStorageURI == "" {
-				t.Skip("local sort might ingest duplicate KV, cause overlapped sst")
+			if kerneltype.IsNextGen() {
+				if tc.cloudStorageURI == "" {
+					t.Skip("local sort might ingest duplicate KV, cause overlapped sst")
+				}
+				if tc.enableDistTask == "0" {
+					t.Skip("DXF is always enabled on nextgen")
+				}
 			}
-			tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = " + tc.enableFastReorg + ";")
-			tk.MustExec("set @@global.tidb_enable_dist_task = " + tc.enableDistTask + ";")
+			if kerneltype.IsClassic() {
+				tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = " + tc.enableFastReorg + ";")
+				tk.MustExec("set @@global.tidb_enable_dist_task = " + tc.enableDistTask + ";")
+			}
 			tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + tc.cloudStorageURI + "';")
 			for _, tn := range tableNames {
 				if kerneltype.IsNextGen() && tc.cloudStorageURI != "" && tn == "t_partition" {
@@ -291,11 +304,16 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 		})
 	}
 
-	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
+	if kerneltype.IsClassic() {
+		tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
+	}
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 }
 
 func TestAddIndexIngestShowReorgTp(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	_, cloudStorageURI := genServerWithStorage(t)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -323,8 +341,12 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
 	jobType, rowCnt := rows[0][12].(string), rows[0][7].(string)
-	require.True(t, strings.Contains(jobType, "ingest"), jobType)
-	require.False(t, strings.Contains(jobType, "cloud"), jobType)
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(jobType, "ingest"), jobType)
+		require.False(t, strings.Contains(jobType, "cloud"), jobType)
+	} else {
+		require.Equal(t, jobType, "")
+	}
 	require.Equal(t, rowCnt, "3")
 }
 
@@ -338,7 +360,9 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	}
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
@@ -518,7 +542,9 @@ func TestIngestUseGivenTS(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	}
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	t.Cleanup(func() {
 		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
@@ -561,7 +587,9 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	}
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	t.Cleanup(func() {
 		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
@@ -629,7 +657,9 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	}
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	t.Cleanup(func() {
 		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")

@@ -24,6 +24,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -100,6 +101,8 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, ke
 	if err != nil {
 		return nil, err
 	}
+
+	failpoint.InjectCall("afterDXFTaskSubmitted")
 
 	NotifyTaskChange()
 	return task, nil

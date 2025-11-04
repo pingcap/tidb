@@ -98,6 +98,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -1057,10 +1058,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
-		if cc.getStatus() != connStatusShutdown {
-			err := cc.Close()
-			terror.Log(err)
-		}
+		util.WithRecovery(
+			func() {
+				if cc.getStatus() != connStatusShutdown {
+					err := cc.Close()
+					terror.Log(err)
+				}
+			}, nil)
 
 		close(cc.quit)
 	}()

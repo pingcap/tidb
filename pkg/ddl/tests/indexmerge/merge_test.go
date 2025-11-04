@@ -45,7 +45,6 @@ func TestAddIndexMergeProcess(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2, 3), (4, 5, 6);")
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
 	var checkErr error
 	var runDML, backfillDone bool
@@ -84,7 +83,6 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2, 3), (4, 5, 6);")
 	// Force onCreateIndex use the backfill-merge process.
 	ingest.LitInitialized = false
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
 	var checkErr error
 	var runDML, backfillDone bool
@@ -126,7 +124,6 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 	tk.MustExec("insert into t values (1);")
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
 	var checkErr error
 	var runDML bool
@@ -175,7 +172,6 @@ func TestAddIndexMergeIndexUntouchedValue(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1, 'a', 'a')")
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
 	var checkErrs []error
 	var runInsert bool
@@ -301,7 +297,6 @@ func TestAddIndexMergeIndexUpdateOnDeleteOnly(t *testing.T) {
 
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 	tk.MustExec("set @@global.tidb_enable_mutation_checker = 1;")
 	tk.MustExec("set @@global.tidb_txn_assertion_level = 'STRICT';")
 
@@ -432,7 +427,6 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 	tk.MustExec("set @@global.tidb_enable_metadata_lock = 0;")
 
 	runPessimisticTxn := false

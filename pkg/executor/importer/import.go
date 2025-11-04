@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -690,6 +691,8 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if p.DataSourceType == DataSourceTypeQuery {
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
 		}
+	}
+	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		// we put the check here, not in planner, to make sure the cloud_storage_uri
 		// won't change in between.
 		if p.IsLocalSort() {
@@ -702,7 +705,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 	}
 
-	if semv1.IsEnabled() {
+	if sem.IsEnabled() {
 		for k := range disallowedOptionsForSEM {
 			if _, ok := specifiedOptions[k]; ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "SEM enabled")
@@ -1267,7 +1270,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}()
 		size, err3 := fileReader.Seek(0, io.SeekEnd)
 		if err3 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "failed to read file size by seek")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err3), "failed to read file size by seek")
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
@@ -1296,26 +1299,29 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		allFiles := make([]mydump.RawFile, 0, 16)
 		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
-				// we have checked in LoadDataExec.Next
-				//nolint: errcheck
-				match, _ := filepath.Match(escapedPath, remotePath)
-				if !match {
-					return nil
-				}
-				// pick arbitrary one file to detect the format.
-				e.detectAndUpdateFormat(remotePath)
-				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
-				totalSize += size
 				return nil
 			}); err != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to walk dir")
 		}
 
 		var err error
-		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
+		var processedFiles []*mydump.SourceFileMeta
+		var once sync.Once
+		if processedFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
+				// we have checked in LoadDataExec.Next
+				//nolint: errcheck
+				match, _ := filepath.Match(escapedPath, f.Path)
+				if !match {
+					return nil, nil
+				}
 				path, size := f.Path, f.Size
+				// pick arbitrary one file to detect the format.
+				once.Do(func() {
+					e.detectAndUpdateFormat(path)
+					sourceType = e.getSourceType()
+				})
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
@@ -1327,6 +1333,13 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				return &fileMeta, nil
 			}); err != nil {
 			return err
+		}
+		// filter unmatch files
+		for _, f := range processedFiles {
+			if f != nil {
+				dataFiles = append(dataFiles, f)
+				totalSize += f.FileSize
+			}
 		}
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {

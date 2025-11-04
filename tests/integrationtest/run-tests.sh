@@ -41,7 +41,7 @@ function help_message()
 
     -d <y|Y|n|N|b|B>: \"y\" or \"Y\" for only enabling the new collation during test.
                       \"n\" or \"N\" for only disabling the new collation during test.
-                      \"b\" or \"B\" for tests the prefix is `collation`, enabling and disabling new collation during test, and for other tests, only enabling the new collation [default].
+                      \"b\" or \"B\" for tests the prefix is 'collation', enabling and disabling new collation during test, and for other tests, only enabling the new collation [default].
                       Enable/Disable the new collation during the integration test.
 
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.

@@ -21,14 +21,35 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/stretchr/testify/require"
 )
+
+func maxPhysicalTableID(h *handle.Handle, is infoschema.InfoSchema) int64 {
+	var maxID int64
+	for _, statsTbl := range h.StatsCache.Values() {
+		table, ok := h.TableInfoByID(is, statsTbl.PhysicalID)
+		if !ok {
+			continue
+		}
+		dbInfo, ok := is.SchemaByID(table.Meta().DBID)
+		if !ok {
+			continue
+		}
+		if filter.IsSystemSchema(dbInfo.Name.L) {
+			continue
+		}
+		maxID = max(maxID, statsTbl.PhysicalID)
+	}
+	return maxID
+}
 
 func TestLiteInitStatsWithTableIDs(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
@@ -220,12 +241,13 @@ func testConcurrentlyInitStats(t *testing.T) {
 			require.False(t, col.IsAllEvicted())
 		}
 	}
+	maxID := maxPhysicalTableID(h, is)
 	if kerneltype.IsClassic() {
-		require.Equal(t, int64(130), handle.GetMaxTidRecordForTest())
+		require.Equal(t, int64(130), maxID)
 	} else {
 		// In next-gen, the table ID is different from classic because the system table IDs and the regular table IDs are different,
 		// so the next-gen table ID will be ahead of the classic table ID.
-		require.Equal(t, int64(23), handle.GetMaxTidRecordForTest())
+		require.Equal(t, int64(23), maxID)
 	}
 }
 
