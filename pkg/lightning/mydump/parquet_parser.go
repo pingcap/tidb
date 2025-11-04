@@ -619,7 +619,7 @@ func SampleStatisticsFromParquet(
 	}
 
 	meta := GetDefaultParquetMeta()
-	meta.MemoryPool = GetPool(10 << 30) // use up to 4GiB memory for sampling
+	meta.MemoryPool = nil
 
 	parser, err := NewParquetParser(ctx, store, r, fileMeta.Path, meta)
 	if err != nil {
@@ -654,12 +654,15 @@ func SampleStatisticsFromParquet(
 	avgRowSize = float64(rowSize) / float64(rowCount)
 
 	alloc := parser.alloc
-	a, _ := alloc.(*appendOnlyAllocator)
-	memoryUsage = a.Allocated() + arenaSize
+	a, ok := alloc.(*appendOnlyAllocator)
 
-	parser.logger.Info("Get memory usage of parquet reader",
-		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
-	)
+	if ok {
+		memoryUsage = a.Allocated() + arenaSize
+		parser.logger.Info("Get memory usage of parquet reader",
+			zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
+		)
+		return rowCount, avgRowSize, memoryUsage, err
+	}
 
-	return rowCount, avgRowSize, memoryUsage, err
+	return rowCount, avgRowSize, 128 << 20, err
 }
