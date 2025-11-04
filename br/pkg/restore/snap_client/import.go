@@ -431,7 +431,7 @@ func (importer *SnapFileImporter) Import(
 		}
 		workerpool := util.NewWorkerPool(uint(workerpoolsize), "restore region")
 		eg, ectx := errgroup.WithContext(ctx)
-		logutil.CL(ctx).Info("scan regions", logutil.Key("start key", startKey), logutil.Key("end key", endKey), zap.Int("count", len(regionInfos)), zap.Int("pool size", workerpoolsize))
+		logutil.CL(ctx).Debug("scan regions", logutil.Key("start key", startKey), logutil.Key("end key", endKey), zap.Int("count", len(regionInfos)), zap.Int("pool size", workerpoolsize))
 		start := time.Now()
 		// Try to download and ingest the file in every region
 		for _, regionInfo := range regionInfos {
@@ -447,7 +447,7 @@ func (importer *SnapFileImporter) Import(
 						logutil.ShortError(errDownload))
 					return errors.Trace(errDownload)
 				}
-				logutil.CL(ectx).Info("download file done", zap.Stringer("take", time.Since(start)),
+				logutil.CL(ectx).Debug("download file done", zap.Stringer("take", time.Since(start)),
 					logutil.Key("start", startKey), logutil.Key("end", endKey))
 				start = time.Now()
 				if errIngest := importer.ingest(ectx, info, downloadMetas); errIngest != nil {
@@ -459,7 +459,7 @@ func (importer *SnapFileImporter) Import(
 						zap.Error(errIngest))
 					return errors.Trace(errIngest)
 				}
-				logutil.CL(ectx).Info("ingest file done", logutil.Key("start", startKey), logutil.Key("end", endKey), zap.Stringer("take", time.Since(start)))
+				logutil.CL(ectx).Debug("ingest file done", logutil.Key("start", startKey), logutil.Key("end", endKey), zap.Stringer("take", time.Since(start)))
 				return nil
 			})
 		}
