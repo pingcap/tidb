@@ -43,7 +43,7 @@ type HTTPFlightRecorder struct {
 	ch                   chan<- []Event
 	oldEnabledCategories TraceCategory
 	counter              int // used when dump trigger config is sampling
-	Config               *DumpTriggerConfig
+	Config               *FlightRecorderConfig
 	// Or should it be a Set if we support trigger condition combination?
 	triggerCanonicalName string
 }
@@ -169,7 +169,7 @@ func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, che
 		return
 	}
 	if flightRecorder.triggerCanonicalName == triggerName {
-		if check(flightRecorder.Config) {
+		if check(&flightRecorder.Config.DumpTrigger) {
 			raw.MarkDump()
 		}
 	}
@@ -230,8 +230,7 @@ func parseCategories(categories []string) TraceCategory {
 	return result
 }
 
-// StartHTTPFlightRecorder starts the HTTP flight recorder.
-func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*HTTPFlightRecorder, error) {
+func newHTTPFlightRecorder(config *FlightRecorderConfig) (*HTTPFlightRecorder, error) {
 	var b strings.Builder
 	if err := config.Validate(&b); err != nil {
 		return nil, err
@@ -239,9 +238,8 @@ func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*
 
 	categories := parseCategories(config.EnabledCategories)
 	ret := &HTTPFlightRecorder{
-		ch:                   ch,
 		oldEnabledCategories: tracing.GetEnabledCategories(),
-		Config:               &config.DumpTrigger,
+		Config:               config,
 		triggerCanonicalName: b.String(),
 	}
 	logutil.BgLogger().Info("start http flight recorder",
@@ -252,13 +250,38 @@ func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*
 	return ret, nil
 }
 
+// StartHTTPFlightRecorder starts the HTTP flight recorder.
+func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*HTTPFlightRecorder, error) {
+	ret, err := newHTTPFlightRecorder(config)
+	ret.ch = ch
+	return ret, err
+}
+
+func StartLogFlightRecorder(config *FlightRecorderConfig) error {
+	_, err := newHTTPFlightRecorder(config)
+	return err
+}
+
+func GetFlightRecorder() *HTTPFlightRecorder {
+	return globalHTTPFlightRecorder.Load()
+}
+
 // Close closes the HTTP flight recorder.
 func (r *HTTPFlightRecorder) Close() {
 	tracing.SetCategories(r.oldEnabledCategories)
 	globalHTTPFlightRecorder.Store(nil)
 }
 
-func (r *HTTPFlightRecorder) collect(events []Event) {
+func (r *HTTPFlightRecorder) collect(ctx context.Context, events []Event) {
+	if r.ch == nil {
+		// Used by log flight recorder
+		for _, event := range events {
+			logEvent(ctx, event)
+		}
+		return
+	}
+
+	// Used by http flight recorder
 	select {
 	case r.ch <- slices.Clone(events):
 	default:
@@ -290,16 +313,16 @@ func (r *Trace) MarkDump() {
 const maxEvents = 4096
 
 // Reset resets the Trace.
-func (r *Trace) Reset() {
+func (r *Trace) Reset(ctx context.Context) {
 	sink := globalHTTPFlightRecorder.Load()
 	if sink != nil {
 		if r.keep {
-			sink.collect(r.events)
+			sink.collect(ctx, r.events)
 		}
-		if sink.Config.Type == "sampling" {
+		if sink.Config.DumpTrigger.Type == "sampling" {
 			sink.counter++
-			if sink.counter >= sink.Config.Sampling {
-				sink.collect(r.events)
+			if sink.counter >= sink.Config.DumpTrigger.Sampling {
+				sink.collect(ctx, r.events)
 				sink.counter = 0
 			}
 		}

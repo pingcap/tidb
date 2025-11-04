@@ -151,6 +151,9 @@ const (
 	// TiDBTraceEvent controls the experimental trace event instrumentation.
 	TiDBTraceEvent = "tidb_trace_event"
 
+	// TiDBTraceEventControl controls the flight recorder dump trigger for trace event.
+	TiDBTraceEventControl = "tidb_trace_event_control"
+
 	// TiDBLogFileMaxDays is used to log every query in the server in info level.
 	TiDBLogFileMaxDays = "tidb_log_file_max_days"
 

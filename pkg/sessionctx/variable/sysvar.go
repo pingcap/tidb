@@ -502,6 +502,41 @@ var defaultSysVars = []*SysVar{
 			return strings.ToUpper(traceevent.CurrentMode()), nil
 		},
 	},
+	{Scope: vardef.ScopeInstance, Name: vardef.TiDBTraceEventControl, Hidden: kerneltype.IsClassic(), Value: "", Type: vardef.TypeStr,
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			if kerneltype.IsClassic() {
+				return errors.New("can only be set for TiDB X kernel")
+			}
+			if val == "" {
+				// Reset the flight recorder
+				recorder := traceevent.GetFlightRecorder()
+				if recorder != nil {
+					recorder.Close()
+				}
+				return nil
+			}
+			var config traceevent.FlightRecorderConfig
+			err := json.Unmarshal([]byte(val), &config)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = traceevent.StartLogFlightRecorder(&config)
+			return err
+		},
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			recorder := traceevent.GetFlightRecorder()
+			if recorder != nil {
+				if recorder.Config != nil {
+					data, err := json.Marshal(recorder.Config)
+					if err != nil {
+						return "", errors.Trace(err)
+					}
+					return string(data), nil
+				}
+			}
+			return "", nil
+		},
+	},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBSlowTxnLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowTxnThreshold),
 		Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 			s.SlowTxnThreshold = TidbOptUint64(val, logutil.DefaultSlowTxnThreshold)

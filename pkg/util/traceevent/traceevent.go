@@ -284,7 +284,10 @@ func (*LogSink) Record(ctx context.Context, event Event) {
 	if !loggingEnabled.Load() {
 		return
 	}
+	logEvent(ctx, event)
+}
 
+func logEvent(ctx context.Context, event Event) {
 	// Append to reserved capacity without allocation.
 	// Field order: [event fields] [category] [timestamp] [trace_id?]
 	fields := event.Fields
