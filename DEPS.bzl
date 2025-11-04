@@ -6816,13 +6816,13 @@ def go_deps():
         name = "com_github_prometheus_procfs",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/procfs",
-        sha256 = "6453085f77476190e10e8606ac50795f2fd19afcdd3b1d8d7e9cf63e32f2a32b",
-        strip_prefix = "github.com/prometheus/procfs@v0.19.1",
+        sha256 = "354e627c196c228369c9e97bca5ff59d8ce2b338756de249d8d343226424c76f",
+        strip_prefix = "github.com/prometheus/procfs@v0.19.2",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.19.1.zip",
-            "http://ats.apps.svc/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.19.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.19.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.19.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.19.2.zip",
+            "http://ats.apps.svc/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.19.2.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.19.2.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.19.2.zip",
         ],
     )
     go_repository(
