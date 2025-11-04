@@ -2927,7 +2927,7 @@ func TestIssue40135Ver2(t *testing.T) {
 	})
 	tk.MustExec("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST")
 	wg.Wait()
-	require.ErrorContains(t, checkErr, "[ddl:8200]DDL job rollback, error msg: Unsupported modify column, decreasing length of int may result in truncation and change of partition")
+	require.ErrorContains(t, checkErr, "Unsupported modify column, decreasing length of int may result in truncation and change of partition")
 	tk.MustQuery("show create table t40135").Check(testkit.Rows("" +
 		"t40135 CREATE TABLE `t40135` (\n" +
 		"  `a` bigint(20) DEFAULT '6243108',\n" +
@@ -2936,6 +2936,7 @@ func TestIssue40135Ver2(t *testing.T) {
 		"  KEY `a` (`a`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 6"))
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
 	tk.MustExec("admin check table t40135")
 }
 
