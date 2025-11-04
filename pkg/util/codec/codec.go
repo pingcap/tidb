@@ -564,15 +564,17 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 				(*memoryUsagePerRow)[j] += signFlagLen + int64(sizeUint64)
 			}
 		case mysql.TypeJSON:
+			sizeByteNum := int64(0)
+			if serializeModes[i] == KeepVarColumnLength {
+				sizeByteNum = int64(sizeUint32)
+			}
+
 			for j, physicalRowindex := range usedRows {
 				if canSkip(physicalRowindex) {
 					continue
 				}
 
-				(*memoryUsagePerRow)[j] = column.GetJSON(physicalRowindex).CalculateHashValueSize()
-				if serializeModes[i] == KeepVarColumnLength {
-					(*memoryUsagePerRow)[j] += int64(sizeUint32)
-				}
+				(*memoryUsagePerRow)[j] += sizeByteNum + column.GetJSON(physicalRowindex).CalculateHashValueSize()
 			}
 		case mysql.TypeNull:
 		default:
