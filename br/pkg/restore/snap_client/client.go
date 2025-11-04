@@ -663,7 +663,7 @@ func SetSpeedLimitFn(ctx context.Context, stores []*metapb.Store, pool *tidbutil
 	}
 }
 
-func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool, isNextGenRestore bool,
+func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool,
 	RawStartKey, RawEndKey []byte) error {
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
@@ -714,7 +714,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 
 	opt := NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		rc.rewriteMode, stores, rc.concurrencyPerStore, isNextGenRestore, createCallBacks, closeCallBacks,
+		rc.rewriteMode, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
 	)
 	if isRawKvMode || isTxnKvMode {
 		mode := Raw
@@ -759,7 +759,6 @@ func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	RawEndKey []byte,
 	hasExplicitFilter bool,
 	isFullRestore bool,
-	isNextGenRestore bool,
 	withSys bool,
 ) error {
 	if needLoadSchemas(backupMeta) {
@@ -786,7 +785,7 @@ func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	}
 	rc.backupMeta = backupMeta
 
-	if err := rc.initClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv, isNextGenRestore, RawStartKey, RawEndKey); err != nil {
+	if err := rc.initClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv, RawStartKey, RawEndKey); err != nil {
 		return errors.Trace(err)
 	}
 

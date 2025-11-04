@@ -41,6 +41,7 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -153,8 +154,6 @@ type SnapFileImporter struct {
 	rawEndKey   []byte
 	rewriteMode RewriteMode
 
-	isNextGenRestore bool
-
 	cacheKey string
 	cond     *sync.Cond
 }
@@ -166,8 +165,6 @@ type SnapFileImporterOptions struct {
 	backend      *backuppb.StorageBackend
 	rewriteMode  RewriteMode
 	tikvStores   []*metapb.Store
-	// for next gen restore, only download/ingest at leader.
-	isNextGenRestore bool
 
 	concurrencyPerStore uint
 	createCallBacks     []func(*SnapFileImporter) error
@@ -182,7 +179,6 @@ func NewSnapFileImporterOptions(
 	rewriteMode RewriteMode,
 	tikvStores []*metapb.Store,
 	concurrencyPerStore uint,
-	isNextGenRestore bool,
 	createCallbacks []func(*SnapFileImporter) error,
 	closeCallbacks []func(*SnapFileImporter) error,
 ) *SnapFileImporterOptions {
@@ -193,7 +189,6 @@ func NewSnapFileImporterOptions(
 		backend:             backend,
 		rewriteMode:         rewriteMode,
 		tikvStores:          tikvStores,
-		isNextGenRestore:    isNextGenRestore,
 		concurrencyPerStore: concurrencyPerStore,
 		createCallBacks:     createCallbacks,
 		closeCallbacks:      closeCallbacks,
@@ -233,7 +228,6 @@ func NewSnapFileImporter(
 		metaClient:          options.metaClient,
 		backend:             options.backend,
 		importClient:        options.importClient,
-		isNextGenRestore:    options.isNextGenRestore,
 		downloadTokensMap:   newStoreTokenChannelMap(options.tikvStores, options.concurrencyPerStore),
 		ingestTokensMap:     newStoreTokenChannelMap(options.tikvStores, options.concurrencyPerStore),
 		rewriteMode:         options.rewriteMode,
@@ -681,7 +675,7 @@ func (importer *SnapFileImporter) downloadSST(
 	}
 
 	downloadPeers := regionInfo.Region.GetPeers()
-	if importer.isNextGenRestore {
+	if kerneltype.IsNextGen() {
 		// for next gen restore, due to the leader will handle ingest cmd and convert sst file/upload to s3
 		// we only need download to leader peer, if ingest fail due to NotLeader error, need retry download SST outside.
 		downloadPeers = []*metapb.Peer{regionInfo.Leader}
@@ -862,7 +856,7 @@ func (importer *SnapFileImporter) ingest(
 		switch {
 		case errPb == nil:
 			return nil
-		case !importer.isNextGenRestore && errPb.NotLeader != nil:
+		case !kerneltype.IsNextGen() && errPb.NotLeader != nil:
 			// If error is `NotLeader`, update the region info and retry
 			var newInfo *split.RegionInfo
 			if newLeader := errPb.GetNotLeader().GetLeader(); newLeader != nil {

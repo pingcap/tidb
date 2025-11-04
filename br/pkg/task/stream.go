@@ -1827,7 +1827,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetUpstreamClusterID(cfg.UpstreamClusterID)
 
-	err = client.InitClients(ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value, utils.IsNextGenRestore(cfg.KeyspaceName, cfg.CheckRequirements))
+	err = client.InitClients(ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

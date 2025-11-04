@@ -1230,14 +1230,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	isNextGenRestore := utils.IsNextGenRestore(cfg.KeyspaceName, cfg.CheckRequirements)
+	isNextGenRestore := utils.CheckNextGenCompatibility(cfg.KeyspaceName, cfg.CheckRequirements)
 	if isNextGenRestore {
 		log.Info("start restore to next-gen cluster")
 	}
 
 	metaReader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
 	if err = client.LoadSchemaIfNeededAndInitClient(ctx, backupMeta, u, metaReader, cfg.LoadStats, nil, nil,
-		cfg.ExplicitFilter, isFullRestore(cmdName), isNextGenRestore, cfg.WithSysTable); err != nil {
+		cfg.ExplicitFilter, isFullRestore(cmdName), cfg.WithSysTable); err != nil {
 		return errors.Trace(err)
 	}
 	if client.IsIncremental() || cfg.ExplicitFilter || !isFullRestore(cmdName) {

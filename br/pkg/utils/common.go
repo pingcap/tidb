@@ -41,7 +41,7 @@ func GenGlobalIDs(ctx context.Context, n int, storage kv.Storage) ([]int64, erro
 	return ids, err
 }
 
-// IsNextGenRestore determines whether the current restore task targets a Next-Gen TiDB cluster.
+// CheckNextGenCompatibility determines whether the current restore task targets a Next-Gen TiDB cluster.
 //
 // Logic summary:
 //   - Classic kernel + keyspaceName: unsupported combination, may consume extra disk space.
@@ -56,7 +56,7 @@ func GenGlobalIDs(ctx context.Context, n int, storage kv.Storage) ([]int64, erro
 //	checkRequirements  if true, the function enforces strict validation and exits on conflicts.
 //
 // Returns true if the restore is considered Next-Gen; false otherwise.
-func IsNextGenRestore(keyspaceName string, checkRequirements bool) bool {
+func CheckNextGenCompatibility(keyspaceName string, checkRequirements bool) bool {
 	switch {
 	case kerneltype.IsClassic() && len(keyspaceName) > 0:
 		// Classic kernel does not support keyspace restores.

@@ -526,7 +526,6 @@ func (rc *LogClient) InitClients(
 	sstCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	concurrency uint,
 	concurrencyPerStore uint,
-	isNextGenRestore bool,
 ) error {
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
@@ -553,7 +552,7 @@ func (rc *LogClient) InitClients(
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, isNextGenRestore, createCallBacks, closeCallBacks,
+		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
 	)
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
