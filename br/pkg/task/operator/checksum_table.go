@@ -75,7 +75,7 @@ func RunChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWithRewriteR
 	return json.NewEncoder(os.Stdout).Encode(results)
 }
 
-func RunUpstreamChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWithPitrIdMapConfig) error {
+func RunUpstreamChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumUpstreamConfig) error {
 	c := &checksumTableCtx{cfg: ChecksumWithRewriteRulesConfig{Config: cfg.Config}}
 	if err := c.init(ctx, g); err != nil {
 		return errors.Trace(err)
@@ -84,7 +84,7 @@ func RunUpstreamChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWith
 	if err != nil {
 		return errors.Trace(err)
 	}
-	reqs, err := c.genUpstreamRequests(ctx, curr, cfg.RestoreTS)
+	reqs, err := c.genUpstreamRequests(curr, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -344,7 +344,7 @@ func (c *checksumTableCtx) genRequests(ctx context.Context, bkup []*metautil.Tab
 	return
 }
 
-func (c *checksumTableCtx) genRequestsWithIDMap(ctx context.Context, curr []tableInDB, idmaps []*backup.PitrDBMap, restoreTS uint64) (reqs []request, err error) {
+func (c *checksumTableCtx) genRequestsWithIDMap(curr []tableInDB, idmaps []*backup.PitrDBMap, restoreTS uint64) (reqs []request, err error) {
 	router := make(map[string]map[string]map[int64]int64)
 	for _, dbidmap := range idmaps {
 		tableRouter, exists := router[dbidmap.Name]
@@ -402,7 +402,7 @@ func (c *checksumTableCtx) genRequestsWithIDMap(ctx context.Context, curr []tabl
 	return
 }
 
-func (c *checksumTableCtx) genUpstreamRequests(ctx context.Context, curr []tableInDB, checksumTS uint64) (reqs []request, err error) {
+func (c *checksumTableCtx) genUpstreamRequests(curr []tableInDB, checksumTS uint64) (reqs []request, err error) {
 	for _, t := range curr {
 		rb := checksum.NewExecutorBuilder(t.info, checksumTS)
 		rb.SetConcurrency(c.cfg.ChecksumConcurrency)
@@ -488,7 +488,7 @@ func RunPitrChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWithPitr
 	if err != nil {
 		return errors.Trace(err)
 	}
-	reqs, err := c.genRequestsWithIDMap(ctx, curr, pitrIdMap, cfg.RestoreTS)
+	reqs, err := c.genRequestsWithIDMap(curr, pitrIdMap, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -156,7 +156,7 @@ func newPitrChecksumCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(cmd, []string{"!*.*"}, false)
-	operator.DefineFlagsForChecksumTableConfig(cmd.Flags())
+	operator.DefineFlagsForChecksumPitrTableConfig(cmd.Flags())
 	return cmd
 }
 
@@ -168,7 +168,7 @@ func newUpstreamChecksumCommand() *cobra.Command {
 			"This can be used when you have the checksum of upstream elsewhere",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := operator.ChecksumWithPitrIdMapConfig{}
+			cfg := operator.ChecksumUpstreamConfig{}
 			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
 				return err
 			}
@@ -177,7 +177,7 @@ func newUpstreamChecksumCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(cmd, []string{"!*.*"}, false)
-	operator.DefineFlagsForChecksumTableConfig(cmd.Flags())
+	operator.DefineFlagsForChecksumUpstreamTableConfig(cmd.Flags())
 	return cmd
 }
 
