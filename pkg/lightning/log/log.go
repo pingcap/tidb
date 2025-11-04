@@ -16,12 +16,13 @@ package log
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
 	"time"
 
-	"github.com/pingcap/errors"
+	perrors "github.com/pingcap/errors"
 	pclog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -113,7 +114,7 @@ func InitLogger(cfg *Config, _ string) error {
 	// this also init GRPCLogger, controlled by GRPC_DEBUG env.
 	err := logutil.InitLogger(&tidbLogCfg)
 	if err != nil {
-		return errors.Trace(err)
+		return perrors.Trace(err)
 	}
 
 	logCfg := &pclog.Config{
@@ -197,7 +198,7 @@ func IsContextCanceledError(err error) bool {
 		return true
 	}
 	// Use pingcap/errors.Cause for errors wrapped by that package
-	cau := errors.Cause(err)
+	cau := perrors.Cause(err)
 	if cau == context.Canceled || status.Code(cau) == codes.Canceled {
 		return true
 	}

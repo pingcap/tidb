@@ -99,7 +99,7 @@ func TestIsContextCanceledError(t *testing.T) {
 
 	// emulate AWS SDK v2 style wrapped errors by wrapping context.Canceled
 	require.True(t, log.IsContextCanceledError(fmt.Errorf("RequestCanceled: %w", context.Canceled)))
-	require.True(t, log.IsContextCanceledError(fmt.Errorf("MultipartUpload: %w", fmt.Errorf("RequestCanceled: %w", context.Canceled)))))
+	require.True(t, log.IsContextCanceledError(fmt.Errorf("MultipartUpload: %w", fmt.Errorf("RequestCanceled: %w", context.Canceled))))
 	require.True(t, log.IsContextCanceledError(fmt.Errorf("RequestError: %w", context.Canceled)))
 
 	require.False(t, log.IsContextCanceledError(nil))
