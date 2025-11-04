@@ -663,16 +663,17 @@ func (s *mockGCSSuite) TestCreateTableMetaByName() {
 			Content:     []byte(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS db%d;\n", i)),
 		})
 		for j := 0; j != 2; j++ {
+			tableName := fmt.Sprintf("db%d.tb%d", i, j)
 			s.server.CreateObject(fakestorage.Object{
-				ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("db%d.tb%d-schema.sql", i, j)},
+				ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("%s-schema.sql", tableName)},
 				Content:     []byte(fmt.Sprintf("CREATE TABLE IF NOT EXISTS db%d.tb%d (a INT, b VARCHAR(10));\n", i, j)),
 			})
 			s.server.CreateObject(fakestorage.Object{
-				ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("db%d.tb%d.001.sql", i, j)},
+				ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("%s.001.sql", tableName)},
 				Content:     []byte(fmt.Sprintf("INSERT INTO db%d.tb%d VALUES (1,'a'),(2,'b');\n", i, j)),
 			})
 			s.server.CreateObject(fakestorage.Object{
-				ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("db%d.tb%d.002.sql", i, j)},
+				ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("%s.002.sql", tableName)},
 				Content:     []byte(fmt.Sprintf("INSERT INTO db%d.tb%d VALUES (3,'c'),(4,'d');\n", i, j)),
 			})
 		}
