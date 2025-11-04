@@ -137,7 +137,7 @@ func rebuildRange(p base.Plan) error {
 					return err
 				}
 				if len(ranges.Ranges) != 1 || !isSafeRange(x.AccessConditions, ranges, false, nil) {
-					return errors.New("rebuild to get an unsafe range")
+					return errors.NewNoStackError("rebuild to get an unsafe range")
 				}
 				for i := range x.IndexValues {
 					x.IndexValues[i] = ranges.Ranges[0].LowVal[i]
@@ -163,7 +163,7 @@ func rebuildRange(p base.Plan) error {
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
 					}, unsignedIntHandle, nil) {
-						return errors.New("rebuild to get an unsafe range")
+						return errors.NewNoStackError("rebuild to get an unsafe range")
 					}
 					x.Handle = kv.IntHandle(ranges[0].LowVal[0].GetInt64())
 				}
@@ -203,7 +203,7 @@ func rebuildRange(p base.Plan) error {
 					return err
 				}
 				if len(ranges.Ranges) != len(x.IndexValues) || !isSafeRange(x.AccessConditions, ranges, false, nil) {
-					return errors.New("rebuild to get an unsafe range")
+					return errors.NewNoStackError("rebuild to get an unsafe range")
 				}
 				for i := range ranges.Ranges {
 					copy(x.IndexValues[i], ranges.Ranges[i].LowVal)
@@ -229,7 +229,7 @@ func rebuildRange(p base.Plan) error {
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
 					}, unsignedIntHandle, nil) {
-						return errors.New("rebuild to get an unsafe range")
+						return errors.NewNoStackError("rebuild to get an unsafe range")
 					}
 					for i := range ranges {
 						x.Handles[i] = kv.IntHandle(ranges[i].LowVal[0].GetInt64())
@@ -239,7 +239,7 @@ func rebuildRange(p base.Plan) error {
 		}
 		if len(x.HandleParams) > 0 {
 			if len(x.HandleParams) != len(x.Handles) {
-				return errors.New("rebuild to get an unsafe range, Handles length diff")
+				return errors.NewNoStackError("rebuild to get an unsafe range, Handles length diff")
 			}
 			for i, param := range x.HandleParams {
 				if param != nil {
@@ -257,7 +257,7 @@ func rebuildRange(p base.Plan) error {
 		}
 		if len(x.IndexValueParams) > 0 {
 			if len(x.IndexValueParams) != len(x.IndexValues) {
-				return errors.New("rebuild to get an unsafe range, IndexValue length diff")
+				return errors.NewNoStackError("rebuild to get an unsafe range, IndexValue length diff")
 			}
 			for i, params := range x.IndexValueParams {
 				if len(params) < 1 {

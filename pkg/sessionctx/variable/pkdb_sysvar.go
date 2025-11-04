@@ -58,29 +58,41 @@ var ffiSysVars = []*SysVar{
 			}
 			return BoolToOnOff((*PDLocalCallVar).Load()), nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBXEnableTiKVLocalCallWithMemRing, Value: BoolToOnOff(DefTiDBXEnableLocalRPCWithMemRingOpt), Type: TypeBool,
+	{Scope: ScopeGlobal, Name: TiDBXShmLocalCall, Value: BoolToOnOff(DefTiDBXShmLocalCallOpt), Type: TypeBool,
 		SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
-			if TiDBOptOn(s) != tikvrpc.EnableTiKVLocalCallWithMem.Load() {
-				tikvrpc.EnableTiKVLocalCallWithMem.Store(TiDBOptOn(s))
-				logutil.BgLogger().Info("set enable local rpc with mem ring opt",
-					zap.String("variable", TiDBXEnableTiKVLocalCallWithMemRing),
+			if TiDBOptOn(s) != tikvrpc.TiDBXShmLocalCall.Load() {
+				tikvrpc.TiDBXShmLocalCall.Store(TiDBOptOn(s))
+				logutil.BgLogger().Info("set enable shm_local_call opt",
+					zap.String("variable", TiDBXShmLocalCall),
 					zap.Bool("enable", TiDBOptOn(s)))
 			}
 			return nil
 		}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
-			return BoolToOnOff(tikvrpc.EnableTiKVLocalCallWithMem.Load()), nil
+			return BoolToOnOff(tikvrpc.TiDBXShmLocalCall.Load()), nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBXEnableTiKVLocalCallWithReprC, Value: BoolToOnOff(DefTiDBXEnableLocalRPCWithReprC), Type: TypeBool,
+	{Scope: ScopeGlobal, Name: TiDBXLocalCallNoMarshall, Value: BoolToOnOff(DefTiDBXLocalCallNoMarshallOpt), Type: TypeBool,
 		SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
-			if TiDBOptOn(s) != tikvrpc.EnableTiKVLocalCallWithReprC.Load() {
-				tikvrpc.EnableTiKVLocalCallWithReprC.Store(TiDBOptOn(s))
-				logutil.BgLogger().Info("set enable local rpc with reprc opt",
-					zap.String("variable", TiDBXEnableTiKVLocalCallWithReprC),
+			if TiDBOptOn(s) != tikvrpc.TiDBXLocalCallNoMarshall.Load() {
+				tikvrpc.TiDBXLocalCallNoMarshall.Store(TiDBOptOn(s))
+				logutil.BgLogger().Info("set enable local_call_no_marshall opt",
+					zap.String("variable", TiDBXLocalCallNoMarshall),
 					zap.Bool("enable", TiDBOptOn(s)))
 			}
 			return nil
 		}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
-			return BoolToOnOff(tikvrpc.EnableTiKVLocalCallWithReprC.Load()), nil
+			return BoolToOnOff(tikvrpc.TiDBXLocalCallNoMarshall.Load()), nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBXStoreBatchGet, Value: BoolToOnOff(DefTiDBXStoreBatchGetOpt), Type: TypeBool,
+		SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+			if TiDBOptOn(s) != tikvrpc.TiDBXStoreBatchGet.Load() {
+				tikvrpc.TiDBXStoreBatchGet.Store(TiDBOptOn(s))
+				logutil.BgLogger().Info("set enable local rpc with store_batch_get opt",
+					zap.String("variable", TiDBXStoreBatchGet),
+					zap.Bool("enable", TiDBOptOn(s)))
+			}
+			return nil
+		}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return BoolToOnOff(tikvrpc.TiDBXStoreBatchGet.Load()), nil
 		}},
 }
 
