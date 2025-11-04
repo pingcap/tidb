@@ -2275,6 +2275,9 @@ func Test1PCWithSchemaChange(t *testing.T) {
 }
 
 func TestPlanCacheSchemaChange(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("fast reorg is always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tmp := testkit.NewTestKit(t, store)
 	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")

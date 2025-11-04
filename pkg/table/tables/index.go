@@ -49,8 +49,7 @@ type index struct {
 // NeedRestoredData checks whether the index columns needs restored data.
 func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
 	for _, idxCol := range idxCols {
-		col := colInfos[idxCol.Offset]
-		if types.NeedRestoredData(&col.FieldType) {
+		if model.ColumnNeedRestoredData(idxCol, colInfos) {
 			return true
 		}
 	}
@@ -77,30 +76,57 @@ func (c *index) TableMeta() *model.TableInfo {
 	return c.tblInfo
 }
 
+func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) error {
+	var err error
+	for i, idxCol := range c.idxInfo.Columns {
+		tblCol := c.tblInfo.Columns[idxCol.Offset]
+		if !idxCol.UseChangingType || tblCol.ChangingFieldType == nil {
+			continue
+		}
+		indexedValues[i], err = table.CastColumnValueWithStrictMode(indexedValues[i], tblCol.ChangingFieldType)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
 func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
 	idxTblID := c.phyTblID
 	if c.idxInfo.Global {
+		idxTblID = c.tblInfo.ID
 		pi := c.tblInfo.GetPartitionInfo()
-		if pi.NewTableID != 0 && c.idxInfo.State != model.StatePublic {
-			idxTblID = pi.NewTableID
-		} else {
-			idxTblID = c.tblInfo.ID
+		if pi != nil && pi.NewTableID != 0 {
+			isNew, ok := pi.DDLChangedIndex[c.idxInfo.ID]
+			if ok && isNew {
+				idxTblID = pi.NewTableID
+			}
 		}
 	}
+
+	if err = c.castIndexValuesToChangingTypes(indexedValues); err != nil {
+		return
+	}
+
 	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
 	err = ec.HandleError(err)
 	return
 }
 
 // GenIndexValue generates the index value.
-func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct bool, indexedValues []types.Datum,
+func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, untouched bool, indexedValues []types.Datum,
 	h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error) {
 	c.initNeedRestoreData.Do(func() {
 		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 	})
-	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData, buf)
+
+	if err := c.castIndexValuesToChangingTypes(indexedValues); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
 	err = ec.HandleError(err)
 	return idx, err
 }
@@ -244,12 +270,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 
 		// save the key buffer to reuse.
 		writeBufs.IndexKeyBuf = key
-		c.initNeedRestoreData.Do(func() {
-			c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
-		})
-		idxVal, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo,
-			c.needRestoredData, distinct, untouched, value, h, c.phyTblID, handleRestoreData, nil)
-		err = ec.HandleError(err)
+		idxVal, err := c.GenIndexValue(ec, loc, distinct, untouched, value, h, handleRestoreData, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -777,10 +798,11 @@ func BuildRowcodecColInfoForIndexColumns(idxInfo *model.IndexInfo, tblInfo *mode
 	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
 	for _, idxCol := range idxInfo.Columns {
 		col := tblInfo.Columns[idxCol.Offset]
+		ft := model.GetIdxChangingFieldType(idxCol, col).Clone()
 		colInfo = append(colInfo, rowcodec.ColInfo{
 			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(ft.GetFlag()),
+			Ft:         ft,
 		})
 	}
 	return colInfo

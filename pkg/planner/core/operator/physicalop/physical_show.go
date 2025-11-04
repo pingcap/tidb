@@ -87,3 +87,19 @@ func findBestTask4LogicalShowDDLJobs(super base.LogicalPlan, prop *property.Phys
 	rt.SetPlan(pShow)
 	return rt, nil
 }
+
+func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
+	if prop.IndexJoinProp != nil {
+		// even enforce hint can not work with this.
+		return base.InvalidTask, nil
+	}
+	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalShow](super)
+	if !prop.IsSortItemEmpty() {
+		return base.InvalidTask, nil
+	}
+	pShow := PhysicalShow{ShowContents: p.ShowContents, Extractor: p.Extractor}.Init(p.SCtx())
+	pShow.SetSchema(p.Schema())
+	rt := &RootTask{}
+	rt.SetPlan(pShow)
+	return rt, nil
+}

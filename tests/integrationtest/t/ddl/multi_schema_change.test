@@ -283,7 +283,7 @@ select count(distinct KEY_NAME) from information_schema.TIDB_INDEXES where TABLE
 drop table if exists t;
 create table t (a BIGINT NULL DEFAULT '-283977870758975838', b double);
 insert into t values (-283977870758975838, 0);
--- error 1690
+-- error 1265
 alter table t change column a c tinyint null default '111' after b, modify column b time null default '13:51:02' FIRST;
 drop table if exists t;
 create table t(a int, b int);

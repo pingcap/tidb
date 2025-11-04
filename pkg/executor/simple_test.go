@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -208,4 +209,128 @@ func TestRefreshStatsWithRestoreAdmin(t *testing.T) {
 
 	tk.MustExec("grant restore_admin on *.* to '" + user + "'@'%'")
 	tkUser.MustExec("refresh stats *.*")
+}
+
+// TestRefreshStatsWithFullMode verifies that running "refresh stats ... full" loads and updates
+// index statistics even when lite-init-stats is enabled, ensuring a full refresh keeps index
+// statistics resident in memory as users expect after explicitly requesting full mode.
+func TestRefreshStatsWithFullMode(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx(a))")
+	tk.MustExec("insert into t1 values (1,1), (2,2), (3,3)")
+	tk.MustExec("analyze table t1 all columns with 1 topn, 2 buckets")
+
+	is := dom.InfoSchema()
+	handle := dom.StatsHandle()
+	ctx := context.Background()
+	tbl1, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl1Meta := tbl1.Meta()
+	statsBeforeRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	tk.MustExec("refresh stats t1")
+	statsAfterDefaultRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	require.NotSame(t, statsBeforeRefresh, statsAfterDefaultRefresh)
+	require.Nil(t, statsAfterDefaultRefresh.GetIdx(1), "index stats should not be loaded in lite mode")
+
+	tk.MustExec("select * from t1 where a = 1")
+	statsAfterSelect := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	require.NotSame(t, statsBeforeRefresh, statsAfterSelect, "stats versuon should not be changed after select")
+	require.NotNil(t, statsAfterSelect.GetIdx(1), "index stats will be loaded after select")
+
+	tk.MustExec("refresh stats t1")
+	statsAfterDefaultRefresh = handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	require.NotSame(t, statsBeforeRefresh, statsAfterDefaultRefresh)
+	require.Nil(t, statsAfterDefaultRefresh.GetIdx(1), "index stats should be removed in lite mode")
+
+	// Issue a full refresh to ensure the index stats are loaded.
+	tk.MustExec("refresh stats t1 full")
+	statsAfterFullRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	require.NotSame(t, statsAfterDefaultRefresh, statsAfterFullRefresh)
+	require.NotNil(t, statsAfterFullRefresh.GetIdx(1), "index stats should be loaded in full mode")
+	require.Len(t, statsAfterFullRefresh.GetIdx(1).Buckets, 1, "buckets should be loaded in full mode")
+	indexVersionAfterFullRefresh := statsAfterFullRefresh.GetIdx(1).LastUpdateVersion
+
+	// Insert additional data and run ANALYZE again.
+	tk.MustExec("insert into t1 values (4,4), (5,5)")
+	// Analyze loads statistics based on the current state of the in-memory stats (all statistics have been loaded) while running in lite mode.
+	tk.MustExec("analyze table t1 all columns with 1 topn, 2 buckets")
+	statsAfterAnalyze := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	require.NoError(t, err)
+	require.NotNil(t, statsAfterAnalyze, "analyze loads statistics from the current in-memory data when running in lite mode")
+	require.NotSame(t, statsAfterFullRefresh, statsAfterAnalyze)
+	indexVersionAfterAnalyze := statsAfterAnalyze.GetIdx(1).LastUpdateVersion
+	require.Len(t, statsAfterAnalyze.GetIdx(1).Buckets, 2, "buckets should be loaded in full mode")
+	require.Greater(t, indexVersionAfterAnalyze, indexVersionAfterFullRefresh, "index stats should be updated")
+
+	// Manually load it again to check it works well.
+	statsAfterLoad, err := handle.TableStatsFromStorage(tbl1Meta, tbl1Meta.ID, false, 0)
+	require.NoError(t, err)
+	require.NotNil(t, statsAfterLoad)
+	require.NotSame(t, statsAfterAnalyze, statsAfterLoad)
+	indexVersionAfterLoad := statsAfterLoad.GetIdx(1).LastUpdateVersion
+	require.Len(t, statsAfterLoad.GetIdx(1).Buckets, 2, "nothing should be changed")
+	require.Equal(t, indexVersionAfterLoad, indexVersionAfterAnalyze, "nothing should be changed")
+}
+
+// TestRefreshStatsWithLiteMode verifies that running "refresh stats ...  lite" omits index stats,
+// while a subsequent loading operation repopulates them. Typically, users wouldn’t expect to run a lite refresh
+// with lite-init-stats=false, so we shouldn’t persist this behavior after the lite refresh stats.
+func TestRefreshStatsWithLiteMode(t *testing.T) {
+	oriVal := config.GetGlobalConfig().Performance.LiteInitStats
+	config.GetGlobalConfig().Performance.LiteInitStats = false
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = oriVal
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx(a))")
+	tk.MustExec("insert into t1 values (1,1), (2,2), (3,3)")
+	tk.MustExec("analyze table t1 all columns with 1 topn, 2 buckets")
+
+	is := dom.InfoSchema()
+	handle := dom.StatsHandle()
+	ctx := context.Background()
+	tbl1, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl1Meta := tbl1.Meta()
+	statsBeforeRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	tk.MustExec("refresh stats t1")
+	statsAfterFullRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	require.NotSame(t, statsBeforeRefresh, statsAfterFullRefresh)
+	require.NotNil(t, statsAfterFullRefresh.GetIdx(1), "index stats should be loaded in full mode")
+
+	// Run a lite refresh and verify the index stats remain unloaded.
+	tk.MustExec("refresh stats t1 lite")
+	statsAfterLiteRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	require.NotSame(t, statsAfterFullRefresh, statsAfterLiteRefresh)
+	require.Nil(t, statsAfterLiteRefresh.GetIdx(1), "index stats should not be loaded in lite mode")
+
+	// Insert additional data and run ANALYZE again.
+	tk.MustExec("insert into t1 values (4,4), (5,5)")
+	// Analyze loads all statistics when running in full mode.
+	tk.MustExec("analyze table t1 all columns with 1 topn, 2 buckets")
+	statsAfterAnalyze := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	require.NoError(t, err)
+	require.NotNil(t, statsAfterAnalyze, "analyze loads all statistics when running in full mode")
+	require.NotSame(t, statsAfterFullRefresh, statsAfterAnalyze)
+	indexVersionAfterAnalyze := statsAfterAnalyze.GetIdx(1).LastUpdateVersion
+	require.Len(t, statsAfterAnalyze.GetIdx(1).Buckets, 2, "buckets should be loaded in full mode")
+	require.Greater(t, indexVersionAfterAnalyze, uint64(0), "index stats should be updated")
+
+	// Manually load it again to check it works well.
+	statsAfterLoad, err := handle.TableStatsFromStorage(tbl1Meta, tbl1Meta.ID, false, 0)
+	require.NoError(t, err)
+	require.NotNil(t, statsAfterLoad)
+	require.NotSame(t, statsAfterAnalyze, statsAfterLoad)
+	indexVersionAfterLoad := statsAfterLoad.GetIdx(1).LastUpdateVersion
+	require.Len(t, statsAfterLoad.GetIdx(1).Buckets, 2, "nothing should be changed")
+	require.Equal(t, indexVersionAfterLoad, indexVersionAfterAnalyze, "nothing should be changed")
 }

@@ -94,6 +94,7 @@ go_library(
         "//pkg/ddl/util",
         "//pkg/distsql",
         "//pkg/distsql/context",
+        "//pkg/disttask/framework/dxfmetric",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/metering",
         "//pkg/disttask/framework/proto",

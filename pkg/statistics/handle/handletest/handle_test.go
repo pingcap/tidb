@@ -128,7 +128,7 @@ func TestVersion(t *testing.T) {
 		context.Background(),
 		testKit2.Session(),
 		time.Millisecond,
-		do.SysSessionPool(),
+		do.AdvancedSysSessionPool(),
 		do.SysProcTracker(),
 		do.DDLNotifier(),
 		do.NextConnID,

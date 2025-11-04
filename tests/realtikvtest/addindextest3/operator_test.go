@@ -25,6 +25,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -161,7 +162,7 @@ func TestBackfillOperators(t *testing.T) {
 		}
 		pTbl := tbl.(table.PhysicalTable)
 		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
+		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, false, 0)
 		require.NoError(t, err)
 		defer bd.Close()
 		bcCtx, err := ingest.NewBackendCtxBuilder(ctx, store, realJob).Build(cfg, bd)
@@ -211,7 +212,7 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	ctx := context.Background()
 	wctx := workerpool.NewContext(ctx)
 	defer wctx.Cancel()
-	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, false, 0)
 	require.NoError(t, err)
 	defer bd.Close()
 	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, store, realJob).Build(cfg, bd)
@@ -251,7 +252,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 	regionCnt := 10
 	tbl, idxInfo, startKey, endKey, _ := prepare(t, tk, dom, regionCnt)
 	sessPool := newSessPoolForTest(t, store)
-	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, false, 0)
 	require.NoError(t, err)
 	defer bd.Close()
 	bcCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
@@ -356,7 +357,9 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 	tk.MustExec("drop database if exists op;")
 	tk.MustExec("create database op;")
 	tk.MustExec("use op;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
 
 	tk.MustExec("create table t(a int primary key, b int, index idx(b));")
 	for i := range regionCnt {
@@ -438,7 +441,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		wctx := workerpool.NewContext(ctx)
 		pTbl := tbl.(table.PhysicalTable)
 		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
+		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, false, 0)
 		require.NoError(t, err)
 		defer bd.Close()
 		bcCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)

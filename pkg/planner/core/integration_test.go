@@ -2298,6 +2298,15 @@ func TestNestedVirtualGeneratedColumnUpdate(t *testing.T) {
 	})
 }
 
+func TestIssue63949(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`use test`)
+		tk.MustExec(`create table t1 (a int)`)
+		tk.MustExec(`create table t2 (a int, b int, c int, d int, key ab(a, b), key abcd(a, b, c, d))`)
+		tk.MustUseIndex(`select /*+ tidb_inlj(t2) */ t2.a from t1, t2 where t1.a=t2.a and t2.b=1 and t2.d=1`, "abcd")
+	})
+}
+
 func TestIssue58829(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
