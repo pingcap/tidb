@@ -66,6 +66,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle/oracles"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 type concurrencySetter func(s *SessionVars, v int)
@@ -3802,6 +3803,30 @@ var defaultSysVars = []*SysVar{
 		},
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return vardef.GlobalSlowLogRules.Load().RawRules, nil
+		},
+	},
+	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBSlowLogMaxPerSec,
+		Value:    "0",
+		Type:     vardef.TypeInt,
+		MinValue: 0, MaxValue: 1000000,
+		SetGlobal: func(_ context.Context, sv *SessionVars, s string) error {
+			d := TidbOptInt(s, 0)
+			if d == int(vardef.GlobalSlowLogRateLimiter.Limit()) {
+				return nil
+			}
+
+			if d == 0 {
+				vardef.GlobalSlowLogRateLimiter.SetLimit(rate.Inf)
+				return nil
+			}
+			vardef.GlobalSlowLogRateLimiter.SetLimit(rate.Limit(d))
+			vardef.GlobalSlowLogRateLimiter.SetBurst(d)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+			return strconv.Itoa(int(vardef.GlobalSlowLogRateLimiter.Limit())), nil
 		},
 	},
 }
