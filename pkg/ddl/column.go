@@ -602,63 +602,6 @@ func (w *worker) modifyTableColumn(
 		}
 	}
 
-	currentVer, err := getValidCurrentVersion(reorgInfo.jobCtx.store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	startElementOffset := 0
-	startElementOffsetToResetHandle := -1
-	// This backfill job starts with backfilling index data, whose index ID is currElement.ID.
-	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
-		for i, element := range reorgInfo.elements[1:] {
-			if reorgInfo.currElement.ID == element.ID {
-				startElementOffset = i
-				startElementOffsetToResetHandle = i
-				break
-			}
-		}
-	}
-
-	for i := startElementOffset; i < len(reorgInfo.elements[1:]); i++ {
-		var physTbl table.PhysicalTable
-		if tbl, ok := t.(table.PartitionedTable); ok {
-			physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
-		} else if nonPartTbl, ok := t.(table.PhysicalTable); ok {
-			physTbl = nonPartTbl
-		}
-		// Get the original start handle and end handle.
-		originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.NewJobContext(), reorgInfo.jobCtx.store, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
-		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
-		if i == startElementOffsetToResetHandle+1 {
-			reorgInfo.StartKey, reorgInfo.EndKey = originalStartHandle, originalEndHandle
-		}
-
-		// Update the element in the reorgInfo for updating the reorg meta below.
-		reorgInfo.currElement = reorgInfo.elements[i+1]
-		// Write the reorg info to store so the whole reorganize process can recover from panic.
-		err = reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
-		logutil.DDLLogger().Info("update column and indexes",
-			zap.Int64("job ID", reorgInfo.Job.ID),
-			zap.Stringer("element", reorgInfo.currElement),
-			zap.String("start key", reorgInfo.StartKey.String()),
-			zap.String("end key", reorgInfo.EndKey.String()))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = w.addTableIndex(jobCtx, t, reorgInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if pt, ok := t.(table.PartitionedTable); ok {
-			// Restart from first partition
-			reorgInfo.PhysicalTableID = pt.Meta().Partition.Definitions[0].ID
-		}
-	}
 	return nil
 }
 
