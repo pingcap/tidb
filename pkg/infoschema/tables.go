@@ -2240,21 +2240,15 @@ func getEtcdMembers(ctx sessionctx.Context) ([]string, error) {
 }
 
 func isTiFlashStore(store *metapb.Store) bool {
-	for _, label := range store.Labels {
-		if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(store.Labels, func(label *metapb.StoreLabel) bool {
+		return label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash
+	})
 }
 
 func isTiFlashWriteNode(store *metapb.Store) bool {
-	for _, label := range store.Labels {
-		if label.GetKey() == placement.EngineRoleLabelKey && label.GetValue() == placement.EngineRoleLabelWrite {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(store.Labels, func(label *metapb.StoreLabel) bool {
+		return label.GetKey() == placement.EngineRoleLabelKey && label.GetValue() == placement.EngineRoleLabelWrite
+	})
 }
 
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
