@@ -16,6 +16,8 @@ package utils
 import (
 	"context"
 
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 )
@@ -55,29 +57,27 @@ func GenGlobalIDs(ctx context.Context, n int, storage kv.Storage) ([]int64, erro
 //
 // Returns true if the restore is considered Next-Gen; false otherwise.
 func IsNextGenRestore(keyspaceName string, checkRequirements bool) bool {
-	// for hotfix restore
-	return true
-	// switch {
-	// case kerneltype.IsClassic() && len(keyspaceName) > 0:
-	// 	// Classic kernel does not support keyspace restores.
-	// 	// This may cause excessive disk usage (e.g., downloading all 3 peers).
-	// 	msg := "classic kernel does not support keyspace restore; " +
-	// 		"it may cause high disk usage. If you are certain this can be ignored, " +
-	// 		"set --check-requirements=false or better use the next-gen build instead."
+	switch {
+	case kerneltype.IsClassic() && len(keyspaceName) > 0:
+		// Classic kernel does not support keyspace restores.
+		// This may cause excessive disk usage (e.g., downloading all 3 peers).
+		msg := "classic kernel does not support keyspace restore; " +
+			"it may cause high disk usage. If you are certain this can be ignored, " +
+			"set --check-requirements=false or better use the next-gen build instead."
 
-	// 	if checkRequirements {
-	// 		log.Fatal(msg)
-	// 	} else {
-	// 		log.Warn(msg + " Skipping check due to --check-requirements=false.")
-	// 	}
+		if checkRequirements {
+			log.Fatal(msg)
+		} else {
+			log.Warn(msg + " Skipping check due to --check-requirements=false.")
+		}
 
-	// case kerneltype.IsNextGen():
-	// 	// Next-Gen kernel requires keyspaceName to avoid SST ingest panic.
-	// 	if len(keyspaceName) == 0 {
-	// 		log.Fatal("next-gen restore requires keyspaceName; missing value may cause SST ingest panic.")
-	// 	}
-	// 	return true
-	// }
+	case kerneltype.IsNextGen():
+		// Next-Gen kernel requires keyspaceName to avoid SST ingest panic.
+		if len(keyspaceName) == 0 {
+			log.Fatal("next-gen restore requires keyspaceName; missing value may cause SST ingest panic.")
+		}
+		return true
+	}
 
-	// return false
+	return false
 }
