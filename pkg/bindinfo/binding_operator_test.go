@@ -412,12 +412,12 @@ func TestLoadBindingTimeLag(t *testing.T) {
 	numBindings := len(tk.MustQuery(`show global bindings`).Rows())
 	require.Equal(t, 1, numBindings)
 
-	tk.Session().SetValue(bindinfo.TestTimeLagInLoadingBinding, 5)
+	tk.Session().SetValue(bindinfo.TestTimeLagInLoadingBinding, 5*time.Second)
 	tk.MustExec(`create global binding using select * from t where a < 1`)
 	numBindings = len(tk.MustQuery(`show global bindings`).Rows())
 	require.Equal(t, 2, numBindings)
 
-	tk.Session().SetValue(bindinfo.TestTimeLagInLoadingBinding, 15)
+	tk.Session().SetValue(bindinfo.TestTimeLagInLoadingBinding, 15*time.Second)
 	tk.MustExec(`create global binding using select * from t where a > 1`)
 	numBindings = len(tk.MustQuery(`show global bindings`).Rows())
 	require.Equal(t, 2, numBindings) // can't see the latest one since the time lag tolerance is only 10s

@@ -75,7 +75,7 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 
 	var mockTimeLag time.Duration // mock time lag between different TiDB instances for test, see #64250.
 	if intest.InTest && sctx.Value(TestTimeLagInLoadingBinding) != nil {
-		mockTimeLag = time.Second * time.Duration(sctx.Value(TestTimeLagInLoadingBinding).(int))
+		mockTimeLag = sctx.Value(TestTimeLagInLoadingBinding).(time.Duration)
 	}
 
 	return callWithSCtx(op.sPool, true, func(sctx sessionctx.Context) error {
