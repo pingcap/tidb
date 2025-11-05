@@ -97,7 +97,7 @@ type ShardLocation struct {
 type shardIndexMu struct {
 	sync.RWMutex
 	shards map[uint64]*ShardWithAddr
-	sorted map[string]*SortedShards // indexID -> SortedShards
+	sorted map[string]*SortedShards // (keyspaceID, indexID) -> SortedShards
 }
 
 // Client is the interface for the TiCI shard cache client.
