@@ -151,9 +151,6 @@ const (
 	// TiDBTraceEvent controls the experimental trace event instrumentation.
 	TiDBTraceEvent = "tidb_trace_event"
 
-	// TiDBTraceEventControl controls the flight recorder dump trigger for trace event.
-	TiDBTraceEventControl = "tidb_trace_event_control"
-
 	// TiDBLogFileMaxDays is used to log every query in the server in info level.
 	TiDBLogFileMaxDays = "tidb_log_file_max_days"
 
@@ -1448,7 +1445,7 @@ const (
 	DefTiDBMemQuotaApplyCache               = 32 << 20 // 32MB.
 	DefTiDBMemQuotaBindingCache             = 64 << 20 // 64MB.
 	DefTiDBGeneralLog                       = false
-	DefTiDBTraceEvent                       = Off
+	DefTiDBTraceEvent                       = ""
 	DefTiDBPProfSQLCPU                      = 0
 	DefTiDBRetryLimit                       = 10
 	DefTiDBDisableTxnAutoRetry              = true

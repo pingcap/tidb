@@ -492,19 +492,7 @@ var defaultSysVars = []*SysVar{
 	// NOTE: The trace-event switch is experimental. It is subject to changes.
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBTraceEvent, Hidden: kerneltype.IsClassic(), Value: vardef.DefTiDBTraceEvent, Type: vardef.TypeStr,
 		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
-			if kerneltype.IsClassic() {
-				return errors.New("can only be set for TiDB X kernel")
-			}
-			_, err := traceevent.SetMode(val)
-			return err
-		},
-		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
-			return strings.ToUpper(traceevent.CurrentMode()), nil
-		},
-	},
-	{Scope: vardef.ScopeInstance, Name: vardef.TiDBTraceEventControl, Hidden: kerneltype.IsClassic(), Value: "", Type: vardef.TypeStr,
-		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
-			if kerneltype.IsClassic() {
+			if kerneltype.IsClassic() && !intest.InTest {
 				return errors.New("can only be set for TiDB X kernel")
 			}
 			if val == "" {

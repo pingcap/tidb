@@ -268,11 +268,13 @@ func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*
 	return ret, err
 }
 
+// StartLogFlightRecorder starts the flight recorder that sink to log.
 func StartLogFlightRecorder(config *FlightRecorderConfig) error {
 	_, err := newHTTPFlightRecorder(config)
 	return err
 }
 
+// GetFlightRecorder returns the flight recorder.
 func GetFlightRecorder() *HTTPFlightRecorder {
 	return globalHTTPFlightRecorder.Load()
 }
