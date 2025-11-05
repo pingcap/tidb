@@ -30,6 +30,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -153,7 +154,9 @@ type jobScheduler struct {
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
 	generalDDLWorkerPool *workerPool
-	seqAllocator         atomic.Uint64
+	// bgJobWorkerPool is only used in the next-gen kernel. NOTE: Need to check it is not nil before use.
+	bgJobWorkerPool *workerPool
+	seqAllocator    atomic.Uint64
 
 	// those fields are shared with 'ddl' instance
 	// TODO ddlCtx is too large for here, we should remove dependency on it.
@@ -184,6 +187,9 @@ func (s *jobScheduler) start() {
 	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	s.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), jobTypeReorg)
 	s.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), jobTypeGeneral)
+	if kerneltype.IsNextGen() {
+		s.bgJobWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(backgroundWorker), 20, 20, 0), jobTypeReorg)
+	}
 	s.wg.RunWithLog(s.scheduleLoop)
 	s.wg.RunWithLog(func() {
 		s.schemaVerSyncer.SyncJobSchemaVerLoop(s.schCtx)
@@ -198,6 +204,9 @@ func (s *jobScheduler) close() {
 	}
 	if s.generalDDLWorkerPool != nil {
 		s.generalDDLWorkerPool.close()
+	}
+	if s.bgJobWorkerPool != nil {
+		s.bgJobWorkerPool.close()
 	}
 	failpoint.InjectCall("afterSchedulerClose")
 }
@@ -376,7 +385,7 @@ func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 }
 
 func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
-	if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
+	if s.workerPoolExhausted() {
 		return nil
 	}
 
@@ -394,10 +403,6 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 	}
 	for _, row := range rows {
 		reorgJob := row.GetInt64(0) == 1
-		targetPool := s.generalDDLWorkerPool
-		if reorgJob {
-			targetPool = s.reorgWorkerPool
-		}
 		jobBinary := row.GetBytes(1)
 
 		job := model.Job{}
@@ -407,6 +412,13 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 		}
 		intest.Assert(job.Version > 0, "job version should be greater than 0")
 
+		targetPool := s.generalDDLWorkerPool
+		if reorgJob {
+			targetPool = s.reorgWorkerPool
+			if kerneltype.IsNextGen() && (job.Type == model.ActionAddPrimaryKey || job.Type == model.ActionAddIndex) {
+				targetPool = s.bgJobWorkerPool
+			}
+		}
 		involving := job.GetInvolvingSchemaInfo()
 		if targetPool.available() == 0 {
 			s.runningJobs.addPending(involving)
@@ -441,7 +453,7 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 		}
 
 		s.deliveryJob(wk, targetPool, model.NewJobW(&job, jobBinary))
-		if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
+		if s.workerPoolExhausted() {
 			break
 		}
 	}
@@ -794,6 +806,15 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", job.ID), zap.Error(err))
 		}
 	}
+}
+
+func (s *jobScheduler) workerPoolExhausted() bool {
+	if s.bgJobWorkerPool == nil {
+		return s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0
+	}
+	return s.generalDDLWorkerPool.available() == 0 &&
+		s.reorgWorkerPool.available() == 0 &&
+		s.bgJobWorkerPool.available() == 0
 }
 
 func getTableByTxn(ctx context.Context, store kv.Storage, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {

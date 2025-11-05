@@ -881,6 +881,8 @@ func setGlobalVars() {
 	{
 		setInstanceVar(vardef.TiDBStmtSummaryMaxStmtCount, strconv.FormatUint(cfg.Instance.StmtSummaryMaxStmtCount, 10))
 		setInstanceVar(vardef.TiDBServerMemoryLimit, cfg.Instance.ServerMemoryLimit)
+		setInstanceVar(vardef.TiDBMemArbitratorMode, cfg.Instance.MemArbitratorMode)
+		setInstanceVar(vardef.TiDBMemArbitratorSoftLimit, cfg.Instance.MemArbitratorSoftLimit)
 		setInstanceVar(vardef.TiDBServerMemoryLimitGCTrigger, cfg.Instance.ServerMemoryLimitGCTrigger)
 		setInstanceVar(vardef.TiDBInstancePlanCacheMaxMemSize, cfg.Instance.InstancePlanCacheMaxMemSize)
 		setInstanceVar(vardef.TiDBStatsCacheMemQuota, strconv.FormatUint(cfg.Instance.StatsCacheMemQuota, 10))

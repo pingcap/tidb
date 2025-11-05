@@ -41,6 +41,7 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -673,8 +674,15 @@ func (importer *SnapFileImporter) downloadSST(
 		}
 	}
 
+	downloadPeers := regionInfo.Region.GetPeers()
+	if kerneltype.IsNextGen() {
+		// for next gen restore, due to the leader will handle ingest cmd and convert sst file/upload to s3
+		// we only need download to leader peer, if ingest fail due to NotLeader error, need retry download SST outside.
+		downloadPeers = []*metapb.Peer{regionInfo.Leader}
+	}
+
 	eg, ectx := errgroup.WithContext(ctx)
-	for _, p := range regionInfo.Region.GetPeers() {
+	for _, p := range downloadPeers {
 		peer := p
 		eg.Go(func() error {
 			tokenCh := importer.downloadTokensMap.acquireTokenCh(peer.GetStoreId(), importer.concurrencyPerStore)
@@ -848,7 +856,7 @@ func (importer *SnapFileImporter) ingest(
 		switch {
 		case errPb == nil:
 			return nil
-		case errPb.NotLeader != nil:
+		case !kerneltype.IsNextGen() && errPb.NotLeader != nil:
 			// If error is `NotLeader`, update the region info and retry
 			var newInfo *split.RegionInfo
 			if newLeader := errPb.GetNotLeader().GetLeader(); newLeader != nil {
