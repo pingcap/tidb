@@ -220,12 +220,23 @@ func (c *FlightRecorderConfig) Validate(b *strings.Builder) error {
 
 func parseCategories(categories []string) TraceCategory {
 	var result TraceCategory
+	sub := false
 	for _, str := range categories {
 		if str == "*" {
 			result = tracing.AllCategories
 			break
 		}
-		result |= tracing.ParseTraceCategory(str)
+		if str == "-" {
+			result = tracing.AllCategories
+			sub = true
+			continue
+		}
+
+		if sub {
+			result &= ^tracing.ParseTraceCategory(str)
+		} else {
+			result |= tracing.ParseTraceCategory(str)
+		}
 	}
 	return result
 }

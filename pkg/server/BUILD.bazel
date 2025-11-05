@@ -138,7 +138,6 @@ go_library(
         "@org_golang_google_grpc//peer",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
-        "@org_uber_go_zap//zapcore",
     ],
 )
 

@@ -143,13 +143,6 @@ func testFlightRecorderConfigBadCase(t *testing.T) {
 	"sampling": 5
 	}
 	}`
-	badcaseCategories := `{
-	"enabled_categories": ["sdaf"],
-	"dump_trigger": {
-	"type": "sampling",
-	"sampling": 5
-	}
-	}`
 	badcaseValidate1 := `{
 	"enabled_categories": ["sdaf"],
 	"dump_trigger": {
@@ -167,7 +160,6 @@ func testFlightRecorderConfigBadCase(t *testing.T) {
 	}{
 		{badcaseJSONDecode, 1},
 		{badcaseValidate, 2},
-		{badcaseCategories, 2},
 		{badcaseValidate1, 2},
 	}
 	var b strings.Builder
@@ -201,6 +193,7 @@ func TestParseTraceCategory(t *testing.T) {
 		expect TraceCategory
 	}{
 		{[]string{"*"}, AllCategories},
+		{[]string{"-", "general"}, AllCategories &^ General},
 		{[]string{"txn_2pc"}, Txn2PC},
 		{[]string{"txn_2pc", "stmt_plan", "non_exist"}, Txn2PC | StmtPlan},
 		{[]string{"non_exist"}, 0},

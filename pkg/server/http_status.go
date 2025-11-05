@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,7 +36,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unsafe"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
@@ -64,13 +62,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/channelz/service"
 	static "sourcegraph.com/sourcegraph/appdash-data"
@@ -740,19 +736,6 @@ func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHan
 	return optimizor.NewStatsPriorityQueueHandler(do)
 }
 
-// Event defines the event structure for tracing.
-// See https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview?tab=t.0
-type Event struct {
-	Name     string          `json:"name"`
-	Phase    tracing.Phase   `json:"ph"`
-	Ts       int64           `json:"ts"` // microsecond
-	PID      uint32          `json:"pid"`
-	TID      uint32          `json:"tid"`
-	ID       uint64          `json:"id,omitempty"` // used by async / flow
-	Category string          `json:"cat,omitempty"`
-	Args     json.RawMessage `json:"args,omitempty"`
-}
-
 func traceeventHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -786,7 +769,7 @@ func traceeventHandler(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case events := <-ch:
-			res := convertTraceEvent(events)
+			res := traceevent.ConvertEventsForRendering(events)
 			fmt.Fprintf(w, "data: ")
 			enc := json.NewEncoder(w)
 			err := enc.Encode(res)
@@ -801,56 +784,4 @@ func traceeventHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-}
-
-func convertTraceEvent(events []traceevent.Event) []Event {
-	var tid uint32
-	res := make([]Event, 0, len(events))
-	for _, event := range events {
-		e := Event{
-			Name:     event.Name,
-			Phase:    event.Phase,
-			Ts:       event.Timestamp.UnixMicro(),
-			PID:      0,
-			Category: event.Category.String(),
-		}
-		if len(event.TraceID) == 20 {
-			if tid == 0 {
-				tid = *((*uint32)(unsafe.Pointer(&event.TraceID[16])))
-			} else {
-				val := *((*uint32)(unsafe.Pointer(&event.TraceID[16])))
-				if tid != val {
-					logutil.BgLogger().Info("wrong traceid",
-						zap.Uint32("expect", tid),
-						zap.Uint32("get", val))
-				}
-			}
-		} else if len(event.TraceID) > 0 {
-			logutil.BgLogger().Info("wrong traceid format",
-				zap.String("trace_id", string(event.TraceID)))
-		}
-		if len(event.Fields) > 0 {
-			cfg := zap.NewProductionEncoderConfig()
-			cfg.LevelKey = ""
-			cfg.MessageKey = ""
-			enc := zapcore.NewJSONEncoder(cfg)
-			fields := event.Fields
-			if len(event.TraceID) > 0 {
-				fields = append(event.Fields, zap.String("trace_id", hex.EncodeToString(event.TraceID)))
-			}
-			buf, _ := enc.EncodeEntry(
-				zapcore.Entry{},
-				fields,
-			)
-			e.Args = buf.Bytes()
-		}
-		res = append(res, e)
-	}
-	if tid == 0 {
-		logutil.BgLogger().Info("wrong traceid")
-	}
-	for i := range res {
-		res[i].TID = tid
-	}
-	return res
 }
