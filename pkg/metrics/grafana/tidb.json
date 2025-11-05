@@ -17772,7 +17772,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Plan Count By KV Requests (Cop Tasks)",
+          "title": "Plan Count By Kv Requests",
           "tooltip": {
             "shared": true,
             "sort": 0,
