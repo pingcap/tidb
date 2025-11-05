@@ -621,12 +621,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 	// If we don't do this it might cause a memory leak.
 	// See: https://github.com/pingcap/tidb/issues/54022
 	if !ok || !index.IsLoadNeeded() {
-		if ok && !index.IsLoadNeeded() {
-			logutil.BgLogger().Warn(
-				"Although the index stats is not required to load, an attempt is still made to load it, skip it",
-				zap.Int64("table_id", idx.TableID), zap.Int64("hist_id", idx.ID),
-			)
-		}
 		statistics.HistogramNeededItems.Delete(idx)
 		return nil
 	}

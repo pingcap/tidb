@@ -122,6 +122,9 @@ func TestReloadExtStatsLockRelease(t *testing.T) {
 	tk.MustExec("analyze table t") // no error
 }
 
+// TestLoadNonExistentIndexStats tests a bug fix for versions 7.5 and 6.5 caused by a missing condition check.
+// Scenario: DDL event is lost (common when bulk creating tables on 7.5.x) → user adds index →
+// sets tidb_opt_objective='determinate' → queries using that index.
 func TestLoadNonExistentIndexStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

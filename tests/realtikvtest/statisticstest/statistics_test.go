@@ -311,6 +311,9 @@ func checkTableIDInItems(t *testing.T, tableID int64) {
 	}
 }
 
+// TestLoadNonExistentIndexStats tests a bug fix for versions 7.5 and 6.5 caused by a missing condition check.
+// Scenario: create small table (<1000 rows) → add new index → table not analyzed yet →
+// set tidb_opt_objective='determinate' → query using that index.
 func TestLoadNonExistentIndexStats(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
