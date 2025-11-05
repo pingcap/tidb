@@ -130,6 +130,7 @@ aliases:
   sig-approvers-docs: *fallback-module-approvers
   sig-approvers-keyspace: *fallback-module-approvers
   sig-approvers-kv: *fallback-module-approvers
+  sig-approvers-privilege: *fallback-module-approvers
   sig-approvers-extension:
     - bb7133
     - YangKeao
