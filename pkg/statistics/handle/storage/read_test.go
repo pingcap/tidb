@@ -158,7 +158,7 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 		return false
 	}, time.Second*5, time.Millisecond*100, "Index ia should be in HistogramNeededItems")
 
-	// Verify that LoadNeededHistograms doesn't panic when the index exists in the cache
+	// Verify that LoadNeededHistograms doesn't panic when the pseudo index stats exists in the cache
 	// but doesn't have histogram data in mysql.stats_histograms yet.
 	err = util.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
 		require.NotPanics(t, func() {
