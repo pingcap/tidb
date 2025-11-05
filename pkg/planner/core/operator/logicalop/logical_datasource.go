@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -642,58 +641,54 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 // analyzeFTSFunc checks whether FTS function is used and is a valid one.
 // Then convert the function to index call because it can not be executed without the index.
 func (ds *DataSource) analyzeFTSFunc() error {
-	ticiIdx2FastCheck := make(map[*model.IndexInfo]intset.FastIntSet)
-	idSetForCheck := intset.NewFastIntSet()
-	for _, path := range ds.AllPossibleAccessPaths {
-		if path.Index != nil && path.Index.FullTextInfo != nil {
-			s := intset.NewFastIntSet()
-			for _, col := range path.Index.Columns {
-				s.Insert(int(ds.TableInfo.Columns[col.Offset].ID))
-			}
-			ticiIdx2FastCheck[path.Index] = s
-		}
-	}
 	var matchedIdx *model.IndexInfo
-	matchedFuncs := make(map[*expression.ScalarFunction]struct{}, 2)
-	for _, cond := range ds.PushedDownConds {
-		sf, ok := cond.(*expression.ScalarFunction)
-		// Not a scalar function, go to next one.
-		if !ok {
+	tmpMatchedExprSet := intset.NewFastIntSet()
+	matchedExprSetForChosenIndex := intset.NewFastIntSet()
+	hasUnmatchedFTSOverAllIdx := true
+	for _, path := range ds.AllPossibleAccessPaths {
+		if path.Index == nil || path.Index.FullTextInfo == nil {
 			continue
 		}
-		_, isSingleFTS := expression.FTSFuncMap[sf.FuncName.L]
-		if !isSingleFTS {
-			containsFTS := expression.ContainsFullTextSearchFn(cond)
-			if !containsFTS {
+		ftsCols := intset.NewFastIntSet()
+		invertedIndexedCols := intset.NewFastIntSet()
+		for _, indexCol := range path.Index.Columns {
+			col := ds.TableInfo.Columns[indexCol.Offset]
+			if col.FieldType.EvalType() != types.ETString {
+				invertedIndexedCols.Insert(int(col.ID))
 				continue
 			}
-			onlyLogicOpAndFTS := expression.ExprOnlyContainsLogicOpAndFTS(cond)
-			if containsFTS && !onlyLogicOpAndFTS {
-				return plannererrors.ErrWrongUsage.FastGen(plannererrors.FTSWrongPlace)
+			ftsCols.Insert(int(col.ID))
+			invertedIndexedCols.Insert(int(col.ID))
+		}
+		noUnmatchedFTSFunc := true
+		tmpMatchedExprSet.Clear()
+	checkExprForIndexLoop:
+		for i, cond := range ds.PushedDownConds {
+			fullyCovered := expression.ExprCoveredByOneTiCIIndex(cond, &ftsCols, &invertedIndexedCols)
+			if !fullyCovered {
+				if expression.ContainsFullTextSearchFn(cond) {
+					noUnmatchedFTSFunc = false
+					break checkExprForIndexLoop
+				}
+				continue
+			}
+			if fullyCovered {
+				tmpMatchedExprSet.Insert(i)
 			}
 		}
-		idSetForCheck.Clear()
-		expression.CollectColumnIDForFTS(sf, &idSetForCheck)
-		// Check TiCI version first.
-		var currentIndex *model.IndexInfo
-		for idx, set := range ticiIdx2FastCheck {
-			// The used columns in the FTS function should be a subset of the index columns.
-			if idSetForCheck.SubsetOf(set) {
-				currentIndex = idx
-				goto finalCheck
-			}
+		if !noUnmatchedFTSFunc {
+			continue
 		}
-	finalCheck:
-		// If the index is not found, it means that the FTS function is not valid.
-		if currentIndex == nil {
-			return errors.New("Full text search can only be used with a matching fulltext index and a columnar storage")
+		hasUnmatchedFTSOverAllIdx = false
+		if tmpMatchedExprSet.Len() > matchedExprSetForChosenIndex.Len() {
+			matchedExprSetForChosenIndex.CopyFrom(tmpMatchedExprSet)
+			matchedIdx = path.Index
 		}
-		// Currently TiDB doesn't support multiple fulltext search functions used with multiple index calls.
-		if matchedIdx != nil && matchedIdx.ID != currentIndex.ID {
-			return errors.New("Current TiDB doesn't support multiple fulltext search functions used with multiple index calls")
-		}
-		matchedIdx = currentIndex
-		matchedFuncs[sf] = struct{}{}
+	}
+
+	// Currently TiDB doesn't support multiple fulltext search functions used with multiple index calls.
+	if hasUnmatchedFTSOverAllIdx {
+		return errors.New("Full text search can only be used with a matching fulltext index")
 	}
 
 	if matchedIdx == nil {
@@ -704,6 +699,13 @@ func (ds *DataSource) analyzeFTSFunc() error {
 		})
 		return nil
 	}
+
+	matchedFuncs := make(map[*expression.ScalarFunction]struct{}, matchedExprSetForChosenIndex.Len())
+	matchedExprSetForChosenIndex.ForEach(func(i int) {
+		if ftsFunc, ok := ds.PushedDownConds[i].(*expression.ScalarFunction); ok {
+			matchedFuncs[ftsFunc] = struct{}{}
+		}
+	})
 
 	// Remove the matched conditions from PushedDownConds.
 	ds.PushedDownConds = slices.DeleteFunc(ds.PushedDownConds, func(cond expression.Expression) bool {
