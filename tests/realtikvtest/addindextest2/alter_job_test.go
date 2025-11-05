@@ -33,6 +33,9 @@ import (
 )
 
 func TestAlterThreadRightAfterJobFinish(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -78,7 +81,9 @@ func TestAlterJobOnDXF(t *testing.T) {
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")
-	tk.MustExec(`set global tidb_enable_dist_task=1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_enable_dist_task=1;`)
+	}
 	tk.MustExec("create table t1(a bigint auto_random primary key);")
 	for range 16 {
 		tk.MustExec("insert into t1 values (), (), (), ()")

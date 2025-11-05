@@ -415,6 +415,8 @@ func (rm *MockRegionManager) SplitArbitrary(keys ...[]byte) {
 		encKey := codec.EncodeBytes(nil, key)
 		splitKeys = append(splitKeys, encKey)
 	}
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 	if _, err := rm.splitKeys(splitKeys); err != nil {
 		panic(err)
 	}
