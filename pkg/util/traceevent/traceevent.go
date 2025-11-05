@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"strconv"
@@ -25,11 +26,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/trace"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -54,6 +57,8 @@ const (
 	StmtPlan = tracing.StmtPlan
 	// KvRequest traces client-go kv request and responses
 	KvRequest = tracing.KvRequest
+	// General is used by tracing API
+	General = tracing.General
 	// UnknownClient is the fallback category for unmapped client-go trace events.
 	// Used when client-go emits events with categories not yet mapped in adapter.go.
 	// This provides forward compatibility if client-go adds new categories.
@@ -285,6 +290,10 @@ func (*LogSink) Record(ctx context.Context, event Event) {
 		return
 	}
 
+	logEvent(ctx, event)
+}
+
+func logEvent(ctx context.Context, event Event) {
 	// Append to reserved capacity without allocation.
 	// Field order: [event fields] [category] [timestamp] [trace_id?]
 	fields := event.Fields
@@ -480,4 +489,76 @@ func getCategoryName(category TraceCategory) string {
 	default:
 		return "unknown(" + strconv.FormatUint(uint64(category), 10) + ")"
 	}
+}
+
+// RenderEvent defines the event structure for trace event rendering on http://ui.perfetto.dev
+// See https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview?tab=t.0
+type RenderEvent struct {
+	Name     string          `json:"name"`
+	Phase    tracing.Phase   `json:"ph"`
+	Ts       int64           `json:"ts"` // microsecond
+	PID      uint32          `json:"pid"`
+	TID      uint32          `json:"tid"`
+	ID       uint64          `json:"id,omitempty"` // used by async / flow
+	Category string          `json:"cat,omitempty"`
+	Args     json.RawMessage `json:"args,omitempty"`
+}
+
+func extractRandFromTraceID(traceID []byte) uint32 {
+	if len(traceID) != 20 {
+		return 0
+	}
+	return *((*uint32)(unsafe.Pointer(&traceID[16])))
+}
+
+func ConvertEventsForRendering(events []Event) []RenderEvent {
+	var tid uint32
+	res := make([]RenderEvent, 0, len(events))
+	for _, event := range events {
+		e := RenderEvent{
+			Name:     event.Name,
+			Phase:    event.Phase,
+			Ts:       event.Timestamp.UnixMicro(),
+			PID:      0,
+			Category: event.Category.String(),
+		}
+		if tid == 0 {
+			tid = extractRandFromTraceID(event.TraceID)
+		} else {
+			val := extractRandFromTraceID(event.TraceID)
+			if tid != val {
+				logutil.BgLogger().Info("wrong traceid",
+					zap.Uint32("expect", tid),
+					zap.Uint32("get", val))
+			}
+		}
+		if len(event.TraceID) > 0 && len(event.TraceID) != 20 {
+			logutil.BgLogger().Info("wrong traceid format",
+				zap.String("trace_id", string(event.TraceID)))
+		}
+
+		if len(event.Fields) > 0 {
+			cfg := zap.NewProductionEncoderConfig()
+			cfg.LevelKey = ""
+			cfg.MessageKey = ""
+			enc := zapcore.NewJSONEncoder(cfg)
+			fields := event.Fields
+			if len(event.TraceID) > 0 {
+				fields = append(event.Fields, zap.String("trace_id", hex.EncodeToString(event.TraceID)))
+			}
+			buf, _ := enc.EncodeEntry(
+				zapcore.Entry{},
+				fields,
+			)
+			e.Args = buf.Bytes()
+		}
+		res = append(res, e)
+	}
+	if tid == 0 {
+		logutil.BgLogger().Info("wrong traceid")
+	}
+	for i := range res {
+		res[i].TID = tid
+	}
+	return res
 }

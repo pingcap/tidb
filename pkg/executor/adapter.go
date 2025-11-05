@@ -1929,11 +1929,11 @@ func (s stmtLabelAlias) stmtLabelDumpTriggerCheck(config *traceevent.DumpTrigger
 	return config.UserCommand.StmtLabel == s.label
 }
 
-type userAtlas struct {
+type userAlias struct {
 	user string
 }
 
-func (u userAtlas) byUserDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+func (u userAlias) byUserDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
 	return config.UserCommand.ByUser == u.user
 }
 
@@ -1968,7 +1968,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	// Not using closure to avoid unnecessary memory allocation.
 	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.plan_digest", digestAlias{digest}.planDigestDumpTriggerCheck)
 	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.stmt_label", stmtLabelAlias{stmtCtx.StmtType}.stmtLabelDumpTriggerCheck)
-	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.by_user", userAtlas{userString}.byUserDumpTriggerCheck)
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.by_user", userAlias{userString}.byUserDumpTriggerCheck)
 
 	var prevSQL, prevSQLDigest string
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {

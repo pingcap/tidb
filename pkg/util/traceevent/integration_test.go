@@ -153,7 +153,7 @@ func TestFlightRecorder(t *testing.T) {
 		require.NoError(t, err)
 		for _, sql := range []string{"select * from t", "select * from t where b = 5"} {
 			tk.MustQueryWithContext(ctx, sql).Check(testkit.Rows())
-			sink.Reset()
+			sink.Reset(ctx)
 			require.Len(t, eventCh, 1)
 			event := <-eventCh
 			require.NotEmpty(t, event)
@@ -173,7 +173,7 @@ func TestFlightRecorder(t *testing.T) {
 		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
 		require.NoError(t, err)
 		tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows())
-		sink.Reset()
+		sink.Reset(ctx)
 		require.NotEmpty(t, eventCh)
 		events := <-eventCh
 		for _, event := range events {
@@ -195,7 +195,7 @@ func TestFlightRecorder(t *testing.T) {
 		require.NoError(t, err)
 		for i := 0; i < 10; i++ {
 			tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows())
-			sink.Reset()
+			sink.Reset(ctx)
 		}
 		require.Len(t, eventCh, 2)
 		flightRecorder.Close()
@@ -217,10 +217,10 @@ func TestFlightRecorder(t *testing.T) {
 		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
 		require.NoError(t, err)
 		tk.MustExecWithContext(ctx, "insert into t values ('aaa', 1)")
-		sink.Reset()
+		sink.Reset(ctx)
 		require.Empty(t, eventCh)
 		tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("aaa 1"))
-		sink.Reset()
+		sink.Reset(ctx)
 		require.Len(t, eventCh, 1)
 		drainEvents(eventCh)
 		flightRecorder.Close()
@@ -241,12 +241,12 @@ func TestFlightRecorder(t *testing.T) {
 		require.NoError(t, err)
 		_, err = tk.ExecWithContext(ctx, "insert into t values ('aaa', 2)")
 		require.Error(t, err)
-		sink.Reset()
+		sink.Reset(ctx)
 		require.Len(t, eventCh, 1)
 		drainEvents(eventCh)
 
 		tk.MustExecWithContext(ctx, "insert into t values ('bbb', 2)")
-		sink.Reset()
+		sink.Reset(ctx)
 		require.Len(t, eventCh, 0)
 		flightRecorder.Close()
 	}
