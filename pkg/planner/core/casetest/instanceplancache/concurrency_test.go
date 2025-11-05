@@ -92,6 +92,8 @@ func (w *worker) run() {
 
 func testWithWorkers(TKs []*testkit.TestKit, stmts []*testStmt) {
 	nStmts := make([][]*testStmt, len(TKs))
+	var dmlMutex sync.Mutex // Synchronize DML operations across databases
+
 	for _, stmt := range stmts {
 		if isDML(stmt.normalStmt) { // avoid duplicate DML
 			x := rand.Intn(len(TKs))
@@ -107,7 +109,28 @@ func testWithWorkers(TKs []*testkit.TestKit, stmts []*testStmt) {
 	for i, tk := range TKs {
 		w := worker{tk: tk, stmts: nStmts[i], wg: &wg}
 		wg.Add(1)
-		go w.run()
+		go func(worker worker) {
+			defer wg.Done()
+			for _, stmt := range worker.stmts {
+				if isTxn(stmt.normalStmt) {
+					worker.tk.MustExec(stmt.normalStmt) // txn stmt
+				} else if isDQL(stmt.normalStmt) { // DQL
+					normalResult := worker.tk.MustQuery(stmt.normalStmt)
+					worker.tk.MustExec(stmt.prepStmt)
+					worker.tk.MustExec(stmt.setStmt)
+					preparedResult := worker.tk.MustQuery(stmt.execStmt)
+					normalResult.Sort().Check(preparedResult.Sort().Rows())
+				} else if isDML(stmt.normalStmt) { // DML
+					// Synchronize DML operations to ensure both databases are updated atomically
+					dmlMutex.Lock()
+					worker.tk.MustExec(stmt.normalStmt)
+					worker.tk.MustExec(stmt.prepStmt)
+					worker.tk.MustExec(stmt.setStmt)
+					worker.tk.MustExec(stmt.execStmt)
+					dmlMutex.Unlock()
+				}
+			}
+		}(w)
 	}
 	wg.Wait()
 }
