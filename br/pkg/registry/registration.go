@@ -101,13 +101,13 @@ const (
 
 	// selectTaskHeartbeatSQLTemplate is the SQL template for getting a specific task's heartbeat time
 	selectTaskHeartbeatSQLTemplate = `
-		SELECT UNIX_TIMESTAMP(last_heartbeat_time)
+		SELECT CAST(UNIX_TIMESTAMP(last_heartbeat_time) AS UNSIGNED INTEGER)
 		FROM %s.%s
 		WHERE id = %%?`
 
 	// selectConflictingTaskSQLTemplate is the SQL template for finding tasks with same parameters
 	selectConflictingTaskSQLTemplate = `
-		SELECT id, restored_ts, status, UNIX_TIMESTAMP(last_heartbeat_time) FROM %s.%s
+		SELECT id, restored_ts, status, CAST(UNIX_TIMESTAMP(last_heartbeat_time) AS UNSIGNED INTEGER) FROM %s.%s
 		WHERE filter_hash = MD5(%%?)
 		AND start_ts = %%?
 		AND upstream_cluster_id = %%?
