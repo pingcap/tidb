@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -528,6 +530,113 @@ func compareStruct(old, new *model.TableInfo) bool {
 	return true
 }
 
+type statsRow struct {
+	isIndex    int64
+	histID     int64
+	bucketID   int64
+	count      int64
+	repeats    int64
+	lowerBound []byte
+	upperBound []byte
+	ndv        int64
+}
+
+type statsRowMap map[int64]statsRow
+
+var globalStats sync.Map
+
+func StoreStats(tableID int64, rows []chunk.Row) {
+	statsMap := make(statsRowMap, len(rows))
+	for _, row := range rows {
+		rid := (row.GetInt64(2)) | row.GetInt64(1)
+		statsMap[rid] = statsRow{
+			bucketID:   row.GetInt64(3),
+			count:      row.GetInt64(4),
+			repeats:    row.GetInt64(5),
+			lowerBound: row.GetBytes(6),
+			upperBound: row.GetBytes(7),
+			ndv:        row.GetInt64(8),
+		}
+	}
+	globalStats.Store(tableID, statsMap)
+}
+
+func CheckStats(tableID int64, rows []chunk.Row) (checked, equal bool) {
+	v, ok := globalStats.Load(tableID)
+	if !ok {
+		return false, false
+	}
+
+	statsMap := v.(statsRowMap)
+	for _, row := range rows {
+		rid := (row.GetInt64(2)) | row.GetInt64(1)
+		newRow := statsRow{
+			bucketID:   row.GetInt64(3),
+			count:      row.GetInt64(4),
+			repeats:    row.GetInt64(5),
+			lowerBound: row.GetBytes(6),
+			upperBound: row.GetBytes(7),
+			ndv:        row.GetInt64(8),
+		}
+		oldRow, ok := statsMap[rid]
+		if !ok {
+			return true, false
+		}
+		if !reflect.DeepEqual(oldRow, newRow) {
+			return true, false
+		}
+	}
+
+	return true, true
+}
+
+func collectStats(w *worker, ctx context.Context, job *model.Job) (bool, error) {
+	args, err := model.GetModifyColumnArgs(job)
+	if err != nil {
+		return false, err
+	}
+
+	sctx, err := w.sessPool.Get()
+	if err != nil {
+		return false, err
+	}
+	defer w.sessPool.Put(sctx)
+
+	initSQLs := []string{
+		fmt.Sprintf("ANALYZE TABLE `%s`.`%s` with 4 topn, 4 buckets", job.SchemaName, job.TableName),
+		"set @@tidb_stats_load_sync_wait = 60000",
+		fmt.Sprintf("EXPLAIN SELECT * FROM `%s`.`%s` WHERE `%s` > 1", job.SchemaName, job.TableName, args.Column.Name.L),
+	}
+
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
+	for _, sql := range initSQLs {
+		_, _, err = sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	collectSQL := fmt.Sprintf("select * from mysql.stats_buckets where table_id = %d", job.TableID)
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, collectSQL)
+	if err != nil {
+		return false, err
+	}
+
+	statsMap := make(statsRowMap, len(rows))
+	for _, row := range rows {
+		statsMap[toMapID(row.GetInt64(1), row.GetInt64(2))] = statsRow{
+			bucketID:   row.GetInt64(3),
+			count:      row.GetInt64(4),
+			repeats:    row.GetInt64(5),
+			lowerBound: row.GetBytes(6),
+			upperBound: row.GetBytes(7),
+			ndv:        row.GetInt64(8),
+		}
+	}
+
+	return true, nil
+}
+
 func runAdminCheck(w *worker, ctx context.Context, dbName, tblName string) bool {
 	var sctx sessionctx.Context
 	sctx, err := w.sessPool.Get()
@@ -537,7 +646,7 @@ func runAdminCheck(w *worker, ctx context.Context, dbName, tblName string) bool 
 	defer w.sessPool.Put(sctx)
 
 	sql := fmt.Sprintf("ADMIN CHECK TABLE `%s`.`%s`", dbName, tblName)
-
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
 	_, _, err = sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
 	return err == nil
 }
