@@ -117,13 +117,14 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	ctx := context.Background()
+	require.NoError(t, h.Update(ctx, dom.InfoSchema()))
 	// Trigger async load of index histogram by using the index in a query.
 	// When we set this variable to determinate, it causes the physical table to no longer use a fake physical table ID, which in turn triggers statistics loading.
 	// See more at index's CheckStats and getStatsTable functions.
 	tk.MustExec("set tidb_opt_objective='determinate';")
 	tk.MustQuery("select * from t where a = 1 and b = 1;").Check(testkit.Rows("1 1"))
-	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	addedIndexID := tableInfo.Indices[0].ID
