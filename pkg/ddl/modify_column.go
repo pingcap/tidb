@@ -844,6 +844,13 @@ func checkModifyColumnData(
 
 		datum := rows[0].GetDatum(0, &oldCol.FieldType)
 		dStr := datumToStringNoErr(datum)
+
+		logutil.DDLLogger().Info("[debug log] modify column data check failed unexpectedly",
+			zap.String("from", oldCol.FieldType.String()),
+			zap.String("to", changingCol.FieldType.String()),
+			zap.String("value", dStr),
+		)
+
 		return true, types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", oldCol.Name.L, dStr)
 	}
 
