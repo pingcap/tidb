@@ -67,6 +67,7 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 		// some bindings' update_time may be earlier than the lastUpdateTime of this TiDB.
 		// timeLagToleranceSec is used to tolerate the time lag between different TiDBs.
 		// See #64250 for more details.
+		// It's safe to load duplicated bindings, because we'll deduplicate them in `pickCachedBinding`.
 		timeLagToleranceSec := 10
 		lastUpdateTime = u.lastUpdateTime.Load().(types.Time)
 		timeCondition = fmt.Sprintf("USE INDEX (time_index) WHERE update_time>DATE_SUB('%s', INTERVAL %d SECOND)",
