@@ -100,7 +100,7 @@ func (re *regexpBaseFuncSig) buildRegexp(pattern string, matchType string) (reg 
 		return nil, ErrRegexp.GenWithStackByArgs(emptyPatternErr)
 	}
 
-	matchType, err = getRegexpMatchType(matchType, re.collation)
+	matchType, err = GetRegexpMatchType(matchType, re.collation)
 	if err != nil {
 		return nil, err
 	}
@@ -162,9 +162,10 @@ func (re *regexpBaseFuncSig) tryVecMemorizedRegexp(ctx EvalContext, params []*fu
 	return sig.memorizedRegexp, true, sig.memorizedErr
 }
 
+// GetRegexpMatchType gets the regexp match type flag string according to the user input and collation.
 // If characters specifying contradictory options are specified
 // within match_type, the rightmost one takes precedence.
-func getRegexpMatchType(userInputMatchType string, collation string) (string, error) {
+func GetRegexpMatchType(userInputMatchType string, collation string) (string, error) {
 	flag := ""
 	matchTypeSet := set.NewStringSet()
 
