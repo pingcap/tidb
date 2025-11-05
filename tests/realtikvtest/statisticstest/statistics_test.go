@@ -256,7 +256,7 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	addedIndexID := tableInfo.Indices[0].ID
-	// Wait for the async load to add the index to HistogramNeededItems.
+	// Wait for the async load to add the index to AsyncLoadHistogramNeededItems.
 	// We should have 3 items: columns a, b, and index ia.
 	require.Eventually(t, func() bool {
 		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
@@ -266,7 +266,7 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 			}
 		}
 		return false
-	}, time.Second*5, time.Millisecond*100, "Index ia should be in HistogramNeededItems")
+	}, time.Second*5, time.Millisecond*100, "Index ia should be in AsyncLoadHistogramNeededItems")
 
 	// Verify that LoadNeededHistograms doesn't panic when the pseudo index stats exists in the cache
 	// but doesn't have histogram data in mysql.stats_histograms yet.
@@ -279,7 +279,7 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	}, util.FlagWrapTxn)
 	require.NoError(t, err)
 
-	// Verify all items were removed from HistogramNeededItems after loading.
+	// Verify all items were removed from AsyncLoadHistogramNeededItems after loading.
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
-	require.Equal(t, len(items), 0, "HistogramNeededItems should be empty after loading")
+	require.Equal(t, len(items), 0, "AsyncLoadHistogramNeededItems should be empty after loading")
 }
