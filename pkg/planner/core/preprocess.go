@@ -270,7 +270,7 @@ func (*tableSourceCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
-func (p *preprocessor) getAllDBInfos(node *ast.TableRefsClause) []pmodel.CIStr {
+func getAllDBNames(node *ast.TableRefsClause) []pmodel.CIStr {
 	dbNames := make([]pmodel.CIStr, 0)
 	collector := tableSourceCollector{
 		tableName: make([]*ast.TableName, 0),
@@ -323,7 +323,7 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 	case *ast.LoadDataStmt:
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.InsertStmt:
-		dbNames = append(dbNames, p.getAllDBInfos(node.Table)...)
+		dbNames = append(dbNames, getAllDBNames(node.Table)...)
 	case *ast.DeleteStmt:
 		if node.Tables != nil {
 			// multiple table delete statement
@@ -336,7 +336,7 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 			}
 		} else {
 			// single table delete statement
-			dbNames = append(dbNames, p.getAllDBInfos(node.TableRefs)...)
+			dbNames = append(dbNames, getAllDBNames(node.TableRefs)...)
 		}
 	case *ast.UpdateStmt:
 		for _, set := range node.List {
@@ -350,7 +350,7 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 		if node.LockInfo != nil {
 			if logicalop.IsSelectForUpdateLockType(node.LockInfo.LockType) ||
 				(logicalop.IsSelectForShareLockType(node.LockInfo.LockType) && p.sctx.GetSessionVars().SharedLockPromotion) {
-				dbNames = append(dbNames, p.getAllDBInfos(node.From)...)
+				dbNames = append(dbNames, getAllDBNames(node.From)...)
 			}
 		}
 	}
