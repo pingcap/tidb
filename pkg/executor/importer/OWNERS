@@ -3,4 +3,6 @@
 options:
   no_parent_owners: true
 approvers:
-  - sig-approvers-importor
+  - sig-approvers-import
+labels:
+  - component/import
