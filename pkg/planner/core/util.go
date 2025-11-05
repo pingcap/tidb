@@ -277,7 +277,13 @@ func planScanMetric(sctx planctx.PlanContext, tbl *model.TableInfo, scanRows int
 	}
 
 	scanRowsLabel := getRowsLabel(scanRows)
-	scanSelectivityLabel := getScanSelectivityLabel(float64(scanRows) / float64(totalRows))
+	var selectivity float64
+	if totalRows == 0 {
+		selectivity = 0.0
+	} else {
+		selectivity = float64(scanRows) / float64(totalRows)
+	}
+	scanSelectivityLabel := getScanSelectivityLabel(selectivity)
 	if isTableFullScan {
 		incMetric(sctx, metrics.PlanTableFullScanCounter, scanRowsLabel)
 	}
