@@ -226,10 +226,10 @@ func flatPlanMetrics(sctx sessionctx.Context, planTree FlatPlanTree) {
 		case *physicalop.BatchPointGetPlan:
 			planScanMetric(op.SCtx(), op.TblInfo, actRows, false)
 		case *physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
-			planCopKVRequestsMetric(op.SCtx(), node, planTree, runtimeStats)
+			planCopKVRequestsMetric(node.Origin.SCtx(), node, planTree, runtimeStats)
 		case *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexMergeJoin, *physicalop.PhysicalIndexHashJoin:
-			planCopKVRequestsMetric(op.SCtx(), node, planTree, runtimeStats)
-			planJoinMetric(op.SCtx(), actRows)
+			planCopKVRequestsMetric(node.Origin.SCtx(), node, planTree, runtimeStats)
+			planJoinMetric(node.Origin.SCtx(), actRows)
 		case *physicalop.PhysicalHashJoin, *physicalop.PhysicalMergeJoin:
 			planJoinMetric(op.SCtx(), actRows)
 		}
