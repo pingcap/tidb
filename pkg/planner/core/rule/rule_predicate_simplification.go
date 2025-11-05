@@ -337,6 +337,9 @@ func comparisonPred(predType predicateType) predicateType {
 // updateOrPredicate simplifies OR predicates by dropping OR predicates if they are empty.
 // It is applied for this pattern: P AND (P1 OR P2 ... OR Pn)
 // Pi is removed if P & Pi is false/empty.
+//
+// The second bool parameter in the return indicates whether the OR expression has changed.
+// If this is a parameter with a param marker, the plan cache needs to be skipped to avoid issues.
 func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expression, scalarPredicatePtr expression.Expression) (expression.Expression, bool) {
 	_, orPredicateType := FindPredicateType(ctx, orPredicateList)
 	_, scalarPredicateType := FindPredicateType(ctx, scalarPredicatePtr)
