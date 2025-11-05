@@ -69,8 +69,8 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 		// See #64250 for more details.
 		timeLagToleranceSec := 10
 		lastUpdateTime = u.lastUpdateTime.Load().(types.Time)
-		whereCondition := `USE INDEX (time_index) WHERE update_time>DATE_SUB('%s', INTERVAL %d SECOND)`
-		timeCondition = fmt.Sprintf(whereCondition, lastUpdateTime.String(), timeLagToleranceSec)
+		timeCondition = fmt.Sprintf("USE INDEX (time_index) WHERE update_time>DATE_SUB('%s', INTERVAL %d SECOND)",
+			lastUpdateTime.String(), timeLagToleranceSec)
 	}
 	condition := fmt.Sprintf(`%s ORDER BY update_time, create_time`, timeCondition)
 	bindings, err := readBindingsFromStorage(u.sPool, condition)

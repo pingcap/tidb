@@ -73,9 +73,9 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 		}
 	}()
 
-	mockTimeLag := 0 // mock time lag between different TiDB instances for test, see #64250.
+	var mockTimeLag time.Duration // mock time lag between different TiDB instances for test, see #64250.
 	if intest.InTest && sctx.Value(TestTimeLagInLoadingBinding) != nil {
-		mockTimeLag = sctx.Value(TestTimeLagInLoadingBinding).(int)
+		mockTimeLag = time.Second * time.Duration(sctx.Value(TestTimeLagInLoadingBinding).(int))
 	}
 
 	return callWithSCtx(op.sPool, true, func(sctx sessionctx.Context) error {
@@ -85,11 +85,10 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 		}
 
 		for i, binding := range bindings {
-			timeNow := time.Now()
-			if mockTimeLag != 0 {
-				timeNow = timeNow.Add(time.Duration(-mockTimeLag) * time.Second)
+			now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6)
+			if intest.InTest && mockTimeLag != 0 {
+				now = types.NewTime(types.FromGoTime(time.Now().Add(-mockTimeLag)), mysql.TypeTimestamp, 6)
 			}
-			now := types.NewTime(types.FromGoTime(timeNow), mysql.TypeTimestamp, 6)
 
 			updateTs := now.String()
 			_, err = exec(
