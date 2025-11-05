@@ -301,9 +301,15 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		cols = slices.Grow(cols, len(mapper))
 		cons = slices.Grow(cons, len(mapper))
-		for id, con := range mapper {
+		// Sort map keys to ensure deterministic iteration order
+		ids := make([]int, 0, len(mapper))
+		for id := range mapper {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		for _, id := range ids {
 			cols = append(cols, s.columns[id])
-			cons = append(cons, con)
+			cons = append(cons, mapper[id])
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
