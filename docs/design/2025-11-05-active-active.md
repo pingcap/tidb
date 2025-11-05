@@ -1,4 +1,5 @@
 #Design Summary
+
 The key requirement is to enable an “Active-Active Deployment” capability in TiDB. The goal is to build a global database solution that supports multiple TiDB clusters distributed across regions, with the ability to handle conflicting writes.
 
 In this setup, an application can connect to any TiDB cluster to perform both read and write operations on any data. Each transaction is processed locally in the TiDB cluster to which the application connects. TiCDC is then responsible for replicating the data changes to other TiDB clusters.
