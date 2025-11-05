@@ -17441,7 +17441,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 9,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 13
@@ -17486,7 +17486,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Plan Count by Index Selectivity",
+          "title": "Plan Count By Index Selectivity",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -17537,7 +17537,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 9,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 13
@@ -17582,7 +17582,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Plan Count by Scan Rows",
+          "title": "Plan Count By Scan Rows",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -17632,7 +17632,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 9,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 22
@@ -17677,7 +17677,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "TableFullScan by Scan Rows",
+          "title": "TableFullScan By Scan Rows",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -17727,7 +17727,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 9,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 22
@@ -17772,7 +17772,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Plan Count by KV Requests (Cop Tasks)",
+          "title": "Plan Count By KV Requests (Cop Tasks)",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -17822,7 +17822,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 9,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 31
@@ -17867,7 +17867,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Plan Count by Join Rows",
+          "title": "Plan Count By Join Rows",
           "tooltip": {
             "shared": true,
             "sort": 0,
