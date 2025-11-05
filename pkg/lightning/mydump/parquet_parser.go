@@ -548,13 +548,13 @@ func NewParquetParser(
 		}
 	}
 
-	// var allocator memory.Allocator
-	// allocator = memory.NewGoAllocator()
-	// if meta.MemoryPool != nil {
-	// allocator = NewAppendOnlyAllocator(meta.MemoryPool, meta.MemoryUsage)
-	// }
+	var allocator memory.Allocator
+	allocator = memory.NewGoAllocator()
+	if meta.MemoryPool != nil {
+		allocator = NewAppendOnlyAllocator(meta.MemoryPool, meta.MemoryUsage)
+	}
 
-	allocator := memory.NewGoAllocator()
+	// allocator := memory.NewGoAllocator()
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
 	prop.BufferSize = 1024
@@ -619,7 +619,7 @@ func SampleStatisticsFromParquet(
 	}
 
 	meta := GetDefaultParquetMeta()
-	meta.MemoryPool = nil
+	meta.MemoryPool = GetPool(10 << 30) // use up to 4GiB memory for sampling
 
 	parser, err := NewParquetParser(ctx, store, r, fileMeta.Path, meta)
 	if err != nil {
@@ -657,7 +657,7 @@ func SampleStatisticsFromParquet(
 	a, ok := alloc.(*appendOnlyAllocator)
 
 	if ok {
-		memoryUsage = a.Allocated() + arenaSize
+		memoryUsage = a.Allocated()
 		parser.logger.Info("Get memory usage of parquet reader",
 			zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
 		)

@@ -73,7 +73,7 @@ func NewAppendOnlyAllocator(pool *Pool, memUsage int) *appendOnlyAllocator {
 		pool:     pool,
 		memUsage: memUsage,
 	}
-	for range 2 {
+	for range 1 {
 		alloc.slices = append(alloc.slices, &appendOnlySlice{buf: pool.Get()})
 	}
 	return alloc
