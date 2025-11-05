@@ -459,7 +459,7 @@ func InitServerMetrics() {
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "plan_kv_request_total",
-			Help:      "Counter of index scans with different kv request count.",
+			Help:      "Counter of operators with different KV request counts, including index lookup, index merge, and index join.",
 		}, []string{LblOperator, LblRange})
 
 	PlanJoinRowsCounter = metricscommon.NewCounterVec(
