@@ -116,7 +116,7 @@ aliases:
     - zimulala
     - yibin87
     - nolouch
-  sig-approvers-fallback: &sig-approvers-fallback
+  sig-approvers-modules: &fallback-module-approvers
     - Benjamin2037
     - XuHuaiyu
     - bb7133
@@ -127,8 +127,8 @@ aliases:
     - terry1purcell
     - zanmato1984
     - zhangjinpeng87
-  sig-approvers-plugin: *sig-approvers-fallback
-  sig-approvers-docs: *sig-approvers-fallback
+  sig-approvers-plugin: *fallback-module-approvers
+  sig-approvers-docs: *fallback-module-approvers
   sig-approvers-stats:
     - mjonss
     - 0xPoe
