@@ -127,8 +127,13 @@ aliases:
     - terry1purcell
     - zanmato1984
     - zhangjinpeng87
-  sig-approvers-plugin: *fallback-module-approvers
   sig-approvers-docs: *fallback-module-approvers
+  sig-approvers-extension:
+    - bb7133
+    - YangKeao
+  sig-approvers-plugin:
+    - bb7133
+    - YangKeao
   sig-approvers-stats:
     - mjonss
     - 0xPoe
