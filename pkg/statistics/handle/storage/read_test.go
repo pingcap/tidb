@@ -120,8 +120,8 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, h.Update(ctx, dom.InfoSchema()))
 	// Trigger async load of index histogram by using the index in a query.
-	// When we set this variable to determinate, it causes the physical table to no longer use a fake physical table ID, which in turn triggers statistics loading.
-	// See more at index's CheckStats and getStatsTable functions.
+	// Setting this variable to determinate marks the pseudo table stats as able to trigger loading (CanNotTriggerLoad=false), which enables statistics loading.
+	// See more at IndexStatsIsInvalid and GetStatsTable functions.
 	tk.MustExec("set tidb_opt_objective='determinate';")
 	tk.MustQuery("select * from t where a = 1 and b = 1;").Check(testkit.Rows("1 1"))
 	table, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
