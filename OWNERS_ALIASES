@@ -133,6 +133,7 @@ aliases:
   sig-approvers-privilege: *fallback-module-approvers
   sig-approvers-server: *fallback-module-approvers
   sig-approvers-session: *fallback-module-approvers
+  sig-approvers-sessionctx: *fallback-module-approvers
   sig-approvers-extension:
     - bb7133
     - YangKeao
