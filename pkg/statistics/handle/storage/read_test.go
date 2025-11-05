@@ -17,10 +17,15 @@ package storage_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -99,4 +104,53 @@ func TestLoadStats(t *testing.T) {
 	topN := idx.TopN
 	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.True(t, idx.IsFullLoad())
+}
+
+func TestLoadNonExistentIndexStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	// Create table with an index. The index histogram doesn't exist in the system tables
+	// because we didn't handle the create table DDL event (simulating a lost DDL event).
+	tk.MustExec("create table if not exists t(a int, b int, index ia(a));")
+	tk.MustExec("insert into t value(1,1), (2,2);")
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	// Trigger async load of index histogram by using the index in a query.
+	// When we set this variable to determinate, it causes the physical table to no longer use a fake physical table ID, which in turn triggers statistics loading.
+	// See more at index's CheckStats and getStatsTable functions.
+	tk.MustExec("set tidb_opt_objective='determinate';")
+	tk.MustQuery("select * from t where a = 1 and b = 1;").Check(testkit.Rows("1 1"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	addedIndexID := tableInfo.Indices[0].ID
+	// Wait for the async load to add the index to HistogramNeededItems.
+	// We should have 3 items: columns a, b, and index ia.
+	require.Eventually(t, func() bool {
+		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+		for _, item := range items {
+			if item.IsIndex && item.TableID == tableInfo.ID && item.ID == addedIndexID {
+				return len(items) == 3
+			}
+		}
+		return false
+	}, time.Second*5, time.Millisecond*100, "Index ia should be in HistogramNeededItems")
+
+	// Verify that LoadNeededHistograms doesn't panic when the pseudo index stats exists in the cache
+	// but doesn't have histogram data in mysql.stats_histograms yet.
+	err = util.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
+		require.NotPanics(t, func() {
+			err := storage.LoadNeededHistograms(sctx, dom.InfoSchema(), h)
+			require.NoError(t, err)
+		})
+		return nil
+	}, util.FlagWrapTxn)
+	require.NoError(t, err)
+
+	// Verify all items were removed from HistogramNeededItems after loading.
+	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+	require.Equal(t, len(items), 0, "HistogramNeededItems should be empty after loading")
 }
