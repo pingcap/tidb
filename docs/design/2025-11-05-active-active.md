@@ -1,3 +1,7 @@
+Author(s): @lcwangchao, @time-and-fate, @xhebox, @hongyunyan, @flowbehappy
+Last updated: 2025-11-05
+Tracking Issue: [#64281](https://github.com/pingcap/tidb/issues/64281)
+
 #Design Summary
 
 The key requirement is to enable an “Active-Active Deployment” capability in TiDB. The goal is to build a global database solution that supports multiple TiDB clusters distributed across regions, with the ability to handle conflicting writes.
