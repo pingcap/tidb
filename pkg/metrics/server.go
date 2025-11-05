@@ -435,7 +435,7 @@ func InitServerMetrics() {
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "plan_table_full_scan_total",
-			Help:      "Counter of table or index full scan.",
+			Help:      "Counter of table full scan.",
 		}, []string{LblRange})
 
 	PlanScanRowsCounter = metricscommon.NewCounterVec(
