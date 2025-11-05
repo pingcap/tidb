@@ -10,10 +10,13 @@ The following example illustrates multiple TiDB clusters forming an active-activ
 Since a transaction happens only inside a TiDB cluster, and the commit_tss are generated from local PD node which has no direct connection to other TiDB clusters' PD nodes, the solution does't provide global transactional consistency. A simple example: A client connects to cluster A and sets value to x, then connects to cluster B and sets the same value to y in a very short time (before the update is replicated to B by TiCDC). The system does not guarantee the final result of value is y. It only guarantees the final value of each cluster is the same, no matter x or y, i.e. eventual consistency.
 To guarantee eventual consistency, the system must address the write conflicts between multiple TiDB clusters. E.g. The same PK rows are modified in more than one cluster simultaneously. The written conflicts are resolved by a strategy named "Last Write Wins (LWW)". An example of how LWW addresses conflict:
 ![active-active-last-write-wins.PNG](active-active-last-write-wins.PNG)
+
 #Design Details
+
 This section introduces the detailed design in two major parts: Soft-delete and Active-Active. Soft-delete is a feature enabling the deleted rows to be recovered in a retention duration. Active-Active describes how we guarantee eventual consistency between multiple TiDB clusters with TiCDC.
 
 ##Soft-Delete
+
 ###Introduction
 
 In TiDB, after a row is deleted by DELETESQL, it is no longer accessible unless by [historical read](https://docs.pingcap.com/tidb/stable/read-historical-data/). After the `tidb_gc_life_time` passed, it is no longer accessible or recoverable by any means because the MVCC versions are cleaned up by GC jobs . But some businesses would like to have a much longer retention duration, e.g. 2 weeks. It is the initial intention of intorducting soft-delete feature.
@@ -161,6 +164,7 @@ For example, if you frequently query rows where v > 1000 and want to optimize su
 ```
 ALTER TABLE t ADD INDEX i2(_tidb_tombstone_time, v);
 ```
+
 ####Scenes to Operate the Table with tidb_translate_softdelete_sql='OFF'
 
 Most applications should keep `tidb_translate_softdelete_sql` set to ON when working with soft-delete tables, allowing TiDB to automatically manage tombstone rows. However, there are certain scenarios where you may want to disable it, such as:
@@ -170,6 +174,7 @@ Most applications should keep `tidb_translate_softdelete_sql` set to ON when wor
 - Disaster recovery or emergency analysis, where querying tombstone rows can help retrieve historical information.
 
 ####Explicit DML for Hard vs Soft Deletes
+
 This section explores introducing explicit DML to control hard vs soft deletes. The key idea being that rather than relying on a session variable, we should be explicit with the DML for the most common cases. This is an supplement to the use of `@@session.tidb_translate_softdelete_sql` to control the soft delete behavior explicitly. It can coexist with that session variable if desired, but a more explicit DML is used to show the express intent of the user.
 The current MySQL/TiDB DELETE syntax is:
 
@@ -195,13 +200,16 @@ This would only have an impact on tables where the soft delete capability is ena
 
 
 ####Notes
+
 1. Since `tidb_translate_softdelete_sql` affects the final executing SQLs, the modification to the value of the var affects [Virtual View](https://docs.pingcap.com/tidb/stable/views/#views)' result and [plan cache](https://docs.pingcap.com/tidb/stable/sql-prepared-plan-cache/).
 2. If a table is a softdelete table, then the delete operations triggered by [TTL](https://docs.pingcap.com/tidb/stable/time-to-live/) background jobs are always soft deletes, which do not follow the setting of `tidb_translate_softdelete_sql`
 3. Softdelete shares the same system vars with TTL. Including all the vars `tidb_ttl_xxx` from [here](https://docs.pingcap.com/tidb/stable/system-variables/#tidb_ttl_running_tasks-new-in-v700). E.g. `tidb_ttl_delete_rate_limit`,  `tidb_ttl_delete_batch_size`, `tidb_ttl_delete_worker_count`, etc
   1. And `tidb_ttl_job_enable` and `tidb_softdelete_job_enable` controls TTL and soft delete jobs separately.
 
 ###Observability 
+
 ####Metrics
+
 Prometheus metrics:
 
 - `softdelete_queries`: num of issued softdelete queries
@@ -221,6 +229,7 @@ There wil the following grafana dashboards:
 - Softdelete OPM: operations count triggered by cleanup job.
 
 ####Stats
+
 Introduce a new system table tidb_softdelete_table_stats in information_schema. The table definition is as follows:
 
 ```
@@ -282,11 +291,13 @@ If we have a DELETE stmt with soft-delete tables and non-soft-delete tables, it 
 
 
 ###How SQL Rewrite Works
+
 ####SELECT 
 
 This part also applies to SELECT statements in DML statements, like INSERT ... SELECT statements.
 
 #####Filtering soft-deleted rows
+
 According to the soft-delete semantic, the rows with a non-null `_tidb_softdelete_time` is deleted and should not be output when the user queries this table, so we should explicitly filter these rows internally. Besides, this filtering behavior can be disabled by turning off `tidb_translate_softdelete_sql`.
 
 If `tidb_translate_softdelete_sql` is enabled, in `PredicatePushDown()` for `DataSource`, we will check if it's a soft-delete-enabled table, if it is, then add an extra `_tidb_softdelete_time IS NULL` filter to the predicates for this DataSource.
@@ -300,6 +311,7 @@ For implementation, the only thing we need to consider is the behavior of the `S
 In `unfoldWildStar()`, we should check the column name (since the user can't create a column with this name, so we don't need any extra flags and checking the name is enough), and skip it if it's `_tidb_softdelete_time`.
 
 #####Compatibility with the plan cache
+
 When `tidb_translate_softdelete_sql` is enabled or disabled, the semantic of the SQL is changed and the execution plan can't be reused between the two cases, so we need special handling in the plan cache module.
 
 If there are soft-delete enabled table in a query, we will include the value of the `tidb_translate_softdelete_sql` in the plan cache key, so that it will have different entries in the plan cache when `tidb_translate_softdelete_sql` is enabled or disabled.
@@ -387,6 +399,7 @@ The behavior of a REPLACE statement on a soft-delete-enabled table will be the s
 Note that, similar to the INSERT statement above, any conflicting rows will be hard-deleted and not be able to be recovered.
 
 ####DELETE
+
 If `tidb_translate_softdelete_sql` is enabled,  a DELETE statement translates to an UPDATE with the same query part plus SET `_tidb_softdelete_time = NOW()` internally.
 
 For example,
@@ -405,6 +418,7 @@ UPDATE t SET _tidb_softdelete_time = NOW() WHERE col_a = 10 ORDER BY col_b LIMIT
 The privilege check is conducted as if it's a normal DELETE statement, i.e., we check the DELETE privilege instead of the UPDATE privilege.
 
 ####RECOVER
+
 Introduce a new SQL syntax `RECOVER VALUES FROM <table_name> WHERE <expr>`
 
 Internally, this SQL translates to `UPDATE <table_name> SET _tidb_softdelete_time = NULL WHERE <expr>` (without further applying the rewriting for normal UPDATE statements mentioned above). The privilege check and query result will be the same as that.
@@ -461,6 +475,7 @@ You could also amend the table manually to correct any error/inconsistency.
 3. The mechanism can be reused by Instant TTL requirement. We don't need to make too much effort to implement Instant TTL later.
 
 ###Cons
+
 1. Userbility compromised. It introduce complexity and limitations to the user interface, especially for DBA during the clusters setting up. 
   1. The setting up of active-active requires configurations on both TiDB and TiCDC sides.
 
@@ -666,8 +681,8 @@ These two rules together ensure the `Last Writer Wins (LWW)` policy—that is, t
 
 ###Active-Active Limitations
 
-- An Active-Active table needs also to be a soft-delete table. (never support to be a non-soft-delete table)
-- All secondary indexes should not be unique in the Active-Active table. For example, it's to figure out how to resolve the conflict below:  (never support unique indexes). You can find more discussions from section "(Unsolved) To Support Secondary Unique Index"
+- An Active-Active table needs also to be a soft-delete table.  (Currently unsupported and not planned to be a non-soft-delete table)
+- All secondary indexes should not be unique in the Active-Active table. For example, it's to figure out how to resolve the conflict below:  (Unique indexes currently unsupported and not planned) You can find more discussions from section "(Unsolved) To Support Secondary Unique Index"
 
 ```
 -- Suppose a table with an extra unique index
@@ -686,8 +701,8 @@ INSERT INTO t VALUES(2, 20); -- commit_ts: ts3
 --   But we cannot remove (2, 20) because (2, 20) has a newer version (ts2 < ts3)
 ```
 
-- The columns `_tidb_origin_ts` and `_tidb_commit_ts` can not be modified with DDL. (never support to alter these hidden columns)
-- Changing table's `Active-Active` enable status after creation is not supported. (never support)
+- The columns `_tidb_origin_ts` and `_tidb_commit_ts` can not be modified with DDL.  (Currently unsupported and not planned to alter these hidden columns)
+- Changing table's `Active-Active` enable status after creation is not supported.  (Currently unsupported and not planned.)
 
 ###How Local DML Works 
 ####How PD TSO Allocation Works
@@ -837,6 +852,7 @@ We have two following options:
 2. Don't set BDR Mode for all clusters, and perform all the ddls this way [replication-scenarios-of-non-replicable-ddls](https://docs.pingcap.com/tidb/stable/ticdc-bidirectional-replication/#replication-scenarios-of-non-replicable-ddls). This approach requires users to stop all writes to all the clusters until finishing running DDLs in all clusters.
 
 ####How to Synchronization Downstream in Normal Mode
+
 When an LWW table needs to be synchronized to external downstreams (such as data warehouses), TiCDC must revert the internal LWW representation back to standard events.
 
 - Native DML Restoration: Upstream INSERT and UPDATE statements are translated into standard INSERT and UPDATE events formatted for the respective downstream.
@@ -989,6 +1005,7 @@ CREATE TABLE IF NOT EXISTS test (
 ```
 
 ####Case 1
+
 ![active-active-case1.png](active-active-case1.png)
 
 
@@ -1498,6 +1515,7 @@ ALTER TABLE <> ACTIVE_ACTIVE='ON' SOFTDELETE RETENTION=7 DAY;
 4. Start writing to tables in any clusters.
 
 ###How to migrate active-active tables to non-active-active tables
+
 This section describes how to switch some tables that are in active-active mode to non-active-active mode. You can refer to the following steps. 
 
 Note: It's not supported in Phase 1, and it might be supported in the future phases.
