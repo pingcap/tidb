@@ -222,7 +222,7 @@ func TestScanRanges(t *testing.T) {
 		}, nil).
 		Once()
 
-	shardInfos, err := ctx.ScanRanges(context.Background(), tableID, indexID, keyRanges, 100)
+	shardInfos, err := ctx.ScanRanges(context.Background(), ctx.getKeyspaceID(), tableID, indexID, keyRanges, 100)
 	assert.NoError(t, err)
 	assert.Len(t, shardInfos, 2)
 	assert.Equal(t, uint64(1), shardInfos[0].Shard.ShardId)
