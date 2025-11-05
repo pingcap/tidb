@@ -128,6 +128,7 @@ aliases:
     - zanmato1984
     - zhangjinpeng87
   sig-approvers-docs: *fallback-module-approvers
+  sig-approvers-keyspace: *fallback-module-approvers
   sig-approvers-extension:
     - bb7133
     - YangKeao
