@@ -26,10 +26,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -47,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var (
@@ -884,6 +887,7 @@ func (p *MySQLPrivilege) LoadTablesPrivTable(exec sqlexec.SQLExecutor) error {
 
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadColumnsPrivTable(exec sqlexec.SQLExecutor) error {
+	logutil.BgLogger().Debug("begin to load mysql.columns_priv")
 	err := loadTable(exec, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow(nil))
 	if err != nil {
 		return err
@@ -1328,6 +1332,23 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(userList map[string]struct{})
 			default:
 				value.assignUserOrHost(row, i, f)
 			}
+		}
+		// string fields' underlying array address should not repeat
+		if log.GetLevel() <= zapcore.DebugLevel {
+			logutil.BgLogger().Debug("columnsPrivRecord addr",
+				zap.String("user", value.User),
+				zap.String("user addr", fmt.Sprintf("%p", unsafe.StringData(value.User))),
+				zap.String("host", value.Host),
+				zap.String("host addr", fmt.Sprintf("%p", unsafe.StringData(value.Host))),
+				zap.String("db", value.DB),
+				zap.String("db addr", fmt.Sprintf("%p", unsafe.StringData(value.DB))),
+				zap.String("table_name", value.TableName),
+				zap.String("table_name addr", fmt.Sprintf("%p", unsafe.StringData(value.TableName))),
+				zap.String("column_name", value.ColumnName),
+				zap.String("column_name addr", fmt.Sprintf("%p", unsafe.StringData(value.ColumnName))),
+				zap.String("privileges", value.ColumnPriv.String()),
+				zap.Time("timestamp", value.Timestamp),
+			)
 		}
 		if userList != nil {
 			if _, ok := userList[value.User]; !ok {
@@ -1834,7 +1855,25 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	sortFromIdx = len(gs)
 	columnPrivTable := make(map[string]privOnColumns)
 	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
+		logutil.BgLogger().Debug("show column privilege record in btree node", zap.String("user", itm.username), zap.Int("len", len(itm.data)))
 		for _, record := range itm.data {
+			if log.GetLevel() <= zapcore.DebugLevel {
+				logutil.BgLogger().Debug("column privilege record in cache",
+					zap.String("user", record.User),
+					zap.String("user addr", fmt.Sprintf("%p", unsafe.StringData(record.User))),
+					zap.String("host", record.Host),
+					zap.String("host addr", fmt.Sprintf("%p", unsafe.StringData(record.Host))),
+					zap.String("db", record.DB),
+					zap.String("db addr", fmt.Sprintf("%p", unsafe.StringData(record.DB))),
+					zap.String("table_name", record.TableName),
+					zap.String("table_name addr", fmt.Sprintf("%p", unsafe.StringData(record.TableName))),
+					zap.String("column_name", record.ColumnName),
+					zap.String("column_name addr", fmt.Sprintf("%p", unsafe.StringData(record.ColumnName))),
+					zap.String("privileges", record.ColumnPriv.String()),
+					zap.Time("timestamp", record.Timestamp),
+					zap.Int("len(allRoles)", len(allRoles)),
+				)
+			}
 			if !collectColumnGrant(&record, user, host, columnPrivTable, sqlMode) {
 				for _, r := range allRoles {
 					collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable, sqlMode)
