@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -277,11 +278,7 @@ func (p *preprocessor) getAllDBInfos(node *ast.TableRefsClause) []pmodel.CIStr {
 	node.Accept(&collector)
 
 	for _, tblName := range collector.tableName {
-		dbName := tblName.Schema
-		if dbName.L == "" {
-			dbName = pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
-		}
-		dbNames = append(dbNames, dbName)
+		dbNames = append(dbNames, tblName.Schema)
 	}
 	return dbNames
 }
@@ -351,11 +348,8 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 		}
 	case *ast.SelectStmt:
 		if node.LockInfo != nil {
-			if node.LockInfo.LockType == ast.SelectLockForUpdate ||
-				node.LockInfo.LockType == ast.SelectLockForUpdateNoWait ||
-				node.LockInfo.LockType == ast.SelectLockForUpdateWaitN ||
-				((node.LockInfo.LockType == ast.SelectLockForShare || node.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
-					p.sctx.GetSessionVars().SharedLockPromotion) {
+			if logicalop.IsSelectForUpdateLockType(node.LockInfo.LockType) ||
+				(logicalop.IsSelectForShareLockType(node.LockInfo.LockType) && p.sctx.GetSessionVars().SharedLockPromotion) {
 				dbNames = append(dbNames, p.getAllDBInfos(node.From)...)
 			}
 		}
