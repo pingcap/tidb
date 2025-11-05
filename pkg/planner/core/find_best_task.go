@@ -170,6 +170,7 @@ func rebuildChildTasks(p *logicalop.BaseLogicalPlan, childTasks *[]base.Task, pp
 	return nil
 }
 
+<<<<<<< HEAD
 func enumeratePhysicalPlans4Task(
 	p *logicalop.BaseLogicalPlan,
 	physicalPlans []base.PhysicalPlan,
@@ -187,6 +188,78 @@ func enumeratePhysicalPlans4Task(
 	iteration := iteratePhysicalPlan4BaseLogical
 	if _, ok := p.Self().(*logicalop.LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
+=======
+// The reason the physical plan is a slice of slices is to allow preferring a specific type of plan within a slice,
+// while still performing cost comparison between slices.
+// There are three types of task in the following code: hintTask, normalPreferTask, and normalIterTask.
+// The purpose of hintTask is to always have the highest priority, both **within and across slices**,
+// meaning it will always be chosen if available, regardless of cost comparison.
+// For non-hint tasks, i.e., normalIterTask and normalPreferTask, normalPreferTask has the highest priority **within** a slice.
+// normalIterTask has the lowest priority and always depends on cost comparison to choose the least expensive task.
+func enumeratePhysicalPlans4Task(
+	super base.LogicalPlan,
+	physicalPlansSlice [][]base.PhysicalPlan,
+	prop *property.PhysicalProperty,
+	addEnforcer bool,
+) (base.Task, bool, error) {
+	if len(physicalPlansSlice) == 0 {
+		return base.InvalidTask, false, nil
+	}
+
+	var normalTask, hintTask = base.InvalidTask, base.InvalidTask
+	for _, ops := range physicalPlansSlice {
+		if len(ops) == 0 {
+			continue
+		}
+		curTask, curHintCanWork, curErr := enumeratePhysicalPlans4TaskHelper(super, ops, prop, addEnforcer)
+		if curErr != nil {
+			return nil, false, curErr
+		}
+
+		if curHintCanWork {
+			if hintTask.Invalid() {
+				hintTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, hintTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				hintTask = curTask
+			}
+		} else {
+			if normalTask.Invalid() {
+				normalTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, normalTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				normalTask = curTask
+			}
+		}
+	}
+	if !hintTask.Invalid() {
+		return hintTask, true, nil
+	}
+	return normalTask, false, nil
+}
+
+func enumeratePhysicalPlans4TaskHelper(
+	super base.LogicalPlan,
+	physicalPlans []base.PhysicalPlan,
+	prop *property.PhysicalProperty,
+	addEnforcer bool,
+) (base.Task, bool, error) {
+	var err error
+	var normalIterTask, normalPreferTask, hintTask = base.InvalidTask, base.InvalidTask, base.InvalidTask
+	initState := &enumerateState{}
+	_, baseLP, childLen, iteration, iterObj := prepareIterationDownElems(super)
+	childTasks := make([]base.Task, 0, childLen)
+
+	var fd *funcdep.FDSet
+	if addEnforcer && len(physicalPlans) != 0 {
+		switch logicalPlan := baseLP.Self().(type) {
+		case *logicalop.LogicalJoin, *logicalop.LogicalAggregation:
+			// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
+			fd = logicalPlan.ExtractFD()
+		}
+>>>>>>> 8b070c22317 (planner: fix prefer task logic when enumerate physical limit/topn (#64151))
 	}
 
 	for _, pp := range physicalPlans {
@@ -224,6 +297,14 @@ func enumeratePhysicalPlans4Task(
 			curTask = curTask.ConvertToRootTask(p.SCtx())
 		}
 
+<<<<<<< HEAD
+=======
+		// we need to check the hint is applicable before enforcing the property. otherwise
+		// what we get is Sort ot Exchanger kind of operators.
+		// todo: extend applyLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
+		hintApplicable := applyLogicalHintVarEigen(baseLP.Self(), pp, childTasks)
+
+>>>>>>> 8b070c22317 (planner: fix prefer task logic when enumerate physical limit/topn (#64151))
 		// Enforce curTask property
 		if addEnforcer {
 			curTask = enforceProperty(prop, curTask, p.Plan.SCtx())
@@ -235,6 +316,7 @@ func enumeratePhysicalPlans4Task(
 			curTask = optimizeByShuffle(curTask, p.Plan.SCtx())
 		}
 
+<<<<<<< HEAD
 		cntPlan += curCntPlan
 		planCounter.Dec(curCntPlan)
 
@@ -251,6 +333,58 @@ func enumeratePhysicalPlans4Task(
 		}
 	}
 	return bestTask, cntPlan, nil
+=======
+		if hintApplicable {
+			if hintTask.Invalid() {
+				hintTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, hintTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				hintTask = curTask
+			}
+		}
+
+		if hintTask.Invalid() && hasNormalPreferTask(baseLP.Self(), initState, pp, childTasks) {
+			if normalPreferTask.Invalid() {
+				normalPreferTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, normalPreferTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				normalPreferTask = curTask
+			}
+		}
+
+		if hintTask.Invalid() && normalPreferTask.Invalid() {
+			if normalIterTask.Invalid() {
+				normalIterTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, normalIterTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				normalIterTask = curTask
+			}
+		}
+	}
+
+	returnedTask := base.InvalidTask
+	var hintCanWork bool
+	if !hintTask.Invalid() {
+		returnedTask = hintTask
+		hintCanWork = true
+	} else if !normalPreferTask.Invalid() {
+		returnedTask = normalPreferTask
+	} else if !normalIterTask.Invalid() {
+		returnedTask = normalIterTask
+	}
+
+	if !hintCanWork && returnedTask != nil && !returnedTask.Invalid() {
+		// It means there is no hint or hint is not applicable.
+		// So record hint warning if necessary.
+		if warn := recordWarnings(baseLP.Self(), prop, addEnforcer); warn != nil {
+			returnedTask.AppendWarning(warn)
+		}
+	}
+	return returnedTask, hintCanWork, nil
+>>>>>>> 8b070c22317 (planner: fix prefer task logic when enumerate physical limit/topn (#64151))
 }
 
 // iteratePhysicalPlan4BaseLogical is used to iterate the physical plan and get all child tasks.
@@ -527,7 +661,15 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
 	newProp := prop.CloneEssentialFields()
+<<<<<<< HEAD
 	var plansFitsProp, plansNeedEnforce []base.PhysicalPlan
+=======
+	// here newProp is used as another complete copy for enforcer, fill indexJoinProp manually.
+	// for childProp := prop.CloneEssentialFields(), we do not clone indexJoinProp childProp for by default.
+	// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
+	newProp.IndexJoinProp = prop.IndexJoinProp
+	var plansFitsProp, plansNeedEnforce [][]base.PhysicalPlan
+>>>>>>> 8b070c22317 (planner: fix prefer task logic when enumerate physical limit/topn (#64151))
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
 	// so we try to get the task without the enforced sort first.
