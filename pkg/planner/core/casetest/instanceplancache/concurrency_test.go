@@ -65,9 +65,10 @@ func isTxn(stmt string) bool {
 }
 
 type worker struct {
-	tk    *testkit.TestKit
-	stmts []*testStmt
-	wg    *sync.WaitGroup
+	tk       *testkit.TestKit
+	stmts    []*testStmt
+	wg       *sync.WaitGroup
+	dmlMutex *sync.Mutex // Optional mutex for synchronizing DML operations across databases
 }
 
 func (w *worker) run() {
@@ -82,10 +83,17 @@ func (w *worker) run() {
 			preparedResult := w.tk.MustQuery(stmt.execStmt)
 			normalResult.Sort().Check(preparedResult.Sort().Rows())
 		} else if isDML(stmt.normalStmt) { // DML
+			// Synchronize DML operations if mutex is provided
+			if w.dmlMutex != nil {
+				w.dmlMutex.Lock()
+			}
 			w.tk.MustExec(stmt.normalStmt)
 			w.tk.MustExec(stmt.prepStmt)
 			w.tk.MustExec(stmt.setStmt)
 			w.tk.MustExec(stmt.execStmt)
+			if w.dmlMutex != nil {
+				w.dmlMutex.Unlock()
+			}
 		}
 	}
 }
@@ -107,30 +115,9 @@ func testWithWorkers(TKs []*testkit.TestKit, stmts []*testStmt) {
 
 	var wg sync.WaitGroup
 	for i, tk := range TKs {
-		w := worker{tk: tk, stmts: nStmts[i], wg: &wg}
+		w := worker{tk: tk, stmts: nStmts[i], wg: &wg, dmlMutex: &dmlMutex}
 		wg.Add(1)
-		go func(worker worker) {
-			defer wg.Done()
-			for _, stmt := range worker.stmts {
-				if isTxn(stmt.normalStmt) {
-					worker.tk.MustExec(stmt.normalStmt) // txn stmt
-				} else if isDQL(stmt.normalStmt) { // DQL
-					normalResult := worker.tk.MustQuery(stmt.normalStmt)
-					worker.tk.MustExec(stmt.prepStmt)
-					worker.tk.MustExec(stmt.setStmt)
-					preparedResult := worker.tk.MustQuery(stmt.execStmt)
-					normalResult.Sort().Check(preparedResult.Sort().Rows())
-				} else if isDML(stmt.normalStmt) { // DML
-					// Synchronize DML operations to ensure both databases are updated atomically
-					dmlMutex.Lock()
-					worker.tk.MustExec(stmt.normalStmt)
-					worker.tk.MustExec(stmt.prepStmt)
-					worker.tk.MustExec(stmt.setStmt)
-					worker.tk.MustExec(stmt.execStmt)
-					dmlMutex.Unlock()
-				}
-			}
-		}(w)
+		go w.run()
 	}
 	wg.Wait()
 }
