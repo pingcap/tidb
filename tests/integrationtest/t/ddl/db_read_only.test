@@ -178,6 +178,7 @@ use db1;
 insert into t1 values(1, 1);
 -- error 3809
 insert into t1 select * from t2;
+insert into db2.t1 select * from t1; # pass
 -- error 3809
 insert into t1 table t2;
 -- error 3809

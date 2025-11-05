@@ -184,6 +184,7 @@ insert into t1 values(1, 1);
 Error 3809 (HY000): Schema 'db1' is in read only mode.
 insert into t1 select * from t2;
 Error 3809 (HY000): Schema 'db1' is in read only mode.
+insert into db2.t1 select * from t1; # pass
 insert into t1 table t2;
 Error 3809 (HY000): Schema 'db1' is in read only mode.
 insert into t1 set a=1;

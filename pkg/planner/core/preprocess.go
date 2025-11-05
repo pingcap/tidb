@@ -253,13 +253,13 @@ type preprocessor struct {
 }
 
 type tableSourceCollector struct {
-	tableSources []*ast.TableSource
+	tableName []*ast.TableName
 }
 
 func (t *tableSourceCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	if ts, ok := in.(*ast.TableSource); ok {
-		if _, ok := ts.Source.(*ast.TableName); ok {
-			t.tableSources = append(t.tableSources, ts)
+		if tblName, ok := ts.Source.(*ast.TableName); ok {
+			t.tableName = append(t.tableName, tblName)
 		}
 	}
 	return in, false
@@ -272,12 +272,11 @@ func (*tableSourceCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 func (p *preprocessor) getAllDBInfos(node *ast.TableRefsClause) []pmodel.CIStr {
 	dbNames := make([]pmodel.CIStr, 0)
 	collector := tableSourceCollector{
-		tableSources: make([]*ast.TableSource, 0),
+		tableName: make([]*ast.TableName, 0),
 	}
 	node.Accept(&collector)
 
-	for _, tbl := range collector.tableSources {
-		tblName := tbl.Source.(*ast.TableName)
+	for _, tblName := range collector.tableName {
 		dbName := tblName.Schema
 		if dbName.L == "" {
 			dbName = pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
@@ -327,9 +326,7 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 	case *ast.LoadDataStmt:
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.InsertStmt:
-		for _, tbl := range p.resolveCtx.GetTableNames() {
-			dbNames = append(dbNames, tbl.DBInfo.Name)
-		}
+		dbNames = append(dbNames, p.getAllDBInfos(node.Table)...)
 	case *ast.DeleteStmt:
 		if node.Tables != nil {
 			// multiple table delete statement
