@@ -15,8 +15,6 @@
 package bindinfo
 
 import (
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"strings"
 	"time"
 
@@ -26,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
 // BindingOperator is used to operate (create/drop/update/GC) bindings.

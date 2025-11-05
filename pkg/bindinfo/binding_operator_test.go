@@ -420,7 +420,7 @@ func TestLoadBindingTimeLag(t *testing.T) {
 	tk.Session().SetValue(bindinfo.TestTimeLagInLoadingBinding, 15)
 	tk.MustExec(`create global binding using select * from t where a > 1`)
 	numBindings = len(tk.MustQuery(`show global bindings`).Rows())
-	require.Equal(t, 2, numBindings) // can't see the latest one since the time lag tolerance is 10s
+	require.Equal(t, 2, numBindings) // can't see the latest one since the time lag tolerance is only 10s
 }
 
 func TestGlobalBinding(t *testing.T) {
