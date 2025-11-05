@@ -130,8 +130,8 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	// Create table with an index. The index histogram will exist in the stats cache
-	// but won't have actual histogram data loaded yet.
+	// Create table with an index. The index histogram doesn't exist in the system tables
+	// because we didn't handle the create table DDL event (simulating a lost DDL event).
 	tk.MustExec("create table if not exists t(a int, b int, index ia(a));")
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	h := dom.StatsHandle()
