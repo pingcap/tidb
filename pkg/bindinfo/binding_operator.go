@@ -15,6 +15,8 @@
 package bindinfo
 
 import (
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"strings"
 	"time"
 
@@ -54,6 +56,9 @@ func newBindingOperator(sPool util.DestroyableSessionPool, cache BindingCacheUpd
 	}
 }
 
+// TestTimeLagInLoadingBinding is used for test only.
+var TestTimeLagInLoadingBinding stringutil.StringerStr = "TestTimeLagInLoadingBinding"
+
 // CreateBinding creates a Bindings to the storage and the cache.
 // It replaces all the exists bindings for the same normalized SQL.
 func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
@@ -68,6 +73,11 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 		}
 	}()
 
+	mockTimeLag := 0 // mock time lag between different TiDB instances for test, see #64250.
+	if intest.InTest && sctx.Value(TestTimeLagInLoadingBinding) != nil {
+		mockTimeLag = sctx.Value(TestTimeLagInLoadingBinding).(int)
+	}
+
 	return callWithSCtx(op.sPool, true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
@@ -75,7 +85,11 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 		}
 
 		for i, binding := range bindings {
-			now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6)
+			timeNow := time.Now()
+			if mockTimeLag != 0 {
+				timeNow = timeNow.Add(time.Duration(-mockTimeLag) * time.Second)
+			}
+			now := types.NewTime(types.FromGoTime(timeNow), mysql.TypeTimestamp, 6)
 
 			updateTs := now.String()
 			_, err = exec(

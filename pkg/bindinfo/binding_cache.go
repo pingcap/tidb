@@ -16,10 +16,6 @@ package bindinfo
 
 import (
 	"fmt"
-	"slices"
-	"sync"
-	"sync/atomic"
-
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -29,6 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
+	"slices"
+	"sync"
+	"sync/atomic"
 )
 
 // BindingCacheUpdater maintains the binding cache and provide update APIs.
@@ -57,14 +56,20 @@ type bindingCacheUpdater struct {
 
 // LoadFromStorageToCache loads bindings from the storage into the cache.
 func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) {
-	var lastUpdateTime types.Time
+	lastUpdateTime := u.lastUpdateTime.Load().(types.Time)
 	var timeCondition string
-	if fullLoad {
+	if fullLoad || lastUpdateTime.IsZero() { // avoid "update_time>'0000-00-00 00:00:00'", which is invalid
 		lastUpdateTime = types.ZeroTimestamp
 		timeCondition = ""
 	} else {
+		// If multiple TiDBs are creating bindings simultaneously and their time are not synchronized,
+		// some bindings' update_time may be earlier than the lastUpdateTime of this TiDB.
+		// timeLagToleranceSec is used to tolerate the time lag between different TiDBs.
+		// See #64250 for more details.
+		timeLagToleranceSec := 10
 		lastUpdateTime = u.lastUpdateTime.Load().(types.Time)
-		timeCondition = fmt.Sprintf("USE INDEX (time_index) WHERE update_time>'%s'", lastUpdateTime.String())
+		whereCondition := `USE INDEX (time_index) WHERE update_time>DATE_SUB('%s', INTERVAL %d SECOND)`
+		timeCondition = fmt.Sprintf(whereCondition, lastUpdateTime.String(), timeLagToleranceSec)
 	}
 	condition := fmt.Sprintf(`%s ORDER BY update_time, create_time`, timeCondition)
 	bindings, err := readBindingsFromStorage(u.sPool, condition)
