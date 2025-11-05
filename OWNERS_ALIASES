@@ -36,7 +36,7 @@ aliases:
     - windtalker
     - XuHuaiyu
     - zanmato1984
-  sig-approvers-executor-import:
+  sig-approvers-importer:
     - D3Hunter
     - gmhdbjd
     - Benjamin2037
