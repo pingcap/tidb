@@ -511,6 +511,7 @@ func extractRandFromTraceID(traceID []byte) uint32 {
 	return *((*uint32)(unsafe.Pointer(&traceID[16])))
 }
 
+// ConvertEventsForRendering converts []Event to []RenderEvent for trace event rendering.
 func ConvertEventsForRendering(events []Event) []RenderEvent {
 	var tid uint32
 	res := make([]RenderEvent, 0, len(events))

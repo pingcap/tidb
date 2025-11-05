@@ -269,7 +269,7 @@ func (r *HTTPFlightRecorder) Close() {
 	globalHTTPFlightRecorder.Store(nil)
 }
 
-func (r *HTTPFlightRecorder) collect(ctx context.Context, events []Event) {
+func (r *HTTPFlightRecorder) collect(_ context.Context, events []Event) {
 	select {
 	case r.ch <- slices.Clone(events):
 	default:
