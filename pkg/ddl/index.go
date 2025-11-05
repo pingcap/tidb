@@ -1067,32 +1067,32 @@ func buildHybridSortSpec(spec *hybridSortSpec, resolveColumn func(string) (*mode
 		}
 		columns = append(columns, colInfo.Name.O)
 	}
-	dirs := spec.Directions
-	if len(dirs) == 0 && len(spec.Order) > 0 {
-		dirs = spec.Order
+	orders := spec.Order
+	if len(orders) == 0 && len(spec.Directions) > 0 {
+		orders = spec.Directions
 	}
-	if len(dirs) != 0 && len(dirs) != len(columns) {
-		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index sort directions length mismatch")
+	if len(orders) != 0 && len(orders) != len(columns) {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index sort order length mismatch")
 	}
 	normalized := make([]string, len(columns))
 	for i := range columns {
 		direction := "asc"
 		raw := "asc"
-		if len(dirs) > 0 {
-			raw = dirs[i]
+		if len(orders) > 0 {
+			raw = orders[i]
 			direction = strings.TrimSpace(strings.ToLower(raw))
 			if direction == "" {
 				direction = "asc"
 			}
 		}
 		if direction != "asc" && direction != "desc" {
-			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index sort direction '%s' is invalid", raw))
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index sort order '%s' is invalid", raw))
 		}
 		normalized[i] = direction
 	}
 	return &model.HybridSortSpec{
-		Columns:    columns,
-		Directions: normalized,
+		Columns: columns,
+		Order:   normalized,
 	}, nil
 }
 

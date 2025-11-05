@@ -227,8 +227,8 @@ type HybridInvertedSpec struct {
 
 // HybridSortSpec describes the order definition of the hybrid index.
 type HybridSortSpec struct {
-	Columns    []string `json:"columns,omitempty"`
-	Directions []string `json:"directions,omitempty"`
+	Columns []string `json:"columns,omitempty"`
+	Order   []string `json:"order,omitempty"`
 }
 
 // Clone clones HybridIndexInfo.
@@ -387,8 +387,8 @@ func (opt *HybridSortSpec) Clone() *HybridSortSpec {
 	if len(opt.Columns) > 0 {
 		cloned.Columns = append([]string(nil), opt.Columns...)
 	}
-	if len(opt.Directions) > 0 {
-		cloned.Directions = append([]string(nil), opt.Directions...)
+	if len(opt.Order) > 0 {
+		cloned.Order = append([]string(nil), opt.Order...)
 	}
 	return cloned
 }
