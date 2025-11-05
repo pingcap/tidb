@@ -408,7 +408,7 @@ func (t *ManagerCtx) AbortIndexUpload(
 }
 
 // ScanRanges sends a request to the TiCI shard cache service to scan ranges for a given table and index.
-func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) ([]*ShardLocalCacheInfo, error) {
+func (t *ManagerCtx) ScanRanges(ctx context.Context, keyspaceID uint32, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) ([]*ShardLocalCacheInfo, error) {
 	ticiKeyRanges := make([]*KeyRange, 0, len(keyRanges))
 	for _, r := range keyRanges {
 		ticiKeyRanges = append(ticiKeyRanges, &KeyRange{
@@ -418,10 +418,11 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 	}
 
 	request := &GetShardLocalCacheRequest{
-		TableId:   tableID,
-		IndexId:   indexID,
-		KeyRanges: ticiKeyRanges,
-		Limit:     int32(limit),
+		TableId:    tableID,
+		IndexId:    indexID,
+		KeyspaceId: keyspaceID,
+		KeyRanges:  ticiKeyRanges,
+		Limit:      int32(limit),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
