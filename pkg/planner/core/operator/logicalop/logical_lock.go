@@ -152,7 +152,7 @@ func IsSelectForUpdateLockType(lockType ast.SelectLockType) bool {
 	return false
 }
 
-// IsSelectForShareLockType checks if the select lock type is supported for  type.
+// IsSelectForShareLockType checks if the select lock type is supported for share type.
 func IsSelectForShareLockType(lockType ast.SelectLockType) bool {
 	if lockType == ast.SelectLockForShare ||
 		lockType == ast.SelectLockForShareNoWait {
