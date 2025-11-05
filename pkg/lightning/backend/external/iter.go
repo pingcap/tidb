@@ -453,8 +453,7 @@ func (i *limitSizeMergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
 	return
 }
 
-// begin instantiations of mergeIter
-
+// KVPair represents a key-value pair.
 type KVPair struct {
 	Key   []byte
 	Value []byte
