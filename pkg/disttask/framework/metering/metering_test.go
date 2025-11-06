@@ -58,10 +58,10 @@ func TestRecord(t *testing.T) {
 	require.Equal(t, uint64(5), m.data[1].putRequests)
 	require.Equal(t, uint64(3), m.data[1].getRequests)
 
-	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{readDataBytes: 100, writeDataBytes: 200})
+	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{readBytes: 100, writeBytes: 200})
 	require.Equal(t, uint64(100), m.data[1].readDataBytes)
 	require.Equal(t, uint64(200), m.data[1].writeDataBytes)
-	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{readDataBytes: 200, writeDataBytes: 100})
+	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{readBytes: 200, writeBytes: 100})
 	require.Equal(t, uint64(300), m.data[1].readDataBytes)
 	require.Equal(t, uint64(300), m.data[1].writeDataBytes)
 
@@ -90,7 +90,7 @@ func TestFlush(t *testing.T) {
 	writeTime := curTime.Truncate(time.Minute).Add(time.Minute)
 	data := readMeteringData(t, reader, writeTime.Add(-time.Minute).Unix())
 	require.Len(t, data, 0)
-	meter.Record("ks1", TaskTypeAddIndex, 1, &Data{putRequests: 10, getRequests: 20, readDataBytes: 300, writeDataBytes: 400})
+	meter.Record("ks1", TaskTypeAddIndex, 1, &Data{putRequests: 10, getRequests: 20, readBytes: 300, writeBytes: 400})
 	meter.flush(context.Background(), writeTime.Unix())
 	data = readMeteringData(t, reader, writeTime.Add(-time.Minute).Unix())
 	require.Len(t, data, 0)

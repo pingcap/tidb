@@ -171,14 +171,14 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 // Accepted implements Collector.Accepted interface.
 func (s *importStepExecutor) Accepted(bytes int64) {
 	s.summary.Bytes.Add(bytes)
-	metering.NewRecorder(s.store, metering.TaskTypeImportInto, s.taskID).
+	metering.RegisterRecorder(s.store.GetKeyspace(), metering.TaskTypeImportInto, s.taskID).
 		RecordReadDataBytes(uint64(bytes))
 }
 
 // Processed implements Collector.Processed interface.
 func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
 	s.summary.RowCnt.Add(rowCnt)
-	metering.NewRecorder(s.store, metering.TaskTypeImportInto, s.taskID).
+	metering.RegisterRecorder(s.store.GetKeyspace(), metering.TaskTypeImportInto, s.taskID).
 		RecordWriteDataBytes(uint64(bytes))
 }
 
@@ -417,12 +417,12 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		mu.Lock()
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
-		metering.NewRecorder(m.store, metering.TaskTypeImportInto, subtask.TaskID).
+		metering.RegisterRecorder(m.store.GetKeyspace(), metering.TaskTypeImportInto, subtask.TaskID).
 			RecordPutRequestCount(summary.PutRequestCount)
 	}
 	onReaderClose := func(summary *external.ReaderSummary) {
 		m.summary.GetReqCnt.Add(summary.GetRequestCount)
-		metering.NewRecorder(m.store, metering.TaskTypeImportInto, subtask.TaskID).
+		metering.RegisterRecorder(m.store.GetKeyspace(), metering.TaskTypeImportInto, subtask.TaskID).
 			RecordGetRequestCount(summary.GetRequestCount)
 	}
 
@@ -580,7 +580,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			MemCapacity:   e.GetResource().Mem.Capacity(),
 			OnReaderClose: func(summary *external.ReaderSummary) {
 				e.summary.GetReqCnt.Add(summary.GetRequestCount)
-				metering.NewRecorder(e.store, metering.TaskTypeImportInto, subtask.TaskID).
+				metering.RegisterRecorder(e.store.GetKeyspace(), metering.TaskTypeImportInto, subtask.TaskID).
 					RecordGetRequestCount(summary.GetRequestCount)
 			},
 		},

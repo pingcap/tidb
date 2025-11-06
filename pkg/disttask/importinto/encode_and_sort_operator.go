@@ -165,7 +165,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 					op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
-					metering.NewRecorder(op.tableImporter.GetKVStore(), metering.TaskTypeImportInto, op.taskID).
+					metering.RegisterRecorder(op.tableImporter.GetKVStore().GetKeyspace(), metering.TaskTypeImportInto, op.taskID).
 						RecordPutRequestCount(summary.PutRequestCount)
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
@@ -183,7 +183,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 			SetOnCloseFunc(func(summary *external.WriterSummary) {
 				op.sharedVars.mergeDataSummary(summary)
 				op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
-				metering.NewRecorder(op.tableImporter.GetKVStore(), metering.TaskTypeImportInto, op.taskID).
+				metering.RegisterRecorder(op.tableImporter.GetKVStore().GetKeyspace(), metering.TaskTypeImportInto, op.taskID).
 					RecordPutRequestCount(summary.PutRequestCount)
 			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
