@@ -442,7 +442,7 @@ func (scanner *regionScanner) IsKeyRangeInOneRegion(ctx context.Context, startKe
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	return bytes.Compare(endKey, regionInfo.Region.EndKey) < 0, nil
+	return len(regionInfo.Region.EndKey) == 0 || bytes.Compare(endKey, regionInfo.Region.EndKey) < 0, nil
 }
 
 type BackupFileSetWithKeyRange struct {
