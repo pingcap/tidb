@@ -67,11 +67,13 @@ type LogRestoreTableIDsBlocklistFile struct {
 	// SnapshotBackupTs records the BackupTS of the PITR restore. Any PITR restore from the log backup of the cluster, whose restoredTS
 	// is less than it, can ignore the restore table IDs blocklist recorded in the file.
 	SnapshotBackupTs uint64 `protobuf:"varint,2,opt,name=snapshot_backup_ts,proto3"`
+	// RestoreTargetTs records the user-specified restore target timestamp. PITR operations restoring to an earlier time can ignore this blocklist.
+	RestoreTargetTs uint64 `protobuf:"varint,7,opt,name=restore_target_ts,proto3"`
 	// RewriteTs records the rewritten timestamp of the meta kvs in this PITR restore.
 	RewriteTs uint64 `protobuf:"varint,6,opt,name=rewrite_ts,proto3"`
-	// TableIds records the table IDs blocklist of the cluster running the log backup task.
+	// TableIds records the downstream table IDs created by this PITR restore.
 	TableIds []int64 `protobuf:"varint,3,rep,packed,name=table_ids,proto3"`
-	// DbIds records the database IDs blocklist of the cluster running the log backup task.
+	// DbIds records the downstream database IDs created by this PITR restore.
 	DbIds []int64 `protobuf:"varint,5,rep,packed,name=db_ids,proto3"`
 	// Checksum records the checksum of other fields.
 	Checksum []byte `protobuf:"bytes,4,opt,name=checksum,proto3"`
@@ -115,6 +117,7 @@ func (m *LogRestoreTableIDsBlocklistFile) checksumLogRestoreTableIDsBlocklistFil
 	hasher := sha256.New()
 	hasher.Write(binary.LittleEndian.AppendUint64(nil, m.RestoreCommitTs))
 	hasher.Write(binary.LittleEndian.AppendUint64(nil, m.SnapshotBackupTs))
+	hasher.Write(binary.LittleEndian.AppendUint64(nil, m.RestoreTargetTs))
 	hasher.Write(binary.LittleEndian.AppendUint64(nil, m.RewriteTs))
 	for _, tableId := range m.TableIds {
 		hasher.Write(binary.LittleEndian.AppendUint64(nil, uint64(tableId)))
@@ -130,10 +133,11 @@ func (m *LogRestoreTableIDsBlocklistFile) setChecksumLogRestoreTableIDsBlocklist
 }
 
 // MarshalLogRestoreTableIDsBlocklistFile generates an Blocklist file and marshals it. It returns its filename and the marshaled data.
-func MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, snapshotBackupTs, rewriteTs uint64, tableIds, dbIds []int64) (string, []byte, error) {
+func MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, snapshotBackupTs, restoreTargetTs, rewriteTs uint64, tableIds, dbIds []int64) (string, []byte, error) {
 	blocklistFile := &LogRestoreTableIDsBlocklistFile{
 		RestoreCommitTs:  restoreCommitTs,
 		SnapshotBackupTs: snapshotBackupTs,
+		RestoreTargetTs:  restoreTargetTs,
 		RewriteTs:        rewriteTs,
 		TableIds:         tableIds,
 		DbIds:            dbIds,
@@ -166,14 +170,15 @@ func unmarshalLogRestoreTableIDsBlocklistFile(data []byte) (*LogRestoreTableIDsB
 func fastWalkLogRestoreTableIDsBlocklistFile(
 	ctx context.Context,
 	s storage.ExternalStorage,
-	filterOutFn func(restoreCommitTs, snapshotBackupTs uint64) bool,
-	executionFn func(ctx context.Context, filename string, restoreCommitTs, rewriteTs uint64, tableIds, dbIds []int64) error,
+	filterOutFn func(restoreCommitTs, snapshotBackupTs, restoreTargetTs uint64) bool,
+	executionFn func(ctx context.Context, filename string, restoreCommitTs, restoreTargetTs, rewriteTs uint64, tableIds, dbIds []int64) error,
 ) error {
 	filenames := make([]string, 0)
 	if err := s.WalkDir(ctx, &storage.WalkOption{SubDir: logRestoreTableIDBlocklistFilePrefix}, func(path string, _ int64) error {
 		restoreCommitTs, snapshotBackupTs, parsed := parseLogRestoreTableIDsBlocklistFileName(path)
 		if parsed {
-			if filterOutFn(restoreCommitTs, snapshotBackupTs) {
+			// Use 0 as restoreTargetTs for file-level filtering since we can't parse it from filename
+			if filterOutFn(restoreCommitTs, snapshotBackupTs, 0) {
 				return nil
 			}
 		}
@@ -197,10 +202,10 @@ func fastWalkLogRestoreTableIDsBlocklistFile(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if filterOutFn(blocklistFile.RestoreCommitTs, blocklistFile.SnapshotBackupTs) {
+			if filterOutFn(blocklistFile.RestoreCommitTs, blocklistFile.SnapshotBackupTs, blocklistFile.RestoreTargetTs) {
 				return nil
 			}
-			err = executionFn(ectx, filename, blocklistFile.RestoreCommitTs, blocklistFile.RewriteTs, blocklistFile.TableIds, blocklistFile.DbIds)
+			err = executionFn(ectx, filename, blocklistFile.RestoreCommitTs, blocklistFile.RestoreTargetTs, blocklistFile.RewriteTs, blocklistFile.TableIds, blocklistFile.DbIds)
 			return errors.Trace(err)
 		})
 	}
@@ -219,9 +224,18 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 	checkDBIdlost func(dbId int64) bool,
 	cleanError func(rewriteTs uint64),
 ) error {
-	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, snapshotBackupTs uint64) bool {
-		return startTs >= restoreCommitTs || restoredTs <= snapshotBackupTs
-	}, func(_ context.Context, _ string, restoreCommitTs, rewriteTs uint64, tableIds, dbIds []int64) error {
+	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, snapshotBackupTs, restoreTargetTs uint64) bool {
+		// Original conditions for backward compatibility
+		if startTs >= restoreCommitTs || restoredTs <= snapshotBackupTs {
+			return true
+		}
+		// New condition: allow time rollback (skip blocklist check if restoring to earlier time)
+		// Only applies to new blocklist files (restoreTargetTs > 0)
+		if restoreTargetTs > 0 && restoredTs < restoreTargetTs {
+			return true
+		}
+		return false
+	}, func(_ context.Context, _ string, restoreCommitTs, restoreTargetTs, rewriteTs uint64, tableIds, dbIds []int64) error {
 		for _, tableId := range tableIds {
 			if tracker.ContainsTableId(tableId) || tracker.ContainsPartitionId(tableId) {
 				return errors.Errorf(
@@ -258,9 +272,9 @@ func TruncateLogRestoreTableIDsBlocklistFiles(
 	s storage.ExternalStorage,
 	untilTs uint64,
 ) error {
-	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, snapshotBackupTs uint64) bool {
+	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, snapshotBackupTs, restoreTargetTs uint64) bool {
 		return untilTs < restoreCommitTs
-	}, func(ctx context.Context, filename string, _, _ uint64, _, _ []int64) error {
+	}, func(ctx context.Context, filename string, _, _, _ uint64, _, _ []int64) error {
 		return s.DeleteFile(ctx, filename)
 	})
 	return errors.Trace(err)

@@ -294,6 +294,10 @@ type RestoreConfig struct {
 
 	WaitTiflashReady bool `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
 
+	// PITR-related fields for blocklist creation
+	piTRTaskInfo        *PiTRTaskInfo              `json:"-" toml:"-"`
+	tableMappingManager *stream.TableMappingManager `json:"-" toml:"-"`
+
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
 	Prepare             bool                  `json:"prepare" toml:"prepare"`
@@ -905,18 +909,66 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			restoreErr = err
 			return
 		}
-		tableIds := make([]int64, 0, len(cfg.PiTRTableTracker.TableIdToDBIds))
-		for tableId := range cfg.PiTRTableTracker.TableIdToDBIds {
-			tableIds = append(tableIds, tableId)
+
+		// Extract downstream IDs from tableMappingManager instead of upstream IDs from tracker
+		downstreamTableIds := make([]int64, 0, len(cfg.PiTRTableTracker.TableIdToDBIds)+len(cfg.PiTRTableTracker.PartitionIds))
+		downstreamDbIds := make([]int64, 0, len(cfg.PiTRTableTracker.DBIds))
+
+		if cfg.tableMappingManager != nil {
+			// Convert upstream table IDs to downstream table IDs
+			for upstreamTableId := range cfg.PiTRTableTracker.TableIdToDBIds {
+				found := false
+				for _, dbReplace := range cfg.tableMappingManager.DBReplaceMap {
+					if tableReplace, exists := dbReplace.TableMap[upstreamTableId]; exists && !tableReplace.FilteredOut {
+						downstreamTableIds = append(downstreamTableIds, tableReplace.TableID)
+						found = true
+						break
+					}
+				}
+				if !found {
+					log.Warn("failed to find downstream ID for upstream table ID", zap.Int64("upstreamTableId", upstreamTableId))
+				}
+			}
+
+			// Convert upstream partition IDs to downstream partition IDs
+			for upstreamPartitionId := range cfg.PiTRTableTracker.PartitionIds {
+				found := false
+				for _, dbReplace := range cfg.tableMappingManager.DBReplaceMap {
+					for _, tableReplace := range dbReplace.TableMap {
+						if downstreamId, exists := tableReplace.PartitionMap[upstreamPartitionId]; exists {
+							downstreamTableIds = append(downstreamTableIds, downstreamId)
+							found = true
+							break
+						}
+					}
+					if found {
+						break
+					}
+				}
+				if !found {
+					log.Warn("failed to find downstream ID for upstream partition ID", zap.Int64("upstreamPartitionId", upstreamPartitionId))
+				}
+			}
+
+			// Convert upstream DB IDs to downstream DB IDs
+			for upstreamDbId := range cfg.PiTRTableTracker.DBIds {
+				if dbReplace, exists := cfg.tableMappingManager.DBReplaceMap[upstreamDbId]; exists && !dbReplace.FilteredOut {
+					downstreamDbIds = append(downstreamDbIds, dbReplace.DbID)
+				} else {
+					log.Warn("failed to find downstream ID for upstream DB ID", zap.Int64("upstreamDbId", upstreamDbId))
+				}
+			}
+		} else {
+			log.Warn("tableMappingManager is nil, blocklist will contain no IDs")
 		}
-		for tableId := range cfg.PiTRTableTracker.PartitionIds {
-			tableIds = append(tableIds, tableId)
+
+		// Get restore target timestamp
+		var restoreTargetTs uint64
+		if cfg.piTRTaskInfo != nil {
+			restoreTargetTs = cfg.piTRTaskInfo.RestoreTS
 		}
-		dbIds := make([]int64, 0, len(cfg.PiTRTableTracker.DBIds))
-		for dbId := range cfg.PiTRTableTracker.DBIds {
-			dbIds = append(dbIds, dbId)
-		}
-		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, cfg.StartTS, cfg.RewriteTS, tableIds, dbIds)
+
+		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, cfg.StartTS, restoreTargetTs, cfg.RewriteTS, downstreamTableIds, downstreamDbIds)
 		if err != nil {
 			restoreErr = err
 			return
@@ -926,7 +978,10 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			restoreErr = err
 			return
 		}
-		log.Info("save the log restore table IDs blocklist into log backup storage")
+		log.Info("save the log restore table IDs blocklist into log backup storage",
+			zap.Int("downstreamTableCount", len(downstreamTableIds)),
+			zap.Int("downstreamDbCount", len(downstreamDbIds)),
+			zap.Uint64("restoreTargetTs", restoreTargetTs))
 		if err = logTaskStorage.WriteFile(c, filename, data); err != nil {
 			restoreErr = err
 			return
