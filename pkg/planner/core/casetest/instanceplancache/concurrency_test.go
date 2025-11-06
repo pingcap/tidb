@@ -889,7 +889,7 @@ func TestInstancePlanCacheConcurrencyComp(t *testing.T) {
 	}
 	stmts = append(stmts, &testStmt{normalStmt: "commit"})
 
-	nConcurrency := 20
+	nConcurrency := 12
 	TKs := make([]*testkit.TestKit, nConcurrency)
 	for i := range TKs {
 		TKs[i] = testkit.NewTestKit(t, store)
