@@ -23,7 +23,10 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -43,8 +46,10 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=on;")
-	tk.MustExec("set @@global.tidb_enable_dist_task=on;")
+	if kerneltype.IsClassic() {
+		tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=on;")
+		tk.MustExec("set @@global.tidb_enable_dist_task=on;")
+	}
 
 	createTables := []string{
 		"create table t (id int, b int, c int, primary key(id) clustered);",
@@ -109,6 +114,9 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 }
 
 func TestFixAdminAlterDDLJobs(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -203,7 +211,7 @@ func TestAddIndexShowAnalyzeProgress(t *testing.T) {
 	tk1.MustExec("use test")
 	tk1.MustExec("create table t (a int, b int, key idx_b(b));")
 	tk1.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
-	tk1.MustExec("set @@tidb_enable_ddl_analyze = 1;")
+	tk1.MustExec("set @@tidb_stats_update_during_ddl = 1;")
 	beginRs := tk1.MustQuery("select now();").Rows()
 	begin := beginRs[0][0].(string)
 	jobID := int64(0)
@@ -255,7 +263,7 @@ func TestAnalyzeTimeout(t *testing.T) {
 	tk1.MustExec("drop table if exists t_timeout;")
 	tk1.MustExec("create table t_timeout (a int, b varchar(16), key idx_b(b));")
 	tk1.MustExec("insert into t_timeout values (1, '1'), (2, '2'), (3, '3');")
-	tk1.MustExec("set @@tidb_enable_ddl_analyze = 1;")
+	tk1.MustExec("set @@tidb_stats_update_during_ddl = 1;")
 
 	jobID := int64(0)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
@@ -337,7 +345,7 @@ func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	tk1.MustExec("set @@tidb_enable_ddl_analyze = true;")
+	tk1.MustExec("set @@tidb_stats_update_during_ddl = true;")
 	tk1.MustExec("set @@sql_mode = '';")
 	dbCnt := 0
 
@@ -368,4 +376,58 @@ func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
 	checkFn("alter table t modify column c char(5), modify column a bigint, modify column b bigint;", "all columns")
 	checkFn("alter table t modify column a bigint, modify column c char(5), modify column b bigint;", "all columns")
 	checkFn("alter table t modify column a bigint, modify column b bigint;", "") // no lossy change
+}
+
+func TestCancelAfterReorgTimeout(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create view all_global_tasks as select * from mysql.tidb_global_task union all select * from mysql.tidb_global_task_history;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+
+	// Mock subtask executor encounter the same error continuously.
+	afterMeetErr := false
+	meetErr := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeReadIndexStepExecRunSubtask", func(err *error) {
+		*err = errors.New("mock err")
+		if !afterMeetErr {
+			meetErr <- struct{}{}
+			afterMeetErr = true
+		}
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs", "return(10)") // Speed up the test.
+	var jobID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionAddIndex {
+			return
+		}
+		jobID = job.ID
+	})
+	afterTimeout := false
+	timeout := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterDXFTaskSubmitted", func() {
+		<-meetErr
+		<-timeout
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test;")
+		tk1.MustExec(fmt.Sprintf("admin cancel ddl jobs %d;", jobID))
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunReorgJobTimeout", func() {
+		if !afterTimeout {
+			timeout <- struct{}{}
+			afterTimeout = true
+		}
+	})
+	tk.MustGetErrCode("alter table t add index idx(a);", errno.ErrCancelledDDLJob)
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery("select state from all_global_tasks;").Rows()
+		require.Greater(t, len(result), 0)
+		state := result[0][0].(string)
+		done := state == proto.TaskStateSucceed.String() ||
+			state == proto.TaskStateReverted.String() ||
+			state == proto.TaskStateFailed.String()
+		return done
+	}, 10*time.Second, 300*time.Millisecond)
 }

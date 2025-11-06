@@ -25,6 +25,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -355,7 +356,9 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 	tk.MustExec("drop database if exists op;")
 	tk.MustExec("create database op;")
 	tk.MustExec("use op;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
 
 	tk.MustExec("create table t(a int primary key, b int, index idx(b));")
 	for i := range regionCnt {

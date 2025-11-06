@@ -6981,7 +6981,7 @@ func getEnableDDLAnalyze(sctx sessionctx.Context) string {
 	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBEnableDDLAnalyze); ok {
 		return val
 	}
-	logutil.DDLLogger().Info("system variable tidb_enable_ddl_analyze not found, use default value")
+	logutil.DDLLogger().Info("system variable tidb_stats_update_during_ddl not found, use default value")
 	return variable.BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze)
 }
 

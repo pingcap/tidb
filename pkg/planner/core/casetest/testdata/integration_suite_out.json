@@ -75,11 +75,10 @@
       {
         "SQL": "explain format = 'verbose' select * from t3 order by b limit 1",
         "Plan": [
-          "Projection_24 1.00 1171.49 root  test.t3.a, test.t3.b",
-          "└─IndexLookUp_23 1.00 1171.29 root  limit embedded(offset:0, count:1)",
-          "  ├─Limit_22(Build) 1.00 203.50 cop[tikv]  offset:0, count:1",
-          "  │ └─IndexFullScan_20 1.00 203.50 cop[tikv] table:t3, index:c(b) keep order:true",
-          "  └─TableRowIDScan_21(Probe) 1.00 227.31 cop[tikv] table:t3 keep order:false"
+          "TopN_8 1.00 60.74 root  test.t3.b, offset:0, count:1",
+          "└─TableReader_17 1.00 54.34 root  data:TopN_16",
+          "  └─TopN_16 1.00 688.32 cop[tikv]  test.t3.b, offset:0, count:1",
+          "    └─TableFullScan_15 3.00 681.92 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
