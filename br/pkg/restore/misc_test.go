@@ -304,9 +304,8 @@ func (fmc *fakeMetaClient) ScanRegions(ctx context.Context, key, endKey []byte, 
 		if len(k) == 0 {
 			if len(regionInfo.Region.EndKey) == 0 {
 				return 0
-			} else {
-				return -1
 			}
+			return -1
 		}
 		startCmpRet := bytes.Compare(regionInfo.Region.StartKey, k)
 		if startCmpRet <= 0 && (len(regionInfo.Region.EndKey) == 0 || bytes.Compare(regionInfo.Region.EndKey, k) > 0) {

@@ -778,6 +778,8 @@ func (importer *SnapFileImporter) batchDownloadSST(
 					}
 
 					mu.Lock()
+					// For TiKV server, the input is req.Ssts and the output target is req.Sst. Therefore, get
+					// the req.Sst as the output of merged SST file.
 					sstMeta := req.Sst
 					sstMeta.Range = &import_sstpb.Range{
 						Start: restoreutils.TruncateTS(resp.Range.GetStart()),
