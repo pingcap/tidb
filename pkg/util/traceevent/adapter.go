@@ -26,6 +26,7 @@ import (
 func RegisterWithClientGo() {
 	trace.SetTraceEventFunc(handleClientGoTraceEvent)
 	trace.SetIsCategoryEnabledFunc(handleClientGoIsCategoryEnabled)
+	trace.SetImmediateLoggingExtractor(handleImmediateLoggingExtractor)
 }
 
 // handleClientGoTraceEvent is the function called by client-go to emit trace events.
@@ -45,6 +46,13 @@ func handleClientGoTraceEvent(ctx context.Context, category trace.Category, name
 func handleClientGoIsCategoryEnabled(category trace.Category) bool {
 	cat := mapCategory(category)
 	return IsEnabled(cat)
+}
+
+// handleImmediateLoggingExtractor is called by client-go to determine if a trace should be logged immediately.
+// For now, this is a placeholder that always returns false. The actual extraction logic will be added in a future PR.
+func handleImmediateLoggingExtractor(ctx context.Context) bool {
+	// TODO: Implement actual extraction logic based on trace ID or other context information
+	return false
 }
 
 func mapCategory(category trace.Category) TraceCategory {
