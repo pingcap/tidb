@@ -33,6 +33,18 @@ type indexWithScore struct {
 	consecutiveOrderingCount int // Consecutive ordering columns from start of index
 }
 
+// columnRequirements holds the column maps and totals needed for index pruning.
+type columnRequirements struct {
+	whereColIDs            map[int64]struct{}
+	joinColIDs             map[int64]struct{}
+	orderingColIDs         map[int64]struct{}
+	totalWhereColumns      int
+	totalJoinColumns       int
+	totalOrderingColumns   int
+	totalLocalRequiredCols int // WHERE + ordering columns
+	totalJoinRequiredCols  int // JOIN + WHERE columns
+}
+
 // PruneIndexesByWhereAndOrder prunes indexes based on their coverage of WHERE, join and ordering columns.
 // It keeps the most promising indexes up to the threshold, prioritizing those that:
 // 1. Cover more required columns (WHERE, JOIN, ORDER BY)
@@ -48,45 +60,8 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		return paths
 	}
 
-	totalWhereColumns := 0
-	totalOrderingColumns := 0
-	totalJoinColumns := 0
-
-	// Build ID-based lookup maps for column matching
-	joinColIDs := make(map[int64]struct{}, len(joinColumns))
-	for _, col := range joinColumns {
-		joinColIDs[col.ID] = struct{}{}
-		totalJoinColumns++
-	}
-	// NOTE: Where columns may also be included in join columns, so that are excluded here to avoid double-counting
-	// TO-DO: Consider refactoring the way columns are extracted from the predicate columns to avoid this risk.
-	// If a join column has never appeared in a query as a local where column, then it will be correctly
-	// identified as a join column only. But if a join column has also appeared in a local where column,
-	// then it will be identified as both a join column and a where column in the current implementation.
-	whereColIDs := make(map[int64]struct{}, len(whereColumns))
-	for _, col := range whereColumns {
-		// Skip if already in joinColIDs to avoid double-counting
-		if _, exists := joinColIDs[col.ID]; !exists {
-			whereColIDs[col.ID] = struct{}{}
-			totalWhereColumns++
-		}
-	}
-	orderingColIDs := make(map[int64]struct{}, len(orderingColumns))
-	for _, col := range orderingColumns {
-		// Skip if already in whereColIDs to avoid double-counting
-		if _, exists := whereColIDs[col.ID]; !exists {
-			orderingColIDs[col.ID] = struct{}{}
-			totalOrderingColumns++
-		}
-	}
-	// Calculate total coverage as a single table index
-	totalLocalRequiredCols := totalWhereColumns + totalOrderingColumns
-	// Calculate total coverage as a join table index
-	totalJoinRequiredCols := totalJoinColumns
-	if totalJoinRequiredCols > 0 {
-		totalJoinRequiredCols += totalWhereColumns
-	}
-	maxConsecutiveWhere, maxConsecutiveJoin := 0, 0
+	// Build column ID maps and calculate totals
+	req := buildColumnRequirements(whereColumns, orderingColumns, joinColumns)
 
 	// maxIndexes allows a minimum number of indexes to be kept regardless of threshold.
 	// max/minToKeep only calculate index plans to keep in addition to table plans.
@@ -94,223 +69,256 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	const maxIndexes = 10
 	maxToKeep := max(maxIndexes, threshold)
 	minToKeep := max(1, min(maxIndexes, threshold))
-	// Prepare lists to hold indexes with different levels of coverage
-	perfectCoveringIndexes := make([]indexWithScore, 0, maxIndexes) // Indexes covering all required columns
-	preferredIndexes := make([]indexWithScore, 0, maxIndexes)       // "Next" best indexes with preferable coveraage
-	tablePaths := make([]*util.AccessPath, 0, 1)                    // Usually just one table path
 
-	lenPerfectCoveringIndexes, lenPreferredIndexes := 0, 0
+	// Prepare lists to hold indexes with different levels of coverage
+	perfectCoveringIndexes := make([]indexWithScore, 0, maxIndexes)
+	preferredIndexes := make([]indexWithScore, 0, maxIndexes)
+	tablePaths := make([]*util.AccessPath, 0, 1)
+
+	maxConsecutiveWhere, maxConsecutiveJoin := 0, 0
 	hasSingleScan := false
+
+	// Categorize each index path
 	for _, path := range paths {
 		if path.IsTablePath() {
 			tablePaths = append(tablePaths, path)
 			continue
 		}
 
-		// If we have forced paths, we shouldn't prune any paths.
-		// Hints processing should have already done the pruning.
-		// It means we may have entered this function due to a low threshold.
+		// If we have forced paths, we shouldn't prune any paths
 		if path.Forced {
 			return paths
 		}
 
-		// Count how many WHERE, join and ordering columns are covered by this index
-		// Also track consecutive matches from the start (most valuable for index usage)
-		coveredWhereCount := 0
-		coveredOrderingCount := 0
-		coveredJoinCount := 0
-		consecutiveWhereCount := 0
-		consecutiveOrderingCount := 0
-		consecutiveJoinCount := 0
+		// Calculate coverage for this index
+		idxScore := scoreIndexPath(path, req)
 
-		skipThisIndex := false
-
-		for i, idxCol := range path.FullIdxCols {
-			idxColID := idxCol.ID
-
-			// Check if this index column matches a WHERE column
-			if totalWhereColumns > 0 {
-				if _, found := whereColIDs[idxColID]; found {
-					coveredWhereCount++
-					// Track consecutive matches from start of index
-					if i == consecutiveWhereCount {
-						consecutiveWhereCount++
-					}
-					// Also increment consecutive join count if there has already been at least one
-					// consecutive join match, and the current index column position matches the
-					// sum of consecutive join and where matches.
-					if consecutiveJoinCount > 0 && i == consecutiveJoinCount+consecutiveWhereCount {
-						consecutiveJoinCount++
-					}
-					continue // Move to next index column - since a column can only appear once
-				}
-			}
-			// Check if this index column matches a join column
-			if totalJoinColumns > 0 {
-				if _, found := joinColIDs[idxColID]; found {
-					coveredJoinCount++
-					// Track consecutive matches from start of index
-					if i == consecutiveJoinCount+consecutiveWhereCount {
-						consecutiveJoinCount++
-					}
-					continue // Move to next index column - since a column can only appear once
-				}
-			}
-
-			// Check if this index column matches an ordering column (ORDER BY or MIN/MAX)
-			if totalOrderingColumns > 0 {
-				if _, found := orderingColIDs[idxColID]; found {
-					coveredOrderingCount++
-					// Track consecutive matches from where column matches
-					if i == consecutiveOrderingCount+consecutiveWhereCount {
-						consecutiveOrderingCount++
-					}
-					continue
-				}
-			}
-			// If we have enough perfect covering indexes, and we've reached here then
-			// the index columns are not a match. Don't continue with this index.
-			if lenPerfectCoveringIndexes >= minToKeep && (i == 0 || hasSingleScan) && i < max(maxConsecutiveWhere, maxConsecutiveJoin) {
-				skipThisIndex = true
-				break
+		// Early skip for indexes that don't match any leading columns
+		if len(perfectCoveringIndexes) >= minToKeep && (idxScore.consecutiveWhereCount == 0 && idxScore.consecutiveJoinCount == 0) {
+			if hasSingleScan || (idxScore.consecutiveWhereCount < maxConsecutiveWhere && idxScore.consecutiveJoinCount < maxConsecutiveJoin) {
+				continue
 			}
 		}
 
-		if skipThisIndex {
-			continue
-		}
-		// Calculate this plans totals
-		totalLocalCovered := coveredWhereCount + coveredOrderingCount
-		totalJoinCovered := coveredWhereCount + coveredJoinCount
-		totalConsecutive := consecutiveWhereCount + consecutiveOrderingCount + consecutiveJoinCount
-		maxListLength := max(lenPerfectCoveringIndexes, lenPreferredIndexes)
+		// Calculate aggregate metrics
+		totalLocalCovered := idxScore.whereCount + idxScore.orderingCount
+		totalJoinCovered := idxScore.whereCount + idxScore.joinCount
+		totalConsecutive := idxScore.consecutiveWhereCount + idxScore.consecutiveOrderingCount + idxScore.consecutiveJoinCount
 
-		if totalLocalCovered >= totalLocalRequiredCols && totalJoinCovered >= totalJoinRequiredCols {
+		// Check if this is a covering index and set IsSingleScan
+		if totalLocalCovered >= req.totalLocalRequiredCols && totalJoinCovered >= req.totalJoinRequiredCols {
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
+
+		// Skip non-single-scan indexes if we already have enough single-scan ones
+		maxListLength := max(len(perfectCoveringIndexes), len(preferredIndexes))
 		if maxListLength >= minToKeep && hasSingleScan && !path.IsSingleScan &&
-			consecutiveWhereCount <= maxConsecutiveWhere && consecutiveJoinCount <= maxConsecutiveJoin {
+			idxScore.consecutiveWhereCount <= maxConsecutiveWhere && idxScore.consecutiveJoinCount <= maxConsecutiveJoin {
 			continue
 		}
-		// Perfect covering: covers ALL required columns AND has consecutive matches from start
-		if ((totalLocalCovered == totalLocalRequiredCols && totalLocalRequiredCols > 0) ||
-			(totalJoinCovered == totalJoinRequiredCols && totalJoinRequiredCols > 0)) &&
+
+		// Categorize as perfect covering if it covers ALL required columns
+		if ((totalLocalCovered == req.totalLocalRequiredCols && req.totalLocalRequiredCols > 0) ||
+			(totalJoinCovered == req.totalJoinRequiredCols && req.totalJoinRequiredCols > 0)) &&
 			(totalConsecutive > 0 || path.IsSingleScan) {
-			perfectCoveringIndexes = append(perfectCoveringIndexes, indexWithScore{
-				path:                     path,
-				whereCount:               coveredWhereCount,
-				orderingCount:            coveredOrderingCount,
-				joinCount:                coveredJoinCount,
-				consecutiveWhereCount:    consecutiveWhereCount,
-				consecutiveJoinCount:     consecutiveJoinCount,
-				consecutiveOrderingCount: consecutiveOrderingCount,
-			})
-			maxConsecutiveWhere = max(maxConsecutiveWhere, consecutiveWhereCount)
-			maxConsecutiveJoin = max(maxConsecutiveJoin, consecutiveJoinCount)
-			lenPerfectCoveringIndexes = len(perfectCoveringIndexes)
+			perfectCoveringIndexes = append(perfectCoveringIndexes, idxScore)
+			maxConsecutiveWhere = max(maxConsecutiveWhere, idxScore.consecutiveWhereCount)
+			maxConsecutiveJoin = max(maxConsecutiveJoin, idxScore.consecutiveJoinCount)
 			if path.IsSingleScan {
 				hasSingleScan = true
 			}
 			continue
 		}
 
-		// Preferred: has meaningful coverage
-		hasGoodCoverage := false
-
-		if maxListLength >= maxToKeep {
-			if (consecutiveWhereCount > maxConsecutiveWhere && maxConsecutiveWhere > 0) || (consecutiveJoinCount > maxConsecutiveJoin && maxConsecutiveJoin > 0) {
-				hasGoodCoverage = true
-			}
-		} else if maxListLength >= minToKeep {
-			if (consecutiveWhereCount >= maxConsecutiveWhere && maxConsecutiveWhere > 0) || (consecutiveJoinCount >= maxConsecutiveJoin && maxConsecutiveJoin > 0) {
-				hasGoodCoverage = true
-			}
-			if consecutiveWhereCount >= totalWhereColumns && totalWhereColumns > 1 {
-				hasGoodCoverage = true
-			}
-			// consecutiveJoinCount can be greater than totalJoinColumns because
-			// we include consecutive where and join columns - since both are available
-			// for index join matching.
-			if consecutiveJoinCount >= totalJoinColumns && totalJoinColumns > 0 {
-				hasGoodCoverage = true
-			}
-			if consecutiveOrderingCount >= totalOrderingColumns && totalOrderingColumns > 0 {
-				hasGoodCoverage = true
-			}
-		} else {
-			if totalConsecutive > 0 {
-				if lenPreferredIndexes < minToKeep ||
-					(totalLocalCovered > 1 || totalJoinCovered > 1) {
-					hasGoodCoverage = true
-				}
-			}
-			if coveredWhereCount >= totalWhereColumns && totalWhereColumns > 0 {
-				hasGoodCoverage = true
-			}
-		}
-
-		if hasGoodCoverage {
-			preferredIndexes = append(preferredIndexes, indexWithScore{
-				path:                     path,
-				whereCount:               coveredWhereCount,
-				orderingCount:            coveredOrderingCount,
-				joinCount:                coveredJoinCount,
-				consecutiveJoinCount:     consecutiveJoinCount,
-				consecutiveWhereCount:    consecutiveWhereCount,
-				consecutiveOrderingCount: consecutiveOrderingCount,
-			})
-			lenPreferredIndexes = len(preferredIndexes)
+		// Categorize as preferred if it has meaningful coverage
+		if shouldKeepAsPreferred(idxScore, maxListLength, maxToKeep, minToKeep, maxConsecutiveWhere, maxConsecutiveJoin, req) {
+			preferredIndexes = append(preferredIndexes, idxScore)
 		}
 	}
 
-	// Build result with priority: table paths, perfect covering, then preferred
+	// Build final result by sorting and selecting top indexes
+	result := buildFinalResult(tablePaths, perfectCoveringIndexes, preferredIndexes, maxToKeep, req)
+
+	// Safety check: if we ended up with nothing, return the original paths
+	if len(result) == 0 {
+		return paths
+	}
+
+	// Additional safety: if we only have table paths and no indexes, keep original
+	if len(result) == len(tablePaths) && len(perfectCoveringIndexes) == 0 && len(preferredIndexes) == 0 {
+		return paths
+	}
+
+	return result
+}
+
+// shouldKeepAsPreferred determines if an index should be kept in the preferred list
+// based on its coverage characteristics and current list sizes.
+func shouldKeepAsPreferred(idxScore indexWithScore, maxListLength, maxToKeep, minToKeep, maxConsecutiveWhere, maxConsecutiveJoin int, req columnRequirements) bool {
+	if maxListLength >= maxToKeep {
+		// At capacity - only keep if better than current best
+		if (idxScore.consecutiveWhereCount > maxConsecutiveWhere && maxConsecutiveWhere > 0) ||
+			(idxScore.consecutiveJoinCount > maxConsecutiveJoin && maxConsecutiveJoin > 0) {
+			return true
+		}
+	} else if maxListLength >= minToKeep {
+		// Have minimum - keep if meets or exceeds current best
+		if (idxScore.consecutiveWhereCount >= maxConsecutiveWhere && maxConsecutiveWhere > 0) ||
+			(idxScore.consecutiveJoinCount >= maxConsecutiveJoin && maxConsecutiveJoin > 0) {
+			return true
+		}
+		if idxScore.consecutiveWhereCount >= req.totalWhereColumns && req.totalWhereColumns > 1 {
+			return true
+		}
+		if idxScore.consecutiveJoinCount >= req.totalJoinColumns && req.totalJoinColumns > 0 {
+			return true
+		}
+		if idxScore.consecutiveOrderingCount >= req.totalOrderingColumns && req.totalOrderingColumns > 0 {
+			return true
+		}
+	} else {
+		// Below minimum - more lenient acceptance criteria
+		totalConsecutive := idxScore.consecutiveWhereCount + idxScore.consecutiveOrderingCount + idxScore.consecutiveJoinCount
+		totalLocalCovered := idxScore.whereCount + idxScore.orderingCount
+		totalJoinCovered := idxScore.whereCount + idxScore.joinCount
+
+		if totalConsecutive > 0 && (maxListLength < minToKeep || totalLocalCovered > 1 || totalJoinCovered > 1) {
+			return true
+		}
+		if idxScore.whereCount >= req.totalWhereColumns && req.totalWhereColumns > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// buildColumnRequirements builds column ID maps for efficient lookup and calculates totals.
+// It handles deduplication to avoid double-counting columns that appear in multiple contexts.
+func buildColumnRequirements(whereColumns, orderingColumns, joinColumns []*expression.Column) columnRequirements {
+	req := columnRequirements{
+		whereColIDs:    make(map[int64]struct{}, len(whereColumns)),
+		joinColIDs:     make(map[int64]struct{}, len(joinColumns)),
+		orderingColIDs: make(map[int64]struct{}, len(orderingColumns)),
+	}
+
+	// Build join column IDs first (highest priority for deduplication)
+	for _, col := range joinColumns {
+		req.joinColIDs[col.ID] = struct{}{}
+		req.totalJoinColumns++
+	}
+
+	// Build WHERE column IDs (exclude join columns to avoid double-counting)
+	for _, col := range whereColumns {
+		if _, exists := req.joinColIDs[col.ID]; !exists {
+			req.whereColIDs[col.ID] = struct{}{}
+			req.totalWhereColumns++
+		}
+	}
+
+	// Build ordering column IDs (exclude WHERE columns to avoid double-counting)
+	for _, col := range orderingColumns {
+		if _, exists := req.whereColIDs[col.ID]; !exists {
+			req.orderingColIDs[col.ID] = struct{}{}
+			req.totalOrderingColumns++
+		}
+	}
+
+	// Calculate total coverage requirements
+	req.totalLocalRequiredCols = req.totalWhereColumns + req.totalOrderingColumns
+	req.totalJoinRequiredCols = req.totalJoinColumns
+	if req.totalJoinRequiredCols > 0 {
+		req.totalJoinRequiredCols += req.totalWhereColumns
+	}
+
+	return req
+}
+
+// scoreIndexPath calculates coverage metrics for a single index path.
+func scoreIndexPath(path *util.AccessPath, req columnRequirements) indexWithScore {
+	score := indexWithScore{path: path}
+
+	for i, idxCol := range path.FullIdxCols {
+		idxColID := idxCol.ID
+		matched := false
+
+		// Check if this index column matches a WHERE column
+		if req.totalWhereColumns > 0 {
+			if _, found := req.whereColIDs[idxColID]; found {
+				score.whereCount++
+				if i == score.consecutiveWhereCount {
+					score.consecutiveWhereCount++
+				}
+				if score.consecutiveJoinCount > 0 && i == score.consecutiveJoinCount+score.consecutiveWhereCount {
+					score.consecutiveJoinCount++
+				}
+				matched = true
+			}
+		}
+
+		// Check if this index column matches a join column
+		if !matched && req.totalJoinColumns > 0 {
+			if _, found := req.joinColIDs[idxColID]; found {
+				score.joinCount++
+				if i == score.consecutiveJoinCount+score.consecutiveWhereCount {
+					score.consecutiveJoinCount++
+				}
+				matched = true
+			}
+		}
+
+		// Check if this index column matches an ordering column
+		if !matched && req.totalOrderingColumns > 0 {
+			if _, found := req.orderingColIDs[idxColID]; found {
+				score.orderingCount++
+				if i == score.consecutiveOrderingCount+score.consecutiveWhereCount {
+					score.consecutiveOrderingCount++
+				}
+			}
+		}
+	}
+
+	return score
+}
+
+// buildFinalResult sorts and selects the top indexes to keep, combining table paths,
+// perfect covering indexes, and preferred indexes.
+func buildFinalResult(tablePaths []*util.AccessPath, perfectCoveringIndexes, preferredIndexes []indexWithScore,
+	maxToKeep int, req columnRequirements) []*util.AccessPath {
+	const maxIndexes = 10
 	result := make([]*util.AccessPath, 0, maxIndexes)
 
 	// CRITICAL: Always include table paths - this is mandatory for correctness
 	result = append(result, tablePaths...)
 
-	// Only sort perfect covering indexes if we have more than we can use
-	// If we'll keep all of them, no need to sort
+	// Sort and add perfect covering indexes
 	maxScoreToKeep := 0
 	if len(perfectCoveringIndexes) > maxToKeep {
-		// Score perfectCoveringIndexes the same way as preferred, but include isSingleScan bonus
 		slices.SortFunc(perfectCoveringIndexes, func(a, b indexWithScore) int {
-			scoreA := calculateScoreFromCoverage(a, totalWhereColumns, totalJoinColumns, totalOrderingColumns, a.path.IsSingleScan)
-			scoreB := calculateScoreFromCoverage(b, totalWhereColumns, totalJoinColumns, totalOrderingColumns, b.path.IsSingleScan)
-			if scoreA != scoreB {
-				return scoreB - scoreA
-			}
-			// Tie-breaker: shorter index first
-			return len(a.path.Index.Columns) - len(b.path.Index.Columns)
+			return compareIndexScores(a, b, req)
 		})
-		// Track the max score from the best perfect covering index
-		maxScoreToKeep = calculateScoreFromCoverage(perfectCoveringIndexes[0], totalWhereColumns, totalJoinColumns, totalOrderingColumns, perfectCoveringIndexes[0].path.IsSingleScan)
+		maxScoreToKeep = calculateScoreFromCoverage(perfectCoveringIndexes[0], req.totalWhereColumns, req.totalJoinColumns, req.totalOrderingColumns, perfectCoveringIndexes[0].path.IsSingleScan)
 	}
 
-	// Add perfect covering indexes (prefer these over preferred)
-	// Add as many index paths (to the result containing table paths) as per maxToKeep.
 	remaining := maxToKeep
 	if remaining > 0 && len(perfectCoveringIndexes) > 0 {
 		toAdd := min(remaining, len(perfectCoveringIndexes))
 		for _, idxWithScore := range perfectCoveringIndexes[:toAdd] {
 			result = append(result, idxWithScore.path)
-			// Track max score if not already set
 			if maxScoreToKeep == 0 {
-				score := calculateScoreFromCoverage(idxWithScore, totalWhereColumns, totalJoinColumns, totalOrderingColumns, idxWithScore.path.IsSingleScan)
+				score := calculateScoreFromCoverage(idxWithScore, req.totalWhereColumns, req.totalJoinColumns, req.totalOrderingColumns, idxWithScore.path.IsSingleScan)
 				maxScoreToKeep = max(maxScoreToKeep, score)
 			}
 		}
 		remaining -= toAdd
 	}
 
-	// Add preferred indexes if we still have room (extract paths from indexWithScore)
+	// Filter and add preferred indexes
 	if remaining > 0 && len(preferredIndexes) > 0 {
-		// Filter out indexes that are 50% below the max score before sorting
 		minScoreThreshold := maxScoreToKeep / 2
 		if maxScoreToKeep > 0 {
 			filtered := make([]indexWithScore, 0, len(preferredIndexes))
 			for _, idxWithScore := range preferredIndexes {
-				score := calculateScoreFromCoverage(idxWithScore, totalWhereColumns, totalJoinColumns, totalOrderingColumns, idxWithScore.path.IsSingleScan)
+				score := calculateScoreFromCoverage(idxWithScore, req.totalWhereColumns, req.totalJoinColumns, req.totalOrderingColumns, idxWithScore.path.IsSingleScan)
 				if score >= minScoreThreshold {
 					filtered = append(filtered, idxWithScore)
 				}
@@ -318,19 +326,9 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			preferredIndexes = filtered
 		}
 
-		// Only sort if we have more preferred indexes than remaining slots
-		// If we'll keep all of them, no need to sort
 		if len(preferredIndexes) > remaining {
 			slices.SortFunc(preferredIndexes, func(a, b indexWithScore) int {
-				// Calculate scores using pre-computed coverage info
-				scoreA := calculateScoreFromCoverage(a, totalWhereColumns, totalJoinColumns, totalOrderingColumns, a.path.IsSingleScan)
-				scoreB := calculateScoreFromCoverage(b, totalWhereColumns, totalJoinColumns, totalOrderingColumns, b.path.IsSingleScan)
-				// Higher score is better, so reverse the comparison
-				if scoreA != scoreB {
-					return scoreB - scoreA
-				}
-				// If same score, prefer shorter index
-				return len(a.path.Index.Columns) - len(b.path.Index.Columns)
+				return compareIndexScores(a, b, req)
 			})
 		}
 
@@ -340,20 +338,18 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		}
 	}
 
-	// Safety check: if we ended up with nothing, return the original paths
-	// This prevents accidentally pruning everything
-	if len(result) == 0 {
-		return paths
-	}
-
-	// Additional safety: if we only have table paths and no indexes at all, keep original
-	// This might happen if no indexes match, but we should still consider all indexes
-	if len(result) == len(tablePaths) && len(perfectCoveringIndexes) == 0 && len(preferredIndexes) == 0 {
-		// We pruned ALL indexes - this is probably too aggressive, keep original
-		return paths
-	}
-
 	return result
+}
+
+// compareIndexScores compares two index scores for sorting (higher score first).
+func compareIndexScores(a, b indexWithScore, req columnRequirements) int {
+	scoreA := calculateScoreFromCoverage(a, req.totalWhereColumns, req.totalJoinColumns, req.totalOrderingColumns, a.path.IsSingleScan)
+	scoreB := calculateScoreFromCoverage(b, req.totalWhereColumns, req.totalJoinColumns, req.totalOrderingColumns, b.path.IsSingleScan)
+	if scoreA != scoreB {
+		return scoreB - scoreA // Higher score first
+	}
+	// Tie-breaker: shorter index first
+	return len(a.path.Index.Columns) - len(b.path.Index.Columns)
 }
 
 // calculateScoreFromCoverage calculates a ranking score using already-computed coverage information.
