@@ -926,25 +926,25 @@ func TestModifyColumnWithIndex(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int, b int,
+	tk.MustExec(`create table t (a varchar(4), b int,
 		index idx1 (a), index idx2 (a), index idx3 (a),
 		index idx4 (b), index idx5 (b), index idx6 (b),
 		index idx7 (a, b), index idx8 (a, b), index idx9 (a, b));`)
-	tk.MustExec("insert into t values (1, 1)")
+	tk.MustExec("insert into t values ('a ', 1)")
 	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 1")
 
 	cnt := 0
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/addIndexTxnWorkerBackfillData", func(idxRecordNum int) {
 		cnt += idxRecordNum
 	})
-	tk.MustExec("alter table t modify column a bigint")
-	require.Equal(t, 0, cnt)
-	tk.MustExec("alter table t modify column a int")
+	tk.MustExec("alter table t modify column a char(4)")
 	require.Equal(t, 6, cnt)
 
 	cnt = 0
-	tk.MustExec("alter table t modify column a bigint, modify column b bigint")
+	tk.MustExec("alter table t modify column b bigint")
 	require.Equal(t, 0, cnt)
-	tk.MustExec("alter table t modify column a int, modify column b int")
-	require.Equal(t, 12, cnt)
+	tk.MustExec("alter table t modify column b int UNSIGNED")
+	require.Equal(t, 6, cnt)
+	tk.MustExec("alter table t modify column a varchar(2), modify column b int")
+	require.Equal(t, 18, cnt)
 }

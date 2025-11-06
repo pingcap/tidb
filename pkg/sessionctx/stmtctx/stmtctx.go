@@ -306,6 +306,7 @@ type StatementContext struct {
 	Priority     mysql.PriorityEnum
 	NotFillCache bool
 	MemTracker   *memory.Tracker
+	MemSensitive bool // whether this statement is memory sensitive
 	DiskTracker  *disk.Tracker
 	// per statement resource group name
 	// hint /* +ResourceGroup(name) */ can change the statement group name
@@ -326,9 +327,16 @@ type StatementContext struct {
 	}
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
-	BindSQL        string
+	BindSQL string
+
+	// ExecRetryCount records the number of retries for executing the statement.
+	// It is set after ExecStmt execution and currently only used in the Slow Log phase
+	// after LogSlowQuery is called.
 	ExecRetryCount uint64
-	ExecSuccess    bool
+	// ExecSuccess indicates whether the statement execution succeeded.
+	// It is set after ExecStmt execution and currently only used in the Slow Log phase
+	// after LogSlowQuery is called.
+	ExecSuccess bool
 
 	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.

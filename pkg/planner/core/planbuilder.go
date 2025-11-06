@@ -2101,7 +2101,8 @@ func (b *PlanBuilder) addColumnsWithVirtualExprs(tbl *resolve.TableNameW, cols *
 	}
 
 	virtualExprs := columnSelector(columns)
-	relatedCols := make(map[int64]*expression.Column, len(tblInfo.Columns))
+	relatedCols := expression.GetUniqueIDToColumnMap()
+	defer expression.PutUniqueIDToColumnMap(relatedCols)
 	for len(virtualExprs) > 0 {
 		expression.ExtractColumnsMapFromExpressionsWithReusedMap(relatedCols, nil, virtualExprs...)
 		virtualExprs = virtualExprs[:0]
@@ -4722,17 +4723,26 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 		}
 		importFromServer = storage.IsLocal(u)
+		// for SEM v2, they are checked by configured rules.
 		if semv1.IsEnabled() {
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
 			}
 			if kerneltype.IsNextGen() && storage.IsS3(u) {
-				newPath, err := processSemNextGenS3Path(u)
-				if err != nil {
+				if err := checkNextGenS3PathWithSem(u); err != nil {
 					return nil, err
 				}
-				ld.Path = newPath
 			}
+		}
+		// a nextgen cluster might be shared by multiple tenants, and they might
+		// share the same AWS role to access import-into source data bucket, this
+		// external ID can be used to restrict the access only to the current tenant.
+		// when SEM enabled, we need set it.
+		if kerneltype.IsNextGen() && sem.IsEnabled() && storage.IsS3(u) {
+			values := u.Query()
+			values.Set(storage.S3ExternalID, config.GetGlobalKeyspaceName())
+			u.RawQuery = values.Encode()
+			ld.Path = u.String()
 		}
 	}
 
@@ -6375,21 +6385,16 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 
 // for nextgen import-into with SEM, we disallow user to set S3 external ID explicitly,
 // and we will use the keyspace name as the S3 external ID.
-// a nextgen cluster might be shared by multiple tenants, and they might share the
-// same AWS role to access import-into source data bucket, this external ID can
-// be used to restrict the access only to the current tenant.
-func processSemNextGenS3Path(u *url.URL) (string, error) {
+func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
 	for k := range values {
 		lowerK := strings.ToLower(k)
 		if lowerK == storage.S3ExternalID {
-			return "", plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with S3 external ID")
+			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with S3 external ID")
 		}
 	}
-	values.Set(storage.S3ExternalID, config.GetGlobalKeyspaceName())
-	u.RawQuery = values.Encode()
 
-	return u.String(), nil
+	return nil
 }
 
 // GetThreadOrBatchSizeFromExpression gets the numeric value of the thread or batch size from the expression.

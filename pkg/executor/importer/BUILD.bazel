@@ -75,6 +75,7 @@ go_library(
         "//pkg/util/naming",
         "//pkg/util/promutil",
         "//pkg/util/sem",
+        "//pkg/util/sem/compat",
         "//pkg/util/sqlexec",
         "//pkg/util/sqlkiller",
         "//pkg/util/stringutil",

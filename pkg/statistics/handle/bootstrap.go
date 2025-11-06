@@ -18,8 +18,6 @@ import (
 	"context"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -54,21 +52,11 @@ const (
 	initStatsPercentageInterval = float64(33)
 )
 
-var maxTidRecord MaxTidRecord
-
-// GetMaxTidRecordForTest gets the max tid record for test.
-func GetMaxTidRecordForTest() int64 {
-	return maxTidRecord.tid.Load()
-}
-
-// MaxTidRecord is to record the max tid.
-type MaxTidRecord struct {
-	mu  sync.Mutex
-	tid atomic.Int64
-}
-
-func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
-	var physicalID, maxPhysicalID int64
+func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) int64 {
+	var (
+		physicalID    int64
+		maxPhysicalID int64
+	)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
 		maxPhysicalID = max(physicalID, maxPhysicalID)
@@ -96,11 +84,7 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
-	maxTidRecord.mu.Lock()
-	defer maxTidRecord.mu.Unlock()
-	if maxTidRecord.tid.Load() < maxPhysicalID {
-		maxTidRecord.tid.Store(maxPhysicalID)
-	}
+	return maxPhysicalID
 }
 
 func genInitStatsMetaSQL(tableIDs ...int64) string {
@@ -114,31 +98,33 @@ func genInitStatsMetaSQL(tableIDs ...int64) string {
 	return selectPrefix + whereClausePrefix + inListStr + whereClauseSuffix
 }
 
-func (h *Handle) initStatsMeta(ctx context.Context, tableIDs ...int64) (statstypes.StatsCache, error) {
+func (h *Handle) initStatsMeta(ctx context.Context, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	sql := genInitStatsMetaSQL(tableIDs...)
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
 	cache, err := cache.NewStatsCacheImpl(h)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
+	var maxPhysicalID int64
 	for {
 		err := rc.Next(ctx, req)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, 0, errors.Trace(err)
 		}
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsMeta4Chunk(cache, iter)
+		chunkMax := h.initStatsMeta4Chunk(cache, iter)
+		maxPhysicalID = max(maxPhysicalID, chunkMax)
 	}
-	return cache, nil
+	return cache, maxPhysicalID, nil
 }
 
 func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
@@ -431,22 +417,27 @@ type loadStrategy interface {
 	generateAndSendTasks(worker *initstats.RangeWorker)
 }
 
+func newLoadStrategy(maxTableID int64, tableIDs []int64) loadStrategy {
+	if len(tableIDs) == 0 {
+		return newMaxTidStrategy(maxTableID)
+	}
+	return newTableListStrategy(tableIDs)
+}
+
 // maxTidStrategy is to load stats by paging using the max tid.
 // It is used for full load. Backup and restore also use this strategy for refreshing stats.
 type maxTidStrategy struct {
 	maxTid int64
 }
 
-func newMaxTidStrategy() maxTidStrategy {
-	return maxTidStrategy{
-		maxTid: maxTidRecord.tid.Load(),
-	}
+func newMaxTidStrategy(maxTid int64) maxTidStrategy {
+	intest.Assert(maxTid >= 0, "maxTid should be non-negative")
+	return maxTidStrategy{maxTid: maxTid}
 }
 
 func (m maxTidStrategy) calculateTotalTaskCnt() uint64 {
+	intest.Assert(m.maxTid >= 0, "maxTid should be non-negative")
 	maxTid := m.maxTid
-	intest.Assert(maxTid >= 0, "maxTid should be non-negative")
-	intest.Assert(maxTid == maxTidRecord.tid.Load(), "maxTid should be equal to the recorded maxTid")
 	totalTaskCnt := int64(1)
 	if maxTid > initStatsStep*2 {
 		totalTaskCnt = maxTid / initStatsStep
@@ -491,14 +482,8 @@ func (t tableListStrategy) generateAndSendTasks(worker *initstats.RangeWorker) {
 	}
 }
 
-func (h *Handle) initStatsHistogramsConcurrently(is infoschema.InfoSchema, cache statstypes.StatsCache, totalMemory uint64, concurrency int, tableIDs ...int64) error {
-	var s loadStrategy
-	if len(tableIDs) == 0 {
-		s = newMaxTidStrategy()
-	} else {
-		s = newTableListStrategy(tableIDs)
-	}
-	totalTaskCnt := s.calculateTotalTaskCnt()
+func (h *Handle) initStatsHistogramsConcurrently(is infoschema.InfoSchema, cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
+	totalTaskCnt := strategy.calculateTotalTaskCnt()
 	ls := initstats.NewRangeWorker(
 		"histogram",
 		func(task initstats.Task) error {
@@ -509,7 +494,7 @@ func (h *Handle) initStatsHistogramsConcurrently(is infoschema.InfoSchema, cache
 		initStatsPercentageInterval,
 	)
 	ls.LoadStats()
-	s.generateAndSendTasks(ls)
+	strategy.generateAndSendTasks(ls)
 	ls.Wait()
 	return nil
 }
@@ -602,17 +587,11 @@ func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache st
 	return nil
 }
 
-func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int, tableIDs ...int64) error {
+func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
-	var s loadStrategy
-	if len(tableIDs) == 0 {
-		s = newMaxTidStrategy()
-	} else {
-		s = newTableListStrategy(tableIDs)
-	}
-	totalTaskCnt := s.calculateTotalTaskCnt()
+	totalTaskCnt := strategy.calculateTotalTaskCnt()
 	ls := initstats.NewRangeWorker(
 		"TopN",
 		func(task initstats.Task) error {
@@ -626,7 +605,7 @@ func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMem
 		initStatsPercentageInterval,
 	)
 	ls.LoadStats()
-	s.generateAndSendTasks(ls)
+	strategy.generateAndSendTasks(ls)
 	ls.Wait()
 	return nil
 }
@@ -687,11 +666,11 @@ func genInitStatsBucketsSQLForIndexes(isPaging bool, tableRange [2]int64) string
 	return selectPrefix + rangeStartClause + rangeEndClause + orderSuffix
 }
 
-func (h *Handle) initStatsBucketsAndCalcPreScalar(cache statstypes.StatsCache, totalMemory uint64, concurrency int, tableIDs ...int64) error {
+func (h *Handle) initStatsBucketsAndCalcPreScalar(cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
-	err := h.initStatsBucketsConcurrently(cache, totalMemory, concurrency, tableIDs...)
+	err := h.initStatsBucketsConcurrently(cache, totalMemory, concurrency, strategy)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -737,17 +716,11 @@ func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache
 	return nil
 }
 
-func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int, tableIDs ...int64) error {
+func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
-	var s loadStrategy
-	if len(tableIDs) == 0 {
-		s = newMaxTidStrategy()
-	} else {
-		s = newTableListStrategy(tableIDs)
-	}
-	totalTaskCnt := s.calculateTotalTaskCnt()
+	totalTaskCnt := strategy.calculateTotalTaskCnt()
 	ls := initstats.NewRangeWorker(
 		"bucket",
 		func(task initstats.Task) error {
@@ -761,7 +734,7 @@ func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, total
 		initStatsPercentageInterval,
 	)
 	ls.LoadStats()
-	s.generateAndSendTasks(ls)
+	strategy.generateAndSendTasks(ls)
 	ls.Wait()
 	return nil
 }
@@ -785,7 +758,7 @@ func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) (err erro
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
 	start := time.Now()
-	cache, err := h.initStatsMeta(ctx, tableIDs...)
+	cache, _, err := h.initStatsMeta(ctx, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -841,7 +814,7 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableI
 	failpoint.Inject("beforeInitStats", func() {})
 
 	start := time.Now()
-	cache, err := h.initStatsMeta(ctx, tableIDs...)
+	cache, maxTableID, err := h.initStatsMeta(ctx, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -849,15 +822,16 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableI
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
 
 	concurrency := initstats.GetConcurrency()
+	strategy := newLoadStrategy(maxTableID, tableIDs)
 	start = time.Now()
-	err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, concurrency, tableIDs...)
+	err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, concurrency, strategy)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the histogram", zap.Duration("duration", time.Since(start)))
 
 	start = time.Now()
-	err = h.initStatsTopNConcurrently(cache, totalMemory, concurrency, tableIDs...)
+	err = h.initStatsTopNConcurrently(cache, totalMemory, concurrency, strategy)
 	if err != nil {
 		return err
 	}
@@ -865,7 +839,7 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableI
 	statslogutil.StatsLogger().Info("Complete loading the topn", zap.Duration("duration", time.Since(start)))
 
 	start = time.Now()
-	err = h.initStatsBucketsAndCalcPreScalar(cache, totalMemory, concurrency, tableIDs...)
+	err = h.initStatsBucketsAndCalcPreScalar(cache, totalMemory, concurrency, strategy)
 	if err != nil {
 		return errors.Trace(err)
 	}

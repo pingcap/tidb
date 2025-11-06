@@ -46,6 +46,7 @@ import (
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
@@ -872,6 +873,10 @@ type SessionVars struct {
 	// LastCommitTS is the commit_ts of the last successful transaction in this session.
 	LastCommitTS uint64
 
+	// PrevTraceID stores the trace ID of the previous statement for chaining.
+	// This allows trace events to link statements together via prev_trace_id field.
+	PrevTraceID []byte
+
 	// TxnReadTS is used for staleness transaction, it provides next staleness transaction startTS.
 	TxnReadTS *TxnReadTS
 
@@ -1207,7 +1212,7 @@ type SessionVars struct {
 
 	// SlowLogRules holds the set of user-defined rules that determine whether a SQL execution should be logged in the slow log.
 	// This allows flexible and fine-grained control over slow logging beyond the traditional single-threshold approach.
-	SlowLogRules *SlowLogRules
+	SlowLogRules *slowlogrule.SessionSlowLogRules
 
 	// EnableFastAnalyze indicates whether to take fast analyze.
 	EnableFastAnalyze bool
@@ -1781,6 +1786,18 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+
+	// MemArbitrator represents the properties to be controlled by the memory arbitrator.
+	MemArbitrator struct {
+		WaitAverse    MemArbitratorWaitAverseMode
+		QueryReserved int64
+	}
+
+	// InPacketBytes records the total incoming packet bytes from clients for current session.
+	InPacketBytes atomic.Uint64
+
+	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
+	OutPacketBytes atomic.Uint64
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
@@ -2400,6 +2417,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.StatsLoadSyncWait.Store(vardef.StatsLoadSyncWait.Load())
 	vars.UseHashJoinV2 = joinversion.IsOptimizedVersion(vardef.DefTiDBHashJoinVersion)
+	vars.SlowLogRules = slowlogrule.NewSessionSlowLogRules(nil)
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
@@ -3754,3 +3772,21 @@ func RemoveLockDDLJobs(sv *SessionVars, jobs map[int64]*mdldef.JobMDL, printLog 
 		return true
 	})
 }
+
+// MemArbitratorWaitAverseMode is the definition for global memory arbitrator to handle wait-averse mode.
+type MemArbitratorWaitAverseMode int
+
+// NoLimit indicates that the memory arbitrator will not control current session
+// Enable indicates that the session will be controlled by the wait-averse mode
+const (
+	MemArbitratorWaitAverseDisable MemArbitratorWaitAverseMode = iota
+	MemArbitratorWaitAverseEnable
+	MemArbitratorNolimit
+)
+
+// Error definitions for memory arbitrator session variables.
+var (
+	ErrTiDBMemArbitratorSoftLimit     = errors.New(vardef.TiDBMemArbitratorSoftLimit + ": 0 (default); (0, 1.0] float-rate * server-limit; (1, server-limit] integer bytes; auto;")
+	ErrTiDBMemArbitratorWaitAverse    = errors.New(vardef.TiDBMemArbitratorWaitAverse + ": 0 (disable); 1 (enable); nolimit;")
+	ErrTiDBMemArbitratorQueryReserved = errors.New(vardef.TiDBMemArbitratorQueryReserved + ": 0 (default); (1, server-limit] integer bytes;")
+)
