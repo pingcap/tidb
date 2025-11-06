@@ -2,61 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "physicalop",
-<<<<<<< HEAD
     srcs = ["base_physical_plan.go"],
-=======
-    srcs = [
-        "base_physical_agg.go",
-        "base_physical_join.go",
-        "base_physical_plan.go",
-        "foreign_key.go",
-        "fragment.go",
-        "nominal_sort.go",
-        "physical_apply.go",
-        "physical_batch_point_get.go",
-        "physical_common_plans.go",
-        "physical_cte.go",
-        "physical_cte_table.go",
-        "physical_exchange_receiver.go",
-        "physical_exchange_sender.go",
-        "physical_expand.go",
-        "physical_hash_agg.go",
-        "physical_hash_join.go",
-        "physical_index_hash_join.go",
-        "physical_index_join.go",
-        "physical_index_merge_join.go",
-        "physical_index_reader.go",
-        "physical_index_scan.go",
-        "physical_indexlookup.go",
-        "physical_indexlookup_reader.go",
-        "physical_indexmerge_reader.go",
-        "physical_limit.go",
-        "physical_lock.go",
-        "physical_max_one_row.go",
-        "physical_mem_table.go",
-        "physical_merge_join.go",
-        "physical_plan_misc.go",
-        "physical_projection.go",
-        "physical_schema_producer.go",
-        "physical_selection.go",
-        "physical_sequence.go",
-        "physical_show.go",
-        "physical_shuffle.go",
-        "physical_sort.go",
-        "physical_stream_agg.go",
-        "physical_table_dual.go",
-        "physical_table_reader.go",
-        "physical_table_sample.go",
-        "physical_table_scan.go",
-        "physical_topn.go",
-        "physical_union_all.go",
-        "physical_union_scan.go",
-        "physical_utils.go",
-        "physical_window.go",
-        "plan_clone_generated.go",
-        "tiflash_predicate_push_down.go",
-    ],
->>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/physicalop",
     visibility = ["//visibility:public"],
     deps = [
@@ -75,29 +21,3 @@ go_library(
         "@com_github_pingcap_tipb//go-tipb",
     ],
 )
-<<<<<<< HEAD
-=======
-
-go_test(
-    name = "physicalop_test",
-    timeout = "short",
-    srcs = [
-        "fragment_test.go",
-        "physical_utils_test.go",
-    ],
-    embed = [":physicalop"],
-    flaky = True,
-    shard_count = 3,
-    deps = [
-        "//pkg/planner/core/base",
-        "@com_github_pingcap_tipb//go-tipb",
-        "@com_github_stretchr_testify//require",
-    ],
-)
-
-filegroup(
-    name = "generator_files",
-    srcs = ["plan_clone_generated.go"],
-    visibility = ["//visibility:public"],
-)
->>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))

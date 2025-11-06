@@ -998,36 +998,11 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 	_, err = GetMaxWriteSpeedFromExpression(opt)
 	require.Equal(t, "parse max_write_speed value error: invalid size: 'MiB'", err.Error())
 }
-<<<<<<< HEAD
-=======
-
-func TestProcessNextGenS3Path(t *testing.T) {
-	u, err := url.Parse("S3://bucket?External-id=abc")
-	require.NoError(t, err)
-	_, err = processSemNextGenS3Path(u)
-	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-	require.ErrorContains(t, err, "IMPORT INTO with S3 external ID")
-
-	bak := config.GetGlobalKeyspaceName()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.KeyspaceName = "sem-next-gen"
-	})
-	t.Cleanup(func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = bak
-		})
-	})
-	u, err = url.Parse("s3://bucket")
-	require.NoError(t, err)
-	newPath, err := processSemNextGenS3Path(u)
-	require.NoError(t, err)
-	require.Equal(t, "s3://bucket?external-id=sem-next-gen", newPath)
-}
 
 func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
-	checkPushDownIndexLookUpReaderCommon := func(r *physicalop.PhysicalIndexLookUpReader) {
+	checkPushDownIndexLookUpReaderCommon := func(r *PhysicalIndexLookUpReader) {
 		require.True(t, r.IndexLookUpPushDown)
-		tablePlans := physicalop.FlattenListPushDownPlan(r.TablePlan)
+		tablePlans := FlattenListPushDownPlan(r.tablePlan)
 		require.Len(t, r.TablePlans, len(tablePlans))
 		planIDMap := make(map[int]struct{})
 		for i, p := range tablePlans {
@@ -1038,7 +1013,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 			require.False(t, ok, "duplicated plan id %d", p.ID())
 			planIDMap[p.ID()] = struct{}{}
 		}
-		indexPlans, m := physicalop.FlattenTreePushDownPlan(r.IndexPlan)
+		indexPlans, m := FlattenTreePushDownPlan(r.indexPlan)
 		require.Len(t, r.IndexPlans, len(indexPlans))
 		for i, p := range indexPlans {
 			require.Equal(t, p, r.IndexPlans[i], i)
@@ -1050,7 +1025,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 	}
 
 	ctx := mock.NewContext()
-	tablePlan := physicalop.PhysicalTableScan{}.Init(ctx, 10)
+	tablePlan := PhysicalTableScan{}.Init(ctx, 10)
 	tableInfo := &model.TableInfo{
 		IsCommonHandle: false,
 		Partition:      nil,
@@ -1065,7 +1040,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		&expression.Column{ID: 3, RetType: types.NewFieldType(mysql.TypeFloat)},
 	)
 	tablePlan.SetSchema(tableSchema.Clone())
-	indexPlan := physicalop.PhysicalIndexScan{}.Init(ctx, 11)
+	indexPlan := PhysicalIndexScan{}.Init(ctx, 11)
 	indexPlan.SetStats(&property.StatsInfo{
 		RowCount: 1000,
 	})
@@ -1077,18 +1052,18 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 
 	// test for simple case: tablePlan and indexPlan are single plans without parent
 	check := func(p base.Plan) {
-		r, ok := p.(*physicalop.PhysicalIndexLookUpReader)
+		r, ok := p.(*PhysicalIndexLookUpReader)
 		require.True(t, ok)
 		checkPushDownIndexLookUpReaderCommon(r)
 		require.Equal(t, map[int]int{
 			0: 2,
 		}, r.IndexPlansUnNatureOrders)
 		require.Len(t, r.TablePlans, 1)
-		require.IsType(t, &physicalop.PhysicalTableScan{}, r.TablePlans[0])
+		require.IsType(t, &PhysicalTableScan{}, r.TablePlans[0])
 		require.Len(t, r.IndexPlans, 3)
-		require.IsType(t, &physicalop.PhysicalIndexScan{}, r.IndexPlans[0])
-		require.IsType(t, &physicalop.PhysicalTableScan{}, r.IndexPlans[1])
-		lookup, ok := r.IndexPlans[2].(*physicalop.PhysicalLocalIndexLookUp)
+		require.IsType(t, &PhysicalIndexScan{}, r.IndexPlans[0])
+		require.IsType(t, &PhysicalTableScan{}, r.IndexPlans[1])
+		lookup, ok := r.IndexPlans[2].(*PhysicalLocalIndexLookUp)
 		require.True(t, ok)
 		require.Equal(t, []uint32{1}, lookup.IndexHandleOffsets)
 		require.Equal(t, tableSchema.String(), lookup.Schema().String())
@@ -1096,10 +1071,10 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		require.Equal(t, tableSchema.String(), r.Schema().String())
 		require.Equal(t, 10, lookup.QueryBlockOffset())
 	}
-	reader := physicalop.PhysicalIndexLookUpReader{
-		TablePlan: tablePlan,
-		IndexPlan: indexPlan,
-		KeepOrder: false,
+	reader := PhysicalIndexLookUpReader{
+		tablePlan: tablePlan,
+		indexPlan: indexPlan,
+		keepOrder: false,
 	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
 	check(reader)
 	cloned, err := reader.Clone(ctx)
@@ -1110,17 +1085,17 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 	check(clonedForCache)
 
 	// test for a more complex case: tablePlan and indexPlan are trees
-	tablePlan = physicalop.PhysicalTableScan{}.Init(ctx, 10)
+	tablePlan = PhysicalTableScan{}.Init(ctx, 10)
 	tablePlan.Table = tableInfo.Clone()
 	tablePlan.SetStats(&property.StatsInfo{
 		RowCount: 500,
 	})
 	tablePlan.SetSchema(tableSchema.Clone())
-	selectionPlan := physicalop.PhysicalSelection{}.Init(ctx, &property.StatsInfo{
+	selectionPlan := PhysicalSelection{}.Init(ctx, &property.StatsInfo{
 		RowCount: 200,
 	}, tablePlan.QueryBlockOffset())
 	selectionPlan.SetChildren(tablePlan)
-	projectionPlan := physicalop.PhysicalProjection{}.Init(ctx, &property.StatsInfo{
+	projectionPlan := PhysicalProjection{}.Init(ctx, &property.StatsInfo{
 		RowCount: 200,
 	}, tablePlan.QueryBlockOffset())
 	projectionSchema := expression.NewSchema(
@@ -1128,35 +1103,35 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 	)
 	projectionPlan.SetSchema(projectionSchema)
 	projectionPlan.SetChildren(selectionPlan)
-	indexPlan = physicalop.PhysicalIndexScan{}.Init(ctx, 11)
+	indexPlan = PhysicalIndexScan{}.Init(ctx, 11)
 	indexPlan.SetStats(&property.StatsInfo{
 		RowCount: 1000,
 	})
 	indexPlan.SetSchema(indexSchema.Clone())
-	limitPlan := physicalop.PhysicalLimit{}.Init(ctx, &property.StatsInfo{
+	limitPlan := PhysicalLimit{}.Init(ctx, &property.StatsInfo{
 		RowCount: 1000,
 	}, indexPlan.QueryBlockOffset())
 	limitPlan.SetChildren(indexPlan)
 
 	check = func(p base.Plan) {
-		r, ok := p.(*physicalop.PhysicalIndexLookUpReader)
+		r, ok := p.(*PhysicalIndexLookUpReader)
 		require.True(t, ok)
 		checkPushDownIndexLookUpReaderCommon(reader)
 		require.Equal(t, map[int]int{
 			1: 3,
 		}, r.IndexPlansUnNatureOrders)
 		require.Len(t, r.TablePlans, 3)
-		require.IsType(t, &physicalop.PhysicalTableScan{}, r.TablePlans[0])
-		require.IsType(t, &physicalop.PhysicalSelection{}, r.TablePlans[1])
-		require.IsType(t, &physicalop.PhysicalProjection{}, r.TablePlans[2])
+		require.IsType(t, &PhysicalTableScan{}, r.TablePlans[0])
+		require.IsType(t, &PhysicalSelection{}, r.TablePlans[1])
+		require.IsType(t, &PhysicalProjection{}, r.TablePlans[2])
 		require.Len(t, reader.IndexPlans, 6)
-		require.IsType(t, &physicalop.PhysicalIndexScan{}, r.IndexPlans[0])
-		require.IsType(t, &physicalop.PhysicalLimit{}, r.IndexPlans[1])
-		require.IsType(t, &physicalop.PhysicalTableScan{}, r.IndexPlans[2])
-		lookup, ok := r.IndexPlans[3].(*physicalop.PhysicalLocalIndexLookUp)
+		require.IsType(t, &PhysicalIndexScan{}, r.IndexPlans[0])
+		require.IsType(t, &PhysicalLimit{}, r.IndexPlans[1])
+		require.IsType(t, &PhysicalTableScan{}, r.IndexPlans[2])
+		lookup, ok := r.IndexPlans[3].(*PhysicalLocalIndexLookUp)
 		require.True(t, ok)
-		require.IsType(t, &physicalop.PhysicalSelection{}, r.IndexPlans[4])
-		require.IsType(t, &physicalop.PhysicalProjection{}, r.IndexPlans[5])
+		require.IsType(t, &PhysicalSelection{}, r.IndexPlans[4])
+		require.IsType(t, &PhysicalProjection{}, r.IndexPlans[5])
 		require.Equal(t, []uint32{1}, lookup.IndexHandleOffsets)
 		require.Equal(t, tableSchema.String(), lookup.Schema().String())
 		require.Equal(t, 10, lookup.QueryBlockOffset())
@@ -1164,10 +1139,10 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		require.Equal(t, 10, lookup.QueryBlockOffset())
 	}
 
-	reader = physicalop.PhysicalIndexLookUpReader{
-		TablePlan: projectionPlan,
-		IndexPlan: limitPlan,
-		KeepOrder: false,
+	reader = PhysicalIndexLookUpReader{
+		tablePlan: projectionPlan,
+		indexPlan: limitPlan,
+		keepOrder: false,
 	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
 	check(reader)
 	cloned, err = reader.Clone(ctx)
@@ -1177,4 +1152,3 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 	require.True(t, ok)
 	check(clonedForCache)
 }
->>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))

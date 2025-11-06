@@ -167,9 +167,9 @@ func TestParseHint(t *testing.T) {
 					Indexes:  []model.CIStr{model.NewCIStr("c1")},
 				},
 				{
-					HintName: ast.NewCIStr("INDEX_LOOKUP_PUSHDOWN"),
-					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl5"), QBName: ast.NewCIStr("qb6")}},
-					Indexes:  []ast.CIStr{ast.NewCIStr("c3")},
+					HintName: model.NewCIStr("INDEX_LOOKUP_PUSHDOWN"),
+					Tables:   []ast.HintTable{{TableName: model.NewCIStr("tbl5"), QBName: model.NewCIStr("qb6")}},
+					Indexes:  []model.CIStr{model.NewCIStr("c3")},
 				},
 			},
 		},

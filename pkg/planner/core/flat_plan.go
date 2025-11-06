@@ -170,11 +170,8 @@ type operatorCtx struct {
 	reqType     ReadReqType
 	indent      string
 	isLastChild bool
-<<<<<<< HEAD
-=======
 	// IsINLProbeChild indicates whether this operator is in indexLookupReader / indexMergeReader / indexLookUp inner side.
 	isINLProbeChild bool
->>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
 }
 
 // FlattenPhysicalPlan generates a FlatPhysicalPlan from a PhysicalPlan, Insert, Delete, Update, Explain or Execute.
@@ -258,11 +255,12 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 	childIdxs := make([]int, 0)
 	var childIdx int
 	childCtx := &operatorCtx{
-		depth:     info.depth + 1,
-		isRoot:    info.isRoot,
-		storeType: info.storeType,
-		reqType:   info.reqType,
-		indent:    texttree.Indent4Child(info.indent, info.isLastChild),
+		depth:           info.depth + 1,
+		isRoot:          info.isRoot,
+		storeType:       info.storeType,
+		reqType:         info.reqType,
+		indent:          texttree.Indent4Child(info.indent, info.isLastChild),
+		isINLProbeChild: info.isINLProbeChild,
 	}
 	indexOfINLProbeChild := -1
 	// For physical operators, we just enumerate their children and collect their information.
@@ -299,7 +297,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		case *PhysicalIndexHashJoin:
 			label[plan.InnerChildIdx] = ProbeSide
 			label[1-plan.InnerChildIdx] = BuildSide
-		case *physicalop.PhysicalLocalIndexLookUp:
+		case *PhysicalLocalIndexLookUp:
 			label[0] = BuildSide
 			label[1] = ProbeSide
 			indexOfINLProbeChild = 1

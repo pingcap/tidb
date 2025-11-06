@@ -569,18 +569,11 @@ type HintedTable struct {
 
 // HintedIndex indicates which index this hint should take effect on.
 type HintedIndex struct {
-<<<<<<< HEAD
-	DBName     pmodel.CIStr   // the database name
-	TblName    pmodel.CIStr   // the table name
-	Partitions []pmodel.CIStr // partition information
-	IndexHint  *ast.IndexHint // the original parser index hint structure
-=======
-	DBName         ast.CIStr      // the database name
-	TblName        ast.CIStr      // the table name
-	Partitions     []ast.CIStr    // partition information
+	DBName         pmodel.CIStr   // the database name
+	TblName        pmodel.CIStr   // the table name
+	Partitions     []pmodel.CIStr // partition information
 	IndexHint      *ast.IndexHint // the original parser index hint structure
 	PushDownLookUp bool           // whether to push down the index lookup
->>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
 	// Matched indicates whether this index hint
 	// has been successfully applied to a DataSource.
 	// If an HintedIndex is not Matched after building
@@ -604,14 +597,10 @@ func (hint *HintedIndex) ShouldPushDownIndexLookUp() bool {
 func (hint *HintedIndex) HintTypeString() string {
 	switch hint.IndexHint.HintType {
 	case ast.HintUse:
-<<<<<<< HEAD
-		return "use_index"
-=======
 		if hint.PushDownLookUp {
 			return HintIndexLookUpPushDown
 		}
 		return HintUseIndex
->>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
 	case ast.HintIgnore:
 		return "ignore_index"
 	case ast.HintForce:

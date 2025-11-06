@@ -102,13 +102,8 @@ func doPhysicalProjectionElimination(p base.PhysicalPlan) base.PhysicalPlan {
 	// eliminate projection in a coprocessor task
 	tableReader, isTableReader := p.(*PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
-<<<<<<< HEAD
 		tableReader.tablePlan = eliminatePhysicalProjection(tableReader.tablePlan)
-		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
-=======
-		tableReader.TablePlan = eliminatePhysicalProjection(tableReader.TablePlan)
-		tableReader.TablePlans = physicalop.FlattenListPushDownPlan(tableReader.TablePlan)
->>>>>>> 933db8df82 (parser, planner: Add hint `INDEX_LOOKUP_PUSH_DOWN` and implement the planner part (#62714))
+		tableReader.TablePlans = FlattenListPushDownPlan(tableReader.tablePlan)
 		return p
 	}
 
