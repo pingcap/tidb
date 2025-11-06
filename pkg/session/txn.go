@@ -652,6 +652,14 @@ func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	}
 
 	if tablecodec.IsTempIndexKey(k) {
+		tmpVal, err := tablecodec.DecodeTempIndexValue(v)
+		if err != nil {
+			logutil.BgLogger().Warn("decode temp index value failed", zap.Error(err))
+			return false
+		}
+		current := tmpVal.Current()
+		if current.Handle != nil || tablecodec.IndexKVIsUnique(current.Value) {
+		}
 		return true
 	}
 
