@@ -337,21 +337,3 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
 }
-
-func TestABC(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE t1 (a int PRIMARY KEY, b int);`)
-	tk.MustExec(`CREATE TABLE t2 (a int PRIMARY KEY, b int);`)
-	for i := range 100 {
-		t.Log(i)
-		tk.MustQuery(`EXPLAIN FORMAT='plan_tree' SELECT STRAIGHT_JOIN * FROM t1 LEFT JOIN t2 ON t1.a = t2.a WHERE t1.a IN(t2.a, t2.b);`).Check(testkit.Rows(
-			`MergeJoin root  inner join, left key:test.t1.a, right key:test.t2.a, other cond:in(test.t1.a, test.t2.a, test.t2.b)`,
-			`├─TableReader(Build) root  data:Selection`,
-			`│ └─Selection cop[tikv]  in(test.t2.a, test.t2.a, test.t2.b)`,
-			`│   └─TableFullScan cop[tikv] table:t2 keep order:true, stats:pseudo`,
-			`└─TableReader(Probe) root  data:TableFullScan`,
-			`  └─TableFullScan cop[tikv] table:t1 keep order:true, stats:pseudo`))
-	}
-}
