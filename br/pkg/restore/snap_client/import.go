@@ -724,7 +724,8 @@ func (importer *SnapFileImporter) batchDownloadSST(
 				bytes.Equal(cfReq.RewriteRule.OldKeyPrefix, req.RewriteRule.OldKeyPrefix) &&
 				cfReq.RewriteRule.IgnoreAfterTimestamp == req.RewriteRule.IgnoreAfterTimestamp &&
 				cfReq.RewriteRule.IgnoreBeforeTimestamp == req.RewriteRule.IgnoreBeforeTimestamp) {
-				log.Panic("rewrite rule mismatch", zap.Reflect("cfReq", cfReq.RewriteRule), zap.Reflect("req", req.RewriteRule))
+				log.Error("rewrite rule mismatch", zap.Reflect("cfReq", cfReq.RewriteRule), zap.Reflect("req", req.RewriteRule))
+				return nil, errors.Errorf("rewrite rules mismatch from the overlapped SST files")
 			}
 			cfReq.Ssts[req.Name] = &sstMeta
 		}

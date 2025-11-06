@@ -506,12 +506,14 @@ func GroupOverlappedBackupFileSetsIter(ctx context.Context, regionClient split.S
 			// into the set.
 			thisBackupFileSet.SSTFiles = append(thisBackupFileSet.SSTFiles, file.backupFileSet.SSTFiles...)
 			if thisBackupFileSet.TableID != file.backupFileSet.TableID || !thisBackupFileSet.RewriteRules.Equal(file.backupFileSet.RewriteRules) {
-				log.Panic("the overlapped SST must have the same table id and rewrite rules",
+				log.Error("the overlapped SST must have the same table id and rewrite rules",
 					zap.Int64("set table id", thisBackupFileSet.TableID),
 					zap.Int64("file table id", file.backupFileSet.TableID),
 					zap.Reflect("set rewrite rule", thisBackupFileSet.RewriteRules),
 					zap.Reflect("file rewrite rule", file.backupFileSet.RewriteRules),
 				)
+				return errors.Errorf("the overlapped SST must have the same table id(%d<>%d) and rewrite rules",
+					thisBackupFileSet.TableID, file.backupFileSet.TableID)
 			}
 			// update lastEndKey if file.endKey is larger
 			if bytes.Compare(lastEndKey, file.endKey) < 0 {
