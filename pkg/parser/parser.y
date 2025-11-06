@@ -228,7 +228,6 @@ import (
 	outer             "OUTER"
 	outfile           "OUTFILE"
 	over              "OVER"
-	parameter         "PARAMETER"
 	partition         "PARTITION"
 	percentRank       "PERCENT_RANK"
 	precisionType     "PRECISION"
@@ -535,6 +534,7 @@ import (
 	optional                   "OPTIONAL"
 	packKeys                   "PACK_KEYS"
 	pageSym                    "PAGE"
+	parameter                  "PARAMETER"
 	parser                     "PARSER"
 	partial                    "PARTIAL"
 	partitioning               "PARTITIONING"
@@ -7064,6 +7064,7 @@ UnReservedKeyword:
 |	"OFFSET"
 |	"PACK_KEYS"
 |	"PARSER"
+|	"PARAMETER"
 |	"PASSWORD" %prec lowerThanEq
 |	"PREPARE"
 |	"PRE_SPLIT_REGIONS"
