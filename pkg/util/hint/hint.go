@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -840,8 +839,6 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			case HintIndexLookUpPushDown:
 				inapplicableMsg := ""
 				switch {
-				case !kerneltype.IsClassic():
-					inapplicableMsg = "only classic kernel type is supported"
 				case len(hint.Indexes) == 0:
 					inapplicableMsg = "the index names should be specified"
 				}

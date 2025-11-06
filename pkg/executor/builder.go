@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"slices"
 	"strconv"
@@ -90,7 +91,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
-	"github.com/pingcap/tipb/go-tipb"
 	clientkv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
@@ -4009,7 +4009,7 @@ func buildIndexLookUpPushDownDAGReq(ctx sessionctx.Context, columns []*model.Ind
 		return nil, err
 	}
 
-	idxScan := plans[0].(*physicalop.PhysicalIndexScan)
+	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
 	intermediateOutputOffsets, err := buildIndexScanOutputOffsets(idxScan, columns, handleLen)
 	if err != nil {
 		return nil, err
@@ -4051,14 +4051,7 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 		return nil, err
 	}
 
-<<<<<<< HEAD
-	indexReq.OutputOffsets = []uint32{}
 	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
-	if len(idxScan.ByItems) != 0 {
-		schema := idxScan.Schema()
-		for _, item := range idxScan.ByItems {
-=======
-	idxScan := plans[0].(*physicalop.PhysicalIndexScan)
 	outputOffsets, err := buildIndexScanOutputOffsets(idxScan, columns, handleLen)
 	if err != nil {
 		return nil, err
@@ -4070,7 +4063,7 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 // buildIndexReqOutputOffsets builds the output offsets for indexScan rows
 // If len(ByItems) != 0 means index request should return related columns
 // to sort result rows in TiDB side for partition tables.
-func buildIndexScanOutputOffsets(p *physicalop.PhysicalIndexScan, columns []*model.IndexColumn, handleLen int) ([]uint32, error) {
+func buildIndexScanOutputOffsets(p *plannercore.PhysicalIndexScan, columns []*model.IndexColumn, handleLen int) ([]uint32, error) {
 	estCap := len(p.ByItems) + handleLen
 	needExtraOutputCol := p.NeedExtraOutputCol()
 	if needExtraOutputCol {
@@ -4081,7 +4074,6 @@ func buildIndexScanOutputOffsets(p *physicalop.PhysicalIndexScan, columns []*mod
 	if len(p.ByItems) != 0 {
 		schema := p.Schema()
 		for _, item := range p.ByItems {
->>>>>>> 967cc9b130 (executor: finish INDEX_LOOKUP_PUSHDOWN execution part (#63746))
 			c, ok := item.Expr.(*expression.Column)
 			if !ok {
 				return nil, errors.Errorf("Not support non-column in orderBy pushed down")
@@ -4100,13 +4092,8 @@ func buildIndexScanOutputOffsets(p *physicalop.PhysicalIndexScan, columns []*mod
 		}
 	}
 
-<<<<<<< HEAD
-	for i := 0; i < handleLen; i++ {
-		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
-=======
 	for i := range handleLen {
 		outputOffsets = append(outputOffsets, uint32(len(columns)+i))
->>>>>>> 967cc9b130 (executor: finish INDEX_LOOKUP_PUSHDOWN execution part (#63746))
 	}
 
 	if needExtraOutputCol {
@@ -4179,11 +4166,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		PushedLimit:                v.PushedLimit,
 		idxNetDataSize:             v.GetAvgTableRowSize(),
 		avgRowSize:                 v.GetAvgTableRowSize(),
-<<<<<<< HEAD
-=======
-		groupedRanges:              is.GroupedRanges,
 		indexLookUpPushDown:        v.IndexLookUpPushDown,
->>>>>>> 967cc9b130 (executor: finish INDEX_LOOKUP_PUSHDOWN execution part (#63746))
 	}
 
 	if v.ExtraHandleCol != nil {

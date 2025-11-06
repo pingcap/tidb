@@ -367,21 +367,12 @@ func useDefaultEncoding(chk *chunk.Chunk, sc *stmtctx.StatementContext,
 	return chunks, nil
 }
 
-<<<<<<< HEAD
-func useChunkEncoding(chk *chunk.Chunk, dagReq *tipb.DAGRequest, fields []*types.FieldType, chunks []tipb.Chunk) []tipb.Chunk {
-	if dagReq.OutputOffsets != nil {
-		offsets := make([]int, len(dagReq.OutputOffsets))
-		newFields := make([]*types.FieldType, len(dagReq.OutputOffsets))
-		for i := 0; i < len(dagReq.OutputOffsets); i++ {
-			offset := dagReq.OutputOffsets[i]
-=======
 func useChunkEncoding(chk *chunk.Chunk, fields []*types.FieldType, outputOffsets []uint32, chunks []tipb.Chunk) []tipb.Chunk {
 	if outputOffsets != nil {
 		offsets := make([]int, len(outputOffsets))
 		newFields := make([]*types.FieldType, len(outputOffsets))
 		for i := range outputOffsets {
 			offset := outputOffsets[i]
->>>>>>> 967cc9b130 (executor: finish INDEX_LOOKUP_PUSHDOWN execution part (#63746))
 			offsets[i] = int(offset)
 			newFields[i] = fields[offset]
 		}
@@ -608,12 +599,8 @@ func genRespWithMPPExec(chunks []tipb.Chunk, intermediateOutput []*tipb.Intermed
 		EncodeType:          dagReq.EncodeType,
 	}
 	executors := dagReq.Executors
-<<<<<<< HEAD
-	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
-=======
 	mppExecs := flattenMppExec(exec, make([]mppExec, 0, len(executors)))
-	if dagReq.GetCollectExecutionSummaries() {
->>>>>>> 967cc9b130 (executor: finish INDEX_LOOKUP_PUSHDOWN execution part (#63746))
+	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
 		// for simplicity, we assume all executors to be spending the same amount of time as the request
 		timeProcessed := uint64(dur / time.Nanosecond)
 		execSummary := make([]*tipb.ExecutorExecutionSummary, len(executors))

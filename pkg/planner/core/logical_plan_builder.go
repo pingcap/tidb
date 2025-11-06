@@ -3706,12 +3706,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 	currentDB := sessionVars.CurrentDB
 	warnHandler := sessionVars.StmtCtx
 	planHints, subQueryHintFlags, err := h.ParsePlanHints(hints, currentLevel, currentDB,
-<<<<<<< HEAD
-		b.hintProcessor, b.ctx.GetSessionVars().StmtCtx.StraightJoinOrder,
-=======
 		b.hintProcessor, sessionVars.StmtCtx.StraightJoinOrder,
-		b.subQueryCtx == handlingInSubquery,
->>>>>>> 967cc9b130 (executor: finish INDEX_LOOKUP_PUSHDOWN execution part (#63746))
 		b.subQueryCtx == handlingExistsSubquery, b.subQueryCtx == notHandlingSubquery, warnHandler)
 	if err != nil {
 		return

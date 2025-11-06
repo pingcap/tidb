@@ -1239,7 +1239,6 @@ func (w *indexWorker) getHandleOffsets(indexTpsLen int) ([]int, error) {
 }
 
 func (w *indexWorker) extractLookUpPushDownRowsOrHandles(ctx context.Context, iter distsql.SelectResultIter, handleOffset []int) (rows []chunk.Row, handles []kv.Handle, exhausted bool, err error) {
-	intest.Assert(w.checkIndexValue == nil, "CheckIndex or CheckTable should not use index lookup push down")
 	const channelIdxIndex = 0
 	const channelIdxRow = 1
 

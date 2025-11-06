@@ -28,12 +28,8 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
->>>>>>> 967cc9b130 (executor: finish INDEX_LOOKUP_PUSHDOWN execution part (#63746))
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -602,9 +598,6 @@ func TestCoprCacheWithoutExecutionInfo(t *testing.T) {
 }
 
 func TestIndexLookUpPushDownCopTask(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("IndexLookUp push down is not supported temporarily in nextgen")
-	}
 	// ensure cop-cache is enabled by default
 	defer config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {

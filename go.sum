@@ -46,8 +46,8 @@ dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7
 filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
 filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
 gioui.org v0.0.0-20210308172011-57750fc8a0a6/go.mod h1:RSH6KIUZ0p2xy5zHDxgAM4zumjgTw83q2ge/PI+yyw8=
-git.pingcap.net/pingkai/tipb v0.0.0-20251105162243-cc862988bc7c h1:89Hb5mPkACPkg+NQBRazbhfymKVDZJes6FhKAJYo2qI=
-git.pingcap.net/pingkai/tipb v0.0.0-20251105162243-cc862988bc7c/go.mod h1:RM8iRcMalzOthG2XJxnNBniM4xFGb/lDwHUwqkaVzt4=
+git.pingcap.net/pingkai/tipb v0.0.0-20251106073343-eb6839a87365 h1:EG3pI9D1XrM7mhze/XjHN5EeSRzrzBVP2KXwLd0DaEw=
+git.pingcap.net/pingkai/tipb v0.0.0-20251106073343-eb6839a87365/go.mod h1:RM8iRcMalzOthG2XJxnNBniM4xFGb/lDwHUwqkaVzt4=
 git.sr.ht/~sbinet/gg v0.3.1/go.mod h1:KGYtlADtqsqANL9ueOFkWymvzUvLMQllU5Ixo+8v3pc=
 gitee.com/Trisia/gotlcp v1.3.18 h1:eVa41lAeNHsiT6uR/zWlY3dlqXVJ2aEqJ4qsQjfqAK8=
 gitee.com/Trisia/gotlcp v1.3.18/go.mod h1:neIy4hVQh598WBn2DwMlBuOE8E+SlW6z4GEfUfvww0o=
@@ -687,11 +687,6 @@ github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e h1:8AZZRv1Ox9FVGATVZ
 github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e/go.mod h1:ORfBOFp1eteu2odzsyaxI+b8TzJwgjwyQcGhI+9SfEA=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 h1:T4pXRhBflzDeAhmOQHNPRRogMYxP13V7BkYw3ZsoSfE=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5/go.mod h1:rlimy0GcTvjiJqvD5mXTRr8O2eNZPBrcUgiWVYp9530=
-<<<<<<< HEAD
-=======
-github.com/pingcap/tipb v0.0.0-20250928030846-9fd33ded6f2c h1:tddMjEiXU0d1VlJ+yHwim4gINeHmFR9CCkitatuby2c=
-github.com/pingcap/tipb v0.0.0-20250928030846-9fd33ded6f2c/go.mod h1:RM8iRcMalzOthG2XJxnNBniM4xFGb/lDwHUwqkaVzt4=
->>>>>>> 967cc9b130 (executor: finish INDEX_LOOKUP_PUSHDOWN execution part (#63746))
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c/go.mod h1:7rwL4CYBLnjLxUqIJNnCWiEdr3bn6IUYi15bNlnbCCU=
 github.com/pkg/diff v0.0.0-20210226163009-20ebb0f2a09e/go.mod h1:pJLUxLENpZxwdsKMEsNbx1VGcRFpLqf3715MtcvvzbA=

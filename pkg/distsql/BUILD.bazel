@@ -66,11 +66,7 @@ go_test(
     embed = [":distsql"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
     shard_count = 28,
-=======
-    shard_count = 33,
->>>>>>> 967cc9b130 (executor: finish INDEX_LOOKUP_PUSHDOWN execution part (#63746))
     deps = [
         "//pkg/distsql/context",
         "//pkg/errctx",

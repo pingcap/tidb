@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -42,11 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
-<<<<<<< HEAD
-=======
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
->>>>>>> 967cc9b130 (executor: finish INDEX_LOOKUP_PUSHDOWN execution part (#63746))
 )
 
 func TestTiDBLastTxnInfoCommitMode(t *testing.T) {
@@ -749,9 +744,6 @@ func TestBuildProjectionForIndexJoinPanic(t *testing.T) {
 }
 
 func TestIndexLookUpPushDownExec(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("IndexLookUp push down is not supported temporarily in nextgen")
-	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
