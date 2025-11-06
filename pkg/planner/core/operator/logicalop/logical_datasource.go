@@ -172,17 +172,9 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
-	if ds.SCtx().HasFTSFunc() {
-		err := ds.analyzeFTSFunc()
-		if err != nil {
-			return nil, nil, err
-		}
-	} else {
-		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-			// If there's no fts filters, we should remove all the fts index paths.
-			// They're not suitable do normal scan.
-			return path.Index != nil && path.Index.FullTextInfo != nil
-		})
+	err := ds.analyzeTiCIIndex(ds.SCtx().HasFTSFunc())
+	if err != nil {
+		return nil, nil, err
 	}
 	return predicates, ds, nil
 }
@@ -638,15 +630,21 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 	return resultColumn, resultColumnInfo
 }
 
-// analyzeFTSFunc checks whether FTS function is used and is a valid one.
+// analyzeTiCIIndex checks whether FTS function is used and is a valid one.
 // Then convert the function to index call because it can not be executed without the index.
-func (ds *DataSource) analyzeFTSFunc() error {
+func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 	var matchedIdx *model.IndexInfo
 	tmpMatchedExprSet := intset.NewFastIntSet()
 	matchedExprSetForChosenIndex := intset.NewFastIntSet()
-	hasUnmatchedFTSOverAllIdx := true
+	hasUnmatchedFTSOverAllIdx := hasFTSFunc
 	for _, path := range ds.AllPossibleAccessPaths {
-		if path.Index == nil || path.Index.FullTextInfo == nil {
+		if path.Index == nil || (path.Index.FullTextInfo == nil && path.Index.HybridInfo == nil) {
+			continue
+		}
+		if hasFTSFunc && (path.Index.FullTextInfo == nil || len(path.Index.HybridInfo.FullText) == 0) {
+			continue
+		}
+		if !hasFTSFunc && (path.Index.HybridInfo == nil || len(path.Index.HybridInfo.Inverted) == 0) {
 			continue
 		}
 		ftsCols := intset.NewFastIntSet()
@@ -692,10 +690,10 @@ func (ds *DataSource) analyzeFTSFunc() error {
 	}
 
 	if matchedIdx == nil {
-		// If no FTS function is found, we should remove all the FTS index
+		// If no FTS function is found, we should remove all the TiCI index
 		// paths from PossibleAccessPaths.
 		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-			return path.Index != nil && path.Index.FullTextInfo != nil
+			return path.Index != nil && (path.Index.FullTextInfo != nil || path.Index.HybridInfo != nil)
 		})
 		return nil
 	}
@@ -744,10 +742,14 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	}
 
 	// Build tipb protobuf info for the matched index.
+	tokenizer := ""
+	if index.FullTextInfo != nil {
+		tokenizer = string(index.FullTextInfo.ParserType)
+	}
 	ds.PossibleAccessPaths[0].FtsQueryInfo = &tipb.FTSQueryInfo{
 		QueryType:      tipb.FTSQueryType_FTSQueryTypeNoScore,
 		IndexId:        index.ID,
-		QueryTokenizer: string(index.FullTextInfo.ParserType),
+		QueryTokenizer: tokenizer,
 		MatchExpr:      pbExprs,
 	}
 
