@@ -146,16 +146,16 @@ func formatWithStyle(number string, precision string, style LocaleFormatStyle) (
 
 	if (number[:1] == "-" && !unicode.IsDigit(rune(number[1]))) ||
 		(!unicode.IsDigit(rune(number[0])) && number[:1] != "-") {
-		buffer.Write([]byte{'0'})
+		buffer.WriteString("0")
 		position, err := strconv.ParseUint(precision, 10, 64)
 		if err == nil && position > 0 {
 			// Use style-defined decimal point
-			buffer.Write([]byte(style.DecimalPoint))
+			buffer.WriteString(style.DecimalPoint)
 			buffer.WriteString(strings.Repeat("0", int(position)))
 		}
 		return buffer.String(), nil
 	} else if number[:1] == "-" {
-		buffer.Write([]byte{'-'})
+		buffer.WriteString("-")
 		number = number[1:]
 	}
 
@@ -171,30 +171,26 @@ func formatWithStyle(number string, precision string, style LocaleFormatStyle) (
 		break
 	}
 
-	// Use separators from the style
-	thousandsSep := []byte(style.ThousandsSep)
-	decimalPoint := []byte(style.DecimalPoint)
-
 	parts := strings.Split(number, ".")
 	pos := 0
 
 	if len(parts[0])%3 != 0 {
 		pos += len(parts[0]) % 3
 		buffer.WriteString(parts[0][:pos])
-		buffer.Write(thousandsSep)
+		buffer.WriteString(style.ThousandsSep)
 	}
 	for ; pos < len(parts[0]); pos += 3 {
 		buffer.WriteString(parts[0][pos : pos+3])
-		buffer.Write(thousandsSep)
+		buffer.WriteString(style.ThousandsSep)
 	}
 	// Truncate the last separator.
 	// If len(thousandsSep) is 0, this does nothing.
-	buffer.Truncate(buffer.Len() - len(thousandsSep))
+	buffer.Truncate(buffer.Len() - len(style.ThousandsSep))
 
 	position, err := strconv.ParseUint(precision, 10, 64)
 	if err == nil {
 		if position > 0 {
-			buffer.Write(decimalPoint) // Use style-defined decimal point
+			buffer.WriteString(style.DecimalPoint) // Use style-defined decimal point
 			if len(parts) == 2 {
 				if uint64(len(parts[1])) >= position {
 					buffer.WriteString(parts[1][:position])
