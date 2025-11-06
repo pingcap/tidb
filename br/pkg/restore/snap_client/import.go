@@ -762,9 +762,8 @@ func (importer *SnapFileImporter) batchDownloadSST(
 						if len(req.Ssts) == 0 {
 							// fallback to single download
 							return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
-						} else {
-							return importer.importClient.BatchDownloadSST(dctx, peer.GetStoreId(), req)
 						}
+						return importer.importClient.BatchDownloadSST(dctx, peer.GetStoreId(), req)
 					})
 					if err != nil {
 						return errors.Trace(err)
