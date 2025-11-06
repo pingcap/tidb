@@ -7064,6 +7064,7 @@ UnReservedKeyword:
 |	"OFFSET"
 |	"PACK_KEYS"
 |	"PARSER"
+|	"PARAMETER"
 |	"PASSWORD" %prec lowerThanEq
 |	"PREPARE"
 |	"PRE_SPLIT_REGIONS"
