@@ -198,7 +198,12 @@ func (t *ManagerCtx) getKeyspaceID() uint32 {
 
 // CreateFulltextIndex creates fulltext index on TiCI.
 func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
-	tableInfoJSON, err := json.Marshal(tblInfo)
+	// Clone and normalize table info to ensure longtext/json flen is narrowed to int32
+	clonedTbl, err := cloneAndNormalizeTableInfo(tblInfo)
+	if err != nil {
+		return err
+	}
+	tableInfoJSON, err := json.Marshal(clonedTbl)
 	if err != nil {
 		return err
 	}
@@ -225,7 +230,7 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 	return nil
 }
 
-// DropFullTextIndex drop full text index on TiCI.
+// DropFullTextIndex drop fulltext index on TiCI.
 func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int64) error {
 	req := &DropIndexRequest{
 		TableId:    tableID,
@@ -564,4 +569,33 @@ func DropFullTextIndex(ctx context.Context, store kv.Storage, tableID int64, ind
 		ticiManager.SetKeyspaceID(keyspaceID)
 	}
 	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
+}
+
+// cloneAndNormalizeTableInfo deep-clones the given model.TableInfo via JSON
+// marshal/unmarshal and forces FieldType.Flen for longtext and json column types
+// through an int32 narrowing (int(int32(flen))). This ensures TiCI parses the
+// length as int32 and avoids 4GB default-value related errors.
+func cloneAndNormalizeTableInfo(tbl *model.TableInfo) (*model.TableInfo, error) {
+	// nil guard
+	if tbl == nil {
+		return nil, nil
+	}
+
+	// deep clone via JSON marshal/unmarshal
+	b, err := json.Marshal(tbl)
+	if err != nil {
+		return nil, err
+	}
+	var dup model.TableInfo
+	if err := json.Unmarshal(b, &dup); err != nil {
+		return nil, err
+	}
+	// normalize flen for longtext and json types by narrowing to int32 and back
+	for i := range dup.Columns {
+		tp := dup.Columns[i].GetType()
+		if tp == mysql.TypeLongBlob || tp == mysql.TypeJSON {
+			dup.Columns[i].FieldType.SetFlen(int(int32(dup.Columns[i].FieldType.GetFlen())))
+		}
+	}
+	return &dup, nil
 }

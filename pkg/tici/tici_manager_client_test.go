@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -248,4 +249,86 @@ func TestModelIndexToTiCIIndexInfo(t *testing.T) {
 	ii := ModelIndexToTiCIIndexInfo(indexInfo, tblInfo)
 	assert.Equal(t, int64(2), ii.IndexId)
 	assert.Equal(t, int64(1), ii.TableId)
+}
+
+func TestCloneAndNormalizeTableInfo(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     *model.TableInfo
+		wantError bool
+		check     func(t *testing.T, input, output *model.TableInfo)
+	}{
+		{
+			name:      "nil input",
+			input:     nil,
+			wantError: false,
+			check: func(t *testing.T, input, output *model.TableInfo) {
+				require.Nil(t, output)
+			},
+		},
+		{
+			name: "table with longtext and json columns",
+			input: &model.TableInfo{
+				ID: 1,
+				Columns: []*model.ColumnInfo{
+					{
+						ID: 1,
+						FieldType: func() types.FieldType {
+							ft := types.FieldType{}
+							ft.SetType(mysql.TypeLongBlob)
+							ft.SetFlen(0x7fffffff + 1) // Value larger than int32 max
+							return ft
+						}(),
+					},
+					{
+						ID: 2,
+						FieldType: func() types.FieldType {
+							ft := types.FieldType{}
+							ft.SetType(mysql.TypeJSON)
+							ft.SetFlen(0x7fffffff + 2)
+							return ft
+						}(),
+					},
+					{
+						ID: 3,
+						FieldType: func() types.FieldType {
+							ft := types.FieldType{}
+							ft.SetType(mysql.TypeVarchar)
+							ft.SetFlen(0x7fffffff + 3)
+							return ft
+						}(),
+					},
+				},
+			},
+			wantError: false,
+			check: func(t *testing.T, input, output *model.TableInfo) {
+				require.NotNil(t, output)
+				require.Equal(t, input.ID, output.ID)
+				require.Len(t, output.Columns, 3)
+
+				// Check longtext column was narrowed
+				require.Equal(t, int32(input.Columns[0].GetFlen()), int32(output.Columns[0].GetFlen()))
+				require.NotEqual(t, input.Columns[0].GetFlen(), output.Columns[0].GetFlen())
+
+				// Check json column was narrowed
+				require.Equal(t, int32(input.Columns[1].GetFlen()), int32(output.Columns[1].GetFlen()))
+				require.NotEqual(t, input.Columns[1].GetFlen(), output.Columns[1].GetFlen())
+
+				// Check varchar column was unchanged
+				require.Equal(t, input.Columns[2].GetFlen(), output.Columns[2].GetFlen())
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := cloneAndNormalizeTableInfo(tt.input)
+			if tt.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			tt.check(t, tt.input, output)
+		})
+	}
 }

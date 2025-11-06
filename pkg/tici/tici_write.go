@@ -272,7 +272,12 @@ func (g *DataWriterGroup) WriteHeader(ctx context.Context, fileWriter *FileWrite
 	if g.indexMeta.tblInfo == nil {
 		return errors.New("tblInfo is nil for DataWriter")
 	}
-	tblJSON, err := json.Marshal(g.indexMeta.tblInfo)
+	// Clone and normalize table info to ensure longtext/json flen is narrowed to int32
+	clonedTbl, err := cloneAndNormalizeTableInfo(g.indexMeta.tblInfo)
+	if err != nil {
+		return errors.Annotate(err, "normalize TableInfo (JSON)")
+	}
+	tblJSON, err := json.Marshal(clonedTbl)
 	if err != nil {
 		return errors.Annotate(err, "marshal TableInfo (JSON)")
 	}
