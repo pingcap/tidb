@@ -278,3 +278,4 @@ drop database db2;
 # TestInfoschemaReaderRlike
 create database test_db_080;
 select SCHEMA_NAME from information_schema.schemata where schema_name rlike 'test_db_0[0-8][0-7]';
+desc format=brief select SCHEMA_NAME from information_schema.schemata where schema_name rlike 'test_db_0[0-8][0-7]';

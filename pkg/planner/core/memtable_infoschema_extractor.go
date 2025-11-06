@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
@@ -213,9 +212,7 @@ func (e *InfoSchemaBaseExtractor) Extract(
 		if _, ok := patternMatchable[colName]; !ok {
 			continue
 		}
-		var likePatterns []string
-		var newRemained []expression.Expression
-		newRemained, likePatterns = e.extractLikePatternCol(ctx, schema, names, remained, colName, true, true)
+		newRemained, likePatterns := e.extractLikePatternCol(ctx, schema, names, remained, colName, true, true)
 		if len(likePatterns) == 0 {
 			continue
 		}
@@ -224,14 +221,7 @@ func (e *InfoSchemaBaseExtractor) Extract(
 		regs := make([]*regexp.Regexp, len(likePatterns))
 		meetError := false
 		for i, pattern := range likePatterns {
-			matchType, err := expression.GetRegexpMatchType("", mysql.UTF8MB4GeneralCICollation)
-			if err != nil {
-				logutil.BgLogger().Warn("get regexp match type failed in infoSchema extractor", zap.String("pattern", pattern), zap.Error(err))
-				meetError = true
-				break
-			}
-			intest.Assert(len(matchType) > 0)
-			reg, err := regexp.Compile(fmt.Sprintf("(?%s)%s", matchType, pattern))
+			reg, err := regexp.Compile(fmt.Sprintf("(?i)%s", pattern))
 			if err != nil {
 				logutil.BgLogger().Warn("compile regexp failed in infoSchema extractor", zap.String("pattern", pattern), zap.Error(err))
 				meetError = true
