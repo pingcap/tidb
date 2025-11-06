@@ -368,7 +368,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), taskID)
+	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
 	return NewAddIndexIngestPipeline(
 		opCtx,
 		r.store,
@@ -410,8 +410,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		kvMeta.MergeSummary(summary)
 		r.summary.PutReqCnt.Add(summary.PutRequestCount)
-		metering.RegisterRecorder(r.store.GetKeyspace(), metering.TaskTypeAddIndex, taskID).
-			RecordPutRequestCount(summary.PutRequestCount)
+		r.GetMeterRecorder().RecordPutRequestCount(summary.PutRequestCount)
 		s.mu.Unlock()
 	}
 	var idxNames strings.Builder
@@ -421,7 +420,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		idxNames.WriteString(idx.Name.O)
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), taskID)
+	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
 		r.store,
@@ -444,37 +443,32 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 }
 
 type distTaskRowCntCollector struct {
-	summary *execute.SubtaskSummary
-	counter prometheus.Counter
-	store   kv.Storage
-	taskID  int64
+	summary  *execute.SubtaskSummary
+	counter  prometheus.Counter
+	meterRec *metering.Recorder
 }
 
 func newDistTaskRowCntCollector(
-	store kv.Storage,
 	summary *execute.SubtaskSummary,
 	dbName, tblName, idxName string,
-	taskID int64,
+	meterRec *metering.Recorder,
 ) *distTaskRowCntCollector {
 	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName)
 	return &distTaskRowCntCollector{
-		summary: summary,
-		counter: counter,
-		store:   store,
-		taskID:  taskID,
+		summary:  summary,
+		counter:  counter,
+		meterRec: meterRec,
 	}
 }
 
 func (d *distTaskRowCntCollector) Accepted(bytes int64) {
 	d.summary.ReadBytes.Add(bytes)
-	metering.RegisterRecorder(d.store.GetKeyspace(), metering.TaskTypeAddIndex, d.taskID).
-		RecordReadDataBytes(uint64(bytes))
+	d.meterRec.RecordReadDataBytes(uint64(bytes))
 }
 
 func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
 	d.summary.Bytes.Add(bytes)
 	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
-	metering.RegisterRecorder(d.store.GetKeyspace(), metering.TaskTypeAddIndex, d.taskID).
-		RecordWriteDataBytes(uint64(bytes))
+	d.meterRec.RecordWriteDataBytes(uint64(bytes))
 }

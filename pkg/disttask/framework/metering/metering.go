@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/metering_sdk/storage"
 	meteringwriter "github.com/pingcap/metering_sdk/writer/metering"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -39,16 +40,12 @@ const (
 	category     = "dxf"
 )
 
-// TaskType is the type of metering during DXF execution.
-type TaskType string
-
+// task type values for billing service, those names are better for display than
+// DXF task type.
 const (
-	// TaskTypeUnknown is the type of metering when task type is unknown.
-	TaskTypeUnknown TaskType = ""
-	// TaskTypeAddIndex is the type of metering during add index.
-	TaskTypeAddIndex TaskType = "add-index"
-	// TaskTypeImportInto is the type of metering during import into.
-	TaskTypeImportInto TaskType = "import-into"
+	taskTypeUnknown    = "unknown"
+	taskTypeAddIndex   = "add-index"
+	taskTypeImportInto = "import-into"
 )
 
 var meteringInstance atomic.Pointer[Meter]
@@ -57,7 +54,7 @@ var meteringInstance atomic.Pointer[Meter]
 type Recorder struct {
 	taskID         int64
 	keyspace       string
-	taskType       TaskType
+	taskType       string
 	getRequests    atomic.Uint64
 	putRequests    atomic.Uint64
 	readDataBytes  atomic.Uint64
@@ -65,15 +62,22 @@ type Recorder struct {
 }
 
 // RegisterRecorder returns the Recorder for the given task.
-func RegisterRecorder(keyspace string, taskType TaskType, taskID int64) *Recorder {
+func RegisterRecorder(task *proto.TaskBase) *Recorder {
 	meter := meteringInstance.Load()
 	if kerneltype.IsClassic() || meter == nil {
 		return &Recorder{}
 	}
+	tp := taskTypeUnknown
+	switch task.Type {
+	case proto.ImportInto:
+		tp = taskTypeImportInto
+	case proto.Backfill:
+		tp = taskTypeAddIndex
+	}
 	return meter.getOrRegisterRecorder(&Recorder{
-		taskID:   taskID,
-		taskType: taskType,
-		keyspace: keyspace,
+		taskID:   task.ID,
+		taskType: tp,
+		keyspace: task.Keyspace,
 	})
 }
 
@@ -129,7 +133,7 @@ func SetMetering(m *Meter) {
 type Data struct {
 	taskID   int64
 	keyspace string
-	taskType TaskType
+	taskType string
 
 	getRequests uint64
 	putRequests uint64

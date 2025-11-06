@@ -52,20 +52,20 @@ func TestRecord(t *testing.T) {
 	m := &Meter{
 		data: make(map[int64]*Data),
 	}
-	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{putRequests: 5})
+	m.Record("keyspace1", taskTypeAddIndex, 1, &Data{putRequests: 5})
 	require.Equal(t, uint64(5), m.data[1].putRequests)
-	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{getRequests: 3})
+	m.Record("keyspace1", taskTypeAddIndex, 1, &Data{getRequests: 3})
 	require.Equal(t, uint64(5), m.data[1].putRequests)
 	require.Equal(t, uint64(3), m.data[1].getRequests)
 
-	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{readBytes: 100, writeBytes: 200})
+	m.Record("keyspace1", taskTypeAddIndex, 1, &Data{readBytes: 100, writeBytes: 200})
 	require.Equal(t, uint64(100), m.data[1].readDataBytes)
 	require.Equal(t, uint64(200), m.data[1].writeDataBytes)
-	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{readBytes: 200, writeBytes: 100})
+	m.Record("keyspace1", taskTypeAddIndex, 1, &Data{readBytes: 200, writeBytes: 100})
 	require.Equal(t, uint64(300), m.data[1].readDataBytes)
 	require.Equal(t, uint64(300), m.data[1].writeDataBytes)
 
-	m.Record("keyspace1", TaskTypeAddIndex, 2, &Data{putRequests: 5})
+	m.Record("keyspace1", taskTypeAddIndex, 2, &Data{putRequests: 5})
 	require.Equal(t, uint64(5), m.data[1].putRequests)
 }
 
@@ -75,7 +75,7 @@ func TestConcurrentRecord(t *testing.T) {
 	for range 100 {
 		wg.Add(1)
 		go func() {
-			m.Record("ks1", TaskTypeAddIndex, 1, &Data{putRequests: 1})
+			m.Record("ks1", taskTypeAddIndex, 1, &Data{putRequests: 1})
 			wg.Done()
 		}()
 	}
@@ -90,7 +90,7 @@ func TestFlush(t *testing.T) {
 	writeTime := curTime.Truncate(time.Minute).Add(time.Minute)
 	data := readMeteringData(t, reader, writeTime.Add(-time.Minute).Unix())
 	require.Len(t, data, 0)
-	meter.Record("ks1", TaskTypeAddIndex, 1, &Data{putRequests: 10, getRequests: 20, readBytes: 300, writeBytes: 400})
+	meter.Record("ks1", taskTypeAddIndex, 1, &Data{putRequests: 10, getRequests: 20, readBytes: 300, writeBytes: 400})
 	meter.flush(context.Background(), writeTime.Unix())
 	data = readMeteringData(t, reader, writeTime.Add(-time.Minute).Unix())
 	require.Len(t, data, 0)
