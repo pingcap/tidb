@@ -522,12 +522,10 @@ func GroupOverlappedBackupFileSetsIter(ctx context.Context, regionClient split.S
 	// add the set into the batch set.
 	if thisBackupFileSet != nil {
 		thisBatchBackupFileSet = append(thisBatchBackupFileSet, *thisBackupFileSet)
-		thisBackupFileSet = nil
 	}
 	// output the last batch backup file set
 	if len(thisBatchBackupFileSet) > 0 {
 		fn(thisBatchBackupFileSet)
-		thisBatchBackupFileSet = nil
 	}
 	return nil
 }
