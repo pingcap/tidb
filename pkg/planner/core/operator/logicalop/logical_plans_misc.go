@@ -81,31 +81,6 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 	return false
 }
 
-// CanGenerateMultipleRows returns if the LogicalPlan can generate multiple rows from a single input row.
-// This is used to check if an operator can expand rows, which affects uniqueness constraints.
-// Operators that can generate multiple rows include:
-//   - JOIN (except semi/anti joins which preserve row count)
-//   - UNION ALL
-//   - PartitionUnionAll
-//   - Expand (for GROUPING SETS/ROLLUP)
-//   - TODO: unnest function when implemented
-func CanGenerateMultipleRows(p base.LogicalPlan) bool {
-	switch p.(type) {
-	case *LogicalJoin:
-		// JOIN operators can generate multiple rows (Cartesian product effect)
-		// Note: Semi/Anti joins preserve row count, but we return true here for safety
-		// as the caller can refine this check if needed
-		return true
-	case *LogicalUnionAll, *LogicalPartitionUnionAll:
-		// UNION ALL combines multiple inputs, potentially generating multiple rows
-		return true
-	case *LogicalExpand:
-		// Expand operator splits rows for GROUPING SETS/ROLLUP
-		return true
-	}
-	return false
-}
-
 // AddSelection adds a LogicalSelection to the given LogicalPlan.
 func AddSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int) {
 	if len(conditions) == 0 {
