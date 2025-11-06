@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -418,11 +417,8 @@ func buildRangeForIndexScan(sctx base.PlanContext, is *physicalop.PhysicalIndexS
 		}
 		return errors.New("unexpected range for PhysicalIndexScan")
 	}
-	// when it is called by RebuildPlan4CachedPlan, the access conditions is from the plan cache. so we cannot modify it.
-	// we need to clone it first. In the DetachCondAndBuildRangeForIndex, we will update the expression hashcode. so it will cause
-	// the problems when to check the equality of expressions.
-	condition := util.CloneExprs(is.AccessCondition)
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), condition, is.IdxCols, is.IdxColLens, 0)
+
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), is.AccessCondition, is.IdxCols, is.IdxColLens, 0)
 	if err != nil {
 		return err
 	}
