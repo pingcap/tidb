@@ -23,6 +23,7 @@ partition by range (year(dob)) (
  partition p1970 values less than (1980),
  partition p1980 values less than (1990),
  partition p1990 values less than (2000));
+ create temporary table temp (a int);
 
 # test information_schema.schemata_extensions
 desc information_schema.schemata_extensions;
@@ -55,6 +56,10 @@ create table t1(c1 int);
 create table t2 like t;
 -- error 3809
 create table pt (a int, b int) partition by hash(a) partitions 4;
+-- error 3809
+create temporary table t1(a int);
+-- error 3809
+create global temporary table t1(a int) on commit delete rows;
 
 # alter table
 -- error 3809
@@ -116,7 +121,11 @@ alter schema db_read_only read only 1;
 -- error 3809
 truncate table t;
 -- error 3809
+truncate table temp;
+-- error 3809
 drop table t;
+-- error 3809
+drop table temp;
 -- error 3809
 drop view v1;
 -- error 3809
@@ -146,6 +155,8 @@ use db1;
 create table t1(id int primary key, a int);
 create table t2(id int, a int);
 create table t3(a int);
+create temporary table temp(a int);
+
 drop database if exists db2;
 create database db2;
 use db2;
@@ -183,6 +194,8 @@ insert into db2.t1 select * from t1; # pass
 insert into t1 table t2;
 -- error 3809
 insert into t1 set a=1;
+-- error 3809
+insert into temp values (1);
 
 # replace
 -- error 3809
@@ -191,10 +204,14 @@ replace into t1 values (1, 2);
 replace into t1 table t2;
 -- error 3809
 replace t1 set a = default;
+-- error 3809
+replace into temp values (1);
 
 # delete
 -- error 3809
 delete from t1;
+-- error 3809
+delete from temp where a = 1;
 -- error 3809
 delete t1, t2 from t1, t2;
 -- error 3809
@@ -222,6 +239,8 @@ with cte as (select * from t1) delete from t2 where t2.a in (select a from cte);
 # update
 -- error 3809
 update t1 set a = a + 1;
+-- error 3809
+update temp set a = 1;
 -- error 3809
 update t1, t2 set t1.a = 1, t2.a = 1 where t1.a = t2.a;
 -- error 3809

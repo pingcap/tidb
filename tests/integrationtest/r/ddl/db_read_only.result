@@ -23,6 +23,7 @@ partition p1960 values less than (1970),
 partition p1970 values less than (1980),
 partition p1980 values less than (1990),
 partition p1990 values less than (2000));
+create temporary table temp (a int);
 desc information_schema.schemata_extensions;
 Field	Type	Null	Key	Default	Extra
 CATALOG_NAME	varchar(64)	YES		NULL	
@@ -81,6 +82,10 @@ create table t2 like t;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 create table pt (a int, b int) partition by hash(a) partitions 4;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+create temporary table t1(a int);
+Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+create global temporary table t1(a int) on commit delete rows;
+Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t add column cc int not null;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t add index (a);
@@ -133,7 +138,11 @@ Error 3809 (HY000): Schema 'db_read_only_1' is in read only mode.
 alter schema db_read_only read only 1;
 truncate table t;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+truncate table temp;
+Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 drop table t;
+Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+drop table temp;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 drop view v1;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
@@ -156,6 +165,7 @@ use db1;
 create table t1(id int primary key, a int);
 create table t2(id int, a int);
 create table t3(a int);
+create temporary table temp(a int);
 drop database if exists db2;
 create database db2;
 use db2;
@@ -189,13 +199,19 @@ insert into t1 table t2;
 Error 3809 (HY000): Schema 'db1' is in read only mode.
 insert into t1 set a=1;
 Error 3809 (HY000): Schema 'db1' is in read only mode.
+insert into temp values (1);
+Error 3809 (HY000): Schema 'db1' is in read only mode.
 replace into t1 values (1, 2);
 Error 3809 (HY000): Schema 'db1' is in read only mode.
 replace into t1 table t2;
 Error 3809 (HY000): Schema 'db1' is in read only mode.
 replace t1 set a = default;
 Error 3809 (HY000): Schema 'db1' is in read only mode.
+replace into temp values (1);
+Error 3809 (HY000): Schema 'db1' is in read only mode.
 delete from t1;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+delete from temp where a = 1;
 Error 3809 (HY000): Schema 'db1' is in read only mode.
 delete t1, t2 from t1, t2;
 Error 3809 (HY000): Schema 'db1' is in read only mode.
@@ -221,6 +237,8 @@ Error 3809 (HY000): Schema 'db1' is in read only mode.
 with cte as (select * from t1) delete from t2 where t2.a in (select a from cte);
 Error 3809 (HY000): Schema 'db1' is in read only mode.
 update t1 set a = a + 1;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+update temp set a = 1;
 Error 3809 (HY000): Schema 'db1' is in read only mode.
 update t1, t2 set t1.a = 1, t2.a = 1 where t1.a = t2.a;
 Error 3809 (HY000): Schema 'db1' is in read only mode.
