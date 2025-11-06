@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -346,42 +346,10 @@ type selectResult struct {
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
-<<<<<<< HEAD
-=======
 	return r.fetchRespWithIntermediateResults(ctx, nil)
 }
 
 func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, intermediateOutputTypes [][]*types.FieldType) error {
-	defer func() {
-		if r.stats != nil {
-			// Ignore internal sql.
-			if !r.ctx.InRestrictedSQL && r.stats.copRespTime.Size() > 0 {
-				ratio := r.stats.calcCacheHit()
-				if ratio >= 1 {
-					telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
-				}
-				if ratio >= 0.8 {
-					telemetry.CurrentCoprCacheHitRatioGTE80Count.Inc()
-				}
-				if ratio >= 0.4 {
-					telemetry.CurrentCoprCacheHitRatioGTE40Count.Inc()
-				}
-				if ratio >= 0.2 {
-					telemetry.CurrentCoprCacheHitRatioGTE20Count.Inc()
-				}
-				if ratio >= 0.1 {
-					telemetry.CurrentCoprCacheHitRatioGTE10Count.Inc()
-				}
-				if ratio >= 0.01 {
-					telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
-				}
-				if ratio >= 0 {
-					telemetry.CurrentCoprCacheHitRatioGTE0Count.Inc()
-				}
-			}
-		}
-	}()
->>>>>>> 9e69f9a5b3 (distsql: Add `SelectResultIter` to read rows from cop-task in the iterator way (#63319))
 	for {
 		r.respChkIdx = 0
 		startTime := time.Now()
@@ -794,7 +762,7 @@ func newSelRespChannelIter(result *selectResult, channel int) (*selRespChannelIt
 		fieldTypes:     fieldTypes,
 		encodeType:     encodeType,
 		chkData:        chkData,
-		reserveChkSize: vardef.DefInitChunkSize,
+		reserveChkSize: variable.DefInitChunkSize,
 	}, nil
 }
 

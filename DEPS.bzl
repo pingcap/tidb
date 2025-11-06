@@ -5867,7 +5867,6 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-<<<<<<< HEAD
         sha256 = "1b707429b5b938a05b250b5770be2a6aa243d6a4983d23b01bbca164e86b3e3c",
         strip_prefix = "github.com/pingcap/tipb@v0.0.0-20241022082558-0607513e7fa4",
         urls = [
@@ -5875,15 +5874,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241022082558-0607513e7fa4.zip",
             "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241022082558-0607513e7fa4.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241022082558-0607513e7fa4.zip",
-=======
-        sha256 = "3c15e8868bd3e7f53c9e3e3b9b9d6768467de348edfda500ddcf48d6ffa9329a",
-        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20250829062436-85a019a5df23",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250829062436-85a019a5df23.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250829062436-85a019a5df23.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250829062436-85a019a5df23.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250829062436-85a019a5df23.zip",
->>>>>>> 9e69f9a5b3 (distsql: Add `SelectResultIter` to read rows from cop-task in the iterator way (#63319))
         ],
     )
     go_repository(
@@ -10063,7 +10053,6 @@ def go_deps():
         name = "org_golang_x_crypto",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/crypto",
-<<<<<<< HEAD
         sha256 = "959acbe3514430c2c009dc93f27e41ddad4fee178a4c680c753bc09b5d2e77d0",
         strip_prefix = "golang.org/x/crypto@v0.28.0",
         urls = [
@@ -10071,15 +10060,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.28.0.zip",
             "https://cache.hawkingrei.com/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.28.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.28.0.zip",
-=======
-        sha256 = "7da981b09d79d021f79ea2953637a85e3c72e43fc88b6a3230e7976fbbeec2de",
-        strip_prefix = "golang.org/x/crypto@v0.41.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.41.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.41.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.41.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.41.0.zip",
->>>>>>> 9e69f9a5b3 (distsql: Add `SelectResultIter` to read rows from cop-task in the iterator way (#63319))
         ],
     )
     go_repository(
@@ -10151,7 +10131,6 @@ def go_deps():
         name = "org_golang_x_mod",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/mod",
-<<<<<<< HEAD
         sha256 = "e736e1acca78c9550fa78f54de78d9cf15d5db1ca7d92537900c8591e6ab79c0",
         strip_prefix = "golang.org/x/mod@v0.21.0",
         urls = [
@@ -10159,15 +10138,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/golang.org/x/mod/org_golang_x_mod-v0.21.0.zip",
             "https://cache.hawkingrei.com/gomod/golang.org/x/mod/org_golang_x_mod-v0.21.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/mod/org_golang_x_mod-v0.21.0.zip",
-=======
-        sha256 = "19fb241d46e4397d3193b5fa899e2a9d62bb5d1c41f73d09d29c17c3c0d3953c",
-        strip_prefix = "golang.org/x/mod@v0.27.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/mod/org_golang_x_mod-v0.27.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/mod/org_golang_x_mod-v0.27.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/mod/org_golang_x_mod-v0.27.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/mod/org_golang_x_mod-v0.27.0.zip",
->>>>>>> 9e69f9a5b3 (distsql: Add `SelectResultIter` to read rows from cop-task in the iterator way (#63319))
         ],
     )
     go_repository(
@@ -10226,7 +10196,6 @@ def go_deps():
         name = "org_golang_x_sys",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/sys",
-<<<<<<< HEAD
         sha256 = "f44842acff792af010dcb5a24308b72272ebd57c74e00d5f530c9e5d55b86979",
         strip_prefix = "golang.org/x/sys@v0.26.0",
         urls = [
@@ -10234,15 +10203,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/golang.org/x/sys/org_golang_x_sys-v0.26.0.zip",
             "https://cache.hawkingrei.com/gomod/golang.org/x/sys/org_golang_x_sys-v0.26.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/sys/org_golang_x_sys-v0.26.0.zip",
-=======
-        sha256 = "dc3c20611168aaa8fda0d71999be1a5222a0ba57bc767c978a590e41ff2ede35",
-        strip_prefix = "golang.org/x/sys@v0.35.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/sys/org_golang_x_sys-v0.35.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/sys/org_golang_x_sys-v0.35.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/sys/org_golang_x_sys-v0.35.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/sys/org_golang_x_sys-v0.35.0.zip",
->>>>>>> 9e69f9a5b3 (distsql: Add `SelectResultIter` to read rows from cop-task in the iterator way (#63319))
         ],
     )
     go_repository(
@@ -10262,7 +10222,6 @@ def go_deps():
         name = "org_golang_x_term",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/term",
-<<<<<<< HEAD
         sha256 = "e058796198c690102b79367c0501a66a4867c323aee42b6315726de0ac015676",
         strip_prefix = "golang.org/x/term@v0.25.0",
         urls = [
@@ -10270,22 +10229,12 @@ def go_deps():
             "http://ats.apps.svc/gomod/golang.org/x/term/org_golang_x_term-v0.25.0.zip",
             "https://cache.hawkingrei.com/gomod/golang.org/x/term/org_golang_x_term-v0.25.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/term/org_golang_x_term-v0.25.0.zip",
-=======
-        sha256 = "22281cbf30560433d57de8d72c1151f9cac2917795dc6e9f694f7a525bb5309c",
-        strip_prefix = "golang.org/x/term@v0.34.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/term/org_golang_x_term-v0.34.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/term/org_golang_x_term-v0.34.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/term/org_golang_x_term-v0.34.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/term/org_golang_x_term-v0.34.0.zip",
->>>>>>> 9e69f9a5b3 (distsql: Add `SelectResultIter` to read rows from cop-task in the iterator way (#63319))
         ],
     )
     go_repository(
         name = "org_golang_x_text",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/text",
-<<<<<<< HEAD
         sha256 = "37f9f40b6c3c56e079684d612439b61ce4e891c3cea32298fbab53a1cac47c35",
         strip_prefix = "golang.org/x/text@v0.19.0",
         urls = [
@@ -10293,15 +10242,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/golang.org/x/text/org_golang_x_text-v0.19.0.zip",
             "https://cache.hawkingrei.com/gomod/golang.org/x/text/org_golang_x_text-v0.19.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/text/org_golang_x_text-v0.19.0.zip",
-=======
-        sha256 = "46259e1416ae7ec6adf1867c5f9fab32af0476a148e3c95f1dfbb134f4acf48d",
-        strip_prefix = "golang.org/x/text@v0.28.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/text/org_golang_x_text-v0.28.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/text/org_golang_x_text-v0.28.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/text/org_golang_x_text-v0.28.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/text/org_golang_x_text-v0.28.0.zip",
->>>>>>> 9e69f9a5b3 (distsql: Add `SelectResultIter` to read rows from cop-task in the iterator way (#63319))
         ],
     )
     go_repository(

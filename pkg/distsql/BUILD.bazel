@@ -66,11 +66,7 @@ go_test(
     embed = [":distsql"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
     shard_count = 28,
-=======
-    shard_count = 32,
->>>>>>> 9e69f9a5b3 (distsql: Add `SelectResultIter` to read rows from cop-task in the iterator way (#63319))
     deps = [
         "//pkg/distsql/context",
         "//pkg/errctx",

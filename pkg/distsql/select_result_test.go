@@ -18,12 +18,13 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -125,7 +126,7 @@ func TestNewSelRespChannelIter(t *testing.T) {
 				{RowsData: []byte("123")},
 				{RowsData: []byte("456")},
 			},
-			reserveChkSize: vardef.DefInitChunkSize,
+			reserveChkSize: variable.DefInitChunkSize,
 		}, iter)
 		require.Equal(t, 2, iter.Channel())
 	}
@@ -144,7 +145,7 @@ func TestNewSelRespChannelIter(t *testing.T) {
 			{RowsData: []byte("789")},
 			{RowsData: []byte("101112")},
 		},
-		reserveChkSize: vardef.DefInitChunkSize,
+		reserveChkSize: variable.DefInitChunkSize,
 	}, iter)
 	require.Equal(t, 0, iter.Channel())
 
@@ -161,7 +162,7 @@ func TestNewSelRespChannelIter(t *testing.T) {
 			{RowsData: []byte("1098")},
 			{RowsData: []byte("765")},
 		},
-		reserveChkSize: vardef.DefInitChunkSize,
+		reserveChkSize: variable.DefInitChunkSize,
 	}, iter)
 	require.Equal(t, 1, iter.Channel())
 
