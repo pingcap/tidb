@@ -371,18 +371,16 @@ func (s *propConstSolver) propagateColumnEQ() {
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
 					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
-					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
-						continue
+					if isConstant(newExpr) || s.vaildExprFunc == nil || s.vaildExprFunc(newExpr) {
+						s.conditions = append(s.conditions, newExpr)
 					}
-					s.conditions = append(s.conditions, newExpr)
 				}
 				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
 					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
-					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
-						continue
+					if isConstant(newExpr) || s.vaildExprFunc == nil || s.vaildExprFunc(newExpr) {
+						s.conditions = append(s.conditions, newExpr)
 					}
-					s.conditions = append(s.conditions, newExpr)
 				}
 			}
 		}
