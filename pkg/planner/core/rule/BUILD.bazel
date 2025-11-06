@@ -12,6 +12,7 @@ go_library(
         "rule_init.go",
         "rule_partition_processor.go",
         "rule_predicate_simplification.go",
+        "rule_prune_indexes.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/rule",
     visibility = ["//visibility:public"],
