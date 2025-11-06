@@ -3322,6 +3322,12 @@ func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
 		return
 	}
 	w.getReorgCtx(jobID).setRowCount(rowCount)
+	keyRangeCount, err := taskMgr.GetSubtaskKeyRangeCount(w.workCtx, task.ID, proto.BackfillStepReadIndex)
+	if err != nil {
+		logutil.DDLLogger().Warn("cannot get subtask key range count", zap.String("task_key", taskKey), zap.Error(err))
+		return
+	}
+	w.getReorgCtx(jobID).setFinishedKeyRangeCount(keyRangeCount)
 }
 
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (pid int64, startKey, endKey kv.Key, err error) {

@@ -380,6 +380,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// So for added count and warnings collection, it is recommended to collect the statistics in every
 		// successfully committed small ranges rather than fetching it in the total result.
 		rc.increaseRowCount(int64(taskCtx.addedCount))
+		rc.increaseFinishedKeyRangeCount(1)
 		rc.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
 
 		if num := result.scanCount - lastLogCount; num >= 90000 {
@@ -926,6 +927,7 @@ func (s *localRowCntCollector) Processed(_, rowCnt int64) {
 	s.curPhysicalRowCnt.mu.Lock()
 	s.curPhysicalRowCnt.cnt += rowCnt
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + s.curPhysicalRowCnt.cnt)
+	s.reorgCtx.increaseFinishedKeyRangeCount(1)
 	s.curPhysicalRowCnt.mu.Unlock()
 	s.counter.Add(float64(rowCnt))
 }
@@ -1062,6 +1064,8 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			if err2 != nil {
 				return errors.Trace(err2)
 			}
+			rc := dc.getReorgCtx(reorgInfo.Job.ID)
+			rc.increaseTotalKeyRangeCount(int64(len(kvRanges)))
 			if len(kvRanges) == 0 {
 				break
 			}
