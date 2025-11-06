@@ -45,7 +45,7 @@ This file provides guidance to agents when working with code in this repository.
 - `/pkg/util/` - Utilities.
 - `/cmd/tidb-server/` - Main entry for TiDB service.
 
-### Building
+## Building
 
 ```bash
 make bazel_prepare
@@ -54,7 +54,7 @@ make gogenerate
 go mod tidy
 ```
 
-### Testing 
+## Testing 
 
 ### Unit Tests
 
