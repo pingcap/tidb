@@ -526,7 +526,9 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 			// So here skip to reserve the allocators when repairing table.
 			diff.Type != model.ActionRepairTable &&
 			// Alter sequence will change the sequence info in the allocator, so the old allocator is not valid any more.
-			diff.Type != model.ActionAlterSequence {
+			diff.Type != model.ActionAlterSequence &&
+			// Exchange partition updates auto IDs in meta store, so we need to reload allocators to pick up the new values.
+			diff.Type != model.ActionExchangeTablePartition {
 			oldAllocs, _ := b.is.AllocByID(oldTableID)
 			keptAllocs = getKeptAllocators(diff, oldAllocs)
 		}
