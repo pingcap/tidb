@@ -3007,9 +3007,7 @@ func formatDecimal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result 
 
 		xStr := roundFormatArgs(x.String(), int(d))
 		dStr := strconv.FormatInt(d, 10)
-		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
-
-		formatString, err := localeFormatFunction(xStr, dStr)
+		formatString, err := mysql.FormatByLocale(xStr, dStr, locale)
 		if err != nil {
 			return err
 		}
@@ -3053,9 +3051,8 @@ func formatReal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *ch
 
 		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))
 		dStr := strconv.FormatInt(d, 10)
-		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
 
-		formatString, err := localeFormatFunction(xStr, dStr)
+		formatString, err := mysql.FormatByLocale(xStr, dStr, locale)
 		if err != nil {
 			return err
 		}

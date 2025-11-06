@@ -2039,8 +2039,8 @@ func TestFormat(t *testing.T) {
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum(formatTests4.ret), r4)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
-	require.Equal(t, 3, len(warnings))
-	for i := range 3 {
+	require.Equal(t, 1, len(warnings))
+	for i := range 1 {
 		require.True(t, terror.ErrorEqual(errUnknownLocale, warnings[i].Err))
 	}
 	ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})
@@ -2762,4 +2762,113 @@ func TestCIWeightString(t *testing.T) {
 	checkResult("utf8mb4_general_ci", generalTests)
 	checkResult("utf8mb4_unicode_ci", unicodeTests)
 	checkResult("utf8mb4_0900_ai_ci", unicode0900Tests)
+}
+
+// TestFormatWithLocale tests the 3-argument version of FORMAT(X, D, locale)
+// with various locales and number formats.
+func TestFormatWithLocale(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.Format]
+
+	tests := []struct {
+		number    any
+		precision any
+		locale    any  // Use 'any' to test NULL locale
+		ret       any  // Expected result
+		warning   bool // True if we expect an 'Unknown locale' warning
+		desc      string
+	}{
+		// --- Style: CommaDot (123,456.78) ---
+		{1234567.89, 2, "en_US", "1,234,567.89", false, "CommaDot (en_US) - large number"},
+		{-98765.432, 2, "zh_CN", "-98,765.43", false, "CommaDot (zh_CN) - negative, rounding"},
+		{0.01, 4, "ja_JP", "0.0100", false, "CommaDot (ja_JP) - decimal padding"},
+		{12345, 0, "en_GB", "12,345", false, "CommaDot (en_GB) - no decimal part"},
+		{1.2, 2, "ko_KR", "1.20", false, "CommaDot (ko_KR) - extra locale"},
+		{500.5, 1, "th_TH", "500.5", false, "CommaDot (th_TH) - extra locale"},
+		{7777, 0, "en_AU", "7,777", false, "CommaDot (en_AU) - extra locale"},
+		{-88.88, 2, "zh_TW", "-88.88", false, "CommaDot (zh_TW) - extra locale"},
+
+		// --- Style: DotComma (123.456,78) ---
+		{7654321.98, 2, "de_DE", "7.654.321,98", false, "DotComma (de_DE) - large number"},
+		{-9.999, 2, "es_ES", "-10,00", false, "DotComma (es_ES) - negative, rounding up to 10"},
+		{100.5, 3, "pt_BR", "100,500", false, "DotComma (pt_BR) - decimal padding"},
+		{12345, 0, "it_IT", "12.345", false, "DotComma (it_IT) - no decimal part"},
+		{"-123.45", 1, "id_ID", "-123,5", false, "DotComma (id_ID) - string input"},
+		{99, 1, "vi_VN", "99,0", false, "DotComma (vi_VN) - extra locale"},
+		{8888.8, 0, "ro_RO", "8.889", false, "DotComma (ro_RO) - extra locale, rounding"},
+		{1234.567, 2, "da_DK", "1.234,57", false, "DotComma (da_DK) - extra locale, rounding"},
+		{555.55, 1, "tr_TR", "555,6", false, "DotComma (tr_TR) - extra locale, rounding"},
+
+		// --- Style: SpaceComma (123 456,78) ---
+		{500000.1, 2, "fr_FR", "500 000,10", false, "SpaceComma (fr_FR) - large number"},
+		{-0.88, 1, "ru_RU", "-0,9", false, "SpaceComma (ru_RU) - negative, rounding"},
+		{98765, 0, "sv_SE", "98 765", false, "SpaceComma (sv_SE) - no decimal part"},
+		{1999.9, 0, "pl_PL", "2 000", false, "SpaceComma (pl_PL) - extra locale, rounding"},
+		{2000, 2, "cs_CZ", "2 000,00", false, "SpaceComma (cs_CZ) - extra locale, padding"},
+
+		// --- Style: NoneComma (123456,78) ---
+		{1000000, 2, "bg_BG", "1000000,00", false, "NoneComma (bg_BG) - no grouping, padding"},
+		{-2.23, 1, "el_GR", "-2,2", false, "NoneComma (el_GR) - negative, rounding"},
+		{44.44, 1, "pt_PT", "44,4", false, "NoneComma (pt_PT) - extra locale"},
+
+		// --- Style: AposDot (123'456.78) ---
+		{4567890.123, 2, "de_CH", "4'567'890.12", false, "AposDot (de_CH) - large number"},
+		{123, 2, "fr_CH", "123.00", false, "AposDot (fr_CH) - padding"},
+		{99.99, 0, "it_CH", "100", false, "AposDot (it_CH) - extra locale, rounding"},
+
+		// --- Style: SpaceDot (123 456.78) ---
+		{9876543.21, 1, "es_MX", "9 876 543.2", false, "SpaceDot (es_MX) - only locale for this style"},
+
+		// --- Style: NarrowSpaceComma (123 456,78) ---
+		// Note: " " is U+202F (Narrow No-Break Space)
+		{3000.14, 2, "ce_RU", "3 000,14", false, "NarrowSpaceComma (ce_RU) - narrow space"},
+		{4000.1, 1, "ky_KG", "4 000,1", false, "NarrowSpaceComma (ky_KG) - extra locale"},
+
+		// --- Style: NoneDot (123456.78) ---
+		{1000000.5, 0, "ar_SA", "1000001", false, "NoneDot (ar_SA) - no grouping, rounding"},
+		{200, 2, "aa_DJ", "200.00", false, "NoneDot (aa_DJ) - extra locale, padding"},
+
+		// --- Style: Arabic (123٬456٫78) ---
+		// Note: "٬" is U+066C, "٫" is U+066B
+		{7890123.456, 2, "ps_AF", "7٬890٬123٫46", false, "Arabic (ps_AF) - arabic seps, rounding"},
+
+		// --- Special Cases (Case, NULL, Invalid) ---
+		{12345.67, 2, "dE_dE", "12.345,67", false, "DotComma (de_DE) - case insensitive"},
+		{12345.67, 2, "en_us", "12,345.67", false, "CommaDot (en_US) - case insensitive"},
+
+		// Test NULL locale: should fallback to en_US and produce a warning
+		{12345.67, 2, nil, "12,345.67", true, "NULL locale fallback"},
+
+		// Test an invalid/unmapped locale
+		// Should fallback to en_US (styleCommaDot) with NO error and NO warning.
+		{12345.67, 2, "de_GE", "12,345.67", false, "Invalid locale 'de_GE' fallback"},
+		{12345.67, 2, "non_existent", "12,345.67", false, "Invalid locale 'non_existent' fallback"},
+	}
+
+	for _, tt := range tests {
+		// Clear warnings for each test run
+		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+
+		// Get function signature
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision, tt.locale)))
+		require.NoError(t, err, "test: %s", tt.desc)
+		require.NotNil(t, f, "test: %s", tt.desc)
+
+		// Evaluate
+		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err, "test: %s", tt.desc)
+
+		// Check result
+		testutil.DatumEqual(t, types.NewDatum(tt.ret), r, "test: %s", tt.desc)
+
+		// Check warnings
+		warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+		if tt.warning {
+			require.Len(t, warnings, 1, "test: %s", tt.desc)
+			// Check if it's the 'Unknown locale' warning
+			require.True(t, terror.ErrorEqual(errUnknownLocale, warnings[0].Err), "test: %s", tt.desc)
+		} else {
+			require.Len(t, warnings, 0, "test: %s", tt.desc)
+		}
+	}
 }

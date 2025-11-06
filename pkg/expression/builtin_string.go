@@ -3608,11 +3608,9 @@ func (b *builtinFormatWithLocaleSig) evalString(ctx EvalContext, row chunk.Row) 
 	tc := typeCtx(ctx)
 	if isNull {
 		tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
-	} else if !strings.EqualFold(locale, "en_US") { // TODO: support other locales.
-		tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+		locale = "en_US"
 	}
-	locale = "en_US"
-	formatString, err := mysql.GetLocaleFormatFunction(locale)(x, d)
+	formatString, err := mysql.FormatByLocale(x, d, locale)
 	return formatString, false, err
 }
 
@@ -3637,7 +3635,7 @@ func (b *builtinFormatSig) evalString(ctx EvalContext, row chunk.Row) (string, b
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	formatString, err := mysql.GetLocaleFormatFunction("en_US")(x, d)
+	formatString, err := mysql.FormatByLocale(x, d, "en_US")
 	return formatString, false, err
 }
 
