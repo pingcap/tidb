@@ -190,7 +190,7 @@ type executor struct {
 	// whether the executor is responsible for auto ID rebase.
 	// Since https://github.com/pingcap/tidb/pull/64356, we move rebase logic from
 	// executor into DDL job worker. So typically, the job worker is responsible for
-	// rebase. But sometimes we use higher version of BR to backup db to lower version
+	// rebase. But sometimes we use higher version of BR to restore db to lower version
 	// of TiDB cluster, which may cause rebase is not executed on both executor(BR) and
 	// worker(downstream TiDB) side. So we use this mode to check if this is runned by BR.
 	// If so, the executor should handle auto ID rebase.
