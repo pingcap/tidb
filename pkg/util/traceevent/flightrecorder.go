@@ -305,7 +305,7 @@ func (r *Trace) Record(_ context.Context, event Event) {
 func (r *Trace) MarkDump() {
 	r.mu.Lock()
 	r.keep = true
-	r.mu.Lock()
+	r.mu.Unlock()
 }
 
 const maxEvents = 4096

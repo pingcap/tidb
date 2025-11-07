@@ -1921,30 +1921,6 @@ func (digest planDigestAlias) planDigestDumpTriggerCheck(config *traceevent.Dump
 	return config.UserCommand.PlanDigest == digest.Digest
 }
 
-type sqlDigestAlias struct {
-	*parser.Digest
-}
-
-func (digest sqlDigestAlias) sqlDigestDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
-	return config.UserCommand.SQLDigest == digest.Digest.String()
-}
-
-type stmtLabelAlias struct {
-	label string
-}
-
-func (s stmtLabelAlias) stmtLabelDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
-	return config.UserCommand.StmtLabel == s.label
-}
-
-type userAlias struct {
-	user string
-}
-
-func (u userAlias) byUserDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
-	return config.UserCommand.ByUser == u.user
-}
-
 // SummaryStmt collects statements for information_schema.statements_summary
 func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -1972,11 +1948,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := sessVars.GetTotalCostDuration()
 	charset, collation := sessVars.GetCharsetInfo()
-
-	// Not using closure to avoid unnecessary memory allocation.
-	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.sql_digest", sqlDigestAlias{digest}.sqlDigestDumpTriggerCheck)
-	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.stmt_label", stmtLabelAlias{stmtCtx.StmtType}.stmtLabelDumpTriggerCheck)
-	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.by_user", userAlias{userString}.byUserDumpTriggerCheck)
 
 	var prevSQL, prevSQLDigest string
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
