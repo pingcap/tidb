@@ -2840,9 +2840,9 @@ func TestFormatWithLocale(t *testing.T) {
 		{12345.67, 2, nil, "12,345.67", true, "NULL locale fallback"},
 
 		// Test an invalid/unmapped locale
-		// Should fallback to en_US (styleCommaDot) with NO error and NO warning.
-		{12345.67, 2, "de_GE", "12,345.67", false, "Invalid locale 'de_GE' fallback"},
-		{12345.67, 2, "non_existent", "12,345.67", false, "Invalid locale 'non_existent' fallback"},
+		// Should fallback to en_US (styleCommaDot) and issue a warning.
+		{12345.67, 2, "de_GE", "12,345.67", true, "Invalid locale 'de_GE' fallback"},
+		{12345.67, 2, "non_existent", "12,345.67", true, "Invalid locale 'non_existent' fallback"},
 	}
 
 	for _, tt := range tests {
