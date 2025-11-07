@@ -1,6 +1,6 @@
-Author(s): @lcwangchao, @time-and-fate, @xhebox, @hongyunyan, @flowbehappy
-Last updated: 2025-11-05
-Tracking Issue: [#64281](https://github.com/pingcap/tidb/issues/64281)
+* Author(s): @lcwangchao, @time-and-fate, @xhebox, @hongyunyan, @flowbehappy
+* Last updated: 2025-11-05
+* Tracking Issue: [#64281](https://github.com/pingcap/tidb/issues/64281)
 
 # Design Summary
 
