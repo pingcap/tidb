@@ -129,7 +129,7 @@ type CreateTableConfig struct {
 	// job submitter, which is is only used by BR now.
 	// Since https://github.com/pingcap/tidb/pull/64356, we move rebase logic from
 	// submitter into DDL executor. But sometimes we use higher version of BR to backup
-	// db with lower version of TiDB cluster, which may cause rebase is not executed
+	// db to lower version of TiDB cluster, which may cause rebase is not executed
 	// on both submitter(BR) and executor(downstream TiDB) side. So we need this to option
 	// to make BR side handle auto ID rebase.
 	RebaseAutoID bool
