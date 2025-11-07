@@ -76,12 +76,43 @@ type fuzzyBindingCache struct {
 	loadBindingFromStorageFunc func(sctx sessionctx.Context, sqlDigest string) (Bindings, error)
 }
 
+<<<<<<< HEAD
 func newFuzzyBindingCache(loadBindingFromStorageFunc func(sessionctx.Context, string) (Bindings, error)) FuzzyBindingCache {
 	return &fuzzyBindingCache{
 		BindingCache:               newBindCache(),
 		fuzzy2SQLDigests:           make(map[string][]string),
 		sql2FuzzyDigest:            make(map[string]string),
 		loadBindingFromStorageFunc: loadBindingFromStorageFunc,
+=======
+// LoadFromStorageToCache loads bindings from the storage into the cache.
+func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) {
+	lastUpdateTime := u.lastUpdateTime.Load().(types.Time)
+	var timeCondition string
+	if fullLoad || lastUpdateTime.IsZero() { // avoid "update_time>'0000-00-00 00:00:00'", which is invalid
+		lastUpdateTime = types.ZeroTimestamp
+		timeCondition = ""
+	} else {
+		// If multiple TiDBs are creating bindings simultaneously and their time are not synchronized,
+		// some bindings' update_time may be earlier than the lastUpdateTime of this TiDB.
+		// timeLagToleranceSec is used to tolerate the time lag between different TiDBs.
+		// See #64250 for more details.
+		// It's safe to load duplicated bindings, because we'll deduplicate them in `pickCachedBinding`.
+		// TODO: use PD TSO to avoid time synchronization issue thoroughly.
+		const timeLagTolerance = 10 * time.Second
+		lastUpdateTime = u.lastUpdateTime.Load().(types.Time)
+		lastUpdateTimeGo, err := lastUpdateTime.GoTime(time.Local)
+		if err != nil {
+			return err
+		}
+		updateTimeBoundary := types.NewTime(types.FromGoTime(lastUpdateTimeGo.Add(-timeLagTolerance)),
+			lastUpdateTime.Type(), lastUpdateTime.Fsp())
+		timeCondition = fmt.Sprintf("USE INDEX (time_index) WHERE update_time>'%s'", updateTimeBoundary.String())
+	}
+	condition := fmt.Sprintf(`%s ORDER BY update_time, create_time`, timeCondition)
+	bindings, err := readBindingsFromStorage(u.sPool, condition)
+	if err != nil {
+		return err
+>>>>>>> e59b6ea1bd7 (planner: tolerate reasonable time lag between different TiDB nodes when updating binding cache (#64289))
 	}
 }
 
