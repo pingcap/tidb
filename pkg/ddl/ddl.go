@@ -109,8 +109,7 @@ const (
 	// the DDL owner, to make sure all upgrade related DDLs are run on new version
 	// TiDB instance.
 	Upgrade StartMode = "upgrade"
-
-	// Start DDL from br, with this mode can skip loadSystemStore in next-gen and initLogBackup.
+	// BR mode, Start DDL from br, with this mode can skip loadSystemStore in next-gen and initLogBackup.
 	BR StartMode = "br"
 )
 
