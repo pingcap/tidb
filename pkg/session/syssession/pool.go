@@ -301,12 +301,14 @@ func (p *AdvancedSessionPool) WithForceBlockGCSession(ctx context.Context, fn fu
 		for !infosync.StoreInternalSession(se.internal.sctx) {
 			// In most cases, the session manager is not set, so this step will be skipped.
 			// It is only enabled explicitly in tests through a failpoint.
-			forceBlockGCInTest := !intest.InTest
-			failpoint.Inject("ForceBlockGCInTest", func(val failpoint.Value) {
-				forceBlockGCInTest = val.(bool)
-			})
-			if !forceBlockGCInTest {
-				break
+			if intest.InTest {
+				forceBlockGCInTest := false
+				failpoint.Inject("ForceBlockGCInTest", func(val failpoint.Value) {
+					forceBlockGCInTest = val.(bool)
+				})
+				if !forceBlockGCInTest {
+					break
+				}
 			}
 
 			// Check context cancellation
