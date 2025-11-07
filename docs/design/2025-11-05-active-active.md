@@ -11,9 +11,12 @@ In this setup, an application can connect to any TiDB cluster to perform both re
 This design provides eventual consistency, and any write conflicts are resolved using the Last Write Wins (LWW) strategy.
 
 The following example illustrates multiple TiDB clusters forming an active-active deployment, referred to as an “active-active group.”
+
 ![active-active-group.png](active-active-group.png)
+
 Since a transaction happens only inside a TiDB cluster, and the commit_tss are generated from local PD node which has no direct connection to other TiDB clusters' PD nodes, the solution does't provide global transactional consistency. A simple example: A client connects to cluster A and sets value to x, then connects to cluster B and sets the same value to y in a very short time (before the update is replicated to B by TiCDC). The system does not guarantee the final result of value is y. It only guarantees the final value of each cluster is the same, no matter x or y, i.e. eventual consistency.
 To guarantee eventual consistency, the system must address the write conflicts between multiple TiDB clusters. E.g. The same PK rows are modified in more than one cluster simultaneously. The written conflicts are resolved by a strategy named "Last Write Wins (LWW)". An example of how LWW addresses conflict:
+
 ![active-active-last-write-wins.PNG](active-active-last-write-wins.PNG)
 
 # Design Details
