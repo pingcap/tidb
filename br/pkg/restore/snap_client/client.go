@@ -641,6 +641,35 @@ func (rc *SnapClient) InitConnections(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
+func SetSpeedLimitCallbacks(
+	ctx context.Context,
+	stores []*metapb.Store,
+	pool *tidbutil.WorkerPool,
+	rateLimit uint64,
+) (func(*SnapFileImporter) error, func(*SnapFileImporter) error) {
+	setFn := SetSpeedLimitFn(ctx, stores, pool)
+	return func(importer *SnapFileImporter) error {
+			return setFn(importer, rateLimit)
+		}, func(importer *SnapFileImporter) error {
+			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
+			var resetErr error
+			for retry := range resetSpeedLimitRetryTimes {
+				resetErr = setFn(importer, 0)
+				if resetErr != nil {
+					log.Warn("failed to reset speed limit, retry it",
+						zap.Int("retry time", retry), logutil.ShortError(resetErr))
+					time.Sleep(time.Duration(retry+3) * time.Second)
+					continue
+				}
+				break
+			}
+			if resetErr != nil {
+				log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
+			}
+			return resetErr
+		}
+}
+
 func SetSpeedLimitFn(ctx context.Context, stores []*metapb.Store, pool *tidbutil.WorkerPool) func(*SnapFileImporter, uint64) error {
 	return func(importer *SnapFileImporter, limit uint64) error {
 		eg, ectx := errgroup.WithContext(ctx)
@@ -685,28 +714,9 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
 	if rc.rateLimit != 0 {
-		setFn := SetSpeedLimitFn(ctx, stores, rc.workerPool)
-		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
-			return setFn(importer, rc.rateLimit)
-		})
-		closeCallBacks = append(closeCallBacks, func(importer *SnapFileImporter) error {
-			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
-			var resetErr error
-			for retry := range resetSpeedLimitRetryTimes {
-				resetErr = setFn(importer, 0)
-				if resetErr != nil {
-					log.Warn("failed to reset speed limit, retry it",
-						zap.Int("retry time", retry), logutil.ShortError(resetErr))
-					time.Sleep(time.Duration(retry+3) * time.Second)
-					continue
-				}
-				break
-			}
-			if resetErr != nil {
-				log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
-			}
-			return resetErr
-		})
+		createCallBack, closeCallBack := SetSpeedLimitCallbacks(ctx, stores, rc.workerPool, rc.rateLimit)
+		createCallBacks = append(createCallBacks, createCallBack)
+		closeCallBacks = append(closeCallBacks, closeCallBack)
 	}
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
