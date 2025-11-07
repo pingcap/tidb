@@ -70,6 +70,9 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			return ver, err
 		}
 
+		// Only preserve the flag of last job that need analyze.
+		setAnalyzeForLastEligibleSubJob(job.MultiSchemaInfo)
+
 		// Save table info and sub-jobs for rolling back.
 		var tblInfo *model.TableInfo
 		tblInfo, err = GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
@@ -195,8 +198,8 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 		SchemaState: jobW.SchemaState,
 		SnapshotVer: jobW.SnapshotVer,
 		Revertible:  true,
-		CtxVars:     jobW.CtxVars,
 		ReorgTp:     reorgTp,
+		NeedAnalyze: jobW.Type == model.ActionAddIndex || jobW.Type == model.ActionAddPrimaryKey,
 	})
 	return nil
 }
@@ -367,13 +370,16 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	info.SubJobs = newSubJobs
 }
 
-// setNeedAnalyze sets NeedAnalyze for the last sub-job that can do embedded analyze.
-func setNeedAnalyze(info *model.MultiSchemaInfo) {
+// setAnalyzeForLastEligibleSubJob sets NeedAnalyze flag only for the last sub-job
+// that can perform embedded analyze, and clear flag for all previous sub-jobs.
+func setAnalyzeForLastEligibleSubJob(info *model.MultiSchemaInfo) {
 	for i := len(info.SubJobs) - 1; i >= 0; i-- {
 		subJob := info.SubJobs[i]
-		if subJob.CanEmbeddedAnalyze() {
-			subJob.NeedAnalyze = true
-			break
+		if subJob.NeedAnalyze {
+			for j := range i {
+				info.SubJobs[j].NeedAnalyze = false
+			}
+			return
 		}
 	}
 }

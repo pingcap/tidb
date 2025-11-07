@@ -207,6 +207,47 @@ func (action ActionType) String() string {
 	return "none"
 }
 
+// ModifyColumnType is used to indicate what type of modify column job it is.
+// Note: to maintain compatibility, value 6(mysql.TypeNull) should not be used here which may be used by older version of TiDB.
+// https://github.com/pingcap/tidb/blob/cf587d3793d7d147132d90eb1850981d3ec41780/pkg/ddl/modify_column.go#L998-L1004
+const (
+	ModifyTypeNone byte = iota
+	// modify column that guarantees no reorganization or check is needed.
+	ModifyTypeNoReorg
+
+	// modify column that don't need to reorg the data, but need to check the existing data.
+	ModifyTypeNoReorgWithCheck
+
+	// modify column that only needs to reorg the index
+	ModifyTypeIndexReorg
+
+	// modify column that needs to reorg both the row and index data.
+	ModifyTypeReorg
+
+	// A special type for varchar->char conversion with data precheck.
+	ModifyTypePrecheck
+)
+
+// ModifyTypeToString converts ModifyColumnType to string.
+func ModifyTypeToString(tp byte) string {
+	switch tp {
+	case ModifyTypeNone:
+		return "none"
+	case ModifyTypeNoReorg:
+		return "modify meta only"
+	case ModifyTypeNoReorgWithCheck:
+		return "modify meta only with range check"
+	case ModifyTypeIndexReorg:
+		return "reorg index only"
+	case ModifyTypeReorg:
+		return "reorg row and index"
+	case ModifyTypePrecheck:
+		return "prechecking"
+	}
+
+	return ""
+}
+
 // SchemaState is the state for schema elements.
 type SchemaState byte
 
@@ -312,10 +353,6 @@ type Job struct {
 	RowCount int64      `json:"row_count"`
 	Mu       sync.Mutex `json:"-"`
 
-	// CtxVars are variables attached to the job. It is for internal usage.
-	// E.g. passing arguments between functions by one single *Job pointer.
-	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
-	CtxVars []any `json:"-"`
 	// it's a temporary place to cache job args.
 	// when Version is JobVersion2, Args contains a single element of type JobArgs.
 	args []any
@@ -735,15 +772,14 @@ func (job *Job) MayNeedReorg() bool {
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
-		// TODO(joechenrh): remove CtxVars here
-		if len(job.CtxVars) > 0 {
-			needReorg, ok := job.CtxVars[0].(bool)
-			return ok && needReorg
+		args, err := GetModifyColumnArgs(job)
+		if err != nil {
+			return false
 		}
-		return false
+		return args.ModifyColumnType == ModifyTypeIndexReorg || args.ModifyColumnType == ModifyTypeReorg
 	case ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			proxyJob := Job{Type: sub.Type, CtxVars: sub.CtxVars}
+			proxyJob := Job{Type: sub.Type, args: sub.args, RawArgs: sub.RawArgs, Version: job.Version}
 			if proxyJob.MayNeedReorg() {
 				return true
 			}
@@ -837,7 +873,6 @@ type SubJob struct {
 	State        JobState        `json:"state"`
 	RowCount     int64           `json:"row_count"`
 	Warning      *terror.Error   `json:"warning"`
-	CtxVars      []any           `json:"-"`
 	SchemaVer    int64           `json:"schema_version"`
 	ReorgTp      ReorgType       `json:"reorg_tp"`
 	ReorgStage   ReorgStage      `json:"reorg_stage"`
@@ -863,22 +898,6 @@ func (sub *SubJob) IsFinished() bool {
 		sub.State == JobStateCancelled
 }
 
-// CanEmbeddedAnalyze indicates that this sub-job can do embedded analyze right after the schema change.
-func (sub *SubJob) CanEmbeddedAnalyze() bool {
-	switch sub.Type {
-	case ActionAddIndex, ActionAddPrimaryKey:
-		return true
-	case ActionModifyColumn:
-		if len(sub.CtxVars) > 0 {
-			needReorg, ok := sub.CtxVars[0].(bool)
-			return ok && needReorg
-		}
-		return false
-	default:
-		return false
-	}
-}
-
 // ToProxyJob converts a sub-job to a proxy job.
 func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 	reorgMeta := parentJob.ReorgMeta
@@ -899,7 +918,6 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		ErrorCount:      0,
 		RowCount:        sub.RowCount,
 		Mu:              sync.Mutex{},
-		CtxVars:         sub.CtxVars,
 		args:            sub.args,
 		RawArgs:         sub.RawArgs,
 		SchemaState:     sub.SchemaState,
@@ -925,6 +943,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 // FromProxyJob converts a proxy job to a sub-job.
 func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
+	sub.NeedAnalyze = proxyJob.MultiSchemaInfo.NeedAnalyze
 	sub.SchemaState = proxyJob.SchemaState
 	sub.SnapshotVer = proxyJob.SnapshotVer
 	sub.RealStartTS = proxyJob.RealStartTS
@@ -966,7 +985,8 @@ type MultiSchemaInfo struct {
 
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
-	// NeedAnalyze is used to indicate whether we need to analyze the table after the sub-job is done.
+	// NeedAnalyze is used to indicate whether we need to check if analyze is needed for this sub-job.
+	// In one multi-schema change job, only the last sub-job that need reorg will set this to true.
 	NeedAnalyze bool `json:"-"`
 
 	AddColumns    []ast.CIStr `json:"-"`
