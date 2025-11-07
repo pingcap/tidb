@@ -57,73 +57,6 @@ const (
 	btreeDegree = 32
 )
 
-// Helper functions for debugging datum types
-func getKindName(kind byte) string {
-	switch kind {
-	case types.KindNull:
-		return "KindNull"
-	case types.KindInt64:
-		return "KindInt64"
-	case types.KindUint64:
-		return "KindUint64"
-	case types.KindFloat32:
-		return "KindFloat32"
-	case types.KindFloat64:
-		return "KindFloat64"
-	case types.KindString:
-		return "KindString"
-	case types.KindBytes:
-		return "KindBytes"
-	case types.KindBinaryLiteral:
-		return "KindBinaryLiteral"
-	case types.KindMysqlDecimal:
-		return "KindMysqlDecimal"
-	case types.KindMysqlDuration:
-		return "KindMysqlDuration"
-	case types.KindMysqlTime:
-		return "KindMysqlTime"
-	case types.KindMysqlJSON:
-		return "KindMysqlJSON"
-	case types.KindMysqlEnum:
-		return "KindMysqlEnum"
-	case types.KindMysqlSet:
-		return "KindMysqlSet"
-	case types.KindMysqlBit:
-		return "KindMysqlBit"
-	case types.KindMinNotNull:
-		return "KindMinNotNull"
-	case types.KindMaxValue:
-		return "KindMaxValue"
-	default:
-		return fmt.Sprintf("Unknown(%d)", kind)
-	}
-}
-
-func getBytes(d types.Datum) []byte {
-	if d.Kind() == types.KindBytes {
-		return d.GetBytes()
-	}
-	return []byte{}
-}
-
-func getString(d types.Datum) string {
-	if d.Kind() == types.KindString {
-		return d.GetString()
-	}
-	return ""
-}
-
-func getDatumLength(d types.Datum) int {
-	switch d.Kind() {
-	case types.KindString:
-		return len(d.GetString())
-	case types.KindBytes:
-		return len(d.GetBytes())
-	default:
-		return -1
-	}
-}
-
 // Both partition and partitionedTable implement the table.Table interface.
 var _ table.PhysicalTable = &partition{}
 var _ table.Table = &partitionedTable{}
@@ -1373,29 +1306,6 @@ func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context
 	// because empty string and the binary value are actually different.
 	isBinaryCol := types.IsBinaryStr(lp.ExprCol.GetType(lp.ctx.GetEvalCtx()))
 
-	// Debug: Log the datum types for binary columns
-	if isBinaryCol {
-		colType := lp.ExprCol.GetType(lp.ctx.GetEvalCtx())
-		typeFlen := colType.GetFlen()
-
-		originalLowValLen := getDatumLength(originalLowVal)
-		originalHighValLen := getDatumLength(originalHighVal)
-		lowValLen := getDatumLength(lowVal)
-		highValLen := getDatumLength(highVal)
-
-		logutil.BgLogger().Info("LocateRanges datum types",
-			zap.String("r.LowVal[0].Kind", fmt.Sprintf("%d (%s)", r.LowVal[0].Kind(), getKindName(r.LowVal[0].Kind()))),
-			zap.String("r.HighVal[0].Kind", fmt.Sprintf("%d (%s)", r.HighVal[0].Kind(), getKindName(r.HighVal[0].Kind()))),
-			zap.String("originalLowVal.Kind", fmt.Sprintf("%d (%s)", originalLowVal.Kind(), getKindName(originalLowVal.Kind()))),
-			zap.String("originalHighVal.Kind", fmt.Sprintf("%d (%s)", originalHighVal.Kind(), getKindName(originalHighVal.Kind()))),
-			zap.String("lowVal.Kind", fmt.Sprintf("%d (%s)", lowVal.Kind(), getKindName(lowVal.Kind()))),
-			zap.String("highVal.Kind", fmt.Sprintf("%d (%s)", highVal.Kind(), getKindName(highVal.Kind()))),
-			zap.String("originalLowVal", fmt.Sprintf("%v (bytes=%x, string=%q, actualLen=%d, typeLen=%d)", originalLowVal.GetValue(), getBytes(originalLowVal), getString(originalLowVal), originalLowValLen, typeFlen)),
-			zap.String("originalHighVal", fmt.Sprintf("%v (bytes=%x, string=%q, actualLen=%d, typeLen=%d)", originalHighVal.GetValue(), getBytes(originalHighVal), getString(originalHighVal), originalHighValLen, typeFlen)),
-			zap.String("lowVal", fmt.Sprintf("%v (actualLen=%d, typeLen=%d)", lowVal.GetValue(), lowValLen, typeFlen)),
-			zap.String("highVal", fmt.Sprintf("%v (actualLen=%d, typeLen=%d)", highVal.GetValue(), highValLen, typeFlen)))
-	}
-
 	// Check if we're excluding an empty string by checking the original values
 	// before they get converted to keys. For NE comparisons, we get two ranges:
 	// 1. [MinNotNull, '') with HighExclude=true - highKey will be key('') = key(0x00)
@@ -1457,7 +1367,6 @@ func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context
 				}
 				if isEmpty {
 					excludedEmptyStringKey = highKeyStr
-					logutil.BgLogger().Info("Set excludedEmptyStringKey from highKey", zap.String("key", fmt.Sprintf("%x", []byte(highKeyStr))))
 				}
 			}
 		}
@@ -1504,7 +1413,6 @@ func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context
 	// that match the excluded key, because empty string != binary value even though
 	// they convert to the same value (e.g., '' != 0x00 even though '' -> 0x00)
 	if excludedEmptyStringKey != "" {
-		logutil.BgLogger().Info("Including partition for excludedEmptyStringKey", zap.String("key", fmt.Sprintf("%x", []byte(excludedEmptyStringKey))))
 		if location, ok := lp.valueMap[excludedEmptyStringKey]; ok && location != nil {
 			// Check if this location is not already included
 			found := false
@@ -1515,13 +1423,8 @@ func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context
 				}
 			}
 			if !found {
-				logutil.BgLogger().Info("Adding partition location", zap.Int("partIdx", location[0].PartIdx))
 				locations = append(locations, location)
-			} else {
-				logutil.BgLogger().Info("Partition already included")
 			}
-		} else {
-			logutil.BgLogger().Info("Partition not found in valueMap")
 		}
 	}
 

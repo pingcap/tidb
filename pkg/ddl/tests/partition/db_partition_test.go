@@ -3772,23 +3772,52 @@ func TestIssue63876(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE t (a int, b binary(1) NOT NULL, PRIMARY KEY (b,a) NONCLUSTERED, key (b)) ` +
+	tk.MustExec(`CREATE TABLE pt (b binary(2) NOT NULL) ` +
 		//`PARTITION BY key(b) PARTITIONS 2`)
-		`PARTITION BY LIST COLUMNS(b) (PARTITION p0 VALUES IN (_binary 0x00))`)
+		`PARTITION BY LIST COLUMNS(b) (PARTITION p0 VALUES IN (_binary 0x00), PARTITION p1 VALUES IN (0x0001), partition p2 values in (0x01), partition p3 values in (0x0101))`)
+	tk.MustExec(`CREATE TABLE ptDef (b binary(2) NOT NULL) ` +
+		`PARTITION BY LIST COLUMNS(b) (PARTITION p0 VALUES IN (_binary 0x00), PARTITION p1 VALUES IN (0x0001), partition p3 values in (0x0101), partition pDef default)`)
+	tk.MustExec(`CREATE TABLE t (b binary(2) NOT NULL) `)
+	//tk.MustQuery(`show create table pt`).Check(testkit.Rows())
 	// ctx := tk.Session()
 	// is := domain.GetDomain(ctx).InfoSchema()
 	// tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	// require.NoError(t, err)
 	// tableID := tbl.Meta().ID
 	// partID := tbl.Meta().Partition.Definitions[0].ID
-	tk.MustExec(`INSERT INTO t VALUES (1,0x00)`)
+	tk.MustExec(`INSERT INTO ptDef VALUES (0x00)`)
+	tk.MustExec(`INSERT INTO pt VALUES (0x00)`)
+	tk.MustExec(`INSERT INTO t VALUES (0x00)`)
 	// require.Equal(t, false, HaveEntriesForTableIndex(t, tk, tableID, 0))
 	// require.Equal(t, true, HaveEntriesForTableIndex(t, tk, partID, 0))
 	// tk.MustQuery(`select tidb_decode_key("7480000000000000735f698000000000000001010000000000000000f8038000000000000001")`).Check(testkit.Rows(`{"index_id":1,"index_vals":{"a":"1","b":"\u0000"},"partition_id":115,"table_id":114}`))
 	// tk.MustQuery(`select tidb_decode_key("7480000000000000735f698000000000000002010000000000000000f8038000000000000001")`).Check(testkit.Rows(`{"index_id":2,"index_vals":{"b":"\u0000"},"partition_id":115,"table_id":114}`))
 	// tk.MustQuery(`select tidb_decode_key("7480000000000000735f728000000000000001")`).Check(testkit.Rows(`{"_tidb_rowid":1,"partition_id":115,"table_id":"114"}`))
-	tk.MustQuery(`SELECT a,hex(b) FROM t`).Check(testkit.Rows("1 00"))
-	tk.MustQuery(`SELECT a,hex(b) FROM t WHERE b != ''`).Check(testkit.Rows("1 00"))
+	tk.MustQuery(`SELECT hex(b) FROM pt`).Check(testkit.Rows("0000"))
+	tk.MustQuery(`SELECT hex(b) FROM pt WHERE b != ''`).Check(testkit.Rows("0000"))
+	tk.MustQuery(`SELECT hex(b) FROM pt WHERE b NOT IN ('',0x00)`).Check(testkit.Rows("0000"))
+	tk.MustQuery(`SELECT hex(b) FROM pt WHERE b = '' or b = 0x00`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT hex(b) FROM ptDef`).Check(testkit.Rows("0000"))
+	tk.MustQuery(`SELECT hex(b) FROM ptDef WHERE b != ''`).Check(testkit.Rows("0000"))
+	tk.MustQuery(`SELECT hex(b) FROM ptDef WHERE b NOT IN ('',0x00)`).Check(testkit.Rows("0000"))
+	tk.MustQuery(`SELECT hex(b) FROM ptDef WHERE b = '' or b = 0x00`).Check(testkit.Rows())
 	// tk.MustQuery(`EXPLAIN SELECT * FROM t WHERE NOT (b IN ('',''))`).Check(testkit.Rows("1 0x00"))
 	// tk.MustQuery(`SELECT * FROM t WHERE NOT (b IN ('',''))`).Check(testkit.Rows("1 0x00"))
+	testStrings := []string{`''`, `0x00`, `0x01`, `0x0000`, `0x0001`, `0x0101`}
+	for _, s := range testStrings {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%s)`, s))
+		tk.MustExec(fmt.Sprintf(`insert into pt values (%s)`, s))
+		tk.MustExec(fmt.Sprintf(`insert into ptDef values (%s)`, s))
+	}
+	testStrings = append(testStrings, `' '`, `0x000000`, `0x000001`, `0x010000`)
+	res := tk.MustQuery(`select * from t`).Sort()
+	tk.MustQuery(`select * from pt`).Sort().Check(res.Rows())
+	tk.MustQuery(`select * from ptDef`).Sort().Check(res.Rows())
+	for _, s := range testStrings {
+		res = tk.MustQuery(fmt.Sprintf(`select * from t where b = %s`, s)).Sort()
+		tk.MustQuery(fmt.Sprintf(`select * from pt where b = %s`, s)).Sort().Check(res.Rows())
+		tk.MustQuery(fmt.Sprintf(`select * from ptDef where b = %s`, s)).Sort().Check(res.Rows())
+		res = tk.MustQuery(fmt.Sprintf(`select * from t where b != %s`, s)).Sort()
+		tk.MustQuery(fmt.Sprintf(`select * from ptDef where b != %s`, s)).Sort().Check(res.Rows())
+	}
 }
