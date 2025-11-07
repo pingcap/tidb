@@ -16,7 +16,6 @@ package metering
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/metering_sdk/common"
 	mconfig "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/metering_sdk/storage"
+	meteringwriterapi "github.com/pingcap/metering_sdk/writer"
 	meteringwriter "github.com/pingcap/metering_sdk/writer/metering"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -40,26 +40,7 @@ const (
 	category     = "dxf"
 )
 
-// task type values for billing service, those names are better for display than
-// DXF task type.
-const (
-	taskTypeUnknown    = "unknown"
-	taskTypeAddIndex   = "add-index"
-	taskTypeImportInto = "import-into"
-)
-
 var meteringInstance atomic.Pointer[Meter]
-
-// Recorder is used to record metering data.
-type Recorder struct {
-	taskID         int64
-	keyspace       string
-	taskType       string
-	getRequests    atomic.Uint64
-	putRequests    atomic.Uint64
-	readDataBytes  atomic.Uint64
-	writeDataBytes atomic.Uint64
-}
 
 // RegisterRecorder returns the Recorder for the given task.
 func RegisterRecorder(task *proto.TaskBase) *Recorder {
@@ -67,16 +48,9 @@ func RegisterRecorder(task *proto.TaskBase) *Recorder {
 	if kerneltype.IsClassic() || meter == nil {
 		return &Recorder{}
 	}
-	tp := taskTypeUnknown
-	switch task.Type {
-	case proto.ImportInto:
-		tp = taskTypeImportInto
-	case proto.Backfill:
-		tp = taskTypeAddIndex
-	}
 	return meter.getOrRegisterRecorder(&Recorder{
 		taskID:   task.ID,
-		taskType: tp,
+		taskType: task.Type.String(),
 		keyspace: task.Keyspace,
 	})
 }
@@ -91,84 +65,9 @@ func UnregisterRecorder(taskID int64) {
 	meter.unregisterRecorder(taskID)
 }
 
-// RecordGetRequestCount records the get request count.
-func (r *Recorder) RecordGetRequestCount(v uint64) {
-	r.getRequests.Add(v)
-}
-
-// RecordPutRequestCount records the put request count.
-func (r *Recorder) RecordPutRequestCount(v uint64) {
-	r.putRequests.Add(v)
-}
-
-// RecordReadDataBytes records the read data bytes.
-func (r *Recorder) RecordReadDataBytes(v uint64) {
-	r.readDataBytes.Add(v)
-}
-
-// RecordWriteDataBytes records the write data bytes.
-func (r *Recorder) RecordWriteDataBytes(v uint64) {
-	r.writeDataBytes.Add(v)
-}
-
-func (r *Recorder) currData() *Data {
-	return &Data{
-		taskID:      r.taskID,
-		keyspace:    r.keyspace,
-		taskType:    r.taskType,
-		getRequests: r.getRequests.Load(),
-		putRequests: r.putRequests.Load(),
-		readBytes:   r.readDataBytes.Load(),
-		writeBytes:  r.writeDataBytes.Load(),
-	}
-}
-
 // SetMetering sets the metering instance for dxf.
 func SetMetering(m *Meter) {
 	meteringInstance.Store(m)
-}
-
-// Data represents the metering data.
-// we might use this struct to store accumulated or diff data.
-type Data struct {
-	taskID   int64
-	keyspace string
-	taskType string
-
-	getRequests uint64
-	putRequests uint64
-	readBytes   uint64
-	writeBytes  uint64
-}
-
-func (m *Data) merge(other *Data) {
-	m.getRequests += other.getRequests
-	m.putRequests += other.putRequests
-	m.readBytes += other.readBytes
-	m.writeBytes += other.writeBytes
-}
-
-func (m *Data) isNotEmpty() bool {
-	return m.getRequests > 0 || m.putRequests > 0 || m.readBytes > 0 || m.writeBytes > 0
-}
-
-func (m *Data) isSame(other *Data) bool {
-	return m.getRequests == other.getRequests &&
-		m.putRequests == other.putRequests &&
-		m.readBytes == other.readBytes &&
-		m.writeBytes == other.writeBytes
-}
-
-// String implements fmt.Stringer interface.
-func (m *Data) String() string {
-	return fmt.Sprintf("{taskID: %d, keyspace: %s, taskType: %s, getReqs: %d, putReqs: %d, readBytes: %d, writeBytes: %d}",
-		m.taskID,
-		m.keyspace,
-		m.taskType,
-		m.getRequests,
-		m.putRequests,
-		m.readBytes,
-		m.writeBytes)
 }
 
 type wrappedRecorder struct {
@@ -182,10 +81,10 @@ type Meter struct {
 	recorders map[int64]*wrappedRecorder
 	// taskID -> last flushed data
 	// when flushing, we scrape the latest data from recorders and calculate the
-	// diff and write to the metering storage.
+	// delta and write to the metering storage.
 	lastFlushedData map[int64]*Data
 	uuid            string
-	writer          *meteringwriter.MeteringWriter
+	writer          meteringwriterapi.MeteringWriter
 	logger          *zap.Logger
 }
 
@@ -202,13 +101,17 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 	}
 	meteringConfig := mconfig.DefaultConfig().WithLogger(logger)
 	writer := meteringwriter.NewMeteringWriterFromConfig(provider, meteringConfig, cfg)
+	return newMeterWithWriter(logger, writer), nil
+}
+
+func newMeterWithWriter(logger *zap.Logger, writer meteringwriterapi.MeteringWriter) *Meter {
 	return &Meter{
 		logger:          logger,
 		recorders:       make(map[int64]*wrappedRecorder),
 		lastFlushedData: make(map[int64]*Data),
 		writer:          writer,
 		uuid:            strings.ReplaceAll(uuid.New().String(), "-", "_"), // no dash in the metering sdk
-	}, nil
+	}
 }
 
 func (m *Meter) getOrRegisterRecorder(r *Recorder) *Recorder {
@@ -248,14 +151,15 @@ func (m *Meter) cleanupUnregisteredRecorders() []*Recorder {
 			continue
 		}
 		// since register and flush run in async, it's possible that:
-		//  - flush start, and scrape current data(doesn't contain R)
+		//  - flush start, and scrape current data(without recorder R)
 		//  - register recorder R, and unregister fast
-		//  - flush finish, so here lastFlushedData doesn't contain R
+		//  - flush finish, so here lastFlushedData doesn't contain R, we should
+		//    keep the recorder and do a final flush.
 		if fd, ok := m.lastFlushedData[taskID]; ok {
 			// unregister and scrape is run in async, it's possible there are still
 			// some non-flushed data even the recorder is unregistered, so we check
 			// current data too.
-			if fd.isSame(r.currData()) {
+			if fd.equals(r.currData()) {
 				delete(m.recorders, r.taskID)
 				removed = append(removed, r.Recorder)
 			}
@@ -284,26 +188,18 @@ func (m *Meter) scrapeCurrData() map[int64]*Data {
 	return data
 }
 
-func (m *Meter) calculateDataDiffs(currData map[int64]*Data) map[int64]*Data {
-	diffs := make(map[int64]*Data, len(currData))
+func (m *Meter) calculateDataItems(currData map[int64]*Data) []map[string]any {
+	items := make([]map[string]any, 0, len(currData))
 	for taskID, curr := range currData {
-		diff := curr
+		theLast := &Data{}
 		if last, ok := m.lastFlushedData[taskID]; ok {
-			diff = &Data{
-				taskID:      taskID,
-				keyspace:    curr.keyspace,
-				taskType:    curr.taskType,
-				getRequests: curr.getRequests - last.getRequests,
-				putRequests: curr.putRequests - last.putRequests,
-				readBytes:   curr.readBytes - last.readBytes,
-				writeBytes:  curr.writeBytes - last.writeBytes,
-			}
+			theLast = last
 		}
-		if diff.isNotEmpty() {
-			diffs[taskID] = diff
+		if item := curr.calMeterDataItem(theLast); item != nil {
+			items = append(items, item)
 		}
 	}
-	return diffs
+	return items
 }
 
 // StartFlushLoop creates a flush loop.
@@ -331,46 +227,37 @@ func (m *Meter) StartFlushLoop(ctx context.Context) {
 func (m *Meter) flush(ctx context.Context, ts int64) {
 	startTime := time.Now()
 	currData := m.scrapeCurrData()
-	diffs := m.calculateDataDiffs(currData)
-	if len(diffs) == 0 {
+	items := m.calculateDataItems(currData)
+	if len(items) == 0 {
 		m.logger.Info("no metering data to flush", zap.Duration("duration", time.Since(startTime)))
 		m.onSuccessFlush(currData)
 		return
 	}
-	array := make([]map[string]any, 0, len(diffs))
-	for taskID, d := range diffs {
-		array = append(array, map[string]any{
-			"version":               "1",
-			"cluster_id":            d.keyspace,
-			"source_name":           category,
-			"task_type":             d.taskType,
-			"task_id":               taskID,
-			"get_external_requests": d.getRequests,
-			"put_external_requests": d.putRequests,
-			"read_data_bytes":       &common.MeteringValue{Value: d.readBytes, Unit: "bytes"},
-			"write_data_bytes":      &common.MeteringValue{Value: d.writeBytes, Unit: "bytes"},
-		})
-	}
 
+	if err := m.writeMeterData(ctx, ts, items); err != nil {
+		m.logger.Warn("failed to write metering data",
+			zap.Error(err),
+			zap.Duration("duration", time.Since(startTime)),
+			zap.Any("data", items))
+	} else {
+		m.logger.Info("succeed to write metering data",
+			zap.Duration("duration", time.Since(startTime)),
+			zap.Any("data", items))
+		m.onSuccessFlush(currData)
+	}
+}
+
+func (m *Meter) writeMeterData(ctx context.Context, ts int64, items []map[string]any) error {
 	meteringData := &common.MeteringData{
 		SelfID:    m.uuid,
 		Timestamp: ts,
 		Category:  category,
-		Data:      array,
+		Data:      items,
 	}
 	flushCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	if err := m.writer.Write(flushCtx, meteringData); err != nil {
-		m.logger.Warn("failed to write metering data",
-			zap.Error(err),
-			zap.Duration("duration", time.Since(startTime)),
-			zap.Any("data", meteringData))
-	} else {
-		m.logger.Info("succeed to write metering data",
-			zap.Duration("duration", time.Since(startTime)),
-			zap.Any("data", meteringData))
-		m.onSuccessFlush(currData)
-	}
+
+	return m.writer.Write(flushCtx, meteringData)
 }
 
 // Close closes the metering writer.

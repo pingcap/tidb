@@ -410,7 +410,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		kvMeta.MergeSummary(summary)
 		r.summary.PutReqCnt.Add(summary.PutRequestCount)
-		r.GetMeterRecorder().RecordPutRequestCount(summary.PutRequestCount)
+		r.GetMeterRecorder().IncPutRequest(summary.PutRequestCount)
 		s.mu.Unlock()
 	}
 	var idxNames strings.Builder
@@ -463,12 +463,12 @@ func newDistTaskRowCntCollector(
 
 func (d *distTaskRowCntCollector) Accepted(bytes int64) {
 	d.summary.ReadBytes.Add(bytes)
-	d.meterRec.RecordReadDataBytes(uint64(bytes))
+	d.meterRec.IncReadBytes(uint64(bytes))
 }
 
 func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
 	d.summary.Bytes.Add(bytes)
 	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
-	d.meterRec.RecordWriteDataBytes(uint64(bytes))
+	d.meterRec.IncWriteBytes(uint64(bytes))
 }

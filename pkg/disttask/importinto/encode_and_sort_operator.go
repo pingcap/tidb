@@ -173,7 +173,7 @@ func newChunkWorker(
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 					op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
-					meterRec.RecordPutRequestCount(summary.PutRequestCount)
+					meterRec.IncPutRequest(summary.PutRequestCount)
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
 				SetBlockSize(indexBlockSize).
@@ -190,7 +190,7 @@ func newChunkWorker(
 			SetOnCloseFunc(func(summary *external.WriterSummary) {
 				op.sharedVars.mergeDataSummary(summary)
 				op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
-				meterRec.RecordPutRequestCount(summary.PutRequestCount)
+				meterRec.IncPutRequest(summary.PutRequestCount)
 			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).

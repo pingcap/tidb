@@ -1101,6 +1101,9 @@ func (do *Domain) InitDistTaskLoop() error {
 			}
 			metering.SetMetering(m)
 			do.wg.Run(func() {
+				defer func() {
+					metering.SetMetering(nil)
+				}()
 				m.StartFlushLoop(do.ctx)
 			}, "dxfMeteringFlushLoop")
 		}

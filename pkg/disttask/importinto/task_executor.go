@@ -170,13 +170,13 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 // Accepted implements Collector.Accepted interface.
 func (s *importStepExecutor) Accepted(bytes int64) {
 	s.summary.Bytes.Add(bytes)
-	s.GetMeterRecorder().RecordReadDataBytes(uint64(bytes))
+	s.GetMeterRecorder().IncReadBytes(uint64(bytes))
 }
 
 // Processed implements Collector.Processed interface.
 func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
 	s.summary.RowCnt.Add(rowCnt)
-	s.GetMeterRecorder().RecordWriteDataBytes(uint64(bytes))
+	s.GetMeterRecorder().IncWriteBytes(uint64(bytes))
 }
 
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
@@ -414,11 +414,11 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		mu.Lock()
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
-		m.GetMeterRecorder().RecordPutRequestCount(summary.PutRequestCount)
+		m.GetMeterRecorder().IncPutRequest(summary.PutRequestCount)
 	}
 	onReaderClose := func(summary *external.ReaderSummary) {
 		m.summary.GetReqCnt.Add(summary.GetRequestCount)
-		m.GetMeterRecorder().RecordGetRequestCount(summary.GetRequestCount)
+		m.GetMeterRecorder().IncGetRequest(summary.GetRequestCount)
 	}
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
@@ -575,7 +575,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			MemCapacity:   e.GetResource().Mem.Capacity(),
 			OnReaderClose: func(summary *external.ReaderSummary) {
 				e.summary.GetReqCnt.Add(summary.GetRequestCount)
-				e.GetMeterRecorder().RecordGetRequestCount(summary.GetRequestCount)
+				e.GetMeterRecorder().IncGetRequest(summary.GetRequestCount)
 			},
 		},
 		TS: sm.TS,
