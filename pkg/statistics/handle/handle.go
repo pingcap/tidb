@@ -240,19 +240,22 @@ func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.Tabl
 		return tbl, true
 	}
 
-	// The failpoint to skip system table check, for testing only.
-	skipSystemTableCheck := false
-	failpoint.Inject("SkipSystemTableCheck", func(val failpoint.Value) {
-		skip, ok := val.(bool)
-		if ok && skip {
-			skipSystemTableCheck = true
-		}
-	})
-	if skipSystemTableCheck {
-		h.UpdateStatsCache(types.CacheUpdate{
-			Updated: []*statistics.Table{tbl},
+	// In some test cases, we may need to skip the system table check.
+	if intest.InTest {
+		// The failpoint to skip system table check, for testing only.
+		skipSystemTableCheck := false
+		failpoint.Inject("SkipSystemTableCheck", func(val failpoint.Value) {
+			skip, ok := val.(bool)
+			if ok && skip {
+				skipSystemTableCheck = true
+			}
 		})
-		return tbl, true
+		if skipSystemTableCheck {
+			h.UpdateStatsCache(types.CacheUpdate{
+				Updated: []*statistics.Table{tbl},
+			})
+			return tbl, true
+		}
 	}
 
 	isSystemTable, err := h.isSystemTable(physicalTableID, tblInfo)
