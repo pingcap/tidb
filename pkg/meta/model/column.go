@@ -44,7 +44,6 @@ const (
 const (
 	// changingColumnPrefix the prefix is used to initialize new column name created in modify column.
 	// The new name will be like "_Col$_<old_column_name>_n".
-	// Export for test.
 	changingColumnPrefix = "_Col$_"
 
 	// removingObjPrefix the prefix is used to initialize the removing column/index name created in modify column.

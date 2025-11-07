@@ -1180,11 +1180,7 @@ SwitchIndexState:
 			if !done {
 				return ver, err
 			}
-			if checkAnalyzeNecessary(job, tblInfo) {
-				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
-			} else {
-				job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
-			}
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 			checkAndMarkNonRevertible(job)
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
@@ -1201,7 +1197,7 @@ SwitchIndexState:
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
 				}
 			}
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+		case model.AnalyzeStateDone, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			// Set column index flag.
 			for _, indexInfo := range allIndexInfos {
 				AddIndexColumnFlag(tblInfo, indexInfo)
@@ -1398,19 +1394,17 @@ func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, s
 
 // analyzeTableAfterCreateIndex analyzes the table after creating index.
 func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, tblInfo *model.TableInfo, dbName string) (done, timedOut, failed bool) {
+	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
 	if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.NeedAnalyze {
 		// If the job is a multi-schema-change job,
 		// we only analyze the table once after all schema changes are done.
 		return true, false, false
 	}
-
 	if !checkAnalyzeNecessary(job, tblInfo) {
 		return true, false, false
 	}
 
 	tblName := tblInfo.Name.L
-
-	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
 	cumulativeTimeout, found := w.ddlCtx.getAnalyzeCumulativeTimeout(job.ID)
 	if !found {
 		cumulativeTimeout = DefaultCumulativeTimeout

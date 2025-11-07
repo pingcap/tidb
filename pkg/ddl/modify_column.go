@@ -1028,11 +1028,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
-				if checkAnalyzeNecessary(job, tblInfo) {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
-				} else {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
-				}
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateRunning:
@@ -1049,7 +1045,7 @@ func (w *worker) doModifyColumnTypeWithData(
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
 				}
 			}
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+		case model.AnalyzeStateDone, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 			if tblInfo.TTLInfo != nil {
@@ -1246,11 +1242,7 @@ func (w *worker) doModifyColumnIndexReorg(
 				}
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
-				if checkAnalyzeNecessary(job, tblInfo) {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
-				} else {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
-				}
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateRunning:
@@ -1267,7 +1259,7 @@ func (w *worker) doModifyColumnIndexReorg(
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
 				}
 			}
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout:
+		case model.AnalyzeStateDone, model.AnalyzeStateTimeout:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 			oldTp := oldCol.FieldType
