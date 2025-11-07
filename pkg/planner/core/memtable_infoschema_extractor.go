@@ -18,6 +18,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+<<<<<<< HEAD
+=======
+	"maps"
+	"regexp"
+>>>>>>> 4b3e59a05bd (*: fix incorrect rlike when quering information_schema (#64301))
 	"slices"
 	"sort"
 	"strconv"
@@ -27,12 +32,15 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+<<<<<<< HEAD
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+=======
+	"github.com/pingcap/tidb/pkg/parser/ast"
+>>>>>>> 4b3e59a05bd (*: fix incorrect rlike when quering information_schema (#64301))
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -100,7 +108,7 @@ type InfoSchemaBaseExtractor struct {
 	// {"schema_name": ["mysql", "INFORMATION_SCHEMA"]}
 	ColPredicates map[string]set.StringSet
 	// all built regexp in predicates
-	colsRegexp map[string][]collate.WildcardPattern
+	colsRegexp map[string][]*regexp.Regexp
 	// used for EXPLAIN only
 	LikePatterns map[string][]string
 	// columns occurs in predicate will be extracted.
@@ -196,7 +204,7 @@ func (e *InfoSchemaBaseExtractor) Extract(
 ) (remained []expression.Expression) {
 	e.ColPredicates = make(map[string]set.StringSet)
 	e.LikePatterns = make(map[string][]string, len(e.colNames))
-	e.colsRegexp = make(map[string][]collate.WildcardPattern, len(e.colNames))
+	e.colsRegexp = make(map[string][]*regexp.Regexp, len(e.colNames))
 	remained = predicates
 	for _, colName := range e.colNames {
 		var resultSet set.StringSet
@@ -213,21 +221,28 @@ func (e *InfoSchemaBaseExtractor) Extract(
 		if _, ok := patternMatchable[colName]; !ok {
 			continue
 		}
-		var likePatterns []string
-		remained, likePatterns = e.extractLikePatternCol(ctx, schema, names, remained, colName, true, false)
+		newRemained, likePatterns := e.extractLikePatternCol(ctx, schema, names, remained, colName, true, true)
 		if len(likePatterns) == 0 {
 			continue
 		}
-		regexp := make([]collate.WildcardPattern, len(likePatterns))
+		// Use the original pattern to display.
+		_, oldLikePatterns := e.extractLikePatternCol(ctx, schema, names, remained, colName, true, false)
+		regs := make([]*regexp.Regexp, len(likePatterns))
+		meetError := false
 		for i, pattern := range likePatterns {
-			// Because @@lower_case_table_names is always 2 in TiDB,
-			// schema object names comparison should be case insensitive.
-			ciCollateID := collate.CollationName2ID(mysql.UTF8MB4GeneralCICollation)
-			regexp[i] = collate.GetCollatorByID(ciCollateID).Pattern()
-			regexp[i].Compile(pattern, byte('\\'))
+			reg, err := regexp.Compile(fmt.Sprintf("(?i)%s", pattern))
+			if err != nil {
+				logutil.BgLogger().Warn("compile regexp failed in infoSchema extractor", zap.String("pattern", pattern), zap.Error(err))
+				meetError = true
+				break
+			}
+			regs[i] = reg
 		}
-		e.LikePatterns[colName] = likePatterns
-		e.colsRegexp[colName] = regexp
+		if !meetError {
+			remained = newRemained
+			e.LikePatterns[colName] = oldLikePatterns
+			e.colsRegexp[colName] = regs
+		}
 	}
 	return remained
 }
@@ -273,7 +288,7 @@ func (e *InfoSchemaBaseExtractor) filter(colName string, val string) bool {
 		return true
 	}
 	for _, re := range e.colsRegexp[colName] {
-		if !re.DoMatch(val) {
+		if !re.MatchString(val) {
 			return true
 		}
 	}
@@ -841,7 +856,7 @@ func filterSchemaObjectByRegexp[targetTp any](
 	for _, target := range targets {
 		allMatch := true
 		for _, re := range regs {
-			if !re.DoMatch(strFn(target)) {
+			if !re.MatchString(strFn(target)) {
 				allMatch = false
 				break
 			}
@@ -926,7 +941,7 @@ ForLoop:
 			continue
 		}
 		for _, re := range regexp {
-			if !re.DoMatch(column.Name.L) {
+			if !re.MatchString(column.Name.L) {
 				continue ForLoop
 			}
 		}
@@ -984,7 +999,11 @@ ForLoop:
 			continue
 		}
 		for _, re := range regexp {
+<<<<<<< HEAD
 			if !re.DoMatch(index.Name.L) {
+=======
+			if !re.MatchString(index.Name) {
+>>>>>>> 4b3e59a05bd (*: fix incorrect rlike when quering information_schema (#64301))
 				continue ForLoop
 			}
 		}
