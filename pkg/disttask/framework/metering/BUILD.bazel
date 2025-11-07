@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "metering",
-    srcs = ["metering.go"],
+    srcs = [
+        "metering.go",
+        "mock_writer.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/metering",
     visibility = ["//visibility:public"],
     deps = [
@@ -22,7 +25,10 @@ go_library(
 go_test(
     name = "metering_test",
     timeout = "short",
-    srcs = ["metering_test.go"],
+    srcs = [
+        "metering_test.go",
+        "mock_writer_test.go",
+    ],
     embed = [":metering"],
     flaky = True,
     shard_count = 5,
