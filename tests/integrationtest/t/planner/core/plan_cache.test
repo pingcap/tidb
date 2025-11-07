@@ -1661,6 +1661,7 @@ EXECUTE stmt;
 
 # TestPlanCacheMaxDecimalParamNums
 set @@tidb_enable_prepared_plan_cache=1;
+set @@session.tidb_plan_cache_max_decimal_param_nums = 2;
 drop table if exists t1;
 create table t1 (a int, b1 decimal(10,2), b2 decimal(10,2), b3 decimal(10,2), b4 decimal(10,2), c varchar(10));
 
@@ -1819,4 +1820,10 @@ select @@last_plan_from_cache;
 set @@session.tidb_plan_cache_max_decimal_param_nums = 2;
 execute stmt using @p0, @p1, @p2;
 select @@last_plan_from_cache;
+
+set @@session.tidb_plan_cache_max_decimal_param_nums = default;
+select @@session.tidb_plan_cache_max_decimal_param_nums;
+execute stmt using @p0, @p1, @p2;
+select @@last_plan_from_cache;
+
 deallocate prepare stmt;
