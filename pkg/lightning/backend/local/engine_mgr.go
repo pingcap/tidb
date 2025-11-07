@@ -238,7 +238,7 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 		return err
 	}
 
-	sstDir := engineSSTDir(em.LocalStoreDir, engineUUID)
+	sstDir := engineSSTDir(em.LocalStoreDir, engineUUID.String())
 	if !cfg.KeepSortDir {
 		if err := os.RemoveAll(sstDir); err != nil {
 			return errors.Trace(err)

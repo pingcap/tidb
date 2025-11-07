@@ -61,6 +61,7 @@ type BackendCtxBuilder struct {
 
 	sessPool   *sess.Pool
 	physicalID int64
+	indexIDs   []int64
 	checkDup   bool
 }
 
@@ -75,9 +76,11 @@ func (b *BackendCtxBuilder) WithImportDistributedLock(etcdCli *clientv3.Client, 
 func (b *BackendCtxBuilder) WithCheckpointManagerParam(
 	sessPool *sess.Pool,
 	physicalID int64,
+	indexIDs []int64,
 ) *BackendCtxBuilder {
 	b.sessPool = sessPool
 	b.physicalID = physicalID
+	b.indexIDs = indexIDs
 	return b
 }
 
@@ -113,6 +116,10 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
 	var cpMgr *CheckpointManager
 	if b.sessPool != nil {
+		if err := local.CleanupPartialFolders(jobSortPath, job.TableName, b.indexIDs); err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		cpMgr, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)
 		if err != nil {
 			logutil.Logger(ctx).Warn("create checkpoint manager failed",
