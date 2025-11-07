@@ -1191,8 +1191,10 @@ func (e *executor) CreateTableWithInfo(
 		}
 
 		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
-		if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tbInfo); err != nil {
-			return errors.Trace(err)
+		if c.RebaseAutoID {
+			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return errors.Trace(err)
@@ -1290,8 +1292,10 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	}
 	for _, tblArgs := range args.Tables {
 		preSplitAndScatterTable(ctx, e.store, tblArgs.TableInfo, scatterScope)
-		if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tblArgs.TableInfo); err != nil {
-			return errors.Trace(err)
+		if c.RebaseAutoID {
+			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tblArgs.TableInfo); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 

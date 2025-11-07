@@ -869,3 +869,42 @@ func TestCreateConstraintForTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "t1")
 }
+
+func TestCreateTableHandleAutoIDOnce(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	count := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/handleAutoIncID", func() {
+		count++
+	})
+
+	tk.MustExec("create table t1(id int) AUTO_INCREMENT 1000")
+	require.Equal(t, 1, count)
+	rs := tk.MustQuery("show table test.t1 next_row_id").Rows()
+	require.Equal(t, "1000", rs[0][3])
+
+	tblInfo := external.GetTableByName(t, tk, "test", "t1").Meta()
+	tblInfo.Name = ast.NewCIStr("t2")
+	tblInfo.ID = 42042
+
+	involvingRef := []model.InvolvingSchemaInfo{{
+		Database: "test",
+		Table:    "t2",
+		Mode:     model.SharedInvolving,
+	}}
+
+	// Mock BR scenario, rebase should be called twice.
+	count = 0
+	se := tk.Session()
+	se.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, dom.DDLExecutor().CreateTableWithInfo(
+		se, ast.NewCIStr("test"), tblInfo, involvingRef,
+		ddl.WithOnExist(ddl.OnExistError), ddl.WithRebaseAutoID(true)))
+	require.Equal(t, 2, count)
+
+	rs = tk.MustQuery("show table test.t2 next_row_id").Rows()
+	require.Equal(t, "1000", rs[0][3])
+}

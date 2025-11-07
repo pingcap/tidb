@@ -124,6 +124,12 @@ type CreateTableConfig struct {
 	// by BR now. By reusing IDs BR can save a lot of works such as rewriting table
 	// IDs in backed up KVs.
 	IDAllocated bool
+
+	// RebaseAutoID indicates whether to rebase auto ID for the created table for the
+	// job submitter. This is only used by BR now, for the case that using higher version
+	// of BR to backup to lower version of TiDB cluster, which may cause auto ID rebase is
+	// not executed.
+	RebaseAutoID bool
 }
 
 // CreateTableOption is the option for creating table.
@@ -143,6 +149,13 @@ func GetCreateTableConfig(cs []CreateTableOption) CreateTableConfig {
 func WithOnExist(o OnExist) CreateTableOption {
 	return func(cfg *CreateTableConfig) {
 		cfg.OnExist = o
+	}
+}
+
+// WithRebaseAutoID is the option for creating table.
+func WithRebaseAutoID(rebase bool) CreateTableOption {
+	return func(cfg *CreateTableConfig) {
+		cfg.RebaseAutoID = rebase
 	}
 }
 

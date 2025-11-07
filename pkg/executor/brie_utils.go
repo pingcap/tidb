@@ -108,7 +108,8 @@ func BRIECreateTable(
 		sctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
 	}()
 
-	return d.CreateTableWithInfo(sctx, dbName, clonedTable, nil, append(cs, ddl.WithOnExist(ddl.OnExistIgnore))...)
+	return d.CreateTableWithInfo(sctx, dbName, clonedTable, nil,
+		append(cs, ddl.WithOnExist(ddl.OnExistIgnore), ddl.WithRebaseAutoID(true))...)
 }
 
 // BRIECreateTables creates the tables with OnExistIgnore option in batch
@@ -158,7 +159,8 @@ func splitBatchCreateTable(sctx sessionctx.Context, schema ast.CIStr,
 	infos []*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	var err error
 	d := domain.GetDomain(sctx).DDLExecutor()
-	err = d.BatchCreateTableWithInfo(sctx, schema, infos, append(cs, ddl.WithOnExist(ddl.OnExistIgnore))...)
+	err = d.BatchCreateTableWithInfo(sctx, schema, infos,
+		append(cs, ddl.WithOnExist(ddl.OnExistIgnore), ddl.WithRebaseAutoID(true))...)
 	if kv.ErrEntryTooLarge.Equal(err) {
 		log.Info("entry too large, split batch create table", zap.Int("num table", len(infos)))
 		if len(infos) == 1 {
