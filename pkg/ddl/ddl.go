@@ -124,15 +124,6 @@ type CreateTableConfig struct {
 	// by BR now. By reusing IDs BR can save a lot of works such as rewriting table
 	// IDs in backed up KVs.
 	IDAllocated bool
-
-	// RebaseAutoID indicates whether to rebase auto ID for the created table for the
-	// job submitter, which is is only used by BR now.
-	// Since https://github.com/pingcap/tidb/pull/64356, we move rebase logic from
-	// submitter into DDL executor. But sometimes we use higher version of BR to backup
-	// db to lower version of TiDB cluster, which may cause rebase is not executed
-	// on both submitter(BR) and executor(downstream TiDB) side. So we need this to option
-	// to make BR side handle auto ID rebase.
-	RebaseAutoID bool
 }
 
 // CreateTableOption is the option for creating table.
@@ -152,13 +143,6 @@ func GetCreateTableConfig(cs []CreateTableOption) CreateTableConfig {
 func WithOnExist(o OnExist) CreateTableOption {
 	return func(cfg *CreateTableConfig) {
 		cfg.OnExist = o
-	}
-}
-
-// WithRebaseAutoID is the option for creating table.
-func WithRebaseAutoID(rebase bool) CreateTableOption {
-	return func(cfg *CreateTableConfig) {
-		cfg.RebaseAutoID = rebase
 	}
 }
 
@@ -912,6 +896,13 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 		zap.Stringer("jobVersion", model.GetJobVerInUse()),
 		zap.String("startMode", string(startMode)),
 	)
+
+	d.executor.startMode = startMode
+	failpoint.Inject("mockBRStartMode", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			d.executor.startMode = BR
+		}
+	})
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool
