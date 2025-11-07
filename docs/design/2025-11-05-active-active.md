@@ -2,7 +2,7 @@ Author(s): @lcwangchao, @time-and-fate, @xhebox, @hongyunyan, @flowbehappy
 Last updated: 2025-11-05
 Tracking Issue: [#64281](https://github.com/pingcap/tidb/issues/64281)
 
-#Design Summary
+# Design Summary
 
 The key requirement is to enable an “Active-Active Deployment” capability in TiDB. The goal is to build a global database solution that supports multiple TiDB clusters distributed across regions, with the ability to handle conflicting writes.
 
@@ -16,13 +16,13 @@ Since a transaction happens only inside a TiDB cluster, and the commit_tss are g
 To guarantee eventual consistency, the system must address the write conflicts between multiple TiDB clusters. E.g. The same PK rows are modified in more than one cluster simultaneously. The written conflicts are resolved by a strategy named "Last Write Wins (LWW)". An example of how LWW addresses conflict:
 ![active-active-last-write-wins.PNG](active-active-last-write-wins.PNG)
 
-#Design Details
+# Design Details
 
 This section introduces the detailed design in two major parts: Soft-delete and Active-Active. Soft-delete is a feature enabling the deleted rows to be recovered in a retention duration. Active-Active describes how we guarantee eventual consistency between multiple TiDB clusters with TiCDC.
 
-##Soft-Delete
+## Soft-Delete
 
-###Introduction
+### Introduction
 
 In TiDB, after a row is deleted by DELETESQL, it is no longer accessible unless by [historical read](https://docs.pingcap.com/tidb/stable/read-historical-data/). After the `tidb_gc_life_time` passed, it is no longer accessible or recoverable by any means because the MVCC versions are cleaned up by GC jobs . But some businesses would like to have a much longer retention duration, e.g. 2 weeks. It is the initial intention of intorducting soft-delete feature.
 A row is soft deleted means it is marked tombstoned but not marked deleted yet (i.e. no delete mark in MVCC list). The MVCC GC process will never clean it up until it is officially hard deleted (i.e. append a delete mark in MVCC list) after the soft delete retention expired.
@@ -31,7 +31,7 @@ Another requirement for soft delete feature comes from the LWW strategy. During 
 
 In the design, we use the SQL rewrite approach to implement the soft-delete. A hidden `_tidb_softdelete_time` column is added to soft-delete tables, and we rewrite the DML SQLs on the soft-delete table.
 
-###How to Use
+### How to Use
 
 First, one needs to create a softdelete table. It is either inherited from db options automatically:
 
@@ -118,7 +118,7 @@ ALTER TABLE t SOFTDELETE = 'OFF'; -- Phase 1 not supported
 ```
 And a new system var `tidb_softdelete_job_enable` is introduced to control the soft delete cleanup jobs running or not.
 
-####Optimize the Query Execution 
+#### Optimize the Query Execution 
 
 Because tombstone rows remain in the cluster for a period of time, they may impact query performance when the system needs to skip over them. For example:
 
@@ -170,7 +170,7 @@ For example, if you frequently query rows where v > 1000 and want to optimize su
 ALTER TABLE t ADD INDEX i2(_tidb_tombstone_time, v);
 ```
 
-####Scenes to Operate the Table with tidb_translate_softdelete_sql='OFF'
+#### Scenes to Operate the Table with tidb_translate_softdelete_sql='OFF'
 
 Most applications should keep `tidb_translate_softdelete_sql` set to ON when working with soft-delete tables, allowing TiDB to automatically manage tombstone rows. However, there are certain scenarios where you may want to disable it, such as:
 
@@ -178,7 +178,7 @@ Most applications should keep `tidb_translate_softdelete_sql` set to ON when wor
 - Manual maintenance by DBAs—for example, updating `_tidb_tombstone_time` to an earlier value to accelerate cleanup of specific rows, or to a later value to preserve them longer.
 - Disaster recovery or emergency analysis, where querying tombstone rows can help retrieve historical information.
 
-####Explicit DML for Hard vs Soft Deletes
+#### Explicit DML for Hard vs Soft Deletes
 
 This section explores introducing explicit DML to control hard vs soft deletes. The key idea being that rather than relying on a session variable, we should be explicit with the DML for the most common cases. This is an supplement to the use of `@@session.tidb_translate_softdelete_sql` to control the soft delete behavior explicitly. It can coexist with that session variable if desired, but a more explicit DML is used to show the express intent of the user.
 The current MySQL/TiDB DELETE syntax is:
@@ -204,16 +204,16 @@ DELETE [HARD] [LOW_PRIORITY] [QUICK] [IGNORE] FROM tbl_name [[AS] tbl_alias]
 This would only have an impact on tables where the soft delete capability is enabled. For all other tables, it would be ignored and treated as a normal delete. For tables where soft delete is enabled, then this statement would perform an actual delete of the data (not a soft delete) and so would not be rewritten as a regular DELETE would be.
 
 
-####Notes
+#### Notes
 
 1. Since `tidb_translate_softdelete_sql` affects the final executing SQLs, the modification to the value of the var affects [Virtual View](https://docs.pingcap.com/tidb/stable/views/#views)' result and [plan cache](https://docs.pingcap.com/tidb/stable/sql-prepared-plan-cache/).
 2. If a table is a softdelete table, then the delete operations triggered by [TTL](https://docs.pingcap.com/tidb/stable/time-to-live/) background jobs are always soft deletes, which do not follow the setting of `tidb_translate_softdelete_sql`
 3. Softdelete shares the same system vars with TTL. Including all the vars `tidb_ttl_xxx` from [here](https://docs.pingcap.com/tidb/stable/system-variables/#tidb_ttl_running_tasks-new-in-v700). E.g. `tidb_ttl_delete_rate_limit`,  `tidb_ttl_delete_batch_size`, `tidb_ttl_delete_worker_count`, etc
   1. And `tidb_ttl_job_enable` and `tidb_softdelete_job_enable` controls TTL and soft delete jobs separately.
 
-###Observability 
+### Observability 
 
-####Metrics
+#### Metrics
 
 Prometheus metrics:
 
@@ -233,7 +233,7 @@ There wil the following grafana dashboards:
 - Softdelete job count/task count: the current live cleanup jobs/tasks.
 - Softdelete OPM: operations count triggered by cleanup job.
 
-####Stats
+#### Stats
 
 Introduce a new system table tidb_softdelete_table_stats in information_schema. The table definition is as follows:
 
@@ -259,7 +259,7 @@ Since we rely on optimizer statistics, there are some limitations:
 - If the corresponding table is not ANALYZEd (manually or automatically), there will be no statistics to display.
 - The displayed information only reflects the row count when the last ANALYZE happen.
 
-###Soft-delete Limitations
+### Soft-delete Limitations
 
 1. Foreign keys are not supported.  (Currently unsupported and not planned.)
 2. The DELETE ... JOIN ..., which involves multiple tables, is not supported. (Currently unsupported and not planned.)
@@ -295,19 +295,19 @@ If we have a DELETE stmt with soft-delete tables and non-soft-delete tables, it 
   4. Though unique-index is not supported, we support adding non-unique indexes for both normal and hidden columns.
 
 
-###How SQL Rewrite Works
+### How SQL Rewrite Works
 
-####SELECT 
+#### SELECT 
 
 This part also applies to SELECT statements in DML statements, like INSERT ... SELECT statements.
 
-#####Filtering soft-deleted rows
+##### Filtering soft-deleted rows
 
 According to the soft-delete semantic, the rows with a non-null `_tidb_softdelete_time` is deleted and should not be output when the user queries this table, so we should explicitly filter these rows internally. Besides, this filtering behavior can be disabled by turning off `tidb_translate_softdelete_sql`.
 
 If `tidb_translate_softdelete_sql` is enabled, in `PredicatePushDown()` for `DataSource`, we will check if it's a soft-delete-enabled table, if it is, then add an extra `_tidb_softdelete_time IS NULL` filter to the predicates for this DataSource.
 
-#####Filtering hidden columns
+##### Filtering hidden columns
 
 Internally, the new hidden column `_tidb_softdelete_time` is a normal public column in its nature. This column should not be output for any queries (even when `tidb_translate_softdelete_sql` is disabled), unless the user explicitly specifies this column in the select fields.
 
@@ -315,13 +315,13 @@ For implementation, the only thing we need to consider is the behavior of the `S
 
 In `unfoldWildStar()`, we should check the column name (since the user can't create a column with this name, so we don't need any extra flags and checking the name is enough), and skip it if it's `_tidb_softdelete_time`.
 
-#####Compatibility with the plan cache
+##### Compatibility with the plan cache
 
 When `tidb_translate_softdelete_sql` is enabled or disabled, the semantic of the SQL is changed and the execution plan can't be reused between the two cases, so we need special handling in the plan cache module.
 
 If there are soft-delete enabled table in a query, we will include the value of the `tidb_translate_softdelete_sql` in the plan cache key, so that it will have different entries in the plan cache when `tidb_translate_softdelete_sql` is enabled or disabled.
 
-####INSERT
+#### INSERT
 
 The insert SQL (without `ON DUPLICATE`) should check the old row's tombstone to determine whether to perform an insert or a replace, or return a dupkey error:
 
@@ -364,7 +364,7 @@ If `replaceConflictIf` is set, `InsertExec` performs the following steps:
   5. If the old row **does** satisfy `replaceConflictIf`, delete the old row and insert the new one.
   6. Continue to the next row in the values list and repeat the process.
 
-####INSERT ... ON DUPLICATE KEY UPDATE ...
+#### INSERT ... ON DUPLICATE KEY UPDATE ...
 
 Similar to normal insert, the upsert case also uses the replaceConflictIf to check whether a row is a tombstone or not. But upsert should handle the update cases if the non-soft-delete conflict happens.
 
@@ -378,7 +378,7 @@ It performs the following steps:
   4.  If the old row **does** satisfy `replaceConflictIf`, delete the old row and insert the new one.
   5. Continue to the next row in the values list and repeat the process.
 
-####UPDATE
+#### UPDATE
 
 We only need to rewrite the SQL to make sure the update will skip updating the tombstone rows, for example:
 
@@ -395,7 +395,7 @@ Currently, updating a soft-delete table will not meet any conflict because:
 1. Changing the primary key is not allowed for a soft-delete table.
 2. There is no unique index besides the primary key.
 
-####REPLACE
+#### REPLACE
 
 The behavior of a REPLACE statement on a soft-delete-enabled table will be the same as a normal one, which is:
 
@@ -403,7 +403,7 @@ The behavior of a REPLACE statement on a soft-delete-enabled table will be the s
 2. The specified rows are inserted.
 Note that, similar to the INSERT statement above, any conflicting rows will be hard-deleted and not be able to be recovered.
 
-####DELETE
+#### DELETE
 
 If `tidb_translate_softdelete_sql` is enabled,  a DELETE statement translates to an UPDATE with the same query part plus SET `_tidb_softdelete_time = NOW()` internally.
 
@@ -422,13 +422,13 @@ UPDATE t SET _tidb_softdelete_time = NOW() WHERE col_a = 10 ORDER BY col_b LIMIT
 
 The privilege check is conducted as if it's a normal DELETE statement, i.e., we check the DELETE privilege instead of the UPDATE privilege.
 
-####RECOVER
+#### RECOVER
 
 Introduce a new SQL syntax `RECOVER VALUES FROM <table_name> WHERE <expr>`
 
 Internally, this SQL translates to `UPDATE <table_name> SET _tidb_softdelete_time = NULL WHERE <expr>` (without further applying the rewriting for normal UPDATE statements mentioned above). The privilege check and query result will be the same as that.
 
-###How Softdelete Cleanup Jobs Work 
+### How Softdelete Cleanup Jobs Work 
 
 There is a minimum for the job interval, 1h. A background task will scan all tables with softdelete enabled, and see if `SOFTDELETE_JOB_INTERVAL` is met since the TiDB startup.
 
@@ -440,7 +440,7 @@ Note that the dispatch manager will either issue softdelete cleanup jobs, or TTL
 
 When collaborating with active-active synchronization and TiCDC, i.e. with `ACTIVE_ACTIVE=ON` on the table meta, cleanup worker should also query the minimum `checkpoint_ts` from `ticdcProgresTable`. Every hard deletion requires `min(current_tso, checkpoint_ts) >= IFNULL(_tidb_origin_ts, _tidb_commit_ts)`. Otherwise there may be inconsistency.
 
-###How to migrate existing tables to soft-delete tables 
+### How to migrate existing tables to soft-delete tables 
 
 (Phase 1 not supported, might support in the future phases)
 
@@ -471,7 +471,7 @@ ALTER TABLE t DROP COLUMN _tidb_softdelete_time;
 
 You could also amend the table manually to correct any error/inconsistency.
 
-###Pros
+### Pros
 
 1. The project risk is under control.
   1. Major impact components are SQL, planner, and executor layer, mainly in the TiDB repo. The technical impact to other compoenents are limited. 
@@ -479,20 +479,20 @@ You could also amend the table manually to correct any error/inconsistency.
 2. Tombstoned rows are indexed normally on the extra column `_tidb_softdelete_time`. So the query performance on tombstoned rows is guaranteed. 
 3. The mechanism can be reused by Instant TTL requirement. We don't need to make too much effort to implement Instant TTL later.
 
-###Cons
+### Cons
 
 1. Userbility compromised. It introduce complexity and limitations to the user interface, especially for DBA during the clusters setting up. 
   1. The setting up of active-active requires configurations on both TiDB and TiCDC sides.
 
-##Active-Active Synchronization
+## Active-Active Synchronization
 
-###Introduction
+### Introduction
 
 In this section we introduce how to build active-active synchronization in a TiDB cluster group. TiDB already supports [CDC bi-directional](https://docs.pingcap.com/tidb/stable/ticdc-bidirectional-replication/#deploy-bi-directional-replication) to replicate changes between two TiDB clusters. The main challenge is how to achieve eventual consistency by "Last Write Wins(LWW)" strategy. 
 
 The basic idea of this design is that before TiCDC applying a change from upstream TiDB cluster to a target TiDB cluster, TiCDC compares the `commit_ts` of the change to the latest existing MVCC version's `commit_ts` and only applies it when the former `commit_ts` is larger. And since we cannot directly use the `commit_ts` from upstream TiDB cluster as the target MVCC version's `commit_ts`(It breaks TiDB's transaction assumption and might cause transactional inconsistency),  the design adds a new hidden column `tidb_origin_ts` to store the original `commit_ts` for further comparison.
 
-###How to Create an Active-Active Table
+### How to Create an Active-Active Table
 
 You can use the table option `ACTIVE_ACTIVE` to create a table that supports active-active synchronization. Note that the `SOFTDELETE` option is also required when defining an active-active table:
 
@@ -601,7 +601,7 @@ ALTER TABLE test ACTIVE_ACTIVE='ON' SOFTDELETE RETENTION=7 DAY; -- returns ERROR
 ALTER TABLE test ACTIVE_ACTIVE='OFF'; -- returns ERROR!
 ```
 
-###`_tidb_origin_ts` and `_tidb_commit_ts`
+### `_tidb_origin_ts` and `_tidb_commit_ts`
 
 If a table is created with `ACTIVE_ACTIVE`, a new hidden column `_tidb_origin_ts` will be added. The column `_tidb_origin_ts` indicates the original `commit ts` if this row is synced from the upstream, and it has the following definition:
 
@@ -684,7 +684,7 @@ IFNULL(`_tidb_origin_ts`, `_tidb_commit_ts`)
 
 These two rules together ensure the `Last Writer Wins (LWW)` policy—that is, the write with the greater timestamp always overwrites the older value.
 
-###Active-Active Limitations
+### Active-Active Limitations
 
 - An Active-Active table needs also to be a soft-delete table.  (Currently unsupported and not planned to be a non-soft-delete table)
 - All secondary indexes should not be unique in the Active-Active table. For example, it's to figure out how to resolve the conflict below:  (Unique indexes currently unsupported and not planned) You can find more discussions from section "(Unsolved) To Support Secondary Unique Index"
@@ -709,8 +709,8 @@ INSERT INTO t VALUES(2, 20); -- commit_ts: ts3
 - The columns `_tidb_origin_ts` and `_tidb_commit_ts` can not be modified with DDL.  (Currently unsupported and not planned to alter these hidden columns)
 - Changing table's `Active-Active` enable status after creation is not supported.  (Currently unsupported and not planned.)
 
-###How Local DML Works 
-####How PD TSO Allocation Works
+### How Local DML Works 
+#### How PD TSO Allocation Works
 
 The values of `_tidb_origin_ts` and `_tidb_commit_ts` are both TSO allocated by PD. However, since each cluster has its own PD instance, we must ensure that timestamps generated by different PDs are comparable. To achieve this, each PD instance must allocate globally unique timestamp values.
 
@@ -756,7 +756,7 @@ Because each PD produces distinct `logical_num` values, the resulting TSO values
 
 A frequent TSO allocation may cause the `logical_num` to grow quickly.  Generally, it is better to ensure `tso-max-index` is less than 10 to avoid the logical_num being exhausted before physical timestamp advances.
 
-####How Local DML Executor Works
+#### How Local DML Executor Works
 
 As mentioned above, a local transaction must ensure that its commit timestamp is greater than the old row’s `_tidb_origin_ts`. To achieve this, the internal implementation should allow DML operations to set a "minimum commit timestamp" for the current transaction.
 
@@ -772,14 +772,14 @@ If `kv.MinCommitTS` is set, during transaction commit, if PD returns a TSO that 
 
 In most cases, the clock drift between clusters should be minimal. However, if PD returns a TSO that is significantly smaller than the old row’s original timestamp (for example, by more than 500 ms), the commit should fail to prevent excessively long waiting times. In this case, there must be a serious clock drift between PD instances and the system administrator has to fix the issue before proceeding new updates to databases.
 
-###How CDC Sync Rows 
-####How to Create a Changefeed in LWW Mode
+### How CDC Sync Rows 
+#### How to Create a Changefeed in LWW Mode
 
 We will add a new changefeed configuration item, `enable-active-active`, with a default value of false. When `enable-active-active` is true, CDC will synchronize data downstream in LWW mode. 
 
 Users need to ensure that all tables that need to be synchronized in this changefeed are created upstream in `ACTIVE_ACTIVE` mode. `enable-active-active` mode only supports tidb downstream now.
 
-####How to Synchronization to TiDB Downstream in LWW Mode
+#### How to Synchronization to TiDB Downstream in LWW Mode
 
 For Active-Active scenarios, TiCDC uniformly transforms upstream data changes into SQL statements with LWW conflict resolution capabilities for writing to the downstream TiDB clusters.
 
@@ -808,7 +808,7 @@ For physical DELETE statements generated by the TiDB Soft Delete TTL job after t
 - TiCDC will directly ignore these Hard Delete changes.
   - Each cluster in the Active-Active group independently handles its own Hard Delete operations based on local TTL configuration and safety checks. Ignoring these statements prevents a flood of physical DELETE statements from impacting TiCDC's synchronization performance.
 
-####How to Guarantee Data Correctness During Hard Delete in LWW Mode
+#### How to Guarantee Data Correctness During Hard Delete in LWW Mode
 
 To mitigate the Corner Case where high TiCDC latency (e.g., during changefeed stops or abnormal conditions) allows a downstream cluster to perform a premature Hard Delete, leading to data inconsistency, we introduce a Hard Delete Safety Watermark mechanism.
 
@@ -847,7 +847,7 @@ TiDB's Soft Delete TTL cleanup module will collaborate with this mechanism:
 
 To avoid placing additional read/write burden on the downstream TiDB cluster, TiCDC will update the `ticdcProgressTable` in a sparse manner, such as once every 30 minutes for all tables. Given that Soft Delete retention periods are typically measured in days, this sparse update frequency will not significantly impact the timeliness of the TTL cleanup.
 
-####How to Perform DDL Operations in LWW Mode
+#### How to Perform DDL Operations in LWW Mode
 
 Executing DDL in LWW mode must comply with the DDL requirements([ticdc-bidirectional-replication](https://docs.pingcap.com/tidb/stable/ticdc-bidirectional-replication/)) for bidirectional synchronization.
 
@@ -856,7 +856,7 @@ We have two following options:
 1. Choose one cluster as the PRIMARY cluster, and only perform replicable DDLs on the primary cluster and synchronize them to the SECONDARY cluster through CDC. For non-replicable DDLs, we should perform this way [replication-scenarios-of-non-replicable-ddls](https://docs.pingcap.com/tidb/stable/ticdc-bidirectional-replication/#replication-scenarios-of-non-replicable-ddls).
 2. Don't set BDR Mode for all clusters, and perform all the ddls this way [replication-scenarios-of-non-replicable-ddls](https://docs.pingcap.com/tidb/stable/ticdc-bidirectional-replication/#replication-scenarios-of-non-replicable-ddls). This approach requires users to stop all writes to all the clusters until finishing running DDLs in all clusters.
 
-####How to Synchronization Downstream in Normal Mode
+#### How to Synchronization Downstream in Normal Mode
 
 When an LWW table needs to be synchronized to external downstreams (such as data warehouses), TiCDC must revert the internal LWW representation back to standard events.
 
@@ -864,14 +864,14 @@ When an LWW table needs to be synchronized to external downstreams (such as data
 - Soft Delete Restoration: The internal UPDATE statement that represents a logical DELETE in TiDB will be restored to a standard DELETE event for the external downstream system.
 - Hard Delete: These are also directly ignored.
 
-####How to Guarantee Cross-Table Transaction Consistency
+#### How to Guarantee Cross-Table Transaction Consistency
 
 How to Enable Cross-Table Transaction Consistency in LWW Mode
 
 - Enablement: The Cross-Table Transaction capability will be enabled via a new parameter in the Sink URI: `enable-transaction-atomic`. Once enabled, all data for that Changefeed will be written downstream at transaction granularity. We only support TiDB Downstream now.
 - Filter Updates: Users must follow a `pause → update filter → resume sequence` to safely modify the tables included in the Changefeed.
 
-#####Overall Architecture: Transaction  Combinator
+##### Overall Architecture: Transaction  Combinator
 
 To support Cross-Table Transactions Consistency, we added a transaction combinator layer between the dispatcher layer and the sink to combine transactions. The transaction combinator receives all data from the dispatcher layer, restores it to transaction granularity, and then writes it to various sink modules to generate the corresponding output format for downstream.
 
@@ -890,7 +890,7 @@ The Transaction Combinator consists of two core components: Event Storage, Trans
     - Txn Rebuilder: The Processing module extracts all events with CommitTS ≤ ProgressTs from the Storage. It uses CommitTS and StartTS as unique identifiers to accurately combine fragmented events into complete transactions (Txn).
     - Cleanup Trigger: After reading the necessary data, this module triggers Event Storage to perform the cleanup of events with CommitTS ≤ ProgressTs.
 
-#####DDL and DML Event Ordering
+##### DDL and DML Event Ordering
 
 DDL and DML events never share a single transaction. The Transaction Processing module must strictly maintain DDL sequence during transaction reassembly:
 
@@ -900,7 +900,7 @@ DDL and DML events never share a single transaction. The Transaction Processing 
 - Subsequent DML transactions can only be processed after the DDL transaction has successfully executed downstream.
 
 
-#####Node Restart and Checkpoint Mechanism
+##### Node Restart and Checkpoint Mechanism
 
 The Transaction Sink's restart mechanism ensures data consistency and preserves LWW correctness.
 
@@ -909,14 +909,14 @@ The Transaction Sink's restart mechanism ensures data consistency and preserves 
 - Fault Tolerance: The CheckpointTs stored in etcd will theoretically lag slightly behind the actual progress. Upon restart, partial data already processed will be re-pulled. Because the Transaction Sink generates LWW-enabled SQL, these redundant writes of stale transactions will be safely ignored downstream, ensuring eventual correctness and simplifying the recovery process.
 
 
-#####Scheduling Strategy
+##### Scheduling Strategy
 
 To guarantee Cross-Table Transaction Atomicity, it is mandatory that all tables associated with a single Changefeed are synchronized on the same TiCDC node.
 
 - Implementation: The Maintainer is responsible for creating all Dispatchers for the Changefeed on its own node.
 - Coordinator Role: The Coordinator manages the load balance of Maintainer instances across nodes (as a preliminary goal). Further balancing based on Transaction Sink throughput may be considered later.
 
-####Limitations and Constraints
+#### Limitations and Constraints
 
 - Performance Limits: Due to the single-node centralized scheduling bottleneck, the maximum throughput for a single changefeed enabling this feature is wide table 100MiB/s and narrow table 30MiB/s, supporting a maximum of 10K tables.
 - Conflict Constraint: It is not supported to configure multiple changefeeds with this feature enabled to synchronize the same table into the same downstream cluster.
@@ -925,7 +925,7 @@ To guarantee Cross-Table Transaction Atomicity, it is mandatory that all tables 
   - SyncPoint is not possible to create an identical consistent view between two clusters in active-active setup.
 
 
-###(Unsolved) To Support Secondary Unique Index
+### (Unsolved) To Support Secondary Unique Index
 
 Currently, active-active mode does not support secondary unique indexes until a well-defined mechanism is introduced to handle cross-row conflicts. For example:
 
@@ -995,7 +995,7 @@ replace into t values(2, 10); -- commit_ts3
 -- The final result is: (1, 20), (2, 10)
 ```
 
-###CASE Scenario Description
+### CASE Scenario Description
 
 In this section, we will explain in detail the behavior of each case in active-to-active mode. We use this table to explain in the following cases for simplify.
 
@@ -1009,7 +1009,7 @@ CREATE TABLE IF NOT EXISTS test (
 );
 ```
 
-####Case 1
+#### Case 1
 
 ![active-active-case1.png](active-active-case1.png)
 
@@ -1072,7 +1072,7 @@ select id, first_name, last_name, _tidb_origin_ts, _tidb_commit_ts from test;
 +----+-------------+------------+-----------------+------------------+
 ```
 
-####Case 2 
+#### Case 2 
 
 ![active-active-case2.png](active-active-case2.png)
 
@@ -1155,7 +1155,7 @@ select id, first_name, last_name, _tidb_origin_ts, _tidb_commit_ts from test;
 +----+-------------+------------+-----------------+------------------+
 ```
 
-####Case 3
+#### Case 3
 
 ![active-active-case3.png](active-active-case3.png)
 
@@ -1254,7 +1254,7 @@ select id, first_name, last_name, _tidb_origin_ts, _tidb_commit_ts from test;
 +----+-------------+------------+-----------------+------------------+
 ```
 
-####Case 4
+#### Case 4
 
 ![active-active-case4.png](active-active-case4.png)
 
@@ -1302,7 +1302,7 @@ select id, first_name, last_name, _tidb_origin_ts, _tidb_commit_ts from test;
 +----+-------------+------------+-----------------+------------------+
 ```
 
-####Case 5
+#### Case 5
 
 ![active-active-case5.png](active-active-case5.png)
 
@@ -1310,13 +1310,13 @@ This case is just about TiDB transactions. TiDB behavior defined by the transact
 - [PESSIMISTIC](https://docs.pingcap.com/tidb/stable/pessimistic-transaction/) (default)
 - [OPTIMISTIC](https://docs.pingcap.com/tidb/stable/optimistic-transaction/)
 
-####Case 6
+#### Case 6
 
 ![active-active-case6.png](active-active-case6.png)
 
 This will never happen in our design; TiDB will guarantee the Region A to generate T1 that always has a greater value than T2.
 
-####Case 7
+#### Case 7
 
 ![active-active-case7.png](active-active-case7.png)
 
@@ -1399,7 +1399,7 @@ select id, first_name, last_name, _tidb_origin_ts, _tidb_commit_ts from test;
 
 ```
 
-####Case 8
+#### Case 8
 
 ![active-active-case8.png](active-active-case8.png)
 
@@ -1481,13 +1481,13 @@ select id, first_name, last_name, _tidb_origin_ts, _tidb_commit_ts from test;
 +----+-------------+------------+-----------------+------------------+---------------------+
 ```
 
-####Case 9
+#### Case 9
 
 ![active-active-case9.png](active-active-case9.png)
 
 The data type has no impact to the final result in Active-Active scenario.
 
-###How to setup an active-active group from scratch
+### How to setup an active-active group from scratch
 
 This section describes how to build an active-active group with multiple TiDB clusters based on  the ability of phase 1. Since it only supports creating active-active tables when they are created at phase 1, a user don't have to do data migration between TiDB clusters.
 
@@ -1497,7 +1497,7 @@ This section describes how to build an active-active group with multiple TiDB cl
 4. Set up TiCDC changefeeds between clusters, with the `enable-active-active` option turned on.
 5. Start writing to tables in any clusters.
 
-###How to migrate existing tables to active-active tables
+### How to migrate existing tables to active-active tables
 
 This section describes how to switch some tables that are not in active-active mode to active-active mode. You can refer to the following steps. 
 
@@ -1519,7 +1519,7 @@ ALTER TABLE <> ACTIVE_ACTIVE='ON' SOFTDELETE RETENTION=7 DAY;
 3. Once both cluster DDL operations have been successfully executed, you can create a changefeed to sync these tables in active-active LWW mode.
 4. Start writing to tables in any clusters.
 
-###How to migrate active-active tables to non-active-active tables
+### How to migrate active-active tables to non-active-active tables
 
 This section describes how to switch some tables that are in active-active mode to non-active-active mode. You can refer to the following steps. 
 
@@ -1541,13 +1541,13 @@ Notice we still have the limitations for DDL operations on `_tidb_origin_ts`
 - This column is only allowed to be dropped when the table is not an `active-active` one.
 - Column `_tidb_origin_ts` cannot be created manually without the option `ACTIVE_ACTIVE`. If a non-active-active table has this column, it means the  table is altered from an active-active table before. If you alter this table to `active-active` mode again, this column will be reused with all previous origin ts values.
 
-##MySQL compatibility
+## MySQL compatibility
 
 1. In active-active mode, a MySQL instance cannot join the TiDB clusters as one of the service regions.
 2. A MySQL instance can still be downstream of one TiDB cluster of the active-active group and receive the changes from all TiDB clusters. I.e. All changes in the TiDB clusters are applied in any one TiDB cluster, so that the MySQL instance only needs to watch one TiDB cluster to receive all changes.
 
 
-#Limitation from User Perspective
+# Limitation from User Perspective
 
 The active-active mode does not provide serializable, linearizability,  or causal consistency across clusters. For example, it can lead to a “lost update” scenario when two clusters concurrently update the same row:
 
