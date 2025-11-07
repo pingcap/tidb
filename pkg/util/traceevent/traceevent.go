@@ -386,8 +386,8 @@ func (r *RingBufferSink) Record(_ context.Context, event Event) {
 	r.next = (r.next + 1) % r.cap
 }
 
-// Reset clears all buffered events.
-func (r *RingBufferSink) Reset() {
+// DiscardOrFlush clears all buffered events.
+func (r *RingBufferSink) DiscardOrFlush() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.buf = r.buf[:0]
