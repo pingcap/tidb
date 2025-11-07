@@ -746,7 +746,7 @@ func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, total
 // And to work with auto analyze's needs, we need to read all the tables' stats meta into memory.
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
 func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) error {
-	return h.Pool.SPool().WithForceBlockGCSession(func(se *syssession.Session) error {
+	return h.Pool.SPool().WithForceBlockGCSession(ctx, func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
 			return h.initStatsLiteWithSession(ctx, sctx, tableIDs...)
 		})
@@ -802,7 +802,7 @@ func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.C
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
 // If tableIDs is provided, we only load the stats for the specified tables.
 func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error {
-	return h.Pool.SPool().WithForceBlockGCSession(func(se *syssession.Session) error {
+	return h.Pool.SPool().WithForceBlockGCSession(ctx, func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
 			return h.initStatsWithSession(ctx, sctx, is, tableIDs...)
 		})

@@ -42,7 +42,7 @@ type Pool interface {
 	Put(*Session)
 	// WithForceBlockGCSession executes the input function with the session and ensures the session is registered to
 	// the session manager so GC can be blocked safely.
-	WithForceBlockGCSession(func(*Session) error) error
+	WithForceBlockGCSession(ctx context.Context, fn func(*Session) error) error
 	// WithSession executes the input function with the session.
 	// After the function called, the session will be returned to the pool automatically.
 	WithSession(func(*Session) error) error
@@ -257,16 +257,30 @@ func (p *AdvancedSessionPool) Put(se *Session) {
 // WithSession executes the input function with the session.
 // After the function called, the session will be returned to the pool automatically.
 func (p *AdvancedSessionPool) WithSession(fn func(*Session) error) error {
-	return p.withSession(fn, false)
+	se, err := p.Get()
+	if err != nil {
+		return err
+	}
+
+	success := false
+	defer func() {
+		if success {
+			p.Put(se)
+		} else {
+			se.Close()
+		}
+	}()
+
+	if err = fn(se); err != nil {
+		return err
+	}
+	success = true
+	return nil
 }
 
 // WithForceBlockGCSession executes the input function with the session and ensures the internal session is
 // registered to the session manager so GC can be blocked safely.
-func (p *AdvancedSessionPool) WithForceBlockGCSession(fn func(*Session) error) error {
-	return p.withSession(fn, true)
-}
-
-func (p *AdvancedSessionPool) withSession(fn func(*Session) error, forceBlockGC bool) error {
+func (p *AdvancedSessionPool) WithForceBlockGCSession(ctx context.Context, fn func(*Session) error) error {
 	se, err := p.Get()
 	if err != nil {
 		return err
@@ -283,7 +297,7 @@ func (p *AdvancedSessionPool) withSession(fn func(*Session) error, forceBlockGC 
 
 	// Make sure the internal session is registered to the session manager to block GC.
 	const retryInterval = 100 * time.Millisecond
-	if forceBlockGC && !infosync.ContainsInternalSession(se.internal.sctx) {
+	if !infosync.ContainsInternalSession(se.internal.sctx) {
 		for !infosync.StoreInternalSession(se.internal.sctx) {
 			// In most cases, the session manager is not set, so this step will be skipped.
 			// It is only enabled explicitly in tests through a failpoint.
@@ -294,7 +308,14 @@ func (p *AdvancedSessionPool) withSession(fn func(*Session) error, forceBlockGC 
 			if !forceBlockGCInTest {
 				break
 			}
-			time.Sleep(retryInterval)
+
+			// Check context cancellation
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retryInterval):
+				// Continue retry
+			}
 		}
 	}
 
