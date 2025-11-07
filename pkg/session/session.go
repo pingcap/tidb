@@ -1846,10 +1846,19 @@ func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	if sink := tracing.GetSink(ctx); sink == nil {
-		// debug.PrintStack()
 		trace := traceevent.NewTrace()
 		ctx = tracing.WithFlightRecorder(ctx, trace)
 		defer trace.Reset(ctx)
+
+		// A developer debugging event so we can see what trace is missing!
+		if traceevent.IsEnabled(tracing.DevDebug) {
+			traceevent.TraceEvent(ctx, tracing.DevDebug, "ExecuteInternal missing trace ctx",
+				zap.String("sql", sql),
+				zap.Stack("stack"))
+			traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.dev_debug", func(config *traceevent.DumpTriggerConfig) bool {
+				return config.Event.DevDebug.Type == "execute_internal_trace_missing"
+			})
+		}
 	}
 
 	rs, err = s.executeInternalImpl(ctx, sql, args...)

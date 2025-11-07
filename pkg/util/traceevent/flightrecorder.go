@@ -103,6 +103,24 @@ type SuspiciousEventConfig struct {
 	// QueryFail error code?
 	// ResolveLock?
 	// RegionError
+	DevDebug *DevDebugConfig `json:"dev_debug,omitempty"`
+}
+
+type DevDebugConfig struct {
+	Type string
+}
+
+func (c *DevDebugConfig) Validate(b *strings.Builder) error {
+	if c == nil {
+		return fmt.Errorf("dump_trigger.suspicious_event.dev_debug missing")
+	}
+	b.WriteString(".dev_debug")
+	switch c.Type {
+	case "execute_internal_trace_missing":
+	default:
+		return fmt.Errorf("wrong dump_trigger.suspicious_event.dev_debug.type")
+	}
+	return nil
 }
 
 // Validate validates the suspicious event configuration.
@@ -116,6 +134,8 @@ func (c *SuspiciousEventConfig) Validate(b *strings.Builder) error {
 	case "query_fail":
 	case "resolve_lock":
 	case "region_error":
+	case "dev_debug":
+		return c.DevDebug.Validate(b)
 	default:
 		return fmt.Errorf("wrong dump_trigger.suspicious_event.type")
 	}

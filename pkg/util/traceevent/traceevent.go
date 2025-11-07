@@ -257,6 +257,12 @@ func TraceIDFromContext(ctx context.Context) []byte {
 	return trace.TraceIDFromContext(ctx)
 }
 
+// ContextWithTraceID returns a new context with the given trace identifier.
+// It delegates to client-go's ContextWithTraceID implementation.
+func ContextWithTraceID(ctx context.Context, traceID []byte) context.Context {
+	return trace.ContextWithTraceID(ctx, traceID)
+}
+
 // GenerateTraceID creates a trace ID from transaction start timestamp and statement count.
 // The trace ID is 20 bytes: [start_ts (8 bytes)][stmt_count (8 bytes)][random (4 bytes)] in big-endian format.
 // The random suffix distinguishes different statement executions.

@@ -499,7 +499,7 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 	if jobW.TraceInfo != nil && len(jobW.TraceInfo.TraceID) > 0 {
 		traceevent.TraceEvent(ctx, tracing.DDLJob, "deliveryJob",
 			zap.Int64("jobID", jobW.ID),
-			zap.ByteString("traceID", jobW.TraceInfo.TraceID))
+			zap.String("traceID", hex.EncodeToString(jobW.TraceInfo.TraceID)))
 	}
 
 	failpoint.InjectCall("beforeDeliveryJob", jobW.Job)
@@ -507,7 +507,6 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 	jobID, involvedSchemaInfos := jobW.ID, jobW.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-	jobCtx := s.getJobRunCtx(ctx, jobW.ID, jobW.TraceInfo)
 
 	s.wg.Run(func() {
 		start := time.Now()
@@ -529,6 +528,12 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 			pool.put(wk)
 		}()
+
+		trace := traceevent.NewTrace()
+		trace.MarkDump()
+		jobCtx := s.getJobRunCtx(trace, jobW.ID, jobW.TraceInfo)
+		defer trace.Reset(jobCtx.ctx)
+
 		for {
 			err := s.transitOneJobStepAndWaitSync(wk, jobCtx, jobW)
 			if err != nil {
@@ -565,14 +570,11 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 	})
 }
 
-func (s *jobScheduler) getJobRunCtx(ctx context.Context, jobID int64, traceInfo *tracing.TraceInfo) *jobContext {
+func (s *jobScheduler) getJobRunCtx(trace *traceevent.Trace, jobID int64, traceInfo *tracing.TraceInfo) *jobContext {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
-	newCtx := s.schCtx
-	if sink := tracing.GetSink(ctx); sink != nil {
-		if raw, ok := sink.(tracing.FlightRecorder); ok {
-			newCtx = tracing.WithFlightRecorder(newCtx, raw)
-			fmt.Println("use job ctx now comes with flight recorder")
-		}
+	newCtx := tracing.WithFlightRecorder(s.schCtx, trace)
+	if len(traceInfo.TraceID) > 0 {
+		newCtx = traceevent.ContextWithTraceID(newCtx, traceInfo.TraceID)
 	}
 	return &jobContext{
 		ctx:                  newCtx,
