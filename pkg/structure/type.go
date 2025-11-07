@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // TypeFlag is for data structure meta/data flag.
@@ -125,6 +127,7 @@ func (t *TxStructure) decodeHashDataKey(ek kv.Key) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	} else if TypeFlag(tp) != HashData {
+		logutil.BgLogger().Error("invalid encoded hash data key flag", zap.Uint64("tp", tp), zap.Any("ek", ek))
 		return nil, nil, ErrInvalidHashKeyFlag.GenWithStack("invalid encoded hash data key flag %c", byte(tp))
 	}
 
