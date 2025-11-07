@@ -19,7 +19,7 @@ import (
 	"sync"
 )
 
-// MockWriter is a mock implementation of MeteringWriter for testing purposes.
+// MockWriter is a mock implementation of Writer for testing purposes.
 type MockWriter struct {
 	mu          sync.Mutex
 	writeData   []interface{}
