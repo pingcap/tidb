@@ -200,6 +200,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 		Revertible:  true,
 		NeedReorg:   jobW.NeedReorg,
 		ReorgTp:     reorgTp,
+		// For modify column, this value will be filled during execution.
 		NeedAnalyze: jobW.Type == model.ActionAddIndex || jobW.Type == model.ActionAddPrimaryKey,
 	})
 	return nil

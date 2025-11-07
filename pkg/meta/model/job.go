@@ -919,6 +919,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		ErrorCount:      0,
 		RowCount:        sub.RowCount,
 		Mu:              sync.Mutex{},
+		NeedReorg:       sub.NeedReorg,
 		args:            sub.args,
 		RawArgs:         sub.RawArgs,
 		SchemaState:     sub.SchemaState,
