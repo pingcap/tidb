@@ -898,10 +898,8 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	)
 
 	d.executor.startMode = startMode
-	failpoint.Inject("mockBRStartMode", func(val failpoint.Value) {
-		if v, ok := val.(bool); ok && v {
-			d.executor.startMode = BR
-		}
+	failpoint.Inject("mockBRStartMode", func() {
+		d.executor.startMode = BR
 	})
 
 	d.sessPool = sess.NewSessionPool(ctxPool)

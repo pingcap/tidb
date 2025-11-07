@@ -883,6 +883,8 @@ func TestCreateTableHandleAutoIDOnce(t *testing.T) {
 	})
 
 	tk.MustExec("create table t1(id int) AUTO_INCREMENT 1000")
+
+	// For normal DDL, rebase should be called only once.
 	require.Equal(t, 1, count)
 	rs := tk.MustQuery("show table test.t1 next_row_id").Rows()
 	require.Equal(t, "1000", rs[0][3])
@@ -929,9 +931,9 @@ func TestCreateTableWithBR(t *testing.T) {
 	require.NoError(t, dom.DDLExecutor().CreateTableWithInfo(
 		se, ast.NewCIStr("test"), tblInfo, involvingRef,
 		ddl.WithOnExist(ddl.OnExistError)))
-	require.Equal(t, 2, count)
 
-	// Check rebase worked.
+	// For BR execution, rebase should be called twice. And this won't affect the rebase result.
+	require.Equal(t, 2, count)
 	rs := tk.MustQuery("show table test.t1 next_row_id").Rows()
 	require.Equal(t, "1000", rs[0][3])
 }
