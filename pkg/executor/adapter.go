@@ -79,6 +79,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -1682,6 +1683,10 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 	return nil
 }
 
+func slowQueryDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.Event.Type == "slow_query"
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -1798,6 +1803,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if trace.IsEnabled() {
 		trace.Log(a.GoCtx, "details", slowLog)
 	}
+<<<<<<< HEAD
 	logutil.SlowQueryLogger.Warn(slowLog)
 	if costTime >= threshold {
 		if sessVars.InRestrictedSQL {
@@ -1839,6 +1845,25 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 				IndexNames: indexNames,
 				Internal:   sessVars.InRestrictedSQL,
 			})
+=======
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.suspicious_event", slowQueryDumpTriggerCheck)
+
+	if !matchRules {
+		return
+	}
+	costTime := slowItems.TimeTotal
+	execDetail := slowItems.ExecDetail
+	if sessVars.InRestrictedSQL {
+		executor_metrics.TotalQueryProcHistogramInternal.Observe(costTime.Seconds())
+		executor_metrics.TotalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+		executor_metrics.TotalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+	} else {
+		executor_metrics.TotalQueryProcHistogramGeneral.Observe(costTime.Seconds())
+		executor_metrics.TotalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+		executor_metrics.TotalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+		if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys != 0 {
+			executor_metrics.CopMVCCRatioHistogramGeneral.Observe(float64(execDetail.ScanDetail.TotalKeys) / float64(execDetail.ScanDetail.ProcessedKeys))
+>>>>>>> 61bbb073d2c (traceevent,*: refine flight recorder (#64199))
 		}
 	}
 }
@@ -1972,6 +1997,14 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 	return
 }
 
+type planDigestAlias struct {
+	Digest string
+}
+
+func (digest planDigestAlias) planDigestDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.PlanDigest == digest.Digest
+}
+
 // SummaryStmt collects statements for information_schema.statements_summary
 func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -2018,6 +2051,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.Plan.TP() != plancodec.TypePointGet {
 		_, tmp := GetPlanDigest(stmtCtx)
 		planDigest = tmp.String()
+		traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.plan_digest", planDigestAlias{planDigest}.planDigestDumpTriggerCheck)
 	}
 
 	execDetail := stmtCtx.GetExecDetails()
