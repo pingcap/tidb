@@ -348,13 +348,13 @@ func validateKeyRangesMonotonic(ctx context.Context, ranges *KeyRanges) {
 		curr := ranges.At(i)
 		validateSingleRange(logger, curr, i, total)
 		if len(prev.EndKey) == 0 {
-			logger.Fatal("copr: key range extends to +inf but more ranges follow",
+			logger.Panic("copr: key range extends to +inf but more ranges follow",
 				zap.Int("rangeIndex", i-1),
 				zap.String("rangeStart", redact.Key(prev.StartKey)),
 				zap.String("rangeEnd", redact.Key(prev.EndKey)))
 		}
 		if prev.EndKey.Cmp(curr.StartKey) > 0 {
-			logger.Fatal("copr: key ranges are not monotonic or overlap",
+			logger.Panic("copr: key ranges are not monotonic or overlap",
 				zap.Int("prevRangeIndex", i-1),
 				zap.String("prevStart", redact.Key(prev.StartKey)),
 				zap.String("prevEnd", redact.Key(prev.EndKey)),
@@ -368,13 +368,13 @@ func validateKeyRangesMonotonic(ctx context.Context, ranges *KeyRanges) {
 
 func validateSingleRange(logger *zap.Logger, r kv.KeyRange, idx, total int) {
 	if len(r.EndKey) > 0 && r.StartKey.Cmp(r.EndKey) > 0 {
-		logger.Fatal("copr: key range start is greater than end",
+		logger.Panic("copr: key range start is greater than end",
 			zap.Int("rangeIndex", idx),
 			zap.String("rangeStart", redact.Key(r.StartKey)),
 			zap.String("rangeEnd", redact.Key(r.EndKey)))
 	}
 	if len(r.EndKey) == 0 && idx != total-1 {
-		logger.Fatal("copr: key range without end must be the last range",
+		logger.Panic("copr: key range without end must be the last range",
 			zap.Int("rangeIndex", idx),
 			zap.String("rangeStart", redact.Key(r.StartKey)))
 	}
