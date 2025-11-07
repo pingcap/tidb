@@ -16,17 +16,21 @@
 set -euo pipefail
 
 GOROOT=$(bazel run @io_bazel_rules_go//go -- env GOROOT)
+cd ${GOROOT}
 
 gosrc_md5=()
-gosrc_md5+=("${GOROOT}/src/internal/runtime/maps/map.go a29531cd3447fd3c90ceabfde5a08921")
-gosrc_md5+=("${GOROOT}/src/internal/runtime/maps/table.go 1ff4f281722eb83ac7d64ae0453e9718")
-gosrc_md5+=("${GOROOT}/src/internal/abi/map_swiss.go 7ef614406774c5be839e63aea0225b00")
-gosrc_md5+=("${GOROOT}/src/internal/abi/type.go d0caafb471a5b971854ca6426510608c")
+gosrc_md5+=("src/internal/runtime/maps/map.go a29531cd3447fd3c90ceabfde5a08921")
+gosrc_md5+=("src/internal/runtime/maps/table.go 1ff4f281722eb83ac7d64ae0453e9718")
+gosrc_md5+=("src/internal/abi/map_swiss.go 7ef614406774c5be839e63aea0225b00")
+gosrc_md5+=("src/internal/abi/type.go d0caafb471a5b971854ca6426510608c")
 
 for x in "${gosrc_md5[@]}"; do
 	x=($x)
-	if [ $(md5sum "${x[0]}" | cut -d' ' -f1) != "${x[1]}" ]; then
-		echo "Unexpect checksum for ${x[0]}"
-		exit 1
+	src="${x[0]}"
+	md5="${x[1]}"
+	echo "Checking ${src}"
+	if [ $(md5sum "${src}" | cut -d' ' -f1) != "${md5}" ]; then
+		echo "Unexpect checksum for ${src}"
+		exit -1
 	fi
 done
