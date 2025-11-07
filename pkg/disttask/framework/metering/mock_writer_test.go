@@ -19,6 +19,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -126,4 +127,33 @@ func TestMockWriterConcurrent(t *testing.T) {
 	
 	require.Equal(t, 10, mock.GetWriteCount())
 	require.Len(t, mock.GetWriteData(), 10)
+}
+
+func TestMockWriterWithMeter(t *testing.T) {
+	// Create a mock writer
+	mockWriter := NewMockWriter()
+	
+	// Create a Meter with the mock writer
+	m := &Meter{
+		data:   make(map[int64]*Data),
+		writer: mockWriter,
+		logger: logutil.BgLogger(),
+		uuid:   "test-uuid",
+	}
+	
+	// Record some data
+	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{putRequests: 10, getRequests: 20})
+	m.Record("keyspace1", TaskTypeAddIndex, 2, &Data{readDataBytes: 100, writeDataBytes: 200})
+	
+	// Flush the data
+	m.flush(context.Background(), 1234567890)
+	
+	// Verify the mock writer received the data
+	require.Equal(t, 1, mockWriter.GetWriteCount())
+	require.Len(t, mockWriter.GetWriteData(), 1)
+	
+	// Close the meter
+	err := m.Close()
+	require.NoError(t, err)
+	require.True(t, mockWriter.IsClosed())
 }

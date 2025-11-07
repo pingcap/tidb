@@ -124,12 +124,20 @@ func (m *Data) merge(other *Data) {
 	m.writeDataBytes += other.writeDataBytes
 }
 
+// Writer defines the interface for metering data writers.
+type Writer interface {
+	// Write writes metering data
+	Write(ctx context.Context, data interface{}) error
+	// Close closes the writer and cleanup resources
+	Close() error
+}
+
 // Meter is responsible for recording and reporting metering data.
 type Meter struct {
 	sync.Mutex
 	data   map[int64]*Data // taskID -> meter data
 	uuid   string
-	writer *meteringwriter.MeteringWriter
+	writer Writer
 	logger *zap.Logger
 }
 
