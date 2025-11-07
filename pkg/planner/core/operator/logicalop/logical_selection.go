@@ -16,6 +16,7 @@ package logicalop
 
 import (
 	"bytes"
+	"fmt"
 	"slices"
 
 	"github.com/pingcap/errors"
@@ -96,6 +97,9 @@ func (p *LogicalSelection) HashCode() []byte {
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	exprCtx := p.SCtx().GetExprCtx()
 	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
 	// Apply predicate simplification to the conditions. because propagateConstant has been dealed in the ConstantPropagationSolver
 	// so we don't need to do it again.

@@ -15,6 +15,8 @@
 package logicalop
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -86,6 +88,9 @@ func AddSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expre
 	if len(conditions) == 0 {
 		p.Children()[chIdx] = child
 		return
+	}
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
 	}
 	conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), conditions, true, nil)
 	if len(conditions) == 0 {

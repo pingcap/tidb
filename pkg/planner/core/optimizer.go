@@ -1068,7 +1068,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 			return nil, err
 		}
 	}
-
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	return logic, err
 }
 

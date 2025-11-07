@@ -198,6 +198,13 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
 	case base.SemiJoin, base.InnerJoin:
+		if !p.SCtx().GetSessionVars().InRestrictedSQL {
+			for _, predicate := range predicates {
+				if sf, ok := predicate.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.IsNull {
+					fmt.Println("wwz")
+				}
+			}
+		}
 		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
 		tempCond = append(tempCond, p.LeftConditions...)
 		tempCond = append(tempCond, p.RightConditions...)
@@ -249,6 +256,11 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	leftChild := children[0]
 	rightCond = constraint.DeleteTrueExprsBySchema(evalCtx, rightChild.Schema(), rightCond)
 	leftCond = constraint.DeleteTrueExprsBySchema(evalCtx, leftChild.Schema(), leftCond)
+	if !p.SCtx().GetSessionVars().InRestrictedSQL && p.JoinType == base.InnerJoin && len(leftCond) == 9 {
+		if j, ok := leftChild.(*LogicalJoin); ok && j.JoinType == base.LeftOuterJoin {
+			fmt.Println("wwz")
+		}
+	}
 	leftRet, lCh, err := leftChild.PredicatePushDown(leftCond)
 	if err != nil {
 		return nil, nil, err
@@ -256,6 +268,20 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	rightRet, rCh, err := rightChild.PredicatePushDown(rightCond)
 	if err != nil {
 		return nil, nil, err
+	}
+	if p.JoinType == base.InnerJoin {
+		if len(leftRet) == 1 {
+			if sf, ok := leftRet[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.IsNull {
+				p.OtherConditions = append(p.OtherConditions, sf)
+				leftRet = leftRet[:0]
+			}
+		}
+		if len(rightRet) == 1 {
+			if sf, ok := rightRet[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.IsNull {
+				p.OtherConditions = append(p.OtherConditions, sf)
+				rightRet = rightRet[:0]
+			}
+		}
 	}
 	AddSelection(p, lCh, leftRet, 0)
 	AddSelection(p, rCh, rightRet, 1)
