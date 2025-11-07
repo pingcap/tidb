@@ -270,6 +270,9 @@ func (r *HTTPFlightRecorder) Close() {
 }
 
 func (r *HTTPFlightRecorder) collect(_ context.Context, events []Event) {
+	if len(events) == 0 {
+		return
+	}
 	select {
 	case r.ch <- slices.Clone(events):
 	default:

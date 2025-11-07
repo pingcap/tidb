@@ -177,7 +177,7 @@ func (d *SchemaTracker) DropSchema(_ sessionctx.Context, stmt *ast.DropDatabaseS
 }
 
 // CreateTable implements the DDL interface.
-func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) error {
+func (d *SchemaTracker) CreateTable(ctx context.Context, sctx sessionctx.Context, s *ast.CreateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	schema := d.SchemaByName(ident.Schema)
 	if schema == nil {
@@ -196,7 +196,7 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 	}
 
 	metaBuildCtx := ddl.NewMetaBuildContextWithSctx(
-		ctx,
+		sctx,
 		// suppress ErrTooLongKey
 		metabuild.WithSuppressTooLongIndexErr(true),
 		// support drop PK
@@ -226,11 +226,12 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 		onExist = ddl.OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, nil, ddl.WithOnExist(onExist))
+	return d.CreateTableWithInfo(ctx, sctx, schema.Name, tbInfo, nil, ddl.WithOnExist(onExist))
 }
 
 // CreateTableWithInfo implements the DDL interface.
 func (d *SchemaTracker) CreateTableWithInfo(
+	ctx context.Context,
 	_ sessionctx.Context,
 	dbName ast.CIStr,
 	info *model.TableInfo,
@@ -244,7 +245,7 @@ func (d *SchemaTracker) CreateTableWithInfo(
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
 	}
 
-	oldTable, _ := d.TableByName(context.Background(), dbName, info.Name)
+	oldTable, _ := d.TableByName(ctx, dbName, info.Name)
 	if oldTable != nil {
 		switch c.OnExist {
 		case ddl.OnExistIgnore:
@@ -287,7 +288,7 @@ func (d *SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt
 		onExist = ddl.OnExistReplace
 	}
 
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, ddl.WithOnExist(onExist))
+	return d.CreateTableWithInfo(context.Background(), ctx, s.ViewName.Schema, tbInfo, nil, ddl.WithOnExist(onExist))
 }
 
 // DropTable implements the DDL interface.
@@ -1173,7 +1174,7 @@ func (*SchemaTracker) AlterResourceGroup(_ sessionctx.Context, _ *ast.AlterResou
 // BatchCreateTableWithInfo implements the DDL interface, it will call CreateTableWithInfo for each table.
 func (d *SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema ast.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	for _, tableInfo := range info {
-		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, nil, cs...); err != nil {
+		if err := d.CreateTableWithInfo(context.Background(), ctx, schema, tableInfo, nil, cs...); err != nil {
 			return err
 		}
 	}

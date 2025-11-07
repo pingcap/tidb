@@ -229,7 +229,7 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 		Name:      name,
 		Phase:     tracing.PhaseInstant,
 		Timestamp: time.Now(),
-		TraceID:   extractTraceID(ctx),
+		TraceID:   TraceIDFromContext(ctx),
 		Fields:    copyFieldsWithCapacity(fields, 3),
 	}
 
@@ -251,9 +251,9 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 	}
 }
 
-// extractTraceID returns the trace identifier from ctx if present.
+// TraceIDFromContext returns the trace identifier from ctx if present.
 // It delegates to client-go's TraceIDFromContext implementation.
-func extractTraceID(ctx context.Context) []byte {
+func TraceIDFromContext(ctx context.Context) []byte {
 	return trace.TraceIDFromContext(ctx)
 }
 

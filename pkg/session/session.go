@@ -1845,6 +1845,18 @@ func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
+	if sink := tracing.GetSink(ctx); sink == nil {
+		// debug.PrintStack()
+		trace := traceevent.NewTrace()
+		ctx = tracing.WithFlightRecorder(ctx, trace)
+		defer trace.Reset(ctx)
+	}
+
+	rs, err = s.executeInternalImpl(ctx, sql, args...)
+	return rs, err
+}
+
+func (s *session) executeInternalImpl(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
