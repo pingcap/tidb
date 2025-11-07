@@ -57,6 +57,73 @@ const (
 	btreeDegree = 32
 )
 
+// Helper functions for debugging datum types
+func getKindName(kind byte) string {
+	switch kind {
+	case types.KindNull:
+		return "KindNull"
+	case types.KindInt64:
+		return "KindInt64"
+	case types.KindUint64:
+		return "KindUint64"
+	case types.KindFloat32:
+		return "KindFloat32"
+	case types.KindFloat64:
+		return "KindFloat64"
+	case types.KindString:
+		return "KindString"
+	case types.KindBytes:
+		return "KindBytes"
+	case types.KindBinaryLiteral:
+		return "KindBinaryLiteral"
+	case types.KindMysqlDecimal:
+		return "KindMysqlDecimal"
+	case types.KindMysqlDuration:
+		return "KindMysqlDuration"
+	case types.KindMysqlTime:
+		return "KindMysqlTime"
+	case types.KindMysqlJSON:
+		return "KindMysqlJSON"
+	case types.KindMysqlEnum:
+		return "KindMysqlEnum"
+	case types.KindMysqlSet:
+		return "KindMysqlSet"
+	case types.KindMysqlBit:
+		return "KindMysqlBit"
+	case types.KindMinNotNull:
+		return "KindMinNotNull"
+	case types.KindMaxValue:
+		return "KindMaxValue"
+	default:
+		return fmt.Sprintf("Unknown(%d)", kind)
+	}
+}
+
+func getBytes(d types.Datum) []byte {
+	if d.Kind() == types.KindBytes {
+		return d.GetBytes()
+	}
+	return []byte{}
+}
+
+func getString(d types.Datum) string {
+	if d.Kind() == types.KindString {
+		return d.GetString()
+	}
+	return ""
+}
+
+func getDatumLength(d types.Datum) int {
+	switch d.Kind() {
+	case types.KindString:
+		return len(d.GetString())
+	case types.KindBytes:
+		return len(d.GetBytes())
+	default:
+		return -1
+	}
+}
+
 // Both partition and partitionedTable implement the table.Table interface.
 var _ table.PhysicalTable = &partition{}
 var _ table.Table = &partitionedTable{}
@@ -1263,13 +1330,20 @@ func (lp *ForListColumnPruning) LocatePartition(tc types.Context, ec errctx.Cont
 func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context, r *ranger.Range, defaultPartIdx int) ([]ListPartitionLocation, error) {
 	var lowKey, highKey []byte
 	var err error
+
+	// Store original values before any conversion
+	originalLowVal := r.LowVal[0]
+	originalHighVal := r.HighVal[0]
+
 	lowVal := r.LowVal[0]
 	if r.LowVal[0].Kind() == types.KindMinNotNull {
 		lowVal = types.GetMinValue(lp.ExprCol.GetType(lp.ctx.GetEvalCtx()))
+		originalLowVal = lowVal
 	}
 	highVal := r.HighVal[0]
 	if r.HighVal[0].Kind() == types.KindMaxValue {
 		highVal = types.GetMaxValue(lp.ExprCol.GetType(lp.ctx.GetEvalCtx()))
+		originalHighVal = highVal
 	}
 
 	// For string type, values returned by GetMinValue and GetMaxValue are already encoded,
@@ -1292,6 +1366,126 @@ func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context
 		}
 	}
 
+	// Check if we need to handle empty string exclusion for binary columns
+	// When excluding an empty string from a binary column, the empty string gets converted
+	// to the binary type (e.g., '' -> 0x00 for binary(1)), which incorrectly excludes
+	// partitions containing the converted value. We need to include those partitions
+	// because empty string and the binary value are actually different.
+	isBinaryCol := types.IsBinaryStr(lp.ExprCol.GetType(lp.ctx.GetEvalCtx()))
+
+	// Debug: Log the datum types for binary columns
+	if isBinaryCol {
+		colType := lp.ExprCol.GetType(lp.ctx.GetEvalCtx())
+		typeFlen := colType.GetFlen()
+
+		originalLowValLen := getDatumLength(originalLowVal)
+		originalHighValLen := getDatumLength(originalHighVal)
+		lowValLen := getDatumLength(lowVal)
+		highValLen := getDatumLength(highVal)
+
+		logutil.BgLogger().Info("LocateRanges datum types",
+			zap.String("r.LowVal[0].Kind", fmt.Sprintf("%d (%s)", r.LowVal[0].Kind(), getKindName(r.LowVal[0].Kind()))),
+			zap.String("r.HighVal[0].Kind", fmt.Sprintf("%d (%s)", r.HighVal[0].Kind(), getKindName(r.HighVal[0].Kind()))),
+			zap.String("originalLowVal.Kind", fmt.Sprintf("%d (%s)", originalLowVal.Kind(), getKindName(originalLowVal.Kind()))),
+			zap.String("originalHighVal.Kind", fmt.Sprintf("%d (%s)", originalHighVal.Kind(), getKindName(originalHighVal.Kind()))),
+			zap.String("lowVal.Kind", fmt.Sprintf("%d (%s)", lowVal.Kind(), getKindName(lowVal.Kind()))),
+			zap.String("highVal.Kind", fmt.Sprintf("%d (%s)", highVal.Kind(), getKindName(highVal.Kind()))),
+			zap.String("originalLowVal", fmt.Sprintf("%v (bytes=%x, string=%q, actualLen=%d, typeLen=%d)", originalLowVal.GetValue(), getBytes(originalLowVal), getString(originalLowVal), originalLowValLen, typeFlen)),
+			zap.String("originalHighVal", fmt.Sprintf("%v (bytes=%x, string=%q, actualLen=%d, typeLen=%d)", originalHighVal.GetValue(), getBytes(originalHighVal), getString(originalHighVal), originalHighValLen, typeFlen)),
+			zap.String("lowVal", fmt.Sprintf("%v (actualLen=%d, typeLen=%d)", lowVal.GetValue(), lowValLen, typeFlen)),
+			zap.String("highVal", fmt.Sprintf("%v (actualLen=%d, typeLen=%d)", highVal.GetValue(), highValLen, typeFlen)))
+	}
+
+	// Check if we're excluding an empty string by checking the original values
+	// before they get converted to keys. For NE comparisons, we get two ranges:
+	// 1. [MinNotNull, '') with HighExclude=true - highKey will be key('') = key(0x00)
+	// 2. ('', MaxValue] with LowExclude=true - lowKey will be PrefixNext(key('')) = PrefixNext(key(0x00))
+	// In both cases, the partition with key(0x00) is excluded, but we need to include it
+	// because '' != 0x00 even though they convert to the same key.
+	var excludedEmptyStringKey string
+	if isBinaryCol {
+		// Check if low boundary is an excluded empty string
+		if r.LowExclude {
+			// Check if originalLowVal is empty string or empty bytes
+			isEmpty := false
+			if originalLowVal.Kind() == types.KindString {
+				isEmpty = len(originalLowVal.GetString()) == 0
+			} else if originalLowVal.Kind() == types.KindBytes {
+				isEmpty = len(originalLowVal.GetBytes()) == 0
+			}
+			if isEmpty {
+				excludedKey, err := lp.genKey(tc, ec, originalLowVal)
+				if err == nil {
+					excludedEmptyStringKey = string(excludedKey)
+				}
+			}
+		}
+		// Check if high boundary is an excluded empty string
+		if excludedEmptyStringKey == "" && r.HighExclude {
+			// Check if originalHighVal is empty string or empty bytes
+			isEmpty := false
+			if originalHighVal.Kind() == types.KindString {
+				isEmpty = len(originalHighVal.GetString()) == 0
+			} else if originalHighVal.Kind() == types.KindBytes {
+				isEmpty = len(originalHighVal.GetBytes()) == 0
+			}
+			if isEmpty {
+				excludedKey, err := lp.genKey(tc, ec, originalHighVal)
+				if err == nil {
+					excludedEmptyStringKey = string(excludedKey)
+				}
+			}
+		}
+		// If we couldn't detect from original values, check if the highKey (before PrefixNext)
+		// matches a partition key when HighExclude is true. This handles the case where
+		// the empty string was already converted to 0x00 before reaching here.
+		// For range [MinNotNull, '') with HighExclude=true, highKey = key('') = key(0x00)
+		// Note: highKey at this point is before PrefixNext, so it's the excluded value's key
+		if excludedEmptyStringKey == "" && r.HighExclude {
+			// highKey is key(0x00) for empty string -> binary(1)
+			// Check if this key exists in our partition map
+			highKeyStr := string(highKey)
+			if _, exists := lp.valueMap[highKeyStr]; exists {
+				// Check if originalHighVal is empty (either empty string or empty bytes)
+				// This ensures we only include partitions when excluding an empty value,
+				// not when excluding any value that happens to match a partition key
+				isEmpty := false
+				if originalHighVal.Kind() == types.KindString {
+					isEmpty = len(originalHighVal.GetString()) == 0
+				} else if originalHighVal.Kind() == types.KindBytes {
+					isEmpty = len(originalHighVal.GetBytes()) == 0
+				}
+				if isEmpty {
+					excludedEmptyStringKey = highKeyStr
+					logutil.BgLogger().Info("Set excludedEmptyStringKey from highKey", zap.String("key", fmt.Sprintf("%x", []byte(highKeyStr))))
+				}
+			}
+		}
+		// Similarly for LowExclude case: ('', MaxValue] with LowExclude=true
+		// lowKey before PrefixNext would be key('') = key(0x00), but after PrefixNext it's > key(0x00)
+		// So we need to check if the key before PrefixNext matches a partition
+		if excludedEmptyStringKey == "" && r.LowExclude {
+			// We need to get the key before PrefixNext was applied
+			// lowKey was already converted, so we can use originalLowVal to regenerate it
+			lowKeyBeforePrefix, err := lp.genKey(tc, ec, originalLowVal)
+			if err == nil {
+				lowKeyStr := string(lowKeyBeforePrefix)
+				if _, exists := lp.valueMap[lowKeyStr]; exists {
+					// Check if originalLowVal is empty (either empty string or empty bytes)
+					isEmpty := false
+					if originalLowVal.Kind() == types.KindString {
+						isEmpty = len(originalLowVal.GetString()) == 0
+					} else if originalLowVal.Kind() == types.KindBytes {
+						isEmpty = len(originalLowVal.GetBytes()) == 0
+					}
+					if isEmpty {
+						excludedEmptyStringKey = lowKeyStr
+					}
+				}
+			}
+		}
+	}
+
 	if r.LowExclude {
 		lowKey = kv.Key(lowKey).PrefixNext()
 	}
@@ -1300,10 +1494,37 @@ func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context
 	}
 
 	locations := make([]ListPartitionLocation, 0, lp.sorted.Len())
+
 	lp.sorted.AscendRange(newBtreeListColumnSearchItem(string(hack.String(lowKey))), newBtreeListColumnSearchItem(string(hack.String(highKey))), func(item *btreeListColumnItem) bool {
 		locations = append(locations, item.location)
 		return true
 	})
+
+	// If we're excluding an empty string, we need to explicitly include partitions
+	// that match the excluded key, because empty string != binary value even though
+	// they convert to the same value (e.g., '' != 0x00 even though '' -> 0x00)
+	if excludedEmptyStringKey != "" {
+		logutil.BgLogger().Info("Including partition for excludedEmptyStringKey", zap.String("key", fmt.Sprintf("%x", []byte(excludedEmptyStringKey))))
+		if location, ok := lp.valueMap[excludedEmptyStringKey]; ok && location != nil {
+			// Check if this location is not already included
+			found := false
+			for _, loc := range locations {
+				if len(loc) > 0 && len(location) > 0 && loc[0].PartIdx == location[0].PartIdx {
+					found = true
+					break
+				}
+			}
+			if !found {
+				logutil.BgLogger().Info("Adding partition location", zap.Int("partIdx", location[0].PartIdx))
+				locations = append(locations, location)
+			} else {
+				logutil.BgLogger().Info("Partition already included")
+			}
+		} else {
+			logutil.BgLogger().Info("Partition not found in valueMap")
+		}
+	}
+
 	if lp.HasDefault() {
 		// Add the default partition since there may be a gap
 		// between the conditions range and the LIST COLUMNS values

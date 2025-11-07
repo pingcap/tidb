@@ -3767,3 +3767,28 @@ func TestTruncateNumberOfPhases(t *testing.T) {
 	dom.Reload()
 	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
 }
+
+func TestIssue63876(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (a int, b binary(1) NOT NULL, PRIMARY KEY (b,a) NONCLUSTERED, key (b)) ` +
+		//`PARTITION BY key(b) PARTITIONS 2`)
+		`PARTITION BY LIST COLUMNS(b) (PARTITION p0 VALUES IN (_binary 0x00))`)
+	// ctx := tk.Session()
+	// is := domain.GetDomain(ctx).InfoSchema()
+	// tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	// require.NoError(t, err)
+	// tableID := tbl.Meta().ID
+	// partID := tbl.Meta().Partition.Definitions[0].ID
+	tk.MustExec(`INSERT INTO t VALUES (1,0x00)`)
+	// require.Equal(t, false, HaveEntriesForTableIndex(t, tk, tableID, 0))
+	// require.Equal(t, true, HaveEntriesForTableIndex(t, tk, partID, 0))
+	// tk.MustQuery(`select tidb_decode_key("7480000000000000735f698000000000000001010000000000000000f8038000000000000001")`).Check(testkit.Rows(`{"index_id":1,"index_vals":{"a":"1","b":"\u0000"},"partition_id":115,"table_id":114}`))
+	// tk.MustQuery(`select tidb_decode_key("7480000000000000735f698000000000000002010000000000000000f8038000000000000001")`).Check(testkit.Rows(`{"index_id":2,"index_vals":{"b":"\u0000"},"partition_id":115,"table_id":114}`))
+	// tk.MustQuery(`select tidb_decode_key("7480000000000000735f728000000000000001")`).Check(testkit.Rows(`{"_tidb_rowid":1,"partition_id":115,"table_id":"114"}`))
+	tk.MustQuery(`SELECT a,hex(b) FROM t`).Check(testkit.Rows("1 00"))
+	tk.MustQuery(`SELECT a,hex(b) FROM t WHERE b != ''`).Check(testkit.Rows("1 00"))
+	// tk.MustQuery(`EXPLAIN SELECT * FROM t WHERE NOT (b IN ('',''))`).Check(testkit.Rows("1 0x00"))
+	// tk.MustQuery(`SELECT * FROM t WHERE NOT (b IN ('',''))`).Check(testkit.Rows("1 0x00"))
+}
