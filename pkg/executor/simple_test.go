@@ -391,9 +391,6 @@ func TestRefreshStatsConcurrently(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Ensure we end in a full-load state deterministically.
-	tk.MustExec("REFRESH STATS *.* FULL")
-
 	ctx := context.Background()
 	is := dom.InfoSchema()
 	checkFullIndex := func(tblName string) {
