@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -335,10 +336,56 @@ type buildCopTaskOpt struct {
 	ignoreTiKVClientReadTimeout bool
 }
 
+func validateKeyRangesMonotonic(ctx context.Context, ranges *KeyRanges) {
+	if ranges == nil || ranges.Len() == 0 {
+		return
+	}
+	logger := logutil.Logger(ctx)
+	total := ranges.Len()
+	prev := ranges.At(0)
+	validateSingleRange(logger, prev, 0, total)
+	for i := 1; i < total; i++ {
+		curr := ranges.At(i)
+		validateSingleRange(logger, curr, i, total)
+		if len(prev.EndKey) == 0 {
+			logger.Fatal("copr: key range extends to +inf but more ranges follow",
+				zap.Int("rangeIndex", i-1),
+				zap.String("rangeStart", redact.Key(prev.StartKey)),
+				zap.String("rangeEnd", redact.Key(prev.EndKey)))
+		}
+		if prev.EndKey.Cmp(curr.StartKey) > 0 {
+			logger.Fatal("copr: key ranges are not monotonic or overlap",
+				zap.Int("prevRangeIndex", i-1),
+				zap.String("prevStart", redact.Key(prev.StartKey)),
+				zap.String("prevEnd", redact.Key(prev.EndKey)),
+				zap.Int("currRangeIndex", i),
+				zap.String("currStart", redact.Key(curr.StartKey)),
+				zap.String("currEnd", redact.Key(curr.EndKey)))
+		}
+		prev = curr
+	}
+}
+
+func validateSingleRange(logger *zap.Logger, r kv.KeyRange, idx, total int) {
+	if len(r.EndKey) > 0 && r.StartKey.Cmp(r.EndKey) > 0 {
+		logger.Fatal("copr: key range start is greater than end",
+			zap.Int("rangeIndex", idx),
+			zap.String("rangeStart", redact.Key(r.StartKey)),
+			zap.String("rangeEnd", redact.Key(r.EndKey)))
+	}
+	if len(r.EndKey) == 0 && idx != total-1 {
+		logger.Fatal("copr: key range without end must be the last range",
+			zap.Int("rangeIndex", idx),
+			zap.String("rangeStart", redact.Key(r.StartKey)))
+	}
+}
+
 func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
 	req, cache, eventCb, hints := opt.req, opt.cache, opt.eventCb, opt.rowHints
 	start := time.Now()
-	defer tracing.StartRegion(bo.GetCtx(), "copr.buildCopTasks").End()
+	ctx := bo.GetCtx()
+	defer tracing.StartRegion(ctx, "copr.buildCopTasks").End()
+	validateKeyRangesMonotonic(ctx, ranges)
 	cmdType := tikvrpc.CmdCop
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
