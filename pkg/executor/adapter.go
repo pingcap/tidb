@@ -1511,6 +1511,9 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
+	if succ {
+		a.planMetrics()
+	}
 	a.observeStmtFinishedForTopSQL()
 	a.UpdatePlanCacheRuntimeInfo()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
@@ -1679,6 +1682,22 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 	}
 	se.GetSessionVars().StmtCtx.CTEStorageMap = nil
 	return nil
+}
+
+func (a *ExecStmt) planMetrics() {
+	vars := a.Ctx.GetSessionVars()
+	var userString string
+	if vars.User != nil {
+		userString = vars.User.Username
+	}
+	if vars.InRestrictedSQL || userString == "" {
+		return // internal query
+	}
+	flat := getFlatPlan(vars.StmtCtx)
+	if flat == nil {
+		return
+	}
+	plannercore.PlanMetrics(a.Ctx, flat)
 }
 
 // LogSlowQuery is used to print the slow query in the log files.

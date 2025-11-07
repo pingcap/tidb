@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -31,16 +32,20 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 )
 
@@ -2407,6 +2412,90 @@ func TestIssue63869(t *testing.T) {
 		// use the index k2(idx, update_time) since update_time has a higher NDV than typ1 and typ2
 		tk.MustUseIndex(`select /*+ tidb_inlj(h) */ 1 from ts inner join h on ts.idx=h.idx and ts.code=h.code
 				where h.typ1=0 and h.typ2=0 and h.update_time>0 and h.update_time<2 and h.code=0`, "k2")
+	})
+}
+
+// PlanMetricsTest is used to avoid cycle import.
+var PlanMetricsTest func(sctx sessionctx.Context, flatPlan any) (metrics []*prometheus.CounterVec, labels [][]string)
+
+type planMetric struct {
+	MetricName string
+	Labels     []string
+}
+
+func queryPlanMetrics(t *testing.T, tk *testkit.TestKit, query string, expectedMetrics []string) {
+	sctx := tk.Session()
+	tk.MustQuery(query)
+	actualMetrics := make([]string, 0, len(expectedMetrics))
+	sctx.SetValue(core.PlanMetricTestingKey, func(m *prometheus.CounterVec, mLabels ...string) {
+		var name string
+		switch m {
+		case metrics.PlanTableFullScanCounter:
+			name = "PlanTableFullScanCounter"
+		case metrics.PlanKVReqCounter:
+			name = "PlanKVReqCounter"
+		case metrics.PlanScanRowsCounter:
+			name = "PlanScanRowsCounter"
+		case metrics.PlanScanSelectivityCounter:
+			name = "PlanScanSelectivityCounter"
+		case metrics.PlanJoinRowsCounter:
+			name = "PlanJoinRowsCounter"
+		default:
+			name = "UnknownMetric"
+		}
+		actualMetrics = append(actualMetrics, fmt.Sprintf("%s:%s", name, strings.Join(mLabels, ",")))
+	})
+	core.PlanMetrics(sctx, sctx.GetSessionVars().StmtCtx.GetFlatPlan().(*core.FlatPhysicalPlan))
+
+	sort.Strings(actualMetrics)
+	sort.Strings(expectedMetrics)
+	require.Equal(t, expectedMetrics, actualMetrics, fmt.Sprintf("query: %v", query))
+}
+
+func TestPlanQualityMetrics(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`use test`)
+		tk.MustExec(`create table t (id int, a int, b int, c int, primary key(id), key(b), key(c))`)
+		tk.MustExec(`set @@cte_max_recursion_depth=20000`)
+		tk.MustExec(`insert into t select * from (
+    with recursive x as (
+        select 1 as id, 1 as a, 1 as b, 1 as c
+        union all
+        select id+1 as id, a+1 as a, b+1 as b, 1 as c from x where id < 15000
+    ) select * from x) tt`)
+		tk.MustExec(`analyze table t all columns`)
+
+		queryPlanMetrics(t, tk, `select * from t`, []string{ // table full scan
+			"PlanScanRowsCounter:10000-100000", "PlanScanSelectivityCounter:50+%", "PlanTableFullScanCounter:10000-100000"})
+		queryPlanMetrics(t, tk, `select * from t where id < 100`, []string{ // table range scan
+			"PlanScanRowsCounter:0-1000", "PlanScanSelectivityCounter:0-1%"})
+		queryPlanMetrics(t, tk, `select b from t where b = 1`, []string{ // index scan
+			"PlanScanRowsCounter:0-1000", "PlanScanSelectivityCounter:0-1%"})
+		queryPlanMetrics(t, tk, `select b from t where b > 1`, []string{
+			"PlanScanRowsCounter:10000-100000", "PlanScanSelectivityCounter:50+%"})
+		queryPlanMetrics(t, tk, `select * from t where id = 1`, []string{
+			"PlanScanRowsCounter:0-1000", "PlanScanSelectivityCounter:0-1%"}) // point get
+		queryPlanMetrics(t, tk, `select * from t where id in (1, 2, 3)`, []string{
+			"PlanScanRowsCounter:0-1000", "PlanScanSelectivityCounter:0-1%"})
+		queryPlanMetrics(t, tk, `select * from t use index(b) where b = 1`, []string{ // index lookup
+			"PlanKVReqCounter:index_lookup,0-100", "PlanScanRowsCounter:0-1000", "PlanScanRowsCounter:0-1000",
+			"PlanScanSelectivityCounter:0-1%", "PlanScanSelectivityCounter:0-1%", "PlanTableFullScanCounter:0-1000"})
+		queryPlanMetrics(t, tk, `select * from t use index(b) where b > 1`, []string{
+			"PlanKVReqCounter:index_lookup,0-100", "PlanScanRowsCounter:10000-100000", "PlanScanRowsCounter:10000-100000",
+			"PlanScanSelectivityCounter:50+%", "PlanScanSelectivityCounter:50+%", "PlanTableFullScanCounter:10000-100000"})
+		queryPlanMetrics(t, tk, `select /*+ tidb_hj(t1, t2) */ * from t t1, t t2 where t1.id=t2.id and t1.id<10 and t2.id<10`, []string{
+			"PlanJoinRowsCounter:0-1000", "PlanScanRowsCounter:0-1000", "PlanScanRowsCounter:0-1000",
+			"PlanScanSelectivityCounter:0-1%", "PlanScanSelectivityCounter:0-1%"})
+		queryPlanMetrics(t, tk, `select /*+ tidb_mj(t1, t2) */ * from t t1, t t2 where t1.id=t2.id and t1.id<10 and t2.id<10`, []string{
+			"PlanJoinRowsCounter:0-1000", "PlanScanRowsCounter:0-1000", "PlanScanRowsCounter:0-1000",
+			"PlanScanSelectivityCounter:0-1%", "PlanScanSelectivityCounter:0-1%"})
+		queryPlanMetrics(t, tk, `select /*+ tidb_inlj(t1, t2) */ * from t t1, t t2 where t1.id=t2.id and t1.id<10 and t2.id<10`, []string{
+			"PlanJoinRowsCounter:0-1000", "PlanKVReqCounter:index_join,0-100", "PlanScanRowsCounter:0-1000",
+			"PlanScanRowsCounter:0-1000", "PlanScanSelectivityCounter:0-1%", "PlanScanSelectivityCounter:0-1%"})
+		queryPlanMetrics(t, tk, `select /*+ use_index_merge(t, b, c) */ * from t where b=1 and c=1`, []string{
+			"PlanKVReqCounter:index_merge,0-100", "PlanScanRowsCounter:0-1000", "PlanScanRowsCounter:0-1000",
+			"PlanScanRowsCounter:10000-100000", "PlanScanSelectivityCounter:0-1%", "PlanScanSelectivityCounter:0-1%",
+			"PlanScanSelectivityCounter:50+%", "PlanTableFullScanCounter:0-1000"})
 	})
 }
 
