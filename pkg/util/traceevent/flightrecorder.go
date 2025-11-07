@@ -52,6 +52,7 @@ type HTTPFlightRecorder struct {
 type UserCommandConfig struct {
 	Type       string `json:"type"`
 	SQLRegexp  string `json:"sql_regexp"`
+	SQLDigest  string `json:"sql_digest"`
 	PlanDigest string `json:"plan_digest"`
 	StmtLabel  string `json:"stmt_label"`
 	ByUser     string `json:"by_user"`
@@ -70,6 +71,11 @@ func (c *UserCommandConfig) Validate(b *strings.Builder) error {
 			return fmt.Errorf("dump_trigger.user_command.sql_regexp should not be empty")
 		}
 		b.WriteString(".sql_regexp")
+	case "sql_digest":
+		if c.SQLDigest == "" {
+			return fmt.Errorf("dump_trigger.user_command.sql_digest should not be empty")
+		}
+		b.WriteString(".sql_digest")
 	case "plan_digest":
 		if c.PlanDigest == "" {
 			return fmt.Errorf("dump_trigger.user_command.plan_digest should not be empty")
@@ -124,7 +130,9 @@ func (c *SuspiciousEventConfig) Validate(b *strings.Builder) error {
 
 // DumpTriggerConfig is the configuration for dump trigger.
 type DumpTriggerConfig struct {
-	Type        string                 `json:"type"`
+	Type string `json:"type"`
+	// sampling = n means every n events will be sampled.
+	// For example, sampling = 1000 means 1/1000 sampling rate.
 	Sampling    int                    `json:"sampling,omitempty"`
 	Event       *SuspiciousEventConfig `json:"suspicious_event,omitempty"`
 	UserCommand *UserCommandConfig     `json:"user_command,omitempty"`
@@ -295,13 +303,15 @@ func (r *Trace) Record(_ context.Context, event Event) {
 
 // MarkDump implements the FlightRecorder interface.
 func (r *Trace) MarkDump() {
+	r.mu.Lock()
 	r.keep = true
+	r.mu.Lock()
 }
 
 const maxEvents = 4096
 
-// Reset resets the Trace.
-func (r *Trace) Reset(ctx context.Context) {
+// DiscardOrFlush will flush or discard the trace, depending on the whether MarkDump has been called.
+func (r *Trace) DiscardOrFlush(ctx context.Context) {
 	sink := globalHTTPFlightRecorder.Load()
 	if sink != nil {
 		if r.keep {
@@ -315,6 +325,8 @@ func (r *Trace) Reset(ctx context.Context) {
 			}
 		}
 	}
+	newRand := rand.Uint32()
+	r.mu.Lock()
 	r.keep = false
 	if len(r.events) > maxEvents {
 		// avoid using too much memory for each session.
@@ -322,5 +334,6 @@ func (r *Trace) Reset(ctx context.Context) {
 	} else {
 		r.events = r.events[:0]
 	}
-	r.rand32 = rand.Uint32()
+	r.rand32 = newRand
+	r.mu.Unlock()
 }

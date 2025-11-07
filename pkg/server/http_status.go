@@ -736,6 +736,8 @@ func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHan
 	return optimizor.NewStatsPriorityQueueHandler(do)
 }
 
+var traceeventCounter = make(chan struct{}, 1)
+
 func traceeventHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -746,6 +748,16 @@ func traceeventHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
 		return
 	}
+
+	select {
+	case traceeventCounter <- struct{}{}:
+	default:
+		http.Error(w, "http api /debug/traceevent only allow one request at a time", http.StatusTooManyRequests)
+		return
+	}
+	defer func() {
+		<-traceeventCounter
+	}()
 
 	var cfg traceevent.FlightRecorderConfig
 	cfg.Initialize()

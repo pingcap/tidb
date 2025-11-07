@@ -1913,12 +1913,20 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 	return
 }
 
-type digestAlias struct {
+type planDigestAlias struct {
+	Digest string
+}
+
+func (digest planDigestAlias) planDigestDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.PlanDigest == digest.Digest
+}
+
+type sqlDigestAlias struct {
 	*parser.Digest
 }
 
-func (digest digestAlias) planDigestDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
-	return config.UserCommand.PlanDigest == digest.Digest.String()
+func (digest sqlDigestAlias) sqlDigestDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.SQLDigest == digest.Digest.String()
 }
 
 type stmtLabelAlias struct {
@@ -1966,7 +1974,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	charset, collation := sessVars.GetCharsetInfo()
 
 	// Not using closure to avoid unnecessary memory allocation.
-	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.plan_digest", digestAlias{digest}.planDigestDumpTriggerCheck)
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.sql_digest", sqlDigestAlias{digest}.sqlDigestDumpTriggerCheck)
 	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.stmt_label", stmtLabelAlias{stmtCtx.StmtType}.stmtLabelDumpTriggerCheck)
 	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.by_user", userAlias{userString}.byUserDumpTriggerCheck)
 
@@ -1988,6 +1996,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.Plan.TP() != plancodec.TypePointGet {
 		_, tmp := GetPlanDigest(stmtCtx)
 		planDigest = tmp.String()
+		traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.plan_digest", planDigestAlias{planDigest}.planDigestDumpTriggerCheck)
 	}
 
 	execDetail := stmtCtx.GetExecDetails()
