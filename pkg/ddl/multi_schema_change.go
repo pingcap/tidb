@@ -198,6 +198,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 		SchemaState: jobW.SchemaState,
 		SnapshotVer: jobW.SnapshotVer,
 		Revertible:  true,
+		NeedReorg:   jobW.NeedReorg,
 		ReorgTp:     reorgTp,
 		NeedAnalyze: jobW.Type == model.ActionAddIndex || jobW.Type == model.ActionAddPrimaryKey,
 	})

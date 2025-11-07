@@ -353,6 +353,10 @@ type Job struct {
 	RowCount int64      `json:"row_count"`
 	Mu       sync.Mutex `json:"-"`
 
+	// NeedReorg indicates whether the job needs reorg.
+	// It's only used by modify column and not the accurate value.
+	NeedReorg bool `json:"-"`
+
 	// it's a temporary place to cache job args.
 	// when Version is JobVersion2, Args contains a single element of type JobArgs.
 	args []any
@@ -772,14 +776,10 @@ func (job *Job) MayNeedReorg() bool {
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
-		args, err := GetModifyColumnArgs(job)
-		if err != nil {
-			return false
-		}
-		return args.ModifyColumnType == ModifyTypeIndexReorg || args.ModifyColumnType == ModifyTypeReorg
+		return job.NeedReorg
 	case ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			proxyJob := Job{Type: sub.Type, args: sub.args, RawArgs: sub.RawArgs, Version: job.Version}
+			proxyJob := Job{Type: sub.Type, NeedReorg: job.NeedReorg}
 			if proxyJob.MayNeedReorg() {
 				return true
 			}
@@ -873,6 +873,7 @@ type SubJob struct {
 	State        JobState        `json:"state"`
 	RowCount     int64           `json:"row_count"`
 	Warning      *terror.Error   `json:"warning"`
+	NeedReorg    bool            `json:"-"`
 	SchemaVer    int64           `json:"schema_version"`
 	ReorgTp      ReorgType       `json:"reorg_tp"`
 	ReorgStage   ReorgStage      `json:"reorg_stage"`
