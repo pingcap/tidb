@@ -120,7 +120,7 @@ func TestInitStatsSessionBlockGCCanBeCanceled(t *testing.T) {
 	require.NoError(t, err)
 
 	infoSyncer := dom.InfoSyncer()
-	// This will cause the session never be created because we do not set session manager.
+	// This prevents the session from being created because we do not set a session manager.
 	infoSyncer.SetSessionManager(nil)
 	h := dom.StatsHandle()
 	ctx, cancel := context.WithCancel(context.Background())
