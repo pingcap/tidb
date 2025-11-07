@@ -102,26 +102,25 @@ var localeToStyleMap = map[string]string{
 	"ps_af": styleArabic,
 }
 
-// GetLocaleFormatStyle returns the formatting rules for a given locale.
-func GetLocaleFormatStyle(locale string) LocaleFormatStyle {
+// GetLocaleFormatStyle returns the formatting rules and a bool indicating if the locale was found.
+func GetLocaleFormatStyle(locale string) (LocaleFormatStyle, bool) {
 	styleID, ok := localeToStyleMap[strings.ToLower(locale)]
 	if !ok {
-		// Default to en_US style if locale is not found
-		styleID = styleCommaDot
+		// Not found. Return default style, but also return 'false'.
+		return formatStyleMap[styleCommaDot], false
 	}
-	// It's guaranteed that styleCommaDot exists in formatStyleMap
-	return formatStyleMap[styleID]
+	// Found. Return style and 'true'.
+	return formatStyleMap[styleID], true
 }
 
-// FormatByLocale is the new exported function to be called by builtin_string.go.
-// It replaces the old GetLocaleFormatFunction.
-func FormatByLocale(number, precision, locale string) (string, error) {
-	// Default to en_US style if locale is NULL
-	if locale == "" {
-		locale = "en_US"
-	}
-	style := GetLocaleFormatStyle(locale)
-	return formatWithStyle(number, precision, style)
+// FormatByLocale  returns (string, bool, error)
+// The bool (found) is true if the locale was found in the map, false otherwise.
+func FormatByLocale(number, precision, locale string) (string, bool, error) {
+	// 'locale' is guaranteed to be non-empty by the caller (builtin_string.go).
+	style, found := GetLocaleFormatStyle(locale)
+	// if not found, style is set to default (en_US)
+	formattedString, err := formatWithStyle(number, precision, style)
+	return formattedString, found, err
 }
 
 // formatWithStyle is the generic formatting function, replacing the old formatENUS

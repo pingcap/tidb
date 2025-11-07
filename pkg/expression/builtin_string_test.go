@@ -2039,8 +2039,8 @@ func TestFormat(t *testing.T) {
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum(formatTests4.ret), r4)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
-	require.Equal(t, 1, len(warnings))
-	for i := range 1 {
+	require.Equal(t, 2, len(warnings))
+	for i := range 2 {
 		require.True(t, terror.ErrorEqual(errUnknownLocale, warnings[i].Err))
 	}
 	ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})
