@@ -162,6 +162,9 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
 			}
 		} else {
+			statslogutil.StatsLogger().Info("stat cache map insert col 2",
+				zap.Int64("tableID", table.PhysicalID),
+				zap.Int64("colID", id))
 			table.ColAndIdxExistenceMap.InsertCol(id, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
@@ -267,6 +270,9 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				StatsVer:   statsVer,
 			}
 			table.SetCol(hist.ID, col)
+			statslogutil.StatsLogger().Info("stat cache map insert col 3",
+				zap.Int64("tableID", table.PhysicalID),
+				zap.Int64("colID", colInfo.ID))
 			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
