@@ -456,12 +456,12 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 	// A NT-DML is not a SELECT. We ignore the SelectLimit for selectSQL so that it can read all values.
 	originalSelectLimit := se.GetSessionVars().SelectLimit
 	se.GetSessionVars().SelectLimit = math.MaxUint64
-	//originalMaxExecutionTime := se.GetSessionVars().MaxExecutionTime
+	originalMaxExecutionTime := se.GetSessionVars().MaxExecutionTime
 	// A NT-DML is not read-only, so we disable max execution time for it.
-	//se.GetSessionVars().MaxExecutionTime = 0
-	//defer func ()  {
-	//	se.GetSessionVars().MaxExecutionTime = originalMaxExecutionTime
-	//}()
+	se.GetSessionVars().MaxExecutionTime = 0
+	defer func() {
+		se.GetSessionVars().MaxExecutionTime = originalMaxExecutionTime
+	}()
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
 	rss, err := se.Execute(ctx, selectSQL)
 	se.GetSessionVars().SelectLimit = originalSelectLimit
