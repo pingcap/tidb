@@ -237,10 +237,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var indexKeys []kv.Key
 	var err error
 	batchGetter := e.batchGetter
-	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
+	if e.Ctx().GetSessionVars().GetMaxExecutionTime() > 0 {
 		// If MaxExecutionTime is set, we need to set the context deadline for the batch get.
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().GetMaxExecutionTime())*time.Millisecond)
 		defer cancel()
 	}
 	rc := e.Ctx().GetSessionVars().IsPessimisticReadConsistency()

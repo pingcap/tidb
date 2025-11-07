@@ -317,10 +317,6 @@ func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
 		return nil
 	}
 
-	if !sessVars.StmtCtx.InSelectStmt {
-		return nil
-	}
-
 	maxExecTimeMS := sessVars.GetMaxExecutionTime()
 	if maxExecTimeMS == 0 {
 		return nil
@@ -350,7 +346,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
 
 	// Set max_execution_time deadline for SELECT statements
-	if seVars.StmtCtx.InSelectStmt && seVars.GetMaxExecutionTime() > 0 {
+	if seVars.GetMaxExecutionTime() > 0 {
 		if processInfo := sctx.ShowProcess(); processInfo != nil {
 			maxExecTimeMs := time.Duration(seVars.GetMaxExecutionTime()) * time.Millisecond
 			lockCtx.MaxExecutionDeadline = processInfo.Time.Add(maxExecTimeMs)

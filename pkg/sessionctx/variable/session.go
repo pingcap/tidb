@@ -3557,6 +3557,10 @@ func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 
 // GetMaxExecutionTime get the max execution timeout value.
 func (s *SessionVars) GetMaxExecutionTime() uint64 {
+	// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
+	if !s.StmtCtx.InSelectStmt {
+		return 0
+	}
 	if s.StmtCtx.HasMaxExecutionTime {
 		return s.StmtCtx.MaxExecutionTime
 	}
