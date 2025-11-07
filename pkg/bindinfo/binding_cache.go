@@ -19,6 +19,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -69,10 +70,15 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 		// See #64250 for more details.
 		// It's safe to load duplicated bindings, because we'll deduplicate them in `pickCachedBinding`.
 		// TODO: use PD TSO to avoid time synchronization issue thoroughly.
-		const timeLagToleranceSec = 10
+		const timeLagTolerance = 10 * time.Second
 		lastUpdateTime = u.lastUpdateTime.Load().(types.Time)
-		timeCondition = fmt.Sprintf("USE INDEX (time_index) WHERE update_time>DATE_SUB('%s', INTERVAL %d SECOND)",
-			lastUpdateTime.String(), timeLagToleranceSec)
+		lastUpdateTimeGo, err := lastUpdateTime.GoTime(time.Local)
+		if err != nil {
+			return err
+		}
+		updateTimeBoundary := types.NewTime(types.FromGoTime(lastUpdateTimeGo.Add(-timeLagTolerance)),
+			lastUpdateTime.Type(), lastUpdateTime.Fsp())
+		timeCondition = fmt.Sprintf("USE INDEX (time_index) WHERE update_time>'%s'", updateTimeBoundary.String())
 	}
 	condition := fmt.Sprintf(`%s ORDER BY update_time, create_time`, timeCondition)
 	bindings, err := readBindingsFromStorage(u.sPool, condition)
