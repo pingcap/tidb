@@ -827,9 +827,11 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		}, "closestReplicaReadCheckLoop")
 	}
 
-	err = do.initLogBackup(do.ctx, pdCli)
-	if err != nil {
-		return err
+	if startMode != ddl.BR {
+		err = do.initLogBackup(do.ctx, pdCli)
+		if err != nil {
+			return err
+		}
 	}
 
 	// right now we only allow access system keyspace info schema after fully bootstrap.
