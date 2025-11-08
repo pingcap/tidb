@@ -15,6 +15,7 @@
 package copr
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -335,48 +336,47 @@ type buildCopTaskOpt struct {
 	ignoreTiKVClientReadTimeout bool
 }
 
-func validateKeyRangesMonotonic(ctx context.Context, ranges *KeyRanges) {
+func ensureMonotonicKeyRanges(ctx context.Context, ranges *KeyRanges) bool {
 	if ranges == nil || ranges.Len() == 0 {
-		return
+		return false
 	}
-	logger := logutil.Logger(ctx)
 	total := ranges.Len()
 	prev := ranges.At(0)
-	validateSingleRange(logger, prev, 0, total)
+	validateRange := func(r kv.KeyRange) bool {
+		if len(r.EndKey) > 0 && bytes.Compare(r.StartKey, r.EndKey) > 0 {
+			logutil.Logger(ctx).Error("invalid key range start > end",
+				zap.String("start", redact.Key(r.StartKey)),
+				zap.String("end", redact.Key(r.EndKey)))
+			return false
+		}
+		return true
+	}
+	valid := validateRange(prev)
+	sorted := true
 	for i := 1; i < total; i++ {
 		curr := ranges.At(i)
-		validateSingleRange(logger, curr, i, total)
-		if len(prev.EndKey) == 0 {
-			logger.Panic("copr: key range extends to +inf but more ranges follow",
-				zap.Int("rangeIndex", i-1),
-				zap.String("rangeStart", redact.Key(prev.StartKey)),
-				zap.String("rangeEnd", redact.Key(prev.EndKey)))
-		}
-		if prev.EndKey.Cmp(curr.StartKey) > 0 {
-			logger.Panic("copr: key ranges are not monotonic or overlap",
-				zap.Int("prevRangeIndex", i-1),
-				zap.String("prevStart", redact.Key(prev.StartKey)),
-				zap.String("prevEnd", redact.Key(prev.EndKey)),
-				zap.Int("currRangeIndex", i),
-				zap.String("currStart", redact.Key(curr.StartKey)),
-				zap.String("currEnd", redact.Key(curr.EndKey)))
+		valid = validateRange(curr) && valid
+		if len(prev.EndKey) == 0 || bytes.Compare(prev.EndKey, curr.StartKey) > 0 {
+			sorted = false
+			break
 		}
 		prev = curr
 	}
-}
-
-func validateSingleRange(logger *zap.Logger, r kv.KeyRange, idx, total int) {
-	if len(r.EndKey) > 0 && r.StartKey.Cmp(r.EndKey) > 0 {
-		logger.Panic("copr: key range start is greater than end",
-			zap.Int("rangeIndex", idx),
-			zap.String("rangeStart", redact.Key(r.StartKey)),
-			zap.String("rangeEnd", redact.Key(r.EndKey)))
+	if sorted && valid {
+		return false
 	}
-	if len(r.EndKey) == 0 && idx != total-1 {
-		logger.Panic("copr: key range without end must be the last range",
-			zap.Int("rangeIndex", idx),
-			zap.String("rangeStart", redact.Key(r.StartKey)))
-	}
+	logutil.Logger(ctx).Error("key ranges not monotonic, reorder before BatchLocateKeyRanges",
+		zap.Int("rangeCount", ranges.Len()), zap.Stack("stack"))
+	flat := ranges.ToRanges()
+	sortedRanges := append([]kv.KeyRange(nil), flat...)
+	slices.SortFunc(sortedRanges, func(a, b kv.KeyRange) int {
+		if cmp := bytes.Compare(a.StartKey, b.StartKey); cmp != 0 {
+			return cmp
+		}
+		return bytes.Compare(a.EndKey, b.EndKey)
+	})
+	ranges.Reset(sortedRanges)
+	return true
 }
 
 func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
@@ -384,7 +384,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	start := time.Now()
 	ctx := bo.GetCtx()
 	defer tracing.StartRegion(ctx, "copr.buildCopTasks").End()
-	validateKeyRangesMonotonic(ctx, ranges)
+	reordered := ensureMonotonicKeyRanges(ctx, ranges)
 	cmdType := tikvrpc.CmdCop
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
@@ -392,6 +392,8 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	rangesLen := ranges.Len()
 	// something went wrong, disable hints to avoid out of range index.
 	if len(hints) != rangesLen {
+		hints = nil
+	} else if reordered {
 		hints = nil
 	}
 
