@@ -10,7 +10,11 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 17,
+=======
+    shard_count = 21,
+>>>>>>> c43df07ebf1 (planner: keep hist unchanged when deriving limit stats (#62537))
     deps = [
         "//pkg/domain",
         "//pkg/executor",
