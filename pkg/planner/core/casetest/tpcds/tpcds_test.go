@@ -41,6 +41,7 @@ func TestTPCDSQ64(t *testing.T) {
 		createStoreSales(t, tk, dom)
 		createStore(t, tk, dom)
 		tk.MustExec("set @@tidb_enforce_mpp=ON")
+		tk.MustExec(`set @@tidb_opt_enable_mpp_shared_cte_execution=on`)
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 		var (
