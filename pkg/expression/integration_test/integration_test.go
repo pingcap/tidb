@@ -709,6 +709,18 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	require.Equal(t, "eq(date_format(test.t.b, \"%m\"), \"11\"), lt(test.t.b, 1994-01-01)", fmt.Sprintf("%v", rows[0][4]))
 	require.Equal(t, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10), gt(test.t.b, 1988-01-01)", fmt.Sprintf("%v", rows[2][4]))
 
+<<<<<<< HEAD
+=======
+	// CastTimeAsString pushed to TiKV but CastTimeAsDuration not pushed
+	rows = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE CAST(b AS CHAR) = '10:00:00';").Rows()
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[1][2]))
+	require.Equal(t, "eq(cast(test.t.b, var_string(10)), \"10:00:00\")", fmt.Sprintf("%v", rows[1][4]))
+
+	rows = tk.MustQuery("explain format = 'brief' select * from test.t where hour(b) > 10").Rows()
+	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
+	require.Equal(t, "gt(hour(cast(test.t.b, time)), 10)", fmt.Sprintf("%v", rows[0][4]))
+
+>>>>>>> 3c2dc46853f (expression: fix the length of casting from INT/REAL/DECIMAL/.... to string (#61476))
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = '<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'date_format' and store_type = 'tikv' and reason = 'for test'")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
