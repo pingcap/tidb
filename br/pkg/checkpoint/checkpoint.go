@@ -374,7 +374,7 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 func (r *CheckpointRunner[K, V]) sendError(err error) {
 	select {
 	case r.errCh <- err:
-		log.Error("send the error", zap.String("category", "checkpoint"), zap.Error(err))
+		log.Warn("send the error", zap.String("category", "checkpoint"), zap.Error(err))
 		r.errLock.Lock()
 		r.err = err
 		r.errLock.Unlock()
