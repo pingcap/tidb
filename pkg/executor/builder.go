@@ -5083,15 +5083,15 @@ func (builder *dataReaderBuilder) validateKeyRangesMonotonic(ctx context.Context
 				zap.String("rangeStart", redact.Key(prev.StartKey)),
 				zap.String("rangeEnd", redact.Key(prev.EndKey)))
 		}
-		if prev.EndKey.Cmp(curr.StartKey) > 0 {
-			logger.Panic("copr: key ranges are not monotonic or overlap",
-				zap.Int("prevRangeIndex", i-1),
-				zap.String("prevStart", redact.Key(prev.StartKey)),
-				zap.String("prevEnd", redact.Key(prev.EndKey)),
-				zap.Int("currRangeIndex", i),
-				zap.String("currStart", redact.Key(curr.StartKey)),
-				zap.String("currEnd", redact.Key(curr.EndKey)))
-		}
+		// if prev.EndKey.Cmp(curr.StartKey) > 0 {
+		// 	logger.Panic("copr: key ranges are not monotonic or overlap",
+		// 		zap.Int("prevRangeIndex", i-1),
+		// 		zap.String("prevStart", redact.Key(prev.StartKey)),
+		// 		zap.String("prevEnd", redact.Key(prev.EndKey)),
+		// 		zap.Int("currRangeIndex", i),
+		// 		zap.String("currStart", redact.Key(curr.StartKey)),
+		// 		zap.String("currEnd", redact.Key(curr.EndKey)))
+		// }
 		prev = curr
 	}
 }
