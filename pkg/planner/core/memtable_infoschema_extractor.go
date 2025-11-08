@@ -18,11 +18,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-<<<<<<< HEAD
-=======
 	"maps"
 	"regexp"
->>>>>>> 4b3e59a05bd (*: fix incorrect rlike when quering information_schema (#64301))
 	"slices"
 	"sort"
 	"strconv"
@@ -32,12 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-<<<<<<< HEAD
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-=======
-	"github.com/pingcap/tidb/pkg/parser/ast"
->>>>>>> 4b3e59a05bd (*: fix incorrect rlike when quering information_schema (#64301))
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
@@ -45,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 // extractableCols records the column names used by tables in information_schema.
@@ -999,11 +990,7 @@ ForLoop:
 			continue
 		}
 		for _, re := range regexp {
-<<<<<<< HEAD
-			if !re.DoMatch(index.Name.L) {
-=======
-			if !re.MatchString(index.Name) {
->>>>>>> 4b3e59a05bd (*: fix incorrect rlike when quering information_schema (#64301))
+			if !re.MatchString(index.Name.L) {
 				continue ForLoop
 			}
 		}
