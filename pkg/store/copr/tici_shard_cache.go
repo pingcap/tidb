@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/tikv"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -162,12 +163,14 @@ func (c *TiCIShardCacheClient) Close() {
 type TiCIShardCache struct {
 	client Client
 	mu     shardIndexMu
+	codec  tikv.Codec
 }
 
 // NewTiCIShardCache creates a new TiCIShardCache instance with the provided client.
-func NewTiCIShardCache(client Client) *TiCIShardCache {
+func NewTiCIShardCache(client Client, codec tikv.Codec) *TiCIShardCache {
 	return &TiCIShardCache{
 		client: client,
+		codec:  codec,
 		mu: shardIndexMu{
 			shards: make(map[uint64]*ShardWithAddr),
 			sorted: make(map[int64]*SortedShards),

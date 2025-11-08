@@ -1753,7 +1753,7 @@ func buildBatchCopTasksForFullText(store *kvStore, tableID int64, indexID int64,
 	cache := store.GetTiCIShardCache()
 	tasks := make([]*batchCopTask, 0)
 
-	var keyspaceID uint32
+	var keyspaceID uint32 = uint32(tikv.NullspaceID)
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
 		meta, err := store.store.GetPDClient().LoadKeyspace(context.Background(), keyspaceName)
@@ -1762,6 +1762,11 @@ func buildBatchCopTasksForFullText(store *kvStore, tableID int64, indexID int64,
 		}
 		keyspaceID = meta.Id
 	}
+
+	keyRanges.Do(func(ran *kv.KeyRange) {
+		ran.StartKey = cache.codec.EncodeKey(ran.StartKey)
+		ran.EndKey = cache.codec.EncodeKey(ran.EndKey)
+	})
 
 	ret, err := cache.BatchLocateKeyRanges(context.TODO(), keyspaceID, tableID, indexID, keyRanges.ToRanges())
 	if err != nil {
