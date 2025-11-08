@@ -638,17 +638,20 @@ func (p *LogicalJoin) ExtractFD() *funcdep.FDSet {
 }
 
 // Keep predicates that *involve at least one column* from the given schema.
-// to belong to `sch`; it just checks “touches inner side or not”.
+// to belong to `sch`; it just checks "touches inner side or not".
 func filterPredsInvolvingSchema(preds []expression.Expression, sch *expression.Schema) []expression.Expression {
 	out := make([]expression.Expression, 0, len(preds))
+	colMap := expression.GetUniqueIDToColumnMap()
+	defer expression.PutUniqueIDToColumnMap(colMap)
 	for _, e := range preds {
-		cols := expression.ExtractColumns(e)
-		for _, c := range cols {
+		expression.ExtractColumnsMapFromExpressionsWithReusedMap(colMap, nil, e)
+		for _, c := range colMap {
 			if sch.Contains(c) {
 				out = append(out, e)
 				break
 			}
 		}
+		clear(colMap)
 	}
 	return out
 }
