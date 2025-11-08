@@ -501,10 +501,18 @@ func (p *PhysicalMergeJoin) getPlanCostVer2(taskType property.TaskType, option *
 	rightRows := max(1.0, getCardinality(p.Children()[1], option.CostFlag))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
+<<<<<<< HEAD
 	filterCost := sumCostVer2(filterCostVer2(option, leftRows, p.LeftConditions, cpuFactor),
 		filterCostVer2(option, rightRows, p.RightConditions, cpuFactor))
 	groupCost := sumCostVer2(groupCostVer2(option, leftRows, cols2Exprs(p.LeftJoinKeys), cpuFactor),
 		groupCostVer2(option, rightRows, cols2Exprs(p.LeftJoinKeys), cpuFactor))
+=======
+	filterCost := costusage.SumCostVer2(filterCostVer2(option, leftRows, p.LeftConditions, cpuFactor),
+		filterCostVer2(option, rightRows, p.RightConditions, cpuFactor),
+		filterCostVer2(option, leftRows+rightRows, p.OtherConditions, cpuFactor)) // OtherConditions are applied to both sides
+	groupCost := costusage.SumCostVer2(groupCostVer2(option, leftRows, cols2Exprs(p.LeftJoinKeys), cpuFactor),
+		groupCostVer2(option, rightRows, cols2Exprs(p.RightJoinKeys), cpuFactor))
+>>>>>>> c89bda5007b (planner: consider OtherConds in MergeJoin cost formula (#63010))
 
 	leftChildCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
