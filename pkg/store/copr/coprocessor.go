@@ -366,9 +366,11 @@ func ensureMonotonicKeyRanges(ctx context.Context, ranges *KeyRanges) bool {
 	if sorted && valid {
 		return false
 	}
-	logutil.Logger(ctx).Error("key ranges not monotonic, reorder before BatchLocateKeyRanges",
-		zap.Int("rangeCount", ranges.Len()), zap.Stack("stack"))
 	flat := ranges.ToRanges()
+	logutil.Logger(ctx).Error("key ranges not monotonic, reorder before BatchLocateKeyRanges",
+		zap.Int("rangeCount", ranges.Len()),
+		formatRanges(NewKeyRanges(flat)),
+		zap.Stack("stack"))
 	sortedRanges := append([]kv.KeyRange(nil), flat...)
 	slices.SortFunc(sortedRanges, func(a, b kv.KeyRange) int {
 		if cmp := bytes.Compare(a.StartKey, b.StartKey); cmp != 0 {
