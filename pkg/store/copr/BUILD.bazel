@@ -22,7 +22,6 @@ go_library(
         "//pkg/ddl/placement",
         "//pkg/domain/infosync",
         "//pkg/errno",
-        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/parser/terror",

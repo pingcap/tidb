@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
@@ -1753,16 +1752,7 @@ func buildBatchCopTasksForFullText(store *kvStore, tableID int64, indexID int64,
 	cache := store.GetTiCIShardCache()
 	tasks := make([]*batchCopTask, 0)
 
-	var keyspaceID uint32 = uint32(tikv.NullspaceID)
-	keyspaceName := keyspace.GetKeyspaceNameBySettings()
-	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-		meta, err := store.store.GetPDClient().LoadKeyspace(context.Background(), keyspaceName)
-		if err != nil {
-			return nil, err
-		}
-		keyspaceID = meta.Id
-	}
-
+	var keyspaceID uint32 = uint32(cache.codec.GetKeyspaceID())
 	keyRanges.Do(func(ran *kv.KeyRange) {
 		ran.StartKey = cache.codec.EncodeKey(ran.StartKey)
 		ran.EndKey = cache.codec.EncodeKey(ran.EndKey)
