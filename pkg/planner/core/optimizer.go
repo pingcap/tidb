@@ -353,6 +353,32 @@ func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag 
 	return logic, finalPlan, cost, nil
 }
 
+<<<<<<< HEAD
+=======
+func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
+	// If there is something after flagPrunColumns, do FlagPruneColumnsAgain.
+	if flag&rule.FlagPruneColumns > 0 && flag-rule.FlagPruneColumns > rule.FlagPruneColumns {
+		flag |= rule.FlagPruneColumnsAgain
+	}
+	if checkStableResultMode(logic.SCtx()) {
+		flag |= rule.FlagStabilizeResults
+	}
+	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
+		// When we use the straight Join Order hint, we should disable the join reorder optimization.
+		flag &= ^rule.FlagJoinReOrder
+	}
+	// InternalSQLScanUserTable is for ttl scan.
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {
+		flag |= rule.FlagCollectPredicateColumnsPoint
+		flag |= rule.FlagSyncWaitStatsLoadPoint
+	}
+	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
+	}
+	return flag
+}
+
+>>>>>>> e54fe94984f (planner: TTL scan can trigger sync/async load/generateRuntimeFilter (#62616))
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
