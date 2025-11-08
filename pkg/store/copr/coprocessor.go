@@ -384,7 +384,6 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	start := time.Now()
 	ctx := bo.GetCtx()
 	defer tracing.StartRegion(ctx, "copr.buildCopTasks").End()
-	validateKeyRangesMonotonic(ctx, ranges)
 	cmdType := tikvrpc.CmdCop
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)

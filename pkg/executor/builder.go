@@ -88,9 +88,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -99,6 +101,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"go.uber.org/zap"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -5044,6 +5047,14 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	if err != nil {
 		return nil, err
 	}
+	// Validate key ranges are monotonic for each partition
+	err = kvReq.KeyRanges.ForEachPartitionWithErr(func(ranges []kv.KeyRange, _ []int) error {
+		builder.validateKeyRangesMonotonic(ctx, ranges)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 	e.resultHandler = &tableResultHandler{}
 	result, err := builder.SelectResult(ctx, builder.ctx.GetDistSQLCtx(), kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
@@ -5052,6 +5063,52 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	}
 	e.resultHandler.open(nil, result)
 	return e, nil
+}
+
+// validateKeyRangesMonotonic validates that key ranges are monotonically increasing and don't overlap.
+func (builder *dataReaderBuilder) validateKeyRangesMonotonic(ctx context.Context, ranges []kv.KeyRange) {
+	if len(ranges) == 0 {
+		return
+	}
+	logger := logutil.Logger(ctx)
+	total := len(ranges)
+	prev := ranges[0]
+	builder.validateSingleRange(logger, prev, 0, total)
+	for i := 1; i < total; i++ {
+		curr := ranges[i]
+		builder.validateSingleRange(logger, curr, i, total)
+		if len(prev.EndKey) == 0 {
+			logger.Panic("copr: key range extends to +inf but more ranges follow",
+				zap.Int("rangeIndex", i-1),
+				zap.String("rangeStart", redact.Key(prev.StartKey)),
+				zap.String("rangeEnd", redact.Key(prev.EndKey)))
+		}
+		if prev.EndKey.Cmp(curr.StartKey) > 0 {
+			logger.Panic("copr: key ranges are not monotonic or overlap",
+				zap.Int("prevRangeIndex", i-1),
+				zap.String("prevStart", redact.Key(prev.StartKey)),
+				zap.String("prevEnd", redact.Key(prev.EndKey)),
+				zap.Int("currRangeIndex", i),
+				zap.String("currStart", redact.Key(curr.StartKey)),
+				zap.String("currEnd", redact.Key(curr.EndKey)))
+		}
+		prev = curr
+	}
+}
+
+// validateSingleRange validates a single key range.
+func (*dataReaderBuilder) validateSingleRange(logger *zap.Logger, r kv.KeyRange, idx, total int) {
+	if len(r.EndKey) > 0 && r.StartKey.Cmp(r.EndKey) > 0 {
+		logger.Panic("copr: key range start is greater than end",
+			zap.Int("rangeIndex", idx),
+			zap.String("rangeStart", redact.Key(r.StartKey)),
+			zap.String("rangeEnd", redact.Key(r.EndKey)))
+	}
+	if len(r.EndKey) == 0 && idx != total-1 {
+		logger.Panic("copr: key range without end must be the last range",
+			zap.Int("rangeIndex", idx),
+			zap.String("rangeStart", redact.Key(r.StartKey)))
+	}
 }
 
 func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle, canReorderHandles bool) (*TableReaderExecutor, error) {
