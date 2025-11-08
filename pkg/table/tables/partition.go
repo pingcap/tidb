@@ -1246,19 +1246,6 @@ func (lp *ForListColumnPruning) genKey(tc types.Context, ec errctx.Context, v ty
 	return valByte, err
 }
 
-// LocatePartition locates partition by the column value
-func (lp *ForListColumnPruning) LocatePartition(tc types.Context, ec errctx.Context, v types.Datum) (ListPartitionLocation, error) {
-	key, err := lp.genKey(tc, ec, v)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	location, ok := lp.valueMap[string(key)]
-	if !ok {
-		return nil, nil
-	}
-	return location, nil
-}
-
 func (lp *ForListColumnPruning) needConvert(d types.Datum) bool {
 	if !types.IsString(lp.ExprCol.RetType.GetType()) {
 		return true
@@ -1282,15 +1269,26 @@ func (lp *ForListColumnPruning) getKey(tc types.Context, ec errctx.Context, d ty
 	return k, nil
 }
 
-// LocateRanges locates partition ranges by the column range
-func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context, r *ranger.Range, defaultPartIdx int) ([]ListPartitionLocation, error) {
-	var lowKey, highKey []byte
-	var err error
-	lowKey, err = lp.getKey(tc, ec, r.LowVal[0])
+// LocatePartition locates partition by the column value
+func (lp *ForListColumnPruning) LocatePartition(tc types.Context, ec errctx.Context, v types.Datum) (ListPartitionLocation, error) {
+	key, err := lp.genKey(tc, ec, v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	highKey, err = lp.getKey(tc, ec, r.HighVal[0])
+	location, ok := lp.valueMap[string(key)]
+	if !ok {
+		return nil, nil
+	}
+	return location, nil
+}
+
+// LocateRanges locates partition ranges by the column range
+func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context, r *ranger.Range, defaultPartIdx int) ([]ListPartitionLocation, error) {
+	lowKey, err := lp.getKey(tc, ec, r.LowVal[0])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	highKey, err := lp.getKey(tc, ec, r.HighVal[0])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
