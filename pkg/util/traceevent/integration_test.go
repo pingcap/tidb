@@ -23,9 +23,21 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/require"
 )
+
+func drainEvents(eventCh <-chan []traceevent.Event) {
+	for {
+		select {
+		case <-eventCh:
+		default:
+			return
+		}
+	}
+}
 
 func TestPrevTraceIDPersistence(t *testing.T) {
 	if kerneltype.IsClassic() {
@@ -58,7 +70,7 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	require.NoError(t, err)
 
 	// Clear the recorder and reset prev trace ID
-	recorder.Reset()
+	recorder.DiscardOrFlush()
 	se.GetSessionVars().PrevTraceID = nil
 
 	// Execute first statement
@@ -76,7 +88,7 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	t.Logf("First statement trace ID: %s", hex.EncodeToString(firstTraceID))
 
 	// Clear the recorder to capture only the second statement's events
-	recorder.Reset()
+	recorder.DiscardOrFlush()
 
 	// Execute second statement in the same session
 	stmt2, err := session.ParseWithParams4Test(ctx, se, "insert into test.t2 values (2, 'second')")
@@ -119,4 +131,123 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	}
 
 	require.True(t, foundPrevTraceID, "Should find prev_trace_id field in stmt.start events")
+}
+
+func TestFlightRecorder(t *testing.T) {
+	eventCh := make(chan []tracing.Event, 1024)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10) primary key, b int, index idx(b))")
+
+	ctx := context.Background()
+	sink := traceevent.NewTrace()
+	ctx = tracing.WithFlightRecorder(ctx, sink)
+
+	// Basic check to see if flight recorder can dump events
+	{
+		var config traceevent.FlightRecorderConfig
+		config.Initialize() // all events by default
+		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
+		require.NoError(t, err)
+		for _, sql := range []string{"select * from t", "select * from t where b = 5"} {
+			tk.MustQueryWithContext(ctx, sql).Check(testkit.Rows())
+			sink.DiscardOrFlush(ctx)
+			require.Len(t, eventCh, 1)
+			event := <-eventCh
+			require.NotEmpty(t, event)
+		}
+		flightRecorder.Close()
+	}
+
+	// Test enabled categories filter
+	{
+		config := traceevent.FlightRecorderConfig{
+			EnabledCategories: []string{"kv_request"},
+			DumpTrigger: traceevent.DumpTriggerConfig{
+				Type:     "sampling",
+				Sampling: 1,
+			},
+		}
+		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
+		require.NoError(t, err)
+		tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows())
+		sink.DiscardOrFlush(ctx)
+		require.NotEmpty(t, eventCh)
+		events := <-eventCh
+		for _, event := range events {
+			require.Equal(t, event.Category, traceevent.KvRequest)
+		}
+		flightRecorder.Close()
+	}
+
+	// Test dump trigger type = sampling
+	{
+		config := traceevent.FlightRecorderConfig{
+			EnabledCategories: []string{"*"},
+			DumpTrigger: traceevent.DumpTriggerConfig{
+				Type:     "sampling",
+				Sampling: 5,
+			},
+		}
+		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
+		require.NoError(t, err)
+		for i := 0; i < 10; i++ {
+			tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows())
+			sink.DiscardOrFlush(ctx)
+		}
+		require.Len(t, eventCh, 2)
+		flightRecorder.Close()
+		drainEvents(eventCh)
+	}
+
+	// Test dump trigger type = user command
+	{
+		config := traceevent.FlightRecorderConfig{
+			EnabledCategories: []string{"*"},
+			DumpTrigger: traceevent.DumpTriggerConfig{
+				Type: "user_command",
+				UserCommand: &traceevent.UserCommandConfig{
+					Type:      "sql_regexp",
+					SQLRegexp: `select \* from t`,
+				},
+			},
+		}
+		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
+		require.NoError(t, err)
+		tk.MustExecWithContext(ctx, "insert into t values ('aaa', 1)")
+		sink.DiscardOrFlush(ctx)
+		require.Empty(t, eventCh)
+		tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("aaa 1"))
+		sink.DiscardOrFlush(ctx)
+		require.Len(t, eventCh, 1)
+		drainEvents(eventCh)
+		flightRecorder.Close()
+	}
+
+	// Test dump trigger type = suspicious event
+	{
+		config := traceevent.FlightRecorderConfig{
+			EnabledCategories: []string{"*"},
+			DumpTrigger: traceevent.DumpTriggerConfig{
+				Type: "suspicious_event",
+				Event: &traceevent.SuspiciousEventConfig{
+					Type: "query_fail",
+				},
+			},
+		}
+		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
+		require.NoError(t, err)
+		_, err = tk.ExecWithContext(ctx, "insert into t values ('aaa', 2)")
+		require.Error(t, err)
+		sink.DiscardOrFlush(ctx)
+		require.Len(t, eventCh, 1)
+		drainEvents(eventCh)
+
+		tk.MustExecWithContext(ctx, "insert into t values ('bbb', 2)")
+		sink.DiscardOrFlush(ctx)
+		require.Len(t, eventCh, 0)
+		flightRecorder.Close()
+	}
 }
