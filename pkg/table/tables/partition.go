@@ -1259,144 +1259,40 @@ func (lp *ForListColumnPruning) LocatePartition(tc types.Context, ec errctx.Cont
 	return location, nil
 }
 
+func (lp *ForListColumnPruning) needConvert(d types.Datum) bool {
+	if !types.IsString(lp.ExprCol.RetType.GetType()) {
+		return true
+	}
+	switch d.Kind() {
+	case types.KindBytes, types.KindString, types.KindMinNotNull, types.KindNull, types.KindMaxValue:
+		return false
+	}
+	return true
+}
+
+func (lp *ForListColumnPruning) getKey(tc types.Context, ec errctx.Context, d types.Datum) ([]byte, error) {
+	if lp.needConvert(d) {
+		return lp.genKey(tc, ec, d)
+	}
+	k, err := codec.EncodeKey(tc.Location(), nil, d)
+	err = ec.HandleError(err)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return k, nil
+}
+
 // LocateRanges locates partition ranges by the column range
 func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context, r *ranger.Range, defaultPartIdx int) ([]ListPartitionLocation, error) {
 	var lowKey, highKey []byte
 	var err error
-
-	// Store original values before any conversion
-	originalLowVal := r.LowVal[0]
-	originalHighVal := r.HighVal[0]
-
-	lowVal := r.LowVal[0]
-	if r.LowVal[0].Kind() == types.KindMinNotNull {
-		lowVal = types.GetMinValue(lp.ExprCol.GetType(lp.ctx.GetEvalCtx()))
-		originalLowVal = lowVal
+	lowKey, err = lp.getKey(tc, ec, r.LowVal[0])
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	highVal := r.HighVal[0]
-	if r.HighVal[0].Kind() == types.KindMaxValue {
-		highVal = types.GetMaxValue(lp.ExprCol.GetType(lp.ctx.GetEvalCtx()))
-		originalHighVal = highVal
-	}
-
-	// For string type, values returned by GetMinValue and GetMaxValue are already encoded,
-	// so it's unnecessary to invoke genKey to encode them.
-	if lp.ExprCol.GetType(lp.ctx.GetEvalCtx()).EvalType() == types.ETString && r.LowVal[0].Kind() == types.KindMinNotNull {
-		lowKey = (&lowVal).GetBytes()
-	} else {
-		lowKey, err = lp.genKey(tc, ec, lowVal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
-	if lp.ExprCol.GetType(lp.ctx.GetEvalCtx()).EvalType() == types.ETString && r.HighVal[0].Kind() == types.KindMaxValue {
-		highKey = (&highVal).GetBytes()
-	} else {
-		highKey, err = lp.genKey(tc, ec, highVal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
-	// Check if we need to handle empty string exclusion for binary columns
-	// When excluding an empty string or a value that gets padded to match a partition value
-	// from a binary column, the value gets converted to the binary type (e.g., '' -> 0x00 for binary(1),
-	// or 0x00 -> 0x0000 for binary(2)), which incorrectly excludes partitions containing the converted value.
-	// We need to include those partitions because the original value and the partition value are actually different.
-	isBinaryCol := types.IsBinaryStr(lp.ExprCol.GetType(lp.ctx.GetEvalCtx()))
-	colType := lp.ExprCol.GetType(lp.ctx.GetEvalCtx())
-	colFlen := colType.GetFlen()
-	// If flen is unspecified, we can't determine if padding occurred, so skip the fix
-	if colFlen < 0 {
-		colFlen = 0
-	}
-
-	// Check if we're excluding a value that gets padded to match a partition value.
-	// For NE comparisons, we get two ranges:
-	// 1. [MinNotNull, value) with HighExclude=true - highKey will be key(value) = key(padded_value)
-	// 2. (value, MaxValue] with LowExclude=true - lowKey will be PrefixNext(key(value)) = PrefixNext(key(padded_value))
-	// In both cases, the partition with key(padded_value) is excluded, but we need to include it
-	// because original_value != padded_value even though they convert to the same key.
-	var excludedPaddedValueKey string
-	if isBinaryCol {
-		// Check if low boundary is an excluded value that gets padded
-		if r.LowExclude {
-			// Check if originalLowVal is shorter than the column length, which means it will be padded
-			originalLen := -1
-			if originalLowVal.Kind() == types.KindString {
-				originalLen = len(originalLowVal.GetString())
-			} else if originalLowVal.Kind() == types.KindBytes {
-				originalLen = len(originalLowVal.GetBytes())
-			}
-			if originalLen >= 0 && originalLen < colFlen {
-				excludedKey, err := lp.genKey(tc, ec, originalLowVal)
-				if err == nil {
-					excludedPaddedValueKey = string(excludedKey)
-				}
-			}
-		}
-		// Check if high boundary is an excluded value that gets padded
-		if excludedPaddedValueKey == "" && r.HighExclude {
-			// Check if originalHighVal is shorter than the column length, which means it will be padded
-			originalLen := -1
-			if originalHighVal.Kind() == types.KindString {
-				originalLen = len(originalHighVal.GetString())
-			} else if originalHighVal.Kind() == types.KindBytes {
-				originalLen = len(originalHighVal.GetBytes())
-			}
-			if originalLen >= 0 && originalLen < colFlen {
-				excludedKey, err := lp.genKey(tc, ec, originalHighVal)
-				if err == nil {
-					excludedPaddedValueKey = string(excludedKey)
-				}
-			}
-		}
-		// If we couldn't detect from original values, check if the highKey (before PrefixNext)
-		// matches a partition key when HighExclude is true. This handles the case where
-		// the value was already converted/padded before reaching here.
-		// For range [MinNotNull, value) with HighExclude=true, highKey = key(value) = key(padded_value)
-		// Note: highKey at this point is before PrefixNext, so it's the excluded value's key
-		if excludedPaddedValueKey == "" && r.HighExclude {
-			// highKey is key(padded_value) for value -> binary(flen)
-			// Check if this key exists in our partition map
-			highKeyStr := string(highKey)
-			if _, exists := lp.valueMap[highKeyStr]; exists {
-				// For binary columns, when an excluded key matches a partition key, we should include it
-				// because the original value (before conversion/padding) might compare differently
-				// with stored rows than the converted value does. This handles cases like:
-				// - '' != 0x00 for binary(1) (empty string gets padded to 0x00)
-				// - 0x00 != 0x0000 for binary(2) (0x00 gets padded to 0x0000)
-				// Since we can't reliably detect if padding occurred (the value is already converted),
-				// we include the partition whenever the excluded key matches a partition key for binary columns.
-				// This is safe because if the original value was the same as the partition value,
-				// the partition would have been included anyway by the range scan.
-				excludedPaddedValueKey = highKeyStr
-			}
-		}
-		// Similarly for LowExclude case: (value, MaxValue] with LowExclude=true
-		// lowKey before PrefixNext would be key(value) = key(padded_value), but after PrefixNext it's > key(padded_value)
-		// So we need to check if the key before PrefixNext matches a partition
-		if excludedPaddedValueKey == "" && r.LowExclude {
-			// We need to get the key before PrefixNext was applied
-			// lowKey was already converted, so we can use originalLowVal to regenerate it
-			lowKeyBeforePrefix, err := lp.genKey(tc, ec, originalLowVal)
-			if err == nil {
-				lowKeyStr := string(lowKeyBeforePrefix)
-				if _, exists := lp.valueMap[lowKeyStr]; exists {
-					// For binary columns, when an excluded key matches a partition key, we should include it
-					// because the original value (before conversion/padding) might compare differently
-					// with stored rows than the converted value does. This handles cases like:
-					// - '' != 0x00 for binary(1) (empty string gets padded to 0x00)
-					// - 0x00 != 0x0000 for binary(2) (0x00 gets padded to 0x0000)
-					// Since we can't reliably detect if padding occurred (the value is already converted),
-					// we include the partition whenever the excluded key matches a partition key for binary columns.
-					// This is safe because if the original value was the same as the partition value,
-					// the partition would have been included anyway by the range scan.
-					excludedPaddedValueKey = lowKeyStr
-				}
-			}
-		}
+	highKey, err = lp.getKey(tc, ec, r.HighVal[0])
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if r.LowExclude {
@@ -1407,32 +1303,10 @@ func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context
 	}
 
 	locations := make([]ListPartitionLocation, 0, lp.sorted.Len())
-
 	lp.sorted.AscendRange(newBtreeListColumnSearchItem(string(hack.String(lowKey))), newBtreeListColumnSearchItem(string(hack.String(highKey))), func(item *btreeListColumnItem) bool {
 		locations = append(locations, item.location)
 		return true
 	})
-
-	// If we're excluding a value that gets padded to match a partition value, we need to explicitly
-	// include partitions that match the excluded key, because the original value != padded value
-	// even though they convert to the same key (e.g., '' != 0x00 even though '' -> 0x00,
-	// or 0x00 != 0x0000 even though 0x00 -> 0x0000 for binary(2))
-	if excludedPaddedValueKey != "" {
-		if location, ok := lp.valueMap[excludedPaddedValueKey]; ok && location != nil {
-			// Check if this location is not already included
-			found := false
-			for _, loc := range locations {
-				if len(loc) > 0 && len(location) > 0 && loc[0].PartIdx == location[0].PartIdx {
-					found = true
-					break
-				}
-			}
-			if !found {
-				locations = append(locations, location)
-			}
-		}
-	}
-
 	if lp.HasDefault() {
 		// Add the default partition since there may be a gap
 		// between the conditions range and the LIST COLUMNS values
