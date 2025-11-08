@@ -3818,6 +3818,7 @@ func TestIssue63876(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf(`select * from pt where b = %s`, s)).Sort().Check(res.Rows())
 		tk.MustQuery(fmt.Sprintf(`select * from ptDef where b = %s`, s)).Sort().Check(res.Rows())
 		res = tk.MustQuery(fmt.Sprintf(`select * from t where b != %s`, s)).Sort()
+		tk.MustQuery(fmt.Sprintf(`select * from pt where b != %s`, s)).Sort().Check(res.Rows())
 		tk.MustQuery(fmt.Sprintf(`select * from ptDef where b != %s`, s)).Sort().Check(res.Rows())
 	}
 }
