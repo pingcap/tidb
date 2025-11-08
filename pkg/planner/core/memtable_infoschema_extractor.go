@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 // extractableCols records the column names used by tables in information_schema.
