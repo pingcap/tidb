@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
@@ -386,6 +387,13 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	start := time.Now()
 	ctx := bo.GetCtx()
 	defer tracing.StartRegion(ctx, "copr.buildCopTasks").End()
+	if traceevent.IsEnabled(traceevent.KvRequest) {
+		traceevent.TraceEvent(ctx, traceevent.KvRequest, "copr.build_ranges",
+			zap.Uint64("connID", req.ConnID),
+			zap.String("connAlias", req.ConnAlias),
+			zap.Int("rangeCount", ranges.Len()),
+			formatRanges(ranges))
+	}
 	reordered := ensureMonotonicKeyRanges(ctx, ranges)
 	cmdType := tikvrpc.CmdCop
 	if req.StoreType == kv.TiDB {
