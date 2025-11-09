@@ -26,7 +26,7 @@ import (
 func RegisterWithClientGo() {
 	trace.SetTraceEventFunc(handleClientGoTraceEvent)
 	trace.SetIsCategoryEnabledFunc(handleClientGoIsCategoryEnabled)
-	trace.SetImmediateLoggingExtractor(handleImmediateLoggingExtractor)
+	trace.SetTraceControlExtractor(handleTraceControlExtractor)
 }
 
 // handleClientGoTraceEvent is the function called by client-go to emit trace events.
@@ -48,11 +48,18 @@ func handleClientGoIsCategoryEnabled(category trace.Category) bool {
 	return IsEnabled(cat)
 }
 
-// handleImmediateLoggingExtractor is called by client-go to determine if a trace should be logged immediately.
-// For now, this is a placeholder that always returns false. The actual extraction logic will be added in a future PR.
-func handleImmediateLoggingExtractor(ctx context.Context) bool {
-	// TODO: Implement actual extraction logic based on trace ID or other context information
-	return false
+// handleTraceControlExtractor is called by client-go to extract trace control flags from context.
+// For now, this is a placeholder that returns FlagTiKVCategoryRequest (the default).
+// The actual extraction logic will be added in a future PR.
+func handleTraceControlExtractor(ctx context.Context) trace.TraceControlFlags {
+	// TODO: Implement actual extraction logic based on trace ID or other context information.
+	// Future implementation might:
+	// - Check if trace ID matches certain patterns
+	// - Look up trace ID in a configuration map
+	// - Extract flags from context values
+	// - Conditionally enable/disable flags based on runtime state
+	// For now, return FlagTiKVCategoryRequest (the default), preserving existing behavior.
+	return trace.FlagTiKVCategoryRequest
 }
 
 func mapCategory(category trace.Category) TraceCategory {

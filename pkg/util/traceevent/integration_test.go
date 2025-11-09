@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/trace"
 )
 
 func TestPrevTraceIDPersistence(t *testing.T) {
@@ -119,4 +120,44 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	}
 
 	require.True(t, foundPrevTraceID, "Should find prev_trace_id field in stmt.start events")
+}
+func TestTraceControlIntegration(t *testing.T) {
+	// Test that the placeholder extractor is registered and returns FlagTiKVCategoryRequest (the default)
+	ctx := context.Background()
+	flags := trace.GetTraceControlFlags(ctx)
+	require.Equal(t, trace.FlagTiKVCategoryRequest, flags)
+	require.True(t, flags.Has(trace.FlagTiKVCategoryRequest))
+	require.False(t, trace.ImmediateLoggingEnabled(ctx))
+
+	// Test that we can set a custom extractor
+	type testKey struct{}
+	trace.SetTraceControlExtractor(func(ctx context.Context) trace.TraceControlFlags {
+		if val, ok := ctx.Value(testKey{}).(trace.TraceControlFlags); ok {
+			return val
+		}
+		return 0
+	})
+	defer func() {
+		// Restore the original extractor
+		traceevent.RegisterWithClientGo()
+	}()
+
+	// Without the key, should return 0
+	require.Equal(t, trace.TraceControlFlags(0), trace.GetTraceControlFlags(ctx))
+	require.False(t, trace.ImmediateLoggingEnabled(ctx))
+
+	// With immediate log flag set
+	ctxWithImmediate := context.WithValue(ctx, testKey{}, trace.FlagImmediateLog)
+	require.True(t, trace.ImmediateLoggingEnabled(ctxWithImmediate))
+	flags = trace.GetTraceControlFlags(ctxWithImmediate)
+	require.True(t, flags.Has(trace.FlagImmediateLog))
+
+	// With multiple flags set
+	ctxWithMultiple := context.WithValue(ctx, testKey{},
+		trace.FlagImmediateLog|trace.FlagTiKVCategoryRequest|trace.FlagTiKVCategoryWriteDetails)
+	flags = trace.GetTraceControlFlags(ctxWithMultiple)
+	require.True(t, flags.Has(trace.FlagImmediateLog))
+	require.True(t, flags.Has(trace.FlagTiKVCategoryRequest))
+	require.True(t, flags.Has(trace.FlagTiKVCategoryWriteDetails))
+	require.False(t, flags.Has(trace.FlagTiKVCategoryReadDetails))
 }
