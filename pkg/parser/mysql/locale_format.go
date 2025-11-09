@@ -20,6 +20,7 @@ const (
 	styleSpaceComma       = "SpaceComma"       // 123 456,78 (fr_FR)
 	styleNoneComma        = "NoneComma"        // 123456,78  (bg_BG)
 	styleAposDot          = "AposDot"          // 123'456.78 (de_CH)
+	styleAposComma        = "AposComma"        // 123'456,78 (it_CH) - New
 	styleSpaceDot         = "SpaceDot"         // 123 456.78  (es_MX)
 	styleNarrowSpaceComma = "NarrowSpaceComma" // 123 456,78 (ce_RU)
 	styleNoneDot          = "NoneDot"          // 123456.78  (ar_SA)
@@ -33,6 +34,7 @@ var formatStyleMap = map[string]LocaleFormatStyle{
 	styleSpaceComma:       {ThousandsSep: " ", DecimalPoint: ","}, // U+0020 or U+00A0
 	styleNoneComma:        {ThousandsSep: "", DecimalPoint: ","},  // No thousands separator
 	styleAposDot:          {ThousandsSep: "'", DecimalPoint: "."},
+	styleAposComma:        {ThousandsSep: "'", DecimalPoint: ","},           // New style for it_CH
 	styleSpaceDot:         {ThousandsSep: " ", DecimalPoint: "."},           // U+0020 or U+00A0
 	styleNarrowSpaceComma: {ThousandsSep: "\u202F", DecimalPoint: ","},      // Narrow no-break space
 	styleNoneDot:          {ThousandsSep: "", DecimalPoint: "."},            // No thousands separator
@@ -61,45 +63,61 @@ var localeToStyleMap = map[string]string{
 	"tk_tm": styleCommaDot, "tl_ph": styleCommaDot, "tn_za": styleCommaDot, "to_to": styleCommaDot, "ts_za": styleCommaDot, "ug_cn": styleCommaDot,
 	"ur_in": styleCommaDot, "ur_pk": styleCommaDot, "ve_za": styleCommaDot, "xh_za": styleCommaDot, "yi_us": styleCommaDot, "yo_ng": styleCommaDot,
 	"zh_cn": styleCommaDot, "zh_hk": styleCommaDot, "zh_sg": styleCommaDot, "zh_tw": styleCommaDot, "zu_za": styleCommaDot,
+	// Moved here based on MySQL logs (Default Fallback)
+	"an_es": styleCommaDot, "az_az": styleCommaDot, "ca_ad": styleCommaDot, "ca_fr": styleCommaDot, "ca_it": styleCommaDot, "de_it": styleCommaDot,
+	"en_dk": styleCommaDot, "es_pe": styleCommaDot, "ff_sn": styleCommaDot, "fy_de": styleCommaDot, "fy_nl": styleCommaDot, "ka_ge": styleCommaDot,
+	"kl_gl": styleCommaDot, "ku_tr": styleCommaDot, "lb_lu": styleCommaDot, "li_be": styleCommaDot, "li_nl": styleCommaDot, "nl_aw": styleCommaDot,
+	"sc_it": styleCommaDot, "se_no": styleCommaDot, "sq_mk": styleCommaDot, "tg_tj": styleCommaDot, "tr_cy": styleCommaDot, "wa_be": styleCommaDot, // from styleDotComma
+	"br_fr": styleCommaDot, "kk_kz": styleCommaDot, "nn_no": styleCommaDot, "oc_fr": styleCommaDot, "uz_uz": styleCommaDot, // from styleSpaceComma
+	"bs_ba": styleCommaDot, "el_cy": styleCommaDot, "es_cu": styleCommaDot, "ln_cd": styleCommaDot, "mg_mg": styleCommaDot, "rw_rw": styleCommaDot, "sr_me": styleCommaDot, "wo_sn": styleCommaDot, // from styleNoneComma
+	"es_mx": styleCommaDot,                                                                                                                                                 // from styleSpaceDot
+	"ce_ru": styleCommaDot, "cv_ru": styleCommaDot, "ht_ht": styleCommaDot, "ia_fr": styleCommaDot, "ky_kg": styleCommaDot, "os_ru": styleCommaDot, "tt_ru": styleCommaDot, // from styleNarrowSpaceComma
+	"aa_dj": styleCommaDot, "aa_er": styleCommaDot, "so_dj": styleCommaDot, "ti_er": styleCommaDot, // from styleNoneDot
+	"ps_af": styleCommaDot, // from styleArabic
 
 	// Maps to styleDotComma (123.456,78)
-	"an_es": styleDotComma, "az_az": styleDotComma, "be_by": styleDotComma, "ca_ad": styleDotComma, "ca_es": styleDotComma, "ca_fr": styleDotComma,
-	"ca_it": styleDotComma, "da_dk": styleDotComma, "de_at": styleDotComma, "de_be": styleDotComma, "de_de": styleDotComma, "de_it": styleDotComma,
-	"de_lu": styleDotComma, "en_dk": styleDotComma, "es_ar": styleDotComma, "es_bo": styleDotComma, "es_cl": styleDotComma, "es_co": styleDotComma,
-	"es_ec": styleDotComma, "es_es": styleDotComma, "es_pe": styleDotComma, "es_py": styleDotComma, "es_uy": styleDotComma, "es_ve": styleDotComma,
-	"eu_es": styleDotComma, "ff_sn": styleDotComma, "fo_fo": styleDotComma, "fr_be": styleDotComma, "fy_de": styleDotComma, "fy_nl": styleDotComma,
-	"hr_hr": styleDotComma, "hu_hu": styleDotComma, "id_id": styleDotComma, "is_is": styleDotComma, "it_it": styleDotComma, "ka_ge": styleDotComma,
-	"kl_gl": styleDotComma, "ku_tr": styleDotComma, "lb_lu": styleDotComma, "li_be": styleDotComma, "li_nl": styleDotComma, "lt_lt": styleDotComma,
-	"mn_mn": styleDotComma, "nl_aw": styleDotComma, "nl_be": styleDotComma, "nl_nl": styleDotComma, "pt_br": styleDotComma, "ro_ro": styleDotComma,
-	"ru_ua": styleDotComma, "sc_it": styleDotComma, "se_no": styleDotComma, "sq_al": styleDotComma, "sq_mk": styleDotComma, "su_id": styleDotComma,
-	"tg_tj": styleDotComma, "tr_cy": styleDotComma, "tr_tr": styleDotComma, "vi_vn": styleDotComma, "wa_be": styleDotComma,
+	"be_by": styleDotComma, "da_dk": styleDotComma, "de_be": styleDotComma, "de_de": styleDotComma, "de_lu": styleDotComma,
+	"es_ar": styleDotComma, "es_bo": styleDotComma, "es_cl": styleDotComma, "es_co": styleDotComma,
+	"es_ec": styleDotComma, "es_es": styleDotComma, "es_py": styleDotComma, "es_uy": styleDotComma, "es_ve": styleDotComma,
+	"fo_fo": styleDotComma, "hu_hu": styleDotComma, "id_id": styleDotComma, "is_is": styleDotComma,
+	"lt_lt": styleDotComma, "mn_mn": styleDotComma, "ro_ro": styleDotComma, "ru_ua": styleDotComma, "sq_al": styleDotComma, "su_id": styleDotComma,
+	"tr_tr": styleDotComma, "vi_vn": styleDotComma,
+	// Moved here based on MySQL logs
+	"nb_no": styleDotComma, "uk_ua": styleDotComma, // from styleSpaceComma
 
 	// Maps to styleSpaceComma (123 456,78)
-	"br_fr": styleSpaceComma, "cs_cz": styleSpaceComma, "es_cr": styleSpaceComma, "et_ee": styleSpaceComma, "fi_fi": styleSpaceComma, "fr_ca": styleSpaceComma,
-	"fr_fr": styleSpaceComma, "fr_lu": styleSpaceComma, "kk_kz": styleSpaceComma, "lv_lv": styleSpaceComma, "mk_mk": styleSpaceComma, "nb_no": styleSpaceComma,
-	"nn_no": styleSpaceComma, "no_no": styleSpaceComma, "oc_fr": styleSpaceComma, "pl_pl": styleSpaceComma, "ru_ru": styleSpaceComma, "sk_sk": styleSpaceComma,
-	"sv_fi": styleSpaceComma, "sv_se": styleSpaceComma, "uk_ua": styleSpaceComma, "uz_uz": styleSpaceComma,
+	"cs_cz": styleSpaceComma, "es_cr": styleSpaceComma, "et_ee": styleSpaceComma, "fi_fi": styleSpaceComma,
+	"lv_lv": styleSpaceComma, "mk_mk": styleSpaceComma, "no_no": styleSpaceComma,
+	"ru_ru": styleSpaceComma, "sk_sk": styleSpaceComma, "sv_fi": styleSpaceComma, "sv_se": styleSpaceComma,
+	// Moved here based on MySQL logs
+	"bg_bg": styleSpaceComma, // from styleNoneComma
 
 	// Maps to styleNoneComma (123456,78)
-	"bg_bg": styleNoneComma, "bs_ba": styleNoneComma, "el_cy": styleNoneComma, "el_gr": styleNoneComma, "es_cu": styleNoneComma, "gl_es": styleNoneComma,
-	"ln_cd": styleNoneComma, "mg_mg": styleNoneComma, "pt_pt": styleNoneComma, "rw_rw": styleNoneComma, "sl_si": styleNoneComma, "sr_me": styleNoneComma,
-	"sr_rs": styleNoneComma, "wo_sn": styleNoneComma,
+	"el_gr": styleNoneComma, "gl_es": styleNoneComma, "pt_pt": styleNoneComma, "sl_si": styleNoneComma, // Kept originals (Passed test)
+	// Moved here based on MySQL logs
+	"ca_es": styleNoneComma, "de_at": styleNoneComma, "eu_es": styleNoneComma, "fr_be": styleNoneComma, "hr_hr": styleNoneComma, "it_it": styleNoneComma, "nl_be": styleNoneComma, "nl_nl": styleNoneComma, "pt_br": styleNoneComma, // from styleDotComma
+	"fr_ca": styleNoneComma, "fr_fr": styleNoneComma, "fr_lu": styleNoneComma, "pl_pl": styleNoneComma, // from styleSpaceComma
+	"fr_ch": styleNoneComma, // from styleAposDot
 
 	// Maps to styleAposDot (123'456.78)
-	"de_ch": styleAposDot, "fr_ch": styleAposDot, "it_ch": styleAposDot,
+	"de_ch": styleAposDot,
+
+	// Maps to styleAposComma (123'456,78) - New Style
+	"it_ch": styleAposComma, // from styleAposDot
 
 	// Maps to styleSpaceDot (123 456.78)
-	"es_mx": styleSpaceDot,
+	// (es_mx was moved to styleCommaDot)
 
 	// Maps to styleNarrowSpaceComma (123 456,78)
-	"ce_ru": styleNarrowSpaceComma, "cv_ru": styleNarrowSpaceComma, "ht_ht": styleNarrowSpaceComma, "ia_fr": styleNarrowSpaceComma, "kv_ru": styleNarrowSpaceComma, "ky_kg": styleNarrowSpaceComma,
-	"os_ru": styleNarrowSpaceComma, "tt_ru": styleNarrowSpaceComma,
+	"kv_ru": styleNarrowSpaceComma, // Kept original (Passed test)
 
 	// Maps to styleNoneDot (123456.78)
-	"aa_dj": styleNoneDot, "aa_er": styleNoneDot, "ar_sa": styleNoneDot, "so_dj": styleNoneDot, "ti_er": styleNoneDot,
+	"ar_sa": styleNoneDot, // Kept original (Passed test)
+	// Moved here based on MySQL logs
+	"sr_rs": styleNoneDot, // from styleNoneComma
 
 	// Maps to styleArabic (123٬456٫78)
-	"ps_af": styleArabic,
+	// (ps_af was moved to styleCommaDot)
 }
 
 // GetLocaleFormatStyle returns the formatting rules and a bool indicating if the locale was found.
