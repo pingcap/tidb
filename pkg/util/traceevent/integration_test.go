@@ -135,11 +135,12 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 }
 
 func TestTraceControlIntegration(t *testing.T) {
-	// Test that the placeholder extractor is registered and returns FlagTiKVCategoryRequest (the default)
+	// Test that the extractor still propagates enabled categories even without a Trace sink.
 	ctx := context.Background()
 	flags := trace.GetTraceControlFlags(ctx)
-	require.Equal(t, trace.FlagTiKVCategoryRequest, flags)
 	require.True(t, flags.Has(trace.FlagTiKVCategoryRequest))
+	require.False(t, flags.Has(trace.FlagTiKVCategoryWriteDetails))
+	require.False(t, flags.Has(trace.FlagTiKVCategoryReadDetails))
 	require.False(t, trace.ImmediateLoggingEnabled(ctx))
 
 	// Test that we can set a custom extractor

@@ -50,17 +50,46 @@ func handleClientGoIsCategoryEnabled(category trace.Category) bool {
 }
 
 // handleTraceControlExtractor is called by client-go to extract trace control flags from context.
-// For now, this is a placeholder that returns FlagTiKVCategoryRequest (the default).
-// The actual extraction logic will be added in a future PR.
+// It determines:
+// 1. Whether to enable immediate logging based on the Trace.keep flag
+// 2. Which TiKV trace categories to enable based on TiDB's enabled categories
 func handleTraceControlExtractor(ctx context.Context) trace.TraceControlFlags {
-	// TODO: Implement actual extraction logic based on trace ID or other context information.
-	// Future implementation might:
-	// - Check if trace ID matches certain patterns
-	// - Look up trace ID in a configuration map
-	// - Extract flags from context values
-	// - Conditionally enable/disable flags based on runtime state
-	// For now, return FlagTiKVCategoryRequest (the default), preserving existing behavior.
-	return trace.FlagTiKVCategoryRequest
+	flags := trace.TraceControlFlags(0)
+
+	// Map TiDB categories to TiKV categories regardless of whether a Trace sink is present.
+	enabledCategories := tracing.GetEnabledCategories()
+	if enabledCategories&tracing.TiKVRequest != 0 {
+		flags = flags.Set(trace.FlagTiKVCategoryRequest)
+	}
+	if enabledCategories&tracing.TiKVWriteDetails != 0 {
+		flags = flags.Set(trace.FlagTiKVCategoryWriteDetails)
+	}
+	if enabledCategories&tracing.TiKVReadDetails != 0 {
+		flags = flags.Set(trace.FlagTiKVCategoryReadDetails)
+	}
+
+	// Extract Trace object from context
+	sink := tracing.GetSink(ctx)
+	if sink == nil {
+		return flags
+	}
+
+	t, ok := sink.(*Trace)
+	if !ok {
+		return flags
+	}
+
+	// Read keep flag with RLock (thread-safe)
+	t.mu.RLock()
+	keep := t.keep
+	t.mu.RUnlock()
+
+	// Set immediate log flag based on keep
+	if keep {
+		flags = flags.Set(trace.FlagImmediateLog)
+	}
+
+	return flags
 }
 
 func mapCategory(category trace.Category) TraceCategory {
