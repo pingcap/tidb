@@ -66,12 +66,12 @@ type tidbSession struct {
 
 // GetDomain implements glue.Glue.
 func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
-	existDom, _ := session.GetDomain(nil)
+	existDom, _ := session.GetDomainForBR(nil)
 	initStatsSe, err := g.createTypesSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	dom, err := session.GetDomain(store)
+	dom, err := session.GetDomainForBR(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -104,14 +104,14 @@ func (g Glue) CreateSession(store kv.Storage) (glue.Session, error) {
 func (g Glue) startDomainAsNeeded(store kv.Storage) error {
 	g.startDomainMu.Lock()
 	defer g.startDomainMu.Unlock()
-	existDom, _ := session.GetDomain(nil)
+	existDom, _ := session.GetDomainForBR(nil)
 	if existDom != nil {
 		return nil
 	}
 	if err := ddl.StartOwnerManager(context.Background(), store); err != nil {
 		return errors.Trace(err)
 	}
-	dom, err := session.GetDomain(store)
+	dom, err := session.GetDomainForBR(store)
 	if err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 		log.Info("one shot session closed")
 	}()
 	// dom will be created during create session.
-	dom, err := session.GetDomain(store)
+	dom, err := session.GetDomainForBR(store)
 	if err != nil {
 		return errors.Trace(err)
 	}
