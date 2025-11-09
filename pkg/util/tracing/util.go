@@ -17,9 +17,16 @@ package tracing
 import (
 	"context"
 	"runtime/trace"
+	"strconv"
+	"sync/atomic"
+	"time"
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	clienttrace "github.com/tikv/client-go/v2/trace"
+	"go.uber.org/zap"
 )
 
 // TiDBTrace is set as Baggage on traces which are used for tidb tracing.
@@ -92,6 +99,43 @@ func StartRegionWithNewRootSpan(ctx context.Context, regionType string) (Region,
 	return r, ctx
 }
 
+// Sink records trace events.
+type Sink interface {
+	Record(ctx context.Context, event Event)
+}
+
+// FlightRecorder defines the flight recorder interface.
+type FlightRecorder interface {
+	Sink
+	MarkDump()
+}
+
+type sinkKeyType struct{}
+
+var sinkKey sinkKeyType = struct{}{}
+
+// WithFlightRecorder creates a context with the given FlightRecorder.
+func WithFlightRecorder(ctx context.Context, sink FlightRecorder) context.Context {
+	return context.WithValue(ctx, sinkKey, sink)
+}
+
+// GetSink returns the Sink from the context.
+func GetSink(ctx context.Context) any {
+	return ctx.Value(sinkKey)
+}
+
+// ExtractTraceID returns the trace identifier from ctx if present.
+// It delegates to client-go's TraceIDFromContext implementation.
+func ExtractTraceID(ctx context.Context) []byte {
+	return extractTraceID(ctx)
+}
+
+// extractTraceID returns the trace identifier from ctx if present.
+// It delegates to client-go's TraceIDFromContext implementation.
+func extractTraceID(ctx context.Context) []byte {
+	return clienttrace.TraceIDFromContext(ctx)
+}
+
 // StartRegion provides better API, integrating both opentracing and runtime.trace facilities into one.
 // Recommended usage is
 //
@@ -102,10 +146,172 @@ func StartRegion(ctx context.Context, regionType string) Region {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 = span.Tracer().StartSpan(regionType, opentracing.ChildOf(span.Context()))
 	}
-	return Region{
+	ret := Region{
 		Region: r,
 		Span:   span1,
 	}
+	if IsEnabled(General) {
+		if tmp := GetSink(ctx); tmp != nil {
+			sink := tmp.(Sink)
+			event := Event{
+				Category:  General,
+				Name:      regionType,
+				Phase:     PhaseBegin,
+				Timestamp: time.Now(),
+				TraceID:   ExtractTraceID(ctx),
+			}
+			sink.Record(ctx, event)
+			ret.span.event = &event
+			ret.span.sink = sink
+			ret.span.ctx = ctx
+		}
+	}
+	return ret
+}
+
+// enabledCategories stores the currently enabled category mask.
+var enabledCategories atomic.Uint64
+
+func init() {
+	enabledCategories.Store(uint64(AllCategories))
+}
+
+// Enable enables trace events for the specified categories.
+func Enable(categories TraceCategory) {
+	for {
+		current := enabledCategories.Load()
+		next := current | uint64(categories)
+		if enabledCategories.CompareAndSwap(current, next) {
+			return
+		}
+	}
+}
+
+// Disable disables trace events for the specified categories.
+func Disable(categories TraceCategory) {
+	for {
+		current := enabledCategories.Load()
+		next := current &^ uint64(categories)
+		if enabledCategories.CompareAndSwap(current, next) {
+			return
+		}
+	}
+}
+
+// SetCategories sets the enabled categories to exactly the specified value.
+func SetCategories(categories TraceCategory) {
+	enabledCategories.Store(uint64(categories))
+}
+
+// GetEnabledCategories returns the currently enabled categories.
+func GetEnabledCategories() TraceCategory {
+	return TraceCategory(enabledCategories.Load())
+}
+
+// IsEnabled returns whether the specified category is enabled.
+// This function is inline-friendly for hot paths.
+// Trace events only work for next-gen kernel.
+func IsEnabled(category TraceCategory) bool {
+	// Fast path: check kernel type first
+	if kerneltype.IsClassic() && !intest.InTest {
+		return false
+	}
+	return enabledCategories.Load()&uint64(category) != 0
+}
+
+// TraceCategory represents different trace event categories.
+type TraceCategory uint64
+
+const (
+	// TxnLifecycle traces transaction begin/commit/rollback events.
+	TxnLifecycle TraceCategory = 1 << iota
+	// Txn2PC traces two-phase commit prewrite and commit phases.
+	Txn2PC
+	// TxnLockResolve traces lock resolution and conflict handling.
+	TxnLockResolve
+	// StmtLifecycle traces statement start/finish events.
+	StmtLifecycle
+	// StmtPlan traces statement plan digest and optimization.
+	StmtPlan
+	// KvRequest traces client-go kv request and responses
+	KvRequest
+	// UnknownClient is the fallback category for unmapped client-go trace events.
+	// Used when client-go emits events with categories not yet mapped in adapter.go.
+	// This provides forward compatibility if client-go adds new categories.
+	UnknownClient
+	// General is used by tracing API
+	General
+	traceCategorySentinel
+)
+
+// AllCategories can be used to enable every known trace category.
+const AllCategories = traceCategorySentinel - 1
+
+// String returns the string representation of a TraceCategory.
+func (c TraceCategory) String() string {
+	return getCategoryName(c)
+}
+
+// ParseTraceCategory parses a trace category string representation and returns the corresponding TraceCategory.
+func ParseTraceCategory(category string) TraceCategory {
+	for i := 0; (1 << i) < traceCategorySentinel; i++ {
+		if getCategoryName(1<<i) == category {
+			return TraceCategory(1 << i)
+		}
+	}
+	return TraceCategory(0) // invalid
+}
+
+// getCategoryName returns the string name for a category.
+func getCategoryName(category TraceCategory) string {
+	switch category {
+	case TxnLifecycle:
+		return "txn_lifecycle"
+	case Txn2PC:
+		return "txn_2pc"
+	case TxnLockResolve:
+		return "txn_lock_resolve"
+	case StmtLifecycle:
+		return "stmt_lifecycle"
+	case StmtPlan:
+		return "stmt_plan"
+	case KvRequest:
+		return "kv_request"
+	case UnknownClient:
+		return "unknown_client"
+	case General:
+		return "general"
+	default:
+		return "unknown(" + strconv.FormatUint(uint64(category), 10) + ")"
+	}
+}
+
+// Constants used in event fields.
+// See https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU
+// for more details.
+
+// Phase represents the phase of an event.
+type Phase string
+
+// The value definition for Phase.
+const (
+	PhaseBegin      Phase = "B"
+	PhaseEnd        Phase = "E"
+	PhaseAsyncBegin Phase = "b"
+	PhaseAsyncEnd   Phase = "e"
+	PhaseFlowBegin  Phase = "s"
+	PhaseFlowEnd    Phase = "f"
+	PhaseInstant    Phase = "i"
+)
+
+// Event represents a traced event.
+type Event struct {
+	Timestamp time.Time
+	Name      string
+	Phase
+	TraceID  []byte
+	Fields   []zap.Field
+	Category TraceCategory
 }
 
 // StartRegionEx returns Region together with the context.
@@ -125,6 +331,11 @@ func StartRegionEx(ctx context.Context, regionType string) (Region, context.Cont
 type Region struct {
 	*trace.Region
 	opentracing.Span
+	span struct {
+		event *Event
+		sink  Sink
+		ctx   context.Context
+	}
 }
 
 // End marks the end of the traced code region.
@@ -133,6 +344,11 @@ func (r Region) End() {
 		r.Span.Finish()
 	}
 	r.Region.End()
+	if r.span.event != nil {
+		r.span.event.Phase = PhaseEnd
+		r.span.event.Timestamp = time.Now()
+		r.span.sink.Record(r.span.ctx, *r.span.event)
+	}
 }
 
 // TraceInfoFromContext returns the `model.TraceInfo` in context
