@@ -360,7 +360,7 @@ func (p *PhysicalIndexScan) GetScanRowSize() float64 {
 	return cardinality.GetIndexAvgRowSize(p.SCtx(), p.TblColHists, scanCols, p.Index.Unique)
 }
 
-// InitSchema is used to set the schema of PhysicalIndexScan. Before calling this,
+// InitSchemaForTiKVIndex is used to set the schema of PhysicalIndexScan. Before calling this,
 // make sure the following field of PhysicalIndexScan are initialized:
 //
 //	PhysicalIndexScan.Table         *model.TableInfo
@@ -368,7 +368,7 @@ func (p *PhysicalIndexScan) GetScanRowSize() float64 {
 //	PhysicalIndexScan.Index.Columns []*IndexColumn
 //	PhysicalIndexScan.IdxCols       []*expression.Column
 //	PhysicalIndexScan.Columns       []*model.ColumnInfo
-func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
+func (p *PhysicalIndexScan) InitSchemaForTiKVIndex(idxExprCols []*expression.Column, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, len(p.IdxCols), len(p.Index.Columns)+1)
 	copy(indexCols, p.IdxCols)
 
@@ -440,6 +440,28 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 	}
 
 	p.SetSchema(expression.NewSchema(indexCols...))
+}
+
+// InitSchemaForTiKVIndex is used to set the schema of PhysicalIndexScan.
+// Unlike the normal TiKV index, the indexed columns in TiCI index may not store its original data.
+// Currently, only primary key can return from the index library.
+func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols []*expression.Column) {
+	intest.Assert(!p.Index.Global && !p.Index.MVIndex)
+	handleLen := 1
+	if p.Table.IsCommonHandle {
+		handleLen = len(possibleHandleCols)
+	}
+	handleCols := make([]*expression.Column, 0, handleLen)
+	handleCols = append(handleCols, possibleHandleCols...)
+	if len(handleCols) == 0 {
+		handleCols = append(handleCols, &expression.Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			ID:       model.ExtraHandleID,
+			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+			OrigName: model.ExtraHandleName.O,
+		})
+	}
+	p.SetSchema(expression.NewSchema(handleCols...))
 }
 
 // AddSelectionConditionForGlobalIndex adds partition filtering conditions for global index scans.
@@ -692,7 +714,7 @@ func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *exp
 		PkIsHandleCol:    ds.GetPKIsHandleCol(),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	is.SetStats(stats)
-	is.InitSchema(s.FullIdxCols, s.IsDoubleRead)
+	is.InitSchemaForTiKVIndex(s.FullIdxCols, s.IsDoubleRead)
 	return is
 }
 
@@ -723,7 +745,11 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		is.StoreType = kv.TiCI
 	}
 	rowCount := path.CountAfterAccess
-	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)
+	if is.FtsQueryInfo != nil {
+		is.InitSchemaForTiCIIndex(ds.CommonHandleCols)
+	} else {
+		is.InitSchemaForTiKVIndex(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)
+	}
 
 	// If (1) tidb_opt_ordering_index_selectivity_threshold is enabled (not 0)
 	// and (2) there exists an index whose selectivity is smaller than or equal to the threshold,
