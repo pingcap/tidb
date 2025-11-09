@@ -1253,6 +1253,31 @@ func containVirtualColumn(p *physicalop.PhysicalTopN, tCols []*expression.Column
 	return false
 }
 
+func checkTopNPushDownByCopType(p *physicalop.PhysicalTopN, task base.Task, taskType kv.StoreType) bool {
+	if !canExpressionConvertedToPB(p, taskType) {
+		return false
+	}
+	copTask, ok := task.(*CopTask)
+	if ok {
+		if len(copTask.rootTaskConds) != 0 {
+			return false
+		}
+		// Check for index merge because it has multiple partial plans.
+		if !copTask.indexPlanFinished && len(copTask.idxMergePartPlans) > 0 {
+			for _, partialPlan := range copTask.idxMergePartPlans {
+				if containVirtualColumn(p, partialPlan.Schema().Columns) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	if containVirtualColumn(p, task.Plan().Schema().Columns) {
+		return false
+	}
+	return true
+}
+
 // canPushDownToTiKV checks whether this topN can be pushed down to TiKV.
 func canPushDownToTiKV(p *physicalop.PhysicalTopN, copTask *CopTask) bool {
 	if !canExpressionConvertedToPB(p, kv.TiKV) {
@@ -1367,13 +1392,60 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 			return newTask
 		}
 	}
-	if copTask, ok := t.(*CopTask); ok && needPushDown && canPushDownToTiKV(p, copTask) && len(copTask.rootTaskConds) == 0 {
+	if copTask, ok := t.(*CopTask); ok && needPushDown && checkTopNPushDownByCopType(p, copTask, copTask.getStoreType()) && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *physicalop.PhysicalTopN
 		var newGlobalTopN *physicalop.PhysicalTopN
 		if !copTask.indexPlanFinished && canPushToIndexPlan(copTask.indexPlan, cols) {
-			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.indexPlan, copTask.getStoreType())
+			indexStoreTp := copTask.getStoreType()
+			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.indexPlan, indexStoreTp)
+			if indexStoreTp == kv.TiCI {
+				indexScanPlan := copTask.indexPlan
+				for len(indexScanPlan.Children()) > 0 {
+					indexScanPlan = indexScanPlan.Children()[0]
+				}
+				indexScan := indexScanPlan.(*physicalop.PhysicalIndexScan)
+				hybridSearchInfo := indexScan.Index.HybridInfo
+				if hybridSearchInfo != nil && hybridSearchInfo.Sort != nil {
+					orderMatched := true
+					orderPos := 0
+				checkLoop:
+					for _, byItem := range pushedDownTopN.ByItems {
+						if orderPos >= len(hybridSearchInfo.Sort.Columns) || !orderMatched {
+							break
+						}
+						switch x := byItem.Expr.(type) {
+						case *expression.Column:
+							isDesc := hybridSearchInfo.Sort.Order[orderPos] == "desc"
+							if isDesc != byItem.Desc {
+								orderMatched = false
+								break checkLoop
+							}
+							colName := hybridSearchInfo.Sort.Columns[orderPos]
+							var id int64 = -1
+							for _, col := range indexScan.Table.Columns {
+								if col.Name.L == colName {
+									id = col.ID
+									break
+								}
+							}
+							if id != x.ID {
+								orderMatched = false
+								break checkLoop
+							}
+							orderPos++
+						case *expression.ScalarFunction:
+							orderMatched = false
+							break checkLoop
+						}
+					}
+					if orderMatched {
+						indexScan.FtsQueryInfo.TopK = new(uint32)
+						*indexScan.FtsQueryInfo.TopK = uint32(pushedDownTopN.Count)
+					}
+				}
+			}
 			copTask.indexPlan = pushedDownTopN
 			if newGlobalTopN != nil {
 				rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())

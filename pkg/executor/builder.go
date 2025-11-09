@@ -4226,6 +4226,9 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan)
 // to sort result rows in TiDB side for partition tables.
 func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans ...base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	idxScan := plans[0].(*physicalop.PhysicalIndexScan)
+	if idxScan.Index.IsFulltextIndexOnTiCI() {
+		plans = []base.PhysicalPlan{plans[len(plans)-1]}
+	}
 	indexReq, err := builder.ConstructDAGReq(ctx, plans, idxScan.StoreType)
 	if err != nil {
 		return nil, err
@@ -4276,11 +4279,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalInd
 		indexReq *tipb.DAGRequest
 		err      error
 	)
-	if !is.Index.IsFulltextIndexOnTiCI() {
-		indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans...)
-	} else {
-		indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans[len(v.IndexPlans)-1])
-	}
+	indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans...)
 	if err != nil {
 		return nil, err
 	}

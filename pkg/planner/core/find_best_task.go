@@ -2743,8 +2743,6 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		task = task.ConvertToRootTask(ds.SCtx())
 	} else if _, ok := task.(*RootTask); ok {
 		return base.InvalidTask, nil
-	} else if is.FtsQueryInfo != nil {
-		cop.finishIndexPlan()
 	}
 	return task, nil
 }
