@@ -15,6 +15,7 @@
 package traceevent_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"strings"
@@ -112,9 +113,16 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	require.NotEmpty(t, events, "Should have recorded trace events")
 
 	// Look for stmt.start events and verify prev_trace_id matches first statement
+	// We need to filter for the correct statement's event to avoid flakiness from background operations
 	foundPrevTraceID := false
 	for _, event := range events {
 		if event.Name == "stmt.start" {
+			// Verify this is the stmt.start event for our second statement
+			// by checking trace_id matches secondTraceID to avoid background operation events
+			if !bytes.Equal(event.TraceID, secondTraceID) {
+				continue // Skip events from other statements
+			}
+
 			for _, field := range event.Fields {
 				if field.Key == "prev_trace_id" {
 					foundPrevTraceID = true
@@ -126,6 +134,9 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 					require.Equal(t, strings.ToUpper(expectedPrevTraceIDHex), strings.ToUpper(prevTraceIDHex), "prev_trace_id should match the previous statement's trace ID")
 					break
 				}
+			}
+			if foundPrevTraceID {
+				break // Found and validated the correct event
 			}
 		}
 	}
