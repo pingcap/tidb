@@ -877,7 +877,6 @@ type SubJob struct {
 	SchemaVer    int64           `json:"schema_version"`
 	ReorgTp      ReorgType       `json:"reorg_tp"`
 	ReorgStage   ReorgStage      `json:"reorg_stage"`
-	NeedAnalyze  bool            `json:"need_analyze"`
 	AnalyzeState int8            `json:"analyze_state"`
 }
 
@@ -930,7 +929,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
 		ReorgMeta:       reorgMeta,
-		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq), NeedAnalyze: sub.NeedAnalyze},
+		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
 		Charset:         parentJob.Charset,
@@ -945,7 +944,6 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 // FromProxyJob converts a proxy job to a sub-job.
 func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
-	sub.NeedAnalyze = proxyJob.MultiSchemaInfo.NeedAnalyze
 	sub.SchemaState = proxyJob.SchemaState
 	sub.SnapshotVer = proxyJob.SnapshotVer
 	sub.RealStartTS = proxyJob.RealStartTS
@@ -987,9 +985,6 @@ type MultiSchemaInfo struct {
 
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
-	// NeedAnalyze is used to indicate whether we need to check if analyze is needed for this sub-job.
-	// In one multi-schema change job, only the last sub-job that need reorg will set this to true.
-	NeedAnalyze bool `json:"-"`
 
 	AddColumns    []ast.CIStr `json:"-"`
 	DropColumns   []ast.CIStr `json:"-"`

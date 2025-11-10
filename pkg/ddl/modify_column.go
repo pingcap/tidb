@@ -207,14 +207,6 @@ func initializeChangingIndexes(
 	return nil
 }
 
-func updateNeedAnalyze(job *model.Job, tp byte) {
-	if job.MultiSchemaInfo != nil {
-		job.MultiSchemaInfo.NeedAnalyze =
-			tp == model.ModifyTypeReorg ||
-				tp == model.ModifyTypeIndexReorg
-	}
-}
-
 func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifyColumnArgs(job)
 	defer func() {
@@ -272,7 +264,6 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 			logutil.DDLLogger().Info("meet varchar to char modify column, change type to precheck")
 			args.ModifyColumnType = model.ModifyTypePrecheck
 		}
-		updateNeedAnalyze(job, args.ModifyColumnType)
 	}
 
 	if job.IsRollingback() {
@@ -310,9 +301,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 
 	switch args.ModifyColumnType {
 	case model.ModifyTypePrecheck:
-		ver, err := w.precheckForVarcharToChar(jobCtx, job, args, dbInfo, tblInfo, oldCol)
-		updateNeedAnalyze(job, args.ModifyColumnType)
-		return ver, errors.Trace(err)
+		return w.precheckForVarcharToChar(jobCtx, job, args, dbInfo, tblInfo, oldCol)
 	case model.ModifyTypeNoReorgWithCheck:
 		return w.doModifyColumnWithCheck(jobCtx, job, dbInfo, tblInfo, args.Column, oldCol, args.Position)
 	case model.ModifyTypeNoReorg:
@@ -1028,24 +1017,17 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
-				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
-				checkAndMarkNonRevertible(job)
+				// For multi-schema change, analyze is done by parent job.
+				if job.MultiSchemaInfo == nil && checkAnalyzeNecessary(job, tblInfo) {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+				} else {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+					checkAndMarkNonRevertible(job)
+				}
 			}
 		case model.AnalyzeStateRunning:
-			// after all old index data are reorged. re-analyze it.
-			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, tblInfo, job.SchemaName)
-			if done || timedOut || failed {
-				if done {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
-				}
-				if timedOut {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
-				}
-				if failed {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
-				}
-			}
-		case model.AnalyzeStateDone, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+			w.doAnalyzeForTable(job, tblInfo)
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 			if tblInfo.TTLInfo != nil {
@@ -1242,24 +1224,17 @@ func (w *worker) doModifyColumnIndexReorg(
 				}
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
-				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
-				checkAndMarkNonRevertible(job)
+				// For multi-schema change, analyze is done by parent job.
+				if job.MultiSchemaInfo == nil && checkAnalyzeNecessary(job, tblInfo) {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+				} else {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+					checkAndMarkNonRevertible(job)
+				}
 			}
 		case model.AnalyzeStateRunning:
-			// after all old index data are reorged. re-analyze it.
-			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, tblInfo, job.SchemaName)
-			if done || timedOut || failed {
-				if done {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
-				}
-				if timedOut {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
-				}
-				if failed {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
-				}
-			}
-		case model.AnalyzeStateDone, model.AnalyzeStateTimeout:
+			w.doAnalyzeForTable(job, tblInfo)
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 			oldTp := oldCol.FieldType

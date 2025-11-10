@@ -70,15 +70,20 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			return ver, err
 		}
 
-		// Only preserve the flag of last job that need analyze.
-		setAnalyzeForLastEligibleSubJob(job.MultiSchemaInfo)
-
-		// Save table info and sub-jobs for rolling back.
 		var tblInfo *model.TableInfo
 		tblInfo, err = GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 		if err != nil {
 			return ver, err
 		}
+
+		if checkNeedAnalyzeForMultiSchemaChange(job, tblInfo) {
+			w.doAnalyzeForTable(job, tblInfo)
+			if job.ReorgMeta.AnalyzeState == model.AnalyzeStateRunning {
+				return ver, nil
+			}
+		}
+
+		// Save table info and sub-jobs for rolling back.
 		var schemaVersionGenerated = false
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
 		// Step the sub-jobs to the non-revertible states all at once.
@@ -200,8 +205,6 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 		Revertible:  true,
 		NeedReorg:   jobW.NeedReorg,
 		ReorgTp:     reorgTp,
-		// For modify column, this value will be filled during execution.
-		NeedAnalyze: jobW.Type == model.ActionAddIndex || jobW.Type == model.ActionAddPrimaryKey,
 	})
 	return nil
 }
@@ -372,18 +375,28 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	info.SubJobs = newSubJobs
 }
 
-// setAnalyzeForLastEligibleSubJob sets NeedAnalyze flag only for the last sub-job
-// that can perform embedded analyze, and clear flag for all previous sub-jobs.
-func setAnalyzeForLastEligibleSubJob(info *model.MultiSchemaInfo) {
-	for i := len(info.SubJobs) - 1; i >= 0; i-- {
-		subJob := info.SubJobs[i]
-		if subJob.NeedAnalyze {
-			for j := range i {
-				info.SubJobs[j].NeedAnalyze = false
+// checkNeedAnalyzeForMultiSchemaChange check if the multi-schema change job
+// need analyze after all sub jobs are non-revertible.
+func checkNeedAnalyzeForMultiSchemaChange(job *model.Job, tblInfo *model.TableInfo) bool {
+	switch job.ReorgMeta.AnalyzeState {
+	case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+		return false
+	case model.AnalyzeStateRunning:
+		return true
+	}
+
+	for i := len(job.MultiSchemaInfo.SubJobs) - 1; i >= 0; i-- {
+		switch job.MultiSchemaInfo.SubJobs[i].Type {
+		case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn:
+			if checkAnalyzeNecessary(job, tblInfo) {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+				return true
 			}
-			return
 		}
 	}
+
+	job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+	return false
 }
 
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {
