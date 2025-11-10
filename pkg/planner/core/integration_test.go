@@ -2442,7 +2442,7 @@ func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 	})
 }
 
-func TestIssuenullreject(t *testing.T) {
+func TestNullReject(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test;")
 
