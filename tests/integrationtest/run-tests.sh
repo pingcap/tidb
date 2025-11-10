@@ -198,7 +198,7 @@ if [ $build -eq 1 ]; then
     fi
     build_mysql_tester
 else
-    if [ -z "$tidb_server" ]; then
+    if [ -z "$tidb_server" -a $runs_on_port -eq 0 ]; then
         tidb_server="./integrationtest_tidb-server"
         if [[ ! -f "$tidb_server" ]]; then
             build_tidb_server
@@ -329,10 +329,13 @@ if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
         start_tidb_server
     fi
     run_mysql_tester
-    kill -15 $SERVER_PID
-    while ps -p $SERVER_PID > /dev/null; do
-        sleep 1
-    done
+    if [ ${runs_on_port} -eq 0 ]
+    then
+        kill -15 $SERVER_PID
+        while ps -p $SERVER_PID > /dev/null; do
+            sleep 1
+        done
+    fi
     check_data_race
 fi
 
