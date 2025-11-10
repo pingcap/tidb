@@ -39,6 +39,8 @@ type Trace struct {
 var globalHTTPFlightRecorder atomic.Pointer[HTTPFlightRecorder]
 
 // HTTPFlightRecorder implements Sink interface.
+// TODO: rename HTTPFlightRecorder to FlightRecorder as it may sink to log now instead of just HTTP
+// TODO: remove the old global flight recorder, clean up code.
 type HTTPFlightRecorder struct {
 	ch                   chan<- []Event
 	oldEnabledCategories TraceCategory

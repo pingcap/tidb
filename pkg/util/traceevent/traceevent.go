@@ -289,6 +289,7 @@ func (*LogSink) Record(ctx context.Context, event Event) {
 	if !loggingEnabled.Load() {
 		return
 	}
+
 	logEvent(ctx, event)
 }
 
