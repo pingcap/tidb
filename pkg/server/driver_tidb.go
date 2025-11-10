@@ -37,8 +37,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // TiDBDriver implements IDriver.
@@ -288,6 +290,9 @@ func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (resu
 	if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
 		rs, err = session.HandleNonTransactionalDML(ctx, s, tc.Session)
 	} else {
+		if sink := tracing.GetSink(ctx); sink == nil {
+			logutil.BgLogger().Warn("what the fuck?")
+		}
 		rs, err = tc.Session.ExecuteStmt(ctx, stmt)
 	}
 	if err != nil {

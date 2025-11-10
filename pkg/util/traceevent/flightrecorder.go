@@ -109,13 +109,16 @@ type SuspiciousEventConfig struct {
 	// QueryFail error code?
 	// ResolveLock?
 	// RegionError
+	// IsInternal
 	DevDebug *DevDebugConfig `json:"dev_debug,omitempty"`
 }
 
+// DevDebugConfig is the configuration for development debugging.
 type DevDebugConfig struct {
 	Type string
 }
 
+// Validate validates the development debugging configuration.
 func (c *DevDebugConfig) Validate(b *strings.Builder) error {
 	if c == nil {
 		return fmt.Errorf("dump_trigger.suspicious_event.dev_debug missing")
@@ -140,6 +143,7 @@ func (c *SuspiciousEventConfig) Validate(b *strings.Builder) error {
 	case "query_fail":
 	case "resolve_lock":
 	case "region_error":
+	case "is_internal":
 	case "dev_debug":
 		return c.DevDebug.Validate(b)
 	default:

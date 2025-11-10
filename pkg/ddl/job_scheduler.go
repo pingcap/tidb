@@ -491,12 +491,6 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 	r := tracing.StartRegion(ctx, "jobScheduler.deliveryJob")
 	defer r.End()
 
-	if sink := tracing.GetSink(ctx); sink != nil {
-		if raw, ok := sink.(tracing.FlightRecorder); ok {
-			raw.MarkDump()
-		}
-	}
-
 	if jobW.TraceInfo != nil && len(jobW.TraceInfo.TraceID) > 0 {
 		traceevent.TraceEvent(ctx, tracing.DDLJob, "deliveryJob",
 			zap.Int64("jobID", jobW.ID),
@@ -531,7 +525,6 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 		}()
 
 		trace := traceevent.NewTrace()
-		trace.MarkDump()
 		jobCtx := s.getJobRunCtx(trace, jobW.ID, jobW.TraceInfo)
 		defer trace.DiscardOrFlush(jobCtx.ctx)
 

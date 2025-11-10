@@ -1845,6 +1845,27 @@ func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
+	if sink := tracing.GetSink(ctx); sink == nil {
+		trace := traceevent.NewTrace()
+		ctx = tracing.WithFlightRecorder(ctx, trace)
+		defer trace.DiscardOrFlush(ctx)
+
+		// A developer debugging event so we can see what trace is missing!
+		if traceevent.IsEnabled(tracing.DevDebug) {
+			traceevent.TraceEvent(ctx, tracing.DevDebug, "ExecuteInternal missing trace ctx",
+				zap.String("sql", sql),
+				zap.Stack("stack"))
+			traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.dev_debug", func(config *traceevent.DumpTriggerConfig) bool {
+				return config.Event.DevDebug.Type == "execute_internal_trace_missing"
+			})
+		}
+	}
+
+	rs, err = s.executeInternalImpl(ctx, sql, args...)
+	return rs, err
+}
+
+func (s *session) executeInternalImpl(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
@@ -2355,6 +2376,10 @@ func queryFailDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
 	return config.Event.Type == "query_fail"
 }
 
+func isInternalDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.Event.Type == "is_internal"
+}
+
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
 	rs, err := s.executeStmtImpl(ctx, stmtNode)
 	if err != nil {
@@ -2376,6 +2401,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 
 	sessVars := s.sessionVars
 	sessVars.StartTime = time.Now()
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event", isInternalDumpTriggerCheck)
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -2809,8 +2835,9 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	sqlDigest, _ := stmtCtx.SQLDigest()
 	// Make sure StmtType is filled even if succ is false.
 	if stmtCtx.StmtType == "" {
-		stmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, s.GetStmtNode())
+		stmtCtx.StmtType = ast.GetStmtLabel(s.GetStmtNode())
 	}
+
 	// Emit stmt.start trace event
 	if traceevent.IsEnabled(traceevent.StmtLifecycle) {
 		fields := []zap.Field{

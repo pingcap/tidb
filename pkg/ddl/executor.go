@@ -21,6 +21,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -6658,7 +6659,9 @@ func (e *executor) DoDDLJobWrapper(ctx context.Context, sctx sessionctx.Context,
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(sctx, job)
 
-	traceevent.TraceEvent(ctx, tracing.DDLJob, "ddlDelieverJobTask", zap.Int64("jobID", job.ID))
+	traceevent.TraceEvent(ctx, tracing.DDLJob, "ddlDelieverJobTask",
+		zap.Int64("jobID", job.ID),
+		zap.String("traceID", hex.EncodeToString(job.TraceInfo.TraceID)))
 	e.deliverJobTask(jobW)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
