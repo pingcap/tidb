@@ -179,6 +179,16 @@ type executor struct {
 	sessPool    *sess.Pool
 	statsHandle *handle.Handle
 
+	// startMode stores the start mode of the ddl executor, it's used to indicate
+	// whether the executor is responsible for auto ID rebase.
+	// Since https://github.com/pingcap/tidb/pull/64356, we move rebase logic from
+	// executor into DDL job worker. So typically, the job worker is responsible for
+	// rebase. But sometimes we use higher version of BR to restore db to lower version
+	// of TiDB cluster, which may cause rebase is not executed on both executor(BR) and
+	// worker(downstream TiDB) side. So we use this mode to check if this is runned by BR.
+	// If so, the executor should handle auto ID rebase.
+	startMode StartMode
+
 	ctx        context.Context
 	uuid       string
 	store      kv.Storage
@@ -1215,7 +1225,17 @@ func (e *executor) CreateTableWithInfo(
 		if val, ok := jobW.GetSessionVars(variable.TiDBScatterRegion); ok {
 			scatterScope = val
 		}
+<<<<<<< HEAD
 		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, scatterScope)
+=======
+
+		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
+		if e.startMode == BR {
+			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
+		}
+>>>>>>> d059a7de1b1 (ddl: add auto ID rebase create table submitted by BR (#64356))
 	}
 
 	return errors.Trace(err)
@@ -1312,8 +1332,16 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		scatterScope = val
 	}
 	for _, tblArgs := range args.Tables {
+<<<<<<< HEAD
 		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, scatterScope); err != nil {
 			return errors.Trace(err)
+=======
+		preSplitAndScatterTable(ctx, e.store, tblArgs.TableInfo, scatterScope)
+		if e.startMode == BR {
+			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tblArgs.TableInfo); err != nil {
+				return errors.Trace(err)
+			}
+>>>>>>> d059a7de1b1 (ddl: add auto ID rebase create table submitted by BR (#64356))
 		}
 	}
 
