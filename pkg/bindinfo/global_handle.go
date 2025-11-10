@@ -287,7 +287,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 	}()
 
 	var mockTimeLag time.Duration // mock time lag between different TiDB instances for test, see #64250.
-	if intest.InTest && sctx.Value(TestTimeLagInLoadingBinding) != nil {
+	if intest.InTest && sctx != nil && sctx.Value(TestTimeLagInLoadingBinding) != nil {
 		mockTimeLag = sctx.Value(TestTimeLagInLoadingBinding).(time.Duration)
 	}
 
