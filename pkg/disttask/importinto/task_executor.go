@@ -170,13 +170,13 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 // Accepted implements Collector.Accepted interface.
 func (s *importStepExecutor) Accepted(bytes int64) {
 	s.summary.Bytes.Add(bytes)
-	s.GetMeterRecorder().IncReadBytes(uint64(bytes))
+	s.GetMeterRecorder().IncReadObjStoreBytes(uint64(bytes))
 }
 
 // Processed implements Collector.Processed interface.
 func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
 	s.summary.RowCnt.Add(rowCnt)
-	s.GetMeterRecorder().IncWriteBytes(uint64(bytes))
+	s.GetMeterRecorder().IncWriteObjStoreBytes(uint64(bytes))
 }
 
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {

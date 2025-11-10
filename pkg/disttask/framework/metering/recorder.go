@@ -18,13 +18,17 @@ import "sync/atomic"
 
 // Recorder is used to record metering data.
 type Recorder struct {
-	taskID      int64
-	keyspace    string
-	taskType    string
-	getRequests atomic.Uint64
-	putRequests atomic.Uint64
-	readBytes   atomic.Uint64
-	writeBytes  atomic.Uint64
+	taskID             int64
+	keyspace           string
+	taskType           string
+	getRequests        atomic.Uint64
+	putRequests        atomic.Uint64
+	readBytes          atomic.Uint64
+	writeBytes         atomic.Uint64
+	readObjStoreBytes  atomic.Uint64
+	writeObjStoreBytes atomic.Uint64
+	readClusterBytes   atomic.Uint64
+	writeClusterBytes  atomic.Uint64
 }
 
 // IncGetRequest records the get request count.
@@ -45,6 +49,26 @@ func (r *Recorder) IncReadBytes(v uint64) {
 // IncWriteBytes records the write data bytes.
 func (r *Recorder) IncWriteBytes(v uint64) {
 	r.writeBytes.Add(v)
+}
+
+// IncReadObjStoreBytes records the read object store bytes.
+func (r *Recorder) IncReadObjStoreBytes(v uint64) {
+	r.readObjStoreBytes.Add(v)
+}
+
+// IncWriteObjStoreBytes records the write object store bytes.
+func (r *Recorder) IncWriteObjStoreBytes(v uint64) {
+	r.writeObjStoreBytes.Add(v)
+}
+
+// IncReadClusterBytes records the read cluster bytes.
+func (r *Recorder) IncReadClusterBytes(v uint64) {
+	r.readClusterBytes.Add(v)
+}
+
+// IncWriteClusterBytes records the write cluster bytes.
+func (r *Recorder) IncWriteClusterBytes(v uint64) {
+	r.writeClusterBytes.Add(v)
 }
 
 func (r *Recorder) currData() *Data {

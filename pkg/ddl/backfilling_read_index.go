@@ -462,12 +462,12 @@ func newDistTaskRowCntCollector(
 
 func (d *distTaskRowCntCollector) Accepted(bytes int64) {
 	d.summary.ReadBytes.Add(bytes)
-	d.meterRec.IncReadBytes(uint64(bytes))
+	d.meterRec.IncReadClusterBytes(uint64(bytes))
 }
 
 func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
 	d.summary.Bytes.Add(bytes)
 	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
-	d.meterRec.IncWriteBytes(uint64(bytes))
+	d.meterRec.IncWriteObjStoreBytes(uint64(bytes))
 }
