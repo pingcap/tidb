@@ -60,9 +60,9 @@ ifneq "$(TIDB_EDITION)" "Enterprise"
 endif
 endif
 
-ARCH      := "`uname -s`"
-LINUX     := "Linux"
-MAC       := "Darwin"
+ARCH      := $(shell uname -s)
+LINUX     := Linux
+MAC       := Darwin
 
 PACKAGE_LIST  := go list ./...
 PACKAGE_LIST_TIDB_TESTS  := go list ./... | grep -vE "github.com\/pingcap\/tidb\/br|github.com\/pingcap\/tidb\/cmd|github.com\/pingcap\/tidb\/dumpling"
