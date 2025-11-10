@@ -25,10 +25,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -126,7 +128,17 @@ func (r *readIndexStepExecutor) runGlobalPipeline(
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) error {
-	pipe, err := r.buildExternalStorePipeline(opCtx, subtask.TaskID, subtask.ID, sm, concurrency)
+	objStoreReqs, extStore, err := handle.CreateGlobalSortStore(ctx, r.cloudStorageURI)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		extStore.Close()
+		r.summary.MergeObjStoreRequests(objStoreReqs)
+		r.GetMeterRecorder().MergeObjStoreRequests(objStoreReqs)
+	}()
+
+	pipe, err := r.buildExternalStorePipeline(opCtx, extStore, subtask.TaskID, subtask.ID, sm, concurrency)
 	if err != nil {
 		return err
 	}
@@ -388,6 +400,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 
 func (r *readIndexStepExecutor) buildExternalStorePipeline(
 	opCtx *OperatorCtx,
+	extStore storage.ExternalStorage,
 	taskID int64,
 	subtaskID int64,
 	sm *BackfillSubTaskMeta,
@@ -408,8 +421,6 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 			s.metaGroups[summary.GroupOffset] = kvMeta
 		}
 		kvMeta.MergeSummary(summary)
-		r.summary.PutReqCnt.Add(summary.PutRequestCount)
-		r.GetMeterRecorder().IncPutRequest(summary.PutRequestCount)
 		s.mu.Unlock()
 	}
 	var idxNames strings.Builder
@@ -423,7 +434,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
 		r.store,
-		r.cloudStorageURI,
+		extStore,
 		r.sessPool,
 		taskID,
 		subtaskID,
@@ -462,12 +473,12 @@ func newDistTaskRowCntCollector(
 
 func (d *distTaskRowCntCollector) Accepted(bytes int64) {
 	d.summary.ReadBytes.Add(bytes)
-	d.meterRec.IncReadClusterBytes(uint64(bytes))
+	d.meterRec.IncReadBytes(uint64(bytes))
 }
 
 func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
 	d.summary.Bytes.Add(bytes)
 	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
-	d.meterRec.IncWriteObjStoreBytes(uint64(bytes))
+	d.meterRec.IncWriteBytes(uint64(bytes))
 }

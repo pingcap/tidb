@@ -19,6 +19,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"go.uber.org/atomic"
@@ -106,6 +107,12 @@ type SubtaskSummary struct {
 	// smoother speed for each subtask.
 	// It's updated each time we store the latest summary into subtask table.
 	Progresses []Progress `json:"progresses,omitempty"`
+}
+
+// MergeObjStoreRequests merges the recording requests into the summary.
+func (s *SubtaskSummary) MergeObjStoreRequests(reqs *recording.Requests) {
+	s.GetReqCnt.Add(reqs.Get.Load())
+	s.PutReqCnt.Add(reqs.Put.Load())
 }
 
 // Update stores the latest progress of the subtask.

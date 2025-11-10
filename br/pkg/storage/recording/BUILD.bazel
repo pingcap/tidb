@@ -1,0 +1,8 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "recording",
+    srcs = ["recording.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/storage/recording",
+    visibility = ["//visibility:public"],
+)

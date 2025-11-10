@@ -22,8 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -84,22 +84,17 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		m.mu.Lock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 		m.mu.Unlock()
-		m.summary.PutReqCnt.Add(summary.PutRequestCount)
-		m.GetMeterRecorder().IncPutRequest(summary.PutRequestCount)
-	}
-	onReaderClose := func(summary *external.ReaderSummary) {
-		m.summary.GetReqCnt.Add(summary.GetRequestCount)
-		m.GetMeterRecorder().IncGetRequest(summary.GetRequestCount)
 	}
 
-	storeBackend, err := storage.ParseBackend(m.cloudStoreURI, nil)
+	objStoreReqs, extStore, err := handle.CreateGlobalSortStore(ctx, m.cloudStoreURI)
 	if err != nil {
 		return err
 	}
-	store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
-	if err != nil {
-		return err
-	}
+	defer func() {
+		extStore.Close()
+		m.summary.MergeObjStoreRequests(objStoreReqs)
+		m.GetMeterRecorder().MergeObjStoreRequests(objStoreReqs)
+	}()
 
 	prefix := path.Join(strconv.Itoa(int(subtask.TaskID)), strconv.Itoa(int(subtask.ID)))
 	res := m.GetResource()
@@ -109,12 +104,11 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	err = external.MergeOverlappingFiles(
 		ctx,
 		sm.DataFiles,
-		store,
+		extStore,
 		partSize,
 		prefix,
 		external.DefaultBlockSize,
 		onWriterClose,
-		onReaderClose,
 		external.NewMergeCollector(ctx, nil),
 		int(res.CPU.Capacity()),
 		true,

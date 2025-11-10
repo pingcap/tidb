@@ -728,11 +728,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	var onFlush func()
-	if option != nil {
-		onFlush = option.OnUpload
-	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, onFlush)
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
 	return uploaderWriter, nil
 }
 
