@@ -4234,7 +4234,7 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 		return nil, err
 	}
 
-	indexReq.OutputOffsets = []uint32{}
+	indexReq.OutputOffsets = make([]uint32, 0, len(idxScan.ByItems)+handleLen+1)
 	if len(idxScan.ByItems) != 0 {
 		schema := idxScan.Schema()
 		for _, item := range idxScan.ByItems {
@@ -4256,15 +4256,33 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 		}
 	}
 
+	if !idxScan.Index.IsFulltextIndexOnTiCI() {
+		handleOutputOffsetsForTiKVIndexLookUp(indexReq, handleLen, columns, idxScan.NeedExtraOutputCol())
+	} else {
+		handleOutuputOffsetsForTiCIIndexLookUp(indexReq, handleLen)
+	}
+
+	return indexReq, err
+}
+
+// handleOutputOffsetsForTiKVIndexLookUp handles the output offsets for TiKV index look up requests.
+// See the InitSchemaForTiKVIndex for the row layout.
+func handleOutputOffsetsForTiKVIndexLookUp(indexReq *tipb.DAGRequest, handleLen int, columns []*model.IndexColumn, needExtraOutputCol bool) {
 	for i := range handleLen {
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
 	}
-
-	if idxScan.NeedExtraOutputCol() {
+	if needExtraOutputCol {
 		// need add one more column for pid or physical table id
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+handleLen))
 	}
-	return indexReq, err
+}
+
+// handleOutuputOffsetsForTiCIIndexLookUp handles the output offsets for TiCI index look up requests.
+// See the InitSchemaForTiCIIndex for the row layout.
+func handleOutuputOffsetsForTiCIIndexLookUp(indexReq *tipb.DAGRequest, handleLen int) {
+	for i := 0; i < handleLen; i++ {
+		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
+	}
 }
 
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
