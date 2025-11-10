@@ -15,6 +15,7 @@
 package traceevent_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"strings"
@@ -70,7 +71,7 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	require.NoError(t, err)
 
 	// Clear the recorder and reset prev trace ID
-	recorder.Reset()
+	recorder.DiscardOrFlush()
 	se.GetSessionVars().PrevTraceID = nil
 
 	// Execute first statement
@@ -88,7 +89,7 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	t.Logf("First statement trace ID: %s", hex.EncodeToString(firstTraceID))
 
 	// Clear the recorder to capture only the second statement's events
-	recorder.Reset()
+	recorder.DiscardOrFlush()
 
 	// Execute second statement in the same session
 	stmt2, err := session.ParseWithParams4Test(ctx, se, "insert into test.t2 values (2, 'second')")
@@ -112,9 +113,16 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	require.NotEmpty(t, events, "Should have recorded trace events")
 
 	// Look for stmt.start events and verify prev_trace_id matches first statement
+	// We need to filter for the correct statement's event to avoid flakiness from background operations
 	foundPrevTraceID := false
 	for _, event := range events {
 		if event.Name == "stmt.start" {
+			// Verify this is the stmt.start event for our second statement
+			// by checking trace_id matches secondTraceID to avoid background operation events
+			if !bytes.Equal(event.TraceID, secondTraceID) {
+				continue // Skip events from other statements
+			}
+
 			for _, field := range event.Fields {
 				if field.Key == "prev_trace_id" {
 					foundPrevTraceID = true
@@ -126,6 +134,9 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 					require.Equal(t, strings.ToUpper(expectedPrevTraceIDHex), strings.ToUpper(prevTraceIDHex), "prev_trace_id should match the previous statement's trace ID")
 					break
 				}
+			}
+			if foundPrevTraceID {
+				break // Found and validated the correct event
 			}
 		}
 	}
@@ -153,7 +164,7 @@ func TestFlightRecorder(t *testing.T) {
 		require.NoError(t, err)
 		for _, sql := range []string{"select * from t", "select * from t where b = 5"} {
 			tk.MustQueryWithContext(ctx, sql).Check(testkit.Rows())
-			sink.Reset(ctx)
+			sink.DiscardOrFlush(ctx)
 			require.Len(t, eventCh, 1)
 			event := <-eventCh
 			require.NotEmpty(t, event)
@@ -173,7 +184,7 @@ func TestFlightRecorder(t *testing.T) {
 		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
 		require.NoError(t, err)
 		tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows())
-		sink.Reset(ctx)
+		sink.DiscardOrFlush(ctx)
 		require.NotEmpty(t, eventCh)
 		events := <-eventCh
 		for _, event := range events {
@@ -195,7 +206,7 @@ func TestFlightRecorder(t *testing.T) {
 		require.NoError(t, err)
 		for i := 0; i < 10; i++ {
 			tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows())
-			sink.Reset(ctx)
+			sink.DiscardOrFlush(ctx)
 		}
 		require.Len(t, eventCh, 2)
 		flightRecorder.Close()
@@ -217,10 +228,10 @@ func TestFlightRecorder(t *testing.T) {
 		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
 		require.NoError(t, err)
 		tk.MustExecWithContext(ctx, "insert into t values ('aaa', 1)")
-		sink.Reset(ctx)
+		sink.DiscardOrFlush(ctx)
 		require.Empty(t, eventCh)
 		tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("aaa 1"))
-		sink.Reset(ctx)
+		sink.DiscardOrFlush(ctx)
 		require.Len(t, eventCh, 1)
 		drainEvents(eventCh)
 		flightRecorder.Close()
@@ -241,12 +252,12 @@ func TestFlightRecorder(t *testing.T) {
 		require.NoError(t, err)
 		_, err = tk.ExecWithContext(ctx, "insert into t values ('aaa', 2)")
 		require.Error(t, err)
-		sink.Reset(ctx)
+		sink.DiscardOrFlush(ctx)
 		require.Len(t, eventCh, 1)
 		drainEvents(eventCh)
 
 		tk.MustExecWithContext(ctx, "insert into t values ('bbb', 2)")
-		sink.Reset(ctx)
+		sink.DiscardOrFlush(ctx)
 		require.Len(t, eventCh, 0)
 		flightRecorder.Close()
 	}

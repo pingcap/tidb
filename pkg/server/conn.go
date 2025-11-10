@@ -494,7 +494,11 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 	if cc.getCtx() != nil {
 		cc.pkt.SetMaxAllowedPacket(cc.ctx.GetSessionVars().MaxAllowedPacket)
 	}
-	return cc.pkt.ReadPacket()
+	data, err := cc.pkt.ReadPacket()
+	if err == nil && cc.getCtx() != nil {
+		cc.ctx.GetSessionVars().InPacketBytes.Add(uint64(len(data)))
+	}
+	return data, err
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
@@ -503,6 +507,9 @@ func (cc *clientConn) writePacket(data []byte) error {
 			failpoint.Return(nil)
 		}
 	})
+	if cc.getCtx() != nil {
+		cc.ctx.GetSessionVars().OutPacketBytes.Add(uint64(len(data)))
+	}
 	return cc.pkt.WritePacket(data)
 }
 
@@ -1074,6 +1081,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 	var traceInfo *tracing.TraceInfo
 
 	trace := traceevent.NewTrace()
+	ctx = tracing.WithFlightRecorder(ctx, trace)
 
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
@@ -1163,12 +1171,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 			}
 		}
 
-		ctx = tracing.WithFlightRecorder(ctx, trace)
 		startTime := time.Now()
 		err = cc.dispatch(ctx, data)
 		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err != nil)
 		cc.chunkAlloc.Reset()
-		trace.Reset(ctx)
+		trace.DiscardOrFlush(ctx)
 
 		if err != nil {
 			cc.audit(context.Background(), plugin.Error) // tell the plugin API there was a dispatch error
@@ -1297,6 +1304,8 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	defer func() {
 		// reset killed for each request
 		cc.ctx.GetSessionVars().SQLKiller.Reset()
+		cc.ctx.GetSessionVars().InPacketBytes.Store(0)
+		cc.ctx.GetSessionVars().OutPacketBytes.Store(0)
 	}()
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {

@@ -153,8 +153,9 @@ type jobScheduler struct {
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
 	generalDDLWorkerPool *workerPool
-	bgJobWorkerPool      *workerPool
-	seqAllocator         atomic.Uint64
+	// bgJobWorkerPool is only used in the next-gen kernel. NOTE: Need to check it is not nil before use.
+	bgJobWorkerPool *workerPool
+	seqAllocator    atomic.Uint64
 
 	// those fields are shared with 'ddl' instance
 	// TODO ddlCtx is too large for here, we should remove dependency on it.
@@ -346,7 +347,7 @@ func (s *jobScheduler) schedule() error {
 		if err := s.loadAndDeliverJobs(ctx, se); err != nil {
 			logutil.SampleLogger().Warn("load and deliver jobs failed", zap.Error(err))
 		}
-		trace.Reset(ctx)
+		trace.DiscardOrFlush(ctx)
 	}
 }
 
@@ -532,7 +533,7 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 		trace := traceevent.NewTrace()
 		trace.MarkDump()
 		jobCtx := s.getJobRunCtx(trace, jobW.ID, jobW.TraceInfo)
-		defer trace.Reset(jobCtx.ctx)
+		defer trace.DiscardOrFlush(jobCtx.ctx)
 
 		for {
 			err := s.transitOneJobStepAndWaitSync(wk, jobCtx, jobW)
@@ -697,6 +698,9 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 }
 
 func (s *jobScheduler) workerPoolExhausted() bool {
+	if s.bgJobWorkerPool == nil {
+		return s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0
+	}
 	return s.generalDDLWorkerPool.available() == 0 &&
 		s.reorgWorkerPool.available() == 0 &&
 		s.bgJobWorkerPool.available() == 0

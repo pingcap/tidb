@@ -131,7 +131,7 @@ func (nm *NodeManager) refreshNodesLoop(ctx context.Context, taskMgr TaskManager
 			return
 		case <-ticker.C:
 			nm.refreshNodes(ctx, taskMgr, slotMgr)
-			trace.Reset(ctx)
+			trace.DiscardOrFlush(ctx)
 		}
 	}
 }

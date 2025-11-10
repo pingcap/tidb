@@ -155,7 +155,7 @@ func (m *Manager) handleTasksLoop() {
 		}
 
 		m.handleTasks()
-		m.trace.Reset(m.ctx)
+		m.trace.DiscardOrFlush(m.ctx)
 
 		// service scope might change, so we call WithLabelValues every time.
 		dxfmetric.UsedSlotsGauge.WithLabelValues(vardef.ServiceScope.Load()).

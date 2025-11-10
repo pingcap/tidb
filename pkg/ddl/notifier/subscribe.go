@@ -173,7 +173,7 @@ func (n *DDLNotifier) start() {
 				)
 				logutil.Logger(ctx).Error("Error processing events", zap.Error(err))
 			}
-			trace.Reset(ctx)
+			trace.DiscardOrFlush(ctx)
 		}
 	}
 }

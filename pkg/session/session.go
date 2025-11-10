@@ -1845,27 +1845,6 @@ func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
-	if sink := tracing.GetSink(ctx); sink == nil {
-		trace := traceevent.NewTrace()
-		ctx = tracing.WithFlightRecorder(ctx, trace)
-		defer trace.Reset(ctx)
-
-		// A developer debugging event so we can see what trace is missing!
-		if traceevent.IsEnabled(tracing.DevDebug) {
-			traceevent.TraceEvent(ctx, tracing.DevDebug, "ExecuteInternal missing trace ctx",
-				zap.String("sql", sql),
-				zap.Stack("stack"))
-			traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.dev_debug", func(config *traceevent.DumpTriggerConfig) bool {
-				return config.Event.DevDebug.Type == "execute_internal_trace_missing"
-			})
-		}
-	}
-
-	rs, err = s.executeInternalImpl(ctx, sql, args...)
-	return rs, err
-}
-
-func (s *session) executeInternalImpl(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
@@ -1923,6 +1902,7 @@ type sqlRegexp struct {
 }
 
 func (s sqlRegexp) sqlRegexpDumpTriggerCheck(cfg *traceevent.DumpTriggerConfig) bool {
+	// TODO: pre-compile the regexp to improve performance
 	match, err := regexp.MatchString(cfg.UserCommand.SQLRegexp, s.regexp)
 	return err == nil && match
 }
@@ -2772,6 +2752,30 @@ func (s *session) hasFileTransInConn() bool {
 	return false
 }
 
+type sqlDigestAlias struct {
+	Digest string
+}
+
+func (digest sqlDigestAlias) sqlDigestDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.SQLDigest == digest.Digest
+}
+
+type userAlias struct {
+	user string
+}
+
+func (u userAlias) byUserDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.ByUser == u.user
+}
+
+type stmtLabelAlias struct {
+	label string
+}
+
+func (s stmtLabelAlias) stmtLabelDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.StmtLabel == s.label
+}
+
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
 	failpoint.Inject("assertTxnManagerInRunStmt", func() {
@@ -2801,10 +2805,14 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	ctx = trace.ContextWithTraceID(ctx, traceID)
 	// Store trace ID for next statement
 	se.sessionVars.PrevTraceID = traceID
+	stmtCtx := se.sessionVars.StmtCtx
+	sqlDigest, _ := stmtCtx.SQLDigest()
+	// Make sure StmtType is filled even if succ is false.
+	if stmtCtx.StmtType == "" {
+		stmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, s.GetStmtNode())
+	}
 	// Emit stmt.start trace event
 	if traceevent.IsEnabled(traceevent.StmtLifecycle) {
-		stmtCtx := se.sessionVars.StmtCtx
-		sqlDigest, _ := stmtCtx.SQLDigest()
 		fields := []zap.Field{
 			zap.String("sql_digest", sqlDigest),
 			zap.Bool("autocommit", se.sessionVars.IsAutocommit()),
@@ -2816,6 +2824,12 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		}
 		traceevent.TraceEvent(ctx, traceevent.StmtLifecycle, "stmt.start", fields...)
 	}
+	// Not using closure to avoid unnecessary memory allocation.
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.sql_digest", sqlDigestAlias{sqlDigest}.sqlDigestDumpTriggerCheck)
+	if se.sessionVars.User != nil && se.sessionVars.User.Username != "" {
+		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.by_user", userAlias{se.sessionVars.User.Username}.byUserDumpTriggerCheck)
+	}
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.stmt_label", stmtLabelAlias{stmtCtx.StmtType}.stmtLabelDumpTriggerCheck)
 
 	// Defer stmt.finish trace event to capture final state including errors
 	defer func() {
