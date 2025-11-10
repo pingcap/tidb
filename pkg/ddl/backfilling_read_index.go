@@ -157,7 +157,7 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 		return err
 	}
 	defer bCtx.Close()
-	pipe, err := r.buildLocalStorePipeline(opCtx, bCtx, sm, concurrency, subtask.TaskID)
+	pipe, err := r.buildLocalStorePipeline(opCtx, bCtx, sm, concurrency)
 	if err != nil {
 		return err
 	}
@@ -343,7 +343,6 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 	backendCtx ingest.BackendCtx,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
-	taskID int64,
 ) (*operator.AsyncPipeline, error) {
 	start, end, tbl, err := r.getTableStartEndKey(sm)
 	if err != nil {
