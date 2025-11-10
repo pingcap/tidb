@@ -2797,6 +2797,8 @@ func TestFormatWithLocale(t *testing.T) {
 		{12345.67, 2, "an_ES", "12,345.67", false, "CommaDot (an_ES) - MySQL fallback"},
 		{12345.67, 2, "az_AZ", "12,345.67", false, "CommaDot (az_AZ) - MySQL fallback"},
 		{12345.67, 2, "br_FR", "12,345.67", false, "CommaDot (br_FR) - MySQL fallback"},
+		{3000.14, 2, "kv_RU", "3,000.14", false, "CommaDot (kv_RU) - MySQL fallback"},
+		{12345.67, 3, "su_ID", "12,345.670", false, "CommaDot (su_ID) - MySQL fallback"},
 
 		// --- Style: DotComma (123.456,78) ---
 		{7654321.98, 2, "de_DE", "7.654.321,98", false, "DotComma (de_DE) - large number"},
@@ -2808,12 +2810,12 @@ func TestFormatWithLocale(t *testing.T) {
 		{555.55, 1, "tr_TR", "555,6", false, "DotComma (tr_TR) - extra locale, rounding"},
 		{1234.56, 2, "nb_NO", "1.234,56", false, "DotComma (nb_NO) - MySQL behavior"},
 		{1234.56, 2, "uk_UA", "1.234,56", false, "DotComma (uk_UA) - MySQL behavior"},
+		{12345.67, 3, "no_NO", "12.345,670", false, "DotComma (no_NO) - MySQL behavior"},
 
 		// --- Style: SpaceComma (123 456,78) ---
 		{-0.88, 1, "ru_RU", "-0,9", false, "SpaceComma (ru_RU) - negative, rounding"},
 		{98765, 0, "sv_SE", "98 765", false, "SpaceComma (sv_SE) - no decimal part"},
 		{2000, 2, "cs_CZ", "2 000,00", false, "SpaceComma (cs_CZ) - extra locale, padding"},
-		{1000000, 2, "bg_BG", "1 000 000,00", false, "SpaceComma (bg_BG) - MySQL behavior"},
 
 		// --- Style: NoneComma (123456,78) ---
 		{-2.23, 1, "el_GR", "-2,2", false, "NoneComma (el_GR) - negative, rounding"},
@@ -2824,16 +2826,13 @@ func TestFormatWithLocale(t *testing.T) {
 		{1999.9, 0, "pl_PL", "2000", false, "NoneComma (pl_PL) - MySQL behavior"},
 		{123, 2, "fr_CH", "123,00", false, "NoneComma (fr_CH) - MySQL behavior"},
 		{12345, 0, "de_AT", "12345", false, "NoneComma (de_AT) - MySQL behavior"},
+		{1000000, 2, "bg_BG", "1000000,00", false, "NoneComma (bg_BG) - MySQL behavior"},
 
 		// --- Style: AposDot (123'456.78) ---
 		{4567890.123, 2, "de_CH", "4'567'890.12", false, "AposDot (de_CH) - large number"},
 
 		// --- Style: AposComma (123'456,78) ---
 		{4567890.123, 2, "it_CH", "4'567'890,12", false, "AposComma (it_CH) - MySQL behavior"},
-
-		// --- Style: NarrowSpaceComma (123 456,78) ---
-		// Note: " " is U+202F (Narrow No-Break Space)
-		{3000.14, 2, "kv_RU", "3 000,14", false, "NarrowSpaceComma (kv_RU) - narrow space"},
 
 		// --- Style: NoneDot (123456.78) ---
 		{1000000.5, 0, "ar_SA", "1000001", false, "NoneDot (ar_SA) - no grouping, rounding"},

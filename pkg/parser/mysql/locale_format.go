@@ -16,33 +16,27 @@ type LocaleFormatStyle struct {
 
 // Formatting style IDs (descriptive names)
 const (
-	styleCommaDot         = "CommaDot"         // 123,456.78 (en_US)
-	styleDotComma         = "DotComma"         // 123.456,78 (de_DE)
-	styleSpaceComma       = "SpaceComma"       // 123 456,78 (fr_FR)
-	styleNoneComma        = "NoneComma"        // 123456,78  (bg_BG)
-	styleAposDot          = "AposDot"          // 123'456.78 (de_CH)
-	styleAposComma        = "AposComma"        // 123'456,78 (it_CH)
-	styleSpaceDot         = "SpaceDot"         // 123 456.78  (es_MX)
-	styleNarrowSpaceComma = "NarrowSpaceComma" // 123 456,78 (ce_RU)
-	styleNoneDot          = "NoneDot"          // 123456.78  (ar_SA)
-	styleArabic           = "Arabic"           // 123٬456٫78 (ps_AF)
-	styleIndian           = "Indian"           // 1,23,45,67,890.123 (en_IN)
+	styleCommaDot   = "CommaDot"   // 123,456.78 (en_US)
+	styleDotComma   = "DotComma"   // 123.456,78 (de_DE)
+	styleSpaceComma = "SpaceComma" // 123 456,78 (fr_FR)
+	styleNoneComma  = "NoneComma"  // 123456,78  (bg_BG)
+	styleAposDot    = "AposDot"    // 123'456.78 (de_CH)
+	styleAposComma  = "AposComma"  // 123'456,78 (it_CH)
+	styleNoneDot    = "NoneDot"    // 123456.78  (ar_SA)
+	styleIndian     = "Indian"     // 1,23,45,67,890.123 (en_IN)
 )
 
 // formatStyleMap maps a style ID to its separator definitions.
 var formatStyleMap = map[string]LocaleFormatStyle{
 	// IsIndianGrouping is false by default
-	styleCommaDot:         {ThousandsSep: ",", DecimalPoint: "."},
-	styleDotComma:         {ThousandsSep: ".", DecimalPoint: ","},
-	styleSpaceComma:       {ThousandsSep: " ", DecimalPoint: ","}, // U+0020 or U+00A0
-	styleNoneComma:        {ThousandsSep: "", DecimalPoint: ","},  // No thousands separator
-	styleAposDot:          {ThousandsSep: "'", DecimalPoint: "."},
-	styleAposComma:        {ThousandsSep: "'", DecimalPoint: ","},                         // New style for it_CH
-	styleSpaceDot:         {ThousandsSep: " ", DecimalPoint: "."},                         // U+0020 or U+00A0
-	styleNarrowSpaceComma: {ThousandsSep: "\u202F", DecimalPoint: ","},                    // Narrow no-break space
-	styleNoneDot:          {ThousandsSep: "", DecimalPoint: "."},                          // No thousands separator
-	styleArabic:           {ThousandsSep: "\u066C", DecimalPoint: "\u066B"},               // Arabic separators
-	styleIndian:           {ThousandsSep: ",", DecimalPoint: ".", IsIndianGrouping: true}, // New style for en_IN
+	styleCommaDot:   {ThousandsSep: ",", DecimalPoint: "."},
+	styleDotComma:   {ThousandsSep: ".", DecimalPoint: ","},
+	styleSpaceComma: {ThousandsSep: " ", DecimalPoint: ","},
+	styleNoneComma:  {ThousandsSep: "", DecimalPoint: ","},
+	styleAposDot:    {ThousandsSep: "'", DecimalPoint: "."},
+	styleAposComma:  {ThousandsSep: "'", DecimalPoint: ","},
+	styleNoneDot:    {ThousandsSep: "", DecimalPoint: "."},
+	styleIndian:     {ThousandsSep: ",", DecimalPoint: ".", IsIndianGrouping: true},
 }
 
 // localeToStyleMap maps locale names (lowercase) to their corresponding format style ID.
@@ -77,36 +71,36 @@ var localeToStyleMap = map[string]string{
 	"ce_ru": styleCommaDot, "cv_ru": styleCommaDot, "ht_ht": styleCommaDot, "ia_fr": styleCommaDot, "ky_kg": styleCommaDot, "os_ru": styleCommaDot, "tt_ru": styleCommaDot,
 	"aa_dj": styleCommaDot, "aa_er": styleCommaDot, "so_dj": styleCommaDot, "ti_er": styleCommaDot,
 	"ps_af": styleCommaDot,
+	"kv_ru": styleCommaDot,
+	"su_id": styleCommaDot,
 
 	// styleDotComma (123.456,78): Common in Europe and South America.
 	"be_by": styleDotComma, "da_dk": styleDotComma, "de_be": styleDotComma, "de_de": styleDotComma, "de_lu": styleDotComma,
 	"es_ar": styleDotComma, "es_bo": styleDotComma, "es_cl": styleDotComma, "es_co": styleDotComma,
 	"es_ec": styleDotComma, "es_es": styleDotComma, "es_py": styleDotComma, "es_uy": styleDotComma, "es_ve": styleDotComma,
 	"fo_fo": styleDotComma, "hu_hu": styleDotComma, "id_id": styleDotComma, "is_is": styleDotComma,
-	"lt_lt": styleDotComma, "mn_mn": styleDotComma, "ro_ro": styleDotComma, "ru_ua": styleDotComma, "sq_al": styleDotComma, "su_id": styleDotComma,
+	"lt_lt": styleDotComma, "mn_mn": styleDotComma, "ro_ro": styleDotComma, "ru_ua": styleDotComma, "sq_al": styleDotComma,
 	"tr_tr": styleDotComma, "vi_vn": styleDotComma,
 	"nb_no": styleDotComma, "uk_ua": styleDotComma,
+	"no_no": styleDotComma,
 
 	// styleSpaceComma (123 456,78): Uses space as thousands separator.
 	"cs_cz": styleSpaceComma, "es_cr": styleSpaceComma, "et_ee": styleSpaceComma, "fi_fi": styleSpaceComma,
-	"lv_lv": styleSpaceComma, "mk_mk": styleSpaceComma, "no_no": styleSpaceComma,
+	"lv_lv": styleSpaceComma, "mk_mk": styleSpaceComma,
 	"ru_ru": styleSpaceComma, "sk_sk": styleSpaceComma, "sv_fi": styleSpaceComma, "sv_se": styleSpaceComma,
-	"bg_bg": styleSpaceComma,
 
 	// styleNoneComma (123456,78): No thousands separator.
 	"el_gr": styleNoneComma, "gl_es": styleNoneComma, "pt_pt": styleNoneComma, "sl_si": styleNoneComma,
 	"ca_es": styleNoneComma, "de_at": styleNoneComma, "eu_es": styleNoneComma, "fr_be": styleNoneComma, "hr_hr": styleNoneComma, "it_it": styleNoneComma, "nl_be": styleNoneComma, "nl_nl": styleNoneComma, "pt_br": styleNoneComma,
 	"fr_ca": styleNoneComma, "fr_fr": styleNoneComma, "fr_lu": styleNoneComma, "pl_pl": styleNoneComma,
 	"fr_ch": styleNoneComma,
+	"bg_bg": styleNoneComma,
 
 	// styleAposDot (123'456.78): Uses apostrophe as thousands separator.
 	"de_ch": styleAposDot,
 
 	// styleAposComma (123'456,78): Uses apostrophe separator, comma decimal.
 	"it_ch": styleAposComma,
-
-	// styleNarrowSpaceComma (123 456,78): Uses narrow no-break space.
-	"kv_ru": styleNarrowSpaceComma,
 
 	// styleNoneDot (123456.78): No thousands separator, dot decimal.
 	"ar_sa": styleNoneDot,
@@ -116,9 +110,6 @@ var localeToStyleMap = map[string]string{
 	"en_in": styleIndian,
 	"ta_in": styleIndian,
 	"te_in": styleIndian,
-
-	// styleArabic (123٬456٫78)
-	// (No locales currently map here based on test results)
 }
 
 // GetLocaleFormatStyle returns the formatting rules and a bool indicating if the locale was found.
@@ -252,17 +243,18 @@ func formatWithStyle(number string, precision string, style LocaleFormatStyle) (
 	integerPart := parts[0]
 	var formattedIntegerPart string
 
-	// === DISPATCH GROUPING LOGIC ===
+	// Apply grouping logic based on the locale style.
 	if len(style.ThousandsSep) == 0 {
 		// No separator (e.g., styleNoneComma), just use the integer part
 		formattedIntegerPart = integerPart
 	} else if style.IsIndianGrouping {
+		// Use 3,2,2... grouping for Indian locales.
 		formattedIntegerPart = formatWithIndianGrouping(integerPart, style.ThousandsSep)
 	} else {
+		// Use standard 3-digit grouping.
 		formattedIntegerPart = formatWithStandardGrouping(integerPart, style.ThousandsSep)
 	}
 	buffer.WriteString(formattedIntegerPart)
-	// === END DISPATCH ===
 
 	position, err := strconv.ParseUint(precision, 10, 64)
 	if err == nil {
