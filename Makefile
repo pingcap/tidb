@@ -427,10 +427,10 @@ lightning_web: ## Build Lightning web UI
 .PHONY: build_br
 build_br: ## Build BR (backup and restore) tool 
 ifeq ($(shell echo $(GOOS) | tr A-Z a-z),darwin)
-	@echo "Detected macOS ($(ARCH)), enabling CGO"
+	@echo "Detected macOS ($(GOOS)), enabling CGO"
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 else
-	@echo "Detected non-macOS ($(ARCH)), disabling CGO"
+	@echo "Detected non-macOS ($(GOOS)), disabling CGO"
 	CGO_ENABLED=0 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 endif
 
