@@ -95,9 +95,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 
 		// Early skip for indexes that don't match any leading columns
 		if len(perfectCoveringIndexes) >= minToKeep && (idxScore.consecutiveWhereCount == 0 && idxScore.consecutiveJoinCount == 0) {
-			if hasSingleScan || (idxScore.consecutiveWhereCount < maxConsecutiveWhere && idxScore.consecutiveJoinCount < maxConsecutiveJoin) {
-				continue
-			}
+			continue
 		}
 
 		// Calculate aggregate metrics
@@ -239,7 +237,6 @@ func scoreIndexPath(path *util.AccessPath, req columnRequirements) indexWithScor
 
 	for i, idxCol := range path.FullIdxCols {
 		idxColID := idxCol.ID
-		matched := false
 
 		// Check if this index column matches a WHERE column
 		if req.totalWhereColumns > 0 {
@@ -251,28 +248,29 @@ func scoreIndexPath(path *util.AccessPath, req columnRequirements) indexWithScor
 				if score.consecutiveJoinCount > 0 && i == score.consecutiveJoinCount+score.consecutiveWhereCount {
 					score.consecutiveJoinCount++
 				}
-				matched = true
+				continue
 			}
 		}
 
 		// Check if this index column matches a join column
-		if !matched && req.totalJoinColumns > 0 {
+		if req.totalJoinColumns > 0 {
 			if _, found := req.joinColIDs[idxColID]; found {
 				score.joinCount++
 				if i == score.consecutiveJoinCount+score.consecutiveWhereCount {
 					score.consecutiveJoinCount++
 				}
-				matched = true
+				continue
 			}
 		}
 
 		// Check if this index column matches an ordering column
-		if !matched && req.totalOrderingColumns > 0 {
+		if req.totalOrderingColumns > 0 {
 			if _, found := req.orderingColIDs[idxColID]; found {
 				score.orderingCount++
 				if i == score.consecutiveOrderingCount+score.consecutiveWhereCount {
 					score.consecutiveOrderingCount++
 				}
+				continue
 			}
 		}
 	}
