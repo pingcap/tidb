@@ -1247,11 +1247,8 @@ func (lp *ForListColumnPruning) genKey(tc types.Context, ec errctx.Context, v ty
 }
 
 func (lp *ForListColumnPruning) needConvert(d types.Datum) bool {
-	if !types.IsString(lp.ExprCol.RetType.GetType()) {
-		return true
-	}
 	switch d.Kind() {
-	case types.KindBytes, types.KindString, types.KindMinNotNull, types.KindNull, types.KindMaxValue:
+	case types.KindBytes, types.KindMinNotNull, types.KindNull, types.KindMaxValue:
 		return false
 	}
 	return true

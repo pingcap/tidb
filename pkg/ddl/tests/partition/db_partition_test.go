@@ -3768,48 +3768,6 @@ func TestTruncateNumberOfPhases(t *testing.T) {
 	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
 }
 
-func TestIssue63876(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE pt (b binary(2) NOT NULL) ` +
-		`PARTITION BY LIST COLUMNS(b) (PARTITION p0 VALUES IN (_binary 0x00), PARTITION p1 VALUES IN (0x0001), partition p2 values in (0x01), partition p3 values in (0x0101))`)
-	tk.MustExec(`CREATE TABLE ptDef (b binary(2) NOT NULL) ` +
-		`PARTITION BY LIST COLUMNS(b) (PARTITION p0 VALUES IN (_binary 0x00), PARTITION p1 VALUES IN (0x0001), partition p3 values in (0x0101), partition pDef default)`)
-	tk.MustExec(`CREATE TABLE t (b binary(2) NOT NULL) `)
-	tk.MustExec(`INSERT INTO ptDef VALUES (0x00)`)
-	tk.MustExec(`INSERT INTO pt VALUES (0x00)`)
-	tk.MustExec(`INSERT INTO t VALUES (0x00)`)
-	tk.MustQuery(`SELECT hex(b) FROM pt`).Check(testkit.Rows("0000"))
-	tk.MustQuery(`select hex(b) from pt WHERE b != 0x01`).Check(testkit.Rows("0000"))
-	tk.MustQuery(`SELECT hex(b) FROM pt WHERE b != ''`).Check(testkit.Rows("0000"))
-	tk.MustQuery(`SELECT hex(b) FROM pt WHERE b NOT IN ('',0x00)`).Check(testkit.Rows("0000"))
-	tk.MustQuery(`SELECT hex(b) FROM pt WHERE b = '' or b = 0x00`).Check(testkit.Rows())
-	tk.MustQuery(`SELECT hex(b) FROM ptDef`).Check(testkit.Rows("0000"))
-	tk.MustQuery(`select hex(b) from ptDef WHERE b != 0x01`).Check(testkit.Rows("0000"))
-	tk.MustQuery(`SELECT hex(b) FROM ptDef WHERE b != ''`).Check(testkit.Rows("0000"))
-	tk.MustQuery(`SELECT hex(b) FROM ptDef WHERE b NOT IN ('',0x00)`).Check(testkit.Rows("0000"))
-	tk.MustQuery(`SELECT hex(b) FROM ptDef WHERE b = '' or b = 0x00`).Check(testkit.Rows())
-	testStrings := []string{`''`, `0x00`, `0x01`, `0x0000`, `0x0001`, `0x0101`}
-	for _, s := range testStrings {
-		tk.MustExec(fmt.Sprintf(`insert into t values (%s)`, s))
-		tk.MustExec(fmt.Sprintf(`insert into pt values (%s)`, s))
-		tk.MustExec(fmt.Sprintf(`insert into ptDef values (%s)`, s))
-	}
-	testStrings = append(testStrings, `' '`, `0x000000`, `0x000001`, `0x010000`)
-	res := tk.MustQuery(`select * from t`).Sort()
-	tk.MustQuery(`select * from pt`).Sort().Check(res.Rows())
-	tk.MustQuery(`select * from ptDef`).Sort().Check(res.Rows())
-	for _, s := range testStrings {
-		res = tk.MustQuery(fmt.Sprintf(`select * from t where b = %s`, s)).Sort()
-		tk.MustQuery(fmt.Sprintf(`select * from pt where b = %s`, s)).Sort().Check(res.Rows())
-		tk.MustQuery(fmt.Sprintf(`select * from ptDef where b = %s`, s)).Sort().Check(res.Rows())
-		res = tk.MustQuery(fmt.Sprintf(`select * from t where b != %s`, s)).Sort()
-		tk.MustQuery(fmt.Sprintf(`select * from pt where b != %s`, s)).Sort().Check(res.Rows())
-		tk.MustQuery(fmt.Sprintf(`select * from ptDef where b != %s`, s)).Sort().Check(res.Rows())
-	}
-}
-
 // Test for issue 64176.
 func TestExchangeTiDBRowID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
