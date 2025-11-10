@@ -274,18 +274,12 @@ func comparisonPred(predType predicateType) predicateType {
 // updateOrPredicate simplifies OR predicates by dropping OR predicates if they are empty.
 // It is applied for this pattern: P AND (P1 OR P2 ... OR Pn)
 // Pi is removed if P & Pi is false/empty.
-<<<<<<< HEAD:pkg/planner/core/rule_predicate_simplification.go
-func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expression, scalarPredicatePtr expression.Expression) expression.Expression {
-	_, orPredicateType := findPredicateType(orPredicateList)
-	_, scalarPredicateType := findPredicateType(scalarPredicatePtr)
-=======
 //
 // The second bool parameter in the return indicates whether the OR expression has changed.
 // If this is a parameter with a param marker, the plan cache needs to be skipped to avoid issues.
 func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expression, scalarPredicatePtr expression.Expression) (expression.Expression, bool) {
-	_, orPredicateType := FindPredicateType(ctx, orPredicateList)
-	_, scalarPredicateType := FindPredicateType(ctx, scalarPredicatePtr)
->>>>>>> 9c74c61a568 (planner: fix wrongly identify the changes in the expression and skip the plan cache (#64265)):pkg/planner/core/rule/rule_predicate_simplification.go
+	_, orPredicateType := findPredicateType(orPredicateList)
+	_, scalarPredicateType := findPredicateType(scalarPredicatePtr)
 	scalarPredicateType = comparisonPred(scalarPredicateType)
 	if orPredicateType != orPredicate || scalarPredicateType != scalarPredicate {
 		return orPredicateList, false
@@ -339,18 +333,11 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 			_, jType := findPredicateType(jthPredicate)
 			iType = comparisonPred(iType)
 			jType = comparisonPred(jType)
-<<<<<<< HEAD:pkg/planner/core/rule_predicate_simplification.go
-			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCacheForMultiExpression(
-				sctx.GetExprCtx(),
-				ithPredicate,
-				jthPredicate)
-=======
 			var isChanged bool
->>>>>>> 9c74c61a568 (planner: fix wrongly identify the changes in the expression and skip the plan cache (#64265)):pkg/planner/core/rule/rule_predicate_simplification.go
 			if iType == scalarPredicate && jType == orPredicate {
 				maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(
 					exprCtx,
-					jthPredicate)
+					[]expression.Expression{jthPredicate})
 				predicates[j], isChanged = updateOrPredicate(sctx, jthPredicate, ithPredicate)
 				if maybeOverOptimized4PlanCache && isChanged {
 					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
@@ -358,7 +345,7 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 			} else if iType == orPredicate && jType == scalarPredicate {
 				maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(
 					exprCtx,
-					ithPredicate)
+					[]expression.Expression{ithPredicate})
 				predicates[i], isChanged = updateOrPredicate(sctx, ithPredicate, jthPredicate)
 				if maybeOverOptimized4PlanCache && isChanged {
 					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
