@@ -72,7 +72,9 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 				setReorgParam = true
 			case model.ActionModifyColumn:
 				setReorgParam = true
-				setDistTaskParam = job.NeedReorg
+				if !setDistTaskParam {
+					setDistTaskParam = sub.NeedReorg
+				}
 			}
 		}
 	default:

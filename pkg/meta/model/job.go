@@ -779,7 +779,7 @@ func (job *Job) MayNeedReorg() bool {
 		return job.NeedReorg
 	case ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			proxyJob := Job{Type: sub.Type, NeedReorg: job.NeedReorg}
+			proxyJob := Job{Type: sub.Type, NeedReorg: sub.NeedReorg}
 			if proxyJob.MayNeedReorg() {
 				return true
 			}
