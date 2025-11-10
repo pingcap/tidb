@@ -338,8 +338,8 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	// Search for a not found value based upon statistics - count should be >= 10 and <=40
 	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
 	require.NoError(t, err)
-	require.Truef(t, count < 45, "expected: between 35 to 45, got: %v", count)
-	require.Truef(t, count > 35, "expected: between 35 to 45, got: %v", count)
+	require.Truef(t, count < 45, "expected: between 0 to 45, got: %v", count)
+	require.Truef(t, count > 0, "expected: between 0 to 45, got: %v", count)
 }
 
 func TestNewIndexWithoutStats(t *testing.T) {
@@ -1181,6 +1181,37 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 		})
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func TestIssue64137(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, key(a))`)
+	tk.MustExec(`set @@cte_max_recursion_depth=10000`)
+	tk.MustExec(`insert into t select * from (with recursive cte as (
+        select 1 as a, 1 as num union all
+        select 1 as a, num+1 as num from cte where num < 10000
+    ) select a from cte) tt;`) // insert 10000 rows with a=1
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustQuery(`select count(1) from t`).Check(testkit.Rows("10000"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_topn where is_index=1`).Check(testkit.Rows("test t  a 1 1 10000")) // 1 topN value with count 10000
+
+	tk.MustExec(`insert into t select * from t limit 2000`) // insert 2000 rows with a=1
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	h.Update(context.Background(), dom.InfoSchema())
+	statsMeta := tk.MustQuery(`show stats_meta`).Rows()[0]
+	require.Equal(t, statsMeta[4], "2000")  // modify_count = 2000
+	require.Equal(t, statsMeta[5], "12000") // row_count = 10000+2000
+
+	tk.MustQuery(`explain select * from t where a=99999999`).Check(testkit.Rows(
+		`IndexReader_6 24.00 root  index:IndexRangeScan_5`, // out-of-range est for small NDV, result should close to zero
+		`└─IndexRangeScan_5 24.00 cop[tikv] table:t, index:a(a) range:[99999999,99999999], keep order:false`))
+	tk.MustQuery(`explain select * from t where a=1`).Check(testkit.Rows(
+		`IndexReader_6 12000.00 root  index:IndexRangeScan_5`, // in-range est for small NDV
+		`└─IndexRangeScan_5 12000.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false`))
 }
 
 func TestOrderingIdxSelectivityRatio(t *testing.T) {
