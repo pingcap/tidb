@@ -298,7 +298,7 @@ func (c *Column) CalculateLenDeltaForAppendCellNTimes(src *Column, pos, times in
 
 	if times == 1 {
 		if c.length>>3 >= len(c.nullBitmap) {
-			nullBitMapLenDelta += 1
+			nullBitMapLenDelta++
 		}
 	} else {
 		nullBitMapLenDelta += int64(((c.length + times + 7) >> 3) - len(c.nullBitmap))
