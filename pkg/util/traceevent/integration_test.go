@@ -270,7 +270,10 @@ func TestFlightRecorder(t *testing.T) {
 	}
 }
 
-func TestTiDBTraceEventControl(t *testing.T) {
+func TestTiDBTraceEventVariable(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("@@tidb_trace_event only works on nextgen tidb")
+	}
 	dir, err := os.MkdirTemp("", "tidb_test_trace_event")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir) // clean up
