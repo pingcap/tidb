@@ -900,8 +900,9 @@ func (sub *SubJob) IsFinished() bool {
 
 // ToProxyJob converts a sub-job to a proxy job.
 func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
-	reorgMeta := parentJob.ReorgMeta
-	if reorgMeta != nil {
+	var reorgMeta *DDLReorgMeta
+	if parentJob.ReorgMeta != nil {
+		reorgMeta = parentJob.ReorgMeta.ShallowCopy()
 		reorgMeta.Stage = sub.ReorgStage
 		reorgMeta.AnalyzeState = sub.AnalyzeState
 	}
