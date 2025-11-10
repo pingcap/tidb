@@ -15,6 +15,7 @@
 PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
 GOMODCACHE ?= $(shell go env GOMODCACHE)
+GOOS ?= $(shell go env GOOS)
 P=8
 
 # Ensure GOPATH is set before running build process.
