@@ -88,7 +88,14 @@ func (a *autoIDAccessor) CopyTo(databaseID, tableID int64) error {
 		return err
 	}
 	// There is no need to copy zero value. And in certain case, this can overwrite
-	// the existing auto ID of the target table.
+	// the existing auto ID of the target table, for example, when restoring data with
+	// a higher version of BR (≥ 8.5) into a lower version of TiDB (≤ 7.5):
+	// In older versions of TiDB, the job worker handles auto ID during rename
+	// table by copying the old value, deleting it, and then setting the new value.
+	// However, in newer versions of TiDB, auto ID is rebased when applying the info
+	// schema diff. This means that when BR applies the new diff here, the original
+	// value have already been deleted. In such cases, the existing value will be
+	// overwritten with zero, which is incorrect.
 	if curr == 0 {
 		return nil
 	}
