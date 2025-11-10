@@ -2445,6 +2445,9 @@ func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 func TestNullReject(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test;")
+		// Create t0 table once at the beginning, reused across multiple test cases
+		tk.MustExec("drop table if exists t0;")
+		tk.MustExec("create table t0(c0 int);")
 
 		// Case 1: NATURAL RIGHT JOIN inside NOT IN should keep right outer join,close #60737
 		tk.MustExec("drop table if exists chqin, chqin2;")
@@ -2478,8 +2481,8 @@ func TestNullReject(t *testing.T) {
 		tk.MustQuery(q1).Check(testkit.Rows())
 
 		// Case 2: RIGHT JOIN with subquery and APPLY should keep right outer join,close #60080
-		tk.MustExec("drop table if exists t0, t1, t2;")
-		tk.MustExec("create table t0(c0 int);")
+		tk.MustExec("drop table if exists t1, t2;")
+		tk.MustExec("delete from t0;")
 		tk.MustExec("insert into t0 values (61);")
 		tk.MustExec("create table t1(c1 int, c2 double);")
 		tk.MustExec("insert into t1 values (NULL,0);")
@@ -2515,8 +2518,8 @@ func TestNullReject(t *testing.T) {
 		tk.MustQuery(q2).Check(testkit.Rows())
 
 		// Case 3: LEFT JOIN with projection constant column should keep left outer join,close #61327
-		tk.MustExec("drop table if exists t0, t2, t3;")
-		tk.MustExec("create table t0(c0 int);")
+		tk.MustExec("drop table if exists t2, t3;")
+		tk.MustExec("delete from t0;")
 		tk.MustExec("create table t2(c0 int);")
 		tk.MustExec("create table t3(c0 int);")
 		tk.MustExec("insert into t0 values(0);")
@@ -2539,8 +2542,8 @@ func TestNullReject(t *testing.T) {
 		tk.MustQuery(q3).Check(testkit.Rows("0 <nil> 3"))
 
 		// Case 4: RIGHT OUTER JOIN with boolean WHERE should keep right outer join,close #59162
-		tk.MustExec("drop table if exists t0, t1;")
-		tk.MustExec("create table t0(c0 int);")
+		tk.MustExec("drop table if exists t1;")
+		tk.MustExec("delete from t0;")
 		tk.MustExec("insert into t0 values (1);")
 		tk.MustExec("create table t1(c0 int);")
 		tk.MustExec("insert into t1 values (0);")
@@ -2559,8 +2562,9 @@ func TestNullReject(t *testing.T) {
 		tk.MustQuery(q4).Check(testkit.Rows("<nil> 0"))
 
 		// Case 5: Complex subquery with view and null-rejecting conditions,close #60081
-		tk.MustExec("drop table if exists t0, t1,t2;")
-		tk.MustExec("create table t0(c0 int);")
+		tk.MustExec("drop table if exists t1;")
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("delete from t0;")
 		tk.MustExec("insert into t0 values (1),(2),(3),(4),(5),(6),(7),(8);")
 		tk.MustExec("create table t1(c1 double);")
 		tk.MustExec("insert into t1 values (1),(2),(3),(4),(5),(6),(7),(8);")
