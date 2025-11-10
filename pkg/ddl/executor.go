@@ -1059,7 +1059,6 @@ func (e *executor) CreateTable(ctx context.Context, sctx sessionctx.Context, s *
 // createTableWithInfoJob returns the table creation job.
 // WARNING: it may return a nil job, which means you don't need to submit any DDL job.
 func (e *executor) createTableWithInfoJob(
-	ctx context.Context,
 	sctx sessionctx.Context,
 	dbName ast.CIStr,
 	tbInfo *model.TableInfo,
@@ -1184,7 +1183,7 @@ func (e *executor) CreateTableWithInfo(
 ) (err error) {
 	c := GetCreateTableConfig(cs)
 
-	jobW, err := e.createTableWithInfoJob(ctx, sctx, dbName, tbInfo, involvingRef, c)
+	jobW, err := e.createTableWithInfoJob(sctx, dbName, tbInfo, involvingRef, c)
 	if err != nil {
 		return err
 	}
@@ -1261,7 +1260,7 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		Tables: make([]*model.CreateTableArgs, 0, len(infos)),
 	}
 	for _, info := range infos {
-		jobItem, err := e.createTableWithInfoJob(context.Background(), ctx, dbName, info, nil, c)
+		jobItem, err := e.createTableWithInfoJob(ctx, dbName, info, nil, c)
 		if err != nil {
 			return errors.Trace(err)
 		}
