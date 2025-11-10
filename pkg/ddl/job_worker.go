@@ -942,7 +942,9 @@ func (w *worker) runOneJobStep(
 
 	prevState := job.State
 
-	traceevent.TraceEvent(jobCtx.ctx, tracing.DDLJob, "runDDLJob callback", zap.String("ActionType", job.Type.String()))
+	if traceevent.IsEnabled(tracing.DDLJob) {
+		traceevent.TraceEvent(jobCtx.ctx, tracing.DDLJob, "runDDLJob callback", zap.String("ActionType", job.Type.String()))
+	}
 	// For every type, `schema/table` modification and `job` modification are conducted
 	// in the one kv transaction. The `schema/table` modification can be always discarded
 	// by kv reset when meets an unhandled error, but the `job` modification can't.

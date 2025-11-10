@@ -492,9 +492,11 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 	defer r.End()
 
 	if jobW.TraceInfo != nil && len(jobW.TraceInfo.TraceID) > 0 {
-		traceevent.TraceEvent(ctx, tracing.DDLJob, "deliveryJob",
-			zap.Int64("jobID", jobW.ID),
-			zap.String("traceID", hex.EncodeToString(jobW.TraceInfo.TraceID)))
+		if traceevent.IsEnabled(tracing.DDLJob) {
+			traceevent.TraceEvent(ctx, tracing.DDLJob, "deliveryJob",
+				zap.Int64("jobID", jobW.ID),
+				zap.String("traceID", hex.EncodeToString(jobW.TraceInfo.TraceID)))
+		}
 	}
 
 	failpoint.InjectCall("beforeDeliveryJob", jobW.Job)
