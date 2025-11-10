@@ -298,8 +298,8 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	close(ch)
 
 	err := op.Close()
-	if err := wctx.OperatorErr(); err != nil {
-		return err
+	if opErr := wctx.OperatorErr(); opErr != nil {
+		return opErr
 	}
 	return err
 }

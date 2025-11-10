@@ -237,7 +237,7 @@ type TableScanTask struct {
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
 func (TableScanTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
-	return metrics.LblAddIndex, "tableScanTask", false, dbterror.ErrReorgPanic
+	return metrics.LblAddIndex, "TableScanTask", false, dbterror.ErrReorgPanic
 }
 
 // String implement fmt.Stringer interface.
@@ -926,7 +926,7 @@ type tempIndexScanTask struct {
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
 func (tempIndexScanTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
-	return metrics.LblAddIndex, "RecoverArgs", false, dbterror.ErrReorgPanic
+	return metrics.LblAddIndex, "TempIndexScanTask", false, dbterror.ErrReorgPanic
 }
 
 // String implement fmt.Stringer interface.

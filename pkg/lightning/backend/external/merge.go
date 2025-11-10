@@ -112,9 +112,6 @@ func NewMergeOperator(
 	// for max-block-size = 32MiB, adding (max-block-size * MaxMergingFilesPerThread)/10000 ~ 1MiB
 	// to part-size is enough.
 	partSize = max(MinUploadPartSize, partSize+units.MiB)
-	logutil.Logger(ctx).Info("merge operator get part size",
-		zap.Int64("part-size", partSize))
-
 	pool := workerpool.NewWorkerPool(
 		"mergeOperator",
 		util.ImportInto,
@@ -212,8 +209,8 @@ func MergeOverlappingFiles(
 	}
 
 	err := pipe.Close()
-	if err := ctx.OperatorErr(); err != nil {
-		return err
+	if opErr := ctx.OperatorErr(); opErr != nil {
+		return opErr
 	}
 	return err
 }

@@ -320,7 +320,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
 			}
 			wctx := workerpool.NewContext(ctx)
-			defer cancel()
+			defer wctx.Cancel()
 			pipeline, err := ddl.NewAddIndexIngestPipeline(
 				wctx, store,
 				sessPool,
