@@ -15,6 +15,7 @@
 PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
 GOMODCACHE ?= $(shell go env GOMODCACHE)
+GOOS ?= $(shell go env GOOS)
 P=8
 
 # Ensure GOPATH is set before running build process.
@@ -60,9 +61,9 @@ ifneq "$(TIDB_EDITION)" "Enterprise"
 endif
 endif
 
-ARCH      := $(shell uname -s)
-LINUX     := Linux
-MAC       := Darwin
+ARCH      := "`uname -s`"
+LINUX     := "Linux"
+MAC       := "Darwin"
 
 PACKAGE_LIST  := go list ./...
 PACKAGE_LIST_TIDB_TESTS  := go list ./... | grep -vE "github.com\/pingcap\/tidb\/br|github.com\/pingcap\/tidb\/cmd|github.com\/pingcap\/tidb\/dumpling"
