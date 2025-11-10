@@ -327,7 +327,7 @@ func TestMaxExecutionTime(t *testing.T) {
 	tk.MustExec("update MaxExecTime set age = age + 1 where id = 1000;")
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().GetMaxExecutionTime())
 	tk.MustExec("update /*+ MAX_EXECUTION_TIME(10000) */ MaxExecTime set age = age + 1 where id = 1000;")
-	// hint works
+	// hint works, maybe we should just ignore this hint in non-select statement?
 	require.Equal(t, uint64(10000), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 	// but MaxExecutionTime is still 0
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().GetMaxExecutionTime())
