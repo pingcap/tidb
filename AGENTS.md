@@ -2,6 +2,8 @@
 
 This file provides guidance to agents when working with code in this repository.
 
+## Developing Environment Tips
+
 ### Code Organization
 
 **Package Structure:**
@@ -96,3 +98,13 @@ popd
 ```
 
 If you modify the test set `t/planner/core/binary_plan.test`, then the `TestName` will be `planner/core/binary_plan`.
+
+## Pull Request Instructions
+
+The PR title **must** strictly adhere to the following format. It uses the package name(s) affected or `*` if it's a non-package-specific change:
+
+**Format 1 (Specific Packages):** `pkg [, pkg2, pkg3]: what is changed`
+
+**Format 2 (Repository-Wide):** `*: what is changed`
+
+The PR description **must** strictly follow the template located at @.github/pull_request_template.md. **Do not remove, alter, or modify** any HTML comments (`<!--`, `-->`) within the template. These elements are essential for CI and removing them will cause processing failures.
