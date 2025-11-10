@@ -827,9 +827,11 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		}, "closestReplicaReadCheckLoop")
 	}
 
-	err = do.initLogBackup(do.ctx, pdCli)
-	if err != nil {
-		return err
+	if startMode != ddl.BR {
+		err = do.initLogBackup(do.ctx, pdCli)
+		if err != nil {
+			return err
+		}
 	}
 
 	// right now we only allow access system keyspace info schema after fully bootstrap.
@@ -2691,12 +2693,19 @@ func (do *Domain) releaseServerID(context.Context) {
 	if do.etcdClient == nil {
 		return
 	}
-	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, serverID)
-	err := etcd.DeleteKeyFromEtcd(key, do.etcdClient, refreshServerIDRetryCnt, acquireServerIDTimeout)
-	if err != nil {
-		logutil.BgLogger().Error("releaseServerID fail", zap.Uint64("serverID", serverID), zap.Error(err))
+
+	// closing session releases attached server id and etcd lease.
+	leaseID := int64(do.serverIDSession.Lease())
+	if err := do.serverIDSession.Close(); err != nil {
+		logutil.BgLogger().Error("releaseServerID fail",
+			zap.Uint64("serverID", serverID),
+			zap.Int64("leaseID", leaseID),
+			zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("releaseServerID succeed", zap.Uint64("serverID", serverID))
+		logutil.BgLogger().Info("releaseServerID succeed",
+			zap.Uint64("serverID", serverID),
+			zap.Int64("leaseID", leaseID),
+		)
 	}
 }
 

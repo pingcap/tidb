@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/printer"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
@@ -333,6 +334,7 @@ func (s *Server) startHTTPServer() {
 	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
 	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
+	router.HandleFunc("/debug/traceevent", traceeventHandler)
 
 	router.HandleFunc("/covdata", func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/zip")
@@ -732,4 +734,66 @@ func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHan
 	}
 
 	return optimizor.NewStatsPriorityQueueHandler(do)
+}
+
+var traceeventCounter = make(chan struct{}, 1)
+
+func traceeventHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+		return
+	}
+
+	select {
+	case traceeventCounter <- struct{}{}:
+	default:
+		http.Error(w, "http api /debug/traceevent only allow one request at a time", http.StatusTooManyRequests)
+		return
+	}
+	defer func() {
+		<-traceeventCounter
+	}()
+
+	var cfg traceevent.FlightRecorderConfig
+	cfg.Initialize()
+	body, _ := io.ReadAll(r.Body)
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &cfg); err != nil {
+			http.Error(w, fmt.Sprintf("decode json failed: %s", err.Error()), http.StatusBadRequest)
+			return
+		}
+	}
+
+	logutil.BgLogger().Info("http api /debug/traceevent called", zap.Any("config", cfg))
+	ch := make(chan []traceevent.Event, 256)
+	recorder, err := traceevent.StartHTTPFlightRecorder(ch, &cfg)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("validate config failed: %s", err.Error()), http.StatusBadRequest)
+		return
+	}
+	defer recorder.Close()
+
+	for {
+		select {
+		case events := <-ch:
+			res := traceevent.ConvertEventsForRendering(events)
+			fmt.Fprintf(w, "data: ")
+			enc := json.NewEncoder(w)
+			err := enc.Encode(res)
+			if err != nil {
+				logutil.BgLogger().Info("http api /debug/traceevent encode fail", zap.Error(err))
+			}
+			fmt.Fprintf(w, "\n\n")
+			flusher.Flush()
+
+		case <-r.Context().Done():
+			logutil.BgLogger().Info("http api /debug/traceevent client disconnected")
+			return
+		}
+	}
 }
