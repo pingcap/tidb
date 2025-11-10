@@ -87,6 +87,11 @@ func (a *autoIDAccessor) CopyTo(databaseID, tableID int64) error {
 	if err != nil {
 		return err
 	}
+	// There is no need to copy zero value. And in certain case, this can overwrite
+	// the existing auto ID of the target table.
+	if curr == 0 {
+		return nil
+	}
 	m := a.m
 	return m.txn.HSet(m.dbKey(databaseID), a.idEncodeFn(tableID), []byte(strconv.FormatInt(curr, 10)))
 }
