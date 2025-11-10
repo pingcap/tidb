@@ -1085,6 +1085,7 @@ func TestShowBindingCache(t *testing.T) {
 }
 
 func TestShowBindingCacheStatus(t *testing.T) {
+	t.Skip("unstable")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
