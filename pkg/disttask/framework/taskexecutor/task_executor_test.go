@@ -1207,7 +1207,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 func TestInject(t *testing.T) {
 	e := &BaseStepExecutor{}
 	r := &proto.StepResource{CPU: proto.NewAllocatable(1)}
-	execute.SetFrameworkInfo(e, proto.StepOne, r)
+	execute.SetFrameworkInfo(e, &proto.Task{TaskBase: proto.TaskBase{Step: proto.StepOne}}, r)
 	got := e.GetResource()
 	require.Equal(t, r, got)
 }

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -86,13 +85,11 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 		m.mu.Unlock()
 		m.summary.PutReqCnt.Add(summary.PutRequestCount)
-		metering.NewRecorder(m.store, metering.TaskTypeAddIndex, subtask.TaskID).
-			RecordPutRequestCount(summary.PutRequestCount)
+		m.GetMeterRecorder().IncPutRequest(summary.PutRequestCount)
 	}
 	onReaderClose := func(summary *external.ReaderSummary) {
 		m.summary.GetReqCnt.Add(summary.GetRequestCount)
-		metering.NewRecorder(m.store, metering.TaskTypeAddIndex, subtask.TaskID).
-			RecordGetRequestCount(summary.GetRequestCount)
+		m.GetMeterRecorder().IncGetRequest(summary.GetRequestCount)
 	}
 
 	storeBackend, err := storage.ParseBackend(m.cloudStoreURI, nil)
