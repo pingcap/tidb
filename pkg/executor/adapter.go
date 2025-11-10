@@ -1803,7 +1803,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if trace.IsEnabled() {
 		trace.Log(a.GoCtx, "details", slowLog)
 	}
-<<<<<<< HEAD
 	logutil.SlowQueryLogger.Warn(slowLog)
 	if costTime >= threshold {
 		if sessVars.InRestrictedSQL {
@@ -1826,6 +1825,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		if len(stmtCtx.TableIDs) > 0 {
 			tableIDs = strings.ReplaceAll(fmt.Sprintf("%v", stmtCtx.TableIDs), " ", ",")
 		}
+		traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.suspicious_event", slowQueryDumpTriggerCheck)
 		// TODO log slow query for cross keyspace query?
 		dom := domain.GetDomain(a.Ctx)
 		if dom != nil {
@@ -1845,25 +1845,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 				IndexNames: indexNames,
 				Internal:   sessVars.InRestrictedSQL,
 			})
-=======
-	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.suspicious_event", slowQueryDumpTriggerCheck)
-
-	if !matchRules {
-		return
-	}
-	costTime := slowItems.TimeTotal
-	execDetail := slowItems.ExecDetail
-	if sessVars.InRestrictedSQL {
-		executor_metrics.TotalQueryProcHistogramInternal.Observe(costTime.Seconds())
-		executor_metrics.TotalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
-		executor_metrics.TotalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
-	} else {
-		executor_metrics.TotalQueryProcHistogramGeneral.Observe(costTime.Seconds())
-		executor_metrics.TotalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
-		executor_metrics.TotalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
-		if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys != 0 {
-			executor_metrics.CopMVCCRatioHistogramGeneral.Observe(float64(execDetail.ScanDetail.TotalKeys) / float64(execDetail.ScanDetail.ProcessedKeys))
->>>>>>> 61bbb073d2c (traceevent,*: refine flight recorder (#64199))
 		}
 	}
 }

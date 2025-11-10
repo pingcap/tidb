@@ -21,26 +21,19 @@ go_library(
 go_test(
     name = "traceevent_test",
     timeout = "short",
-<<<<<<< HEAD
-    srcs = ["traceevent_test.go"],
-=======
     srcs = [
         "flightrecorder_test.go",
         "integration_test.go",
         "traceevent_test.go",
     ],
->>>>>>> 61bbb073d2c (traceevent,*: refine flight recorder (#64199))
     embed = [":traceevent"],
     flaky = True,
     deps = [
         "//pkg/config/kerneltype",
-<<<<<<< HEAD
-=======
         "//pkg/kv",
         "//pkg/session",
         "//pkg/testkit",
         "//pkg/util/tracing",
->>>>>>> 61bbb073d2c (traceevent,*: refine flight recorder (#64199))
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//trace",
         "@org_uber_go_zap//:zap",
