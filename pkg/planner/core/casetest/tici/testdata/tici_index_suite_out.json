@@ -281,7 +281,7 @@
         "SQL": "explain format='brief' select * from t1 use index(idx_field) where fts_match_word('hello', title)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",
-          "├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:idx_title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [

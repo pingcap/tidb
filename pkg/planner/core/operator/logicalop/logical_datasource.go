@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -641,7 +642,7 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 		if path.Index == nil || (path.Index.FullTextInfo == nil && path.Index.HybridInfo == nil) {
 			continue
 		}
-		if hasFTSFunc && (path.Index.FullTextInfo == nil || len(path.Index.HybridInfo.FullText) == 0) {
+		if hasFTSFunc && (path.Index.FullTextInfo == nil || (path.Index.HybridInfo != nil && len(path.Index.HybridInfo.FullText) == 0)) {
 			continue
 		}
 		if !hasFTSFunc && (path.Index.HybridInfo == nil || len(path.Index.HybridInfo.Inverted) == 0) {
