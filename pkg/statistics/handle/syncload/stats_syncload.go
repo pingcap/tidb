@@ -589,9 +589,10 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 		if colHist.StatsAvailable() {
 			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, true)
 		}
-		// All the objects shares the same stats version. Update it here.
+		// All the objects share the same stats version. Update it here.
 		if colHist.StatsVer != statistics.Version0 {
-			tbl.StatsVer = statistics.Version0
+			// SAFETY: The stats version only has a limited range, it is safe to convert int64 to int here.
+			tbl.StatsVer = int(colHist.StatsVer)
 		}
 		// we have to refresh the map for the possible change to ensure that the map information is not missing.
 		tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.StatsAvailable())
@@ -607,8 +608,9 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 		// If the index is analyzed we refresh the map for the possible change.
 		if idxHist.IsAnalyzed() {
 			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, true)
-			// All the objects shares the same stats version. Update it here.
-			tbl.StatsVer = statistics.Version0
+			// All the objects share the same stats version. Update it here.
+			// SAFETY: The stats version only has a limited range, it is safe to convert int64 to int here.
+			tbl.StatsVer = int(idxHist.StatsVer)
 		}
 	}
 	s.statsHandle.UpdateStatsCache(statstypes.CacheUpdate{

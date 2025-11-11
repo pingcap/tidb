@@ -709,7 +709,7 @@ func TestAutoAnalyzeAfterAnalyzeVersionChange(t *testing.T) {
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
 	tk.MustQuery("select * from t force index(idx) where a = 1;").Check(testkit.Rows("1 2"))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.Equal(t, statistics.Version0, statsTbl.StatsVer)
+	require.Equal(t, statistics.Version1, statsTbl.StatsVer)
 	// Set analyze version to 2.
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	// Trigger auto analyze.
@@ -724,6 +724,5 @@ func TestAutoAnalyzeAfterAnalyzeVersionChange(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	require.True(t, h.HandleAutoAnalyze())
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	// FIXME: The auto-analyze should keep the stats version unchanged.
-	require.Equal(t, statistics.Version2, statsTbl.StatsVer)
+	require.Equal(t, statistics.Version1, statsTbl.StatsVer)
 }
