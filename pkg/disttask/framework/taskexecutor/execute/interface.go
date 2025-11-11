@@ -293,7 +293,7 @@ func (f *frameworkInfo) GetCheckpointFunc() func(context.Context, int64) (string
 // SetFrameworkInfo sets the framework info for the StepExecutor.
 func SetFrameworkInfo(
 	exec StepExecutor,
-	task proto.Task,
+	task *proto.Task,
 	resource *proto.StepResource,
 	updateCheckpointFunc func(context.Context, int64, any) error,
 	getCheckpointFunc func(context.Context, int64) (string, error),
