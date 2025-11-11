@@ -871,6 +871,10 @@ func GetRenameTablesArgsFromV1(
 	newTableNames []ast.CIStr,
 	tableIDs []int64,
 ) []*RenameTableArgs {
+	// See https://github.com/pingcap/tidb/blob/293331cd9211c214f3431ff789210374378e9697/pkg/ddl/ddl_worker.go#L1442-L1447
+	if oldTableNames == nil {
+		oldTableNames = make([]ast.CIStr, len(oldSchemaIDs))
+	}
 	infos := make([]*RenameTableArgs, 0, len(oldSchemaIDs))
 	for i, oldSchemaID := range oldSchemaIDs {
 		infos = append(infos, &RenameTableArgs{
