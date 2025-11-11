@@ -29,8 +29,7 @@ type Recorder struct {
 
 // MergeObjStoreRequests merges the object store requests from another Requests.
 func (r *Recorder) MergeObjStoreRequests(other *recording.Requests) {
-	r.objStoreReqs.Get.Add(other.Get.Load())
-	r.objStoreReqs.Put.Add(other.Put.Load())
+	r.objStoreReqs.Merge(other)
 }
 
 // IncReadBytes records the read data bytes.

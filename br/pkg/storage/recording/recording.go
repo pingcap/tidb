@@ -28,20 +28,21 @@ type Requests struct {
 
 // Rec records a request made to the object storage.
 func (r *Requests) Rec(httpReq *http.Request) {
+	// we classify requests into Get which read data from object storage, and PUT
+	// which write data to it, for HEAD and POST we treat them as GET and PUT
+	// respectively.
 	switch httpReq.Method {
 	case http.MethodGet, http.MethodHead:
 		r.Get.Add(1)
-	case http.MethodPut, http.MethodPost, http.MethodDelete:
+	case http.MethodPut, http.MethodPost:
 		r.Put.Add(1)
 	}
 }
 
-// Clone returns a copy of the Requests.
-func (r *Requests) Clone() *Requests {
-	newR := &Requests{}
-	newR.Get.Store(r.Get.Load())
-	newR.Put.Store(r.Put.Load())
-	return newR
+// Merge merges another Requests into this one.
+func (r *Requests) Merge(other *Requests) {
+	r.Get.Add(other.Get.Load())
+	r.Put.Add(other.Put.Load())
 }
 
 // Traffic records the amount of data read and written to object storage.

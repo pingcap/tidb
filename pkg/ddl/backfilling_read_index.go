@@ -128,14 +128,14 @@ func (r *readIndexStepExecutor) runGlobalPipeline(
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) error {
-	objStoreReqs, extStore, err := handle.CreateGlobalSortStore(ctx, r.cloudStorageURI)
+	reqRec, extStore, err := handle.CreateGlobalSortStore(ctx, r.cloudStorageURI)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		extStore.Close()
-		r.summary.MergeObjStoreRequests(objStoreReqs)
-		r.GetMeterRecorder().MergeObjStoreRequests(objStoreReqs)
+		r.summary.MergeObjStoreRequests(reqRec)
+		r.GetMeterRecorder().MergeObjStoreRequests(reqRec)
 	}()
 
 	pipe, err := r.buildExternalStorePipeline(opCtx, extStore, subtask.TaskID, subtask.ID, sm, concurrency)

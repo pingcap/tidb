@@ -351,8 +351,8 @@ func GetScheduleTuneFactors(ctx context.Context, keyspace string) (*schstatus.Tu
 
 // CreateGlobalSortStore creates an external storage for global sort.
 func CreateGlobalSortStore(ctx context.Context, uri string) (*recording.Requests, extstorage.ExternalStorage, error) {
-	objStoreReqs := &recording.Requests{}
-	ctx2 := recording.WithRequests(ctx, objStoreReqs)
+	reqRec := &recording.Requests{}
+	ctx2 := recording.WithRequests(ctx, reqRec)
 	storeBackend, err := extstorage.ParseBackend(uri, nil)
 	if err != nil {
 		return nil, nil, err
@@ -361,7 +361,7 @@ func CreateGlobalSortStore(ctx context.Context, uri string) (*recording.Requests
 	if err != nil {
 		return nil, nil, err
 	}
-	return objStoreReqs, store, nil
+	return reqRec, store, nil
 }
 
 func init() {

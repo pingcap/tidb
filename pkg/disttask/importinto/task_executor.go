@@ -198,19 +198,19 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	var (
-		objStoreReqs = &recording.Requests{}
-		extStore     storage.ExternalStorage
+		reqRec   = &recording.Requests{}
+		extStore storage.ExternalStorage
 	)
 	if s.tableImporter.IsGlobalSort() {
 		var err3 error
-		objStoreReqs, extStore, err3 = handle.CreateGlobalSortStore(ctx, s.tableImporter.CloudStorageURI)
+		reqRec, extStore, err3 = handle.CreateGlobalSortStore(ctx, s.tableImporter.CloudStorageURI)
 		if err3 != nil {
 			return err3
 		}
 		defer func() {
 			extStore.Close()
-			s.summary.MergeObjStoreRequests(objStoreReqs)
-			s.GetMeterRecorder().MergeObjStoreRequests(objStoreReqs)
+			s.summary.MergeObjStoreRequests(reqRec)
+			s.GetMeterRecorder().MergeObjStoreRequests(reqRec)
 		}()
 	}
 	// read import step meta from external storage when using global sort.
@@ -408,18 +408,18 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	m.summary.Reset()
 
-	objStoreReqs, sortStore, err := handle.CreateGlobalSortStore(ctx, m.taskMeta.Plan.CloudStorageURI)
+	reqRec, extStore, err := handle.CreateGlobalSortStore(ctx, m.taskMeta.Plan.CloudStorageURI)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		sortStore.Close()
-		m.summary.MergeObjStoreRequests(objStoreReqs)
-		m.GetMeterRecorder().MergeObjStoreRequests(objStoreReqs)
+		extStore.Close()
+		m.summary.MergeObjStoreRequests(reqRec)
+		m.GetMeterRecorder().MergeObjStoreRequests(reqRec)
 	}()
 	// read merge sort step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
-		if err := sm.ReadJSONFromExternalStorage(ctx, sortStore, sm); err != nil {
+		if err := sm.ReadJSONFromExternalStorage(ctx, extStore, sm); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -446,7 +446,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	err = external.MergeOverlappingFiles(
 		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
 		sm.DataFiles,
-		sortStore,
+		extStore,
 		partSize,
 		prefix,
 		external.DefaultOneWriterBlockSize,
@@ -465,7 +465,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return m.onFinished(ctx, subtask, sortStore)
+	return m.onFinished(ctx, subtask, extStore)
 }
 
 func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sortStore storage.ExternalStorage) error {
@@ -544,18 +544,18 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	e.summary.Reset()
 
-	objStoreReqs, sortStore, err := handle.CreateGlobalSortStore(ctx, e.tableImporter.CloudStorageURI)
+	reqRec, extStore, err := handle.CreateGlobalSortStore(ctx, e.tableImporter.CloudStorageURI)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		sortStore.Close()
-		e.summary.MergeObjStoreRequests(objStoreReqs)
-		e.GetMeterRecorder().MergeObjStoreRequests(objStoreReqs)
+		extStore.Close()
+		e.summary.MergeObjStoreRequests(reqRec)
+		e.GetMeterRecorder().MergeObjStoreRequests(reqRec)
 	}()
 	// read write and ingest step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
-		if err := sm.ReadJSONFromExternalStorage(ctx, sortStore, sm); err != nil {
+		if err := sm.ReadJSONFromExternalStorage(ctx, extStore, sm); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -583,7 +583,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			ExtStore:      sortStore,
+			ExtStore:      extStore,
 			DataFiles:     sm.DataFiles,
 			StatFiles:     sm.StatFiles,
 			StartKey:      sm.StartKey,

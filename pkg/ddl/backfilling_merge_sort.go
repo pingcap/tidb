@@ -86,14 +86,14 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		m.mu.Unlock()
 	}
 
-	objStoreReqs, extStore, err := handle.CreateGlobalSortStore(ctx, m.cloudStoreURI)
+	reqRec, extStore, err := handle.CreateGlobalSortStore(ctx, m.cloudStoreURI)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		extStore.Close()
-		m.summary.MergeObjStoreRequests(objStoreReqs)
-		m.GetMeterRecorder().MergeObjStoreRequests(objStoreReqs)
+		m.summary.MergeObjStoreRequests(reqRec)
+		m.GetMeterRecorder().MergeObjStoreRequests(reqRec)
 	}()
 
 	prefix := path.Join(strconv.Itoa(int(subtask.TaskID)), strconv.Itoa(int(subtask.ID)))
