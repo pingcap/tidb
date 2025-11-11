@@ -98,10 +98,10 @@ func genInitStatsMetaSQL(tableIDs ...int64) string {
 	return selectPrefix + whereClausePrefix + inListStr + whereClauseSuffix
 }
 
-func (h *Handle) initStatsMeta(ctx context.Context, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
+func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	sql := genInitStatsMetaSQL(tableIDs...)
-	rc, err := util.Exec(h.initStatsCtx, sql)
+	rc, err := util.Exec(sctx, sql)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
@@ -356,9 +356,9 @@ func genInitStatsHistogramsSQL(options genHistSQLOptions) string {
 	return selectPrefix + " where table_id in (" + inListStr + ")" + orderSuffix
 }
 
-func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.StatsCache, tableIDs ...int64) error {
+func (h *Handle) initStatsHistogramsLite(ctx context.Context, sctx sessionctx.Context, cache statstypes.StatsCache, tableIDs ...int64) error {
 	sql := genInitStatsHistogramsSQL(newGenHistSQLOptionsForTableIDs(tableIDs))
-	rc, err := util.Exec(h.initStatsCtx, sql)
+	rc, err := util.Exec(sctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -745,26 +745,34 @@ func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, total
 // 3. TopN, Bucket, FMSketch are not loaded.
 // And to work with auto analyze's needs, we need to read all the tables' stats meta into memory.
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
-func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) (err error) {
+func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) error {
+	return h.Pool.SPool().WithForceBlockGCSession(ctx, func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			return h.initStatsLiteWithSession(ctx, sctx, tableIDs...)
+		})
+	})
+}
+
+func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (err error) {
 	defer func() {
-		_, err1 := util.Exec(h.initStatsCtx, "commit")
+		_, err1 := util.Exec(sctx, "commit")
 		if err == nil && err1 != nil {
 			err = err1
 		}
 	}()
-	_, err = util.Exec(h.initStatsCtx, "begin")
+	_, err = util.Exec(sctx, "begin")
 	if err != nil {
 		return err
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
 	start := time.Now()
-	cache, _, err := h.initStatsMeta(ctx, tableIDs...)
+	cache, _, err := h.initStatsMeta(ctx, sctx, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the stats meta in the lite mode", zap.Duration("duration", time.Since(start)))
 	start = time.Now()
-	err = h.initStatsHistogramsLite(ctx, cache, tableIDs...)
+	err = h.initStatsHistogramsLite(ctx, sctx, cache, tableIDs...)
 	if err != nil {
 		cache.Close()
 		return errors.Trace(err)
@@ -793,7 +801,15 @@ func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) (err erro
 // To work with auto-analyze's needs, we need to read all stats meta info into memory.
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
 // If tableIDs is provided, we only load the stats for the specified tables.
-func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) (err error) {
+func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error {
+	return h.Pool.SPool().WithForceBlockGCSession(ctx, func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			return h.initStatsWithSession(ctx, sctx, is, tableIDs...)
+		})
+	})
+}
+
+func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, tableIDs ...int64) (err error) {
 	initstats.InitStatsPercentage.Store(0)
 	defer initstats.InitStatsPercentage.Store(100)
 	totalMemory, err := memory.MemTotal()
@@ -801,20 +817,20 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableI
 		return err
 	}
 	defer func() {
-		_, err1 := util.Exec(h.initStatsCtx, "commit")
+		_, err1 := util.Exec(sctx, "commit")
 		if err == nil && err1 != nil {
 			err = err1
 		}
 	}()
 
-	_, err = util.Exec(h.initStatsCtx, "begin")
+	_, err = util.Exec(sctx, "begin")
 	if err != nil {
 		return err
 	}
 	failpoint.Inject("beforeInitStats", func() {})
 
 	start := time.Now()
-	cache, maxTableID, err := h.initStatsMeta(ctx, tableIDs...)
+	cache, maxTableID, err := h.initStatsMeta(ctx, sctx, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}

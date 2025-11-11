@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -251,6 +252,7 @@ func (e *BaseTaskExecutor) Run() {
 		if e.stepExec != nil {
 			e.cleanStepExecutor()
 		}
+		metering.UnregisterRecorder(e.GetTaskBase().ID)
 	}()
 	// task executor occupies resources, if there's no subtask to run for 10s,
 	// we release the resources so that other tasks can use them.
@@ -376,7 +378,7 @@ func (e *BaseTaskExecutor) createStepExecutor() error {
 		return errors.Trace(err)
 	}
 	resource := e.nodeRc.GetStepResource(e.GetTaskBase().Concurrency)
-	execute.SetFrameworkInfo(stepExecutor, task.Step, resource)
+	execute.SetFrameworkInfo(stepExecutor, task, resource)
 
 	if err := stepExecutor.Init(e.ctx); err != nil {
 		if e.IsRetryableError(err) {

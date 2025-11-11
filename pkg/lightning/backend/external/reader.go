@@ -179,7 +179,7 @@ func readOneFile(
 		}
 	}
 
-	kvs := make([]kvPair, 0, 1024)
+	kvs := make([]KVPair, 0, 1024)
 	size := 0
 	droppedSize := 0
 
@@ -200,7 +200,7 @@ func readOneFile(
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
-		kvs = append(kvs, kvPair{key: smallBlockBuf.AddBytes(k), value: smallBlockBuf.AddBytes(v)})
+		kvs = append(kvs, KVPair{Key: smallBlockBuf.AddBytes(k), Value: smallBlockBuf.AddBytes(v)})
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
