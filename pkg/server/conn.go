@@ -1081,7 +1081,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 	trace := traceevent.NewTrace()
 	ctx = tracing.WithFlightRecorder(ctx, trace)
 
-	parentCtx := ctx
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
 	// the status to special values, for example: kill or graceful shutdown.
@@ -1820,7 +1819,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			// Save the point plan in Session, so we don't need to build the point plan again.
 			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
 		}
-
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
 			action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
