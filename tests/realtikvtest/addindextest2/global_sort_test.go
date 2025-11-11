@@ -861,7 +861,11 @@ func TestNextGenMetering(t *testing.T) {
 		t.Skip("Metering for next-gen only")
 	}
 	testutil.ReduceCheckInterval(t)
+	bak := metering.FlushInterval
 	metering.FlushInterval = time.Second
+	t.Cleanup(func() {
+		metering.FlushInterval = bak
+	})
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

@@ -28,6 +28,7 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -391,10 +392,21 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	require.Equal(s.T(), removeCnt, addCnt)
 }
 
-func (s *mockGCSSuite) TestNextGenMetering() {
+func TestNextGenMetering(t *testing.T) {
 	if kerneltype.IsClassic() {
-		s.T().Skip("Metering is not supported in classic kernel type")
+		t.Skip("Metering is not supported in classic kernel type")
 	}
+	bak := metering.FlushInterval
+	metering.FlushInterval = time.Second
+	t.Cleanup(func() {
+		metering.FlushInterval = bak
+	})
+	s := &mockGCSSuite{}
+	s.SetT(t)
+	s.SetupSuite()
+	t.Cleanup(func() {
+		s.TearDownSuite()
+	})
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	srcDirURI := realtikvtest.GetNextGenObjStoreURI("meter-test")
