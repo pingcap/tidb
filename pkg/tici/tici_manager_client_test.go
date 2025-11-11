@@ -259,14 +259,6 @@ func TestCloneAndNormalizeTableInfo(t *testing.T) {
 		check     func(t *testing.T, input, output *model.TableInfo)
 	}{
 		{
-			name:      "nil input",
-			input:     nil,
-			wantError: false,
-			check: func(t *testing.T, input, output *model.TableInfo) {
-				require.Nil(t, output)
-			},
-		},
-		{
 			name: "table with longtext and json columns",
 			input: &model.TableInfo{
 				ID: 1,

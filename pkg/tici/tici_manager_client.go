@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/pd/client/constants"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -571,10 +572,8 @@ func DropFullTextIndex(ctx context.Context, store kv.Storage, tableID int64, ind
 // through an int32 narrowing (int(int32(flen))). This ensures TiCI parses the
 // length as int32 and avoids 4GB default-value related errors.
 func cloneAndNormalizeTableInfo(tbl *model.TableInfo) (*model.TableInfo, error) {
-	// nil guard
-	if tbl == nil {
-		return nil, nil
-	}
+
+	intest.Assert(tbl != nil, "tableInfo is nil")
 
 	// deep clone via JSON marshal/unmarshal
 	b, err := json.Marshal(tbl)
