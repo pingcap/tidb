@@ -71,7 +71,7 @@ func TestTableModeBasic(t *testing.T) {
 	tblInfo := getClonedTableInfoFromDomain(t, "test", "t3", domain)
 	tblInfo.Name = ast.NewCIStr("t1_foreign_key")
 	tblInfo.Mode = model.TableModeImport
-	err := de.CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
+	err := de.CreateTableWithInfo(context.Background(), tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
 	require.NoError(t, err)
 	dbInfo, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
@@ -83,7 +83,7 @@ func TestTableModeBasic(t *testing.T) {
 	tblInfo = getClonedTableInfoFromDomain(t, "test", "t1", domain)
 	tblInfo.Name = ast.NewCIStr("t1_restore_import")
 	tblInfo.Mode = model.TableModeRestore
-	err = de.CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
+	err = de.CreateTableWithInfo(context.Background(), tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
 	require.NoError(t, err)
 	dbInfo, ok = domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
@@ -156,7 +156,7 @@ func TestTableModeBasic(t *testing.T) {
 	err = testutil.SetTableMode(ctx, t, store, de, dbInfo, tblInfo, model.TableModeImport)
 	require.NoError(t, err)
 	tblInfo.Mode = model.TableModeRestore
-	err = de.CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
+	err = de.CreateTableWithInfo(context.Background(), tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
 	require.ErrorContains(t, err, "Invalid mode set from (or by default) Import to Restore for table t1_restore_import")
 
 	// For testing batch create tables with info
