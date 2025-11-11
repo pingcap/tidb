@@ -193,8 +193,6 @@ explain select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNU
 
 select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
 
-<<<<<<< HEAD:cmd/explaintest/t/explain_complex.test
-=======
 set @@sql_mode=default;
 
 # https://github.com/pingcap/tidb/issues/50080
@@ -223,4 +221,3 @@ analyze table test all columns;
 load stats 's/issue_50080.json';
 explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2023-12-31 23:59:59';
 explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2024-01-01 00:00:00';
->>>>>>> 36e39785ab1 (Planner: Single col out of range use original type (#55600)):tests/integrationtest/t/explain_complex.test
