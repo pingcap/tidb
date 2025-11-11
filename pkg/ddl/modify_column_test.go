@@ -26,21 +26,15 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -1367,66 +1361,5 @@ func TestModifyColumnWithDifferentCollation(t *testing.T) {
 				runSingleTest(t, oldColTp, newColTp)
 			})
 		}
-	}
-}
-
-func TestHistogramFromStorageWithPriority(t *testing.T) {
-	t.Skip("not finished")
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t2(a int auto_increment, b int, c int, primary key(a), key idxb(b), key idxc(c))")
-	for i := range 200 {
-		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", i, i))
-	}
-	for range 4 {
-		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", 20, 20))
-		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", 50, 50))
-		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", 111, 111))
-		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", 156, 156))
-	}
-	tk.MustExec("analyze table t2")
-	tk.MustExec("explain select * from t2 where b < 512")
-	tk.MustExec("explain select * from t2 where b > 200")
-
-	getHg := func(dbName, tblName string) (int, *statistics.Histogram) {
-		tblInfo := external.GetTableByName(t, tk, dbName, tblName).Meta()
-		colID := tblInfo.Columns[1].ID
-		tp := &tblInfo.Columns[1].FieldType
-
-		topN, err := storage.TopNFromStorage(tk.Session(), tblInfo.ID, 0, colID)
-		require.NoError(t, err)
-
-		lowerValue, err := table.CastColumnValueWithStrictMode(types.NewIntDatum(25), tp)
-		require.NoError(t, err)
-		upperValue, err := table.CastColumnValueWithStrictMode(types.NewIntDatum(125), tp)
-		require.NoError(t, err)
-
-		lowEncoded, err := codec.EncodeKey(time.UTC, nil, lowerValue)
-		require.NoError(t, err)
-		upperEncoded, err := codec.EncodeKey(time.UTC, nil, upperValue)
-		require.NoError(t, err)
-
-		oldCount := topN.BetweenCount(nil, lowEncoded, upperEncoded)
-
-		hg, err := storage.HistogramFromStorageWithPriority(
-			tk.Session(), tblInfo.ID, colID, tp, 0,
-			0, 0, 0, 0, 0, kv.PriorityHigh)
-		require.NoError(t, err)
-		return int(oldCount), hg
-	}
-
-	oldCount, oldHg := getHg("test", "t2")
-	tk.MustExec("alter table t2 modify column b mediumint unsigned")
-	newCount, newHg := getHg("test", "t2")
-
-	require.Equal(t, oldCount, newCount)
-	require.Equal(t, len(oldHg.Buckets), len(newHg.Buckets))
-
-	for i := range len(oldHg.Buckets) {
-		oldLower, oldUpper := oldHg.GetLower(i), oldHg.GetUpper(i)
-		newLower, newUpper := newHg.GetLower(i), newHg.GetUpper(i)
-		require.Equal(t, oldLower.GetInt64(), newLower.GetInt64())
-		require.Equal(t, oldUpper.GetInt64(), newUpper.GetInt64())
 	}
 }
