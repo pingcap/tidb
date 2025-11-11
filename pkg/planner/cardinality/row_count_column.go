@@ -426,12 +426,21 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 	}
 	// If it is a single column index, directly use column estimation instead.
 	if len(idxCols) == 1 {
-		var countEst statistics.RowEstimate
-		countEst, err = GetRowCountByColumnRanges(sctx, coll, idxCols[0].UniqueID, indexRanges)
-		if err != nil {
-			return 0, 0, err
+		colID := idxCols[0].UniqueID
+		col := coll.GetCol(colID)
+		if col != nil && col.IsEssentialStatsLoaded() && col.Histogram.Len() > 0 {
+			var countEst statistics.RowEstimate
+			countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, indexRanges)
+			if err != nil {
+				return 0, 0, err
+			}
+			return countEst.Est, 0, nil
 		}
-		return countEst.Est, 0, nil
+		// Fall back to pseudo when column stats are not loaded to avoid triggering sync load.
+		pseudoCount, err := getPseudoRowCountByColumnRanges(
+			sctx.GetSessionVars().StmtCtx.TypeCtx(), tableRowCount, indexRanges, 0,
+		)
+		return pseudoCount, 0, err
 	}
 	tmpRan := []*ranger.Range{
 		{
@@ -458,13 +467,23 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 				tmpRan[0].HighExclude = indexRange.HighExclude
 			}
 			colID = idxCols[i].UniqueID
+			col := coll.GetCol(colID)
 			// GetRowCountByColumnRanges handles invalid stats internally by using pseudo estimation
 			var countEst statistics.RowEstimate
-			countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
-			if err != nil {
-				return 0, 0, errors.Trace(err)
+			if col != nil && col.IsEssentialStatsLoaded() && col.Histogram.Len() > 0 {
+				countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
+				if err != nil {
+					return 0, 0, errors.Trace(err)
+				}
+				count = countEst.Est
+			} else {
+				var pseudoCount float64
+				pseudoCount, err = getPseudoRowCountByColumnRanges(sctx.GetSessionVars().StmtCtx.TypeCtx(), tableRowCount, tmpRan, 0)
+				if err != nil {
+					return 0, 0, errors.Trace(err)
+				}
+				count = pseudoCount
 			}
-			count = countEst.Est
 			tempSelectivity := count / tableRowCount
 			selectivity *= tempSelectivity
 			corrSelectivity = min(corrSelectivity, tempSelectivity)
