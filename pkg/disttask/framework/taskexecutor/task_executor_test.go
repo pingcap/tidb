@@ -1212,7 +1212,7 @@ func TestInject(t *testing.T) {
 		ctrl.Finish()
 	})
 	taskTable := mock.NewMockTaskTable(ctrl)
-	execute.SetFrameworkInfo(e, proto.StepOne, r, taskTable.UpdateSubtaskCheckpoint, taskTable.GetSubtaskCheckpoint)
+	execute.SetFrameworkInfo(e, &proto.Task{TaskBase: proto.TaskBase{Step: proto.StepOne}}, r, taskTable.UpdateSubtaskCheckpoint, taskTable.GetSubtaskCheckpoint)
 	got := e.GetResource()
 	require.Equal(t, r, got)
 }

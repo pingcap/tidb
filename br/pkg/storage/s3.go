@@ -1018,8 +1018,6 @@ type s3ObjectReader struct {
 	pos       int64
 	rangeInfo RangeInfo
 	// reader context used for implement `io.Seek`
-	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
-	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
 	ctx          context.Context
 	prefetchSize int
 }
@@ -1237,7 +1235,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	if option != nil {
 		onFlush = option.OnUpload
 		if onFlush != nil {
-			// Total number of PUT operations for an multi-part uploaded file = total file size / part-size + 2. For details, see
+			// Total number of PUT operations for a multipart uploaded file = total file size / part-size + 2. For details, see
 			// https://repost.aws/questions/QUXmwDga0VRvSOOjYWMfor-w/are-we-billed-a-put-request-for-each-part-with-s3-multipart-upload-or-only-once-for-the-final-merged-file
 			onFlush() // Initiate: PUT
 			onFlush() // Complete: PUT
