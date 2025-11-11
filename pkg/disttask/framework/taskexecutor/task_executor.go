@@ -378,7 +378,7 @@ func (e *BaseTaskExecutor) createStepExecutor() error {
 		return errors.Trace(err)
 	}
 	resource := e.nodeRc.GetStepResource(e.GetTaskBase().Concurrency)
-	execute.SetFrameworkInfo(stepExecutor, task, resource)
+	execute.SetFrameworkInfo(stepExecutor, task, resource, e.taskTable.UpdateSubtaskCheckpoint, e.taskTable.GetSubtaskCheckpoint)
 
 	if err := stepExecutor.Init(e.ctx); err != nil {
 		if e.IsRetryableError(err) {
