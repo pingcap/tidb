@@ -457,12 +457,22 @@ func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols []*express
 	handleCols := make([]*expression.Column, 0, handleLen)
 	handleCols = append(handleCols, possibleHandleCols...)
 	if len(handleCols) == 0 {
-		handleCols = append(handleCols, &expression.Column{
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			ID:       model.ExtraHandleID,
-			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-			OrigName: model.ExtraHandleName.O,
-		})
+		foundIntPK := false
+		for i, col := range p.Columns {
+			if (mysql.HasPriKeyFlag(col.GetFlag()) && p.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
+				handleCols = append(handleCols, p.DataSourceSchema.Columns[i])
+				foundIntPK = true
+				break
+			}
+		}
+		if !foundIntPK {
+			handleCols = append(handleCols, &expression.Column{
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				ID:       model.ExtraHandleID,
+				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+				OrigName: model.ExtraHandleName.O,
+			})
+		}
 	}
 	p.SetSchema(expression.NewSchema(handleCols...))
 }

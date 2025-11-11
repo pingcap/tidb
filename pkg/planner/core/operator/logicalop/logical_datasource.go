@@ -771,10 +771,10 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 func (ds *DataSource) CleanUnusedTiCIIndexes() {
 	useIndexIsPruned := false
 	ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index != nil && path.Index.FullTextInfo != nil && len(path.AccessConds) == 0
+		return path.Index != nil && path.Index.IsFulltextIndexOnTiCI() && len(path.AccessConds) == 0
 	})
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-		if path.Index != nil && path.Index.FullTextInfo != nil && len(path.AccessConds) == 0 {
+		if path.Index != nil && path.Index.IsFulltextIndexOnTiCI() && len(path.AccessConds) == 0 {
 			useIndexIsPruned = path.Forced
 			return true
 		}
