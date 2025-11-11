@@ -222,7 +222,7 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files/t.*.csv?endpoint=%s'
 		with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
-	result := s.tk.MustQuery(importSQL + ", detached").Rows()
+	result := s.tk.MustQuery(importSQL + ", __force_merge_step").Rows()
 	s.Len(result, 1)
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
@@ -237,40 +237,43 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
 
-	subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepEncodeAndSort)
-	s.NoError(err)
-	s.Len(subtasks, 1)
-	v := &execute.SubtaskSummary{}
-	err = json.Unmarshal([]byte(subtasks[0].Summary), &v)
-	s.NoError(err)
-	s.Equal(int64(10000), v.RowCnt.Load())
-	s.Equal(int64(147780), v.Bytes.Load())
-	s.Equal(uint64(9), v.PutReqCnt.Load())
+	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
+	s.EqualValues(10000, sum.RowCnt.Load())
+	s.EqualValues(147780, sum.Bytes.Load())
 	// this GET comes from reading subtask meta from object storage.
-	s.Equal(uint64(1), v.GetReqCnt.Load())
-	logutil.BgLogger().Info("subtasks", zap.Any("subtasks", v))
+	s.EqualValues(1, sum.GetReqCnt.Load())
+	// we have 4 kv groups, 2 files per group, and 1 for the meta file.
+	s.EqualValues(9, sum.PutReqCnt.Load())
 
-	subtasks, err = taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepWriteAndIngest)
+	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepMergeSort)
+	// 4 kv groups, each have 3 read(1 meta, 1 get kv file size, 1 read kv file)
+	// and 3 write(1 kv, 1 stat, 1 meta)
+	s.EqualValues(12, sum.GetReqCnt.Load())
+	s.EqualValues(12, sum.PutReqCnt.Load())
+
+	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
+	s.Greater(sum.RowCnt.Load(), int64(0)) // Fixme: why not 10000?
+	s.Greater(sum.Bytes.Load(), int64(0))  // Fixme: unstable
+	s.EqualValues(20, sum.GetReqCnt.Load())
+	s.EqualValues(0, sum.PutReqCnt.Load())
+}
+
+func (s *mockGCSSuite) getStepSummary(ctx context.Context, taskMgr *storage.TaskManager, taskID int64, step proto.Step) *execute.SubtaskSummary {
+	s.T().Helper()
+	subtasks, err := taskMgr.GetSubtasksWithHistory(ctx, taskID, step)
 	s.NoError(err)
-	s.Len(subtasks, 4)
-	totalRows := int64(0)
-	totalBytes := int64(0)
-	totalPutReq := uint64(0)
-	totalGetReq := uint64(0)
+	var accumSummary execute.SubtaskSummary
 	for i, subtask := range subtasks {
-		v = &execute.SubtaskSummary{}
+		v := &execute.SubtaskSummary{}
 		err = json.Unmarshal([]byte(subtask.Summary), &v)
 		s.NoError(err)
-		totalRows += v.RowCnt.Load()
-		totalBytes += v.Bytes.Load()
-		totalPutReq += v.PutReqCnt.Load()
-		totalGetReq += v.GetReqCnt.Load()
+		accumSummary.RowCnt.Add(v.RowCnt.Load())
+		accumSummary.Bytes.Add(v.Bytes.Load())
+		accumSummary.PutReqCnt.Add(v.PutReqCnt.Load())
+		accumSummary.GetReqCnt.Add(v.GetReqCnt.Load())
 		logutil.BgLogger().Info("subtasks", zap.Int("seq", i), zap.Any("subtasks", v))
 	}
-	s.Greater(totalRows, int64(0))  // Fixme: why not 10000?
-	s.Greater(totalBytes, int64(0)) // Fixme: unstable
-	s.Equal(uint64(0), totalPutReq)
-	s.Equal(uint64(20), totalGetReq)
+	return &accumSummary
 }
 
 func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {

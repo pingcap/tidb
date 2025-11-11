@@ -98,10 +98,12 @@ type SubtaskSummary struct {
 	Bytes atomic.Int64 `json:"bytes,omitempty"`
 	// ReadBytes is the number of bytes that read from the source.
 	ReadBytes atomic.Int64 `json:"read_bytes,omitempty"`
+	// GetReqCnt is the number of get requests to the external storage.
+	// Note: Import-into also do GET on the source data bucket, but that's not
+	// recorded.
+	GetReqCnt atomic.Uint64 `json:"get_request_count,omitempty"`
 	// PutReqCnt is the number of put requests to the external storage.
 	PutReqCnt atomic.Uint64 `json:"put_request_count,omitempty"`
-	// GetReqCnt is the number of get requests to the external storage.
-	GetReqCnt atomic.Uint64 `json:"get_request_count,omitempty"`
 
 	// Progresses are the history of data processed, which is used to get a
 	// smoother speed for each subtask.
