@@ -1103,7 +1103,7 @@ func buildHybridSortSpec(spec *hybridSortSpec, resolveColumn func(string) (*mode
 	}
 	return &model.HybridSortSpec{
 		Columns: columns,
-		Order:   normalized,
+		IsAsc:   normalized,
 	}, nil
 }
 

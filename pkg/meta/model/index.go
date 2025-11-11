@@ -228,8 +228,8 @@ type HybridInvertedSpec struct {
 // HybridSortSpec describes the order definition of the hybrid index.
 type HybridSortSpec struct {
 	Columns []*IndexColumn `json:"columns,omitempty"`
-	// Order stores true for ascending order and false for descending order.
-	Order []bool `json:"order,omitempty"`
+	// IsAsc stores, for each column, whether it is sorted in ascending order (true) or descending order (false).
+	IsAsc []bool `json:"is_asc,omitempty"`
 }
 
 // Clone clones HybridIndexInfo.
@@ -380,8 +380,8 @@ func (opt *HybridSortSpec) Clone() *HybridSortSpec {
 	}
 	cloned := &HybridSortSpec{}
 	cloned.Columns = cloneIndexColumnSlice(opt.Columns)
-	if len(opt.Order) > 0 {
-		cloned.Order = append([]bool(nil), opt.Order...)
+	if len(opt.IsAsc) > 0 {
+		cloned.IsAsc = append([]bool(nil), opt.IsAsc...)
 	}
 	return cloned
 }

@@ -2990,8 +2990,8 @@ func hybridParameterJSONForShow(tableInfo *model.TableInfo, idxInfo *model.Index
 		if len(columns) > 0 {
 			orders := make([]string, len(columns))
 			for i := range columns {
-				if i < len(clone.Sort.Order) {
-					if clone.Sort.Order[i] {
+				if i < len(clone.Sort.IsAsc) {
+					if clone.Sort.IsAsc[i] {
 						orders[i] = "asc"
 					} else {
 						orders[i] = "desc"
