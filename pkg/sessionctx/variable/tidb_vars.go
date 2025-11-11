@@ -1004,6 +1004,9 @@ const (
 	// division operations performed with the / operator.
 	DivPrecisionIncrement = "div_precision_increment"
 
+	// TiDBPlanCacheMaxDecimalParamNums indicates the max number of decimal parameters which can use the plan cache
+	TiDBPlanCacheMaxDecimalParamNums = "tidb_plan_cache_max_decimal_param_nums"
+
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
@@ -1626,6 +1629,7 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
+	DefTiDBPlanCacheMaxDecimalParamNums               = -1
 	DefTiDBLoadBindingTimeout                         = 200
 )
 
