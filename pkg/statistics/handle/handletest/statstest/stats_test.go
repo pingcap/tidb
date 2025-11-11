@@ -313,14 +313,17 @@ num: 1 lower_bound: 7 upper_bound: 7 repeats: 1 ndv: 0`, tbl.Meta().ID)
 
 func TestInitStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
-	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
-	testKit.MustExec("analyze table t all columns with 1 topn, 5 buckets")
-
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	// With all columns.
+	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
@@ -332,6 +335,136 @@ func TestInitStats(t *testing.T) {
 	require.Equal(t, int64(0), tableStats.ModifyCount)
 	require.Equal(t, int64(6), tableStats.RealtimeCount)
 	require.Equal(t, statistics.Version2, tableStats.StatsVer)
+	// Check index stats (TopN + Histogram)
+	idx := tableStats.GetIdx(tbl.Meta().Indices[0].ID)
+	require.NotNil(t, idx)
+	require.True(t, tableStats.ColAndIdxExistenceMap.Has(idx.ID, true))
+	require.True(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true))
+	require.True(t, idx.IsStatsInitialized())
+	require.True(t, idx.IsFullLoad())
+	require.Equal(t, uint64(2), idx.TopN.TotalCount())
+	require.Equal(t, float64(6), idx.TotalRowCount())
+	require.Equal(t, 2, idx.Histogram.Len())
+	// Check column stats (Only Basic Info, no TopN and Histogram)
+	tableStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.True(t, tableStats.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.True(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsAllEvicted())
+		require.Equal(t, int64(6), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
+
+	// Another table with no analyze
+	tk.MustExec("create table t1(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t1 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	h = dom.StatsHandle()
+	is = dom.InfoSchema()
+	// Handle DDL event to init the stats meta and histogram meta.
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), is))
+	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+	tableStats1 := h.GetPhysicalTableStats(tbl1.Meta().ID, tbl1.Meta())
+	require.False(t, tableStats1.Pseudo)
+	require.False(t, tableStats1.IsAnalyzed())
+	require.Equal(t, int64(0), tableStats1.ModifyCount)
+	require.Equal(t, int64(0), tableStats1.RealtimeCount)
+	require.Equal(t, statistics.Version0, tableStats1.StatsVer)
+
+	// Check index stats
+	require.Equal(t, 1, tableStats1.IdxNum())
+	idx1 := tableStats1.GetIdx(tbl1.Meta().Indices[0].ID)
+	require.NotNil(t, idx1)
+	require.True(t, tableStats1.ColAndIdxExistenceMap.Has(idx1.ID, true))
+	require.False(t, tableStats1.ColAndIdxExistenceMap.HasAnalyzed(idx1.ID, true))
+	require.False(t, idx1.IsStatsInitialized())
+	require.False(t, idx1.IsAllEvicted())
+	require.Equal(t, uint64(0), idx1.TopN.TotalCount())
+	require.Equal(t, float64(0), idx1.TotalRowCount())
+	require.Equal(t, 0, idx1.Histogram.Len())
+	// Check column stats
+	require.Equal(t, int(3), tableStats1.ColNum())
+	tableStats1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.True(t, tableStats1.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.False(t, tableStats1.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.False(t, col.IsStatsInitialized())
+		require.False(t, col.IsAllEvicted())
+		require.False(t, col.IsFullLoad())
+		require.Equal(t, int64(0), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
+
+	// Another table with predicaye columns
+	tk.MustExec("create table t2(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t2 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	h = dom.StatsHandle()
+	is = dom.InfoSchema()
+	// Handle DDL event to init the stats meta and histogram meta.
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("analyze table t2 with 2 topn, 2 buckets")
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+	tableStats2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
+	require.True(t, tableStats2.IsAnalyzed())
+	// Check index stats
+	require.Equal(t, 1, tableStats2.IdxNum())
+	idx2 := tableStats2.GetIdx(tbl2.Meta().Indices[0].ID)
+	require.NotNil(t, idx2)
+	require.True(t, tableStats2.ColAndIdxExistenceMap.Has(idx2.ID, true))
+	require.True(t, tableStats2.ColAndIdxExistenceMap.HasAnalyzed(idx2.ID, true))
+	require.True(t, idx2.IsStatsInitialized())
+	require.False(t, idx2.IsAllEvicted())
+	require.True(t, idx2.IsFullLoad())
+	require.Equal(t, uint64(2), idx2.TopN.TotalCount())
+	require.Equal(t, float64(6), idx2.TotalRowCount())
+	require.Equal(t, 2, idx2.Histogram.Len())
+	// Check column stats
+	require.Equal(t, int(3), tableStats2.ColNum())
+	// For column c, it is not in the predicate columns, so its stats has not been collected.
+	tableStats2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		if col.Info.Name.L == "c" {
+			require.True(t, tableStats2.ColAndIdxExistenceMap.Has(col.ID, false))
+			require.False(t, tableStats2.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+			require.False(t, col.IsStatsInitialized())
+			require.False(t, col.IsAllEvicted())
+			require.False(t, col.IsFullLoad())
+			require.Equal(t, int64(0), col.NDV)
+			require.Equal(t, int64(0), col.NullCount)
+			require.Equal(t, float64(0), col.TotalRowCount())
+			require.Nil(t, col.TopN)
+			require.Equal(t, 0, col.Histogram.Len())
+			return false
+		}
+		require.True(t, tableStats2.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.True(t, tableStats2.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsAllEvicted())
+		require.False(t, col.IsFullLoad())
+		require.Equal(t, int64(6), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
 }
 
 func TestInitStats51358(t *testing.T) {
