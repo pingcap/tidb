@@ -724,9 +724,15 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	ftsFuncs map[*expression.ScalarFunction]struct{},
 ) error {
 	// Fulltext index must be used. So we prune all other possible access paths.
+	prunedHintedPath := false
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index == nil || path.Index.ID != index.ID
+		pruned := path.Index == nil || path.Index.ID != index.ID
+		prunedHintedPath = prunedHintedPath || (pruned && path.Forced)
+		return pruned
 	})
+	if prunedHintedPath && !ds.PossibleAccessPaths[0].Forced {
+		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
+	}
 
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	client := ds.SCtx().GetBuildPBCtx().Client
@@ -757,4 +763,27 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 		ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, ftsFunc)
 	}
 	return nil
+}
+
+// CleanUnusedTiCIIndexes removes the unused TiCI indexes from PossibleAccessPaths and AllPossibleAccessPaths.
+// It also checks whether all hinted indexes is pruned, and raises a warning if so.
+func (ds *DataSource) CleanUnusedTiCIIndexes() {
+	useIndexIsPruned := false
+	ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+		return path.Index != nil && path.Index.FullTextInfo != nil && len(path.AccessConds) == 0
+	})
+	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+		if path.Index != nil && path.Index.FullTextInfo != nil && len(path.AccessConds) == 0 {
+			useIndexIsPruned = path.Forced
+			return true
+		}
+		return false
+	})
+	stillHasHintedIndex := false
+	for _, path := range ds.PossibleAccessPaths {
+		stillHasHintedIndex = stillHasHintedIndex || path.Forced
+	}
+	if useIndexIsPruned && !stillHasHintedIndex {
+		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
+	}
 }
