@@ -28,6 +28,9 @@ type Requests struct {
 
 // Rec records a request made to the object storage.
 func (r *Requests) Rec(httpReq *http.Request) {
+	if httpReq == nil {
+		return
+	}
 	// we classify requests into Get which read data from object storage, and PUT
 	// which write data to it, for HEAD and POST we treat them as GET and PUT
 	// respectively.
