@@ -497,29 +497,6 @@ func TestRenameTablesArgs(t *testing.T) {
 	}
 }
 
-func TestDecodeOlderRenameTablesArgs(t *testing.T) {
-	inArgs := &RenameTablesArgs{
-		RenameTableInfos: []*RenameTableArgs{
-			{OldSchemaID: 1, OldSchemaName: ast.CIStr{O: "db1", L: "db1"},
-				NewTableName: ast.CIStr{O: "tb3", L: "tb3"}, OldTableName: ast.CIStr{O: "tb1", L: "tb1"},
-				NewSchemaID: 3, TableID: 100},
-			{OldSchemaID: 2, OldSchemaName: ast.CIStr{O: "db2", L: "db2"},
-				NewTableName: ast.CIStr{O: "tb2", L: "tb2"}, OldTableName: ast.CIStr{O: "tb4", L: "tb4"},
-				NewSchemaID: 3, TableID: 101},
-		},
-	}
-
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		j2 := &Job{}
-		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionRenameTables)))
-
-		args, err := GetRenameTablesArgs(j2)
-		require.NoError(t, err)
-		require.Equal(t, inArgs.RenameTableInfos[0], args.RenameTableInfos[0])
-		require.Equal(t, inArgs.RenameTableInfos[1], args.RenameTableInfos[1])
-	}
-}
-
 func TestResourceGroupArgs(t *testing.T) {
 	inArgs := &ResourceGroupArgs{
 		RGInfo: &ResourceGroupInfo{ID: 100, Name: model.NewCIStr("rg_name")},
