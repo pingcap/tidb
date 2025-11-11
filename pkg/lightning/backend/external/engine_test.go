@@ -43,14 +43,14 @@ func testNewIter(
 	t *testing.T,
 	data engineapi.IngestData,
 	lowerBound, upperBound []byte,
-	expectedKVs []kvPair,
+	expectedKVs []KVPair,
 ) {
 	ctx := context.Background()
 	iter := data.NewIter(ctx, lowerBound, upperBound, nil)
-	var kvs []kvPair
+	var kvs []KVPair
 	for iter.First(); iter.Valid(); iter.Next() {
 		require.NoError(t, iter.Error())
-		kvs = append(kvs, kvPair{key: iter.Key(), value: iter.Value()})
+		kvs = append(kvs, KVPair{Key: iter.Key(), Value: iter.Value()})
 	}
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
@@ -58,12 +58,12 @@ func testNewIter(
 }
 
 func TestMemoryIngestData(t *testing.T) {
-	kvs := []kvPair{
-		{key: []byte("key1"), value: []byte("value1")},
-		{key: []byte("key2"), value: []byte("value2")},
-		{key: []byte("key3"), value: []byte("value3")},
-		{key: []byte("key4"), value: []byte("value4")},
-		{key: []byte("key5"), value: []byte("value5")},
+	kvs := []KVPair{
+		{Key: []byte("key1"), Value: []byte("value1")},
+		{Key: []byte("key2"), Value: []byte("value2")},
+		{Key: []byte("key3"), Value: []byte("value3")},
+		{Key: []byte("key4"), Value: []byte("value4")},
+		{Key: []byte("key5"), Value: []byte("value5")},
 	}
 	data := &MemoryIngestData{
 		kvs: kvs,
@@ -90,25 +90,25 @@ func TestMemoryIngestData(t *testing.T) {
 	data = &MemoryIngestData{
 		ts: 234,
 	}
-	encodedKVs := make([]kvPair, 0, len(kvs)*2)
-	duplicatedKVs := make([]kvPair, 0, len(kvs)*2)
+	encodedKVs := make([]KVPair, 0, len(kvs)*2)
+	duplicatedKVs := make([]KVPair, 0, len(kvs)*2)
 
 	for i := range kvs {
-		encodedKey := slices.Clone(kvs[i].key)
-		encodedKVs = append(encodedKVs, kvPair{key: encodedKey, value: kvs[i].value})
+		encodedKey := slices.Clone(kvs[i].Key)
+		encodedKVs = append(encodedKVs, KVPair{Key: encodedKey, Value: kvs[i].Value})
 		if i%2 == 0 {
 			continue
 		}
 
 		// duplicatedKeys will be like key2_0, key2_1, key4_0, key4_1
-		duplicatedKVs = append(duplicatedKVs, kvPair{key: encodedKey, value: kvs[i].value})
+		duplicatedKVs = append(duplicatedKVs, KVPair{Key: encodedKey, Value: kvs[i].Value})
 
-		encodedKey = slices.Clone(kvs[i].key)
-		newValues := make([]byte, len(kvs[i].value)+1)
-		copy(newValues, kvs[i].value)
-		newValues[len(kvs[i].value)] = 1
-		encodedKVs = append(encodedKVs, kvPair{key: encodedKey, value: newValues})
-		duplicatedKVs = append(duplicatedKVs, kvPair{key: encodedKey, value: newValues})
+		encodedKey = slices.Clone(kvs[i].Key)
+		newValues := make([]byte, len(kvs[i].Value)+1)
+		copy(newValues, kvs[i].Value)
+		newValues[len(kvs[i].Value)] = 1
+		encodedKVs = append(encodedKVs, KVPair{Key: encodedKey, Value: newValues})
+		duplicatedKVs = append(duplicatedKVs, KVPair{Key: encodedKey, Value: newValues})
 	}
 	data.kvs = encodedKVs
 
@@ -166,7 +166,7 @@ func TestSplit(t *testing.T) {
 	}
 }
 
-func prepareKVFiles(t *testing.T, store storage.ExternalStorage, contents [][]kvPair) (dataFiles, statFiles []string) {
+func prepareKVFiles(t *testing.T, store storage.ExternalStorage, contents [][]KVPair) (dataFiles, statFiles []string) {
 	ctx := context.Background()
 	for i, c := range contents {
 		var summary *WriterSummary
@@ -176,7 +176,7 @@ func prepareKVFiles(t *testing.T, store storage.ExternalStorage, contents [][]kv
 			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
 			Build(store, "/test", fmt.Sprintf("%d", i))
 		for _, p := range c {
-			require.NoError(t, writer.WriteRow(ctx, p.key, p.value, nil))
+			require.NoError(t, writer.WriteRow(ctx, p.Key, p.Value, nil))
 		}
 		require.NoError(t, writer.Close(ctx))
 		require.Len(t, summary.MultipleFilesStats, 1)
@@ -189,12 +189,12 @@ func prepareKVFiles(t *testing.T, store storage.ExternalStorage, contents [][]kv
 	return
 }
 
-func getAllDataFromDataAndRanges(t *testing.T, dataAndRanges *engineapi.DataAndRanges) []kvPair {
+func getAllDataFromDataAndRanges(t *testing.T, dataAndRanges *engineapi.DataAndRanges) []KVPair {
 	ctx := context.Background()
 	iter := dataAndRanges.Data.NewIter(ctx, nil, nil, membuf.NewPool())
-	var allKVs []kvPair
+	var allKVs []KVPair
 	for iter.First(); iter.Valid(); iter.Next() {
-		allKVs = append(allKVs, kvPair{key: iter.Key(), value: iter.Value()})
+		allKVs = append(allKVs, KVPair{Key: iter.Key(), Value: iter.Value()})
 	}
 	require.NoError(t, iter.Close())
 	return allKVs
@@ -202,14 +202,14 @@ func getAllDataFromDataAndRanges(t *testing.T, dataAndRanges *engineapi.DataAndR
 
 func TestEngineOnDup(t *testing.T) {
 	ctx := context.Background()
-	contents := [][]kvPair{{
-		{key: []byte{4}, value: []byte("bbb")},
-		{key: []byte{4}, value: []byte("bbb")},
-		{key: []byte{1}, value: []byte("aa")},
-		{key: []byte{1}, value: []byte("aa")},
-		{key: []byte{1}, value: []byte("aa")},
-		{key: []byte{2}, value: []byte("vv")},
-		{key: []byte{3}, value: []byte("sds")},
+	contents := [][]KVPair{{
+		{Key: []byte{4}, Value: []byte("bbb")},
+		{Key: []byte{4}, Value: []byte("bbb")},
+		{Key: []byte{1}, Value: []byte("aa")},
+		{Key: []byte{1}, Value: []byte("aa")},
+		{Key: []byte{1}, Value: []byte("aa")},
+		{Key: []byte{2}, Value: []byte("vv")},
+		{Key: []byte{3}, Value: []byte("sds")},
 	}}
 
 	getEngineFn := func(store storage.ExternalStorage, onDup engineapi.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
@@ -258,11 +258,11 @@ func TestEngineOnDup(t *testing.T) {
 	t.Run("on duplicate record or remove, no duplicates", func(t *testing.T) {
 		for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
 			store := storage.NewMemStorage()
-			dfiles, sfiles := prepareKVFiles(t, store, [][]kvPair{{
-				{key: []byte{4}, value: []byte("bbb")},
-				{key: []byte{1}, value: []byte("aa")},
-				{key: []byte{2}, value: []byte("vv")},
-				{key: []byte{3}, value: []byte("sds")},
+			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
+				{Key: []byte{4}, Value: []byte("bbb")},
+				{Key: []byte{1}, Value: []byte("aa")},
+				{Key: []byte{2}, Value: []byte("vv")},
+				{Key: []byte{3}, Value: []byte("sds")},
 			}})
 			extEngine := getEngineFn(store, od, dfiles, sfiles)
 			loadDataCh := make(chan engineapi.DataAndRanges, 4)
@@ -273,11 +273,11 @@ func TestEngineOnDup(t *testing.T) {
 			require.Len(t, loadDataCh, 1)
 			dataAndRanges := <-loadDataCh
 			allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
-			require.EqualValues(t, []kvPair{
-				{key: []byte{1}, value: []byte("aa")},
-				{key: []byte{2}, value: []byte("vv")},
-				{key: []byte{3}, value: []byte("sds")},
-				{key: []byte{4}, value: []byte("bbb")},
+			require.EqualValues(t, []KVPair{
+				{Key: []byte{1}, Value: []byte("aa")},
+				{Key: []byte{2}, Value: []byte("vv")},
+				{Key: []byte{3}, Value: []byte("sds")},
+				{Key: []byte{4}, Value: []byte("bbb")},
 			}, allKVs)
 			info := extEngine.ConflictInfo()
 			require.Zero(t, info.Count)
@@ -286,12 +286,12 @@ func TestEngineOnDup(t *testing.T) {
 	})
 
 	t.Run("on duplicate record or remove, partial duplicated", func(t *testing.T) {
-		contents2 := [][]kvPair{
-			{{key: []byte{1}, value: []byte("aa")}, {key: []byte{1}, value: []byte("aa")}},
-			{{key: []byte{1}, value: []byte("aa")}, {key: []byte{2}, value: []byte("vv")}, {key: []byte{3}, value: []byte("sds")}},
-			{{key: []byte{4}, value: []byte("bbb")}, {key: []byte{4}, value: []byte("bbb")}},
+		contents2 := [][]KVPair{
+			{{Key: []byte{1}, Value: []byte("aa")}, {Key: []byte{1}, Value: []byte("aa")}},
+			{{Key: []byte{1}, Value: []byte("aa")}, {Key: []byte{2}, Value: []byte("vv")}, {Key: []byte{3}, Value: []byte("sds")}},
+			{{Key: []byte{4}, Value: []byte("bbb")}, {Key: []byte{4}, Value: []byte("bbb")}},
 		}
-		for _, cont := range [][][]kvPair{contents, contents2} {
+		for _, cont := range [][][]KVPair{contents, contents2} {
 			for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
 				store := storage.NewMemStorage()
 				dataFiles, statFiles := prepareKVFiles(t, store, cont)
@@ -304,9 +304,9 @@ func TestEngineOnDup(t *testing.T) {
 				require.Len(t, loadDataCh, 1)
 				dataAndRanges := <-loadDataCh
 				allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
-				require.EqualValues(t, []kvPair{
-					{key: []byte{2}, value: []byte("vv")},
-					{key: []byte{3}, value: []byte("sds")},
+				require.EqualValues(t, []KVPair{
+					{Key: []byte{2}, Value: []byte("vv")},
+					{Key: []byte{3}, Value: []byte("sds")},
 				}, allKVs)
 				info := extEngine.ConflictInfo()
 				if od == engineapi.OnDuplicateKeyRemove {
@@ -316,12 +316,12 @@ func TestEngineOnDup(t *testing.T) {
 					require.EqualValues(t, 5, info.Count)
 					require.Len(t, info.Files, 1)
 					dupPairs := readKVFile(t, store, info.Files[0])
-					require.EqualValues(t, []kvPair{
-						{key: []byte{1}, value: []byte("aa")},
-						{key: []byte{1}, value: []byte("aa")},
-						{key: []byte{1}, value: []byte("aa")},
-						{key: []byte{4}, value: []byte("bbb")},
-						{key: []byte{4}, value: []byte("bbb")},
+					require.EqualValues(t, []KVPair{
+						{Key: []byte{1}, Value: []byte("aa")},
+						{Key: []byte{1}, Value: []byte("aa")},
+						{Key: []byte{1}, Value: []byte("aa")},
+						{Key: []byte{4}, Value: []byte("bbb")},
+						{Key: []byte{4}, Value: []byte("bbb")},
 					}, dupPairs)
 				}
 			}
@@ -331,11 +331,11 @@ func TestEngineOnDup(t *testing.T) {
 	t.Run("on duplicate record or remove, all duplicated", func(t *testing.T) {
 		for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
 			store := storage.NewMemStorage()
-			dfiles, sfiles := prepareKVFiles(t, store, [][]kvPair{{
-				{key: []byte{1}, value: []byte("aaa")},
-				{key: []byte{1}, value: []byte("aaa")},
-				{key: []byte{1}, value: []byte("aaa")},
-				{key: []byte{1}, value: []byte("aaa")},
+			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
+				{Key: []byte{1}, Value: []byte("aaa")},
+				{Key: []byte{1}, Value: []byte("aaa")},
+				{Key: []byte{1}, Value: []byte("aaa")},
+				{Key: []byte{1}, Value: []byte("aaa")},
 			}})
 			extEngine := getEngineFn(store, od, dfiles, sfiles)
 			loadDataCh := make(chan engineapi.DataAndRanges, 4)
@@ -355,11 +355,11 @@ func TestEngineOnDup(t *testing.T) {
 				require.EqualValues(t, 4, info.Count)
 				require.Len(t, info.Files, 1)
 				dupPairs := readKVFile(t, store, info.Files[0])
-				require.EqualValues(t, []kvPair{
-					{key: []byte{1}, value: []byte("aaa")},
-					{key: []byte{1}, value: []byte("aaa")},
-					{key: []byte{1}, value: []byte("aaa")},
-					{key: []byte{1}, value: []byte("aaa")},
+				require.EqualValues(t, []KVPair{
+					{Key: []byte{1}, Value: []byte("aaa")},
+					{Key: []byte{1}, Value: []byte("aaa")},
+					{Key: []byte{1}, Value: []byte("aaa")},
+					{Key: []byte{1}, Value: []byte("aaa")},
 				}, dupPairs)
 			}
 		}
