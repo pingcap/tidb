@@ -133,8 +133,9 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 		for _, item := range items {
 			if item.IsIndex && item.TableID == tableInfo.ID && item.ID == addedIndexID {
-				// TODO: we better to check the count of items is 3 here, but we found it is flaky in CI env when use the real TiKV store.
-				return true
+				// NOTE: Because the unit test environment doesn't enable sync load by default,
+				// columns a and b should also be in the AsyncLoadHistogramNeededItems.
+				return len(items) == 3
 			}
 		}
 		return false
