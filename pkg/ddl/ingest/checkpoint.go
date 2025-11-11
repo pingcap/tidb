@@ -48,22 +48,22 @@ type CheckpointStorage interface {
 	SaveCheckpoint(ctx context.Context, checkpoint *ReorgCheckpoint) error
 }
 
-// NormalStorageStrategy implements CheckpointStorage for the Non-DXF reorg table storage
-type NormalStorageStrategy struct {
+// NormalCheckpointStorage implements CheckpointStorage for the Non-DXF reorg table storage
+type NormalCheckpointStorage struct {
 	sessPool   *sess.Pool
 	jobID      int64
 	physicalID int64
 }
 
-// DistTaskStorageStrategy implements CheckpointStorage for distributed task storage
-type DistTaskStorageStrategy struct {
+// DistTaskCheckpointStorage implements CheckpointStorage for distributed task storage
+type DistTaskCheckpointStorage struct {
 	updateFunc func(context.Context, int64, any) error
 	getFunc    func(context.Context, int64) (string, error)
 	subtaskID  int64
 }
 
 // LoadCheckpoint loads the checkpoint from the normal storage strategy.
-func (s *NormalStorageStrategy) LoadCheckpoint(ctx context.Context) (*ReorgCheckpoint, error) {
+func (s *NormalCheckpointStorage) LoadCheckpoint(ctx context.Context) (*ReorgCheckpoint, error) {
 	sessCtx, err := s.sessPool.Get()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -106,7 +106,7 @@ func (s *NormalStorageStrategy) LoadCheckpoint(ctx context.Context) (*ReorgCheck
 }
 
 // SaveCheckpoint saves the checkpoint to the normal storage strategy.
-func (s *NormalStorageStrategy) SaveCheckpoint(ctx context.Context, checkpoint *ReorgCheckpoint) error {
+func (s *NormalCheckpointStorage) SaveCheckpoint(ctx context.Context, checkpoint *ReorgCheckpoint) error {
 	sessCtx, err := s.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -128,7 +128,7 @@ func (s *NormalStorageStrategy) SaveCheckpoint(ctx context.Context, checkpoint *
 }
 
 // LoadCheckpoint loads the checkpoint from the distributed task storage strategy.
-func (s *DistTaskStorageStrategy) LoadCheckpoint(ctx context.Context) (*ReorgCheckpoint, error) {
+func (s *DistTaskCheckpointStorage) LoadCheckpoint(ctx context.Context) (*ReorgCheckpoint, error) {
 	if s.getFunc == nil {
 		return nil, nil
 	}
@@ -152,7 +152,7 @@ func (s *DistTaskStorageStrategy) LoadCheckpoint(ctx context.Context) (*ReorgChe
 }
 
 // SaveCheckpoint saves the checkpoint to the distributed task storage strategy.
-func (s *DistTaskStorageStrategy) SaveCheckpoint(ctx context.Context, checkpoint *ReorgCheckpoint) error {
+func (s *DistTaskCheckpointStorage) SaveCheckpoint(ctx context.Context, checkpoint *ReorgCheckpoint) error {
 	if s.updateFunc == nil {
 		return nil
 	}
@@ -259,7 +259,7 @@ func NewCheckpointManager(
 	pdCli pd.Client,
 	startKey kv.Key,
 ) (*CheckpointManager, error) {
-	storage := &NormalStorageStrategy{
+	storage := &NormalCheckpointStorage{
 		sessPool:   sessPool,
 		jobID:      jobID,
 		physicalID: physicalID,
@@ -279,7 +279,7 @@ func NewCheckpointManagerForDistTask(
 	getFunc func(context.Context, int64) (string, error),
 	startKey kv.Key,
 ) (*CheckpointManager, error) {
-	storage := &DistTaskStorageStrategy{
+	storage := &DistTaskCheckpointStorage{
 		updateFunc: updateFunc,
 		getFunc:    getFunc,
 		subtaskID:  subtaskID,

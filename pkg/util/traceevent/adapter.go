@@ -17,6 +17,7 @@ package traceevent
 import (
 	"context"
 
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/trace"
 	"go.uber.org/zap"
 )
@@ -35,7 +36,7 @@ func handleClientGoTraceEvent(ctx context.Context, category trace.Category, name
 		return
 	}
 	// Include original category value for unknown categories to aid debugging
-	if cat == UnknownClient {
+	if cat == tracing.UnknownClient {
 		fields = append(fields, zap.Uint32("client_go_category", uint32(category)))
 	}
 	TraceEvent(ctx, cat, name, fields...)
@@ -50,12 +51,12 @@ func handleClientGoIsCategoryEnabled(category trace.Category) bool {
 func mapCategory(category trace.Category) TraceCategory {
 	switch category {
 	case trace.CategoryTxn2PC:
-		return Txn2PC
+		return tracing.Txn2PC
 	case trace.CategoryTxnLockResolve:
-		return TxnLockResolve
+		return tracing.TxnLockResolve
 	case trace.CategoryKVRequest:
-		return KvRequest
+		return tracing.KvRequest
 	default:
-		return UnknownClient
+		return tracing.UnknownClient
 	}
 }

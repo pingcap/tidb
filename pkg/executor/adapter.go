@@ -78,6 +78,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -1681,6 +1682,10 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 	return nil
 }
 
+func slowQueryDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.Event.Type == "slow_query"
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -1735,6 +1740,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if trace.IsEnabled() {
 		trace.Log(a.GoCtx, "details", slowLog)
 	}
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.suspicious_event", slowQueryDumpTriggerCheck)
 
 	if !matchRules {
 		return
@@ -1912,6 +1918,14 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 	return
 }
 
+type planDigestAlias struct {
+	Digest string
+}
+
+func (digest planDigestAlias) planDigestDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.PlanDigest == digest.Digest
+}
+
 // SummaryStmt collects statements for information_schema.statements_summary
 func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -1958,6 +1972,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.Plan.TP() != plancodec.TypePointGet {
 		_, tmp := GetPlanDigest(stmtCtx)
 		planDigest = tmp.String()
+		traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.plan_digest", planDigestAlias{planDigest}.planDigestDumpTriggerCheck)
 	}
 
 	execDetail := stmtCtx.GetExecDetails()
@@ -2151,13 +2166,13 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	if !topsqlstate.TopSQLEnabled() {
 		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
 		if stats != nil {
-			stats.OnExecutionBegin(sqlDigestByte, planDigestByte)
+			stats.OnExecutionBegin(sqlDigestByte, planDigestByte, vars.InPacketBytes.Load())
 		}
 		return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 	}
 
 	if stats != nil {
-		stats.OnExecutionBegin(sqlDigestByte, planDigestByte)
+		stats.OnExecutionBegin(sqlDigestByte, planDigestByte, vars.InPacketBytes.Load())
 		// This is a special logic prepared for TiKV's SQLExecCount.
 		sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
 	}
@@ -2207,7 +2222,7 @@ func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
 		execDuration := vars.GetTotalCostDuration()
-		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
+		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration, vars.OutPacketBytes.Load())
 	}
 }
 
