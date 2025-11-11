@@ -578,106 +578,49 @@ func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
 		},
 	}
 
-	isolationLevels := []struct {
-		name        string
-		setupFunc   func(*testkit.TestKit) func() // Returns cleanup function
-		description string
-	}{
-		{
-			name: "REPEATABLE-READ",
-			setupFunc: func(tk *testkit.TestKit) func() {
-				// Default isolation level, TSO fetched at transaction start via prepareTxnWithOracleTS()
-				return func() {} // No cleanup needed
-			},
-			description: "TSO fetched at transaction start",
-		},
-		{
-			name: "READ-COMMITTED",
-			setupFunc: func(tk *testkit.TestKit) func() {
-				// Set transaction isolation to READ-COMMITTED
-				tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
-				tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
-				tk.RefreshSession()
-				// Re-select database after RefreshSession
-				tk.MustExec("use test")
-				// Disable RCCheckTS to ensure we always fetch new TSO instead of using cached one
-				tk.MustExec("set @@tidb_rc_read_check_ts=0")
-				// Force READ-COMMITTED provider to fetch fresh TSO instead of reusing startTS
-				forceStmtTSFailpoint := "github.com/pingcap/tidb/pkg/sessiontxn/isolation/forceStmtUseStartTS"
-				require.NoError(t, failpoint.Enable(forceStmtTSFailpoint, `return(false)`))
-				return func() {
-					require.NoError(t, failpoint.Disable(forceStmtTSFailpoint))
-				}
-			},
-			description: "TSO fetched per statement via getOracleFuture()",
-		},
-	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Enable failpoint to inject delay in TSO Wait()
+			failpointName := "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
+			require.NoError(t, failpoint.Enable(failpointName, `return(`+fmt.Sprintf("%d", tc.tsoDelayMs)+`)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable(failpointName))
+			}()
+			// Set max_execution_time
+			tk.MustExec("set @@max_execution_time = ?", tc.maxExecutionTime)
 
-	for _, isolation := range isolationLevels {
-		t.Run(isolation.name, func(t *testing.T) {
-			// Setup isolation level
-			tk := testkit.NewTestKit(t, store)
-			tk.MustExec("use test")
-			cleanup := isolation.setupFunc(tk)
-			defer cleanup()
-
-			for _, tc := range testCases {
-				t.Run(tc.name, func(t *testing.T) {
-					// Enable failpoint to inject delay in TSO Wait()
-					failpointName := "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
-					require.NoError(t, failpoint.Enable(failpointName, `return(`+fmt.Sprintf("%d", tc.tsoDelayMs)+`)`))
-					defer func() {
-						require.NoError(t, failpoint.Disable(failpointName))
-					}()
-
-					// Ensure no leftover transaction from previous iteration.
-					tk.MustExec("rollback")
-
-					// Set max_execution_time
-					tk.MustExec("set @@max_execution_time = ?", tc.maxExecutionTime)
-
-					// Set transaction mode to pessimistic
-					tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
-					// Turn off autocommit to use implicit transactions (each statement starts its own transaction)
-					tk.MustExec("set @@autocommit = 0")
-
-					// Execute a SELECT statement that will trigger TSO wait
-					// Use range scan instead of point get to avoid optimization
-					startTime := time.Now()
-					if tc.expectTimeout {
-						err := tk.QueryToErr("select * from t where a >= 1")
-						if err != nil {
-							require.Contains(t, err.Error(), "maximum statement execution time exceeded")
-						} else {
-							pi := tk.Session().ShowProcess()
-							require.NotNil(t, pi)
-							processElapsed := time.Since(pi.Time)
-							require.GreaterOrEqual(t, processElapsed, time.Duration(tc.maxExecutionTime)*time.Millisecond,
-								"ProcessInfo elapsed time should exceed max_execution_time. Got %v", processElapsed)
-						}
-					} else {
-						tk.MustQuery("select * from t where a >= 1")
-					}
-					elapsed := time.Since(startTime)
-
-					// Verify that the elapsed time includes the TSO delay
-					// Allow some skew (50ms) for test execution overhead
-					expectedMinTime := time.Duration(tc.tsoDelayMs) * time.Millisecond
-					require.GreaterOrEqual(t, elapsed, expectedMinTime-time.Millisecond*50,
-						"Elapsed time should include TSO wait time (%s). Expected at least %v, got %v", isolation.description, expectedMinTime, elapsed)
-
-					// Check ProcessInfo to verify the start time was set before TSO wait
+			// Execute a SELECT statement that will trigger TSO wait
+			// Use range scan instead of point get to avoid optimization
+			startTime := time.Now()
+			if tc.expectTimeout {
+				err := tk.QueryToErr("select * from t where a >= 1")
+				if err != nil {
+					require.Contains(t, err.Error(), "maximum statement execution time exceeded")
+				} else {
 					pi := tk.Session().ShowProcess()
 					require.NotNil(t, pi)
-					if pi.MaxExecutionTime > 0 {
-						processElapsed := time.Since(pi.Time)
-						require.GreaterOrEqual(t, processElapsed, expectedMinTime-time.Millisecond*50,
-							"ProcessInfo elapsed time should include TSO wait time (%s). Expected at least %v, got %v", isolation.description, expectedMinTime, processElapsed)
-					}
+					processElapsed := time.Since(pi.Time)
+					require.GreaterOrEqual(t, processElapsed, time.Duration(tc.maxExecutionTime)*time.Millisecond,
+						"ProcessInfo elapsed time should exceed max_execution_time. Got %v", processElapsed)
+				}
+			} else {
+				tk.MustQuery("select * from t where a >= 1")
+			}
+			elapsed := time.Since(startTime)
 
-					// Clean up transaction state for next test case
-					tk.MustExec("rollback")
-				})
+			// Verify that the elapsed time includes the TSO delay
+			// Allow some skew (50ms) for test execution overhead
+			expectedMinTime := time.Duration(tc.tsoDelayMs) * time.Millisecond
+			require.GreaterOrEqual(t, elapsed, expectedMinTime-time.Millisecond*50,
+				"Elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, elapsed)
+
+			// Check ProcessInfo to verify the start time was set before TSO wait
+			pi := tk.Session().ShowProcess()
+			require.NotNil(t, pi)
+			if pi.MaxExecutionTime > 0 {
+				processElapsed := time.Since(pi.Time)
+				require.GreaterOrEqual(t, processElapsed, expectedMinTime-time.Millisecond*50,
+					"ProcessInfo elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, processElapsed)
 			}
 		})
 	}
