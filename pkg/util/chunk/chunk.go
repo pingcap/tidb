@@ -488,6 +488,20 @@ func appendCellByCell(dst *Column, src *Column, rowIdx int) {
 	dst.length++
 }
 
+func CalculateLenDeltaAppendCellFromRawData(dst *Column, rowData unsafe.Pointer, currentOffset int) (dataLenDelta int, offsetLenDelta int) {
+	if dst.isFixed() {
+		elemLen := len(dst.elemBuf)
+		dataLenDelta += elemLen
+	} else {
+		elemLen := *(*uint32)(unsafe.Add(rowData, currentOffset))
+		if elemLen > 0 {
+			dataLenDelta += int(elemLen)
+		}
+		offsetLenDelta++
+	}
+	return
+}
+
 // AppendCellFromRawData appends the cell from raw data
 func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer, currentOffset int) int {
 	if dst.isFixed() {

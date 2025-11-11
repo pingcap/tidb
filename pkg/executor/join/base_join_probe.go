@@ -622,6 +622,20 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 		var currentColumn *chunk.Column
 		if ok {
 			currentColumn = chk.Column(indexInDstChk)
+
+			// Pre-allocate memory for `currentColumn`
+			dataLen := int(0)
+			offsetLen := int(0)
+			nullBitMapLen := int(0)
+			for index := range j.nextCachedBuildRowIndex {
+				dataLenDelta, offsetLenDelta := chunk.CalculateLenDeltaAppendCellFromRawData(currentColumn, *(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset)
+				dataLen += dataLenDelta
+				offsetLen += offsetLenDelta
+				nullBitMapLen++
+			}
+
+			currentColumn.Reserve(int64(nullBitMapLen), int64(dataLen), int64(offsetLen+1))
+
 			readNullMapThreadSafe := meta.isReadNullMapThreadSafe(columnIndex)
 			if readNullMapThreadSafe {
 				for index := range j.nextCachedBuildRowIndex {
@@ -685,7 +699,7 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 			offsetTotalLenDelta += offsetLenDelta
 		}
 
-		dstCol.Reserve(nullBitmapTotalLenDelta, dataMemTotalLenDelta, offsetTotalLenDelta)
+		dstCol.Reserve(nullBitmapTotalLenDelta, dataMemTotalLenDelta, offsetTotalLenDelta+1)
 	}
 
 	if forOtherCondition {

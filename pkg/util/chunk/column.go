@@ -310,7 +310,7 @@ func (c *Column) CalculateLenDeltaForAppendCellNTimes(src *Column, pos, times in
 	} else {
 		start, end := src.offsets[pos], src.offsets[pos+1]
 		dataLenDelta += (end - start) * int64(times)
-		offsetLenDelta += int64(times) + 1
+		offsetLenDelta += int64(times)
 	}
 	return
 }
