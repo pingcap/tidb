@@ -198,12 +198,7 @@ func (t *ManagerCtx) getKeyspaceID() uint32 {
 
 // CreateFulltextIndex creates fulltext index on TiCI.
 func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
-	// Clone and normalize table info to ensure longtext/json flen is narrowed to int32
-	clonedTbl, err := cloneAndNormalizeTableInfo(tblInfo)
-	if err != nil {
-		return err
-	}
-	tableInfoJSON, err := json.Marshal(clonedTbl)
+	tableInfoJSON, err := cloneAndMarshalTableInfo(tblInfo)
 	if err != nil {
 		return err
 	}
@@ -598,4 +593,17 @@ func cloneAndNormalizeTableInfo(tbl *model.TableInfo) (*model.TableInfo, error) 
 		}
 	}
 	return &dup, nil
+}
+
+// cloneAndMarshalTableInfo clones and normalizes the given TableInfo and returns
+// the marshalled JSON bytes. It returns an error if tbl is nil or if marshalling fails.
+func cloneAndMarshalTableInfo(tbl *model.TableInfo) ([]byte, error) {
+	if tbl == nil {
+		return nil, errors.New("tableInfo is nil")
+	}
+	clonedTbl, err := cloneAndNormalizeTableInfo(tbl)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(clonedTbl)
 }
