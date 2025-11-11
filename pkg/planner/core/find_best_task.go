@@ -911,10 +911,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		// must win on at least 2 of the metrics below.
 		// This is to prevent a case where x wins on 1 metric but loses badly on another.
 		// Other checks in this logic only require > 0 or < 0 (1 metric is enough).
-		if riskResult > 0 && leftDidNotLose && totalSum > 1 {
+		if riskResult > 0 && leftDidNotLose && totalSum >= 0 && predicateResult > 0 {
 			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 		}
-		if riskResult < 0 && rightDidNotLose && totalSum < -1 {
+		if riskResult < 0 && rightDidNotLose && totalSum <= 0 && predicateResult < 0 {
 			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 		}
 		return 0, false // No winner (0). Do not return the pseudo result
