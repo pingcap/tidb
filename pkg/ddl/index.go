@@ -957,6 +957,13 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 	}
 
 	info := &model.HybridIndexInfo{}
+	makeIndexColumn := func(colInfo *model.ColumnInfo) *model.IndexColumn {
+		return &model.IndexColumn{
+			Name:   colInfo.Name,
+			Offset: colInfo.Offset,
+			Length: types.UnspecifiedLength,
+		}
+	}
 
 	if len(param.FullText) > 0 {
 		info.FullText = make([]*model.HybridFullTextSpec, 0, len(param.FullText))
@@ -964,7 +971,7 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 			if len(spec.Columns) == 0 {
 				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index fulltext component %d must specify columns", i+1))
 			}
-			columns := make([]string, 0, len(spec.Columns))
+			columns := make([]*model.IndexColumn, 0, len(spec.Columns))
 			for _, colName := range spec.Columns {
 				colInfo, err := resolveColumn(colName)
 				if err != nil {
@@ -973,7 +980,7 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 				if !types.IsString(colInfo.FieldType.GetType()) {
 					return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index fulltext column '%s' must be of string type", colInfo.Name.O))
 				}
-				columns = append(columns, colInfo.Name.O)
+				columns = append(columns, makeIndexColumn(colInfo))
 			}
 			component := &model.HybridFullTextSpec{Columns: columns}
 			if spec.IndexInfo != nil {
@@ -989,7 +996,7 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 			if len(spec.Columns) == 0 {
 				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index vector component %d must specify columns", i+1))
 			}
-			columns := make([]string, 0, len(spec.Columns))
+			columns := make([]*model.IndexColumn, 0, len(spec.Columns))
 			for _, colName := range spec.Columns {
 				colInfo, err := resolveColumn(colName)
 				if err != nil {
@@ -998,7 +1005,7 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 				if colInfo.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
 					return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index vector column '%s' must be of VECTOR type", colInfo.Name.O))
 				}
-				columns = append(columns, colInfo.Name.O)
+				columns = append(columns, makeIndexColumn(colInfo))
 			}
 			component := &model.HybridVectorSpec{Columns: columns}
 			if spec.IndexInfo != nil {
@@ -1020,13 +1027,13 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index inverted component %d must specify columns", i+1))
 			}
 			component := &model.HybridInvertedSpec{}
-			component.Columns = make([]string, 0, len(spec.Columns))
+			component.Columns = make([]*model.IndexColumn, 0, len(spec.Columns))
 			for _, colName := range spec.Columns {
 				colInfo, err := resolveColumn(colName)
 				if err != nil {
 					return nil, err
 				}
-				component.Columns = append(component.Columns, colInfo.Name.O)
+				component.Columns = append(component.Columns, makeIndexColumn(colInfo))
 			}
 			if len(spec.Params) > 0 {
 				component.Params = cloneInterfaceMap(spec.Params)
@@ -1059,13 +1066,17 @@ func buildHybridSortSpec(spec *hybridSortSpec, resolveColumn func(string) (*mode
 	if len(spec.Columns) == 0 {
 		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index sort must specify columns")
 	}
-	columns := make([]string, 0, len(spec.Columns))
+	columns := make([]*model.IndexColumn, 0, len(spec.Columns))
 	for _, colName := range spec.Columns {
 		colInfo, err := resolveColumn(colName)
 		if err != nil {
 			return nil, err
 		}
-		columns = append(columns, colInfo.Name.O)
+		columns = append(columns, &model.IndexColumn{
+			Name:   colInfo.Name,
+			Offset: colInfo.Offset,
+			Length: types.UnspecifiedLength,
+		})
 	}
 	orders := spec.Order
 	if len(orders) == 0 && len(spec.Directions) > 0 {
@@ -1074,7 +1085,7 @@ func buildHybridSortSpec(spec *hybridSortSpec, resolveColumn func(string) (*mode
 	if len(orders) != 0 && len(orders) != len(columns) {
 		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index sort order length mismatch")
 	}
-	normalized := make([]string, len(columns))
+	normalized := make([]bool, len(columns))
 	for i := range columns {
 		direction := "asc"
 		raw := "asc"
@@ -1088,7 +1099,7 @@ func buildHybridSortSpec(spec *hybridSortSpec, resolveColumn func(string) (*mode
 		if direction != "asc" && direction != "desc" {
 			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index sort order '%s' is invalid", raw))
 		}
-		normalized[i] = direction
+		normalized[i] = direction != "desc"
 	}
 	return &model.HybridSortSpec{
 		Columns: columns,
