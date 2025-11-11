@@ -1494,7 +1494,7 @@ func TestInitStatsLiteRecordsSynthesizedColumnStats(t *testing.T) {
 	require.True(t, statsTbl.ColAndIdxExistenceMap.Has(colBID, false))
 	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(colBID, false))
 	// NOTE: The column stats will be created by the DDL handler after adding the column.
-	// But it shouldn't contain no topN and only one bucket in histogram since the column stats is synthesized.
+	// But it should contain no topN and only one bucket in histogram since the column stats is synthesized.
 	require.NotNil(t, statsTbl.GetCol(colBID))
 	require.True(t, statsTbl.IsInitialized())
 	require.True(t, statsTbl.GetCol(colBID).IsFullLoad())
