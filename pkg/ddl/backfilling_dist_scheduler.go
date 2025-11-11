@@ -449,9 +449,16 @@ func generateGlobalSortIngestPlan(
 		kvMetaGroups []*external.SortedKVMeta
 		eleIDs       []int64
 	)
+	extStore, err := handle.NewGLSortStore(ctx, cloudStorageURI)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		extStore.Close()
+	}()
 	for _, step := range []proto.Step{proto.BackfillStepMergeSort, proto.BackfillStepReadIndex} {
 		hasSubtasks := false
-		err := forEachBackfillSubtaskMeta(ctx, cloudStorageURI, taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
+		err := forEachBackfillSubtaskMeta(ctx, extStore, taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
 			hasSubtasks = true
 			if kvMetaGroups == nil {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
@@ -499,7 +506,7 @@ func generateGlobalSortIngestPlan(
 	}
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, external.PlanMetaPath(
+		if err := writeExternalBackfillSubTaskMeta(ctx, extStore, m, external.PlanMetaPath(
 			task.ID,
 			proto.Step2Str(proto.Backfill, proto.BackfillStepWriteAndIngest),
 			i+1,
@@ -628,7 +635,14 @@ func generateMergeSortPlan(
 		kvMetaGroups    []*external.SortedKVMeta
 		eleIDs          []int64
 	)
-	err := forEachBackfillSubtaskMeta(ctx, cloudStorageURI, taskHandle, task.ID, proto.BackfillStepReadIndex,
+	extStore, err := handle.NewGLSortStore(ctx, cloudStorageURI)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		extStore.Close()
+	}()
+	err = forEachBackfillSubtaskMeta(ctx, extStore, taskHandle, task.ID, proto.BackfillStepReadIndex,
 		func(subtask *BackfillSubTaskMeta) {
 			if kvMetaGroups == nil {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
@@ -692,7 +706,7 @@ func generateMergeSortPlan(
 
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, external.PlanMetaPath(
+		if err := writeExternalBackfillSubTaskMeta(ctx, extStore, m, external.PlanMetaPath(
 			task.ID,
 			proto.Step2Str(proto.Backfill, proto.BackfillStepMergeSort),
 			i+1)); err != nil {
@@ -764,7 +778,7 @@ func getRangeSplitter(
 
 func forEachBackfillSubtaskMeta(
 	ctx context.Context,
-	cloudStorageURI string,
+	extStore storage.ExternalStorage,
 	taskHandle diststorage.TaskHandle,
 	gTaskID int64,
 	step proto.Step,
@@ -775,7 +789,7 @@ func forEachBackfillSubtaskMeta(
 		return errors.Trace(err)
 	}
 	for _, subTaskMeta := range subTaskMetas {
-		subtask, err := decodeBackfillSubTaskMeta(ctx, cloudStorageURI, subTaskMeta)
+		subtask, err := decodeBackfillSubTaskMeta(ctx, extStore, subTaskMeta)
 		if err != nil {
 			logutil.DDLLogger().Error("unmarshal error", zap.Error(err))
 			return errors.Trace(err)

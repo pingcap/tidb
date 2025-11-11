@@ -95,7 +95,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 
 	e.summary.Reset()
 
-	reqRec, extStore, err := handle.CreateGlobalSortStore(ctx, e.cloudStoreURI)
+	reqRec, extStore, err := handle.NewGLSortStoreWithRecording(ctx, e.cloudStoreURI)
 	if err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		e.GetMeterRecorder().MergeObjStoreRequests(reqRec)
 	}()
 
-	sm, err := decodeBackfillSubTaskMeta(ctx, e.cloudStoreURI, subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, extStore, subtask.Meta)
 	if err != nil {
 		return err
 	}

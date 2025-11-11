@@ -203,7 +203,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	)
 	if s.tableImporter.IsGlobalSort() {
 		var err3 error
-		reqRec, extStore, err3 = handle.CreateGlobalSortStore(ctx, s.tableImporter.CloudStorageURI)
+		reqRec, extStore, err3 = handle.NewGLSortStoreWithRecording(ctx, s.tableImporter.CloudStorageURI)
 		if err3 != nil {
 			return err3
 		}
@@ -408,7 +408,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	m.summary.Reset()
 
-	reqRec, extStore, err := handle.CreateGlobalSortStore(ctx, m.taskMeta.Plan.CloudStorageURI)
+	reqRec, extStore, err := handle.NewGLSortStoreWithRecording(ctx, m.taskMeta.Plan.CloudStorageURI)
 	if err != nil {
 		return err
 	}
@@ -544,7 +544,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	e.summary.Reset()
 
-	reqRec, extStore, err := handle.CreateGlobalSortStore(ctx, e.tableImporter.CloudStorageURI)
+	reqRec, extStore, err := handle.NewGLSortStoreWithRecording(ctx, e.tableImporter.CloudStorageURI)
 	if err != nil {
 		return err
 	}
