@@ -319,5 +319,5 @@ func UpdateTiDBConfig() {
 
 // GetNextGenObjStoreURI returns a next-gen object store URI for testing.
 func GetNextGenObjStoreURI(path string) string {
-	return fmt.Sprintf("s3://next-gen-test/%s?access-key=minioadmin&secret-access-key=minioadmin&endpoint=http%%3a%%2f%%2f0.0.0.0%%3a9000", path)
+	return fmt.Sprintf("s3://next-gen-test/%s?access-key=minioadmin&secret-access-key=minioadmin&endpoint=http%%3a%%2f%%2f0.0.0.0%%3a9000&provider=minio", path)
 }

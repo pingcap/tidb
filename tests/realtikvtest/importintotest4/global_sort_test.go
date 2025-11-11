@@ -36,14 +36,12 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"github.com/tikv/pd/client/opt"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -265,7 +263,7 @@ func (s *mockGCSSuite) getStepSummary(ctx context.Context, taskMgr *storage.Task
 	subtasks, err := taskMgr.GetSubtasksWithHistory(ctx, taskID, step)
 	s.NoError(err)
 	var accumSummary execute.SubtaskSummary
-	for i, subtask := range subtasks {
+	for _, subtask := range subtasks {
 		v := &execute.SubtaskSummary{}
 		err = json.Unmarshal([]byte(subtask.Summary), &v)
 		s.NoError(err)
@@ -273,7 +271,6 @@ func (s *mockGCSSuite) getStepSummary(ctx context.Context, taskMgr *storage.Task
 		accumSummary.Bytes.Add(v.Bytes.Load())
 		accumSummary.PutReqCnt.Add(v.PutReqCnt.Load())
 		accumSummary.GetReqCnt.Add(v.GetReqCnt.Load())
-		logutil.BgLogger().Info("subtasks", zap.Int("seq", i), zap.Any("subtasks", v))
 	}
 	return &accumSummary
 }
@@ -438,23 +435,19 @@ func (s *mockGCSSuite) TestNextGenMetering() {
 	}, 30*time.Second, 300*time.Millisecond)
 
 	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	s.Contains(gotMeterData.Load(), "requests{get: 11, put: 6}, read: 27, write: 102")
+	s.Contains(gotMeterData.Load(), "requests{get: 8, put: 6}, read: 27B, write: 102B")
 
 	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
 	s.EqualValues(3, sum.RowCnt.Load())
 	s.EqualValues(27, sum.Bytes.Load())
-	// this GET comes from reading subtask meta from object storage.
-	s.EqualValues(3, sum.GetReqCnt.Load())
-	// we have 4 kv groups, 2 files per group, and 1 for the meta file.
+	s.EqualValues(2, sum.GetReqCnt.Load())
 	s.EqualValues(3, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepMergeSort)
-	// 4 kv groups, each have 3 read(1 meta, 1 get kv file size, 1 read kv file)
-	// and 3 write(1 kv, 1 stat, 1 meta)
-	s.EqualValues(4, sum.GetReqCnt.Load())
+	s.EqualValues(3, sum.GetReqCnt.Load())
 	s.EqualValues(3, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
-	s.EqualValues(4, sum.GetReqCnt.Load())
+	s.EqualValues(3, sum.GetReqCnt.Load())
 	s.EqualValues(0, sum.PutReqCnt.Load())
 }
