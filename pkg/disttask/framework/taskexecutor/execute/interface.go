@@ -298,7 +298,6 @@ func SetFrameworkInfo(
 	updateCheckpointFunc func(context.Context, int64, any) error,
 	getCheckpointFunc func(context.Context, int64) (string, error),
 ) {
-
 	if exec == nil {
 		return
 	}
