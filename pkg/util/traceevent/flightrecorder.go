@@ -32,7 +32,7 @@ import (
 type Trace struct {
 	mu     sync.Mutex
 	events []Event
-	keep   bool
+	bits   uint64
 	rand32 uint32
 }
 
@@ -46,8 +46,7 @@ type HTTPFlightRecorder struct {
 	oldEnabledCategories TraceCategory
 	counter              int // used when dump trigger config is sampling
 	Config               *FlightRecorderConfig
-	// Or should it be a Set if we support trigger condition combination?
-	triggerCanonicalName string
+	dumpTriggerConfigCompiled
 }
 
 // UserCommandConfig is the configuration for DumpTriggerConfig of user command type.
@@ -62,46 +61,56 @@ type UserCommandConfig struct {
 }
 
 // Validate validates the UserCommandConfig.
-func (c *UserCommandConfig) Validate(b *strings.Builder) error {
+func (c *UserCommandConfig) validate(b *strings.Builder, mapping *dumpTriggerConfigCompiled, conf *DumpTriggerConfig) (uint64, error) {
 	if c == nil {
-		return fmt.Errorf("dump_trigger.user_command missing")
+		return 0, fmt.Errorf("dump_trigger.user_command missing")
 	}
 	b.WriteString(".user_command")
 	switch c.Type {
 	case "sql_regexp":
 		if c.SQLRegexp == "" {
-			return fmt.Errorf("dump_trigger.user_command.sql_regexp should not be empty")
+			return 0, fmt.Errorf("dump_trigger.user_command.sql_regexp should not be empty")
 		}
 		b.WriteString(".sql_regexp")
+		canonicalName := b.String()
+		return mapping.addTrigger(canonicalName, conf), nil
 	case "sql_digest":
 		if c.SQLDigest == "" {
-			return fmt.Errorf("dump_trigger.user_command.sql_digest should not be empty")
+			return 0, fmt.Errorf("dump_trigger.user_command.sql_digest should not be empty")
 		}
 		b.WriteString(".sql_digest")
+		canonicalName := b.String()
+		return mapping.addTrigger(canonicalName, conf), nil
 	case "plan_digest":
 		if c.PlanDigest == "" {
-			return fmt.Errorf("dump_trigger.user_command.plan_digest should not be empty")
+			return 0, fmt.Errorf("dump_trigger.user_command.plan_digest should not be empty")
 		}
 		b.WriteString(".plan_digest")
+		canonicalName := b.String()
+		return mapping.addTrigger(canonicalName, conf), nil
 	case "stmt_label":
 		if c.StmtLabel == "" {
-			return fmt.Errorf("dump_trigger.user_command.stmt_label should not be empty, should be something in https://github.com/pingcap/tidb/blob/adf08267939416d1b989e56dba6a6544bf34a8dd/pkg/parser/ast/ast.go#L160")
+			return 0, fmt.Errorf("dump_trigger.user_command.stmt_label should not be empty, should be something in https://github.com/pingcap/tidb/blob/adf08267939416d1b989e56dba6a6544bf34a8dd/pkg/parser/ast/ast.go#L160")
 		}
 		b.WriteString(".stmt_label")
+		canonicalName := b.String()
+		return mapping.addTrigger(canonicalName, conf), nil
 	case "by_user":
 		if c.ByUser == "" {
-			return fmt.Errorf("dump_trigger.user_command.by_user should not be empty")
+			return 0, fmt.Errorf("dump_trigger.user_command.by_user should not be empty")
 		}
 		b.WriteString(".by_user")
+		canonicalName := b.String()
+		return mapping.addTrigger(canonicalName, conf), nil
 	case "table":
 		if c.Table == "" {
-			return fmt.Errorf("dump_trigger.user_command.table should not be empty")
+			return 0, fmt.Errorf("dump_trigger.user_command.table should not be empty")
 		}
 		b.WriteString(".table")
-	default:
-		return fmt.Errorf("wrong dump_trigger.user_command.type")
+		canonicalName := b.String()
+		return mapping.addTrigger(canonicalName, conf), nil
 	}
-	return nil
+	return 0, fmt.Errorf("wrong dump_trigger.user_command.type")
 }
 
 // SuspiciousEventConfig is the configuration for suspicious event.
@@ -114,20 +123,26 @@ type SuspiciousEventConfig struct {
 }
 
 // Validate validates the suspicious event configuration.
-func (c *SuspiciousEventConfig) Validate(b *strings.Builder) error {
+func (c *SuspiciousEventConfig) validate(b *strings.Builder, mapping *dumpTriggerConfigCompiled, conf *DumpTriggerConfig) (uint64, error) {
 	if c == nil {
-		return fmt.Errorf("dump_trigger.suspicious_event missing")
+		return 0, fmt.Errorf("dump_trigger.suspicious_event missing")
 	}
 	b.WriteString(".suspicious_event")
 	switch c.Type {
 	case "slow_query":
+		canonicalName := b.String()
+		return mapping.addTrigger(canonicalName, conf), nil
 	case "query_fail":
+		canonicalName := b.String()
+		return mapping.addTrigger(canonicalName, conf), nil
 	case "resolve_lock":
+		canonicalName := b.String()
+		return mapping.addTrigger(canonicalName, conf), nil
 	case "region_error":
-	default:
-		return fmt.Errorf("wrong dump_trigger.suspicious_event.type")
+		canonicalName := b.String()
+		return mapping.addTrigger(canonicalName, conf), nil
 	}
-	return nil
+	return 0, fmt.Errorf("wrong dump_trigger.suspicious_event.type")
 }
 
 // DumpTriggerConfig is the configuration for dump trigger.
@@ -138,50 +153,179 @@ type DumpTriggerConfig struct {
 	Sampling    int                    `json:"sampling,omitempty"`
 	Event       *SuspiciousEventConfig `json:"suspicious_event,omitempty"`
 	UserCommand *UserCommandConfig     `json:"user_command,omitempty"`
+	// TODO: sampling is not supported in And, Or currently
+	And []DumpTriggerConfig `json:"and,omitempty"`
+	Or  []DumpTriggerConfig `json:"or,omitempty"`
 }
 
 // Validate validates the DumpTriggerConfig.
 // When validate successfully, it returns nil, strings.Builder will contain the canonical name of the trigger.
-func (c *DumpTriggerConfig) Validate(b *strings.Builder) error {
+func (c *DumpTriggerConfig) Validate(b *strings.Builder, mapping *dumpTriggerConfigCompiled) ([]uint64, error) {
 	if c == nil {
-		return fmt.Errorf("dump_trigger missing")
+		return nil, fmt.Errorf("dump_trigger missing")
 	}
 	b.WriteString("dump_trigger")
 	switch c.Type {
 	case "sampling":
 		if c.Sampling <= 0 {
-			return fmt.Errorf("wrong dump_trigger.sampling")
+			return nil, fmt.Errorf("wrong dump_trigger.sampling")
 		}
 		b.WriteString(".sampling")
+		res := mapping.addTrigger(b.String(), c)
+		return []uint64{res}, nil
 	case "suspicious_event":
-		return c.Event.Validate(b)
+		ret, err := c.Event.validate(b, mapping, c)
+		if err != nil {
+			return nil, err
+		}
+		return []uint64{ret}, nil
 	case "user_command":
-		return c.UserCommand.Validate(b)
-	default:
-		return fmt.Errorf("wrong dump_trigger.type")
+		ret, err := c.UserCommand.validate(b, mapping, c)
+		if err != nil {
+			return nil, err
+		}
+		return []uint64{ret}, nil
+	case "and":
+		if len(c.And) == 0 {
+			return nil, fmt.Errorf("dump_trigger.and missing")
+		}
+		var ret []uint64
+		for _, and := range c.And {
+			var buf strings.Builder
+			tmp, err := and.Validate(&buf, mapping)
+			if err != nil {
+				return nil, err
+			}
+			ret = truthTableForAnd(ret, tmp)
+		}
+		return ret, nil
+	case "or":
+		if len(c.Or) == 0 {
+			return nil, fmt.Errorf("dump_trigger.or missing")
+		}
+		var ret []uint64
+		for _, or := range c.Or {
+			var buf strings.Builder
+			tmp, err := or.Validate(&buf, mapping)
+			if err != nil {
+				return nil, err
+			}
+			ret = truthTableForOr(ret, tmp)
+		}
+		return ret, nil
 	}
-	return nil
+	return nil, fmt.Errorf("wrong dump_trigger.type")
 }
 
-// CheckFlightRecorderDumpTrigger checks if the flight recorder should dump based on the trigger name and configuration.
+// How it works?
+// Imagine we need to implement support any combination of AND and OR operations for flight recorder dump trigger conditions.
+// Like dump_trigger.user_command.sql_digest = xxx && dump_trigger.suspicious_event.resolve_lock ...
+// Each trigger condition can be write as A, B etc for short, so this is A && B
+//
+// We use 1 bit for each condition.
+// A: 1...
+// B: 01...
+// C: 001...
+// D: 0001...
+//
+// Use bit | to represent AND
+// A && B => 11...
+// A && C => 101...
+//
+// Use array to represent OR
+// A || B => [1..., 01...]
+// A || C => [1..., 001...]
+//
+// Now we can combine any AND and OR operations.
+// A && [B || C] => [A && B, A && C] => [11..., 101...]
+// [A || B] && [C || D] => [A && C, A && D, B && C, B && D] => [110..., 1001.., 011..., 0101..]
+//
+// How to check if a condition is satisfied?
+// For example, we have a condition A && [B || C] && D => [A && B, A && C] => [1101., 1011...]
+// And the sequence of events is A, D, C, we calculate A && D && C => 1011...
+// We can use bit & to check if a condition is satisfied. 1011 & 1101 => 1001, the first check fail;
+// 1011 & 1011 => 1011, the second check pass, it is an OR condition
+// So this sequence satisfies the condition.
+type dumpTriggerConfigCompiled struct {
+	// nameMapping mapes a dump trigger canonical name to a bit representation
+	nameMapping map[string]int
+	configRef   []*DumpTriggerConfig
+	// short cut for checking combinations of AND and OR conditions
+	truthTable []uint64
+}
+
+func (c *dumpTriggerConfigCompiled) addTrigger(canonicalName string, config *DumpTriggerConfig) uint64 {
+	idx, ok := c.nameMapping[canonicalName]
+	if ok {
+		return 1 << idx
+	}
+	idx = len(c.nameMapping)
+	c.nameMapping[canonicalName] = idx
+	c.configRef = append(c.configRef, config)
+	return 1 << idx
+}
+
+func truthTableForAnd(x, y []uint64) []uint64 {
+	if len(x) == 0 {
+		return y
+	}
+	if len(x) == 1 {
+		// A && [B, C, D] => [A && B, A && C, A && D]
+		return truthTableForAnd1(x[0], y)
+	}
+	// [A || B || C] && D => [A && D || B && D || C && D]
+	ret := make([]uint64, 0, len(x)*len(y))
+	for _, v := range x {
+		pos := len(ret)
+		ret = append(ret, y...)
+		truthTableForAnd1(v, ret[pos:])
+	}
+	return ret
+}
+
+func truthTableForAnd1(x uint64, xs []uint64) []uint64 {
+	for i := 0; i < len(xs); i++ {
+		xs[i] = xs[i] | x
+	}
+	return xs
+}
+
+func truthTableForOr(x, y []uint64) []uint64 {
+	// not doing any deduplication because it's unlikely user write duplicate trigger condition
+	return append(x, y...)
+}
+
+func checkTruthTable(bits uint64, table []uint64) bool {
+	for _, v := range table {
+		if bits&v == v {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckFlightRecorderDumpTrigger checks if the flight recorder should dump based on the trigger configuration.
 func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, check func(*DumpTriggerConfig) bool) {
 	flightRecorder := globalHTTPFlightRecorder.Load()
 	if flightRecorder == nil {
 		return
 	}
-	// Sink should always be set, it should be a Trace object which implements MarkDump()
+	// Sink should always be set, it should be a Trace object
 	sink := tracing.GetSink(ctx)
 	if sink == nil {
 		return
 	}
-	raw, ok := sink.(tracing.FlightRecorder)
+	trace, ok := sink.(*Trace)
 	if !ok {
 		return
 	}
-	if flightRecorder.triggerCanonicalName == triggerName {
-		if check(&flightRecorder.Config.DumpTrigger) {
-			raw.MarkDump()
-		}
+	idx, ok := flightRecorder.dumpTriggerConfigCompiled.nameMapping[triggerName]
+	if !ok {
+		return
+	}
+	conf := flightRecorder.dumpTriggerConfigCompiled.configRef[idx]
+	if check(conf) {
+		trace.bits |= 1 << idx
 	}
 }
 
@@ -224,8 +368,17 @@ func (c *FlightRecorderConfig) Initialize() {
 }
 
 // Validate validates the flight recorder configuration.
-func (c *FlightRecorderConfig) Validate(b *strings.Builder) error {
-	return c.DumpTrigger.Validate(b)
+func (c *FlightRecorderConfig) Validate() (dumpTriggerConfigCompiled, error) {
+	var b strings.Builder
+	result := dumpTriggerConfigCompiled{
+		nameMapping: make(map[string]int),
+	}
+	truthTable, err := c.DumpTrigger.Validate(&b, &result)
+	if err != nil {
+		return result, err
+	}
+	result.truthTable = truthTable
+	return result, nil
 }
 
 func parseCategories(categories []string) TraceCategory {
@@ -252,20 +405,21 @@ func parseCategories(categories []string) TraceCategory {
 }
 
 func newHTTPFlightRecorder(config *FlightRecorderConfig) (*HTTPFlightRecorder, error) {
-	var b strings.Builder
-	if err := config.Validate(&b); err != nil {
+	compiled, err := config.Validate()
+	if err != nil {
 		return nil, err
 	}
 
 	categories := parseCategories(config.EnabledCategories)
 	ret := &HTTPFlightRecorder{
-		oldEnabledCategories: tracing.GetEnabledCategories(),
-		Config:               config,
-		triggerCanonicalName: b.String(),
+		oldEnabledCategories:      tracing.GetEnabledCategories(),
+		Config:                    config,
+		dumpTriggerConfigCompiled: compiled,
 	}
 	logutil.BgLogger().Info("start http flight recorder",
 		zap.Stringer("category", categories),
-		zap.String("triggerCanonicalName", ret.triggerCanonicalName))
+		zap.Any("mapping", compiled.nameMapping),
+		zap.Uint64s("truthTable", ret.truthTable))
 	SetCategories(categories)
 	globalHTTPFlightRecorder.Store(ret)
 	return ret, nil
@@ -274,6 +428,9 @@ func newHTTPFlightRecorder(config *FlightRecorderConfig) (*HTTPFlightRecorder, e
 // StartHTTPFlightRecorder starts the HTTP flight recorder.
 func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*HTTPFlightRecorder, error) {
 	ret, err := newHTTPFlightRecorder(config)
+	if err != nil {
+		return nil, err
+	}
 	ret.ch = ch
 	return ret, err
 }
@@ -295,6 +452,10 @@ func (r *HTTPFlightRecorder) Close() {
 	globalHTTPFlightRecorder.Store(nil)
 }
 
+func (r *HTTPFlightRecorder) shouldKeep(bits uint64) bool {
+	return checkTruthTable(bits, r.truthTable)
+}
+
 func (r *HTTPFlightRecorder) collect(ctx context.Context, events []Event) {
 	if r.ch == nil {
 		// Used by log flight recorder
@@ -311,9 +472,6 @@ func (r *HTTPFlightRecorder) collect(ctx context.Context, events []Event) {
 	}
 }
 
-// Trace implement the FlightRecorder interface.
-var _ tracing.FlightRecorder = &Trace{}
-
 // NewTrace creates a new Trace.
 func NewTrace() *Trace {
 	return &Trace{
@@ -328,20 +486,13 @@ func (r *Trace) Record(_ context.Context, event Event) {
 	r.events = append(r.events, event)
 }
 
-// MarkDump implements the FlightRecorder interface.
-func (r *Trace) MarkDump() {
-	r.mu.Lock()
-	r.keep = true
-	r.mu.Unlock()
-}
-
 const maxEvents = 4096
 
 // DiscardOrFlush will flush or discard the trace, depending on the whether MarkDump has been called.
 func (r *Trace) DiscardOrFlush(ctx context.Context) {
 	sink := globalHTTPFlightRecorder.Load()
 	if sink != nil {
-		if r.keep {
+		if sink.shouldKeep(r.bits) {
 			sink.collect(ctx, r.events)
 		}
 		if sink.Config.DumpTrigger.Type == "sampling" {
@@ -354,7 +505,7 @@ func (r *Trace) DiscardOrFlush(ctx context.Context) {
 	}
 	newRand := rand.Uint32()
 	r.mu.Lock()
-	r.keep = false
+	r.bits = 0
 	if len(r.events) > maxEvents {
 		// avoid using too much memory for each session.
 		r.events = nil
