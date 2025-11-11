@@ -80,7 +80,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 		},
 		logger: logger,
 	}
-	execute.SetFrameworkInfo(executorForParam, &proto.Task{TaskBase: proto.TaskBase{ID: 1}}, nil)
+	execute.SetFrameworkInfo(executorForParam, &proto.Task{TaskBase: proto.TaskBase{ID: 1}}, nil, nil, nil)
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
 	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, nil, 3, 1)
 	op.SetSource(source)
