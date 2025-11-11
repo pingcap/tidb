@@ -22,8 +22,8 @@ import (
 
 func TestRecorder(t *testing.T) {
 	r := Recorder{taskID: 1, keyspace: "ks", taskType: "tt"}
-	r.IncGetRequest(100)
-	r.IncPutRequest(200)
+	r.objStoreReqs.Get.Add(100)
+	r.objStoreReqs.Put.Add(200)
 	r.IncReadBytes(300)
 	r.IncWriteBytes(400)
 	require.Equal(t, &Data{
