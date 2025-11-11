@@ -192,7 +192,7 @@ func formatWithIndianGrouping(integerPart string, thousandsSep string) string {
 	return buffer.String()
 }
 
-// formatWithStyle is the generic formatting function, replacing the old formatENUS
+// formatWithStyle is the generic formatting function.
 func formatWithStyle(number string, precision string, style LocaleFormatStyle) (string, error) {
 	var buffer bytes.Buffer
 	if unicode.IsDigit(rune(precision[0])) {
