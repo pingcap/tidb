@@ -2323,7 +2323,7 @@ func TestExternalEngine(t *testing.T) {
 	require.NoError(t, err)
 
 	externalCfg := &backend.ExternalEngineConfig{
-		StorageURI:    storageURI,
+		ExtStore:      extStorage,
 		DataFiles:     dataFiles,
 		StatFiles:     statFiles,
 		StartKey:      keys[0],
