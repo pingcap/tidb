@@ -408,7 +408,7 @@ func TestInitStats(t *testing.T) {
 		return false
 	})
 
-	// Another table with predicaye columns
+	// Another table with predicate columns
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t2 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
 	h = dom.StatsHandle()
