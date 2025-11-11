@@ -266,7 +266,7 @@ func testInitStatsMemTraceFunc(t *testing.T, liteInitStats bool) {
 	testInitStatsMemTrace(t)
 }
 
-func TestInitStats(t *testing.T) {
+func TestInitStatsWithAnalyzeVersion1(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("analyze V1 cannot support in the next gen")
 	}
