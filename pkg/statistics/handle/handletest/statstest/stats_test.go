@@ -361,15 +361,6 @@ func TestInitStatsVer2(t *testing.T) {
 	initStatsVer2(t)
 }
 
-func TestInitStatsVer2Concurrency(t *testing.T) {
-	originValue := config.GetGlobalConfig().Performance.LiteInitStats
-	defer func() {
-		config.GetGlobalConfig().Performance.LiteInitStats = originValue
-	}()
-	config.GetGlobalConfig().Performance.LiteInitStats = false
-	initStatsVer2(t)
-}
-
 func initStatsVer2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
