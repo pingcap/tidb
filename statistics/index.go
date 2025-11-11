@@ -387,7 +387,6 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 
 		// handling the out-of-range part
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == Version2 {
 				colIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
@@ -397,11 +396,9 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
 				if isSingleColRange && c != nil && c.Histogram.NDV > 0 {
-					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
 					count += c.Histogram.outOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], modifyCount)
 				} else {
 					// TODO: Extend original datatype out-of-range estimation to multi-column
-					histNDV -= int64(idx.TopN.Num())
 					count += idx.Histogram.outOfRangeRowCount(sctx, &l, &r, modifyCount)
 				}
 			} else {
