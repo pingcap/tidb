@@ -508,6 +508,7 @@ func TestNextGenPessimisticTxnNotFailWithTempIndex(t *testing.T) {
 		startTxnOnce.Do(func() {
 			triggered = true
 			txnStarted.Store(true)
+			// let the user transaction acquire pessimistic lock first
 			go func() {
 				tk2 := testkit.NewTestKit(t, store)
 				tk2.MustExec("use test")
@@ -518,11 +519,13 @@ func TestNextGenPessimisticTxnNotFailWithTempIndex(t *testing.T) {
 				txnDone <- tk2.ExecToErr("commit")
 			}()
 		})
+		// Wait for the txn to hold the pessimistic lock
 		if triggered {
 			<-txnReady
 		}
 	})
 
+	// Assert: both user transaction and DDL will succeed, and data are consistent
 	tk.MustExec("alter table t_pess add index idx_b(b);")
 	require.True(t, txnStarted.Load())
 	require.NoError(t, <-txnDone)
