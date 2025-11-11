@@ -17,8 +17,10 @@ package importintotest
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -52,6 +54,7 @@ func (s *mockGCSSuite) SetupSuite() {
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	s.Require().True(*realtikvtest.WithRealTiKV)
 	testutil.ReduceCheckInterval(s.T())
+	metering.FlushInterval = time.Second
 	var err error
 	opt := fakestorage.Options{
 		Scheme:     "http",

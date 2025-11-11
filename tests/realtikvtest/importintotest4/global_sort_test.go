@@ -27,6 +27,7 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -390,4 +392,69 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	s.tk.MustExec(`import into dst FROM select * from t`)
 	require.Equal(s.T(), addCnt, 2*len(stores))
 	require.Equal(s.T(), removeCnt, addCnt)
+}
+
+func (s *mockGCSSuite) TestNextGenMetering() {
+	if kerneltype.IsClassic() {
+		s.T().Skip("Metering is not supported in classic kernel type")
+	}
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	srcDirURI := realtikvtest.GetNextGenObjStoreURI("meter-test")
+	srcStore, err2 := handle.NewObjStore(ctx, srcDirURI)
+	s.NoError(err2)
+	s.NoError(srcStore.WriteFile(ctx, "t.1.csv", []byte("1,test-1\n2,test-2\n3,test-3\n")))
+	s.prepareAndUseDB("metering")
+	glSortURI := realtikvtest.GetNextGenObjStoreURI("gl-sort")
+	s.tk.MustExec("create table t (a bigint primary key , b varchar(100));")
+
+	baseTime := time.Now().Truncate(time.Minute).Unix()
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
+		// the metering library requires the timestamp to be at minute boundary, but
+		// during test, we want to reduce the flush interval.
+		*ts = baseTime
+		baseTime += 60
+	})
+	var gotMeterData atomic.String
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
+		gotMeterData.Store(s.String())
+	})
+
+	// 1 subtask, encoding 10 files using 4 threads.
+	importSQL := fmt.Sprintf(`import into t FROM '%s'
+		with cloud_storage_uri='%s'`, realtikvtest.GetNextGenObjStoreURI("meter-test/*.csv"), glSortURI)
+	result := s.tk.MustQuery(importSQL + ", __force_merge_step").Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 test-1", "2 test-2", "3 test-3"))
+
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+	s.NoError(err)
+	s.Eventually(func() bool {
+		return gotMeterData.Load() != ""
+	}, 30*time.Second, 300*time.Millisecond)
+
+	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
+	s.Contains(gotMeterData.Load(), "requests{get: 11, put: 6}, read: 27, write: 102")
+
+	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
+	s.EqualValues(3, sum.RowCnt.Load())
+	s.EqualValues(27, sum.Bytes.Load())
+	// this GET comes from reading subtask meta from object storage.
+	s.EqualValues(3, sum.GetReqCnt.Load())
+	// we have 4 kv groups, 2 files per group, and 1 for the meta file.
+	s.EqualValues(3, sum.PutReqCnt.Load())
+
+	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepMergeSort)
+	// 4 kv groups, each have 3 read(1 meta, 1 get kv file size, 1 read kv file)
+	// and 3 write(1 kv, 1 stat, 1 meta)
+	s.EqualValues(4, sum.GetReqCnt.Load())
+	s.EqualValues(3, sum.PutReqCnt.Load())
+
+	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
+	s.EqualValues(4, sum.GetReqCnt.Load())
+	s.EqualValues(0, sum.PutReqCnt.Load())
 }

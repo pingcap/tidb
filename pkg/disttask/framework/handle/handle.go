@@ -354,15 +354,15 @@ func GetScheduleTuneFactors(ctx context.Context, keyspace string) (*schstatus.Tu
 func NewGLSortStoreWithRecording(ctx context.Context, uri string) (*recording.Requests, extstorage.ExternalStorage, error) {
 	reqRec := &recording.Requests{}
 	ctx2 := recording.WithRequests(ctx, reqRec)
-	store, err := NewGLSortStore(ctx2, uri)
+	store, err := NewObjStore(ctx2, uri)
 	if err != nil {
 		return nil, nil, err
 	}
 	return reqRec, store, nil
 }
 
-// NewGLSortStore creates an external storage for global sort.
-func NewGLSortStore(ctx context.Context, uri string) (extstorage.ExternalStorage, error) {
+// NewObjStore creates an external storage for global sort.
+func NewObjStore(ctx context.Context, uri string) (extstorage.ExternalStorage, error) {
 	storeBackend, err := extstorage.ParseBackend(uri, nil)
 	if err != nil {
 		return nil, err

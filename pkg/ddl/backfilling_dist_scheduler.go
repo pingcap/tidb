@@ -449,7 +449,7 @@ func generateGlobalSortIngestPlan(
 		kvMetaGroups []*external.SortedKVMeta
 		eleIDs       []int64
 	)
-	extStore, err := handle.NewGLSortStore(ctx, cloudStorageURI)
+	extStore, err := handle.NewObjStore(ctx, cloudStorageURI)
 	if err != nil {
 		return nil, err
 	}
@@ -635,7 +635,7 @@ func generateMergeSortPlan(
 		kvMetaGroups    []*external.SortedKVMeta
 		eleIDs          []int64
 	)
-	extStore, err := handle.NewGLSortStore(ctx, cloudStorageURI)
+	extStore, err := handle.NewObjStore(ctx, cloudStorageURI)
 	if err != nil {
 		return nil, err
 	}
