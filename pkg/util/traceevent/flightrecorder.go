@@ -39,6 +39,8 @@ type Trace struct {
 var globalHTTPFlightRecorder atomic.Pointer[HTTPFlightRecorder]
 
 // HTTPFlightRecorder implements Sink interface.
+// TODO: rename HTTPFlightRecorder to FlightRecorder as it may sink to log now instead of just HTTP
+// TODO: remove the old global flight recorder, clean up code.
 type HTTPFlightRecorder struct {
 	ch                   chan<- []Event
 	oldEnabledCategories TraceCategory
@@ -273,8 +275,7 @@ func parseCategories(categories []string) TraceCategory {
 	return result
 }
 
-// StartHTTPFlightRecorder starts the HTTP flight recorder.
-func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*HTTPFlightRecorder, error) {
+func newHTTPFlightRecorder(config *FlightRecorderConfig) (*HTTPFlightRecorder, error) {
 	var b strings.Builder
 	if err := config.Validate(&b); err != nil {
 		return nil, err
@@ -282,7 +283,6 @@ func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*
 
 	categories := parseCategories(config.EnabledCategories)
 	ret := &HTTPFlightRecorder{
-		ch:                   ch,
 		oldEnabledCategories: tracing.GetEnabledCategories(),
 		Config:               config,
 		triggerCanonicalName: b.String(),
@@ -295,16 +295,40 @@ func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*
 	return ret, nil
 }
 
+// StartHTTPFlightRecorder starts the HTTP flight recorder.
+func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*HTTPFlightRecorder, error) {
+	ret, err := newHTTPFlightRecorder(config)
+	ret.ch = ch
+	return ret, err
+}
+
+// StartLogFlightRecorder starts the flight recorder that sink to log.
+func StartLogFlightRecorder(config *FlightRecorderConfig) error {
+	_, err := newHTTPFlightRecorder(config)
+	return err
+}
+
+// GetFlightRecorder returns the flight recorder.
+func GetFlightRecorder() *HTTPFlightRecorder {
+	return globalHTTPFlightRecorder.Load()
+}
+
 // Close closes the HTTP flight recorder.
 func (r *HTTPFlightRecorder) Close() {
 	tracing.SetCategories(r.oldEnabledCategories)
 	globalHTTPFlightRecorder.Store(nil)
 }
 
-func (r *HTTPFlightRecorder) collect(_ context.Context, events []Event) {
-	if len(events) == 0 {
+func (r *HTTPFlightRecorder) collect(ctx context.Context, events []Event) {
+	if r.ch == nil {
+		// Used by log flight recorder
+		for _, event := range events {
+			logEvent(ctx, event)
+		}
 		return
 	}
+
+	// Used by http flight recorder
 	select {
 	case r.ch <- slices.Clone(events):
 	default:
