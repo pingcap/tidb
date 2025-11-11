@@ -236,7 +236,7 @@ func checkTableIDInItems(t *testing.T, tableID int64) {
 func TestLoadNonExistentIndexStats(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table if not exists t(a int, b int);")
 	// Add an index after table creation. The index histogram will exist in the stats cache

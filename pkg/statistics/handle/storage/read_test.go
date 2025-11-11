@@ -109,8 +109,7 @@ func TestLoadStats(t *testing.T) {
 func TestLoadNonExistentIndexStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
+	tk.MustExec("use test")
 	// Create table with an index. The index histogram doesn't exist in the system tables
 	// because we didn't handle the create table DDL event (simulating a lost DDL event).
 	tk.MustExec("create table if not exists t(a int, b int, index ia(a));")
