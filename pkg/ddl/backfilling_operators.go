@@ -1004,22 +1004,25 @@ func (s *indexWriteResultSink) collectResult() error {
 			}
 			s.collector.Processed(int64(rs.Bytes), int64(rs.RowCnt))
 
-			if s.backendCtx != nil {
-				if s.barrier == nil {
-					if err := s.backendCtx.IngestIfQuotaExceeded(s.ctx); err != nil {
-						s.ctx.onError(err)
-					}
-				} else {
-					if err := s.barrier.PauseAndWait(s.ctx); err != nil {
-						s.ctx.onError(err)
-					} else {
-						err := s.backendCtx.IngestIfQuotaExceeded(s.ctx)
-						s.barrier.Resume()
-						if err != nil {
-							s.ctx.onError(err)
-						}
-					}
+			if s.backendCtx == nil {
+				continue
+			}
+			// global sort
+			if s.barrier == nil {
+				if err := s.backendCtx.IngestIfQuotaExceeded(s.ctx); err != nil {
+					s.ctx.onError(err)
 				}
+				continue
+			}
+			// local sort
+			if err := s.barrier.PauseAndWait(s.ctx); err != nil {
+				s.ctx.onError(err)
+				continue
+			}
+			err := s.backendCtx.IngestIfQuotaExceeded(s.ctx)
+			s.barrier.Resume()
+			if err != nil {
+				s.ctx.onError(err)
 			}
 		}
 	}

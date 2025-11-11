@@ -172,12 +172,12 @@ type ProcessedRange struct {
 type CheckpointManager struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	localStoreDir string
-	pdCli         pd.Client
 	logger        *zap.Logger
 	physicalID    int64
+	localStoreDir string
+	pdCli         pd.Client
 
-	// strategy for checkpoint storage
+	// Strategy for checkpoint storage
 	storage CheckpointStorage
 
 	// Derived and unchanged after the initialization.
