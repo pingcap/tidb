@@ -258,7 +258,7 @@ func (c *Column) StatsAvailable() bool {
 	// Typically, when the column is analyzed, StatsVer is set to Version1/Version2, so we check IsAnalyzed().
 	// However, when we add/modify a column, its stats are generated according to the default value without setting
 	// StatsVer, so we check NDV > 0 || NullCount > 0 for the case.
-	return c.IsAnalyzed() || c.NDV > 0 || c.NullCount > 0
+	return IsColumnAnalyzedOrSynthesized(c.GetStatsVer(), c.NDV, c.NullCount)
 }
 
 // EmptyColumn creates an empty column object. It may be used for pseudo estimation or to stop loading unexisting stats.
