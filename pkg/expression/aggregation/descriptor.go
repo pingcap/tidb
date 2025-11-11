@@ -185,14 +185,19 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 		})
 		finalAggDesc.Args = args
 	default:
-		args := make([]expression.Expression, 0, 1)
-		args = append(args, &expression.Column{
-			Index:   ordinal[0],
-			RetType: a.RetTp,
-		})
-		finalAggDesc.Args = args
-		if finalAggDesc.Name == ast.AggFuncGroupConcat || finalAggDesc.Name == ast.AggFuncApproxPercentile {
-			finalAggDesc.Args = append(finalAggDesc.Args, a.Args[len(a.Args)-1]) // separator
+		// TODO refine it
+		if a.HasDistinct {
+			finalAggDesc.Args = partialAggDesc.Args
+		} else {
+			args := make([]expression.Expression, 0, 1)
+			args = append(args, &expression.Column{
+				Index:   ordinal[0],
+				RetType: a.RetTp,
+			})
+			finalAggDesc.Args = args
+			if finalAggDesc.Name == ast.AggFuncGroupConcat || finalAggDesc.Name == ast.AggFuncApproxPercentile {
+				finalAggDesc.Args = append(finalAggDesc.Args, a.Args[len(a.Args)-1]) // separator
+			}
 		}
 	}
 	return

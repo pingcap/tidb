@@ -121,3 +121,8 @@ func (s *Int64SetWithMemoryUsage) Insert(val int64) (memDelta int64) {
 	}
 	return memDelta
 }
+
+// Merge merges another set
+func (s *Int64SetWithMemoryUsage) Merge(src *Int64SetWithMemoryUsage) (memDelta int64) {
+	panic("")
+}

@@ -2119,7 +2119,7 @@ func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *
 		e.DefaultVal = e.AllocPool.Alloc(exec.RetTypes(e), 1, 1)
 	}
 	for _, aggDesc := range v.AggFuncs {
-		if aggDesc.HasDistinct || len(aggDesc.OrderByItems) > 0 {
+		if len(aggDesc.OrderByItems) > 0 {
 			e.IsUnparallelExec = true
 		}
 	}

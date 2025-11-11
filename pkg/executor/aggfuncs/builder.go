@@ -212,28 +212,42 @@ func buildCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFuncDesc
 
 	// If HasDistinct and mode is CompleteMode or Partial1Mode, we should
 	// use countOriginalWithDistinct.
-	if aggFuncDesc.HasDistinct &&
-		(aggFuncDesc.Mode == aggregation.CompleteMode || aggFuncDesc.Mode == aggregation.Partial1Mode) {
-		if len(base.args) == 1 {
-			// optimize with single column
-			// TODO: because Time and JSON does not have `hashcode()` or similar method
-			// so they're in exception for now.
-			// TODO: add hashCode method for all evaluate types (decimal, Time, Duration, JSON).
-			// https://github.com/pingcap/tidb/issues/15857
-			switch aggFuncDesc.Args[0].GetType(ctx).EvalType() {
-			case types.ETInt:
-				return &countOriginalWithDistinct4Int{baseCount{base}}
-			case types.ETReal:
-				return &countOriginalWithDistinct4Real{baseCount{base}}
-			case types.ETDecimal:
-				return &countOriginalWithDistinct4Decimal{baseCount{base}}
-			case types.ETDuration:
-				return &countOriginalWithDistinct4Duration{baseCount{base}}
-			case types.ETString:
-				return &countOriginalWithDistinct4String{baseCount{base}}
+	if aggFuncDesc.HasDistinct {
+		if aggFuncDesc.Mode == aggregation.CompleteMode || aggFuncDesc.Mode == aggregation.Partial1Mode {
+			if len(base.args) == 1 {
+				// optimize with single column
+				// TODO: because Time and JSON does not have `hashcode()` or similar method
+				// so they're in exception for now.
+				// TODO: add hashCode method for all evaluate types (decimal, Time, Duration, JSON).
+				// https://github.com/pingcap/tidb/issues/15857
+				switch aggFuncDesc.Args[0].GetType(ctx).EvalType() {
+				case types.ETInt:
+					return &countOriginalWithDistinct4Int{baseCountDistinct4Int{baseCount{base}}}
+				case types.ETReal:
+					return &countOriginalWithDistinct4Real{baseCount{base}}
+				case types.ETDecimal:
+					return &countOriginalWithDistinct4Decimal{baseCount{base}}
+				case types.ETDuration:
+					return &countOriginalWithDistinct4Duration{baseCount{base}}
+				case types.ETString:
+					return &countOriginalWithDistinct4String{baseCountDistinct4String{baseCount{base}}}
+				}
 			}
+			return &countOriginalWithDistinct{baseCount{base}}
+		} else if aggFuncDesc.Mode == aggregation.FinalMode || aggFuncDesc.Mode == aggregation.Partial2Mode {
+			if len(base.args) == 1 {
+				switch aggFuncDesc.Args[0].GetType(ctx).EvalType() {
+				case types.ETInt:
+					return &countDistinctPartial4Int{baseCountDistinct4Int{baseCount{base}}}
+				case types.ETString:
+					return &countDistinctPartial4String{baseCountDistinct4String{baseCount{base}}}
+				default:
+					panic("Not implemented")
+				}
+			}
+			panic("Not implemented")
+			// return &countOriginalWithDistinct{baseCount{base}}
 		}
-		return &countOriginalWithDistinct{baseCount{base}}
 	}
 
 	switch aggFuncDesc.Mode {

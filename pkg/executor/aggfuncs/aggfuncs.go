@@ -35,18 +35,20 @@ var (
 	_ AggFunc = (*countOriginal4JSON)(nil)
 	_ AggFunc = (*countOriginal4VectorFloat32)(nil)
 	_ AggFunc = (*countOriginal4String)(nil)
-	_ AggFunc = (*countOriginalWithDistinct4Int)(nil)
-	_ AggFunc = (*countOriginalWithDistinct4Real)(nil)
-	_ AggFunc = (*countOriginalWithDistinct4Decimal)(nil)
-	_ AggFunc = (*countOriginalWithDistinct4Duration)(nil)
-	_ AggFunc = (*countOriginalWithDistinct4String)(nil)
-	_ AggFunc = (*countOriginalWithDistinct)(nil)
+	_ AggFunc = (*countDistinctPartial4Int)(nil)
+	_ AggFunc = (*countOriginalWithDistinct4Int)(nil) // TODO support MergePartialResult
+	_ AggFunc = (*countOriginalWithDistinct4Real)(nil) // TODO support MergePartialResult
+	_ AggFunc = (*countOriginalWithDistinct4Decimal)(nil) // TODO support MergePartialResult
+	_ AggFunc = (*countOriginalWithDistinct4Duration)(nil) // TODO support MergePartialResult
+	_ AggFunc = (*countOriginalWithDistinct4String)(nil) // TODO support MergePartialResult
+	_ AggFunc = (*countOriginalWithDistinct)(nil) // TODO support MergePartialResult
+	// TODO disable spill function when there is a distinct aggregation function
 
 	// All the AggFunc implementations for "APPROX_COUNT_DISTINCT" are listed here.
-	_ AggFunc = (*approxCountDistinctOriginal)(nil)
-	_ AggFunc = (*approxCountDistinctPartial1)(nil)
-	_ AggFunc = (*approxCountDistinctPartial2)(nil)
-	_ AggFunc = (*approxCountDistinctFinal)(nil)
+	_ AggFunc = (*approxCountDistinctOriginal)(nil) // TODO support MergePartialResult
+	_ AggFunc = (*approxCountDistinctPartial1)(nil) // TODO support MergePartialResult
+	_ AggFunc = (*approxCountDistinctPartial2)(nil) // TODO support MergePartialResult
+	_ AggFunc = (*approxCountDistinctFinal)(nil) // TODO support MergePartialResult
 
 	// All the AggFunc implementations for "APPROX_PERCENTILE" are listed here.
 	_ AggFunc = (*percentileOriginal4Int)(nil)
@@ -82,21 +84,21 @@ var (
 
 	// All the AggFunc implementations for "AVG" are listed here.
 	_ AggFunc = (*avgOriginal4Decimal)(nil)
-	_ AggFunc = (*avgOriginal4DistinctDecimal)(nil)
+	_ AggFunc = (*avgOriginal4DistinctDecimal)(nil) // TODO support MergePartialResult
 	_ AggFunc = (*avgPartial4Decimal)(nil)
 
 	_ AggFunc = (*avgOriginal4Float64)(nil)
 	_ AggFunc = (*avgPartial4Float64)(nil)
-	_ AggFunc = (*avgOriginal4DistinctFloat64)(nil)
+	_ AggFunc = (*avgOriginal4DistinctFloat64)(nil) // TODO support MergePartialResult
 
 	// All the AggFunc implementations for "SUM" are listed here.
-	_ AggFunc = (*sum4DistinctFloat64)(nil)
-	_ AggFunc = (*sum4DistinctDecimal)(nil)
+	_ AggFunc = (*sum4DistinctFloat64)(nil) // TODO support MergePartialResult
+	_ AggFunc = (*sum4DistinctDecimal)(nil) // TODO support MergePartialResult
 	_ AggFunc = (*sum4Decimal)(nil)
 	_ AggFunc = (*sum4Float64)(nil)
 
 	// All the AggFunc implementations for "GROUP_CONCAT" are listed here.
-	_ AggFunc = (*groupConcatDistinct)(nil)
+	_ AggFunc = (*groupConcatDistinct)(nil) // TODO support MergePartialResult
 	_ AggFunc = (*groupConcat)(nil)
 
 	// All the AggFunc implementations for "BIT_OR" are listed here.
