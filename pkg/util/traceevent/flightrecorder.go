@@ -73,42 +73,42 @@ func (c *UserCommandConfig) validate(b *strings.Builder, mapping *dumpTriggerCon
 		}
 		b.WriteString(".sql_regexp")
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf), nil
+		return mapping.addTrigger(canonicalName, conf)
 	case "sql_digest":
 		if c.SQLDigest == "" {
 			return 0, fmt.Errorf("dump_trigger.user_command.sql_digest should not be empty")
 		}
 		b.WriteString(".sql_digest")
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf), nil
+		return mapping.addTrigger(canonicalName, conf)
 	case "plan_digest":
 		if c.PlanDigest == "" {
 			return 0, fmt.Errorf("dump_trigger.user_command.plan_digest should not be empty")
 		}
 		b.WriteString(".plan_digest")
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf), nil
+		return mapping.addTrigger(canonicalName, conf)
 	case "stmt_label":
 		if c.StmtLabel == "" {
 			return 0, fmt.Errorf("dump_trigger.user_command.stmt_label should not be empty, should be something in https://github.com/pingcap/tidb/blob/adf08267939416d1b989e56dba6a6544bf34a8dd/pkg/parser/ast/ast.go#L160")
 		}
 		b.WriteString(".stmt_label")
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf), nil
+		return mapping.addTrigger(canonicalName, conf)
 	case "by_user":
 		if c.ByUser == "" {
 			return 0, fmt.Errorf("dump_trigger.user_command.by_user should not be empty")
 		}
 		b.WriteString(".by_user")
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf), nil
+		return mapping.addTrigger(canonicalName, conf)
 	case "table":
 		if c.Table == "" {
 			return 0, fmt.Errorf("dump_trigger.user_command.table should not be empty")
 		}
 		b.WriteString(".table")
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf), nil
+		return mapping.addTrigger(canonicalName, conf)
 	}
 	return 0, fmt.Errorf("wrong dump_trigger.user_command.type")
 }
@@ -131,16 +131,16 @@ func (c *SuspiciousEventConfig) validate(b *strings.Builder, mapping *dumpTrigge
 	switch c.Type {
 	case "slow_query":
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf), nil
+		return mapping.addTrigger(canonicalName, conf)
 	case "query_fail":
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf), nil
+		return mapping.addTrigger(canonicalName, conf)
 	case "resolve_lock":
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf), nil
+		return mapping.addTrigger(canonicalName, conf)
 	case "region_error":
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf), nil
+		return mapping.addTrigger(canonicalName, conf)
 	}
 	return 0, fmt.Errorf("wrong dump_trigger.suspicious_event.type")
 }
@@ -171,7 +171,10 @@ func (c *DumpTriggerConfig) Validate(b *strings.Builder, mapping *dumpTriggerCon
 			return nil, fmt.Errorf("wrong dump_trigger.sampling")
 		}
 		b.WriteString(".sampling")
-		res := mapping.addTrigger(b.String(), c)
+		res, err := mapping.addTrigger(b.String(), c)
+		if err != nil {
+			return nil, err
+		}
 		return []uint64{res}, nil
 	case "suspicious_event":
 		ret, err := c.Event.validate(b, mapping, c)
@@ -254,15 +257,15 @@ type dumpTriggerConfigCompiled struct {
 	truthTable []uint64
 }
 
-func (c *dumpTriggerConfigCompiled) addTrigger(canonicalName string, config *DumpTriggerConfig) uint64 {
+func (c *dumpTriggerConfigCompiled) addTrigger(canonicalName string, config *DumpTriggerConfig) (uint64, error) {
 	idx, ok := c.nameMapping[canonicalName]
 	if ok {
-		return 1 << idx
+		return 0, fmt.Errorf("duplicate trigger name: %s", canonicalName)
 	}
 	idx = len(c.nameMapping)
 	c.nameMapping[canonicalName] = idx
 	c.configRef = append(c.configRef, config)
-	return 1 << idx
+	return 1 << idx, nil
 }
 
 func truthTableForAnd(x, y []uint64) []uint64 {
@@ -488,19 +491,23 @@ func (r *Trace) Record(_ context.Context, event Event) {
 
 const maxEvents = 4096
 
+func (r *HTTPFlightRecorder) checkSampling(conf *DumpTriggerConfig) bool {
+	r.counter++
+	if r.counter >= conf.Sampling {
+		r.counter = 0
+		return true
+	}
+	return false
+}
+
 // DiscardOrFlush will flush or discard the trace, depending on the whether MarkDump has been called.
 func (r *Trace) DiscardOrFlush(ctx context.Context) {
 	sink := globalHTTPFlightRecorder.Load()
 	if sink != nil {
+		CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.sampling", sink.checkSampling)
+
 		if sink.shouldKeep(r.bits) {
 			sink.collect(ctx, r.events)
-		}
-		if sink.Config.DumpTrigger.Type == "sampling" {
-			sink.counter++
-			if sink.counter >= sink.Config.DumpTrigger.Sampling {
-				sink.collect(ctx, r.events)
-				sink.counter = 0
-			}
 		}
 	}
 	newRand := rand.Uint32()

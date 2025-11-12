@@ -121,6 +121,37 @@ func testFlightRecorderConfigGoodCase(t *testing.T) {
   }
 }`
 
+	conf9 := `{
+  "enabled_categories": ["*"],
+  "dump_trigger": {
+    "type": "or",
+    "or": [
+      {
+        "type": "and",
+        "and": [
+          {
+            "type": "user_command",
+            "user_command": {
+              "type": "stmt_label",
+              "stmt_label": "Insert"
+            }
+          },
+          {
+            "type": "suspicious_event",
+            "suspicious_event": {
+              "type": "query_fail"
+            }
+          }
+        ]
+      },
+      {
+        "type": "sampling",
+        "sampling": 10
+      }
+    ]
+  }
+}`
+
 	testcases := []struct {
 		conf   string
 		result map[string]int
@@ -133,6 +164,7 @@ func testFlightRecorderConfigGoodCase(t *testing.T) {
 		{conf6, map[string]int{name6: 0}},
 		{conf7, map[string]int{name7: 0}},
 		{conf8, map[string]int{"dump_trigger.user_command.stmt_label": 0, "dump_trigger.suspicious_event": 1}},
+		{conf9, map[string]int{"dump_trigger.user_command.stmt_label": 0, "dump_trigger.suspicious_event": 1, "dump_trigger.sampling": 2}},
 	}
 
 	var b strings.Builder
@@ -176,7 +208,28 @@ func testFlightRecorderConfigBadCase(t *testing.T) {
 	}
 	}
 	}`
-
+	badcaseDuplicated := `{
+  "enabled_categories": [
+    "*"
+  ],
+  "dump_trigger": {
+    "type": "and",
+    "and": [
+      {
+        "type": "suspicious_event",
+        "suspicious_event": {
+          "type": "slow_query"
+        }
+      },
+      {
+        "type": "suspicious_event",
+        "suspicious_event": {
+          "type": "query_fail"
+        }
+      }
+    ]
+  }
+}`
 	badcases := []struct {
 		conf    string
 		errkind int
@@ -184,6 +237,7 @@ func testFlightRecorderConfigBadCase(t *testing.T) {
 		{badcaseJSONDecode, 1},
 		{badcaseValidate, 2},
 		{badcaseValidate1, 2},
+		{badcaseDuplicated, 2},
 	}
 	var b strings.Builder
 	for idx, badcase := range badcases {
@@ -232,10 +286,14 @@ func TestAndOrCombination(t *testing.T) {
 	compiled := dumpTriggerConfigCompiled{
 		nameMapping: make(map[string]int),
 	}
-	A := compiled.addTrigger("A", nil)
-	B := compiled.addTrigger("B", nil)
-	C := compiled.addTrigger("C", nil)
-	D := compiled.addTrigger("D", nil)
+	A, err := compiled.addTrigger("A", nil)
+	require.NoError(t, err)
+	B, err := compiled.addTrigger("B", nil)
+	require.NoError(t, err)
+	C, err := compiled.addTrigger("C", nil)
+	require.NoError(t, err)
+	D, err := compiled.addTrigger("D", nil)
+	require.NoError(t, err)
 
 	truthTable := truthTableForAnd([]uint64{A}, []uint64{B, C})
 	require.False(t, checkTruthTable(A, truthTable))
