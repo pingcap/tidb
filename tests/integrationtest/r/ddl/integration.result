@@ -147,3 +147,31 @@ PARTITION `p1970` VALUES LESS THAN (1980),
 PARTITION `p1980` VALUES LESS THAN (1990),
 PARTITION `p1990` VALUES LESS THAN (2000));
 ALTER TABLE members REORGANIZE PARTITION `p1990` INTO (PARTITION p1995 VALUES LESS THAN (1995),  PARTITION p2000 VALUES LESS THAN (2010));
+create table t (a int, b int, key testidx(b) where a > 2);
+insert into t values (1, 2);
+alter table t modify column a bigint;
+Error 8272 (HY000): Cannot drop, change or modify column 'a': it is referenced in partial index 'testidx'
+alter table t drop column a;
+Error 8272 (HY000): Cannot drop, change or modify column 'a': it is referenced in partial index 'testidx'
+alter table t change column a c int;
+Error 8272 (HY000): Cannot drop, change or modify column 'a': it is referenced in partial index 'testidx'
+alter table t drop index testidx;
+alter table t modify column b bigint;
+alter table t drop column b;
+drop table t;
+drop table if exists t;
+create table t (a int, b int, key testidx(b) where _tidb_rowid > 2);
+Error 8200 (HY000): Unsupported add partial index: column name `_tidb_rowid` referenced in partial index condition is not found in table
+create table t (a int, b int);
+alter table t add index testidx(b) where _tidb_rowid > 2;
+Error 8200 (HY000): Unsupported add partial index: column name `_tidb_rowid` referenced in partial index condition is not found in table
+drop table if exists t;
+create table t (a int, b int, key testidx(b) where a > 5) partition by range (b) (partition p0 values less than (5));
+Error 8200 (HY000): Unsupported add partial index: partial index is not supported on partitioned table
+create table t (a int, b int) partition by range (b) (partition p0 values less than (5));
+create index testidx on t(b) where a > 5;
+Error 8200 (HY000): Unsupported add partial index: partial index on partitioned table is not supported
+drop table t;
+create table t (a int, b int, key testidx(b) where a > 5);
+alter table t partition by range (b) (partition p0 values less than (5));
+Error 8200 (HY000): Unsupported add partial index: partial index is not supported on partitioned table
