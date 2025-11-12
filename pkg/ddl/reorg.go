@@ -75,6 +75,10 @@ type reorgCtx struct {
 	doneCh chan reorgFnResult
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
+	// keyRangeCount
+	finishedKeyRangeCount int64
+	// total
+	totalKeyRangeCount int64
 
 	mu struct {
 		sync.Mutex
@@ -304,6 +308,32 @@ func (rc *reorgCtx) getRowCount() int64 {
 	return row
 }
 
+func (rc *reorgCtx) setTotalKeyRangeCount(count int64) {
+	atomic.StoreInt64(&rc.totalKeyRangeCount, count)
+}
+
+func (rc *reorgCtx) getTotalKeyRangeCount() int64 {
+	row := atomic.LoadInt64(&rc.totalKeyRangeCount)
+	return row
+}
+
+func (rc *reorgCtx) increaseTotalKeyRangeCount(count int64) {
+	atomic.AddInt64(&rc.totalKeyRangeCount, count)
+}
+
+func (rc *reorgCtx) increaseFinishedKeyRangeCount(count int64) {
+	atomic.AddInt64(&rc.finishedKeyRangeCount, count)
+}
+
+func (rc *reorgCtx) getFinishedKeyRangeCount() int64 {
+	row := atomic.LoadInt64(&rc.finishedKeyRangeCount)
+	return row
+}
+
+func (rc *reorgCtx) setFinishedKeyRangeCount(count int64) {
+	atomic.StoreInt64(&rc.finishedKeyRangeCount, count)
+}
+
 // runReorgJob is used as a portal to do the reorganization work.
 // eg:
 // 1: add index
@@ -426,6 +456,7 @@ func (w *worker) runReorgJob(
 			d.removeReorgCtx(job.ID)
 
 			updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
+			// updateBackfillProgress(reorgInfo, tblInfo, rc.getFinishedKeyRangeCount(), rc.getTotalKeyRangeCount())
 
 			// For other errors, even err is not nil here, we still wait the partial counts to be collected.
 			// since in the next round, the startKey is brand new which is stored by last time.
@@ -434,6 +465,7 @@ func (w *worker) runReorgJob(
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
 			updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
+			// updateBackfillProgress(reorgInfo, tblInfo, rc.getFinishedKeyRangeCount(), rc.getTotalKeyRangeCount())
 
 			// Update a job's warnings.
 			w.mergeWarningsIntoJob(job)

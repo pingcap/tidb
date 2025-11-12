@@ -81,8 +81,9 @@ const (
 type Progress struct {
 	// For now, RowCnt is not used, but as it's collected by the collector,
 	// we still keep it here for future possible usage.
-	RowCnt int64 `json:"row_count,omitempty"`
-	Bytes  int64 `json:"bytes,omitempty"`
+	RowCnt      int64 `json:"row_count,omitempty"`
+	Bytes       int64 `json:"bytes,omitempty"`
+	KeyRangeCnt int64 `json:"key_range_count,omitempty"`
 
 	// UpdateTime is the time when this progress is stored.
 	UpdateTime time.Time `json:"update_time,omitempty"`
@@ -100,7 +101,9 @@ type SubtaskSummary struct {
 	// PutReqCnt is the number of put requests to the external storage.
 	PutReqCnt atomic.Uint64 `json:"put_request_count,omitempty"`
 	// GetReqCnt is the number of get requests to the external storage.
-	GetReqCnt atomic.Uint64 `json:"get_request_count,omitempty"`
+	GetReqCnt     atomic.Uint64 `json:"get_request_count,omitempty"`
+	KeyRangeCnt   atomic.Int64  `json:"key_range_count,omitempty"`
+	TotalRangeCnt atomic.Int64  `json:"total_range_count,omitempty"`
 
 	// Progresses are the history of data processed, which is used to get a
 	// smoother speed for each subtask.
@@ -111,9 +114,10 @@ type SubtaskSummary struct {
 // Update stores the latest progress of the subtask.
 func (s *SubtaskSummary) Update() {
 	s.Progresses = append(s.Progresses, Progress{
-		RowCnt:     s.RowCnt.Load(),
-		Bytes:      s.Bytes.Load(),
-		UpdateTime: time.Now(),
+		RowCnt:      s.RowCnt.Load(),
+		Bytes:       s.Bytes.Load(),
+		UpdateTime:  time.Now(),
+		KeyRangeCnt: s.KeyRangeCnt.Load(),
 	})
 
 	if len(s.Progresses) > maxProgressInSummary {
