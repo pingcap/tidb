@@ -46,6 +46,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -395,6 +397,10 @@ func BuildIndexInfo(
 			return nil, errors.Trace(err)
 		}
 		idxInfo.ConditionExprString = conditionString
+		idxInfo.AffectColumn, err = buildAffectColumn(idxInfo, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	} else {
 		// Use btree as default index type.
 		idxInfo.Tp = pmodel.IndexTypeBtree
@@ -998,11 +1004,17 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (v
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		allIndexInfos = append(allIndexInfos, indexInfo)
 		// The condition in the index option is not marshaled, so we need to set it here.
 		if len(arg.ConditionString) > 0 {
 			indexInfo.ConditionExprString = arg.ConditionString
+			// As we've updated the `ConditionExprString`, we need to rebuild the AffectColumn.
+			indexInfo.AffectColumn, err = buildAffectColumn(indexInfo, tblInfo)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
 		}
+		allIndexInfos = append(allIndexInfos, indexInfo)
 	}
 
 	originalState := allIndexInfos[0].State
@@ -1155,6 +1167,12 @@ func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo)
 	reorgTp, err := pickBackfillType(job)
 	if err != nil {
 		return err
+	}
+	// Partial Index is not supported without fast reorg.
+	for _, indexInfo := range idxInfos {
+		if (reorgTp == model.ReorgTypeTxn || reorgTp == model.ReorgTypeTxnMerge) && indexInfo.HasCondition() {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg is not supported")
+		}
 	}
 	loadCloudStorageURI(w, job)
 	if reorgTp.NeedMergeProcess() {
@@ -2174,7 +2192,10 @@ func newAddIndexTxnWorker(
 			continue
 		}
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
-		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		index, err := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		if err != nil {
+			return nil, err
+		}
 		allIndexes = append(allIndexes, index)
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
@@ -2303,7 +2324,11 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			if err != nil {
 				return false, err
 			}
+
 			for _, index := range w.indexes {
+				if index.Meta().HasCondition() {
+					return false, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg")
+				}
 				idxRecord, err1 := w.getIndexRecord(index.Meta(), handle, recordKey)
 				if err1 != nil {
 					return false, errors.Trace(err1)
@@ -2454,6 +2479,7 @@ func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
 	indexes []table.Index,
+	indexConditionCheckers []func(row chunk.Row) (bool, error),
 	copCtx copr.CopContext,
 	loc *time.Location,
 	errCtx errctx.Context,
@@ -2495,6 +2521,7 @@ func writeChunk(
 	if restore {
 		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
 	}
+
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf := ExtractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 		if restore {
@@ -2508,6 +2535,18 @@ func writeChunk(
 			return 0, nil, errors.Trace(err)
 		}
 		for i, index := range indexes {
+			// If the `IndexRecordChunk.conditionPushed` is true and we have only 1 index, the `indexConditionCheckers`
+			// will not be initialized.
+			if index.Meta().HasCondition() && indexConditionCheckers != nil {
+				ok, err := indexConditionCheckers[i](row)
+				if err != nil {
+					return 0, nil, errors.Trace(err)
+				}
+				if !ok {
+					continue
+				}
+			}
+
 			idxID := index.Meta().ID
 			idxDataBuf = ExtractDatumByOffsets(ectx,
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
@@ -3680,6 +3719,13 @@ func CheckAndBuildIndexConditionString(tblInfo *model.TableInfo, indexConditionE
 		return "", nil
 	}
 
+	// Be careful, in `CREATE TABLE` statement, the `tblInfo.Partition` is always nil here. We have to
+	// check it in `buildTablePartitionInfo` again.
+	if tblInfo.Partition != nil {
+		return "", dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+			"partial index on partitioned table is not supported")
+	}
+
 	// check partial index condition expression
 	err := checkIndexCondition(tblInfo, indexConditionExpr)
 	if err != nil {
@@ -3860,4 +3906,41 @@ func checkIndexCondition(tblInfo *model.TableInfo, indexCondition ast.ExprNode) 
 		return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
 			"the kind of partial index condition is not supported")
 	}
+}
+
+func buildAffectColumn(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) ([]*model.IndexColumn, error) {
+	ectx := exprstatic.NewExprContext()
+
+	// Build affect column for partial index.
+	if idxInfo.HasCondition() {
+		cols, err := tables.ExtractColumnsFromCondition(ectx, idxInfo, tblInfo, true)
+		if err != nil {
+			return nil, err
+		}
+		return tables.DedupIndexColumns(cols), nil
+	}
+
+	return nil, nil
+}
+
+// buildIndexConditionChecker builds an expression for evaluating the index condition based on
+// the given columns.
+func buildIndexConditionChecker(copCtx copr.CopContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) (func(row chunk.Row) (bool, error), error) {
+	schema, names := copCtx.GetBase().GetSchemaAndNames()
+
+	exprCtx := copCtx.GetBase().ExprCtx
+	expr, err := expression.ParseSimpleExpr(exprCtx, idxInfo.ConditionExprString, expression.WithInputSchemaAndNames(schema, names, tblInfo))
+	if err != nil {
+		return nil, err
+	}
+
+	return func(row chunk.Row) (bool, error) {
+		datum, isNull, err := expr.EvalInt(exprCtx.GetEvalCtx(), row)
+		if err != nil {
+			return false, err
+		}
+		// If the result is NULL, it usually means the original column itself is NULL.
+		// In this case, we should refuse to consider the index for partial index condition.
+		return datum > 0 && !isNull, nil
+	}, nil
 }

@@ -21,18 +21,36 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"go.uber.org/zap"
 )
+
+var indexConditionECtx exprctx.BuildContext
+
+// indexPartialCondition is a data structure to help implement the partial index.
+type indexPartialCondition struct {
+	conditionExpr expression.Expression
+	// conditionEvalBufferPool stores many eval buffer to avoid allocating chunk for evaluating partial index condition for each time.
+	// It's only initialized if the `partialConditionExpr` is not nil.
+	conditionEvalBufferPool sync.Pool
+}
 
 // index is the data structure for index data in the KV store.
 type index struct {
@@ -44,6 +62,8 @@ type index struct {
 	// the collation global variable is initialized *after* `NewIndex()`.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
+
+	indexPartialCondition
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
@@ -57,13 +77,43 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 }
 
 // NewIndex builds a new Index object.
-func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
 	index := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
 	}
-	return index
+
+	conditionString := indexInfo.ConditionExprString
+	if len(conditionString) > 0 {
+		var err error
+		index.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString, expression.WithTableInfo("", tblInfo))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		index.conditionEvalBufferPool = sync.Pool{
+			New: func() any {
+				// For INSERT path, it'll only pass all writable columns.
+				// For UPDATE/DELETE path, it'll contain all columns.
+				// As the writable columns are always at the beginning of the `tblInfo.Columns`, it'll not affect
+				// the offsets of related columns in the expression. Therefore, it's fine to always record all
+				// columns here.
+				evalBufferTypes := make([]*types.FieldType, 0, len(tblInfo.Columns)+1)
+				for _, col := range tblInfo.Columns {
+					evalBufferTypes = append(evalBufferTypes, &col.FieldType)
+				}
+
+				if !tblInfo.HasClusteredIndex() {
+					// If the table doesn't have clustered index, we need to append an extra handle column.
+					evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
+				}
+
+				evalBuffer := chunk.MutRowFromTypes(evalBufferTypes)
+				return &evalBuffer
+			},
+		}
+	}
+	return index, nil
 }
 
 // Meta returns index info.
@@ -181,6 +231,34 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 	}
 out:
 	return vals
+}
+
+// MeetPartialCondition checks whether the row meets the partial index condition of the index.
+func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			err = errors.Errorf("panic in MeetPartialCondition: %v", r)
+			intest.Assert(false, "should never panic in MeetPartialCondition")
+			logutil.BgLogger().Warn("panic in MeetPartialCondition", zap.Error(err), zap.Any("recover message", r))
+		}
+	}()
+
+	if c.conditionExpr == nil {
+		return true, nil
+	}
+
+	evalBuffer := c.conditionEvalBufferPool.Get().(*chunk.MutRow)
+	defer c.conditionEvalBufferPool.Put(evalBuffer)
+	evalBuffer.SetDatums(row...)
+
+	datum, isNull, err := c.conditionExpr.EvalInt(indexConditionECtx.GetEvalCtx(), evalBuffer.ToRow())
+	if err != nil {
+		return false, err
+	}
+	// If the result is NULL, it usually means the original column itself is NULL.
+	// In this case, we should refuse to consider the index for partial index condition.
+	return datum > 0 && !isNull, nil
 }
 
 // Create creates a new entry in the kvIndex data.
@@ -837,4 +915,83 @@ func GenIndexValueFromIndex(key []byte, value []byte, tblInfo *model.TableInfo, 
 	}
 
 	return valueStr, nil
+}
+
+// ExtractColumnsFromCondition returns the columns that are referenced in the index condition expression.
+// If `includeColumnsReferencedByVirtualGeneratedColumns` is true, it will recursively extract the columns from the virtual generated columns.
+// The returned columns might be duplicated.
+func ExtractColumnsFromCondition(ctx expression.BuildContext, idxInfo *model.IndexInfo, tblInfo *model.TableInfo, includeColumnsReferencedByVirtualGeneratedColumns bool) ([]*model.IndexColumn, error) {
+	if len(idxInfo.ConditionExprString) == 0 {
+		return nil, nil
+	}
+
+	expr, err := expression.ParseSimpleExpr(ctx, idxInfo.ConditionExprString, expression.WithTableInfo("", tblInfo))
+	if err != nil {
+		return nil, err
+	}
+	return extractColumnsFromExpr(expr, tblInfo, includeColumnsReferencedByVirtualGeneratedColumns)
+}
+
+// DedupIndexColumns deduplicates the index columns based on their Offset.
+func DedupIndexColumns(cols []*model.IndexColumn) []*model.IndexColumn {
+	if len(cols) <= 1 {
+		return cols
+	}
+
+	seen := make(map[int]struct{}, len(cols))
+	result := make([]*model.IndexColumn, 0, len(cols))
+	for _, col := range cols {
+		if _, found := seen[col.Offset]; !found {
+			seen[col.Offset] = struct{}{}
+			result = append(result, col)
+		}
+	}
+	return result
+}
+
+// extractColumnsFromExpr extracts the columns from the given expression.
+// If `includeVirtualGeneratedColumn` is true, it will recursively extract the columns from the virtual generated columns.
+// The returned columns might be duplicated.
+func extractColumnsFromExpr(expr expression.Expression, tblInfo *model.TableInfo, includeVirtualGeneratedColumn bool) ([]*model.IndexColumn, error) {
+	var neededCols []*model.IndexColumn
+	cols := expression.ExtractColumns(expr)
+	for _, col := range cols {
+		if tblInfo.Columns[col.Index].IsVirtualGenerated() {
+			if includeVirtualGeneratedColumn {
+				depCols, err := extractColumnsFromExpr(col.VirtualExpr, tblInfo, includeVirtualGeneratedColumn)
+				if err != nil {
+					return nil, err
+				}
+
+				neededCols = append(neededCols, depCols...)
+			}
+
+			neededCols = append(neededCols, &model.IndexColumn{
+				Name:   tblInfo.Columns[col.Index].Name,
+				Offset: col.Index,
+			})
+		} else {
+			neededCols = append(neededCols, &model.IndexColumn{
+				Name:   tblInfo.Columns[col.Index].Name,
+				Offset: col.Index,
+			})
+		}
+	}
+
+	return neededCols, nil
+}
+
+func init() {
+	evalCtx := exprstatic.NewEvalContext(
+		exprstatic.WithSQLMode(mysql.ModeNone),
+		exprstatic.WithTypeFlags(types.DefaultStmtFlags),
+		exprstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
+	)
+
+	planCacheTracker := contextutil.NewPlanCacheTracker(contextutil.IgnoreWarn)
+
+	indexConditionECtx = exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(evalCtx),
+		exprstatic.WithPlanCacheTracker(&planCacheTracker),
+	)
 }
