@@ -202,7 +202,7 @@ func CreateLocalBackend(
 	ctx context.Context,
 	store kv.Storage,
 	job *model.Job,
-	checkDup bool,
+	hasUnique, checkDup bool,
 	adjustedWorkerConcurrency int,
 ) (*local.BackendConfig, *local.Backend, error) {
 	jobSortPath, err := genJobSortPath(job.ID, checkDup)

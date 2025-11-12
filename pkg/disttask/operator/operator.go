@@ -15,11 +15,8 @@
 package operator
 
 import (
-	"context"
 	"fmt"
-	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 )
@@ -130,39 +127,3 @@ func (s *asyncWorker[T, R]) HandleTask(task T, rsFn func(R)) error {
 }
 
 func (*asyncWorker[T, R]) Close() error { return nil }
-
-// Context is the context used for worker pool
-// TODO(joechenrh): use this context in WorkerPool to simplify
-// the error handling logic of pipelines.
-type Context struct {
-	context.Context
-	cancel context.CancelFunc
-	err    atomic.Pointer[error]
-}
-
-// OnError is called when an error occurs in the operator.
-func (ctx *Context) OnError(err error) {
-	tracedErr := errors.Trace(err)
-	ctx.err.CompareAndSwap(nil, &tracedErr)
-	ctx.cancel()
-}
-
-// OperatorErr returns the error of the operator.
-func (ctx *Context) OperatorErr() error {
-	err := ctx.err.Load()
-	if err == nil {
-		return nil
-	}
-	return *err
-}
-
-// NewContext creates a new Context
-func NewContext(
-	ctx context.Context,
-) (*Context, context.CancelFunc) {
-	opCtx, cancel := context.WithCancel(ctx)
-	return &Context{
-		Context: opCtx,
-		cancel:  cancel,
-	}, cancel
-}

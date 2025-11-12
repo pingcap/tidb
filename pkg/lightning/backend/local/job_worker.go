@@ -54,7 +54,7 @@ func toAtomic(v int) atomic.Int32 {
 type regionJobWorker interface {
 	HandleTask(job *regionJob, f func(*regionJob)) error
 
-	Close()
+	Close() error
 
 	// run is only used in test, to process jobs from jobInCh.
 	// It's used to minimize the code change for tests for
@@ -63,7 +63,7 @@ type regionJobWorker interface {
 }
 
 type regionJobBaseWorker struct {
-	ctx *operator.Context
+	ctx *workerpool.Context
 
 	jobInCh  chan *regionJob
 	jobOutCh chan *regionJob
@@ -176,7 +176,8 @@ func (w *regionJobBaseWorker) process(job *regionJob) error {
 	return err
 }
 
-func (*regionJobBaseWorker) Close() {
+func (*regionJobBaseWorker) Close() error {
+	return nil
 }
 
 // doRunJob handles a regionJob and tries to convert it to ingested stage.
@@ -435,7 +436,7 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) er
 }
 
 type jobOperator struct {
-	ctx *operator.Context
+	ctx *workerpool.Context
 	*operator.AsyncOperator[*regionJob, *regionJob]
 
 	// cancel is used to close the worker pool in happy path
@@ -454,7 +455,7 @@ func newRegionJobOperator(
 	jobToWorkerCh, jobFromWorkerCh chan *regionJob,
 	clusterID uint64,
 ) *jobOperator {
-	opCtx, cancel := operator.NewContext(workerCtx)
+	wctx := workerpool.NewContext(workerCtx)
 	var (
 		sourceChannel   = jobToWorkerCh
 		afterExecuteJob func([]*metapb.Peer)
@@ -472,15 +473,14 @@ func newRegionJobOperator(
 		rutil.DistTask,
 		local.Concurrency(),
 		func() workerpool.Worker[*regionJob, *regionJob] {
-			return local.newRegionJobWorker(opCtx, clusterID, sourceChannel, jobFromWorkerCh, jobWg, afterExecuteJob)
+			return local.newRegionJobWorker(wctx, clusterID, sourceChannel, jobFromWorkerCh, jobWg, afterExecuteJob)
 		},
 	)
 
 	op := &jobOperator{
-		ctx:           opCtx,
-		AsyncOperator: operator.NewAsyncOperator(opCtx, pool),
+		ctx:           wctx,
+		AsyncOperator: operator.NewAsyncOperator(wctx, pool),
 		workerGroup:   workGroup,
-		cancel:        cancel,
 	}
 	op.SetSink(operator.NewSimpleDataChannel(jobFromWorkerCh))
 	op.SetSource(operator.NewSimpleDataChannel(sourceChannel))
