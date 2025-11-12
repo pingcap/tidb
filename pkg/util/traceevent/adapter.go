@@ -59,13 +59,13 @@ func handleTraceControlExtractor(ctx context.Context) trace.TraceControlFlags {
 	// Map TiDB categories to TiKV categories regardless of whether a Trace sink is present.
 	enabledCategories := tracing.GetEnabledCategories()
 	if enabledCategories&tracing.TiKVRequest != 0 {
-		flags = flags.Set(trace.FlagTiKVCategoryRequest)
+		flags = flags.With(trace.FlagTiKVCategoryRequest)
 	}
 	if enabledCategories&tracing.TiKVWriteDetails != 0 {
-		flags = flags.Set(trace.FlagTiKVCategoryWriteDetails)
+		flags = flags.With(trace.FlagTiKVCategoryWriteDetails)
 	}
 	if enabledCategories&tracing.TiKVReadDetails != 0 {
-		flags = flags.Set(trace.FlagTiKVCategoryReadDetails)
+		flags = flags.With(trace.FlagTiKVCategoryReadDetails)
 	}
 
 	// Extract Trace object from context
@@ -86,7 +86,7 @@ func handleTraceControlExtractor(ctx context.Context) trace.TraceControlFlags {
 
 	// Set immediate log flag based on keep
 	if keep {
-		flags = flags.Set(trace.FlagImmediateLog)
+		flags = flags.With(trace.FlagImmediateLog)
 	}
 
 	return flags
