@@ -298,7 +298,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 			defer func() {
 				require.NoError(t, failpoint.Disable(tc.failPointPath))
 			}()
-			ctx, cancel := context.WithCancel(context.Background())
+			wctx := workerpool.NewContext(context.Background())
 			if strings.Contains(tc.failPointPath, "writeLocalExec") {
 				var counter atomic.Int32
 				require.NoError(t, failpoint.EnableCall(tc.failPointPath, func(done bool) {
@@ -311,15 +311,14 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 					// 10 is the table scan task count.
 					counter.Add(1)
 					if counter.Load() == 10 {
-						cancel()
+						wctx.Cancel()
 					}
 				}))
 			} else if strings.Contains(tc.failPointPath, "scanRecordExec") {
-				require.NoError(t, failpoint.EnableCall(tc.failPointPath, func(*model.DDLReorgMeta) { cancel() }))
+				require.NoError(t, failpoint.EnableCall(tc.failPointPath, func(*model.DDLReorgMeta) { wctx.Cancel() }))
 			} else {
 				require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
 			}
-			wctx := workerpool.NewContext(ctx)
 			defer wctx.Cancel()
 			pipeline, err := ddl.NewAddIndexIngestPipeline(
 				wctx, store,
