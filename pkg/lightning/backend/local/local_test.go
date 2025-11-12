@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
@@ -55,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -1091,8 +1091,8 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	bak := Backend{}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)")
 	toCh := make(chan *regionJob, 1)
-	opCtx, _ := operator.NewContext(context.Background())
-	worker := bak.newRegionJobWorker(opCtx, 1, toCh, make(chan *regionJob, 1), nil, nil)
+	wctx := workerpool.NewContext(context.Background())
+	worker := bak.newRegionJobWorker(wctx, 1, toCh, make(chan *regionJob, 1), nil, nil)
 
 	toCh <- &regionJob{}
 	err := worker.run()
@@ -1299,8 +1299,8 @@ func TestCheckPeersBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		opCtx, _ := operator.NewContext(ctx)
-		worker := local.newRegionJobWorker(opCtx, 1, jobCh, jobOutCh, nil, nil)
+		wctx := workerpool.NewContext(ctx)
+		worker := local.newRegionJobWorker(wctx, 1, jobCh, jobOutCh, nil, nil)
 		err := worker.run()
 		require.NoError(t, err)
 	}()
@@ -1411,8 +1411,8 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		opCtx, _ := operator.NewContext(ctx)
-		worker := local.newRegionJobWorker(opCtx, 1, jobCh, jobOutCh, &jobWg, nil)
+		wctx := workerpool.NewContext(ctx)
+		worker := local.newRegionJobWorker(wctx, 1, jobCh, jobOutCh, &jobWg, nil)
 		err := worker.run()
 		require.NoError(t, err)
 	}()
@@ -1516,8 +1516,8 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		opCtx, _ := operator.NewContext(ctx)
-		worker := local.newRegionJobWorker(opCtx, 1, jobCh, jobOutCh, &jobWg, nil)
+		wctx := workerpool.NewContext(ctx)
+		worker := local.newRegionJobWorker(wctx, 1, jobCh, jobOutCh, &jobWg, nil)
 		err := worker.run()
 		require.NoError(t, err)
 	}()
@@ -1642,8 +1642,8 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		opCtx, _ := operator.NewContext(ctx)
-		worker := local.newRegionJobWorker(opCtx, 1, jobCh, jobOutCh, &jobWg, nil)
+		wctx := workerpool.NewContext(ctx)
+		worker := local.newRegionJobWorker(wctx, 1, jobCh, jobOutCh, &jobWg, nil)
 		err := worker.run()
 		require.NoError(t, err)
 	}()

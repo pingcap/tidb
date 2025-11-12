@@ -537,7 +537,6 @@ func (e *Engine) LoadIngestData(
 			}
 		}()
 	}
-
 	// try to make every worker busy for each batch
 	currBatchSize := int(e.workerConcurrency.Load())
 	logutil.Logger(ctx).Info("load ingest data", zap.Int("current batchSize", currBatchSize))

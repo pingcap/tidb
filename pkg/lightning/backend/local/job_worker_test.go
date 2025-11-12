@@ -23,20 +23,20 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	ingestclimock "github.com/pingcap/tidb/pkg/ingestor/ingestcli/mock"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
 func TestRegionJobBaseWorker(t *testing.T) {
 	newWorker := func() *regionJobBaseWorker {
-		opCtx, _ := operator.NewContext(context.Background())
+		wctx := workerpool.NewContext(context.Background())
 		return &regionJobBaseWorker{
-			ctx:      opCtx,
+			ctx:      wctx,
 			jobInCh:  make(chan *regionJob, 10),
 			jobOutCh: make(chan *regionJob, 10),
 			jobWg:    &sync.WaitGroup{},

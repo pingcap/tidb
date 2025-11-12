@@ -58,7 +58,7 @@ func genConfig(
 		ResourceGroupName: resourceGroup,
 		MaxConnPerStore:   concurrency,
 		WorkerConcurrency: *atomic.NewInt32(workerConcurrency),
-		KeyspaceName:      tidb.GetGlobalKeyspaceName(),
+		KeyspaceName:      keyspace,
 		// We disable the switch TiKV mode feature for now, because the impact is not
 		// fully tested.
 		ShouldCheckWriteStall: true,

@@ -126,4 +126,6 @@ func (s *asyncWorker[T, R]) HandleTask(task T, rsFn func(R)) error {
 	return nil
 }
 
-func (*asyncWorker[T, R]) Close() error { return nil }
+func (*asyncWorker[T, R]) Close() error {
+	return nil
+}
