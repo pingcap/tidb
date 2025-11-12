@@ -664,7 +664,7 @@ func TestPQHandlesTableDeletionGracefully(t *testing.T) {
 
 	// Drop the table and mock the table stats is removed from the cache.
 	tk.MustExec("drop table t1")
-	deleteEvent := findEvent(handle.DDLEventCh(), model.ActionDropTable)
+	deleteEvent := statstestutil.FindEvent(handle.DDLEventCh(), model.ActionDropTable)
 	require.NotNil(t, deleteEvent)
 	err = statstestutil.HandleDDLEventWithTxn(handle, deleteEvent)
 	require.NoError(t, err)

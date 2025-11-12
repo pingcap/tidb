@@ -597,7 +597,7 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, true)
 		}
 		// All the objects shares the same stats version. Update it here.
-		if colHist.StatsVer != statistics.Version0 {
+		if statistics.IsAnalyzed(colHist.StatsVer) {
 			tbl.StatsVer = statistics.Version0
 		}
 		// we have to refresh the map for the possible change to ensure that the map information is not missing.
