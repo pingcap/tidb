@@ -86,7 +86,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20241219054535-6b8c588c3122
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20250908061600-97d984880071
+	github.com/pingcap/kvproto v0.0.0-20251105064658-e1e6b2a1e664
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -329,6 +329,4 @@ replace (
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/tikv/client-go/v2 => github.com/zyguan/client-go/v2 v2.0.0-alpha.0.20251028074353-5480dbfea54e
-
-replace github.com/pingcap/kvproto => github.com/you06/kvproto v0.0.0-20251020061652-12035a620aaf
+replace github.com/tikv/client-go/v2 => github.com/zyguan/client-go/v2 v2.0.0-alpha.0.20251107072337-25d334dd8f73
