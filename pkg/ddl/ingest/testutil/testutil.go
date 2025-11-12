@@ -35,8 +35,8 @@ func InjectMockBackendCtx(t *testing.T, store kv.Storage) (restore func()) {
 
 	tk := testkit.NewTestKit(t, store)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockNewBackendContext",
-		func(job *model.Job, cpMgr *ingest.CheckpointManager, mockBackendCtx *ingest.BackendCtx) {
-			*mockBackendCtx = ingest.NewMockBackendCtx(job, tk.Session(), cpMgr)
+		func(job *model.Job, cpOp ingest.CheckpointOperator, mockBackendCtx *ingest.BackendCtx) {
+			*mockBackendCtx = ingest.NewMockBackendCtx(job, tk.Session(), cpOp)
 		})
 	ingest.LitInitialized = true
 	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())

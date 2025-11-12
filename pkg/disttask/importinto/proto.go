@@ -17,8 +17,9 @@ package importinto
 import (
 	"fmt"
 	"sync"
-	"sync/atomic"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -164,15 +165,12 @@ type importStepMinimalTask struct {
 	Plan       importer.Plan
 	Chunk      importer.Chunk
 	SharedVars *SharedVars
-	panicked   *atomic.Bool
 	logger     *zap.Logger
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (t *importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "encodeAndSortOperator", "RecoverArgs", func() {
-		t.panicked.Store(true)
-	}, false
+func (*importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return proto.ImportInto.String(), "importStepMininalTask", errors.Errorf("panic occurred during import, please check log")
 }
 
 func (t *importStepMinimalTask) String() string {
