@@ -142,18 +142,21 @@ type mergeIndexWorker struct {
 	currentIndex *model.IndexInfo
 }
 
-func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements []*meta.Element) *mergeIndexWorker {
+func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements []*meta.Element) (*mergeIndexWorker, error) {
 	allIndexes := make([]table.Index, 0, len(elements))
 	for _, elem := range elements {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
-		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		index, err := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		if err != nil {
+			return nil, err
+		}
 		allIndexes = append(allIndexes, index)
 	}
 
 	return &mergeIndexWorker{
 		backfillCtx: bfCtx,
 		indexes:     allIndexes,
-	}
+	}, nil
 }
 
 func (w *mergeIndexWorker) setCurrentIndexForRange(taskRange *reorgBackfillTask) (err error) {
