@@ -218,3 +218,16 @@ insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1
 select /*+ read_from_storage(tikv[`executor__admin`.`admin_test`]) */ bit_xor(crc32(md5(concat_ws(0x2, `c1`, `c2`)))), ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024), count(*) from `executor__admin`.`admin_test` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024);
 select bit_xor(crc32(md5(concat_ws(0x2, `c1`, `c2`)))), ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024), count(*) from `executor__admin`.`admin_test` use index(`c2`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024);
 set cte_max_recursion_depth=default;
+drop table if exists t;
+create table t (col1 int, key idx(col1) where col1 > 0);
+insert into t values (NULL);
+insert into t values (-1);
+insert into t values (1);
+set tidb_enable_fast_table_check = 'OFF';
+admin check index t idx;
+Error 8273 (HY000): Validation of partial indexes requires tidb_enable_fast_table_check=ON
+admin check table t;
+Error 8273 (HY000): Validation of partial indexes requires tidb_enable_fast_table_check=ON
+set tidb_enable_fast_table_check = 'ON';
+admin check index t idx;
+admin check table t;

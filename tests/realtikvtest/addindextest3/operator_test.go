@@ -116,7 +116,7 @@ func TestBackfillOperators(t *testing.T) {
 		ctx := context.Background()
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx)
 		src := testutil.NewOperatorTestSource(opTasks...)
-		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, 0, nil, nil, &execute.TestCollector{})
+		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, 0, &model.DDLReorgMeta{}, nil, &execute.TestCollector{})
 		sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
 		operator.Compose[ddl.TableScanTask](src, scanOp)
@@ -160,7 +160,8 @@ func TestBackfillOperators(t *testing.T) {
 			},
 		}
 		pTbl := tbl.(table.PhysicalTable)
-		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		require.NoError(t, err)
 		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, false, 0)
 		require.NoError(t, err)
 		defer bd.Close()
@@ -379,7 +380,7 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 	tblInfo := tbl.Meta()
 	idxInfo = tblInfo.FindIndexByName("idx")
 	sctx := tk.Session()
-	copCtx, err = ddl.NewReorgCopContext(dom.Store(), ddl.NewDDLReorgMeta(sctx), tblInfo, []*model.IndexInfo{idxInfo}, "")
+	copCtx, err = ddl.NewReorgCopContext(ddl.NewDDLReorgMeta(sctx), tblInfo, []*model.IndexInfo{idxInfo}, "")
 	require.NoError(t, err)
 	require.IsType(t, copCtx, &copr.CopContextSingleIndex{})
 	return tbl, idxInfo, start, end, copCtx
@@ -421,7 +422,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 	{
 		ctx := context.Background()
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx)
-		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, nil, 2, 0, nil, nil, &execute.TestCollector{})
+		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, nil, 2, 0, &model.DDLReorgMeta{}, nil, &execute.TestCollector{})
 
 		scanOp.Open()
 		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(2))
@@ -439,7 +440,8 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		ctx := context.Background()
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx)
 		pTbl := tbl.(table.PhysicalTable)
-		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		require.NoError(t, err)
 		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, false, 0)
 		require.NoError(t, err)
 		defer bd.Close()
