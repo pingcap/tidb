@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -160,8 +161,19 @@ func NeedsMerge(left, right *RangeStats, splitSizeBytes, splitKeyCount uint64) b
 	if leftKeys+rightKeys > splitKeyCount {
 		return false
 	}
-	tableID1, indexID1, isRecord1, err1 := tablecodec.DecodeKeyHead(left.StartKey)
-	tableID2, indexID2, isRecord2, err2 := tablecodec.DecodeKeyHead(right.StartKey)
+
+	parseInnerKey := func(key []byte) (int64, int64, bool, error) {
+		// Trim the keyspace prefix.
+		_, innerKey, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+		if err != nil {
+			// Not a V2 (keyspaced) key.
+			return tablecodec.DecodeKeyHead(key)
+		}
+		return tablecodec.DecodeKeyHead(innerKey)
+	}
+
+	tableID1, indexID1, isRecord1, err1 := parseInnerKey(left.StartKey)
+	tableID2, indexID2, isRecord2, err2 := parseInnerKey(right.StartKey)
 
 	// Failed to decode the file key head... can this happen?
 	if err1 != nil || err2 != nil {

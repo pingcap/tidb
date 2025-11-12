@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -51,6 +52,7 @@ type cloudImportExecutor struct {
 	taskConcurrency int
 	metric          *lightningmetric.Common
 	engine          atomic.Pointer[external.Engine]
+	summary         *execute.SubtaskSummary
 }
 
 func newCloudImportExecutor(
@@ -68,6 +70,7 @@ func newCloudImportExecutor(
 		ptbl:            ptbl,
 		cloudStoreURI:   cloudStoreURI,
 		taskConcurrency: taskConcurrency,
+		summary:         &execute.SubtaskSummary{},
 	}, nil
 }
 
@@ -75,7 +78,7 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
 	e.metric = metrics.RegisterLightningCommonMetricsForDDL(e.job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, e.metric)
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, false, e.taskConcurrency)
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, hasUniqueIndex(e.indexes), false, e.taskConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -92,6 +95,7 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
+	e.summary.Reset()
 	sm, err := decodeBackfillSubTaskMeta(ctx, e.cloudStoreURI, subtask.Meta)
 	if err != nil {
 		return err
@@ -132,6 +136,10 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			CheckHotspot:  true,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
 			OnDup:         engineapi.OnDuplicateKeyError,
+			OnReaderClose: func(summary *external.ReaderSummary) {
+				e.summary.GetReqCnt.Add(summary.GetRequestCount)
+				e.GetMeterRecorder().IncGetRequest(summary.GetRequestCount)
+			},
 		},
 		TS: sm.TS,
 	}, engineUUID)
@@ -169,6 +177,15 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	return kv.ErrKeyExists
 }
 
+func hasUniqueIndex(idxs []*model.IndexInfo) bool {
+	for _, idx := range idxs {
+		if idx.Unique {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	if e.backendCtx != nil {
@@ -177,6 +194,11 @@ func (e *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	e.backend.Close()
 	metrics.UnregisterLightningCommonMetricsForDDL(e.job.ID, e.metric)
 	return nil
+}
+
+// RealtimeSummary returns the summary of the subtask execution.
+func (e *cloudImportExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return e.summary
 }
 
 // TaskMetaModified changes the max write speed for ingest

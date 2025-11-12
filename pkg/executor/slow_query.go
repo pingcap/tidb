@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -100,7 +101,7 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	// initialize column value factories.
 	e.columnValueFactoryMap = make(map[string]slowQueryColumnValueFactory, len(e.outputCols))
 	for idx, col := range e.outputCols {
-		if col.Name.O == util.ClusterTableInstanceColumnName {
+		if col.Name.O == metadef.ClusterTableInstanceColumnName {
 			e.instanceFactory, err = getInstanceColumnValueFactory(sctx, idx)
 			if err != nil {
 				return err
@@ -852,7 +853,7 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 		execdetails.LockKeysTimeStr, variable.SlowLogCopProcAvg, variable.SlowLogCopProcP90, variable.SlowLogCopProcMax,
 		variable.SlowLogCopWaitAvg, variable.SlowLogCopWaitP90, variable.SlowLogCopWaitMax, variable.SlowLogKVTotal,
 		variable.SlowLogPDTotal, variable.SlowLogBackoffTotal, variable.SlowLogWriteSQLRespTotal, variable.SlowLogRRU,
-		variable.SlowLogWRU, variable.SlowLogWaitRUDuration, variable.SlowLogTidbCPUUsageDuration, variable.SlowLogTikvCPUUsageDuration:
+		variable.SlowLogWRU, variable.SlowLogWaitRUDuration, variable.SlowLogTidbCPUUsageDuration, variable.SlowLogTikvCPUUsageDuration, variable.SlowLogMemArbitration:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseFloat(value, 64)
 			if err != nil {
@@ -882,7 +883,8 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 			return true, nil
 		}, nil
 	case variable.SlowLogPrepared, variable.SlowLogSucc, variable.SlowLogPlanFromCache, variable.SlowLogPlanFromBinding,
-		variable.SlowLogIsInternalStr, variable.SlowLogIsExplicitTxn, variable.SlowLogIsWriteCacheTable, variable.SlowLogHasMoreResults:
+		variable.SlowLogIsInternalStr, variable.SlowLogIsExplicitTxn, variable.SlowLogIsWriteCacheTable, variable.SlowLogHasMoreResults,
+		variable.SlowLogStorageFromKV, variable.SlowLogStorageFromMPP:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseBool(value)
 			if err != nil {

@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -93,7 +92,9 @@ func InitTest(t *testing.T) *SuiteContext {
 	tk.MustExec("drop database if exists addindex;")
 	tk.MustExec("create database addindex;")
 	tk.MustExec("use addindex;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
 
 	ctx := newSuiteContext(t, tk, store)
 	createTable(tk)
@@ -587,15 +588,4 @@ func AssertExternalField(t *testing.T, subtaskMeta any) {
 			}
 		}
 	}
-}
-
-// UpdateTiDBConfig updates the TiDB configuration for the real TiKV test.
-func UpdateTiDBConfig() {
-	// need a real PD
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Path = "127.0.0.1:2379"
-		if kerneltype.IsNextGen() {
-			conf.TiKVWorkerURL = "localhost:19000"
-		}
-	})
 }

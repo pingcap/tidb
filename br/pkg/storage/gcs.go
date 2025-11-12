@@ -343,7 +343,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		wc := s.GetBucketHandle().Object(object).NewWriter(ctx)
 		wc.StorageClass = s.gcs.StorageClass
 		wc.PredefinedACL = s.gcs.PredefinedAcl
-		return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
+		return newFlushStorageWriter(wc, &callbackFlusher{wo.OnUpload}, wc), nil
 	}
 	uri := s.objectName(name)
 	// 5MB is the minimum part size for GCS.
@@ -353,7 +353,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		return nil, errors.Trace(err)
 	}
 	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
-	bw := newBufferedWriter(fw, int(partSize), NoCompression)
+	bw := newBufferedWriter(fw, int(partSize), NoCompression, wo.OnUpload)
 	return bw, nil
 }
 
@@ -594,8 +594,6 @@ type gcsObjectReader struct {
 
 	prefetchSize int
 	// reader context used for implement `io.Seek`
-	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
-	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
 	ctx context.Context
 }
 

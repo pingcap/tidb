@@ -63,7 +63,7 @@ TiDB (/’taɪdiːbi:/, "Ti" stands for Titanium) is an open-source, cloud-nativ
 
 ## Need Help?
 
-- You can connect with TiDB users, ask questions, find answers, and help others on our community platforms: [Discord](https://discord.gg/KVRZBR2DrG?utm_source=github), Slack ([English](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb), [Japanese](https://slack.tidb.io/invite?team=tidb-community&channel=tidb-japan&ref=github-tidb)), [Stack Overflow](https://stackoverflow.com/questions/tagged/tidb), TiDB Forum ([English](https://ask.pingcap.com/), [Chinese](https://asktug.com)), X [@PingCAP](https://twitter.com/PingCAP)
+- You can connect with TiDB users, ask questions, find answers, and help others on our community platforms: [Discord](https://discord.gg/KVRZBR2DrG?utm_source=github), Slack ([English](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb), [Japanese](https://slack.tidb.io/invite?team=tidb-community&channel=tidb-japan&ref=github-tidb)), [Stack Overflow](https://stackoverflow.com/questions/tagged/tidb), [TiDB Chinese Forum](https://asktug.com), X [@PingCAP](https://twitter.com/PingCAP)
 
 - For filing bugs, suggesting improvements, or requesting new features, use [Github Issues](https://github.com/pingcap/tidb/issues) or join discussions on [Github Discussions](https://github.com/orgs/pingcap/discussions).
 

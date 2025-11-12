@@ -50,6 +50,7 @@ go_test(
     ],
     embed = [":runaway"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "@com_github_stretchr_testify//assert",
         "@com_github_tikv_client_go_v2//util",

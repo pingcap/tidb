@@ -111,9 +111,9 @@ explain select null as a union all select 'a' as a;
 id	estRows	task	access object	operator info
 Union_8	2.00	root		
 ├─Projection_10	1.00	root		<nil>->Column#3
-│ └─TableDual_11	1.00	root		rows:1
-└─Projection_12	1.00	root		a->Column#3
-  └─TableDual_13	1.00	root		rows:1
+│ └─TableDual_12	1.00	root		rows:1
+└─Projection_14	1.00	root		a->Column#3
+  └─TableDual_16	1.00	root		rows:1
 select null as a union all select 'a' as a;
 a
 NULL

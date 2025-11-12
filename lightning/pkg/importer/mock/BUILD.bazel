@@ -26,6 +26,7 @@ go_test(
     srcs = ["mock_test.go"],
     embed = [":mock"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//lightning/pkg/importer",
         "//pkg/meta/model",

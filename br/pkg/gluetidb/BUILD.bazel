@@ -17,7 +17,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/session",
-        "//pkg/session/types",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",

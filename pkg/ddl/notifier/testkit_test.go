@@ -21,12 +21,14 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -64,12 +66,14 @@ func TestPublishToTableStore(t *testing.T) {
 	closeFn()
 }
 
+var localNotifierTableSQL = strings.ReplaceAll(ddl.NotifierTableSQL, "mysql.tidb_ddl_notifier", "tidb_ddl_notifier")
+
 func TestBasicPubSub(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec(localNotifierTableSQL)
 
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
 	sessionPool := util.NewSessionPool(
@@ -141,7 +145,7 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec(localNotifierTableSQL)
 
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
 	sessionPool := util.NewSessionPool(
@@ -315,7 +319,7 @@ func Test2OwnerForAShortTime(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec(localNotifierTableSQL)
 	tk.MustExec("CREATE TABLE result (id INT PRIMARY KEY)")
 
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
@@ -451,7 +455,7 @@ func TestBeginTwice(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec(localNotifierTableSQL)
 
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
 	sessionPool := util.NewSessionPool(
@@ -502,7 +506,7 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec(localNotifierTableSQL)
 	ctx := context.Background()
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
 	sessionPool := util.NewSessionPool(
@@ -544,6 +548,9 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 }
 
 func TestCommitFailed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	// Make sure events don't get lost if internal txn commit failed.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -553,7 +560,7 @@ func TestCommitFailed(t *testing.T) {
 		tk.MustExec("set global tidb_enable_metadata_lock=1")
 	})
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec(localNotifierTableSQL)
 	tk.MustExec("CREATE TABLE subscribe_table (id INT PRIMARY KEY, c INT)")
 	tk.MustExec("INSERT INTO subscribe_table VALUES (1, 1)")
 

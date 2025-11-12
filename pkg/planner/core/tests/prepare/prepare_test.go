@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -35,10 +36,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -709,7 +710,7 @@ func TestIssue33031(t *testing.T) {
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	explain := tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	require.Regexp(t, "IndexLookUp", explain[1][0])
@@ -725,7 +726,7 @@ func TestIssue33031(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 }
 
-func newSession(t *testing.T, store kv.Storage, dbName string) sessiontypes.Session {
+func newSession(t *testing.T, store kv.Storage, dbName string) sessionapi.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	mustExec(t, se, "create database if not exists "+dbName)
@@ -733,7 +734,7 @@ func newSession(t *testing.T, store kv.Storage, dbName string) sessiontypes.Sess
 	return se
 }
 
-func mustExec(t *testing.T, se sessiontypes.Session, sql string) {
+func mustExec(t *testing.T, se sessionapi.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	require.NoError(t, err)
 }
@@ -1349,6 +1350,9 @@ func TestCachedTable(t *testing.T) {
 }
 
 func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
@@ -1390,6 +1394,9 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 }
 
 func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
@@ -1466,6 +1473,9 @@ func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *t
 }
 
 func TestCacheHitInRc(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
@@ -1581,27 +1591,27 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tkProcess := tk.Session().ShowProcess()
-		ps := []*util.ProcessInfo{tkProcess}
+		ps := []*sessmgr.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		explain := tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 		if pruneMode == string(variable.Dynamic) {
-			require.Equal(t, "Selection_6", explain.Rows()[0][0])
+			require.Equal(t, "Selection_7", explain.Rows()[0][0])
 		} else {
-			require.Equal(t, "TableDual_7", explain.Rows()[0][0])
+			require.Equal(t, "TableDual_8", explain.Rows()[0][0])
 		}
 		tk.MustExec(`set @a=-5, @b=112`)
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows("-5 7"))
 
 		explain = tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 		if pruneMode == string(variable.Dynamic) {
-			require.Equal(t, "Selection_6", explain.Rows()[0][0])
+			require.Equal(t, "Selection_7", explain.Rows()[0][0])
 			require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 			tk.MustQuery(`show warnings`).Check(testkit.Rows())
 		} else {
 			explain.CheckAt([]int{0},
 				[][]any{
-					{"Selection_8"},
-					{"└─Point_Get_7"},
+					{"Selection_9"},
+					{"└─Point_Get_8"},
 				})
 			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 			tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'"))
@@ -1634,7 +1644,7 @@ func TestHashPartitionAndPlanCache(t *testing.T) {
 	tk.MustExec(`set @a=1`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 1"))
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	explain := tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	require.Equal(t, "Point_Get_1", explain.Rows()[0][0])

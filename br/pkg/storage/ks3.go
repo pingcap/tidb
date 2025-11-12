@@ -699,6 +699,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 		}
 	} else {
 		up := s3manager.NewUploader(&s3manager.UploadOptions{
+			PartSize: option.PartSize,
 			Parallel: option.Concurrency,
 			S3:       rs.svc,
 		})
@@ -727,7 +728,11 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
+	var onFlush func()
+	if option != nil {
+		onFlush = option.OnUpload
+	}
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, onFlush)
 	return uploaderWriter, nil
 }
 

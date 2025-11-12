@@ -137,10 +137,20 @@ func (importer *LogFileImporter) ImportKVFiles(
 	log.Debug("rewrite file keys",
 		logutil.Key("startKey", startKey), logutil.Key("endKey", endKey))
 
-	var numRegions int64
+	var (
+		numRegions int64
+
+		listener = RangeCtlMetricListener{
+			RequestRegion: metrics.KVApplyRunOverRegionsEvents.WithLabelValues("request-region"),
+			RetryRegion:   metrics.KVApplyRunOverRegionsEvents.WithLabelValues("retry-region"),
+			RetryRange:    metrics.KVApplyRunOverRegionsEvents.WithLabelValues("retry-range"),
+			RegionSuccess: metrics.KVApplyRunOverRegionsEvents.WithLabelValues("region-success"),
+		}
+	)
 	// This RetryState will retry 45 time, about 10 min.
 	rs := utils.InitialRetryState(45, 100*time.Millisecond, 15*time.Second)
 	ctl := CreateRangeController(startKey, endKey, importer.metaClient, &rs)
+	ctl.SetEventListener(&listener)
 	err = ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		atomic.AddInt64(&numRegions, 1)
 		subfiles, errFilter := filterFilesByRegion(files, ranges, r)

@@ -594,6 +594,54 @@ local SQLCPUTimePanel = graphPanel.new(
   )
 );
 
+local CrossAZTrafficRead = graphPanel.new(
+  title="Cross AZ Traffic Bytes(Read)",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=false,
+  legend_max=true,
+  legend_avg=false,
+  legend_current=false,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="bytes",
+  description="The metrics about cross AZ network traffic involved in queries for all resource groups.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group", type="read"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="read"}[1m]))',
+    legendFormat="total",
+  )
+);
+
+local CrossAZTrafficWrite = graphPanel.new(
+  title="Cross AZ Traffic Bytes(Write)",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=false,
+  legend_max=true,
+  legend_avg=false,
+  legend_current=false,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="bytes",
+  description="The metrics about cross AZ network traffic involved in write for all resource groups.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group", type="write"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="write"}[1m]))',
+    legendFormat="total",
+  )
+);
+
 //*  ==============Panel (Client)==================
 //*  Row Title: Client
 //*  Description:  The metrics about resource control client
@@ -1232,6 +1280,8 @@ TiDBResourceControlDash
   .addPanel(BytesWrittenPerQueryPanel, gridPos=rightPanelPos)
   .addPanel(KVCPUTimePanel, gridPos=leftPanelPos)
   .addPanel(SQLCPUTimePanel, gridPos=rightPanelPos)
+  .addPanel(CrossAZTrafficRead, gridPos=leftPanelPos)
+  .addPanel(CrossAZTrafficWrite, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
 ).addPanel(

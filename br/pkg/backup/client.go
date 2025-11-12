@@ -34,9 +34,9 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -692,7 +692,9 @@ func (bc *Client) BuildBackupRangeAndSchema(
 		return BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup)
 	}
 	ranges, schemas, policies, err := BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup)
-	schemas.SetCheckpointChecksum(bc.checkpointMeta.CheckpointChecksum)
+	if schemas != nil {
+		schemas.SetCheckpointChecksum(bc.checkpointMeta.CheckpointChecksum)
+	}
 	return ranges, schemas, policies, errors.Trace(err)
 }
 
@@ -758,7 +760,7 @@ func BuildBackupRangeAndInitSchema(
 
 	for _, dbInfo := range dbs {
 		// skip system databases
-		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
+		if !tableFilter.MatchSchema(dbInfo.Name.O) || metadef.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
 			continue
 		}
 
@@ -832,7 +834,7 @@ func BuildBackupSchemas(
 
 	for _, dbInfo := range dbs {
 		// skip system databases
-		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
+		if !tableFilter.MatchSchema(dbInfo.Name.O) || metadef.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
 			continue
 		}
 

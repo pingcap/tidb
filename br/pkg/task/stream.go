@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
@@ -148,7 +149,7 @@ type StreamConfig struct {
 	DumpStatusTo *[]stream.TaskStatus `json:"-" toml:"-"`
 
 	// Spec for the command `advancer`.
-	AdvancerCfg advancercfg.Config `json:"advancer-config" toml:"advancer-config"`
+	AdvancerCfg advancercfg.CommandConfig `json:"advancer-config" toml:"advancer-config"`
 
 	// Spec for the command `pause`.
 	Message string `json:"message" toml:"message"`
@@ -974,8 +975,8 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return err
 	}
 	env := streamhelper.CliEnv(mgr.StoreManager, mgr.GetStore(), etcdCLI)
-	advancer := streamhelper.NewCheckpointAdvancer(env)
-	advancer.UpdateConfig(cfg.AdvancerCfg)
+	advancer := streamhelper.NewCommandCheckpointAdvancer(env)
+	advancer.UpdateConfig(&cfg.AdvancerCfg)
 	ownerMgr := streamhelper.OwnerManagerForLogBackup(ctx, etcdCLI)
 	defer func() {
 		ownerMgr.Close()
@@ -1519,12 +1520,24 @@ func restoreStream(
 	}
 
 	client := cfg.logClient
-	migs, err := client.GetMigrations(ctx)
+	migs, err := client.GetLockedMigrations(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	client.BuildMigrations(migs.Migs)
-	defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
+
+	skipCleanup := false
+	failpoint.Inject("skip-migration-read-lock-cleanup", func(_ failpoint.Value) {
+		// Skip the cleanup - this keeps the read lock held
+		// and will cause lock conflicts for other restore operations
+		log.Info("Skipping migration read lock cleanup due to failpoint")
+		skipCleanup = true
+	})
+
+	if !skipCleanup {
+		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
+	}
+
 	defer client.RestoreSSTStatisticFields(&extraFields)
 
 	ddlFiles := cfg.ddlFiles
@@ -1704,10 +1717,12 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
+		logFilesIter = iter.WithEmitSizeTrace(logFilesIter, metrics.KVLogFileEmittedMemory.WithLabelValues("0-loaded"))
 		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		logFilesIterWithSplit = iter.WithEmitSizeTrace(logFilesIterWithSplit, metrics.KVLogFileEmittedMemory.WithLabelValues("1-split"))
 
 		if cfg.UseCheckpoint {
 			// TODO make a failpoint iter inside the logclient.
@@ -1768,19 +1783,8 @@ func restoreStream(
 		sqls := cfg.tiflashRecorder.GenerateAlterTableDDLs(mgr.GetDomain().InfoSchema())
 		log.Info("Generating SQLs for restoring TiFlash Replica",
 			zap.Strings("sqls", sqls))
-		err = g.UseOneShotSession(mgr.GetStorage(), false, func(se glue.Session) error {
-			for _, sql := range sqls {
-				if errExec := se.ExecuteInternal(ctx, sql); errExec != nil {
-					logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
-						logutil.ShortError(errExec),
-						zap.String("sql", sql),
-					)
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			return err
+		if err := client.ResetTiflashReplicas(ctx, sqls, g); err != nil {
+			return errors.Annotate(err, "failed to reset tiflash replicas")
 		}
 	}
 

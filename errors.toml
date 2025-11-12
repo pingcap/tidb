@@ -1621,6 +1621,11 @@ error = '''
 Invalid storage class: %s
 '''
 
+["ddl:8272"]
+error = '''
+Cannot drop, change or modify column '%s': it is referenced in partial index '%s'
+'''
+
 ["ddl:9014"]
 error = '''
 TiFlash backfill index failed: %s
@@ -2009,6 +2014,11 @@ Delete can not find column %s for table %s
 ["executor:8179"]
 error = '''
 Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
+'''
+
+["executor:8180"]
+error = '''
+Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]
 '''
 
 ["executor:8212"]

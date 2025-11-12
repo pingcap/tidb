@@ -106,6 +106,7 @@ func TestContextDetach(t *testing.T) {
 			"$.ResourceGroupTagger",
 			// The following fields are on stmtctx and will be recreated before the new statement
 			"$.RunawayChecker",
+			"$.RUConsumptionReporter",
 			"$.ExecDetails",
 		}))
 
@@ -120,6 +121,7 @@ func TestContextDetach(t *testing.T) {
 			// The following fields are on stmtctx and will be recreated before the new statement,
 			// so keep the same pointer is fine
 			"$.RunawayChecker",
+			"$.RUConsumptionReporter",
 			"$.ExecDetails",
 			"$.KVVars.Killed",
 			"$.KvExecCounter",

@@ -555,7 +555,6 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 	}
 	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
 		tkO.MustQuery(`select * from t where b = 5`).Check(testkit.Rows("5 5 5"))
-		tkO.MustExec(`admin check table t`)
 		tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
 			"1 1 1",
 			"10 10 10",
@@ -579,11 +578,40 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 
 // TestMultiSchemaModifyColumn to show behavior when changing a column
 func TestMultiSchemaModifyColumn(t *testing.T) {
-	createSQL := `create table t (a int primary key, b varchar(255), unique key uk_b (b))`
+	createSQL := `create table t (a int primary key, b varchar(255), key k_b (b))`
 	initFn := func(tkO *testkit.TestKit) {
-		tkO.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9)`)
+		tkO.MustExec(`insert into t values (1,1)`)
 	}
 	alterSQL := `alter table t modify column b int unsigned not null`
+	checkFn := func(tkO, tkNO *testkit.TestKit, id int, schemaState string) {
+		indexIDSQL := `select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't' and key_name = 'k_b'`
+		logutil.BgLogger().Info("check table", zap.Int("id", id), zap.String("schemaState", schemaState),
+			zap.String("owner table", tkO.MustQuery("select * from t use index()").Sort().String()),
+			zap.String("owner index", tkO.MustQuery("select * from t use index(k_b)").Sort().String()),
+			zap.String("owner index id", tkO.MustQuery(indexIDSQL).String()),
+			zap.Int64("owner txn schema version", sessiontxn.GetTxnManager(tkO.Session()).GetTxnInfoSchema().SchemaMetaVersion()),
+			zap.Int64("owner domain schema version", tkO.Session().GetLatestInfoSchema().SchemaMetaVersion()),
+			zap.String("non-owner table", tkNO.MustQuery("select * from t use index()").Sort().String()),
+			zap.String("non-owner index", tkNO.MustQuery("select * from t use index(k_b)").Sort().String()),
+			zap.String("non-owner index id", tkNO.MustQuery(indexIDSQL).String()),
+			zap.Int64("non-owner txn schema version", sessiontxn.GetTxnManager(tkNO.Session()).GetTxnInfoSchema().SchemaMetaVersion()),
+			zap.Int64("non-owner domain schema version", tkNO.Session().GetLatestInfoSchema().SchemaMetaVersion()),
+		)
+		tkO.MustExec("set @@sql_mode = default")
+		tkNO.MustExec("set @@sql_mode = default")
+
+		tkO.MustExec("set session tidb_enable_fast_table_check = off")
+		tkNO.MustExec("set session tidb_enable_fast_table_check = off")
+		defer func() {
+			tkO.MustExec("set session tidb_enable_fast_table_check = default")
+			tkNO.MustExec("set session tidb_enable_fast_table_check = default")
+		}()
+		err := tkO.ExecToErr(`admin check table t`)
+		require.NoError(t, err, "owner admin check table failed", fmt.Sprintf("id, %d, schemaState: %s", id, schemaState))
+		err = tkNO.ExecToErr(`admin check table t`)
+		require.NoError(t, err, "non-owner admin check table failed", fmt.Sprintf("id, %d, schemaState: %s", id, schemaState))
+	}
+	firstTimeToPublic := true
 	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
@@ -594,29 +622,35 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 			// we are only interested in StateDeleteReorganization->StatePublic
 		case model.StateWriteReorganization.String():
 		case model.StatePublic.String():
+			if !firstTimeToPublic {
+				return
+			}
+			firstTimeToPublic = false
 			// tkNO sees varchar column and tkO sees int column
 			tkO.MustQuery(`show create table t`).Check(testkit.Rows("" +
 				"t CREATE TABLE `t` (\n" +
 				"  `a` int(11) NOT NULL,\n" +
 				"  `b` int(10) unsigned NOT NULL,\n" +
 				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-				"  UNIQUE KEY `uk_b` (`b`)\n" +
+				"  KEY `k_b` (`b`)\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 			tkNO.MustQuery(`show create table t`).Check(testkit.Rows("" +
 				"t CREATE TABLE `t` (\n" +
 				"  `a` int(11) NOT NULL,\n" +
 				"  `b` varchar(255) DEFAULT NULL,\n" +
 				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-				"  UNIQUE KEY `uk_b` (`b`)\n" +
+				"  KEY `k_b` (`b`)\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			checkFn(tkO, tkNO, 1, schemaState)
 
 			tkO.MustExec(`insert into t values (10, " 09.60 ")`)
+
+			checkFn(tkO, tkNO, 2, schemaState)
+
 			// No warning!? Same in MySQL...
 			tkNO.MustQuery(`show warnings`).Check(testkit.Rows())
-			tkNO.MustContainErrMsg(`insert into t values (11, "09.60")`, "[kv:1062]Duplicate entry '10' for key 't._Idx$_uk_b_0'")
 			tkO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 10"))
-			// <nil> ?!?
-			tkNO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 <nil>"))
+			tkNO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 10"))
 			// If the original b was defined as 'NOT NULL', then it would give an error:
 			// [table:1364]Field 'b' doesn't have a default value
 
@@ -731,23 +765,6 @@ func getTableAndPartitionIDs(t *testing.T, tk *testkit.TestKit) (parts []int64) 
 	return originalIDs
 }
 
-func getAddingPartitionIDs(t *testing.T, tk *testkit.TestKit) (parts []int64) {
-	ctx := tk.Session()
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	if tbl.Meta().Partition == nil {
-		return nil
-	}
-	ids := make([]int64, 0, len(tbl.Meta().Partition.AddingDefinitions))
-	if tbl.Meta().Partition != nil {
-		for _, def := range tbl.Meta().Partition.AddingDefinitions {
-			ids = append(ids, def.ID)
-		}
-	}
-	return ids
-}
-
 func checkTableAndIndexEntries(t *testing.T, tk *testkit.TestKit, originalIDs []int64) {
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
@@ -836,6 +853,8 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	if !domOwner.DDL().OwnerManager().IsOwner() {
 		domOwner, domNonOwner = domNonOwner, domOwner
 	}
+	require.True(t, domOwner.DDL().OwnerManager().IsOwner())
+	require.False(t, domNonOwner.DDL().OwnerManager().IsOwner())
 
 	seDDLOwner, err := session.CreateSessionWithDomain(store, domOwner)
 	require.NoError(t, err)
@@ -880,6 +899,9 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 
 	initFn(tkO)
 
+	tkO.MustExec("set session tidb_enable_fast_table_check = off")
+	tkO.MustExec(`admin check table t`)
+
 	domOwner.Reload()
 	domNonOwner.Reload()
 
@@ -891,14 +913,13 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 
 	verStart := domNonOwner.InfoSchema().SchemaMetaVersion()
 	hookChan := make(chan *model.Job)
-	hookFunc := func(job *model.Job) {
+	// Notice that the job.SchemaState is not committed yet, so the table will still be in the previous state!
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		hookChan <- job
 		logutil.BgLogger().Info("XXXXXXXXXXX Hook now waiting", zap.String("job.State", job.State.String()), zap.String("job.SchemaState", job.SchemaState.String()))
 		<-hookChan
 		logutil.BgLogger().Info("XXXXXXXXXXX Hook released", zap.String("job.State", job.State.String()), zap.String("job.SchemaState", job.SchemaState.String()))
-	}
-	// Notice that the job.SchemaState is not committed yet, so the table will still be in the previous state!
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", hookFunc)
+	})
 	alterChan := make(chan error)
 	go func() {
 		if backfillDML != "" {
@@ -963,6 +984,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 			state = job.SchemaState
 		}
 		states = append(states, state)
+		tkO.MustExec(fmt.Sprintf(`admin check table t /* state: %s */`, state.String()))
 		loopFn(tkO, tkNO)
 		domNonOwner.Reload()
 		if !releaseHook {
@@ -976,6 +998,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	}
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep")
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
+	tkO.MustExec(`admin check table t`)
 	if !tbl.Meta().HasClusteredIndex() {
 		// Debug prints, so it is possible to verify possible newly generated _tidb_rowid's
 		res := tkO.MustQuery(`select *, _tidb_rowid from t`)
@@ -995,47 +1018,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	if tableID != newTableID {
 		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, 0), "Old table id %d has still entries!", tableID)
 	}
-GlobalLoop:
-	for _, globIdx := range originalGlobalIndexIDs {
-		for _, idx := range tbl.Meta().Indices {
-			if idx.ID == globIdx {
-				continue GlobalLoop
-			}
-		}
-		// Global index removed
-		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, globIdx), "Global index id %d for table id %d has still entries!", globIdx, tableID)
-	}
-LocalLoop:
-	for _, locIdx := range originalIndexIDs {
-		for _, idx := range tbl.Meta().Indices {
-			if idx.ID == locIdx {
-				continue LocalLoop
-			}
-		}
-		// local index removed
-		if tbl.Meta().Partition != nil {
-			for _, part := range tbl.Meta().Partition.Definitions {
-				require.False(t, HaveEntriesForTableIndex(t, tkO, part.ID, locIdx), "Local index id %d for partition id %d has still entries!", locIdx, tableID)
-			}
-		}
-	}
-PartitionLoop:
-	for _, partID := range originalPartitions {
-		if tbl.Meta().Partition != nil {
-			for _, def := range tbl.Meta().Partition.Definitions {
-				if def.ID == partID {
-					continue PartitionLoop
-				}
-			}
-		}
-		// old partitions removed
-		require.False(t, HaveEntriesForTableIndex(t, tkO, partID, 0), "Reorganized partition id %d for table id %d has still entries!", partID, tableID)
-	}
-	// TODO: Use this instead of the above, which check for any row that should not exists
-	// When the following issues are fixed:
-	// TestMultiSchemaModifyColumn - https://github.com/pingcap/tidb/issues/60264
-	// TestMultiSchemaPartitionByGlobalIndex -https://github.com/pingcap/tidb/issues/60263
-	//checkTableAndIndexEntries(t, tkO, originalIDs)
+	checkTableAndIndexEntries(t, tkO, originalPartitions)
 
 	if postFn != nil {
 		postFn(tkO, store)
@@ -2291,8 +2274,8 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 			logutil.BgLogger().Info("Have new before entries 1 -> 24?", zap.Bool("rows", HaveEntriesForTableIndex(t, tkO, newPartIDs[1%len(newPartIDs)], 0)))
 			logutil.BgLogger().Info("Have new after entries 1 -> 24?", zap.Bool("rows", HaveEntriesForTableIndex(t, tkO, newPartIDs[24%len(newPartIDs)], 0)))
 			*/
-			tkO.MustQuery("select a,b,_tidb_rowid from t where a = 24 or a = 1").Sort().Check(testkit.Rows("24 1 21"))
-			tkNO.MustQuery("select a,b,_tidb_rowid from t where a = 24 or a = 1").Sort().Check(testkit.Rows("24 1 21"))
+			tkO.MustQuery("select a,b,_tidb_rowid from t where a = 24 or a = 1").Sort().Check(testkit.Rows("24 1 30001"))
+			tkNO.MustQuery("select a,b,_tidb_rowid from t where a = 24 or a = 1").Sort().Check(testkit.Rows("24 1 30001"))
 			tkO.MustExec("admin check table t")
 			// 25 % 4 = 1, 25 % 3 = 1
 			tkO.MustExec("update t set a = 25 where a = 24")
@@ -2302,8 +2285,8 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 			logutil.BgLogger().Info("Have new before entries 24 -> 25?", zap.Bool("rows", HaveEntriesForTableIndex(t, tkO, newPartIDs[24%len(newPartIDs)], 0)))
 			logutil.BgLogger().Info("Have new after entries 24 -> 25?", zap.Bool("rows", HaveEntriesForTableIndex(t, tkO, newPartIDs[25%len(newPartIDs)], 0)))
 			*/
-			tkO.MustQuery("select a,b,_tidb_rowid from t where a = 25 or a = 24 or a = 1").Sort().Check(testkit.Rows("25 1 22"))
-			tkNO.MustQuery("select a,b,_tidb_rowid from t where a = 25 or a = 24 or a = 1").Sort().Check(testkit.Rows("25 1 22"))
+			tkO.MustQuery("select a,b,_tidb_rowid from t where a = 25 or a = 24 or a = 1").Sort().Check(testkit.Rows("25 1 30002"))
+			tkNO.MustQuery("select a,b,_tidb_rowid from t where a = 25 or a = 24 or a = 1").Sort().Check(testkit.Rows("25 1 30002"))
 			tkO.MustExec("admin check table t")
 			// Test the same but with a delete instead of in second query
 			// 26 % 4 = 2, 26 % 3 = 2
@@ -2335,7 +2318,7 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 				"18 18 5",
 				"19 19 5",
 				"20 20 5",
-				"25 1 22",
+				"25 1 30002",
 				"4 4 1",
 				"42 2 1",
 				"5 5 2",
@@ -2352,46 +2335,46 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 			tkNO.MustExec("admin check table t")
 			// after backfill:
 			tkO.MustQuery("select a, b, _tidb_rowid from t").Sort().Check(testkit.Rows(""+
-				"10 10 30006",
-				"11 11 30010",
-				"13 13 30003",
-				"14 14 30007",
-				"15 15 30011",
+				"10 10 60006",
+				"11 11 60010",
+				"13 13 60003",
+				"14 14 60007",
+				"15 15 60011",
 				"16 16 4",
-				"17 17 30004",
-				"18 18 30008",
-				"19 19 30012",
+				"17 17 60004",
+				"18 18 60008",
+				"19 19 60012",
 				"20 20 5",
-				"25 1 22",
-				"4 4 30001",
+				"25 1 30002",
+				"4 4 60001",
 				"42 2 1",
-				"5 5 30002",
-				"6 6 30005",
-				"7 7 30009",
+				"5 5 60002",
+				"6 6 60005",
+				"7 7 60009",
 				"8 8 2",
 				"9 9 3"))
 			tkNO.MustQuery("select a, b, _tidb_rowid from t").Sort().Check(testkit.Rows(""+
-				"10 10 30006",
-				"11 11 30010",
-				"13 13 30003",
-				"14 14 30007",
-				"15 15 30011",
+				"10 10 60006",
+				"11 11 60010",
+				"13 13 60003",
+				"14 14 60007",
+				"15 15 60011",
 				"16 16 4",
-				"17 17 30004",
-				"18 18 30008",
-				"19 19 30012",
+				"17 17 60004",
+				"18 18 60008",
+				"19 19 60012",
 				"20 20 5",
-				"25 1 22",
-				"4 4 30001",
+				"25 1 30002",
+				"4 4 60001",
 				"42 2 1",
-				"5 5 30002",
-				"6 6 30005",
-				"7 7 30009",
+				"5 5 60002",
+				"6 6 60005",
+				"7 7 60009",
 				"8 8 2",
 				"9 9 3"))
 			// 13 % 4 = 1, 13 % 3 = 1, 36 % 4 = 0, 36 % 3 = 0
-			tkO.MustQuery("select *, _tidb_rowid from t where a = 13").Check(testkit.Rows("13 13 30003"))
-			tkNO.MustQuery("select *, _tidb_rowid from t where a = 13").Check(testkit.Rows("13 13 30003"))
+			tkO.MustQuery("select *, _tidb_rowid from t where a = 13").Check(testkit.Rows("13 13 60003"))
+			tkNO.MustQuery("select *, _tidb_rowid from t where a = 13").Check(testkit.Rows("13 13 60003"))
 			tkO.MustExec("update t set a = 36 where a = 13")
 			// 38 % 4 = 2, 38 % 3 = 2
 			tkO.MustExec("update t set a = 38 where a = 36")
@@ -2429,20 +2412,20 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 		tkO.MustExec("admin check table t /* postFn */")
 		tkO.MustQuery(`select count(*) from t`).Check(testkit.Rows("16"))
 		tkO.MustQuery(`select b, a,_tidb_rowid from t`).Sort().Check(testkit.Rows(""+
-			"1 25 22",
-			"10 10 30006",
-			"11 11 30010",
-			"13 38 30003",
-			"15 15 30011",
+			"1 25 30002",
+			"10 10 60006",
+			"11 11 60010",
+			"13 38 60003",
+			"15 15 60011",
 			"16 16 4",
-			"17 17 30004",
-			"18 18 30008",
-			"19 19 30012",
+			"17 17 60004",
+			"18 18 60008",
+			"19 19 60012",
 			"2 42 1",
 			"20 20 5",
-			"4 4 30001",
-			"5 5 30002",
-			"6 41 30005",
+			"4 4 60001",
+			"5 5 60002",
+			"6 41 60005",
 			"8 8 2",
 			"9 9 3"))
 	}
@@ -2524,132 +2507,132 @@ func TestBackfillConcurrentDML(t *testing.T) {
 	tk.MustExec("alter table t coalesce partition 1")
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows(
-		"1 301 129",
-		"10 10 30035",
-		"100 100 30065",
+		"1 301 30001",
+		"10 10 60035",
+		"100 100 60065",
 		"101 101 34",
 		"102 102 34",
-		"103 103 30066",
+		"103 103 60066",
 		"104 104 35",
 		"105 105 35",
-		"106 106 30067",
+		"106 106 60067",
 		"107 107 36",
 		"108 108 36",
-		"109 109 30068",
+		"109 109 60068",
 		"11 11 4",
 		"110 110 37",
 		"111 111 37",
-		"112 112 30069",
+		"112 112 60069",
 		"113 113 38",
 		"114 114 38",
-		"115 115 30070",
+		"115 115 60070",
 		"116 116 39",
 		"117 117 39",
-		"118 118 30071",
+		"118 118 60071",
 		"119 119 40",
 		"12 12 4",
 		"120 120 40",
-		"121 121 30072",
+		"121 121 60072",
 		"122 122 41",
 		"123 123 41",
-		"124 124 30073",
+		"124 124 60073",
 		"125 125 42",
 		"126 126 42",
 		"127 127 43",
 		"128 128 43",
-		"13 13 30036",
+		"13 13 60036",
 		"14 14 5",
 		"15 15 5",
-		"16 16 30037",
+		"16 16 60037",
 		"17 17 6",
 		"18 18 6",
-		"19 19 30038",
+		"19 19 60038",
 		"2 2 1",
 		"20 20 7",
 		"21 21 7",
-		"22 22 30039",
+		"22 22 60039",
 		"23 23 8",
 		"24 24 8",
-		"25 25 30040",
+		"25 25 60040",
 		"26 26 9",
 		"27 27 9",
-		"28 28 30041",
+		"28 28 60041",
 		"29 29 10",
 		"3 3 1",
 		"30 30 10",
-		"31 31 30042",
+		"31 31 60042",
 		"32 32 11",
 		"33 33 11",
-		"34 34 30043",
+		"34 34 60043",
 		"35 35 12",
 		"36 36 12",
-		"37 37 30044",
+		"37 37 60044",
 		"38 38 13",
 		"39 39 13",
-		"4 4 30033",
-		"40 40 30045",
+		"4 4 60033",
+		"40 40 60045",
 		"41 41 14",
 		"42 42 14",
-		"43 43 30046",
+		"43 43 60046",
 		"44 44 15",
 		"45 45 15",
-		"46 46 30047",
+		"46 46 60047",
 		"47 47 16",
 		"48 48 16",
-		"49 49 30048",
+		"49 49 60048",
 		"5 5 2",
 		"50 50 17",
 		"51 51 17",
-		"52 52 30049",
+		"52 52 60049",
 		"53 53 18",
 		"54 54 18",
-		"55 55 30050",
+		"55 55 60050",
 		"56 56 19",
 		"57 57 19",
-		"58 58 30051",
+		"58 58 60051",
 		"59 59 20",
 		"6 6 2",
 		"60 60 20",
-		"61 61 30052",
+		"61 61 60052",
 		"62 62 21",
 		"63 63 21",
-		"64 64 30053",
+		"64 64 60053",
 		"65 65 22",
 		"66 66 22",
-		"67 67 30054",
+		"67 67 60054",
 		"68 68 23",
 		"69 69 23",
-		"7 7 30034",
-		"70 70 30055",
+		"7 7 60034",
+		"70 70 60055",
 		"71 71 24",
 		"72 72 24",
-		"73 73 30056",
+		"73 73 60056",
 		"74 74 25",
 		"75 75 25",
-		"76 76 30057",
+		"76 76 60057",
 		"77 77 26",
 		"78 78 26",
-		"79 79 30058",
+		"79 79 60058",
 		"8 8 3",
 		"80 80 27",
 		"81 81 27",
-		"82 82 30059",
+		"82 82 60059",
 		"83 83 28",
 		"84 84 28",
-		"85 85 30060",
+		"85 85 60060",
 		"86 86 29",
 		"87 87 29",
-		"88 88 30061",
+		"88 88 60061",
 		"89 89 30",
 		"9 9 3",
 		"90 90 30",
-		"91 91 30062",
+		"91 91 60062",
 		"92 92 31",
 		"93 93 31",
-		"94 94 30063",
+		"94 94 60063",
 		"95 95 32",
 		"96 96 32",
-		"97 97 30064",
+		"97 97 60064",
 		"98 98 33",
 		"99 99 33"))
 }
@@ -3075,10 +3058,10 @@ func TestMultiSchemaReorgDeleteNonClusteredRange(t *testing.T) {
 			// 102 deleted
 			// 103 deleted
 			// 104 deleted
-			"201 Original 201 30001",
-			"202 Original updated 202 14",
-			"203 Original 203 30002",
-			"204 Original 204 30003",
+			"201 Original 201 60001",
+			"202 Original updated 202 30002",
+			"203 Original 203 60002",
+			"204 Original 204 60003",
 			// 2 deleted
 			"3 Original updated 3 3",
 			"4 Original updated 4 4"))
@@ -3106,10 +3089,10 @@ func TestNonClusteredUpdateReorgUpdate(t *testing.T) {
 		tk2.MustExec("update t set b = b + 10 where a = 1")
 		// Would delete newFrom 1, which would then be backfilled again!
 		tk2.MustExec("update t set b = b + 10 where a = 2")
-		tk2.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("1 11 1", "2 12 3"))
+		tk2.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("1 11 1", "2 12 30001"))
 	})
 	tk.MustExec("alter table t remove partitioning")
-	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows("1 11 1", "2 12 3"))
+	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows("1 11 1", "2 12 30001"))
 }
 
 func TestNonClusteredReorgUpdate(t *testing.T) {

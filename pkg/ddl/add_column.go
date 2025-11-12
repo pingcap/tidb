@@ -84,6 +84,10 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+		if err = checkUnsupportedCharsetForTiFlash(tblInfo, columnInfo.Name, columnInfo.FieldType); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
 	originalState := columnInfo.State
@@ -125,7 +129,8 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		}
 		tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
 		columnInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
+		// Use updateVersionAndTableInfoWithCheck to validate the table before making it public
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -168,7 +173,22 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		return nil, dbterror.ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
 
-	return CreateNewColumn(ctx, schema, spec, t, specNewColumn)
+	newCol, err := CreateNewColumn(ctx, schema, spec, t, specNewColumn)
+	if err == nil {
+		err = checkUnsupportedCharsetForTiFlash(t.Meta(), newCol.Name, newCol.FieldType)
+	}
+	return newCol, errors.Trace(err)
+}
+
+func checkUnsupportedCharsetForTiFlash(tbl *model.TableInfo, colName ast.CIStr, colTp types.FieldType) error {
+	if tbl.TiFlashReplica == nil {
+		return nil
+	}
+
+	if _, isSupported := charset.TiFlashSupportedCharsets[colTp.GetCharset()]; !isSupported {
+		return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' when altering '%s' with TiFlash replicas and %s encoding", colName, tbl.Name, colTp.GetCharset())
+	}
+	return nil
 }
 
 func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
@@ -208,6 +228,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			//nolint:forbidigo
 			if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
 				if err := checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 					return nil, errors.Trace(err)
@@ -267,7 +288,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 		return nil, errors.Trace(err)
 	}
 
-	originDefVal, err := generateOriginDefaultValue(col.ToInfo(), ctx)
+	originDefVal, err := generateOriginDefaultValue(col.ToInfo(), ctx, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -604,7 +625,9 @@ func SetDefaultValue(ctx expression.BuildContext, col *table.Column, option *ast
 		}
 		col.DefaultIsExpr = isSeqExpr
 	}
-
+	if _, ok := option.Expr.(*ast.ColumnNameExpr); ok {
+		return hasDefaultValue, errors.New("column name is not yet supported as a default value")
+	}
 	// When the default value is expression, we skip check and convert.
 	if !col.DefaultIsExpr {
 		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {

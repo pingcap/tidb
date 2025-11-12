@@ -22,11 +22,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/stretchr/testify/require"
 )
 
-func getFunctionName(f func(sessiontypes.Session, int64)) (string, error) {
+func getFunctionName(f func(sessionapi.Session, int64)) (string, error) {
 	if f == nil {
 		return "", errors.New("function is nil")
 	}

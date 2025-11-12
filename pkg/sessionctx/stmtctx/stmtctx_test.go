@@ -44,44 +44,42 @@ func TestCopTasksDetails(t *testing.T) {
 	ctx := stmtctx.NewStmtCtx()
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
 	for i := range 100 {
-		d := &execdetails.ExecDetails{
-			DetailsNeedP90: execdetails.DetailsNeedP90{
-				CalleeAddress: fmt.Sprintf("%v", i+1),
-				BackoffSleep:  make(map[string]time.Duration),
-				BackoffTimes:  make(map[string]int),
-				TimeDetail: util.TimeDetail{
-					ProcessTime: time.Second * time.Duration(i+1),
-					WaitTime:    time.Millisecond * time.Duration(i+1),
-				},
+		d := &execdetails.CopExecDetails{
+			CalleeAddress: fmt.Sprintf("%v", i+1),
+			BackoffSleep:  make(map[string]time.Duration),
+			BackoffTimes:  make(map[string]int),
+			TimeDetail: util.TimeDetail{
+				ProcessTime: time.Second * time.Duration(i+1),
+				WaitTime:    time.Millisecond * time.Duration(i+1),
 			},
 		}
 		for _, backoff := range backoffs {
 			d.BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(i+1)
 			d.BackoffTimes[backoff] = i + 1
 		}
-		ctx.MergeExecDetails(d, nil)
+		ctx.MergeCopExecDetails(d, 0)
 	}
 	d := ctx.CopTasksDetails()
 	require.Equal(t, 100, d.NumCopTasks)
-	require.Equal(t, time.Second*101/2, d.AvgProcessTime)
-	require.Equal(t, time.Second*101/2*100, d.TotProcessTime)
-	require.Equal(t, time.Second*91, d.P90ProcessTime)
-	require.Equal(t, time.Second*100, d.MaxProcessTime)
-	require.Equal(t, "100", d.MaxProcessAddress)
-	require.Equal(t, time.Millisecond*101/2, d.AvgWaitTime)
-	require.Equal(t, time.Millisecond*101/2*100, d.TotWaitTime)
-	require.Equal(t, time.Millisecond*91, d.P90WaitTime)
-	require.Equal(t, time.Millisecond*100, d.MaxWaitTime)
-	require.Equal(t, "100", d.MaxWaitAddress)
+	require.Equal(t, time.Second*101/2, d.ProcessTimeStats.AvgTime)
+	require.Equal(t, time.Second*101/2*100, d.ProcessTimeStats.TotTime)
+	require.Equal(t, time.Second*91, d.ProcessTimeStats.P90Time)
+	require.Equal(t, time.Second*100, d.ProcessTimeStats.MaxTime)
+	require.Equal(t, "100", d.ProcessTimeStats.MaxAddress)
+	require.Equal(t, time.Millisecond*101/2, d.WaitTimeStats.AvgTime)
+	require.Equal(t, time.Millisecond*101/2*100, d.WaitTimeStats.TotTime)
+	require.Equal(t, time.Millisecond*91, d.WaitTimeStats.P90Time)
+	require.Equal(t, time.Millisecond*100, d.WaitTimeStats.MaxTime)
+	require.Equal(t, "100", d.WaitTimeStats.MaxAddress)
 	fields := d.ToZapFields()
 	require.Equal(t, 9, len(fields))
 	for _, backoff := range backoffs {
-		require.Equal(t, "100", d.MaxBackoffAddress[backoff])
-		require.Equal(t, 100*time.Millisecond*100, d.MaxBackoffTime[backoff])
-		require.Equal(t, time.Millisecond*100*91, d.P90BackoffTime[backoff])
-		require.Equal(t, time.Millisecond*100*101/2, d.AvgBackoffTime[backoff])
+		require.Equal(t, "100", d.BackoffTimeStatsMap[backoff].MaxAddress)
+		require.Equal(t, 100*time.Millisecond*100, d.BackoffTimeStatsMap[backoff].MaxTime)
+		require.Equal(t, time.Millisecond*100*91, d.BackoffTimeStatsMap[backoff].P90Time)
+		require.Equal(t, time.Millisecond*100*101/2, d.BackoffTimeStatsMap[backoff].AvgTime)
 		require.Equal(t, 101*50, d.TotBackoffTimes[backoff])
-		require.Equal(t, 101*50*100*time.Millisecond, d.TotBackoffTime[backoff])
+		require.Equal(t, 101*50*100*time.Millisecond, d.BackoffTimeStatsMap[backoff].TotTime)
 	}
 }
 
@@ -224,17 +222,15 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	var n = rand.Intn(19000) + 1000
 	var valRange = rand.Int31n(10000) + 1000
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
-	details := []*execdetails.ExecDetails{}
+	details := []*execdetails.CopExecDetails{}
 	for i := range n {
-		d := &execdetails.ExecDetails{
-			DetailsNeedP90: execdetails.DetailsNeedP90{
-				CalleeAddress: fmt.Sprintf("%v", i+1),
-				BackoffSleep:  make(map[string]time.Duration),
-				BackoffTimes:  make(map[string]int),
-				TimeDetail: util.TimeDetail{
-					ProcessTime: time.Second * time.Duration(rand.Int31n(valRange)),
-					WaitTime:    time.Millisecond * time.Duration(rand.Int31n(valRange)),
-				},
+		d := &execdetails.CopExecDetails{
+			CalleeAddress: fmt.Sprintf("%v", i+1),
+			BackoffSleep:  make(map[string]time.Duration),
+			BackoffTimes:  make(map[string]int),
+			TimeDetail: util.TimeDetail{
+				ProcessTime: time.Second * time.Duration(rand.Int31n(valRange)),
+				WaitTime:    time.Millisecond * time.Duration(rand.Int31n(valRange)),
 			},
 		}
 		details = append(details, d)
@@ -245,15 +241,15 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	}
 
 	// Make CalleeAddress for each max value is deterministic.
-	details[rand.Intn(n)].DetailsNeedP90.TimeDetail.ProcessTime = time.Second * time.Duration(valRange)
-	details[rand.Intn(n)].DetailsNeedP90.TimeDetail.WaitTime = time.Millisecond * time.Duration(valRange)
+	details[rand.Intn(n)].TimeDetail.ProcessTime = time.Second * time.Duration(valRange)
+	details[rand.Intn(n)].TimeDetail.WaitTime = time.Millisecond * time.Duration(valRange)
 	for _, backoff := range backoffs {
 		details[rand.Intn(n)].BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(valRange)
 	}
 
 	ctx := stmtctx.NewStmtCtx()
 	for i := range n {
-		ctx.MergeExecDetails(details[i], nil)
+		ctx.MergeCopExecDetails(details[i], 0)
 	}
 	d := ctx.CopTasksDetails()
 
@@ -265,11 +261,11 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	for _, detail := range details {
 		timeSum += detail.TimeDetail.ProcessTime
 	}
-	require.Equal(t, d.TotProcessTime, timeSum)
-	require.Equal(t, d.AvgProcessTime, timeSum/time.Duration(n))
-	require.InEpsilon(t, d.P90ProcessTime.Nanoseconds(), details[n*9/10].TimeDetail.ProcessTime.Nanoseconds(), 0.05)
-	require.Equal(t, d.MaxProcessTime, details[n-1].TimeDetail.ProcessTime)
-	require.Equal(t, d.MaxProcessAddress, details[n-1].CalleeAddress)
+	require.Equal(t, d.ProcessTimeStats.TotTime, timeSum)
+	require.Equal(t, d.ProcessTimeStats.AvgTime, timeSum/time.Duration(n))
+	require.InEpsilon(t, d.ProcessTimeStats.P90Time.Nanoseconds(), details[n*9/10].TimeDetail.ProcessTime.Nanoseconds(), 0.05)
+	require.Equal(t, d.ProcessTimeStats.MaxTime, details[n-1].TimeDetail.ProcessTime)
+	require.Equal(t, d.ProcessTimeStats.MaxAddress, details[n-1].CalleeAddress)
 
 	sort.Slice(details, func(i, j int) bool {
 		return details[i].TimeDetail.WaitTime.Nanoseconds() < details[j].TimeDetail.WaitTime.Nanoseconds()
@@ -278,11 +274,11 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	for _, detail := range details {
 		timeSum += detail.TimeDetail.WaitTime
 	}
-	require.Equal(t, d.TotWaitTime, timeSum)
-	require.Equal(t, d.AvgWaitTime, timeSum/time.Duration(n))
-	require.InEpsilon(t, d.P90WaitTime.Nanoseconds(), details[n*9/10].TimeDetail.WaitTime.Nanoseconds(), 0.05)
-	require.Equal(t, d.MaxWaitTime, details[n-1].TimeDetail.WaitTime)
-	require.Equal(t, d.MaxWaitAddress, details[n-1].CalleeAddress)
+	require.Equal(t, d.WaitTimeStats.TotTime, timeSum)
+	require.Equal(t, d.WaitTimeStats.AvgTime, timeSum/time.Duration(n))
+	require.InEpsilon(t, d.WaitTimeStats.P90Time.Nanoseconds(), details[n*9/10].TimeDetail.WaitTime.Nanoseconds(), 0.05)
+	require.Equal(t, d.WaitTimeStats.MaxTime, details[n-1].TimeDetail.WaitTime)
+	require.Equal(t, d.WaitTimeStats.MaxAddress, details[n-1].CalleeAddress)
 
 	fields := d.ToZapFields()
 	require.Equal(t, 9, len(fields))
@@ -296,13 +292,14 @@ func TestApproxRuntimeInfo(t *testing.T) {
 			timeSum += detail.BackoffSleep[backoff]
 			timesSum += detail.BackoffTimes[backoff]
 		}
-		require.Equal(t, d.MaxBackoffAddress[backoff], details[n-1].CalleeAddress)
-		require.Equal(t, d.MaxBackoffTime[backoff], details[n-1].BackoffSleep[backoff])
-		require.InEpsilon(t, d.P90BackoffTime[backoff], details[n*9/10].BackoffSleep[backoff], 0.1)
-		require.Equal(t, d.AvgBackoffTime[backoff], timeSum/time.Duration(n))
+		backoffStats := d.BackoffTimeStatsMap[backoff]
+		require.Equal(t, backoffStats.MaxAddress, details[n-1].CalleeAddress)
+		require.Equal(t, backoffStats.MaxTime, details[n-1].BackoffSleep[backoff])
+		require.InEpsilon(t, backoffStats.P90Time, details[n*9/10].BackoffSleep[backoff], 0.1)
+		require.Equal(t, backoffStats.AvgTime, timeSum/time.Duration(n))
 
 		require.Equal(t, d.TotBackoffTimes[backoff], timesSum)
-		require.Equal(t, d.TotBackoffTime[backoff], timeSum)
+		require.Equal(t, backoffStats.TotTime, timeSum)
 	}
 }
 

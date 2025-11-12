@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -153,6 +154,7 @@ func (s *SstRestoreManager) Close(ctx context.Context) {
 
 func NewSstRestoreManager(
 	ctx context.Context,
+	metaClient split.SplitClient,
 	snapFileImporter *snapclient.SnapFileImporter,
 	concurrencyPerStore uint,
 	storeCount uint,
@@ -175,7 +177,13 @@ func NewSstRestoreManager(
 			return nil, errors.Trace(err)
 		}
 	}
-	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
+	if snapFileImporter.GetMergeSst() {
+		log.Info("create batch sst restorer to restore SST files")
+		s.restorer = restore.NewBatchSstRestorer(ctx, snapFileImporter, metaClient, sstWorkerPool, checkpointRunner)
+	} else {
+		log.Info("create simple sst restorer to restore SST files")
+		s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
+	}
 	return s, nil
 }
 
@@ -548,18 +556,22 @@ func (rc *LogClient) InitClients(
 	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
+	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
+		return importer.CheckBatchDownloadSupport(ctx, stores)
+	})
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
 		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
 	)
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
-		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
+		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompacted, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	rc.sstRestoreManager, err = NewSstRestoreManager(
 		ctx,
+		metaClient,
 		snapFileImporter,
 		concurrencyPerStore,
 		uint(len(stores)),
@@ -652,18 +664,19 @@ type LockedMigrations struct {
 	ReadLock storage.RemoteLock
 }
 
-func (rc *LogClient) GetMigrations(ctx context.Context) (*LockedMigrations, error) {
+func (rc *LogClient) GetLockedMigrations(ctx context.Context) (*LockedMigrations, error) {
 	ext := stream.MigrationExtension(rc.storage)
+	readLock, err := ext.GetReadLock(ctx, "restore stream")
+	if err != nil {
+		return nil, err
+	}
+
 	migs, err := ext.Load(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	ms := migs.ListAll()
-	readLock, err := ext.GetReadLock(ctx, "restore stream")
-	if err != nil {
-		return nil, err
-	}
 
 	lms := &LockedMigrations{
 		Migs:     ms,
@@ -887,8 +900,16 @@ func (rc *LogClient) RestoreKVFiles(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	var applyWg sync.WaitGroup
-	eg, ectx := errgroup.WithContext(ctx)
+	var (
+		applyWg  sync.WaitGroup
+		eg, ectx = errgroup.WithContext(ctx)
+
+		skipped    = metrics.KVApplyTasksEvents.WithLabelValues("skipped")
+		submitted  = metrics.KVApplyTasksEvents.WithLabelValues("submitted")
+		started    = metrics.KVApplyTasksEvents.WithLabelValues("started")
+		finished   = metrics.KVApplyTasksEvents.WithLabelValues("finished")
+		memApplied = metrics.KVLogFileEmittedMemory.WithLabelValues("2-applied")
+	)
 	applyFunc := func(files []*LogDataFileInfo, kvCount int64, size uint64) {
 		if len(files) == 0 {
 			return
@@ -897,16 +918,23 @@ func (rc *LogClient) RestoreKVFiles(
 		// because the tableID of files is the same.
 		rule, ok := rules[files[0].TableId]
 		if !ok {
+			skipped.Add(float64(len(files)))
 			onProgress(kvCount)
 			summary.CollectInt("FileSkip", len(files))
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
 			skipFile += len(files)
 		} else {
+			submitted.Add(float64(len(files)))
 			applyWg.Add(1)
 			rc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
+				started.Add(float64(len(files)))
 				fileStart := time.Now()
 				defer applyWg.Done()
 				defer func() {
+					for _, file := range files {
+						memApplied.Add(float64(file.Size()))
+					}
+					finished.Add(float64(len(files)))
 					onProgress(kvCount)
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
@@ -1487,37 +1515,120 @@ func WrapLogFilesIterWithCheckpointFailpoint(
 	return logIter, nil
 }
 
+// ResetTiflashReplicas set tiflash replicas by given sqls concurrently.
+func (rc *LogClient) ResetTiflashReplicas(ctx context.Context, sqls []string, g glue.Glue) error {
+	resetSessions, err := createSessions(ctx, g, rc.dom.Store(), 16)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		closeSessions(resetSessions)
+	}()
+	workerpool := tidbutil.NewWorkerPool(16, "repair ingest index")
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, sql := range sqls {
+		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			resetSession := resetSessions[id%uint64(len(resetSessions))]
+			log.Info("reset tiflash replica", zap.Uint64("task id", id), zap.String("sql", sql))
+			var resetErr error
+			for range 5 {
+				resetErr = resetSession.ExecuteInternal(ectx, sql)
+				if resetErr == nil {
+					break
+				}
+				log.Warn("Failed to restore tiflash replica config", zap.Uint64("task id", id), zap.Error(resetErr))
+				if ectx.Err() != nil {
+					log.Warn("Stop retrying because context cancelled", zap.Error(ectx.Err()))
+					break
+				}
+			}
+			if resetErr != nil {
+				logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
+					logutil.ShortError(resetErr),
+					zap.String("sql", sql),
+				)
+			}
+			return nil
+		})
+	}
+	return eg.Wait()
+}
+
+func colsToStr(cols []ast.CIStr) string {
+	var str strings.Builder
+	for i, col := range cols {
+		if i != 0 {
+			str.WriteString(",")
+		}
+		str.WriteString(col.O)
+	}
+	return str.String()
+}
+
 const (
 	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"
 	alterTableAddIndexFormat       = "ALTER TABLE %%n.%%n ADD INDEX %%n(%s)"
 	alterTableAddUniqueIndexFormat = "ALTER TABLE %%n.%%n ADD UNIQUE KEY %%n(%s)"
 	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
+	alterTableAddForeignKeyFormat  = "ALTER TABLE %%n.%%n ADD CONSTRAINT %%n FOREIGN KEY (%s) REFERENCES %%n.%%n (%s)"
+	alterTableDropForeignKeyFormat = "ALTER TABLE %n.%n DROP FOREIGN KEY %n"
 )
 
 func (rc *LogClient) generateRepairIngestIndexSQLs(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
+) ([]checkpoint.CheckpointIngestIndexRepairSQL, []checkpoint.CheckpointForeignKeyUpdateSQL, bool, error) {
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
+	var fkSqls []checkpoint.CheckpointForeignKeyUpdateSQL
 	if rc.useCheckpoint {
 		exists, err := logCheckpointMetaManager.ExistsCheckpointIngestIndexRepairSQLs(ctx)
 		if err != nil {
-			return sqls, false, errors.Trace(err)
+			return sqls, fkSqls, false, errors.Trace(err)
 		}
 		if exists {
 			checkpointSQLs, err := logCheckpointMetaManager.LoadCheckpointIngestIndexRepairSQLs(ctx)
 			if err != nil {
-				return sqls, false, errors.Trace(err)
+				return sqls, fkSqls, false, errors.Trace(err)
 			}
 			sqls = checkpointSQLs.SQLs
+			fkSqls = checkpointSQLs.FKSQLs
 			log.Info("load ingest index repair sqls from checkpoint", zap.String("category", "ingest"), zap.Reflect("sqls", sqls))
-			return sqls, true, nil
+			return sqls, fkSqls, true, nil
 		}
 	}
 
-	if err := ingestRecorder.UpdateIndexInfo(rc.dom.InfoSchema()); err != nil {
-		return sqls, false, errors.Trace(err)
+	if err := ingestRecorder.UpdateIndexInfo(ctx, rc.dom.InfoSchema()); err != nil {
+		return sqls, fkSqls, false, errors.Trace(err)
+	}
+	if err := ingestRecorder.IterateForeignKeys(func(fkRecord *ingestrec.ForeignKeyRecord) error {
+		var (
+			addSQL  strings.Builder
+			addArgs []any = make([]any, 0, 7+len(fkRecord.Cols)+len(fkRecord.RefCols))
+		)
+		childCols := colsToStr(fkRecord.Cols)
+		parentCols := colsToStr(fkRecord.RefCols)
+		addSQL.WriteString(fmt.Sprintf(alterTableAddForeignKeyFormat, childCols, parentCols))
+		addArgs = append(addArgs,
+			fkRecord.ChildSchemaNameO, fkRecord.ChildTableNameO, fkRecord.Name.O, fkRecord.RefSchema.O, fkRecord.RefTable.O,
+		)
+		if onDelete := ast.ReferOptionType(fkRecord.OnDelete); onDelete != ast.ReferOptionNoOption {
+			addSQL.WriteString(fmt.Sprintf(" ON DELETE %s", onDelete.String()))
+		}
+		if onUpdate := ast.ReferOptionType(fkRecord.OnUpdate); onUpdate != ast.ReferOptionNoOption {
+			addSQL.WriteString(fmt.Sprintf(" ON UPDATE %s", onUpdate.String()))
+		}
+		fkSqls = append(fkSqls, checkpoint.CheckpointForeignKeyUpdateSQL{
+			FKID:       fkRecord.ID,
+			SchemaName: fkRecord.ChildSchemaNameO,
+			TableName:  fkRecord.ChildTableNameO,
+			FKName:     fkRecord.Name.O,
+			AddSQL:     addSQL.String(),
+			AddArgs:    addArgs,
+		})
+		return nil
+	}); err != nil {
+		return sqls, fkSqls, false, errors.Trace(err)
 	}
 	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
@@ -1543,7 +1654,11 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addSQL.WriteString(" USING ")
 			addSQL.WriteString(indexTypeStr)
 		}
-
+		// WITH PARSER [...]
+		if info.IndexInfo.FullTextInfo != nil {
+			addSQL.WriteString(" WITH PARSER ")
+			addSQL.WriteString(info.IndexInfo.FullTextInfo.ParserType.SQLName())
+		}
 		// COMMENT [...]
 		if len(info.IndexInfo.Comment) > 0 {
 			addSQL.WriteString(" COMMENT %?")
@@ -1554,6 +1669,12 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addSQL.WriteString(" INVISIBLE")
 		} else {
 			addSQL.WriteString(" VISIBLE")
+		}
+
+		if info.IndexInfo.Global {
+			addSQL.WriteString(" GLOBAL")
+		} else {
+			addSQL.WriteString(" LOCAL")
 		}
 
 		sqls = append(sqls, checkpoint.CheckpointIngestIndexRepairSQL{
@@ -1567,17 +1688,18 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 
 		return nil
 	}); err != nil {
-		return sqls, false, errors.Trace(err)
+		return sqls, fkSqls, false, errors.Trace(err)
 	}
 
 	if rc.useCheckpoint && len(sqls) > 0 {
 		if err := logCheckpointMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, &checkpoint.CheckpointIngestIndexRepairSQLs{
-			SQLs: sqls,
+			SQLs:   sqls,
+			FKSQLs: fkSqls,
 		}); err != nil {
-			return sqls, false, errors.Trace(err)
+			return sqls, fkSqls, false, errors.Trace(err)
 		}
 	}
-	return sqls, false, nil
+	return sqls, fkSqls, false, nil
 }
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
@@ -1587,7 +1709,7 @@ func (rc *LogClient) RepairIngestIndex(
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	g glue.Glue,
 ) error {
-	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, logCheckpointMetaManager)
+	sqls, fkSqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, logCheckpointMetaManager)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1623,6 +1745,29 @@ func (rc *LogClient) RepairIngestIndex(
 			}
 		}
 	}
+	for i, sql := range fkSqls {
+		tableInfo, err := info.TableByName(ctx, ast.NewCIStr(sql.SchemaName), ast.NewCIStr(sql.TableName))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		fkSqls[i].OldForeignKeyFound = false
+		fkSqls[i].ForeignKeyUpdated = false
+		if fromCheckpoint {
+			for _, fk := range tableInfo.Meta().ForeignKeys {
+				if fk.ID == sql.FKID {
+					// the original foreign key id is not dropped
+					fkSqls[i].OldForeignKeyFound = true
+					break
+				}
+				if fk.Name.O == sql.FKName {
+					// find the same name foreign key, but not the same foreign key id,
+					// which means the foreign key is updated and all the indexes are recreated
+					fkSqls[i].ForeignKeyUpdated = true
+					break
+				}
+			}
+		}
+	}
 
 	sessionCount := defaultRepairIndexSessionCount
 	indexSessions, err := createSessions(ctx, g, rc.dom.Store(), sessionCount)
@@ -1634,6 +1779,30 @@ func (rc *LogClient) RepairIngestIndex(
 	}()
 	workerpool := tidbutil.NewWorkerPool(sessionCount, "repair ingest index")
 	eg, ectx := errgroup.WithContext(ctx)
+	for _, fk := range fkSqls {
+		if fk.ForeignKeyUpdated {
+			continue
+		}
+		if fromCheckpoint && !fk.OldForeignKeyFound {
+			continue
+		}
+		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			indexSession := indexSessions[id%uint64(len(indexSessions))]
+			if err := indexSession.ExecuteInternal(ectx, alterTableDropForeignKeyFormat, fk.SchemaName, fk.TableName, fk.FKName); err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+	failpoint.Inject("failed-before-repair-ingest-index", func(v failpoint.Value) {
+		if v != nil && v.(bool) {
+			failpoint.Return(errors.New("failed before repair ingest index"))
+		}
+	})
+	eg, ectx = errgroup.WithContext(ctx)
 	mp := console.StartMultiProgress()
 	for _, sql := range sqls {
 		if sql.IndexRepaired {
@@ -1679,6 +1848,27 @@ func (rc *LogClient) RepairIngestIndex(
 	if err := eg.Wait(); err != nil {
 		return errors.Trace(err)
 	}
+	eg, ectx = errgroup.WithContext(ctx)
+	for _, fk := range fkSqls {
+		if fk.ForeignKeyUpdated {
+			continue
+		}
+		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			indexSession := indexSessions[id%uint64(len(indexSessions))]
+			if err := indexSession.ExecuteInternal(ectx, fk.AddSQL, fk.AddArgs...); err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+	failpoint.Inject("failed-after-repair-ingest-index", func(v failpoint.Value) {
+		if v != nil && v.(bool) {
+			failpoint.Return(errors.New("failed after repair ingest index"))
+		}
+	})
 
 	return nil
 }
@@ -1909,18 +2099,18 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 		if len(tableIDsSet) > 0 {
 			// handle table deletions
 			for tableID := range tableIDsSet {
-				args := &model.RefreshMetaArgs{
-					SchemaID: dbID,
-					TableID:  tableID,
-				}
-
-				// Get table and database names for logging
 				var dbName, tableName string
 				if dbReplace, ok := schemasReplace.DbReplaceMap[dbID]; ok {
 					dbName = dbReplace.Name
 					if tableReplace, ok := dbReplace.TableMap[tableID]; ok {
 						tableName = tableReplace.Name
 					}
+				}
+				args := &model.RefreshMetaArgs{
+					SchemaID:      dbID,
+					TableID:       tableID,
+					InvolvedDB:    dbName,
+					InvolvedTable: tableName,
 				}
 
 				log.Info("refreshing deleted table meta",
@@ -1940,15 +2130,16 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 
 	// Then, delete databases if needed
 	for dbID := range deletedTablesMap {
-		args := &model.RefreshMetaArgs{
-			SchemaID: dbID,
-			TableID:  0, // 0 for database-only refresh
-		}
-
 		// Get database name for logging
 		var dbName string
 		if dbReplace, ok := schemasReplace.DbReplaceMap[dbID]; ok {
 			dbName = dbReplace.Name
+		}
+		args := &model.RefreshMetaArgs{
+			SchemaID:      dbID,
+			TableID:       0, // 0 for database-only refresh
+			InvolvedDB:    dbName,
+			InvolvedTable: model.InvolvingAll,
 		}
 
 		log.Info("refreshing potential deleted database meta",
@@ -1978,8 +2169,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 		}
 
 		args := &model.RefreshMetaArgs{
-			SchemaID: dbReplace.DbID,
-			TableID:  0, // tableID = 0 for database-only refresh
+			SchemaID:      dbReplace.DbID,
+			TableID:       0, // tableID = 0 for database-only refresh
+			InvolvedDB:    dbReplace.Name,
+			InvolvedTable: model.InvolvingAll,
 		}
 		log.Info("refreshing database-only meta",
 			zap.Int64("schemaID", dbReplace.DbID),
@@ -2010,8 +2203,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 				}
 
 				args := &model.RefreshMetaArgs{
-					SchemaID: dbReplace.DbID,
-					TableID:  tableReplace.TableID,
+					SchemaID:      dbReplace.DbID,
+					TableID:       tableReplace.TableID,
+					InvolvedDB:    dbReplace.Name,
+					InvolvedTable: tableReplace.Name,
 				}
 				log.Info("refreshing regular table meta",
 					zap.Int64("schemaID", dbReplace.DbID),

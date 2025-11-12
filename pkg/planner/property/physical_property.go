@@ -87,6 +87,21 @@ func (s SortItem) MemoryUsage() (sum int64) {
 	return
 }
 
+// ExplainPartitionBy produce text for p.PartitionBy. Common for window functions and TopN.
+func ExplainPartitionBy(ctx expression.EvalContext, buffer *bytes.Buffer,
+	partitionBy []SortItem, normalized bool) *bytes.Buffer {
+	if len(partitionBy) > 0 {
+		buffer.WriteString("partition by ")
+		for i, item := range partitionBy {
+			fmt.Fprintf(buffer, "%s", item.Col.ColumnExplainInfo(ctx, normalized))
+			if i+1 < len(partitionBy) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	return buffer
+}
+
 // MPPPartitionType is the way to partition during mpp data exchanging.
 type MPPPartitionType int
 
@@ -178,6 +193,15 @@ func (partitionCol *MPPPartitionColumn) MemoryUsage() (sum int64) {
 	return
 }
 
+// ChoosePartitionKeys chooses partition keys according to the matches.
+func ChoosePartitionKeys(keys []*MPPPartitionColumn, matches []int) []*MPPPartitionColumn {
+	newKeys := make([]*MPPPartitionColumn, 0, len(matches))
+	for _, id := range matches {
+		newKeys = append(newKeys, keys[id])
+	}
+	return newKeys
+}
+
 // ExplainColumnList generates explain information for a list of columns.
 func ExplainColumnList(ctx expression.EvalContext, cols []*MPPPartitionColumn) []byte {
 	buffer := bytes.NewBufferString("")
@@ -219,6 +243,25 @@ const (
 	SomeCTEFailedMpp
 	AllCTECanMpp
 )
+
+// PhysicalPropMatchResult describes the result of matching PhysicalProperty against an access path.
+type PhysicalPropMatchResult int
+
+const (
+	// PropNotMatched means the access path cannot satisfy the required order.
+	PropNotMatched PhysicalPropMatchResult = iota
+	// PropMatched means the access path can satisfy the required property directly.
+	PropMatched
+	// PropMatchedNeedMergeSort means the access path can satisfy the required property, but a merge sort between range
+	// groups is needed.
+	// Corresponding information will be recorded in AccessPath.GroupedRanges and AccessPath.GroupByColIdxs.
+	PropMatchedNeedMergeSort
+)
+
+// Matched returns true if the required order can be satisfied.
+func (r PhysicalPropMatchResult) Matched() bool {
+	return r == PropMatched || r == PropMatchedNeedMergeSort
+}
 
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.
@@ -266,6 +309,10 @@ type PhysicalProperty struct {
 	}
 
 	IndexJoinProp *IndexJoinRuntimeProp
+
+	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
+	// It is true when the agg is in the outer child tree of apply.
+	NoCopPushDown bool
 }
 
 // IndexJoinRuntimeProp is the inner runtime property for index join.
@@ -494,6 +541,12 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = codec.EncodeInt(p.hashcode, 0)
 		}
 	}
+	// encode NoCopPushDown into physical prop's hashcode.
+	if p.NoCopPushDown {
+		p.hashcode = codec.EncodeInt(p.hashcode, 1)
+	} else {
+		p.hashcode = codec.EncodeInt(p.hashcode, 0)
+	}
 	return p.hashcode
 }
 
@@ -513,6 +566,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionTp:        p.MPPPartitionTp,
 		MPPPartitionCols:      p.MPPPartitionCols,
 		CTEProducerStatus:     p.CTEProducerStatus,
+		NoCopPushDown:         p.NoCopPushDown,
 		// we default not to clone basic indexJoinProp by default.
 		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	}
@@ -551,4 +605,34 @@ func (p *PhysicalProperty) MemoryUsage() (sum int64) {
 		sum += mppCol.MemoryUsage()
 	}
 	return
+}
+
+// NeedEnforceExchanger checks if we need to enforce an exchange operator on the top of the mpp task.
+func NeedEnforceExchanger(mtp MPPPartitionType, mHashCols []*MPPPartitionColumn,
+	prop *PhysicalProperty, fd *funcdep.FDSet) bool {
+	switch prop.MPPPartitionTp {
+	case AnyType:
+		return false
+	case BroadcastType:
+		return true
+	case SinglePartitionType:
+		return mtp != SinglePartitionType
+	default:
+		if mtp != HashType {
+			return true
+		}
+		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
+		if fd != nil && len(mHashCols) != 0 {
+			return prop.NeedMPPExchangeByEquivalence(mHashCols, fd)
+		}
+		if len(prop.MPPPartitionCols) != len(mHashCols) {
+			return true
+		}
+		for i, col := range prop.MPPPartitionCols {
+			if !col.Equal(mHashCols[i]) {
+				return true
+			}
+		}
+		return false
+	}
 }

@@ -39,14 +39,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	backendkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
@@ -60,6 +62,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -87,9 +91,6 @@ const (
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
 	gRPCBackOffMaxDelay  = 10 * time.Minute
-
-	// The max ranges count in a batch to split and scatter.
-	maxBatchSplitRanges = 4096
 
 	propRangeIndex = "tikv.range_index"
 
@@ -261,13 +262,13 @@ func NewEncodingBuilder(ctx context.Context) encode.EncodingBuilder {
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
 func (b *encodingBuilder) NewEncoder(_ context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	return kv.NewTableKVEncoder(config, b.metrics)
+	return backendkv.NewTableKVEncoder(config, b.metrics)
 }
 
 // MakeEmptyRows creates an empty KV rows.
 // It implements the `backend.EncodingBuilder` interface.
 func (*encodingBuilder) MakeEmptyRows() encode.Rows {
-	return kv.MakeRowsFromKvPairs(nil)
+	return backendkv.MakeRowsFromKvPairs(nil)
 }
 
 type targetInfoGetter struct {
@@ -388,7 +389,7 @@ func checkTiFlashVersion(ctx context.Context, db *sql.DB, checkCtx *backend.Chec
 
 	exec := common.SQLWithRetry{
 		DB:     db,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(tidblogutil.Logger(ctx)),
 	}
 
 	res, err := exec.QueryStringRows(ctx, "fetch tiflash replica info", tiFlashReplicaQuery)
@@ -533,15 +534,18 @@ type Backend struct {
 	tls       *common.TLS
 	tikvCodec tikvclient.Codec
 
+	collector execute.Collector
+
 	BackendConfig
 	engineMgr *engineManager
 
 	supportMultiIngest  bool
 	importClientFactory importClientFactory
 
-	metrics      *metric.Common
-	writeLimiter StoreWriteLimiter
-	logger       log.Logger
+	metrics       *metric.Common
+	writeLimiter  StoreWriteLimiter
+	ingestLimiter atomic.Pointer[ingestLimiter]
+	logger        log.Logger
 
 	nextgenHTTPCli *http.Client
 }
@@ -673,7 +677,7 @@ func NewBackend(
 		supportMultiIngest:  multiIngestSupported,
 		importClientFactory: importClientFactory,
 		writeLimiter:        writeLimiter,
-		logger:              log.FromContext(ctx),
+		logger:              log.Wrap(tidblogutil.Logger(ctx)),
 	}
 	local.engineMgr, err = newEngineManager(config, local, local.logger)
 	if err != nil {
@@ -691,7 +695,7 @@ func NewBackend(
 func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper StoreHelper) (*Backend, error) {
 	config.adjust()
 
-	logger := log.FromContext(ctx)
+	logger := log.Wrap(tidblogutil.Logger(ctx))
 	engineMgr, err := newEngineManager(config, storeHelper, logger)
 	if err != nil {
 		return nil, err
@@ -706,6 +710,11 @@ func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper St
 	}
 
 	return local, nil
+}
+
+// SetCollector sets the collector for the local backend
+func (local *Backend) SetCollector(c execute.Collector) {
+	local.collector = c
 }
 
 // TotalMemoryConsume returns the total memory usage of the local backend.
@@ -744,7 +753,7 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 			client, err1 := factory.create(ctx, s.Id)
 			if err1 != nil {
 				err = err1
-				log.FromContext(ctx).Warn("get import client failed", zap.Error(err), zap.String("store", s.Address))
+				tidblogutil.Logger(ctx).Warn("get import client failed", zap.Error(err), zap.String("store", s.Address))
 				continue
 			}
 			_, err = client.MultiIngest(ctx, &sst.MultiIngestRequest{})
@@ -753,11 +762,11 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 			}
 			if st, ok := status.FromError(err); ok {
 				if st.Code() == codes.Unimplemented {
-					log.FromContext(ctx).Info("multi ingest not support", zap.Any("unsupported store", s))
+					tidblogutil.Logger(ctx).Info("multi ingest not support", zap.Any("unsupported store", s))
 					return false, nil
 				}
 			}
-			log.FromContext(ctx).Warn("check multi ingest support failed", zap.Error(err), zap.String("store", s.Address),
+			tidblogutil.Logger(ctx).Warn("check multi ingest support failed", zap.Error(err), zap.String("store", s.Address),
 				zap.Int("retry", i))
 		}
 		if err != nil {
@@ -766,12 +775,12 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 			if hasTiFlash {
 				return false, errors.Trace(err)
 			}
-			log.FromContext(ctx).Warn("check multi failed all retry, fallback to false", log.ShortError(err))
+			tidblogutil.Logger(ctx).Warn("check multi failed all retry, fallback to false", log.ShortError(err))
 			return false, nil
 		}
 	}
 
-	log.FromContext(ctx).Info("multi ingest support")
+	tidblogutil.Logger(ctx).Info("multi ingest support")
 	return true, nil
 }
 
@@ -843,6 +852,109 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 	return local.engineMgr.closeEngine(ctx, cfg, engineUUID)
 }
 
+// forceTableSplitRange turns on force_partition_range for importing.
+// See https://github.com/tikv/tikv/pull/18866 for detail.
+// It returns a resetter to turn off.
+func (local *Backend) forceTableSplitRange(ctx context.Context,
+	startKey, endKey kv.Key, stores []*metapb.Store) (resetter func()) {
+	subctx, cancel := context.WithCancel(ctx)
+	var wg util.WaitGroupWrapper
+	clients := make([]sst.ImportSSTClient, 0, len(stores))
+	storeAddrs := make([]string, 0, len(stores))
+	const ttlSecond = uint64(3600) // default 1 hour
+	addReq := &sst.AddPartitionRangeRequest{
+		Range: &sst.Range{
+			Start: startKey,
+			End:   endKey,
+		},
+		TtlSeconds: ttlSecond,
+	}
+	removeReq := &sst.RemovePartitionRangeRequest{
+		Range: &sst.Range{
+			Start: startKey,
+			End:   endKey,
+		},
+	}
+
+	for _, store := range stores {
+		if store.StatusAddress == "" || engine.IsTiFlash(store) {
+			continue
+		}
+		importCli, err := local.importClientFactory.create(subctx, store.Id)
+		if err != nil {
+			tidblogutil.Logger(subctx).Warn("create import client failed", zap.Error(err), zap.String("store", store.StatusAddress))
+			continue
+		}
+		clients = append(clients, importCli)
+		storeAddrs = append(storeAddrs, store.StatusAddress)
+	}
+
+	addTableSplitRange := func() {
+		var firstErr error
+		successStores := make([]string, 0, len(clients))
+		failedStores := make([]string, 0, len(clients))
+		for i, c := range clients {
+			_, err := c.AddForcePartitionRange(subctx, addReq)
+			if err == nil {
+				successStores = append(successStores, storeAddrs[i])
+				failpoint.InjectCall("AddPartitionRangeForTable")
+			} else {
+				failedStores = append(failedStores, storeAddrs[i])
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		tidblogutil.Logger(subctx).Info("call AddForcePartitionRange",
+			zap.Strings("success stores", successStores),
+			zap.Strings("failed stores", failedStores),
+			zap.Error(firstErr),
+		)
+	}
+
+	addTableSplitRange()
+	wg.Run(func() {
+		timeout := time.Duration(ttlSecond) * time.Second / 5 // 12min
+		ticker := time.NewTicker(timeout)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-subctx.Done():
+				return
+			case <-ticker.C:
+				addTableSplitRange()
+			}
+		}
+	})
+
+	resetter = func() {
+		cancel()
+		wg.Wait()
+
+		var firstErr error
+		successStores := make([]string, 0, len(clients))
+		failedStores := make([]string, 0, len(clients))
+		for i, c := range clients {
+			_, err := c.RemoveForcePartitionRange(ctx, removeReq)
+			if err == nil {
+				successStores = append(successStores, storeAddrs[i])
+				failpoint.InjectCall("RemovePartitionRangeRequest")
+			} else {
+				failedStores = append(failedStores, storeAddrs[i])
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		tidblogutil.Logger(ctx).Info("call RemoveForcePartitionRange",
+			zap.Strings("success stores", successStores),
+			zap.Strings("failed stores", failedStores),
+			zap.Error(firstErr),
+		)
+	}
+	return resetter
+}
+
 func splitRangeBySizeProps(fullRange engineapi.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []engineapi.Range {
 	ranges := make([]engineapi.Range, 0, sizeProps.totalSize/uint64(sizeLimit))
 	curSize := uint64(0)
@@ -898,7 +1010,7 @@ func getRegionSplitKeys(
 		return [][]byte{startKey, endKey}, nil
 	}
 
-	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
+	logger := log.Wrap(tidblogutil.Logger(ctx)).With(zap.String("engine", engine.ID()))
 	keys, err := engine.GetRegionSplitKeys()
 	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize),
@@ -919,7 +1031,14 @@ func (local *Backend) prepareAndSendJob(
 	jobWg *sync.WaitGroup,
 ) error {
 	lfTotalSize, lfLength := engine.KVStatistics()
-	log.FromContext(ctx).Info("import engine ranges", zap.Int("len(regionSplitKeyCnt)", len(regionSplitKeys)))
+	splitRangesBatch := GetMaxBatchSplitRanges()
+	maxRangesPerSec := GetMaxSplitRangePerSec()
+
+	tidblogutil.Logger(ctx).Info("import engine ranges",
+		zap.Int("len(regionSplitKeys)", len(regionSplitKeys)),
+		zap.Int("splitRangesBatch", splitRangesBatch),
+		zap.Float64("splitRangePerSec", maxRangesPerSec),
+	)
 
 	// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 	// the table when table is created.
@@ -930,7 +1049,7 @@ func (local *Backend) prepareAndSendJob(
 	})
 	if needSplit {
 		var err error
-		logger := log.FromContext(ctx).With(zap.String("uuid", engine.ID())).Begin(zap.InfoLevel, "split and scatter ranges")
+		logger := log.Wrap(tidblogutil.Logger(ctx)).With(zap.String("uuid", engine.ID())).Begin(zap.InfoLevel, "split and scatter ranges")
 		backOffTime := 10 * time.Second
 		maxbackoffTime := 120 * time.Second
 		for i := range maxRetryTimes {
@@ -938,12 +1057,12 @@ func (local *Backend) prepareAndSendJob(
 				failpoint.Break()
 			})
 
-			err = local.splitAndScatterRegionInBatches(ctx, regionSplitKeys, maxBatchSplitRanges)
+			err = local.splitAndScatterRegionInBatches(ctx, regionSplitKeys, splitRangesBatch, maxRangesPerSec)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
 
-			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.String("engine ID", engine.ID()),
+			tidblogutil.Logger(ctx).Warn("split and scatter failed in retry", zap.String("engine ID", engine.ID()),
 				log.ShortError(err), zap.Int("retry", i))
 			select {
 			case <-time.After(backOffTime):
@@ -1076,9 +1195,9 @@ func (local *Backend) generateJobForRange(
 		return nil, err
 	}
 	if pairStart == nil {
-		logFn := log.FromContext(ctx).Info
+		logFn := tidblogutil.Logger(ctx).Info
 		if _, ok := data.(*external.MemoryIngestData); ok {
-			logFn = log.FromContext(ctx).Warn
+			logFn = tidblogutil.Logger(ctx).Warn
 		}
 		logFn("There is no pairs in range",
 			logutil.Key("startOfAllRanges", startOfAllRanges),
@@ -1093,7 +1212,7 @@ func (local *Backend) generateJobForRange(
 	endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
 	regions, err := split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
 	if err != nil {
-		log.FromContext(ctx).Error("scan region failed",
+		tidblogutil.Logger(ctx).Error("scan region failed",
 			log.ShortError(err), zap.Int("region_len", len(regions)),
 			logutil.Key("startKey", startKey),
 			logutil.Key("endKey", endKey))
@@ -1101,7 +1220,7 @@ func (local *Backend) generateJobForRange(
 	}
 
 	jobs := newRegionJobs(regions, data, sortedJobRanges, regionSplitSize, regionSplitKeys, local.metrics)
-	log.FromContext(ctx).Info("generate region jobs",
+	tidblogutil.Logger(ctx).Info("generate region jobs",
 		zap.Int("len(jobs)", len(jobs)),
 		zap.String("startOfAllRanges", hex.EncodeToString(startOfAllRanges)),
 		zap.String("endOfAllRanges", hex.EncodeToString(endOfAllRanges)),
@@ -1112,7 +1231,7 @@ func (local *Backend) generateJobForRange(
 }
 
 func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
-	logger := log.FromContext(ctx)
+	logger := log.Wrap(tidblogutil.Logger(ctx))
 	capacity, err := units.RAMInBytes(store.Status.Capacity)
 	if err != nil {
 		logger.Warn("failed to parse capacity",
@@ -1172,7 +1291,7 @@ func (local *Backend) ImportEngine(
 			regionSplitKeys = kvRegionSplitKeys
 		}
 	} else {
-		log.FromContext(ctx).Warn("fail to get region split keys and size", zap.Error(err))
+		tidblogutil.Logger(ctx).Warn("fail to get region split keys and size", zap.Error(err))
 	}
 
 	var e engineapi.Engine
@@ -1192,7 +1311,7 @@ func (local *Backend) ImportEngine(
 	lfTotalSize, lfLength := e.KVStatistics()
 	if lfTotalSize == 0 {
 		// engine is empty, this is likes because it's a index engine but the table contains no index
-		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
+		tidblogutil.Logger(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
 
@@ -1201,9 +1320,23 @@ func (local *Backend) ImportEngine(
 	if err != nil {
 		return err
 	}
+	intest.Assert(len(splitKeys) > 0)
+	startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]
 
-	if len(splitKeys) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
-		log.FromContext(ctx).Info("pause pd scheduler of table scope")
+	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 {
+		tidblogutil.Logger(ctx).Info("force table split range",
+			zap.String("startKey", redact.Key(startKey)),
+			zap.String("endKey", redact.Key(endKey)))
+		stores, err := local.pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
+		if err != nil {
+			return err
+		}
+		removeTableSplitRange := local.forceTableSplitRange(ctx, startKey, endKey, stores)
+		defer removeTableSplitRange()
+	}
+
+	if local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
+		tidblogutil.Logger(ctx).Info("pause pd scheduler of table scope")
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
@@ -1224,10 +1357,10 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
-	if len(splitKeys) > 0 && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
-		log.FromContext(ctx).Info("switch import mode of ranges",
-			zap.String("startKey", hex.EncodeToString(splitKeys[0])),
-			zap.String("endKey", hex.EncodeToString(splitKeys[len(splitKeys)-1])))
+	if local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
+		tidblogutil.Logger(ctx).Info("switch import mode of ranges",
+			zap.String("startKey", redact.Key(startKey)),
+			zap.String("endKey", redact.Key(endKey)))
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
@@ -1241,18 +1374,24 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
-	log.FromContext(ctx).Info("start import engine",
+	maxReqInFlight := GetMaxIngestConcurrency()
+	maxReqPerSec := GetMaxIngestPerSec()
+	local.ingestLimiter.Store(newIngestLimiter(ctx, maxReqInFlight, maxReqPerSec))
+	tidblogutil.Logger(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
 		zap.Int("region ranges", len(splitKeys)-1),
 		zap.Int64("count", lfLength),
-		zap.Int64("size", lfTotalSize))
+		zap.Int64("size", lfTotalSize),
+		zap.Int("maxReqInFlight", maxReqInFlight),
+		zap.Float64("maxReqPerSec", maxReqPerSec),
+	)
 
-	failpoint.Inject("ReadyForImportEngine", func() {})
+	failpoint.InjectCall("ReadyForImportEngine")
 
 	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys)
 	if err == nil {
 		importedSize, importedLength := e.ImportedStatistics()
-		log.FromContext(ctx).Info("import engine success",
+		tidblogutil.Logger(ctx).Info("import engine success",
 			zap.Stringer("uuid", engineUUID),
 			zap.Int64("size", lfTotalSize),
 			zap.Int64("kvs", lfLength),
@@ -1389,7 +1528,7 @@ func (local *Backend) doImport(
 					intest.Assert(lastErr != nil, "lastRetryableErr should not be nil")
 					if lastErr == nil {
 						lastErr = errors.New("retry limit exceeded")
-						log.FromContext(ctx).Error(
+						tidblogutil.Logger(ctx).Error(
 							"lastRetryableErr should not be nil",
 							logutil.Key("startKey", job.keyRange.Start),
 							logutil.Key("endKey", job.keyRange.End),
@@ -1401,7 +1540,7 @@ func (local *Backend) doImport(
 				// max retry backoff time: 2+4+8+16+30*26=810s
 				sleepSecond := min(math.Pow(2, float64(job.retryCount)), float64(maxRetryBackoffSecond))
 				job.waitUntil = time.Now().Add(time.Second * time.Duration(sleepSecond))
-				log.FromContext(ctx).Info("put job back to jobCh to retry later",
+				tidblogutil.Logger(ctx).Info("put job back to jobCh to retry later",
 					logutil.Key("startKey", job.keyRange.Start),
 					logutil.Key("endKey", job.keyRange.End),
 					zap.Stringer("stage", job.stage),
@@ -1487,7 +1626,7 @@ func (local *Backend) doImport(
 	}
 
 	if err != nil && !common.IsContextCanceledError(err) {
-		log.FromContext(ctx).Error("do import meets error", zap.Error(err))
+		tidblogutil.Logger(ctx).Error("do import meets error", zap.Error(err))
 	}
 	return err
 }
@@ -1517,6 +1656,7 @@ func (local *Backend) newRegionJobWorker(
 			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, clusterID, isHTTPS, local.nextgenHTTPCli, local.splitCli),
 			writeBatchSize: local.KVWriteBatchSize,
 			bufPool:        local.engineMgr.getBufferPool(),
+			collector:      local.collector,
 		}
 		base.writeFn = cloudW.write
 		base.ingestFn = cloudW.ingest
@@ -1605,7 +1745,7 @@ func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormana
 func (local *Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
 	// DO NOT call be.abstract.CloseEngine()! The engine should still be writable after
 	// calling UnsafeImportAndReset().
-	logger := log.FromContext(ctx).With(
+	logger := log.Wrap(tidblogutil.Logger(ctx)).With(
 		zap.String("engineTag", "<import-and-reset>"),
 		zap.Stringer("engineUUID", engineUUID),
 	)
@@ -1633,7 +1773,7 @@ func (local *Backend) switchModeBySplitKeys(
 	ctx context.Context,
 	splitKeys [][]byte,
 ) (<-chan struct{}, error) {
-	switcher := NewTiKVModeSwitcher(local.tls.TLSConfig(), local.pdHTTPCli, log.FromContext(ctx).Logger)
+	switcher := NewTiKVModeSwitcher(local.tls.TLSConfig(), local.pdHTTPCli, tidblogutil.Logger(ctx))
 	done := make(chan struct{})
 
 	keyRange := &sst.Range{}
@@ -1783,7 +1923,7 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		if err == nil {
 			return regionSplitSize, regionSplitKeys, nil
 		}
-		log.FromContext(ctx).Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
+		tidblogutil.Logger(ctx).Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
 	}
 	return 0, 0, errors.New("get region split size and keys failed")
 }

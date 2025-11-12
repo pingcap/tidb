@@ -26,17 +26,19 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -66,7 +68,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/naming"
+	semv1 "github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
@@ -98,6 +102,7 @@ const (
 	fieldsDefinedNullByOption = "fields_defined_null_by"
 	linesTerminatedByOption   = "lines_terminated_by"
 	skipRowsOption            = "skip_rows"
+	groupKeyOption            = "group_key"
 	splitFileOption           = "split_file"
 	diskQuotaOption           = "disk_quota"
 	threadOption              = "thread"
@@ -116,7 +121,7 @@ const (
 	//
 	// default false for local sort, true for global sort.
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
-	cloudStorageURIOption       = "cloud_storage_uri"
+	cloudStorageURIOption       = ast.CloudStorageURI
 	disablePrecheckOption       = "disable_precheck"
 	// used for test
 	maxEngineSizeOption  = "__max_engine_size"
@@ -135,6 +140,7 @@ var (
 		fieldsDefinedNullByOption:   true,
 		linesTerminatedByOption:     true,
 		skipRowsOption:              true,
+		groupKeyOption:              true,
 		splitFileOption:             false,
 		diskQuotaOption:             true,
 		threadOption:                true,
@@ -167,6 +173,13 @@ var (
 		diskQuotaOption:       {},
 		maxWriteSpeedOption:   {},
 		cloudStorageURIOption: {},
+		threadOption:          {},
+	}
+
+	disallowedOptionsForSEM = map[string]struct{}{
+		maxEngineSizeOption:  {},
+		forceMergeStep:       {},
+		manualRecoveryOption: {},
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
@@ -245,6 +258,10 @@ type Plan struct {
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
 
+	// Location is used to convert time type for parquet, see
+	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
+	Location *time.Location
+
 	SQLMode mysql.SQLMode
 	// Charset is the charset of the data file when file is CSV or TSV.
 	// it might be nil when using LOAD DATA and no charset is specified.
@@ -273,6 +290,7 @@ type Plan struct {
 	MaxEngineSize         config.ByteSize
 	CloudStorageURI       string
 	DisablePrecheck       bool
+	GroupKey              string
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -295,6 +313,8 @@ type Plan struct {
 	ForceMergeStep bool
 	// see ManualRecovery in proto.ExtraParams
 	ManualRecovery bool
+	// the keyspace name when submitting this job, only for import-into
+	Keyspace string
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -306,6 +326,28 @@ type ASTArgs struct {
 	OnDuplicate        ast.OnDuplicateKeyHandlingType
 	FieldsInfo         *ast.FieldsClause
 	LinesInfo          *ast.LinesClause
+}
+
+// StepSummary records the number of data involved in each step.
+// The data stored might be inaccurate, such as the number of rows in encode step.
+type StepSummary struct {
+	Bytes  int64 `json:"input-bytes,omitempty"`
+	RowCnt int64 `json:"input-rows,omitempty"`
+}
+
+// Summary records the amount of data needed to be processed in each step of the import job.
+// And this information will be saved into tidb_import_jobs table after the job is finished.
+type Summary struct {
+	// EncodeSummary stores the bytes and rows needed to be processed in encode step.
+	// Same for other summaries.
+	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
+
+	MergeSummary StepSummary `json:"merge-summary,omitempty"`
+
+	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
+
+	// ImportedRows is the number of rows imported into TiKV.
+	ImportedRows int64 `json:"row-count,omitempty"`
 }
 
 // LoadDataController load data controller.
@@ -449,6 +491,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		FieldNullDef:   defaultFieldNullDef,
 		LineFieldsInfo: lineFieldsInfo,
 
+		Location:         userSctx.GetSessionVars().Location(),
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		ImportantSysVars: getImportantSysVars(userSctx),
 
@@ -456,6 +499,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		InImportInto:           true,
 		DataSourceType:         getDataSourceType(plan),
 		User:                   userSctx.GetSessionVars().User.String(),
+		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
@@ -521,8 +565,18 @@ func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
 	}, nil
 }
 
+// Option is used to set optional parameters for LoadDataController.
+type Option func(c *LoadDataController)
+
+// WithLogger sets the logger for LoadDataController.
+func WithLogger(logger *zap.Logger) Option {
+	return func(c *LoadDataController) {
+		c.logger = logger
+	}
+}
+
 // NewLoadDataController create new controller.
-func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*LoadDataController, error) {
+func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs, options ...Option) (*LoadDataController, error) {
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
@@ -532,6 +586,10 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 		logger:          logger,
 		ExecuteNodesCnt: 1,
 	}
+	for _, opt := range options {
+		opt(c)
+	}
+
 	if err := c.checkFieldParams(); err != nil {
 		return nil, err
 	}
@@ -584,11 +642,11 @@ func (e *LoadDataController) checkFieldParams() error {
 }
 
 func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, store tidbkv.Storage) {
-	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
+	var threadCnt int
+	threadCnt = int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
 	if p.DataSourceType == DataSourceTypeQuery {
 		threadCnt = 2
 	}
-
 	p.Checksum = config.OpLevelRequired
 	p.ThreadCnt = threadCnt
 	p.MaxWriteSpeed = unlimitedWriteSpeed
@@ -596,11 +654,18 @@ func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, sto
 	p.MaxRecordedErrors = 100
 	p.Detached = false
 	p.DisableTiKVImportMode = false
-	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
+	p.MaxEngineSize = getDefMaxEngineSize()
 	p.CloudStorageURI = handle.GetCloudStorageURI(ctx, store)
 
 	v := defaultCharacterSet
 	p.Charset = &v
+}
+
+func getDefMaxEngineSize() config.ByteSize {
+	if kerneltype.IsNextGen() {
+		return config.DefaultBatchSize
+	}
+	return config.ByteSize(defaultMaxEngineSize)
 }
 
 func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
@@ -626,10 +691,14 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	p.specifiedOptions = specifiedOptions
 
-	if kerneltype.IsNextGen() && sem.IsEnabled() {
+	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
+	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.
+	if kerneltype.IsNextGen() && semv1.IsEnabled() {
 		if p.DataSourceType == DataSourceTypeQuery {
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
 		}
+	}
+	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		// we put the check here, not in planner, to make sure the cloud_storage_uri
 		// won't change in between.
 		if p.IsLocalSort() {
@@ -638,6 +707,14 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		for k := range disallowedOptionsOfNextGen {
 			if _, ok := specifiedOptions[k]; ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "nextgen kernel")
+			}
+		}
+	}
+
+	if sem.IsEnabled() {
+		for k := range disallowedOptionsForSEM {
+			if _, ok := specifiedOptions[k]; ok {
+				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "SEM enabled")
 			}
 		}
 	}
@@ -771,6 +848,13 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
+	if opt, ok := specifiedOptions[groupKeyOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil || v == "" || naming.CheckWithMaxLen(v, 256) != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.GroupKey = v
+	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
 		vInt, err := optAsInt64(opt)
 		if err != nil || vInt < -1 {
@@ -822,10 +906,12 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		p.ManualRecovery = true
 	}
 
-	if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
-		p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
-		if p.MaxNodeCnt == -1 { // -1 means calculate automatically
-			p.MaxNodeCnt = ddl.GetDXFDefaultMaxNodeCntAuto(seCtx.GetStore())
+	if kerneltype.IsClassic() {
+		if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+			p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
+			if p.MaxNodeCnt == -1 { // -1 means calculate automatically
+				p.MaxNodeCnt = scheduler.CalcMaxNodeCountByStoresNum(ctx, seCtx.GetStore())
+			}
 		}
 	}
 
@@ -1121,6 +1207,34 @@ func initExternalStore(ctx context.Context, u *url.URL, target string) (storage.
 	return s, nil
 }
 
+func estimateCompressionRatio(
+	ctx context.Context,
+	filePath string,
+	fileSize int64,
+	tp mydump.SourceType,
+	store storage.ExternalStorage,
+) (float64, error) {
+	if tp != mydump.SourceTypeParquet {
+		return 1.0, nil
+	}
+	failpoint.Inject("skipEstimateCompressionForParquet", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(2.0, nil)
+		}
+	})
+	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
+	if err != nil {
+		return 1.0, err
+	}
+	// No row in the file, use 2.0 as default compression ratio.
+	if rowSize == 0 || rows == 0 {
+		return 2.0, nil
+	}
+
+	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
+	return compressionRatio, nil
+}
+
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
@@ -1172,8 +1286,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-		totalSize  int64
-		sourceType mydump.SourceType
+		totalSize        int64
+		sourceType       mydump.SourceType
+		compressionRatio = 1.0
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1190,10 +1305,14 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}()
 		size, err3 := fileReader.Seek(0, io.SeekEnd)
 		if err3 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "failed to read file size by seek")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err3), "failed to read file size by seek")
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
+		compressionRatio, err := estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
@@ -1202,6 +1321,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Type:        sourceType,
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
 		totalSize = size
 	} else {
@@ -1219,26 +1339,34 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		allFiles := make([]mydump.RawFile, 0, 16)
 		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
-				// we have checked in LoadDataExec.Next
-				//nolint: errcheck
-				match, _ := filepath.Match(escapedPath, remotePath)
-				if !match {
-					return nil
-				}
-				// pick arbitrary one file to detect the format.
-				e.detectAndUpdateFormat(remotePath)
-				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
-				totalSize += size
 				return nil
 			}); err != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to walk dir")
 		}
 
 		var err error
-		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
+		var processedFiles []*mydump.SourceFileMeta
+		var once sync.Once
+		if processedFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
+				// we have checked in LoadDataExec.Next
+				//nolint: errcheck
+				match, _ := filepath.Match(escapedPath, f.Path)
+				if !match {
+					return nil, nil
+				}
 				path, size := f.Path, f.Size
+				// pick arbitrary one file to detect the format.
+				var err2 error
+				once.Do(func() {
+					e.detectAndUpdateFormat(path)
+					sourceType = e.getSourceType()
+					compressionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+				})
+				if err2 != nil {
+					return nil, err2
+				}
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
@@ -1247,9 +1375,17 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Type:        sourceType,
 				}
 				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
+		}
+		// filter unmatch files
+		for _, f := range processedFiles {
+			if f != nil {
+				dataFiles = append(dataFiles, f)
+				totalSize += f.FileSize
+			}
 		}
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
@@ -1260,6 +1396,48 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
+
+	return nil
+}
+
+// CalResourceParams calculates resource related parameters according to the total
+// file size and target node cpu count.
+func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []byte) error {
+	start := time.Now()
+	targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
+	if err != nil {
+		return err
+	}
+	factors, err := handle.GetScheduleTuneFactors(ctx, e.Keyspace)
+	if err != nil {
+		return err
+	}
+	totalSize := e.TotalFileSize
+	failpoint.InjectCall("mockImportDataSize", &totalSize)
+	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
+	var indexSizeRatio float64
+	if numOfIndexGenKV > 0 {
+		indexSizeRatio, err = e.sampleIndexSizeRatio(ctx, ksCodec)
+		if err != nil {
+			e.logger.Warn("meet error when sampling index size ratio", zap.Error(err))
+		}
+	}
+	cal := scheduler.NewRCCalc(totalSize, targetNodeCPUCnt, indexSizeRatio, factors)
+	e.ThreadCnt = cal.CalcConcurrency()
+	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
+	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
+	e.logger.Info("auto calculate resource related params",
+		zap.Int("thread", e.ThreadCnt),
+		zap.Int("maxNode", e.MaxNodeCnt),
+		zap.Int("distsqlScanConcurrency", e.DistSQLScanConcurrency),
+		zap.Int("targetNodeCPU", targetNodeCPUCnt),
+		zap.String("totalFileSize", units.BytesSize(float64(totalSize))),
+		zap.Int("fileCount", len(e.dataFiles)),
+		zap.Int("numOfIndexGenKV", numOfIndexGenKV),
+		zap.Float64("indexSizeRatio", indexSizeRatio),
+		zap.Float64("amplifyFactor", factors.AmplifyFactor),
+		zap.Duration("costTime", time.Since(start)),
+	)
 	return nil
 }
 
@@ -1373,6 +1551,7 @@ func (e *LoadDataController) GetParser(
 			e.dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.ParquetMeta,
 		)
 	}
 	if err != nil {
@@ -1498,7 +1677,7 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 	return res, allWarnings, nil
 }
 
-func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
+func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
@@ -1518,7 +1697,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		TiKVWorkerURL:               tidb.GetGlobalConfig().TiKVWorkerURL,
 		StoreWriteBWLimit:           int(e.MaxWriteSpeed),
 		MaxOpenFiles:                int(tidbutil.GenRLimit("table_import")),
-		KeyspaceName:                tidb.GetGlobalKeyspaceName(),
+		KeyspaceName:                keyspace,
 		PausePDSchedulerScope:       config.PausePDSchedulerScopeTable,
 		DisableAutomaticCompactions: true,
 		BlockSize:                   config.DefaultBlockSize,
@@ -1539,12 +1718,6 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 		return DataSourceTypeQuery
 	}
 	return DataSourceTypeFile
-}
-
-// JobImportResult is the result of the job import.
-type JobImportResult struct {
-	Affected uint64
-	Warnings []contextutil.SQLWarn
 }
 
 // GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.
@@ -1568,6 +1741,3 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 	}
 	return handle.GetCPUCountOfNode(ctx)
 }
-
-// TestSyncCh is used in unit test to synchronize the execution.
-var TestSyncCh = make(chan struct{})

@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -70,7 +70,7 @@ type IndexLookUpMergeJoin struct {
 	KeyOff2IdxOff []int
 
 	// LastColHelper store the information for last col if there's complicated filter like col > x_col and col < x_col + 100.
-	LastColHelper *plannercore.ColWithCmpFuncManager
+	LastColHelper *physicalop.ColWithCmpFuncManager
 
 	memTracker *memory.Tracker // track memory usage
 	prepared   bool
@@ -127,7 +127,7 @@ type outerMergeWorker struct {
 	maxBatchSize int
 	batchSize    int
 
-	nextColCompareFilters *plannercore.ColWithCmpFuncManager
+	nextColCompareFilters *physicalop.ColWithCmpFuncManager
 
 	resultCh chan<- *lookUpMergeJoinTask
 	innerCh  chan<- *lookUpMergeJoinTask
@@ -148,7 +148,7 @@ type innerMergeWorker struct {
 
 	maxChunkSize          int
 	indexRanges           []*ranger.Range
-	nextColCompareFilters *plannercore.ColWithCmpFuncManager
+	nextColCompareFilters *physicalop.ColWithCmpFuncManager
 	keyOff2IdxOff         []int
 }
 

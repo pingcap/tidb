@@ -28,6 +28,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/session"
@@ -1704,9 +1705,9 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
-		selection, ok := p.(*plannercore.Update).SelectPlan.(*plannercore.PhysicalSelection)
+		selection, ok := p.(*physicalop.Update).SelectPlan.(*physicalop.PhysicalSelection)
 		require.True(t, ok)
-		_, ok = selection.Children()[0].(*plannercore.PointGetPlan)
+		_, ok = selection.Children()[0].(*physicalop.PointGetPlan)
 		require.True(t, ok)
 	})
 
@@ -1723,9 +1724,9 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
-		del := p.(*plannercore.Delete)
+		del := p.(*physicalop.Delete)
 		require.Equal(t, "PointGet(Index(test6.uk_expr)[KindUint64 32 KindInt64 45])->Sel([eq(test.test6.b, 46)])->Projection", plannercore.ToString(del.SelectPlan))
-		proj := del.SelectPlan.(*plannercore.PhysicalProjection)
+		proj := del.SelectPlan.(*physicalop.PhysicalProjection)
 		//nolint: printexpression
 		require.Equal(t, "[test.test6.id test.test6.a tidb_shard(test.test6.a)]", fmt.Sprintf("%v", proj.Exprs))
 	})
@@ -2125,17 +2126,17 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
-		"[or(eq(test.t2.a, aaa), eq(test.t2.a, ccc))]",
-		"[eq(test.t2.c, eee) or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd)))]",
-		"[[\"aa\",\"aa\"] [\"cc\",\"cc\"]]")
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) eq(test.t2.c, eee)]",
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) eq(test.t2.c, eee)]",
+		`[["aa" "bb" "ee","aa" "bb" "ee"] ["cc" "dd" "ee","cc" "dd" "ee"]]`)
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
-		"[]",
-		"[eq(test.t2.c, eee) or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) or(eq(test.t2.a, aaa), eq(test.t2.a, ccc))]",
-		"[[NULL,+inf]]")
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd)))]",
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) eq(test.t2.c, eee)]",
+		`[["aa" "bb","aa" "bb"] ["cc" "dd","cc" "dd"]]`)
 	checkRangeFallbackAndReset(t, sctx, true)
 }
 
@@ -2389,9 +2390,9 @@ func TestIssue40997(t *testing.T) {
         )
     )
 	`).Check(testkit.Rows(
-		"IndexLookUp_7 1.25 root  ",
-		"├─IndexRangeScan_5(Build) 1.25 cop[tikv] table:t71706696, index:dt_2(dt, db_id, tbl_id) range:(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf], [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_6(Probe) 1.25 cop[tikv] table:t71706696 keep order:false, stats:pseudo",
+		"IndexLookUp_8 1.25 root  ",
+		"├─IndexRangeScan_6(Build) 1.25 cop[tikv] table:t71706696, index:dt_2(dt, db_id, tbl_id) range:(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf], [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_7(Probe) 1.25 cop[tikv] table:t71706696 keep order:false, stats:pseudo",
 	))
 }
 

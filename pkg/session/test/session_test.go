@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -57,6 +58,9 @@ import (
 )
 
 func TestSchemaCheckerSQL(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 
 	setTxnTk := testkit.NewTestKit(t, store)
@@ -705,6 +709,10 @@ func TestRequestSource(t *testing.T) {
 				case *kvrpcpb.BatchGetRequest:
 					readType = "leader_" // read request will be attached with read type
 					requestSource = r.GetContext().GetRequestSource()
+				case *kvrpcpb.PessimisticLockRequest:
+					requestSource = r.GetContext().GetRequestSource()
+				default:
+					fmt.Printf("unexpected request type %T\n", r)
 				}
 				require.Equal(t, readType+source, requestSource)
 				return next(target, req)

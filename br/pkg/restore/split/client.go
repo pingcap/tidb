@@ -28,10 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	brlog "github.com/pingcap/tidb/pkg/lightning/log"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
@@ -502,7 +502,7 @@ func (c *pdClient) waitRegionsSplit(ctx context.Context, newRegions []*RegionInf
 			ok, err := c.hasHealthyRegion(ctx, regionID)
 			if !ok || err != nil {
 				if err != nil {
-					brlog.FromContext(ctx).Warn(
+					tidblogutil.Logger(ctx).Warn(
 						"wait for split failed",
 						zap.Uint64("regionID", regionID),
 						zap.Error(err),
@@ -671,7 +671,7 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, 
 			}
 			err = c.waitRegionsSplit(ctx, newRegionsOfBatch)
 			if err != nil {
-				brlog.FromContext(ctx).Warn(
+				tidblogutil.Logger(ctx).Warn(
 					"wait regions split failed, will continue anyway",
 					zap.Error(err),
 				)
@@ -681,7 +681,7 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, 
 			}
 			err = c.scatterRegions(ctx, newRegionsOfBatch)
 			if err != nil {
-				brlog.FromContext(ctx).Warn(
+				tidblogutil.Logger(ctx).Warn(
 					"scatter regions failed, will continue anyway",
 					zap.Error(err),
 				)
@@ -887,7 +887,7 @@ func (c *pdClient) WaitRegionsScattered(ctx context.Context, regions []*RegionIn
 			if retryCnt > 10 && !loggedInThisRound {
 				loggedInThisRound = true
 				resp, err := c.GetOperator(ctx, regionID)
-				brlog.FromContext(ctx).Info(
+				tidblogutil.Logger(ctx).Info(
 					"retried many times to wait for scattering regions, checking operator",
 					zap.Int("retryCnt", retryCnt),
 					zap.Uint64("firstRegionID", regionID),
@@ -899,7 +899,7 @@ func (c *pdClient) WaitRegionsScattered(ctx context.Context, regions []*RegionIn
 			ok, rescatter, err := c.isScatterRegionFinished(ctx, regionID)
 			if err != nil {
 				if !common.IsRetryableError(err) {
-					brlog.FromContext(ctx).Warn(
+					tidblogutil.Logger(ctx).Warn(
 						"wait for scatter region encountered non-retryable error",
 						logutil.Region(region.Region),
 						zap.Error(err),
@@ -908,7 +908,7 @@ func (c *pdClient) WaitRegionsScattered(ctx context.Context, regions []*RegionIn
 					return err
 				}
 				// if meet retryable error, recheck this region in next round
-				brlog.FromContext(ctx).Warn(
+				tidblogutil.Logger(ctx).Warn(
 					"wait for scatter region encountered error, will retry again",
 					logutil.Region(region.Region),
 					zap.Error(err),

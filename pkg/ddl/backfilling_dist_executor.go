@@ -21,12 +21,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
 )
@@ -48,6 +50,7 @@ type BackfillTaskMeta struct {
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
+	MergeTempIndex  bool   `json:"merge_temp_index"`
 
 	Version int `json:"version,omitempty"`
 }
@@ -145,9 +148,28 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	jobMeta := &s.taskMeta.Job
 	ddlObj := s.d
 
+	store := ddlObj.store
+	sessPool := ddlObj.sessPool
+	taskKS := s.task.Keyspace
+	if ddlObj.store.GetKeyspace() != taskKS {
+		var err error
+		err = s.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
+			svr := se.GetSQLServer()
+			store, err = svr.GetKSStore(taskKS)
+			if err != nil {
+				return err
+			}
+			sp, err := svr.GetKSSessPool(taskKS)
+			sessPool = sess.NewSessionPool(sp)
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
 	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
 	// we should move this operation out of GetStepExecutor, and put into Init.
-	_, tblIface, err := ddlObj.getTableByTxn(ddlObj.ddlCtx.getAutoIDRequirement(), jobMeta.SchemaID, jobMeta.TableID)
+	_, tblIface, err := getTableByTxn(ddlObj.ctx, store, jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
 	}
@@ -172,14 +194,16 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
-		return newMergeSortExecutor(jobMeta.ID, indexInfos, tbl, cloudStorageURI)
+		return newMergeSortExecutor(store, jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, ddlObj.store, indexInfos, tbl, cloudStorageURI, s.GetTaskBase().Concurrency)
+		return newCloudImportExecutor(jobMeta, store, indexInfos, tbl, cloudStorageURI, s.GetTaskBase().Concurrency)
+	case proto.BackfillStepMergeTempIndex:
+		return newMergeTempIndexExecutor(jobMeta, store, tbl)
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
@@ -193,7 +217,11 @@ type backfillDistExecutor struct {
 	taskMeta *BackfillTaskMeta
 }
 
-func newBackfillDistExecutor(ctx context.Context, task *proto.Task, param taskexecutor.Param, d *ddl) taskexecutor.TaskExecutor {
+func newBackfillDistExecutor(
+	ctx context.Context,
+	task *proto.Task,
+	param taskexecutor.Param,
+	d *ddl) taskexecutor.TaskExecutor {
 	s := &backfillDistExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, task, param),
 		d:                d,
@@ -221,7 +249,10 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
 	switch task.Step {
-	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
+	case proto.BackfillStepReadIndex,
+		proto.BackfillStepMergeSort,
+		proto.BackfillStepWriteAndIngest,
+		proto.BackfillStepMergeTempIndex:
 		return s.newBackfillStepExecutor(task.Step)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)

@@ -16,6 +16,7 @@ import (
 	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	storage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	sessionctx "github.com/pingcap/tidb/pkg/sessionctx"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -107,6 +108,21 @@ func (mr *MockTaskTableMockRecorder) GetFirstSubtaskInStates(arg0, arg1, arg2, a
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{arg0, arg1, arg2, arg3}, arg4...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetFirstSubtaskInStates", reflect.TypeOf((*MockTaskTable)(nil).GetFirstSubtaskInStates), varargs...)
+}
+
+// GetSubtaskCheckpoint mocks base method.
+func (m *MockTaskTable) GetSubtaskCheckpoint(arg0 context.Context, arg1 int64) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetSubtaskCheckpoint", arg0, arg1)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetSubtaskCheckpoint indicates an expected call of GetSubtaskCheckpoint.
+func (mr *MockTaskTableMockRecorder) GetSubtaskCheckpoint(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskCheckpoint", reflect.TypeOf((*MockTaskTable)(nil).GetSubtaskCheckpoint), arg0, arg1)
 }
 
 // GetSubtasksByExecIDAndStepAndStates mocks base method.
@@ -264,6 +280,20 @@ func (mr *MockTaskTableMockRecorder) StartSubtask(arg0, arg1, arg2 any) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartSubtask", reflect.TypeOf((*MockTaskTable)(nil).StartSubtask), arg0, arg1, arg2)
 }
 
+// UpdateSubtaskCheckpoint mocks base method.
+func (m *MockTaskTable) UpdateSubtaskCheckpoint(arg0 context.Context, arg1 int64, arg2 any) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateSubtaskCheckpoint", arg0, arg1, arg2)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateSubtaskCheckpoint indicates an expected call of UpdateSubtaskCheckpoint.
+func (mr *MockTaskTableMockRecorder) UpdateSubtaskCheckpoint(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSubtaskCheckpoint", reflect.TypeOf((*MockTaskTable)(nil).UpdateSubtaskCheckpoint), arg0, arg1, arg2)
+}
+
 // UpdateSubtaskStateAndError mocks base method.
 func (m *MockTaskTable) UpdateSubtaskStateAndError(arg0 context.Context, arg1 string, arg2 int64, arg3 proto.SubtaskState, arg4 error) error {
 	m.ctrl.T.Helper()
@@ -276,6 +306,20 @@ func (m *MockTaskTable) UpdateSubtaskStateAndError(arg0 context.Context, arg1 st
 func (mr *MockTaskTableMockRecorder) UpdateSubtaskStateAndError(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSubtaskStateAndError", reflect.TypeOf((*MockTaskTable)(nil).UpdateSubtaskStateAndError), arg0, arg1, arg2, arg3, arg4)
+}
+
+// WithNewSession mocks base method.
+func (m *MockTaskTable) WithNewSession(arg0 func(sessionctx.Context) error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WithNewSession", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// WithNewSession indicates an expected call of WithNewSession.
+func (mr *MockTaskTableMockRecorder) WithNewSession(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WithNewSession", reflect.TypeOf((*MockTaskTable)(nil).WithNewSession), arg0)
 }
 
 // MockTaskExecutor is a mock of TaskExecutor interface.

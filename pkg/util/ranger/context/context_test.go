@@ -37,7 +37,6 @@ func TestContextDetach(t *testing.T) {
 		PlanCacheTracker:         &planCacheTracker,
 		OptimizerFixControl:      map[uint64]string{1: "a"},
 		UseCache:                 true,
-		InPreparedPlanBuilding:   true,
 		RegardNULLAsPoint:        true,
 		OptPrefixIndexSingleScan: true,
 	}
