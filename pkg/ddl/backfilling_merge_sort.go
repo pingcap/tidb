@@ -16,9 +16,11 @@ package ddl
 
 import (
 	"context"
+	goerrors "errors"
 	"path"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
@@ -43,6 +46,8 @@ type mergeSortExecutor struct {
 	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
 	cloudStoreURI string
+
+	mergeOp atomic.Pointer[external.MergeOperator]
 
 	mu                  sync.Mutex
 	subtaskSortedKVMeta *external.SortedKVMeta
@@ -103,9 +108,9 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	memSizePerCon := res.Mem.Capacity() / res.CPU.Capacity()
 	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/external.MaxUploadPartCount)
 
-	err = external.MergeOverlappingFiles(
-		ctx,
-		sm.DataFiles,
+	wctx := workerpool.NewContext(ctx)
+	op := external.NewMergeOperator(
+		wctx,
 		objStore,
 		partSize,
 		prefix,
@@ -116,6 +121,19 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		true,
 		engineapi.OnDuplicateKeyError,
 	)
+
+	m.mergeOp.Store(op)
+	defer m.mergeOp.Store(nil)
+
+	failpoint.InjectCall("mergeOverlappingFiles", op)
+
+	err = external.MergeOverlappingFiles(
+		wctx,
+		sm.DataFiles,
+		subtask.Concurrency, // the concurrency used to split subtask
+		op,
+	)
+
 	failpoint.Inject("mockMergeSortRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
 	})
@@ -155,7 +173,21 @@ func (m *mergeSortExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return m.summary
 }
 
-func (*mergeSortExecutor) ResourceModified(_ context.Context, _ *proto.StepResource) error {
-	// Will be added in the future PR
+func (m *mergeSortExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {
+	currOp := m.mergeOp.Load()
+	if currOp == nil {
+		// let framework retry
+		return goerrors.New("no subtask running")
+	}
+
+	targetConcurrency := int32(newResource.CPU.Capacity())
+	currentConcurrency := currOp.GetWorkerPoolSize()
+	// TODO(joechenrh): Currently, the worker pool size matches the task count for most times,
+	// so wait here blocks until the subtask finish. Maybe we may improve this later by killing
+	// tasks directly when reducing workers if tasks are idempotent.
+	if targetConcurrency != currentConcurrency {
+		currOp.TuneWorkerPoolSize(targetConcurrency, true)
+	}
+
 	return nil
 }

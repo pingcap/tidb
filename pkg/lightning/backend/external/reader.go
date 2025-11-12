@@ -32,11 +32,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// ReaderSummary is used to collect some statistics during reading.
-type ReaderSummary struct {
-	GetRequestCount uint64
-}
-
 func readAllData(
 	ctx context.Context,
 	store storage.ExternalStorage,

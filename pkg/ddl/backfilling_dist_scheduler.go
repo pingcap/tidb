@@ -669,6 +669,7 @@ func generateMergeSortPlan(
 			break
 		}
 	}
+
 	if allSkip {
 		logger.Info("skip merge sort")
 		return nil, nil
