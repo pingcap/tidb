@@ -497,6 +497,97 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
 }
 
+func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
+	testutil.ReduceCheckInterval(t)
+
+	server, cloudStorageURI := genServerWithStorage(t)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+	})
+
+	tk.MustExec("drop database if exists testalter;")
+	tk.MustExec("create database testalter;")
+	tk.MustExec("use testalter;")
+	tk.MustExec("create table gsort(a bigint auto_random primary key);")
+	for range 16 {
+		tk.MustExec("insert into gsort values (), (), (), ()")
+	}
+	tk.MustExec("split table gsort between (3) and (8646911284551352360) regions 50;")
+
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
+	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 32")
+	tk.MustExec("set global tidb_ddl_reorg_max_write_speed = '256MiB'")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
+	})
+
+	var (
+		modifiedReadIndex atomic.Bool
+		modifiedMerge     atomic.Bool
+	)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return(true)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func(step proto.Step) {
+		switch step {
+		case proto.BackfillStepReadIndex:
+			modifiedReadIndex.Store(true)
+		case proto.BackfillStepMergeSort:
+			modifiedMerge.Store(true)
+		}
+	})
+
+	var pipeClosed bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
+		pipeClosed = true
+		reader, writer := pipe.GetReaderAndWriter()
+		require.EqualValues(t, 4, reader.GetWorkerPoolSize())
+		require.EqualValues(t, 6, writer.GetWorkerPoolSize())
+	})
+
+	// Change the batch size and concurrency during table scanning and check the modified parameters.
+	var onceScan sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func(reorgMeta *model.DDLReorgMeta) {
+		onceScan.Do(func() {
+			tk1 := testkit.NewTestKit(t, store)
+			rows := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+			require.Len(t, rows, 1)
+			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 8, batch_size = 256", rows[0][0]))
+			require.Eventually(t, func() bool {
+				return modifiedReadIndex.Load()
+			}, 30*time.Second, 100*time.Millisecond)
+			require.Equal(t, 256, reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+		})
+	})
+
+	// Change the concurrency during merge sort and check the modified parameters.
+	var onceMerge sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mergeOverlappingFiles", func(op *external.MergeOperator) {
+		onceMerge.Do(func() {
+			tk1 := testkit.NewTestKit(t, store)
+			rows := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+			require.Len(t, rows, 1)
+			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 2", rows[0][0]))
+			require.Eventually(t, func() bool {
+				return modifiedMerge.Load()
+			}, 30*time.Second, 100*time.Millisecond)
+			require.EqualValues(t, 2, op.GetWorkerPoolSize())
+		})
+	})
+
+	tk.MustExec("alter table gsort add index idx(a)")
+	require.True(t, pipeClosed)
+	require.True(t, modifiedReadIndex.Load())
+	require.True(t, modifiedMerge.Load())
+	tk.MustExec("admin check index gsort idx")
+}
+
 func TestSplitRangeForTable(t *testing.T) {
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{

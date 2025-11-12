@@ -77,52 +77,10 @@ type opSessPool interface {
 	Put(sessionctx.Context)
 }
 
-// OperatorCtx is the context for AddIndexIngestPipeline.
-// This is used to cancel the pipeline and collect errors.
-type OperatorCtx struct {
-	context.Context
-	cancel context.CancelFunc
-	err    atomic.Pointer[error]
-}
-
-// NewDistTaskOperatorCtx is used for adding index with dist framework.
-func NewDistTaskOperatorCtx(
-	ctx context.Context,
-	taskID, subtaskID int64,
-) (*OperatorCtx, context.CancelFunc) {
-	opCtx, cancel := context.WithCancel(ctx)
-	opCtx = logutil.WithFields(opCtx,
-		zap.Int64("task-id", taskID),
-		zap.Int64("subtask-id", subtaskID))
-	return &OperatorCtx{
-		Context: opCtx,
-		cancel:  cancel,
-	}, cancel
-}
-
-// NewLocalOperatorCtx is used for adding index with local ingest mode.
-func NewLocalOperatorCtx(ctx context.Context, jobID int64) (*OperatorCtx, context.CancelFunc) {
-	opCtx, cancel := context.WithCancel(ctx)
-	opCtx = logutil.WithFields(opCtx, zap.Int64("jobID", jobID))
-	return &OperatorCtx{
-		Context: opCtx,
-		cancel:  cancel,
-	}, cancel
-}
-
-func (ctx *OperatorCtx) onError(err error) {
-	tracedErr := errors.Trace(err)
-	ctx.err.CompareAndSwap(nil, &tracedErr)
-	ctx.cancel()
-}
-
-// OperatorErr returns the error of the operator.
-func (ctx *OperatorCtx) OperatorErr() error {
-	err := ctx.err.Load()
-	if err == nil {
-		return nil
-	}
-	return *err
+// NewLocalWorkerCtx is used for adding index with local ingest mode.
+func NewLocalWorkerCtx(ctx context.Context, jobID int64) *workerpool.Context {
+	ctx = logutil.WithFields(ctx, zap.Int64("jobID", jobID))
+	return workerpool.NewContext(ctx)
 }
 
 var (
@@ -151,7 +109,7 @@ var MockDMLExecutionBeforeScan func()
 
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
-	ctx *OperatorCtx,
+	ctx *workerpool.Context,
 	store kv.Storage,
 	sessPool opSessPool,
 	backendCtx ingest.BackendCtx,
@@ -208,7 +166,7 @@ func NewAddIndexIngestPipeline(
 
 // NewWriteIndexToExternalStoragePipeline creates a pipeline for writing index to external storage.
 func NewWriteIndexToExternalStoragePipeline(
-	ctx *OperatorCtx,
+	ctx *workerpool.Context,
 	store kv.Storage,
 	extStoreURI string,
 	sessPool opSessPool,
@@ -294,14 +252,12 @@ type TableScanTask struct {
 	Start kv.Key
 	End   kv.Key
 
-	ctx *OperatorCtx
+	ctx *workerpool.Context
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (t TableScanTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return metrics.LblAddIndex, "RecoverArgs", func() {
-		t.ctx.onError(dbterror.ErrReorgPanic)
-	}, false
+func (TableScanTask) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return metrics.LblAddIndex, "TableScanTask", dbterror.ErrReorgPanic
 }
 
 // String implement fmt.Stringer interface.
@@ -316,19 +272,16 @@ type IndexRecordChunk struct {
 	Chunk *chunk.Chunk
 	Err   error
 	Done  bool
-	ctx   *OperatorCtx
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (t IndexRecordChunk) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return metrics.LblAddIndex, "RecoverArgs", func() {
-		t.ctx.onError(dbterror.ErrReorgPanic)
-	}, false
+func (IndexRecordChunk) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return metrics.LblAddIndex, "IndexRecordChunk", dbterror.ErrReorgPanic
 }
 
 // TableScanTaskSource produces TableScanTask by splitting table records into ranges.
 type TableScanTaskSource struct {
-	ctx *OperatorCtx
+	ctx *workerpool.Context
 
 	errGroup errgroup.Group
 	sink     operator.DataChannel[TableScanTask]
@@ -343,7 +296,7 @@ type TableScanTaskSource struct {
 
 // NewTableScanTaskSource creates a new TableScanTaskSource.
 func NewTableScanTaskSource(
-	ctx *OperatorCtx,
+	ctx *workerpool.Context,
 	store kv.Storage,
 	physicalTable table.PhysicalTable,
 	startKey kv.Key,
@@ -489,7 +442,7 @@ type TableScanOperator struct {
 
 // NewTableScanOperator creates a new TableScanOperator.
 func NewTableScanOperator(
-	ctx *OperatorCtx,
+	ctx *workerpool.Context,
 	sessPool opSessPool,
 	copCtx copr.CopContext,
 	srcChkPool *sync.Pool,
@@ -532,7 +485,7 @@ func (o *TableScanOperator) Close() error {
 }
 
 type tableScanWorker struct {
-	ctx        *OperatorCtx
+	ctx        *workerpool.Context
 	copCtx     copr.CopContext
 	sessPool   opSessPool
 	se         *session.Session
@@ -544,7 +497,7 @@ type tableScanWorker struct {
 	totalCount    *atomic.Int64
 }
 
-func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecordChunk)) {
+func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecordChunk)) error {
 	failpoint.Inject("injectPanicForTableScan", func() {
 		panic("mock panic")
 	})
@@ -552,21 +505,23 @@ func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecord
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
 			logutil.Logger(w.ctx).Error("tableScanWorker get session from pool failed", zap.Error(err))
-			w.ctx.onError(err)
-			return
+			return err
 		}
 		w.se = session.NewSession(sessCtx)
 	}
-	w.scanRecords(task, sender)
+
+	return w.scanRecords(task, sender)
 }
 
-func (w *tableScanWorker) Close() {
+func (w *tableScanWorker) Close() error {
 	if w.se != nil {
 		w.sessPool.Put(w.se.Context)
 	}
+
+	return nil
 }
 
-func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) {
+func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) error {
 	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.Stringer("task", task))
 
@@ -592,7 +547,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				terror.Call(rs.Close)
 				return err
 			}
-			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx}
+			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done}
 			if w.cpOp != nil {
 				w.cpOp.UpdateChunk(task.ID, srcChk.NumRows(), done)
 			}
@@ -601,9 +556,8 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		}
 		return rs.Close()
 	})
-	if err != nil {
-		w.ctx.onError(err)
-	}
+
+	return err
 }
 
 func (w *tableScanWorker) getChunk() *chunk.Chunk {
@@ -633,7 +587,7 @@ type WriteExternalStoreOperator struct {
 
 // NewWriteExternalStoreOperator creates a new WriteExternalStoreOperator.
 func NewWriteExternalStoreOperator(
-	ctx *OperatorCtx,
+	ctx *workerpool.Context,
 	copCtx copr.CopContext,
 	sessPool opSessPool,
 	jobID int64,
@@ -717,7 +671,7 @@ type IndexIngestOperator struct {
 
 // NewIndexIngestOperator creates a new IndexIngestOperator.
 func NewIndexIngestOperator(
-	ctx *OperatorCtx,
+	ctx *workerpool.Context,
 	copCtx copr.CopContext,
 	backendCtx ingest.BackendCtx,
 	sessPool opSessPool,
@@ -743,7 +697,7 @@ func NewIndexIngestOperator(
 				writer, err := engines[i].CreateWriter(writerID, writerCfg)
 				if err != nil {
 					logutil.Logger(ctx).Error("create index ingest worker failed", zap.Error(err))
-					ctx.onError(err)
+					ctx.OnError(err)
 					return nil
 				}
 				writers = append(writers, writer)
@@ -776,7 +730,7 @@ type indexIngestExternalWorker struct {
 	rowCntListener RowCountListener
 }
 
-func (w *indexIngestExternalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
+func (w *indexIngestExternalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) error {
 	defer func() {
 		if ck.Chunk != nil {
 			w.srcChunkPool.Put(ck.Chunk)
@@ -784,11 +738,11 @@ func (w *indexIngestExternalWorker) HandleTask(ck IndexRecordChunk, send func(In
 	}()
 	rs, err := w.indexIngestBaseWorker.HandleTask(ck)
 	if err != nil {
-		w.ctx.onError(err)
-		return
+		return err
 	}
 	w.rowCntListener.Written(rs.Added)
 	send(rs)
+	return nil
 }
 
 type indexIngestLocalWorker struct {
@@ -797,7 +751,7 @@ type indexIngestLocalWorker struct {
 	rowCntListener RowCountListener
 }
 
-func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
+func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) error {
 	defer func() {
 		if ck.Chunk != nil {
 			w.srcChunkPool.Put(ck.Chunk)
@@ -805,24 +759,23 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 	}()
 	rs, err := w.indexIngestBaseWorker.HandleTask(ck)
 	if err != nil {
-		w.ctx.onError(err)
-		return
+		return err
 	}
 	if rs.Added == 0 {
-		return
+		return nil
 	}
 	w.rowCntListener.Written(rs.Added)
 	err = w.backendCtx.IngestIfQuotaExceeded(w.ctx, ck.ID, rs.Added)
 	if err != nil {
-		w.ctx.onError(err)
-		return
+		return err
 	}
 	rs.Total = w.backendCtx.TotalKeyCount()
 	send(rs)
+	return nil
 }
 
 type indexIngestBaseWorker struct {
-	ctx *OperatorCtx
+	ctx *workerpool.Context
 
 	tbl       table.PhysicalTable
 	indexes   []table.Index
@@ -848,7 +801,6 @@ func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk) (IndexWriteResul
 	w.initSessCtx()
 	count, _, err := w.WriteChunk(&rs)
 	if err != nil {
-		w.ctx.onError(err)
 		return result, err
 	}
 	if count == 0 {
@@ -865,40 +817,41 @@ func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk) (IndexWriteResul
 	return result, nil
 }
 
-func (w *indexIngestBaseWorker) initSessCtx() {
+func (w *indexIngestBaseWorker) initSessCtx() error {
 	if w.se == nil {
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
-			w.ctx.onError(err)
-			return
+			return err
 		}
 		w.restore = restoreSessCtx(sessCtx)
 		if err := initSessCtx(sessCtx, w.reorgMeta); err != nil {
-			w.ctx.onError(err)
-			return
+			return err
 		}
 		w.se = session.NewSession(sessCtx)
 	}
+
+	return nil
 }
 
-func (w *indexIngestBaseWorker) Close() {
+func (w *indexIngestBaseWorker) Close() error {
 	// TODO(lance6716): unify the real write action for engineInfo and external
 	// writer.
+	var gerr error
 	for i, writer := range w.writers {
 		ew, ok := writer.(*external.Writer)
 		if !ok {
 			break
 		}
-		err := ew.Close(w.ctx)
-		if err != nil {
-			err = ingest.TryConvertToKeyExistsErr(err, w.indexes[i].Meta(), w.tbl.Meta())
-			w.ctx.onError(err)
+		if err := ew.Close(w.ctx); err != nil {
+			gerr = ingest.TryConvertToKeyExistsErr(err, w.indexes[i].Meta(), w.tbl.Meta())
 		}
 	}
 	if w.se != nil {
 		w.restore(w.se.Context)
 		w.sessPool.Put(w.se.Context)
 	}
+
+	return gerr
 }
 
 // WriteChunk will write index records to lightning engine.
@@ -921,7 +874,7 @@ func (w *indexIngestBaseWorker) WriteChunk(rs *IndexRecordChunk) (count int, nex
 }
 
 type indexWriteResultSink struct {
-	ctx        *OperatorCtx
+	ctx        *workerpool.Context
 	backendCtx ingest.BackendCtx
 	tbl        table.PhysicalTable
 	indexes    []table.Index
@@ -933,7 +886,7 @@ type indexWriteResultSink struct {
 }
 
 func newIndexWriteResultSink(
-	ctx *OperatorCtx,
+	ctx *workerpool.Context,
 	backendCtx ingest.BackendCtx,
 	tbl table.PhysicalTable,
 	indexes []table.Index,
@@ -967,7 +920,7 @@ func (s *indexWriteResultSink) collectResult() error {
 			if !ok {
 				err := s.flush()
 				if err != nil {
-					s.ctx.onError(err)
+					s.ctx.OnError(err)
 				}
 				if s.backendCtx != nil {
 					total := s.backendCtx.TotalKeyCount()

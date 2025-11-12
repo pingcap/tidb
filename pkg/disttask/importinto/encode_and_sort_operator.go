@@ -31,8 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -51,11 +49,6 @@ const (
 // them inside.
 type encodeAndSortOperator struct {
 	*operator.AsyncOperator[*importStepMinimalTask, workerpool.None]
-	wg       tidbutil.WaitGroupWrapper
-	firstErr atomic.Error
-
-	ctx    context.Context
-	cancel context.CancelFunc
 
 	taskID, subtaskID int64
 	tableImporter     *importer.TableImporter
@@ -70,16 +63,13 @@ var _ operator.WithSource[*importStepMinimalTask] = (*encodeAndSortOperator)(nil
 var _ operator.WithSink[workerpool.None] = (*encodeAndSortOperator)(nil)
 
 func newEncodeAndSortOperator(
-	ctx context.Context,
+	wctx *workerpool.Context,
 	executor *importStepExecutor,
 	sharedVars *SharedVars,
 	subtaskID int64,
 	concurrency int,
 ) *encodeAndSortOperator {
-	subCtx, cancel := context.WithCancel(ctx)
 	op := &encodeAndSortOperator{
-		ctx:           subCtx,
-		cancel:        cancel,
 		taskID:        executor.taskID,
 		subtaskID:     subtaskID,
 		tableImporter: executor.tableImporter,
@@ -93,55 +83,16 @@ func newEncodeAndSortOperator(
 		util.ImportInto,
 		concurrency,
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
-			return newChunkWorker(ctx, op, executor.dataKVMemSizePerCon,
+			return newChunkWorker(wctx, op, executor.dataKVMemSizePerCon,
 				executor.perIndexKVMemSizePerCon, executor.dataBlockSize, executor.indexBlockSize)
 		},
 	)
-	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
+	op.AsyncOperator = operator.NewAsyncOperator(wctx, pool)
 	return op
-}
-
-func (op *encodeAndSortOperator) Open() error {
-	op.wg.Run(func() {
-		for err := range op.errCh {
-			if op.firstErr.CompareAndSwap(nil, err) {
-				op.cancel()
-			} else {
-				if errors.Cause(err) != context.Canceled {
-					op.logger.Error("error on encode and sort", zap.Error(err))
-				}
-			}
-		}
-	})
-	return op.AsyncOperator.Open()
-}
-
-func (op *encodeAndSortOperator) Close() error {
-	// TODO: handle close err after we separate wait part from close part.
-	// right now AsyncOperator.Close always returns nil, ok to ignore it.
-	// nolint:errcheck
-	op.AsyncOperator.Close()
-	op.cancel()
-	close(op.errCh)
-	op.wg.Wait()
-	// see comments on interface definition, this Close is actually WaitAndClose.
-	return op.firstErr.Load()
 }
 
 func (*encodeAndSortOperator) String() string {
 	return "encodeAndSortOperator"
-}
-
-func (op *encodeAndSortOperator) hasError() bool {
-	return op.firstErr.Load() != nil
-}
-
-func (op *encodeAndSortOperator) onError(err error) {
-	op.errCh <- err
-}
-
-func (op *encodeAndSortOperator) Done() <-chan struct{} {
-	return op.ctx.Done()
 }
 
 type chunkWorker struct {
@@ -203,19 +154,14 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 	return w
 }
 
-func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.None)) {
-	if w.op.hasError() {
-		return
-	}
+func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.None)) error {
 	// we don't use the input send function, it makes workflow more complex
 	// we send result to errCh and handle it here.
 	executor := newImportMinimalTaskExecutor(task)
-	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter); err != nil {
-		w.op.onError(err)
-	}
+	return executor.Run(w.ctx, w.dataWriter, w.indexWriter)
 }
 
-func (w *chunkWorker) Close() {
+func (w *chunkWorker) Close() error {
 	closeCtx := w.ctx
 	if closeCtx.Err() != nil {
 		// in case of context canceled, we need to create a new context to close writers.
@@ -227,14 +173,16 @@ func (w *chunkWorker) Close() {
 		// Note: we cannot ignore close error as we're writing to S3 or GCS.
 		// ignore error might cause data loss. below too.
 		if _, err := w.dataWriter.Close(closeCtx); err != nil {
-			w.op.onError(errors.Trace(err))
+			return err
 		}
 	}
 	if w.indexWriter != nil {
 		if _, err := w.indexWriter.Close(closeCtx); err != nil {
-			w.op.onError(errors.Trace(err))
+			return err
 		}
 	}
+
+	return nil
 }
 
 func subtaskPrefix(taskID, subtaskID int64) string {
