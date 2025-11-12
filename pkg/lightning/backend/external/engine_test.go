@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -123,50 +124,6 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key25"), []byte("key26"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key0"), []byte("key1"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
-}
-
-func TestSplit(t *testing.T) {
-	cases := []struct {
-		input    []int
-		conc     int
-		expected [][]int
-	}{
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     1,
-			expected: [][]int{{1, 2, 3, 4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     2,
-			expected: [][]int{{1, 2, 3}, {4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     0,
-			expected: [][]int{{1, 2, 3, 4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     5,
-			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
-		},
-		{
-			input:    []int{},
-			conc:     5,
-			expected: nil,
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     100,
-			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
-		},
-	}
-
-	for _, c := range cases {
-		got := split(c.input, c.conc)
-		require.Equal(t, c.expected, got)
-	}
 }
 
 func prepareKVFiles(t *testing.T, store storage.ExternalStorage, contents [][]kvPair) (dataFiles, statFiles []string) {
@@ -370,60 +327,67 @@ func TestEngineOnDup(t *testing.T) {
 func TestChangeEngineConcurrency(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
 
-	e := &Engine{jobKeys: make([][]byte, 32)}
-	e.workerConcurrency.Store(4)
+	var (
+		outCh    chan engineapi.DataAndRanges
+		eg       errgroup.Group
+		e        *Engine
+		finished atomic.Int32
+	)
 
-	ctx := context.Background()
-	outCh := make(chan engineapi.DataAndRanges, 4)
-
-	var eg errgroup.Group
-
-	// Load the data
-	eg.Go(func() error {
-		defer close(outCh)
-		return e.LoadIngestData(ctx, outCh)
-	})
-
-	// Change concurrency after the channel is filled
-	time.Sleep(time.Second)
-	e.UpdateResource(1, 1<<10)
-
-	eg.Go(func() error {
-		for data := range outCh {
-			// mock generate job
-			data.Data.IncRef()
-			data.Data.IncRef()
-			// mock job finish
-			data.Data.DecRef()
-			data.Data.DecRef()
+	resetFn := func() {
+		outCh = make(chan engineapi.DataAndRanges, 4)
+		eg = errgroup.Group{}
+		finished.Store(0)
+		e = &Engine{
+			jobKeys:           make([][]byte, 64),
+			workerConcurrency: *atomic.NewInt32(4),
+			readyCh:           make(chan struct{}),
 		}
-		return nil
+
+		// Load and consume the data
+		eg.Go(func() error {
+			defer close(outCh)
+			return e.LoadIngestData(context.Background(), outCh)
+		})
+		eg.Go(func() error {
+			for data := range outCh {
+				// mock some time consuming job
+				data.Data.IncRef()
+				time.Sleep(time.Millisecond * 100)
+				finished.Add(1)
+				data.Data.DecRef()
+			}
+			return nil
+		})
+	}
+
+	t.Run("reduce concurrency", func(t *testing.T) {
+		resetFn()
+		// Wait part of the data being processed
+		require.Eventually(t, func() bool {
+			return finished.Load() > 2
+		}, time.Second, 10*time.Millisecond)
+		e.UpdateResource(context.Background(), 1, 1024)
+		require.NoError(t, eg.Wait())
 	})
 
-	// Should not be blocked
-	require.NoError(t, eg.Wait())
-}
-
-func TestChangeEngineConcurrencyWithCancel(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
-
-	e := &Engine{jobKeys: make([][]byte, 32)}
-	e.workerConcurrency.Store(4)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	outCh := make(chan engineapi.DataAndRanges, 16)
-
-	var eg errgroup.Group
-
-	// Load the data and didn't consume it
-	eg.Go(func() error {
-		defer close(outCh)
-		return e.LoadIngestData(ctx, outCh)
+	t.Run("increase concurrency", func(t *testing.T) {
+		resetFn()
+		// Wait part of the data being processed
+		require.Eventually(t, func() bool {
+			return finished.Load() > 2
+		}, time.Second, 10*time.Millisecond)
+		e.UpdateResource(context.Background(), 8, 1024)
+		require.NoError(t, eg.Wait())
 	})
 
-	e.UpdateResource(1, 1<<10)
-	cancel()
-
-	// Should not be blocked
-	require.Error(t, eg.Wait())
+	t.Run("increase concurrency after loading all data", func(t *testing.T) {
+		resetFn()
+		// Wait part of the data being processed
+		require.Eventually(t, func() bool {
+			return finished.Load() >= 16
+		}, 3*time.Second, 10*time.Millisecond)
+		e.UpdateResource(context.Background(), 8, 1024)
+		require.NoError(t, eg.Wait())
+	})
 }

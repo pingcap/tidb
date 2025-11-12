@@ -19,7 +19,6 @@ import (
 	"net"
 	"runtime"
 	"strconv"
-	"sync/atomic"
 
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	kvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -47,10 +47,16 @@ func genConfig(
 	maxWriteSpeed int,
 	globalSort bool,
 ) *local.BackendConfig {
+	workerConcurrency := int32(concurrency * 2)
+	if ImporterRangeConcurrencyForTest != nil {
+		workerConcurrency = ImporterRangeConcurrencyForTest.Load() * 2
+	}
+
 	cfg := &local.BackendConfig{
 		LocalStoreDir:     jobSortPath,
 		ResourceGroupName: resourceGroup,
 		MaxConnPerStore:   concurrency,
+		WorkerConcurrency: *atomic.NewInt32(workerConcurrency),
 		KeyspaceName:      tidb.GetGlobalKeyspaceName(),
 		// We disable the switch TiKV mode feature for now, because the impact is not
 		// fully tested.
@@ -71,11 +77,7 @@ func genConfig(
 		DisableAutomaticCompactions: true,
 		StoreWriteBWLimit:           maxWriteSpeed,
 	}
-	// Each backend will build a single dir in lightning dir.
-	cfg.SetConcurrency(concurrency * 2)
-	if ImporterRangeConcurrencyForTest != nil {
-		cfg.SetConcurrency(int(ImporterRangeConcurrencyForTest.Load() * 2))
-	}
+
 	adjustImportMemory(ctx, memRoot, cfg)
 	if unique && !globalSort {
 		cfg.DupeDetectEnabled = true

@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
-	goerrors "errors"
 	"math"
 	"net"
 	"net/http"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
@@ -432,7 +432,10 @@ type BackendConfig struct {
 	MaxConnPerStore int
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
-	// concurrency of generateJobForRange and import(write & ingest) workers
+	// concurrency is used in these places:
+	// 1. generateJobForRange parallelism, only for local engine.
+	// 2. data size loaded from LoadIngestData, only for external engine.
+	// 3. region job worker pool size
 	WorkerConcurrency atomic.Int32
 	// batch kv size when writing to TiKV
 	KVWriteBatchSize       int64
@@ -511,14 +514,14 @@ func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
-// SetConcurrency sets the concurrency of the backend
-func (c *BackendConfig) SetConcurrency(concurrency int) {
-	c.WorkerConcurrency.Store(int32(concurrency))
-}
-
 // Concurrency gets the current concurrency of the backend
 func (c *BackendConfig) Concurrency() int {
 	return int(c.WorkerConcurrency.Load())
+}
+
+// SetConcurrency sets the current concurrency of the backend
+func (c *BackendConfig) SetConcurrency(concurrency int) {
+	c.WorkerConcurrency.Store(int32(concurrency))
 }
 
 // Backend is a local backend.
@@ -535,10 +538,6 @@ type Backend struct {
 
 	supportMultiIngest  bool
 	importClientFactory importClientFactory
-
-	// workers store all running workers for this backend to tune pool size.
-	// It is expected to have at most one worker at each time.
-	workers sync.Map
 
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
@@ -774,36 +773,6 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 
 	log.FromContext(ctx).Info("multi ingest support")
 	return true, nil
-}
-
-// UpdateResource update the concurrency of current running job.
-// The engineUUID is used to get corresponding engine.
-// If there is no running job, or the concurrency change is not allowed, it will return an error.
-func (local *Backend) UpdateResource(ctx context.Context, engineUUID uuid.UUID, concurrency int, memCapacity int64) error {
-	engine, ok := local.engineMgr.getExternalEngine(engineUUID)
-	if !ok {
-		return goerrors.New("changing concurrency is only supported on external engine")
-	}
-
-	v, ok := local.workers.Load(engine.ID())
-	if !ok {
-		// let framework retry
-		return goerrors.New("worker not running")
-	}
-
-	e, _ := engine.(*external.Engine)
-	worker, _ := v.(*jobOperator)
-	worker.TuneWorkerPoolSize(int32(concurrency), true)
-	e.UpdateResource(concurrency, memCapacity)
-	local.SetConcurrency(concurrency)
-
-	log.FromContext(ctx).Info("update concurrency finished",
-		zap.String("engine", engine.ID()),
-		zap.Int("concurrency", concurrency),
-		zap.Int64("memCapacity", memCapacity),
-	)
-
-	return nil
 }
 
 func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
@@ -1173,6 +1142,21 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 	return nil
 }
 
+// GetExternalEngine returns the external engine by uuid.
+// If the engine is not found or not an external engine, it returns nil.
+// It's used to dynamically update the resource used by the external engine
+func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
+	e, ok := local.engineMgr.getExternalEngine(engineUUID)
+	if !ok {
+		return nil
+	}
+	ext, ok := e.(*external.Engine)
+	if !ok {
+		return nil
+	}
+	return ext
+}
+
 // ImportEngine imports an engine to TiKV.
 func (local *Backend) ImportEngine(
 	ctx context.Context,
@@ -1291,12 +1275,12 @@ func (local *Backend) doImport(
 	regionSplitSize, regionSplitKeyCnt int64,
 ) error {
 	/*
-	 [prepareAndSendJob]---jobToWorkerCh->[storeBalancer(optional)]->[workers]
-	                     ^                                             |
-	                     |                                     jobFromWorkerCh
-	                     |                                             |
-	                     |                                             v
-	               [regionJobRetryer]<-------------[dispatchJobGoroutine]-->done
+	 [prepareAndSendJob]---jobToWorkerCh->[storeBalancer(optional)]->[workerpool]
+	                     ^                                                |
+	                     |                                        jobFromWorkerCh
+	                     |                                                |
+	                     |                                                v
+	               [regionJobRetryer]<-------------------------[dispatchJobGoroutine]-->done
 	*/
 
 	// Above is the happy path workflow of region jobs. A job is generated by
@@ -1311,29 +1295,42 @@ func (local *Backend) doImport(
 	// next components. The exit order is important because if the next component is
 	// exited before the owner component, deadlock will happen.
 	//
-	// All components are spawned by workGroup so the main goroutine can wait all
-	// components to exit. Component exit order in happy path is:
+	// All components (except worker pool) are spawned by workGroup so the main goroutine
+	// can wait all components to exit. worker pool uses subcontext of workerCtx. Apart from
+	// the goroutine shown above, worker pool also spawns a goroutine to notity the internal
+	// error in the pool. We call it internal goroutine here. All Component exit order
+	// in happy path is:
 	//
 	// 1. prepareAndSendJob is finished, its goroutine will wait all jobs are
-	// finished by jobWg.Wait(). Then it will exit and close the output channel of
-	// workers.
+	// finished by jobWg.Wait(). Then the worker pool will be closed to close
+	// the output channel of this pool. This will quit the internal goroutine too.
 	//
-	// 2. one-by-one, when every component see its input channel is closed, it knows
-	// the workflow is finished. It will exit and (except for workers) close the
-	// output channel which is the input channel of the next component.
+	// 2. one-by-one, when each component see its input channel is closed, it knows
+	// the workflow is finished. It will exit and close the output channel which is the
+	// input channel of the next component.
 	//
 	// 3. Now all components are exited, the main goroutine can exit after
 	// workGroup.Wait().
 	//
 	// Component exit order in error case is:
 	//
-	// 1. The error component exits and causes workGroup's context to be canceled.
+	// 1. Error occurs in worker pool
+	//      1.1 the subcontext will be canceled and cause internal goroutine to exit.
+	//      1.2 the internal goroutine return the error caught in worker pool to
+	//          cancel the workerCtx.
+	//      1.3 All other components will exit because of the canceled context.
+	//          No need to close channels.
 	//
-	// 2. All other components will exit because of the canceled context. No need to
-	// close channels.
-	//
-	// 3. the main goroutine can see the error and exit after workGroup.Wait().
+	// 2. Error occuers in other components (e.g. retryer, dispatchJobGoroutine,)
+	//      2.1 The error component exits and causes workGroup's context to be canceled.
+	//      2.2 All other components will exit because of the canceled context. No need to
+	//          close channels.
+	//      2.3 The worker pool will exit due to the canceled context too, we also need to
+	//          wait these workers to exit in the main goroutine.
+	//      2.4 The main goroutine can see the error and exit after workGroup.Wait().
+
 	var (
+		// workGroup is used to run all components in the workflow.
 		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
 		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
 		// owned by them.
@@ -1423,16 +1420,26 @@ func (local *Backend) doImport(
 		clusterID = local.pdCli.GetClusterID(ctx)
 	}
 
-	workerpool := newJobWorker(
+	worker := newRegionJobOperator(
 		workerCtx, workGroup, &jobWg,
 		local, balancer,
-		jobFromWorkerCh, jobToWorkerCh,
+		jobToWorkerCh, jobFromWorkerCh,
 		clusterID,
 	)
+
+	if e, ok := engine.(*external.Engine); ok {
+		e.SetWorker(worker)
+	}
 
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
 	})
+
+	if err := worker.Open(); err != nil {
+		close(jobFromWorkerCh)
+		_ = workGroup.Wait()
+		return errors.Trace(err)
+	}
 
 	failpoint.Label("afterStartWorker")
 
@@ -1464,11 +1471,17 @@ func (local *Backend) doImport(
 				return allZero
 			})
 		}
-		close(jobFromWorkerCh)
-		return nil
+		return worker.Close()
 	})
 
 	err := workGroup.Wait()
+
+	// Wait for all workers to quit in error case
+	if err != nil {
+		//nolint: errcheck
+		_ = worker.Close()
+	}
+
 	if err != nil && !common.IsContextCanceledError(err) {
 		log.FromContext(ctx).Error("do import meets error", zap.Error(err))
 	}
@@ -1476,14 +1489,14 @@ func (local *Backend) doImport(
 }
 
 func (local *Backend) newRegionJobWorker(
-	workerCtx context.Context,
+	ctx *operator.Context,
 	clusterID uint64,
 	toCh, jobFromWorkerCh chan *regionJob,
 	jobWg *sync.WaitGroup,
 	afterExecuteJob func([]*metapb.Peer),
 ) regionJobWorker {
 	base := &regionJobBaseWorker{
-		ctx:              workerCtx,
+		ctx:              ctx,
 		jobInCh:          toCh,
 		jobOutCh:         jobFromWorkerCh,
 		jobWg:            jobWg,

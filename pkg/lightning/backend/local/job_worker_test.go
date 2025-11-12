@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
@@ -33,8 +34,9 @@ import (
 
 func TestRegionJobBaseWorker(t *testing.T) {
 	newWorker := func() *regionJobBaseWorker {
+		opCtx, _ := operator.NewContext(context.Background())
 		return &regionJobBaseWorker{
-			ctx:      context.Background(),
+			ctx:      opCtx,
 			jobInCh:  make(chan *regionJob, 10),
 			jobOutCh: make(chan *regionJob, 10),
 			jobWg:    &sync.WaitGroup{},

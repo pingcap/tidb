@@ -17,8 +17,8 @@ package ddl
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -50,7 +50,7 @@ type cloudImportExecutor struct {
 	backend         *local.Backend
 	taskConcurrency int
 	metric          *lightningmetric.Common
-	engineUUID      uuid.UUID
+	engine          atomic.Pointer[external.Engine]
 }
 
 func newCloudImportExecutor(
@@ -138,7 +138,14 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	e.engineUUID = engineUUID
+
+	eng := localBackend.GetExternalEngine(engineUUID)
+	if eng == nil {
+		return errors.Errorf("external engine %s not found", engineUUID)
+	}
+	e.engine.Store(eng)
+	defer e.engine.Store(nil)
+
 	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
@@ -194,11 +201,21 @@ func (e *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []by
 func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
 	logutil.Logger(ctx).Info("cloud import executor update resource")
 	newConcurrency := int(newResource.CPU.Capacity())
-	if newConcurrency != e.backend.Concurrency() {
-		return e.backend.UpdateResource(ctx, e.engineUUID, newConcurrency, newResource.Mem.Capacity())
+	if newConcurrency == e.backend.Concurrency() {
+		return nil
 	}
+
+	eng := e.engine.Load()
+	if eng != nil {
+		if err := eng.UpdateResource(ctx, newConcurrency, newResource.Mem.Capacity()); err != nil {
+			return err
+		}
+	}
+
+	e.backend.SetConcurrency(newConcurrency)
 	return nil
 }
+
 func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *model.IndexInfo, idxID int64, err error) {
 	switch len(eleIDs) {
 	case 1:

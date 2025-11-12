@@ -130,7 +130,7 @@ type regionJob struct {
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
 func (*regionJob) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "", "", nil, false
+	return "regionJob", "regionJob", nil, false
 }
 
 type tikvWriteResult struct {
