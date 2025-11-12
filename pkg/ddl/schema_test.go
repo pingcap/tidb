@@ -660,7 +660,7 @@ func TestReadOnlyInMiddleState(t *testing.T) {
 	dbInfo, ok := is.SchemaByName(pmodel.NewCIStr("test_db"))
 	require.True(t, ok)
 	require.True(t, dbInfo.ReadOnly)
-	tk3.MustExec("insert into test_db.t values (1)") // TODO(fzzf678): this should fail, fix this after adding the check read only logic
+	tk3.MustGetErrMsg("insert into test_db.t values (1)", "[schema:3809]Schema 'test_db' is in read only mode.")
 	tk1.MustExec("commit")
 	wg.Wait()
 }

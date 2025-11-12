@@ -23,6 +23,7 @@ partition by range (year(dob)) (
  partition p1970 values less than (1980),
  partition p1980 values less than (1990),
  partition p1990 values less than (2000));
+ create temporary table temp (a int);
 
 # test information_schema.schemata_extensions
 desc information_schema.schemata_extensions;
@@ -55,6 +56,10 @@ create table t1(c1 int);
 create table t2 like t;
 -- error 3809
 create table pt (a int, b int) partition by hash(a) partitions 4;
+-- error 3809
+create temporary table t1(a int);
+-- error 3809
+create global temporary table t1(a int) on commit delete rows;
 
 # alter table
 -- error 3809
@@ -116,7 +121,11 @@ alter schema db_read_only read only 1;
 -- error 3809
 truncate table t;
 -- error 3809
+truncate table temp;
+-- error 3809
 drop table t;
+-- error 3809
+drop table temp;
 -- error 3809
 drop view v1;
 -- error 3809
@@ -132,13 +141,168 @@ alter table t auto_increment = 10000;
 
 # DDL can be executed in read-only mode
 # temporary table
-create temporary table t(a INT);
-drop temporary table t;
-create global temporary table t_global(a INT) on commit delete rows;
-drop global temporary table t_global;
-
 alter table t compact tiflash replica;
 
 # finish test
 alter schema db_read_only read only 0;
 alter schema db_read_only_1 read only 0;
+
+
+### DML can't be executed in read-only mode
+drop database if exists db1;
+create database db1;
+use db1;
+create table t1(id int primary key, a int);
+create table t2(id int, a int);
+create table t3(a int);
+create temporary table temp(a int);
+
+drop database if exists db2;
+create database db2;
+use db2;
+create table t1(id int primary key, a int);
+create table t2(id int, a int);
+create table t3(a int);
+create table parent_0(id int, key(id));
+create table parent_1(id int, key(id));
+create table parent_2(id int, key(id));
+create table parent_3(id int, key(id));
+insert into parent_0 values (0);
+insert into parent_1 values (1);
+insert into parent_2 values (2);
+insert into parent_3 values (3);
+create table db1.child_0(pid int, key(pid), foreign key (pid) references db2.parent_0(id) on delete cascade);
+create table db1.child_1(pid int, key(pid), foreign key (pid) references db2.parent_1(id) on update cascade);
+create table db1.child_2(pid int, key(pid), foreign key (pid) references db2.parent_2(id) on delete set null);
+create table db1.child_3(pid int, key(pid), foreign key (pid) references db2.parent_3(id) on update set null);
+insert into db1.child_0 values (0);
+insert into db1.child_1 values (1);
+insert into db1.child_2 values (2);
+insert into db1.child_3 values (3);
+
+
+alter schema db1 read only 1;
+use db1;
+
+# insert
+-- error 3809
+insert into t1 values(1, 1);
+-- error 3809
+insert into t1 select * from t2;
+insert into db2.t1 select * from t1; # pass
+-- error 3809
+insert into t1 table t2;
+-- error 3809
+insert into t1 set a=1;
+-- error 3809
+insert into temp values (1);
+
+# replace
+-- error 3809
+replace into t1 values (1, 2);
+-- error 3809
+replace into t1 table t2;
+-- error 3809
+replace t1 set a = default;
+-- error 3809
+replace into temp values (1);
+
+# delete
+-- error 3809
+delete from t1;
+-- error 3809
+delete from temp where a = 1;
+-- error 3809
+delete t1, t2 from t1, t2;
+-- error 3809
+delete db1.t1, db2.t2 from db1.t1, db2.t2;
+-- error 3809
+delete t1,t2,t3 from t1, t2, t3 where t3.a < 5 and t1.a = 3;
+-- error 3809
+delete t2 from t1, t2;
+delete db2.t2 from db1.t1, db2.t2;
+-- error 3809
+delete db1.t1 from db1.t1, db2.t2;
+-- error 3809
+delete t1 from t1, t1 as t2 where t1.b = t2.b and t1.a > t2.a;
+-- error 3809
+delete from t1,t2,t3 using t1,t2,t3 where t3.a = 1;
+-- error 3809
+delete from t1,db2.t2,db2.t3 using t1,db2.t2,db2.t3 where db2.t3.a = 1;
+-- error 3809
+delete from t2,t3 using t1,t2,t3 where t1.a = 1;
+-- error 3809
+delete from t2,db2.t3 using t1,t2,db2.t3 where t1.a = 1;
+-- error 3809
+with cte as (select * from t1) delete from t2 where t2.a in (select a from cte);
+
+# update
+-- error 3809
+update t1 set a = a + 1;
+-- error 3809
+update temp set a = 1;
+-- error 3809
+update t1, t2 set t1.a = 1, t2.a = 1 where t1.a = t2.a;
+-- error 3809
+update t1 join db2.t2 set t1.a=1 where t1.b=db2.t2.b;
+analyze table t1; #pass
+-- error 3809
+with cte as (select * from t1) update t2 set a = 1 where t2.a in (select a from cte);
+
+# modify columns with foreign key
+-- error 3809
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete restrict;
+-- error 3809
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update restrict;
+-- error 3809
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete cascade;
+-- error 3809
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update cascade;
+-- error 3809
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete set null;
+-- error 3809
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update set null;
+-- error 3809
+
+# for update / for share + tidb_enable_shared_lock_promotion
+-- error 3809
+select * from t1 for update;
+-- error 3809
+select * from t1 for update of t1 nowait;
+-- error 3809
+select * from t1 for update of t1 wait 5;
+-- error 3809
+select * from t1 join t2 on t1.a= t2.a for update;
+-- error 3809
+select t1.a from t1 join t2 on t1.a= t2.a for update;
+-- error 3809
+table t1 for update;
+set @@session.tidb_enable_shared_lock_promotion = 1;
+-- error 3809
+select * from t1 for share;
+-- error 3809
+select * from t1 for share nowait;
+-- error 3809
+select * from t1 join t2 on t1.a= t2.a for share;
+-- error 3809
+select t1.a from t1 join t2 on t1.a= t2.a for share;
+-- error 3809
+table t1 for share;
+
+# select should be ok
+select * from t1;
+select * from t1 join t2 on t1.a= t2.a;
+table t1;
+
+# fk, schema of child table is read only
+-- error 3809
+delete from db2.parent_0;
+-- error 3809
+update db2.parent_1 set id_0 = 10;
+-- error 3809
+delete from db2.parent_2;
+-- error 3809
+update db2.parent_3 set id_3 = 10;
+
+# finish test
+alter schema db1 read only 0;
