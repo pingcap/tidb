@@ -169,8 +169,8 @@ type importStepMinimalTask struct {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (*importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
-	return proto.ImportInto.String(), "importStepMininalTask", false, errors.Errorf("panic occurred during import, please check log")
+func (*importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return proto.ImportInto.String(), "importStepMininalTask", errors.Errorf("panic occurred during import, please check log")
 }
 
 func (t *importStepMinimalTask) String() string {

@@ -34,8 +34,8 @@ var cntWg sync.WaitGroup
 
 type int64Task int64
 
-func (int64Task) RecoverArgs() (string, string, bool, error) {
-	return "", "", false, nil
+func (int64Task) RecoverArgs() (string, string, error) {
+	return "", "", nil
 }
 
 type MyWorker[T int64Task, R struct{}] struct {

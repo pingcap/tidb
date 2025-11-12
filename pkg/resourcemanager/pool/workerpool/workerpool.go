@@ -32,20 +32,21 @@ import (
 // Context is the context used for worker pool
 type Context struct {
 	context.Context
-	cancel context.CancelFunc
-	err    atomic.Pointer[error]
+	cancel   context.CancelFunc
+	firstErr atomic.Pointer[error]
 }
 
 // OnError store the error and cancel the context.
 // If the error is already set, it will not overwrite it.
 func (ctx *Context) OnError(err error) {
-	ctx.err.CompareAndSwap(nil, &err)
+	ctx.firstErr.CompareAndSwap(nil, &err)
+	logutil.BgLogger().Error("worker pool encountered error", zap.Error(err))
 	ctx.cancel()
 }
 
 // OperatorErr returns the error caused by business logic.
 func (ctx *Context) OperatorErr() error {
-	err := ctx.err.Load()
+	err := ctx.firstErr.Load()
 	if err == nil {
 		return nil
 	}
@@ -74,13 +75,16 @@ type TaskMayPanic interface {
 	// RecoverArgs returns the argument for pkg/util.Recover function of this task.
 	// The error returned is which will be passed to upper level, if not provided,
 	// we will use the default error.
-	RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error)
+	RecoverArgs() (metricsLabel string, funcInfo string, err error)
 }
 
 // Worker is worker interface.
 type Worker[T TaskMayPanic, R any] interface {
-	// HandleTask consumes a task(T) and produces a result(R).
-	// The result is sent to the result channel by calling `send` function.
+	// HandleTask consumes a task(T), either produces a result(R) or return an error.
+	// The result is sent to the result channel by calling `send` function, and the
+	// error returned will be catched and handled by the worker pool.
+	// TODO(joechenrh): we can pass the context to HandleTask, so we don't need to
+	// store the context in each worker implement.
 	HandleTask(task T, send func(R)) error
 	Close() error
 }
@@ -91,9 +95,12 @@ type tuneConfig struct {
 
 // WorkerPool is a pool of workers.
 type WorkerPool[T TaskMayPanic, R any] struct {
-	wctx          *Context
-	ctx           context.Context
-	cancel        context.CancelFunc
+	// wctx are the context used for the whole pipeline, and ctx and cancel are derived
+	// from wctx, to notify all workers to quit when the tasks are done or any error occurs.
+	wctx   *Context
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	name          string
 	numWorkers    int32
 	originWorkers int32
@@ -185,7 +192,7 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 		p.runningTask.Add(-1)
 	}()
 
-	label, funcInfo, quit, err := task.RecoverArgs()
+	label, funcInfo, err := task.RecoverArgs()
 	recoverFn := func() {
 		if err != nil {
 			p.wctx.OnError(err)
@@ -194,7 +201,7 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 		}
 	}
 
-	defer tidbutil.Recover(label, funcInfo, recoverFn, quit)
+	defer tidbutil.Recover(label, funcInfo, recoverFn, false)
 
 	sendResult := func(r R) {
 		if p.resChan == nil {

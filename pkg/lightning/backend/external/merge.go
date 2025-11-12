@@ -78,14 +78,14 @@ func (c *mergeCollector) Processed(bytes, rowCnt int64) {
 }
 
 type mergeMinimalTask struct {
-	files       []string
-	concurrency int
-	writerID    string
+	files        []string
+	fileGroupNum int
+	writerID     string
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (*mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
-	return "merge_sort", "mergeMinimalTask", false, nil
+func (*mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return "merge_sort", "mergeMinimalTask", nil
 }
 
 // MergeOperator is the operator that merges overlapping files.
@@ -112,6 +112,8 @@ func NewMergeOperator(
 	// for max-block-size = 32MiB, adding (max-block-size * MaxMergingFilesPerThread)/10000 ~ 1MiB
 	// to part-size is enough.
 	partSize = max(MinUploadPartSize, partSize+units.MiB)
+	logutil.Logger(ctx).Info("create merge operator",
+		zap.Int64("part-size", partSize))
 	pool := workerpool.NewWorkerPool(
 		"mergeOperator",
 		util.ImportInto,
@@ -170,7 +172,7 @@ func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)
 		w.collector,
 		w.checkHotspot,
 		w.onDup,
-		task.concurrency,
+		task.fileGroupNum,
 	)
 }
 
@@ -195,13 +197,13 @@ func MergeOverlappingFiles(
 	mergeTasks := make([]*mergeMinimalTask, 0, len(dataFilesSlice))
 	for _, files := range dataFilesSlice {
 		mergeTasks = append(mergeTasks, &mergeMinimalTask{
-			files:       files,
-			concurrency: len(dataFilesSlice),
-			writerID:    uuid.New().String(),
+			files:        files,
+			fileGroupNum: len(dataFilesSlice),
+			writerID:     uuid.New().String(),
 		})
 	}
 
-	sourceOp := operator.NewSimpleDataSource(ctx, mergeTasks)
+	sourceOp := operator.NewDataSource(ctx, mergeTasks)
 	operator.Compose(sourceOp, op)
 
 	pipe := operator.NewAsyncPipeline(sourceOp, op)

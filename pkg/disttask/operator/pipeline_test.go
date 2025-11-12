@@ -39,7 +39,7 @@ func TestPipelineAsyncMultiOperatorsWithoutError(t *testing.T) {
 		wctx := workerpool.NewContext(context.Background())
 
 		var mostCommonWord stringTask
-		source := NewSimpleDataSource(wctx, tasks)
+		source := NewDataSource(wctx, tasks)
 		lower := makeLower(wctx)
 		trimmer := makeTrimmer(wctx)
 		counter := makeCounter(wctx, mockError)
@@ -75,8 +75,8 @@ type strCnt struct {
 
 type stringTask string
 
-func (stringTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
-	return "", "", false, nil
+func (stringTask) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return "", "", nil
 }
 
 func makeLower(ctx *workerpool.Context) *simpleOperator[stringTask, stringTask] {

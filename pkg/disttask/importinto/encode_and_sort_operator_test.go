@@ -16,8 +16,6 @@ package importinto
 
 import (
 	"context"
-	"os"
-	"path"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -39,21 +37,9 @@ import (
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
-	"go.uber.org/zap"
 )
 
 func TestEncodeAndSortOperator(t *testing.T) {
-	bak := os.Stdout
-	logFileName := path.Join(t.TempDir(), "test.log")
-	file, err := os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	require.NoError(t, err)
-	os.Stdout = file
-	t.Cleanup(func() {
-		require.NoError(t, os.Stdout.Close())
-		os.Stdout = bak
-	})
-	logger := zap.NewExample()
-
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	executor := mock.NewMockMiniTaskExecutor(ctrl)
@@ -79,7 +65,6 @@ func TestEncodeAndSortOperator(t *testing.T) {
 				},
 			},
 		},
-		logger: logger,
 	}
 
 	execute.SetFrameworkInfo(executorForParam, &proto.Task{TaskBase: proto.TaskBase{ID: 1}}, nil, nil, nil)
@@ -127,6 +112,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 			wg.Wait()
 			return mockErr2
 		})
+	var err2 error
 	executor2.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(context.Context, backend.EngineWriter, backend.EngineWriter, execute.Collector) error {
 			wg.Done()
@@ -135,7 +121,8 @@ func TestEncodeAndSortOperator(t *testing.T) {
 			require.Eventually(t, func() bool {
 				return wctx.OperatorErr() != nil
 			}, 3*time.Second, 300*time.Millisecond)
-			return errors.New("mock error should be logged")
+			err2 = errors.New("mock error from executor2")
+			return err2
 		})
 	require.NoError(t, op.Open())
 	// send 2 tasks
@@ -145,6 +132,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	<-wctx.Done()
 	require.NoError(t, op.Close())
 	require.ErrorIs(t, wctx.OperatorErr(), mockErr2)
+	require.Equal(t, err2.Error(), "mock error from executor2")
 }
 
 func TestGetWriterMemorySizeLimit(t *testing.T) {

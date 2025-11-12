@@ -281,7 +281,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
-	ch := make(chan checkIndexTask)
+	ch := make(chan checkIndexTask, len(e.indexInfos))
 	dc := operator.NewSimpleDataChannel(ch)
 
 	wctx := workerpool.NewContext(ctx)
@@ -696,8 +696,8 @@ type checkIndexTask struct {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
-	return "fast_check_table", "checkIndexTask", false, nil
+func (checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return "fast_check_table", "checkIndexTask", nil
 }
 
 type groupByChecksum struct {

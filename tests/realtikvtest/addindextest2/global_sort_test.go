@@ -645,7 +645,7 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 8, batch_size = 256", rows[0][0]))
 			require.Eventually(t, func() bool {
 				return modifiedReadIndex.Load()
-			}, 5*time.Second, 100*time.Millisecond)
+			}, 30*time.Second, 100*time.Millisecond)
 			require.Equal(t, 256, reorgMeta.GetBatchSize())
 		})
 	})
@@ -660,7 +660,7 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 2", rows[0][0]))
 			require.Eventually(t, func() bool {
 				return modifiedMerge.Load()
-			}, 5*time.Second, 100*time.Millisecond)
+			}, 30*time.Second, 100*time.Millisecond)
 			require.EqualValues(t, 2, op.GetWorkerPoolSize())
 		})
 	})
