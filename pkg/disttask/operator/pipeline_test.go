@@ -39,7 +39,7 @@ func TestPipelineAsyncMultiOperatorsWithoutError(t *testing.T) {
 		wctx := workerpool.NewContext(context.Background())
 
 		var mostCommonWord stringTask
-		source := NewDataSource(wctx, tasks)
+		source := NewSimpleDataSource(wctx, tasks)
 		lower := makeLower(wctx)
 		trimmer := makeTrimmer(wctx)
 		counter := makeCounter(wctx, mockError)

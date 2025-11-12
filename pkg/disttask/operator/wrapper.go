@@ -21,76 +21,35 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type iterable[T any] interface {
-	Next() (T, bool)
-}
-
-type sliceIterable[T any] struct {
-	slice []T
-	index int
-}
-
-func (s *sliceIterable[T]) Next() (T, bool) {
-	if s.index >= len(s.slice) {
-		var zero T
-		return zero, false
-	}
-	val := s.slice[s.index]
-	s.index++
-	return val, true
-}
-
-type chanIterable[T any] struct {
-	ch <-chan T
-}
-
-func (c *chanIterable[T]) Next() (T, bool) {
-	val, ok := <-c.ch
-	return val, ok
-}
-
-// DataSource represents a data source operator.
-type DataSource[T workerpool.TaskMayPanic] struct {
+// SimpleDataSource is a simple operator which use the given input slice as the data source.
+type SimpleDataSource[T workerpool.TaskMayPanic] struct {
 	ctx      *workerpool.Context
 	errGroup *errgroup.Group
-	inputs   iterable[T]
+	inputs   []T
 	target   DataChannel[T]
 }
 
-// NewDataSource creates a new data source with the given inputs.
+// NewSimpleDataSource creates a new SimpleOperator with the given inputs.
 // The input workerpool.Context is used to quit this operator.
 // By using the same context as the downstream operators, we can ensure that
 // this operator will quit when other operators encounter an error or panic.
-func NewDataSource[T workerpool.TaskMayPanic](
+func NewSimpleDataSource[T workerpool.TaskMayPanic](
 	ctx *workerpool.Context,
 	inputs []T,
-) *DataSource[T] {
-	return &DataSource[T]{
-		inputs:   &sliceIterable[T]{slice: inputs},
-		errGroup: &errgroup.Group{},
-		ctx:      ctx,
-	}
-}
-
-// NewDataSourceFromChan creates a new data source with the given inputs.
-// It's almost the same as NewDataSource, but uses a channel as input.
-func NewDataSourceFromChan[T workerpool.TaskMayPanic](
-	ctx *workerpool.Context,
-	inputs <-chan T,
-) *DataSource[T] {
-	return &DataSource[T]{
-		inputs:   &chanIterable[T]{ch: inputs},
+) *SimpleDataSource[T] {
+	return &SimpleDataSource[T]{
+		inputs:   inputs,
 		errGroup: &errgroup.Group{},
 		ctx:      ctx,
 	}
 }
 
 // Open implements the Operator interface.
-func (s *DataSource[T]) Open() error {
+func (s *SimpleDataSource[T]) Open() error {
 	s.errGroup.Go(func() error {
 		defer s.target.Finish()
 
-		for input, ok := s.inputs.Next(); ok; {
+		for _, input := range s.inputs {
 			select {
 			case s.target.Channel() <- input:
 			case <-s.ctx.Done():
@@ -104,18 +63,18 @@ func (s *DataSource[T]) Open() error {
 }
 
 // Close implements the Operator interface.
-func (s *DataSource[T]) Close() error {
+func (s *SimpleDataSource[T]) Close() error {
 	return s.errGroup.Wait()
 }
 
 // String implements the Operator interface.
-func (*DataSource[T]) String() string {
+func (*SimpleDataSource[T]) String() string {
 	var zT T
 	return fmt.Sprintf("SimpleDataSource[%T]", zT)
 }
 
 // SetSink implements the WithSink interface.
-func (s *DataSource[T]) SetSink(ch DataChannel[T]) {
+func (s *SimpleDataSource[T]) SetSink(ch DataChannel[T]) {
 	s.target = ch
 }
 
