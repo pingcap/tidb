@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
@@ -84,7 +83,6 @@ func newEncodeAndSortOperator(
 			return newChunkWorker(wctx, op,
 				executor.dataKVMemSizePerCon, executor.perIndexKVMemSizePerCon,
 				executor.dataBlockSize, executor.indexBlockSize,
-				executor.GetMeterRecorder(),
 			)
 		},
 	)
@@ -109,7 +107,6 @@ func newChunkWorker(
 	op *encodeAndSortOperator,
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64,
 	dataBlockSize, indexBlockSize int,
-	meterRec *metering.Recorder,
 ) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
@@ -123,8 +120,6 @@ func newChunkWorker(
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
-					op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
-					meterRec.IncPutRequest(summary.PutRequestCount)
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
 				SetBlockSize(indexBlockSize).
@@ -132,7 +127,7 @@ func newChunkWorker(
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
-			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
+			writer := builder.Build(op.sharedVars.globalSortStore, prefix, writerID)
 			return writer, nil
 		}
 
@@ -140,8 +135,6 @@ func newChunkWorker(
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(func(summary *external.WriterSummary) {
 				op.sharedVars.mergeDataSummary(summary)
-				op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
-				meterRec.IncPutRequest(summary.PutRequestCount)
 			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
@@ -149,7 +142,7 @@ func newChunkWorker(
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)
-		writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
+		writer := builder.Build(op.sharedVars.globalSortStore, prefix, writerID)
 		w.dataWriter = external.NewEngineWriter(writer)
 
 		w.indexWriter = importer.NewIndexRouteWriter(op.logger, indexWriterFn)
