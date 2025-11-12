@@ -23,7 +23,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
-	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -421,7 +421,7 @@ func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec
 		return errors.Annotatef(err, "failed to copy blob from %s to %s", url, spec.To)
 	}
 	copyID := resp.CopyID
-	deref := aws.StringValue
+	deref := aws.ToString
 
 	for {
 		prop, err := dstBlob.GetProperties(ctx, &blob.GetPropertiesOptions{})
