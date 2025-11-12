@@ -90,7 +90,7 @@ func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForT
 	args := &model.DropForeignKeyArgs{FkName: ast.NewCIStr(foreignKeyName)}
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	return job
 }
 
@@ -163,7 +163,7 @@ func TestForeignKey(t *testing.T) {
 	mu.Unlock()
 	require.NoError(t, hErr)
 	require.True(t, ok)
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 
 	mu.Lock()
 	checkOK = false

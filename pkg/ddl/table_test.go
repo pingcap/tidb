@@ -73,7 +73,7 @@ func testRenameTable(
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
 	tblInfo.State = model.StatePublic
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	tblInfo.State = model.StateNone
 	return job
 }
@@ -102,7 +102,7 @@ func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTes
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{tbl: nil})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	return job
 }
 
@@ -137,7 +137,7 @@ func testLockTable(
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	return job
 }
 
@@ -180,7 +180,7 @@ func testTruncateTable(t *testing.T, ctx sessionctx.Context, store kv.Storage, d
 	require.NoError(t, err)
 
 	tblInfo.ID = newTableID
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	return job
 }
 
@@ -319,7 +319,7 @@ func TestCreateView(t *testing.T) {
 	require.NoError(t, err)
 
 	tblInfo.State = model.StatePublic
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{tbl: newTblInfo0})
+	checkJobWithHistory(t, ctx, job.ID, nil, newTblInfo0)
 	tblInfo.State = model.StateNone
 	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
@@ -342,7 +342,7 @@ func TestCreateView(t *testing.T) {
 	require.NoError(t, err)
 
 	tblInfo.State = model.StatePublic
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{tbl: newTblInfo1})
+	checkJobWithHistory(t, ctx, job.ID, nil, newTblInfo1)
 	tblInfo.State = model.StateNone
 	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
@@ -413,7 +413,7 @@ func testAlterCacheTable(
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
 	require.NoError(t, err)
 
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	return job
 }
 
@@ -438,7 +438,7 @@ func testAlterNoCacheTable(
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true)))
 
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	return job
 }
 
@@ -590,7 +590,7 @@ func TestAlterTTL(t *testing.T) {
 	}
 	require.NoError(t, de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{tbl: nil})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 
 	// assert the ddlInfo as expected
 	historyJob, err := ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
@@ -610,7 +610,7 @@ func TestAlterTTL(t *testing.T) {
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true)))
 
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{tbl: nil})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 
 	// assert the ddlInfo as expected
 	historyJob, err = ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)

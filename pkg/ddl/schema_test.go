@@ -54,7 +54,7 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest
 	require.NoError(t, err)
 
 	tblInfo.State = model.StatePublic
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	tblInfo.State = model.StateNone
 	return job
 }
@@ -149,7 +149,7 @@ func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTes
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.CreateSchemaArgs{DBInfo: dbInfo}, true)))
 
 	dbInfo.State = model.StatePublic
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{db: dbInfo})
+	checkJobWithHistory(t, ctx, job.ID, dbInfo, nil)
 	dbInfo.State = model.StateNone
 	return job
 }
@@ -265,7 +265,7 @@ func TestSchema(t *testing.T) {
 	ids := make(map[int64]struct{})
 	ids[tblInfo1.ID] = struct{}{}
 	ids[tblInfo2.ID] = struct{}{}
-	checkJobWithHistory(t, tk3.Session(), job.ID, &finishedJobInfo{db: dbInfo})
+	checkJobWithHistory(t, tk3.Session(), job.ID, dbInfo, nil)
 
 	// Drop a non-existent database.
 	job = &model.Job{

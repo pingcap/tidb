@@ -124,7 +124,7 @@ func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTe
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	return job
 }
 
@@ -146,7 +146,7 @@ func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorF
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
-	checkJobWithHistory(t, ctx, job.ID, &finishedJobInfo{tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	return job
 }
 
