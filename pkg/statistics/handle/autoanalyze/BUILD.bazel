@@ -35,7 +35,11 @@ go_test(
     timeout = "short",
     srcs = ["autoanalyze_test.go"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 12,
+=======
+    shard_count = 16,
+>>>>>>> c11aa55845d (statistics: use the correct analyze version (#64399))
     deps = [
         ":autoanalyze",
         "//pkg/domain/infosync",
