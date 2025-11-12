@@ -1164,6 +1164,9 @@ const (
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
 	ErrResourceGroupInvalidForRole            = 8257
 
+	ErrModifyColumnReferencedByPartialCondition = 8272
+	ErrCheckPartialIndexWithoutFastCheck        = 8273
+
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

@@ -1358,7 +1358,7 @@ type IndexArg struct {
 	IfExist  bool  `json:"if_exist,omitempty"`
 	IsGlobal bool  `json:"is_global,omitempty"`
 	// ConditionString is used to store the partial index condition string for the index.
-	ConditionString string `json:"partial_condition_str,omitempty"`
+	ConditionString string `json:"condition_string,omitempty"`
 }
 
 // ModifyIndexArgs is the argument for add/drop/rename index jobs,

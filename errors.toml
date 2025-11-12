@@ -1601,6 +1601,11 @@ error = '''
 Invalid AFFINITY %s
 '''
 
+["ddl:8272"]
+error = '''
+Cannot drop, change or modify column '%s': it is referenced in partial index '%s'
+'''
+
 ["ddl:9014"]
 error = '''
 TiFlash backfill index failed: %s
