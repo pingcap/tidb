@@ -126,10 +126,7 @@ func (h *Handle) Clear() {
 }
 
 func (h *Handle) resetSystemDBIDCache() {
-	h.systemDBIDCache.Range(func(key, _ any) bool {
-		h.systemDBIDCache.Delete(key)
-		return true
-	})
+	h.systemDBIDCache.Clear()
 }
 
 // GetSystemDBIDCacheLenForTest gets the length of systemDBIDCache, only for test.
