@@ -153,9 +153,8 @@ type DumpTriggerConfig struct {
 	Sampling    int                    `json:"sampling,omitempty"`
 	Event       *SuspiciousEventConfig `json:"suspicious_event,omitempty"`
 	UserCommand *UserCommandConfig     `json:"user_command,omitempty"`
-	// TODO: sampling is not supported in And, Or currently
-	And []DumpTriggerConfig `json:"and,omitempty"`
-	Or  []DumpTriggerConfig `json:"or,omitempty"`
+	And         []DumpTriggerConfig    `json:"and,omitempty"`
+	Or          []DumpTriggerConfig    `json:"or,omitempty"`
 }
 
 // Validate validates the DumpTriggerConfig.
@@ -294,7 +293,7 @@ func truthTableForAnd1(x uint64, xs []uint64) []uint64 {
 }
 
 func truthTableForOr(x, y []uint64) []uint64 {
-	// not doing any deduplication because it's unlikely user write duplicate trigger condition
+	// not doing any deduplication because duplicate trigger condition is not allowed by validate
 	return append(x, y...)
 }
 
