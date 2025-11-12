@@ -26,15 +26,21 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -1360,6 +1366,127 @@ func TestModifyColumnWithDifferentCollation(t *testing.T) {
 			t.Run(fmt.Sprintf("%s -> %s", oldColTp, newColTp), func(t *testing.T) {
 				runSingleTest(t, oldColTp, newColTp)
 			})
+		}
+	}
+}
+
+func TestHistogramFromStorageWithPriority(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_stats_update_during_ddl = ON")
+
+	// Prepare data
+	tk.MustExec("create table t2(a int auto_increment, b int, c int, primary key(a), key idxb(b))")
+	for i := range 200 {
+		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", i, i))
+	}
+	for range 4 {
+		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", 20, 20))
+		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", 50, 50))
+		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", 111, 111))
+		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", 156, 156))
+	}
+	tk.MustExec("analyze table t2")
+
+	getCountByTopN := func(topN *statistics.TopN, tp *types.FieldType) uint64 {
+		lowerValue, err := table.CastColumnValueWithStrictMode(types.NewIntDatum(25), tp)
+		require.NoError(t, err)
+		upperValue, err := table.CastColumnValueWithStrictMode(types.NewIntDatum(125), tp)
+		require.NoError(t, err)
+
+		lowEncoded, err := codec.EncodeKey(time.UTC, nil, lowerValue)
+		require.NoError(t, err)
+		upperEncoded, err := codec.EncodeKey(time.UTC, nil, upperValue)
+		require.NoError(t, err)
+
+		return topN.BetweenCount(nil, lowEncoded, upperEncoded)
+	}
+
+	getTopNAndHg := func(offset int64, isIndex int) (*statistics.TopN, *statistics.Histogram) {
+		tblInfo := external.GetTableByName(t, tk, "test", "t2").Meta()
+		var (
+			tp *types.FieldType
+			id int64
+		)
+
+		if isIndex == 0 {
+			tp = &tblInfo.Columns[offset].FieldType
+			id = tblInfo.Columns[offset].ID
+		} else {
+			idx := tblInfo.Indices[offset]
+			tp = types.NewFieldType(mysql.TypeBlob)
+			id = idx.ID
+		}
+
+		topN, err := storage.TopNFromStorage(tk.Session(), tblInfo.ID, isIndex, id)
+		require.NoError(t, err)
+		hg, err := storage.HistogramFromStorageWithPriority(
+			tk.Session(), tblInfo.ID, id, tp, 0,
+			isIndex, 0, 0, 0, 0, kv.PriorityHigh)
+		require.NoError(t, err)
+		return topN, hg
+	}
+
+	var (
+		oldTopNs []*statistics.TopN
+		newTopNs []*statistics.TopN
+		oldHgs   []*statistics.Histogram
+		newHgs   []*statistics.Histogram
+	)
+	for _, check := range [][]int64{{1, 0}, {2, 0}, {0, 1}} {
+		oldTopN, oldHg := getTopNAndHg(check[0], int(check[1]))
+		oldTopNs = append(oldTopNs, oldTopN)
+		oldHgs = append(oldHgs, oldHg)
+	}
+	tk.MustExec("alter table t2 modify column b mediumint unsigned, modify column c mediumint unsigned")
+	for _, check := range [][]int64{{1, 0}, {2, 0}, {0, 1}} {
+		newTopN, newHg := getTopNAndHg(check[0], int(check[1]))
+		newTopNs = append(newTopNs, newTopN)
+		newHgs = append(newHgs, newHg)
+	}
+
+	oldTp := types.NewFieldType(mysql.TypeLong)
+	newTp := types.NewFieldType(mysql.TypeInt24)
+	newTp.AddFlag(mysql.UnsignedFlag)
+	// Check TopN
+	for i := range 3 {
+		oldTopN := oldTopNs[i]
+		newTopN := newTopNs[i]
+		oldCount := getCountByTopN(oldTopN, oldTp)
+		newCount := getCountByTopN(newTopN, newTp)
+		require.Equal(t, oldCount, newCount)
+	}
+
+	// Index historgram is stored as blob, we need to decode it.
+	decodeToInt := func(b *types.Datum) int64 {
+		d, err := codec.Decode(b.GetBytes(), 1)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(d))
+		return d[0].GetInt64()
+	}
+
+	// Check Histogram
+	for i := range 3 {
+		oldHg := oldHgs[i]
+		newHg := newHgs[i]
+		require.Equal(t, len(oldHg.Buckets), len(newHg.Buckets))
+
+		var (
+			oldLower, oldUpper int64
+			newLower, newUpper int64
+		)
+
+		for j := range len(oldHg.Buckets) {
+			if i == 2 {
+				oldLower, oldUpper = decodeToInt(oldHg.GetLower(j)), decodeToInt(oldHg.GetUpper(j))
+				newLower, newUpper = decodeToInt(newHg.GetLower(j)), decodeToInt(newHg.GetUpper(j))
+			} else {
+				oldLower, oldUpper = oldHg.GetLower(j).GetInt64(), oldHg.GetUpper(j).GetInt64()
+				newLower, newUpper = newHg.GetLower(j).GetInt64(), newHg.GetUpper(j).GetInt64()
+			}
+			require.Equal(t, oldLower, newLower)
+			require.Equal(t, oldUpper, newUpper)
 		}
 	}
 }
