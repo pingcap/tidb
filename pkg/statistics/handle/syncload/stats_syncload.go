@@ -533,9 +533,10 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		if colHist.StatsAvailable() {
 			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.Info, true)
 		}
-		// All the objects shares the same stats version. Update it here.
+		// All the objects share the same stats version. Update it here.
 		if colHist.StatsVer != statistics.Version0 {
-			tbl.StatsVer = statistics.Version0
+			// SAFETY: The stats version only has a limited range, it is safe to convert int64 to int here.
+			tbl.StatsVer = int(colHist.StatsVer)
 		}
 	} else if item.IsIndex && idxHist != nil {
 		index, ok := tbl.Indices[item.ID]
@@ -548,9 +549,16 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		tbl.Indices[item.ID] = idxHist
 		// If the index is analyzed we refresh the map for the possible change.
 		if idxHist.IsAnalyzed() {
+<<<<<<< HEAD
 			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, idxHist.Info, true)
 			// All the objects shares the same stats version. Update it here.
 			tbl.StatsVer = statistics.Version0
+=======
+			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, true)
+			// All the objects share the same stats version. Update it here.
+			// SAFETY: The stats version only has a limited range, it is safe to convert int64 to int here.
+			tbl.StatsVer = int(idxHist.StatsVer)
+>>>>>>> c11aa55845d (statistics: use the correct analyze version (#64399))
 		}
 	}
 	s.statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)
