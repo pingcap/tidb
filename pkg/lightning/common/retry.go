@@ -85,7 +85,7 @@ func IsRetryableError(err error) bool {
 var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	errdef.ErrKVEpochNotMatch.ID():  {},
 	errdef.ErrKVNotLeader.ID():      {},
-	ErrNoLeader.ID():                {},
+	errdef.ErrNoLeader.ID():         {},
 	errdef.ErrKVRegionNotFound.ID(): {},
 	// common.ErrKVServerIsBusy is a little duplication with tmysql.ErrTiKVServerBusy
 	// it's because the response of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,
