@@ -613,6 +613,20 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 		})
 	}
 
+	var (
+		modifiedReadIndex atomic.Bool
+		modifiedMerge     atomic.Bool
+	)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return(true)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func(step proto.Step) {
+		switch step {
+		case proto.BackfillStepReadIndex:
+			modifiedReadIndex.Store(true)
+		case proto.BackfillStepMergeSort:
+			modifiedMerge.Store(true)
+		}
+	})
+
 	var pipeClosed bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
 		pipeClosed = true
@@ -622,11 +636,6 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	})
 
 	// Change the batch size and concurrency during table scanning and check the modified parameters.
-	var modified atomic.Bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func() {
-		require.False(t, modified.Load())
-		modified.Store(true)
-	})
 	var onceScan sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func(reorgMeta *model.DDLReorgMeta) {
 		onceScan.Do(func() {
@@ -635,15 +644,31 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 			require.Len(t, rows, 1)
 			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 8, batch_size = 256", rows[0][0]))
 			require.Eventually(t, func() bool {
-				return modified.Load()
-			}, 20*time.Second, 100*time.Millisecond)
+				return modifiedReadIndex.Load()
+			}, 30*time.Second, 100*time.Millisecond)
 			require.Equal(t, 256, reorgMeta.GetBatchSize())
+		})
+	})
+
+	// Change the concurrency during merge sort and check the modified parameters.
+	var onceMerge sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mergeOverlappingFiles", func(op *external.MergeOperator) {
+		onceMerge.Do(func() {
+			tk1 := testkit.NewTestKit(t, store)
+			rows := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+			require.Len(t, rows, 1)
+			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 2", rows[0][0]))
+			require.Eventually(t, func() bool {
+				return modifiedMerge.Load()
+			}, 30*time.Second, 100*time.Millisecond)
+			require.EqualValues(t, 2, op.GetWorkerPoolSize())
 		})
 	})
 
 	tk.MustExec("alter table gsort add index idx(a)")
 	require.True(t, pipeClosed)
-	require.True(t, modified.Load())
+	require.True(t, modifiedReadIndex.Load())
+	require.True(t, modifiedMerge.Load())
 	tk.MustExec("admin check index gsort idx")
 }
 

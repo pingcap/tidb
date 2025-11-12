@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -519,10 +520,11 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		s.beforeMerge()
 	}
 
+	wctx := workerpool.NewContext(ctx)
+
 	now := time.Now()
-	err = MergeOverlappingFiles(
-		ctx,
-		datas,
+	op := NewMergeOperator(
+		wctx,
 		s.store,
 		int64(5*size.MB),
 		mergeOutput,
@@ -533,6 +535,13 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		s.concurrency,
 		s.mergeIterHotspot,
 		engineapi.OnDuplicateKeyIgnore,
+	)
+
+	err = MergeOverlappingFiles(
+		wctx,
+		datas,
+		s.concurrency,
+		op,
 	)
 
 	intest.AssertNoError(err)
