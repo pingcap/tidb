@@ -78,9 +78,9 @@ func (c *mergeCollector) Processed(bytes, rowCnt int64) {
 }
 
 type mergeMinimalTask struct {
-	files []string
-
+	files       []string
 	concurrency int
+	writerID    string
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
@@ -163,7 +163,7 @@ func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)
 		w.store,
 		w.partSize,
 		w.newFilePrefix,
-		uuid.New().String(),
+		task.writerID,
 		w.blockSize,
 		w.onWriterClose,
 		w.onReaderClose,
@@ -197,6 +197,7 @@ func MergeOverlappingFiles(
 		mergeTasks = append(mergeTasks, &mergeMinimalTask{
 			files:       files,
 			concurrency: len(dataFilesSlice),
+			writerID:    uuid.New().String(),
 		})
 	}
 
