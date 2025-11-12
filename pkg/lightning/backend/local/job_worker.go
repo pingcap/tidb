@@ -50,7 +50,7 @@ func toAtomic(v int) atomic.Int32 {
 }
 
 type regionJobWorker interface {
-	HandleTask(job *regionJob, f func(*regionJob))
+	HandleTask(job *regionJob, f func(*regionJob)) error
 
 	Close()
 
@@ -83,7 +83,7 @@ type regionJobBaseWorker struct {
 // HandleTask get jobs from the job channel and process them.
 // job.done() must be called if we can't put the job into jobOutCh
 // to make worker group quit.
-func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) {
+func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) error {
 	// As we need to call job.done() after panic, we recover here rather than in worker pool.
 	defer putil.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
 		w.ctx.OnError(errors.Errorf("region job worker panic"))
@@ -94,10 +94,7 @@ func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) {
 		panic("mock panic")
 	})
 
-	err := w.process(job)
-	if err != nil {
-		w.ctx.OnError(err)
-	}
+	return w.process(job)
 }
 
 func (w *regionJobBaseWorker) run() error {
