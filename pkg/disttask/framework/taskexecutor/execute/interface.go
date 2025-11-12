@@ -90,7 +90,7 @@ type Progress struct {
 }
 
 // SubtaskSummary contains the summary of a subtask.
-// It tracks the progress in terms of rows and bytes processed.
+// It tracks the runtime summary of the subtask.
 type SubtaskSummary struct {
 	// RowCnt and Bytes are updated by the collector.
 	RowCnt atomic.Int64 `json:"row_count,omitempty"`

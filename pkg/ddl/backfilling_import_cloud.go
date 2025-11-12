@@ -95,17 +95,17 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 
 	e.summary.Reset()
 
-	reqRec, extStore, err := handle.NewGLSortStoreWithRecording(ctx, e.cloudStoreURI)
+	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.cloudStoreURI)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		extStore.Close()
+		objStore.Close()
 		e.summary.MergeObjStoreRequests(reqRec)
 		e.GetMeterRecorder().MergeObjStoreRequests(reqRec)
 	}()
 
-	sm, err := decodeBackfillSubTaskMeta(ctx, extStore, subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			ExtStore:      extStore,
+			ExtStore:      objStore,
 			DataFiles:     sm.DataFiles,
 			StatFiles:     sm.StatFiles,
 			StartKey:      all.StartKey,

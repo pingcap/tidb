@@ -207,20 +207,20 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	var (
 		reqRec   = &recording.Requests{}
-		extStore storage.ExternalStorage
+		objStore storage.ExternalStorage
 	)
 	if r.isGlobalSort() {
-		reqRec, extStore, err = handle.NewGLSortStoreWithRecording(ctx, r.cloudStorageURI)
+		reqRec, objStore, err = handle.NewObjStoreWithRecording(ctx, r.cloudStorageURI)
 		if err != nil {
 			return err
 		}
 		defer func() {
-			extStore.Close()
+			objStore.Close()
 			r.summary.MergeObjStoreRequests(reqRec)
 			r.GetMeterRecorder().MergeObjStoreRequests(reqRec)
 		}()
 	}
-	sm, err := decodeBackfillSubTaskMeta(ctx, extStore, subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -230,7 +230,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	concurrency := int(r.GetResource().CPU.Capacity())
 	if r.isGlobalSort() {
-		return r.runGlobalPipeline(ctx, opCtx, subtask, sm, concurrency, extStore)
+		return r.runGlobalPipeline(ctx, opCtx, subtask, sm, concurrency, objStore)
 	}
 	return r.runLocalPipeline(ctx, opCtx, subtask, sm, concurrency)
 }

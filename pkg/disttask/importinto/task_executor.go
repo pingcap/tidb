@@ -199,23 +199,23 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 
 	var (
 		reqRec   = &recording.Requests{}
-		extStore storage.ExternalStorage
+		objStore storage.ExternalStorage
 	)
 	if s.tableImporter.IsGlobalSort() {
 		var err3 error
-		reqRec, extStore, err3 = handle.NewGLSortStoreWithRecording(ctx, s.tableImporter.CloudStorageURI)
+		reqRec, objStore, err3 = handle.NewObjStoreWithRecording(ctx, s.tableImporter.CloudStorageURI)
 		if err3 != nil {
 			return err3
 		}
 		defer func() {
-			extStore.Close()
+			objStore.Close()
 			s.summary.MergeObjStoreRequests(reqRec)
 			s.GetMeterRecorder().MergeObjStoreRequests(reqRec)
 		}()
 	}
 	// read import step meta from external storage when using global sort.
 	if subtaskMeta.ExternalPath != "" {
-		if err := subtaskMeta.ReadJSONFromExternalStorage(ctx, extStore, &subtaskMeta); err != nil {
+		if err := subtaskMeta.ReadJSONFromExternalStorage(ctx, objStore, &subtaskMeta); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -245,7 +245,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		Checksum:         verification.NewKVGroupChecksumWithKeyspace(s.tableImporter.GetKeySpace()),
 		SortedDataMeta:   &external.SortedKVMeta{},
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
-		globalSortStore:  extStore,
+		globalSortStore:  objStore,
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
@@ -282,7 +282,7 @@ outer:
 	if panicked.Load() {
 		return errors.Errorf("panic occurred during import, please check log")
 	}
-	return s.onFinished(ctx, subtask, extStore)
+	return s.onFinished(ctx, subtask, objStore)
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -408,18 +408,18 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	m.summary.Reset()
 
-	reqRec, extStore, err := handle.NewGLSortStoreWithRecording(ctx, m.taskMeta.Plan.CloudStorageURI)
+	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, m.taskMeta.Plan.CloudStorageURI)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		extStore.Close()
+		objStore.Close()
 		m.summary.MergeObjStoreRequests(reqRec)
 		m.GetMeterRecorder().MergeObjStoreRequests(reqRec)
 	}()
 	// read merge sort step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
-		if err := sm.ReadJSONFromExternalStorage(ctx, extStore, sm); err != nil {
+		if err := sm.ReadJSONFromExternalStorage(ctx, objStore, sm); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -446,7 +446,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	err = external.MergeOverlappingFiles(
 		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
 		sm.DataFiles,
-		extStore,
+		objStore,
 		partSize,
 		prefix,
 		external.DefaultOneWriterBlockSize,
@@ -465,7 +465,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return m.onFinished(ctx, subtask, extStore)
+	return m.onFinished(ctx, subtask, objStore)
 }
 
 func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sortStore storage.ExternalStorage) error {
@@ -544,18 +544,18 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	e.summary.Reset()
 
-	reqRec, extStore, err := handle.NewGLSortStoreWithRecording(ctx, e.tableImporter.CloudStorageURI)
+	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.tableImporter.CloudStorageURI)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		extStore.Close()
+		objStore.Close()
 		e.summary.MergeObjStoreRequests(reqRec)
 		e.GetMeterRecorder().MergeObjStoreRequests(reqRec)
 	}()
 	// read write and ingest step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
-		if err := sm.ReadJSONFromExternalStorage(ctx, extStore, sm); err != nil {
+		if err := sm.ReadJSONFromExternalStorage(ctx, objStore, sm); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -583,7 +583,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			ExtStore:      extStore,
+			ExtStore:      objStore,
 			DataFiles:     sm.DataFiles,
 			StatFiles:     sm.StatFiles,
 			StartKey:      sm.StartKey,

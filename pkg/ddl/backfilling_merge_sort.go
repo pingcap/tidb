@@ -76,17 +76,17 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	m.summary.Reset()
 
-	reqRec, extStore, err := handle.NewGLSortStoreWithRecording(ctx, m.cloudStoreURI)
+	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, m.cloudStoreURI)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		extStore.Close()
+		objStore.Close()
 		m.summary.MergeObjStoreRequests(reqRec)
 		m.GetMeterRecorder().MergeObjStoreRequests(reqRec)
 	}()
 
-	sm, err := decodeBackfillSubTaskMeta(ctx, extStore, subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	err = external.MergeOverlappingFiles(
 		ctx,
 		sm.DataFiles,
-		extStore,
+		objStore,
 		partSize,
 		prefix,
 		external.DefaultBlockSize,
@@ -126,7 +126,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		}
 		return errors.Trace(err)
 	}
-	return m.onFinished(ctx, subtask, sm, extStore)
+	return m.onFinished(ctx, subtask, sm, objStore)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {

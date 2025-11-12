@@ -449,16 +449,16 @@ func generateGlobalSortIngestPlan(
 		kvMetaGroups []*external.SortedKVMeta
 		eleIDs       []int64
 	)
-	extStore, err := handle.NewObjStore(ctx, cloudStorageURI)
+	objStore, err := handle.NewObjStore(ctx, cloudStorageURI)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
-		extStore.Close()
+		objStore.Close()
 	}()
 	for _, step := range []proto.Step{proto.BackfillStepMergeSort, proto.BackfillStepReadIndex} {
 		hasSubtasks := false
-		err := forEachBackfillSubtaskMeta(ctx, extStore, taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
+		err := forEachBackfillSubtaskMeta(ctx, objStore, taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
 			hasSubtasks = true
 			if kvMetaGroups == nil {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
@@ -506,7 +506,7 @@ func generateGlobalSortIngestPlan(
 	}
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, extStore, m, external.PlanMetaPath(
+		if err := writeExternalBackfillSubTaskMeta(ctx, objStore, m, external.PlanMetaPath(
 			task.ID,
 			proto.Step2Str(proto.Backfill, proto.BackfillStepWriteAndIngest),
 			i+1,
@@ -635,14 +635,14 @@ func generateMergeSortPlan(
 		kvMetaGroups    []*external.SortedKVMeta
 		eleIDs          []int64
 	)
-	extStore, err := handle.NewObjStore(ctx, cloudStorageURI)
+	objStore, err := handle.NewObjStore(ctx, cloudStorageURI)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
-		extStore.Close()
+		objStore.Close()
 	}()
-	err = forEachBackfillSubtaskMeta(ctx, extStore, taskHandle, task.ID, proto.BackfillStepReadIndex,
+	err = forEachBackfillSubtaskMeta(ctx, objStore, taskHandle, task.ID, proto.BackfillStepReadIndex,
 		func(subtask *BackfillSubTaskMeta) {
 			if kvMetaGroups == nil {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
@@ -706,7 +706,7 @@ func generateMergeSortPlan(
 
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, extStore, m, external.PlanMetaPath(
+		if err := writeExternalBackfillSubTaskMeta(ctx, objStore, m, external.PlanMetaPath(
 			task.ID,
 			proto.Step2Str(proto.Backfill, proto.BackfillStepMergeSort),
 			i+1)); err != nil {
