@@ -736,8 +736,9 @@ insert into ta
 values ('"json string1"', 623.8);
 insert into ta
 values (NULL, 1337.0);
-select count(*)from ta where not ( ta.a1 in ( select b2 from tb where not ( ta.a1 in ( select c1 from tc where ta.a2 in ( select b2 from tb where IsNull(ta.a1) ) ) ) ) );
-Error 1815 (HY000): expression isnull(cast(executor__issues.ta.a1, var_string(4294967295))) cannot be pushed down
+select count(*) from ta where not ( ta.a1 in ( select b2 from tb where not ( ta.a1 in ( select c1 from tc where ta.a2 in ( select b2 from tb where IsNull(ta.a1) ) ) ) ) );
+count(*)
+3
 drop table if exists V, F;
 create table V (id int primary key, col_int int);
 insert into V values (1, 8);
@@ -1043,3 +1044,24 @@ DELETE FROM test_62458 PARTITION (p1) WHERE c1 = 15;
 CREATE TABLE test_62457 (c INT) PARTITION BY RANGE (c) (PARTITION p VALUES LESS THAN (10));
 ALTER TABLE test_62457 ADD COLUMN c2 INT AS (JSON_EXTRACT(c, '$.number')) VIRTUAL;
 Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_extract; a JSON string or JSON type is required.
+DROP TABLE IF EXISTS tb2;
+DROP TABLE IF EXISTS tb5;
+CREATE TABLE tb2 (c0 FLOAT NOT NULL);
+CREATE TABLE tb5 (c4 JSON NOT NULL);
+INSERT INTO tb5 (c4) VALUES ('{"name": "aeEl9", "data": {"id": 199}}');
+explain format='brief' SELECT 1 FROM tb5 AS t3 WHERE (EXISTS (SELECT 1 FROM tb2 AS t0 WHERE (t3.c4 IN (SELECT t0.c0 FROM tb2 AS t0))));
+id	estRows	task	access object	operator info
+Projection	10000.00	root		1->Column#8
+└─Apply	10000.00	root		CARTESIAN semi join, left side:TableReader
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	640000000000.00	root		CARTESIAN inner join
+    ├─HashAgg(Build)	64000000.00	root		group by:executor__issues.tb2.c0, funcs:firstrow(Column#11)->Column#10
+    │ └─TableReader	64000000.00	root		data:HashAgg
+    │   └─HashAgg	64000000.00	cop[tikv]		group by:executor__issues.tb2.c0, funcs:firstrow(1)->Column#11
+    │     └─Selection	80000000.00	cop[tikv]		eq(executor__issues.tb5.c4, cast(executor__issues.tb2.c0, json BINARY))
+    │       └─TableFullScan	100000000.00	cop[tikv]	table:t0	keep order:false, stats:pseudo
+    └─TableReader(Probe)	100000000.00	root		data:TableFullScan
+      └─TableFullScan	100000000.00	cop[tikv]	table:t0	keep order:false, stats:pseudo
+SELECT 1 FROM tb5 AS t3 WHERE (EXISTS (SELECT 1 FROM tb2 AS t0 WHERE (t3.c4 IN (SELECT t0.c0 FROM tb2 AS t0))));
+1
