@@ -348,7 +348,7 @@ func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
 	tk1.MustExec("set @@tidb_stats_update_during_ddl = true;")
 	dbCnt := 0
 
-	checkFn := func(sql string, containRes string) {
+	checkFn := func(sql, containRes string) {
 		dbCnt++
 		dbName := fmt.Sprintf("test_%d", dbCnt)
 		tk1.MustExec("drop database if exists " + dbName)

@@ -70,6 +70,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			return ver, err
 		}
 
+		// Save table info and sub-jobs for rolling back.
 		var tblInfo *model.TableInfo
 		tblInfo, err = GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 		if err != nil {
@@ -83,7 +84,6 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			}
 		}
 
-		// Save table info and sub-jobs for rolling back.
 		var schemaVersionGenerated = false
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
 		// Step the sub-jobs to the non-revertible states all at once.
@@ -385,8 +385,8 @@ func checkNeedAnalyzeForMultiSchemaChange(job *model.Job, tblInfo *model.TableIn
 		return true
 	}
 
-	for i := len(job.MultiSchemaInfo.SubJobs) - 1; i >= 0; i-- {
-		switch job.MultiSchemaInfo.SubJobs[i].Type {
+	for _, subJob := range job.MultiSchemaInfo.SubJobs {
+		switch subJob.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn:
 			if checkAnalyzeNecessary(job, tblInfo) {
 				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
