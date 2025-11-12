@@ -257,11 +257,11 @@ type dumpTriggerConfigCompiled struct {
 }
 
 func (c *dumpTriggerConfigCompiled) addTrigger(canonicalName string, config *DumpTriggerConfig) (uint64, error) {
-	idx, ok := c.nameMapping[canonicalName]
+	_, ok := c.nameMapping[canonicalName]
 	if ok {
 		return 0, fmt.Errorf("duplicate trigger name: %s", canonicalName)
 	}
-	idx = len(c.nameMapping)
+	idx := len(c.nameMapping)
 	c.nameMapping[canonicalName] = idx
 	c.configRef = append(c.configRef, config)
 	return 1 << idx, nil
