@@ -645,11 +645,8 @@ func filterPredsInvolvingSchema(preds []expression.Expression, sch *expression.S
 	defer expression.PutUniqueIDToColumnMap(colMap)
 	for _, e := range preds {
 		expression.ExtractColumnsMapFromExpressionsWithReusedMap(colMap, sch.Contains, e)
-		for _, c := range colMap {
-			if sch.Contains(c) {
-				out = append(out, e)
-				break
-			}
+		if len(colMap) > 0 {
+			out = append(out, e)
 		}
 		clear(colMap)
 	}
