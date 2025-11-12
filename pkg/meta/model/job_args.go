@@ -860,7 +860,6 @@ func (a *RenameTablesArgs) decodeV1(job *Job) error {
 	// See https://github.com/pingcap/tidb/blob/293331cd9211c214f3431ff789210374378e9697/pkg/ddl/ddl_worker.go#L1442-L1447
 	if len(oldTableNames) == 0 && len(oldSchemaIDs) != 0 {
 		oldTableNames = make([]ast.CIStr, len(oldSchemaIDs))
-		job.args = append(job.args, oldTableNames)
 	}
 
 	a.RenameTableInfos = GetRenameTablesArgsFromV1(
