@@ -207,7 +207,7 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		}
 	})
 
-	r, _ := tracing.StartRegionEx(jobCtx.ctx, "ddlWorker.onCreateTable")
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.onCreateTable")
 	defer r.End()
 
 	args, err := model.GetCreateTableArgs(job)

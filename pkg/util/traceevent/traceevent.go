@@ -275,7 +275,9 @@ func GenerateTraceID(ctx context.Context, startTS uint64, stmtCount uint64) []by
 	var rand32 uint32
 	if sink := tracing.GetSink(ctx); sink != nil {
 		if t, ok := sink.(*Trace); ok {
+			t.mu.Lock()
 			rand32 = t.rand32
+			t.mu.Unlock()
 		}
 	}
 	if rand32 == 0 {
