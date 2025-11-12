@@ -478,11 +478,12 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 			}
 		case mysql.TypeNewDecimal:
 			ds := column.Decimals()
-			elemLen := int64(0)
-			for _, physicalRowindex := range usedRows {
+			for j, physicalRowindex := range usedRows {
 				if canSkip(physicalRowindex) {
 					continue
 				}
+
+				elemLen := int64(0)
 
 				// Buffer length for all decimal in one column should be same
 				b, err := ds[physicalRowindex].ToHashKey()
@@ -494,10 +495,6 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 					elemLen += int64(sizeUint8)
 				}
 				elemLen += int64(len(b))
-				break
-			}
-
-			for j := range *memoryUsagePerRow {
 				(*memoryUsagePerRow)[j] += elemLen
 			}
 		case mysql.TypeEnum:
