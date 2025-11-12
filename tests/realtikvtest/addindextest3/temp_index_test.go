@@ -240,7 +240,6 @@ func TestMergeTempIndexStuck(t *testing.T) {
 		}
 	})
 
-	time.Sleep(2 * time.Second) // wait workload run for a while
 	for execCnt.Load() < 5000 {
 		time.Sleep(100 * time.Millisecond)
 	}
