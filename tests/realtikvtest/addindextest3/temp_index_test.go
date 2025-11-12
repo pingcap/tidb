@@ -17,6 +17,7 @@ package addindextest
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -179,6 +180,7 @@ func TestMergeTempIndexStuck(t *testing.T) {
 		pkEnd     = 50 // workerNum * batchNum = pkEnd - pkBegin
 		rowNum    = 100
 		values    []string
+		execCnt   atomic.Int64
 	)
 	for i := 0; i <= rowNum; i++ {
 		values = append(values, fmt.Sprintf("(%d, %d)", i, i))
@@ -213,6 +215,7 @@ func TestMergeTempIndexStuck(t *testing.T) {
 					tk.MustExec(query)
 					select {
 					case chPkFinish <- pk:
+						execCnt.Add(1)
 					case <-done:
 						return
 					}
@@ -238,6 +241,9 @@ func TestMergeTempIndexStuck(t *testing.T) {
 	})
 
 	time.Sleep(2 * time.Second) // wait workload run for a while
+	for execCnt.Load() < 5000 {
+		time.Sleep(100 * time.Millisecond)
+	}
 	tk.MustExec("alter table t add index idx_a(a);")
 	tk.MustExec("admin check index t idx_a;")
 	close(done)
