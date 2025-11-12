@@ -173,7 +173,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 				}
 				job.lastRetryableErr = err
 				tidblogutil.Logger(ctx).Warn("meet retryable error when writing to TiKV",
-					log.ShortError(err), zap.Stringer("job stage", job.stage))
+					zap.Error(err), zap.Stringer("job stage", job.stage))
 				return nil
 			}
 			if res.emptyJob {
