@@ -19,6 +19,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"go.uber.org/atomic"
 )
@@ -238,13 +239,25 @@ type StepExecFrameworkInfo interface {
 	GetResource() *proto.StepResource
 	// SetResource sets the resource of this step executor.
 	SetResource(resource *proto.StepResource)
+	// GetMeterRecorder returns the meter recorder for the corresponding task.
+	GetMeterRecorder() *metering.Recorder
+	// GetCheckpointUpdateFunc returns the checkpoint update function
+	GetCheckpointUpdateFunc() func(context.Context, int64, any) error
+	// GetCheckpointunc returns the checkpoint get function
+	GetCheckpointFunc() func(context.Context, int64) (string, error)
 }
 
 var stepExecFrameworkInfoName = reflect.TypeFor[StepExecFrameworkInfo]().Name()
 
 type frameworkInfo struct {
-	step     proto.Step
-	resource atomic.Pointer[proto.StepResource]
+	step          proto.Step
+	meterRecorder *metering.Recorder
+	resource      atomic.Pointer[proto.StepResource]
+
+	// updateCheckpointFunc is used to update checkpoint for the current subtask
+	updateCheckpointFunc func(context.Context, int64, any) error
+	// getCheckpointFunc is used to get checkpoint for the current subtask
+	getCheckpointFunc func(context.Context, int64) (string, error)
 }
 
 var _ StepExecFrameworkInfo = (*frameworkInfo)(nil)
@@ -263,13 +276,36 @@ func (f *frameworkInfo) SetResource(resource *proto.StepResource) {
 	f.resource.Store(resource)
 }
 
+func (f *frameworkInfo) GetMeterRecorder() *metering.Recorder {
+	return f.meterRecorder
+}
+
+// GetCheckpointUpdateFunc returns the checkpoint update function
+func (f *frameworkInfo) GetCheckpointUpdateFunc() func(context.Context, int64, any) error {
+	return f.updateCheckpointFunc
+}
+
+// GetCheckpointFunc returns the checkpoint get function
+func (f *frameworkInfo) GetCheckpointFunc() func(context.Context, int64) (string, error) {
+	return f.getCheckpointFunc
+}
+
 // SetFrameworkInfo sets the framework info for the StepExecutor.
-func SetFrameworkInfo(exec StepExecutor, step proto.Step, resource *proto.StepResource) {
+func SetFrameworkInfo(
+	exec StepExecutor,
+	task *proto.Task,
+	resource *proto.StepResource,
+	updateCheckpointFunc func(context.Context, int64, any) error,
+	getCheckpointFunc func(context.Context, int64) (string, error),
+) {
 	if exec == nil {
 		return
 	}
 	toInject := &frameworkInfo{
-		step: step,
+		step:                 task.Step,
+		meterRecorder:        metering.RegisterRecorder(&task.TaskBase),
+		updateCheckpointFunc: updateCheckpointFunc,
+		getCheckpointFunc:    getCheckpointFunc,
 	}
 	toInject.resource.Store(resource)
 	// use reflection to set the framework info

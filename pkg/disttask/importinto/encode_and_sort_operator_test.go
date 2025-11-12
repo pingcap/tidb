@@ -82,6 +82,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 		logger: logger,
 	}
 
+	execute.SetFrameworkInfo(executorForParam, &proto.Task{TaskBase: proto.TaskBase{ID: 1}}, nil, nil, nil)
 	wctx := workerpool.NewContext(context.Background())
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
 	op := newEncodeAndSortOperator(wctx, executorForParam, nil, nil, 3, 1)
