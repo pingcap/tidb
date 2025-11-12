@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -294,7 +295,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
-	ch := make(chan checkIndexTask, len(e.indexInfos))
+	ch := make(chan checkIndexTask)
 	dc := operator.NewSimpleDataChannel(ch)
 
 	wctx := workerpool.NewContext(ctx)
@@ -305,8 +306,13 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	//nolint: errcheck
 	op.Open()
 
+OUTER:
 	for i := range e.indexInfos {
-		ch <- checkIndexTask{indexOffset: i}
+		select {
+		case ch <- checkIndexTask{indexOffset: i}:
+		case <-wctx.Done():
+			break OUTER
+		}
 	}
 	close(ch)
 
@@ -391,6 +397,10 @@ func verifyIndexSideQuery(ctx context.Context, se sessionctx.Context, sql string
 
 // HandleTask implements the Worker interface.
 func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) error {
+	failpoint.Inject("mockFastCheckTableError", func() {
+		failpoint.Return(errors.New("mock fast check table error"))
+	})
+
 	idxInfo := w.indexInfos[task.indexOffset]
 	bucketSize := int(CheckTableFastBucketSize.Load())
 

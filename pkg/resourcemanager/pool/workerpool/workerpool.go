@@ -82,9 +82,10 @@ type TaskMayPanic interface {
 type Worker[T TaskMayPanic, R any] interface {
 	// HandleTask consumes a task(T), either produces a result(R) or return an error.
 	// The result is sent to the result channel by calling `send` function, and the
-	// error returned will be catched and handled by the worker pool.
+	// error returned will be catched, log, and broadcasted it to other operators
+	// by worker pool.
 	// TODO(joechenrh): we can pass the context to HandleTask, so we don't need to
-	// store the context in each worker implement.
+	// store the context in each worker implementation.
 	HandleTask(task T, send func(R)) error
 	Close() error
 }
