@@ -158,7 +158,6 @@ type Engine struct {
 	dupFile         string
 	dupWriter       storage.ExternalFileWriter
 	dupKVStore      *KeyValueStore
-	onReaderClose   OnReaderCloseFunc
 }
 
 var _ engineapi.Engine = (*Engine)(nil)
@@ -185,7 +184,6 @@ func NewExternalEngine(
 	memCapacity int64,
 	onDup engineapi.OnDuplicateKey,
 	filePrefix string,
-	onReaderClose OnReaderCloseFunc,
 ) *Engine {
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
@@ -220,7 +218,6 @@ func NewExternalEngine(
 		memLimit:          memLimit,
 		onDup:             onDup,
 		filePrefix:        filePrefix,
-		onReaderClose:     onReaderClose,
 	}
 }
 
@@ -312,7 +309,6 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		e.smallBlockBufPool,
 		e.largeBlockBufPool,
 		&e.memKVsAndBuffers,
-		e.onReaderClose,
 	)
 	if err != nil {
 		return err
@@ -578,7 +574,6 @@ func (e *Engine) Close() error {
 		e.largeBlockBufPool.Destroy()
 		e.largeBlockBufPool = nil
 	}
-	e.storage.Close()
 	return nil
 }
 

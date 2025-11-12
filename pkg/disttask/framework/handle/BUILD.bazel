@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/storage",
+        "//br/pkg/storage/recording",
         "//pkg/config/kerneltype",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/schstatus",

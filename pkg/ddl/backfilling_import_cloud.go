@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -93,7 +94,18 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
 	e.summary.Reset()
-	sm, err := decodeBackfillSubTaskMeta(ctx, e.cloudStoreURI, subtask.Meta)
+
+	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.cloudStoreURI)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		objStore.Close()
+		e.summary.MergeObjStoreRequests(reqRec)
+		e.GetMeterRecorder().MergeObjStoreRequests(reqRec)
+	}()
+
+	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -121,7 +133,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			StorageURI:    e.cloudStoreURI,
+			ExtStore:      objStore,
 			DataFiles:     sm.DataFiles,
 			StatFiles:     sm.StatFiles,
 			StartKey:      all.StartKey,
@@ -133,10 +145,6 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			CheckHotspot:  true,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
 			OnDup:         engineapi.OnDuplicateKeyError,
-			OnReaderClose: func(summary *external.ReaderSummary) {
-				e.summary.GetReqCnt.Add(summary.GetRequestCount)
-				e.GetMeterRecorder().IncGetRequest(summary.GetRequestCount)
-			},
 		},
 		TS: sm.TS,
 	}, engineUUID)

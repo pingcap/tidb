@@ -57,7 +57,6 @@ type OneFileWriter struct {
 	// Statistic information per writer.
 	totalSize uint64
 	totalCnt  uint64
-	putReqCnt uint64
 	rc        *rangePropertiesCollector
 
 	// file information.
@@ -104,7 +103,6 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 	dataWriter, err := w.store.Create(ctx, dataFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    w.partSize,
-		OnUpload:    func() { w.putReqCnt++ },
 	})
 	if err != nil {
 		return err
@@ -113,7 +111,6 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 	statWriter, err := w.store.Create(ctx, statFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    MinUploadPartSize,
-		OnUpload:    func() { w.putReqCnt++ },
 	})
 	if err != nil {
 		w.logger.Info("create stat writer failed", zap.Error(err))
@@ -308,7 +305,6 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		TotalCnt:           w.totalCnt,
 		MultipleFilesStats: mStats,
 		ConflictInfo:       conflictInfo,
-		PutRequestCount:    w.putReqCnt,
 	})
 	w.totalCnt = 0
 	w.totalSize = 0
