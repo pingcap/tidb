@@ -1101,9 +1101,7 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 	defer cancel()
 	workGroup, egCtx := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
 
-	if concurrency >= 15 {
-		concurrency = 15
-	}
+	concurrency = max(1, min(15, concurrency))
 
 	kvRanges := splitRangeInt64Max(int64(concurrency))
 
