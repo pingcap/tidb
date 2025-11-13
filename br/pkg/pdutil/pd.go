@@ -20,7 +20,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/kv"
+||||||| parent of 978d72a8e1 (pd: replace client with NewClientWithAPIContext (#1899))
+=======
+	"github.com/pingcap/tidb/pkg/keyspace"
+>>>>>>> 978d72a8e1 (pd: replace client with NewClientWithAPIContext (#1899))
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -148,6 +153,7 @@ type PdController struct {
 // NewPdController creates a new PdController.
 func NewPdController(
 	ctx context.Context,
+	keyspaceName string,
 	pdAddrs []string,
 	tlsConf *tls.Config,
 	securityOption pd.SecurityOption,
@@ -156,8 +162,8 @@ func NewPdController(
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSize)),
 		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(maxMsgSize)),
 	}
-	pdClient, err := pd.NewClientWithContext(
-		ctx, pdAddrs, securityOption,
+	pdClient, err := pd.NewClientWithAPIContext(
+		ctx, keyspace.BuildAPIContext(keyspaceName), pdAddrs, securityOption,
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.

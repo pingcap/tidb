@@ -589,8 +589,9 @@ func NewBackend(
 	} else {
 		pdAddrs = strings.Split(config.PDAddr, ",")
 	}
-	pdCli, err = pd.NewClientWithContext(
-		ctx, pdAddrs, tls.ToPDSecurityOption(),
+	apiContext := keyspace.BuildAPIContext(config.KeyspaceName)
+	pdCli, err = pd.NewClientWithAPIContext(
+		ctx, apiContext, pdAddrs, tls.ToPDSecurityOption(),
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.

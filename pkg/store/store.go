@@ -99,11 +99,12 @@ func loadDriver(name string) (kv.Driver, bool) {
 //	Transaction conflict and is retryable (kv.IsTxnRetryableError)
 //	PD is not bootstrapped at the time of request
 //	Keyspace requested does not exist (request prior to PD keyspace pre-split)
+//	Generate timestamp failed because requested TSO server is not leader
 func isNewStoreRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return kv.IsTxnRetryableError(err) || IsNotBootstrappedError(err) || IsKeyspaceNotExistError(err)
+	return kv.IsTxnRetryableError(err) || IsNotBootstrappedError(err) || IsKeyspaceNotExistError(err) || IsNotTSOLeaderError(err)
 }
 
 // IsNotBootstrappedError returns true if the error is pd not bootstrapped error.
@@ -120,4 +121,12 @@ func IsKeyspaceNotExistError(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), pdpb.ErrorType_ENTRY_NOT_FOUND.String())
+}
+
+// IsNotTSOLeaderError returns true if the error is caused by not a TSO leader.
+func IsNotTSOLeaderError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "not leader")
 }

@@ -359,11 +359,11 @@ func TestSplitForOneSubtask(t *testing.T) {
 		MultipleFilesStats: multiFileStat,
 	}
 
-	bak := importer.NewClientWithContext
+	bak := importer.NewClientWithAPIContext
 	t.Cleanup(func() {
-		importer.NewClientWithContext = bak
+		importer.NewClientWithAPIContext = bak
 	})
-	importer.NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
+	importer.NewClientWithAPIContext = func(_ context.Context, _ pd.APIContext, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
 		return nil, errors.New("mock error")
 	}
 
