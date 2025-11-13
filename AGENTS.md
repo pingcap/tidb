@@ -112,3 +112,5 @@ The PR title **must** strictly adhere to the following format. It uses the packa
 ### PR description
 
 The PR description **must** strictly follow the template located at @.github/pull_request_template.md. And **must** keep HTML comment elements in pull request description according to the pull request template. These elements are essential for CI and removing them will cause processing failures.
+
+If you are copilot coding agent and have an assigned issue, **must** use the issue to fill the `Issue Number: ` line of pull request template.
