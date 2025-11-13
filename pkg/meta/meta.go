@@ -1035,6 +1035,7 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 	defer cancel()
 	workGroup, egCtx := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
 
+	// In case of too many goroutines or 0 concurrency. fetchAllTablesAndBuildAnalysisJobs may pass 0 concurrency on 1C machine.
 	concurrency = max(1, min(15, concurrency))
 
 	kvRanges := splitRangeInt64Max(int64(concurrency))
