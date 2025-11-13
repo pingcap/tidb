@@ -849,8 +849,8 @@ func (a *RenameTablesArgs) decodeV1(job *Job) error {
 		return errors.Trace(err)
 	}
 
-	// if the job is run on older TiDB versions(<=8.1), it will incorrectly remove
-	// the last arg oldTableNames
+	// If the job is run on older TiDB versions(<=8.1), it will incorrectly remove
+	// the last arg oldTableNames.
 	// See https://github.com/pingcap/tidb/blob/293331cd9211c214f3431ff789210374378e9697/pkg/ddl/ddl_worker.go#L1442-L1447
 	if len(oldTableNames) == 0 && len(oldSchemaIDs) != 0 {
 		oldTableNames = make([]ast.CIStr, len(oldSchemaIDs))
