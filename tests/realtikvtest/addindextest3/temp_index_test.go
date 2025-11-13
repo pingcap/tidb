@@ -179,10 +179,10 @@ func TestMergeTempIndexStuck(t *testing.T) {
 		pkBegin   = 0
 		pkEnd     = 50 // workerNum * batchNum = pkEnd - pkBegin
 		rowNum    = 100
+		values    []string
 		execCnt   atomic.Int64
 	)
-	values := make([]string, 0, rowNum+1)
-	for i := 0; i <= rowNum; i++ {
+	for i := range rowNum {
 		values = append(values, fmt.Sprintf("(%d, %d)", i, i))
 	}
 	tk.MustExec("insert into t values " + strings.Join(values, ","))
