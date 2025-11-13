@@ -467,6 +467,47 @@ func TestInitStats(t *testing.T) {
 	})
 }
 
+// TestInitStatsWithoutHandingDDLEvent tests the scenario that stats
+// meta exists but no histogram meta exists because no analyze has been done
+// and no DDL event has been handled.
+func TestInitStatsWithoutHandingDDLEvent(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+	tableStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.False(t, tableStats.Pseudo)
+	require.False(t, tableStats.IsAnalyzed())
+	// Basic meta info check
+	require.Equal(t, int64(6), tableStats.ModifyCount)
+	require.Equal(t, int64(6), tableStats.RealtimeCount)
+	require.Equal(t, statistics.Version0, tableStats.StatsVer)
+	// Check index stats
+	require.Equal(t, 0, tableStats.IdxNum())
+	idxID := tbl.Meta().Indices[0].ID
+	idx := tableStats.GetIdx(idxID)
+	require.Nil(t, idx)
+	require.False(t, tableStats.ColAndIdxExistenceMap.Has(idxID, true))
+	require.False(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(idxID, true))
+	// Check column stats
+	for _, colInfo := range tbl.Meta().Columns {
+		col := tableStats.GetCol(colInfo.ID)
+		require.Nil(t, col)
+		require.False(t, tableStats.ColAndIdxExistenceMap.Has(colInfo.ID, false))
+		require.False(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(colInfo.ID, false))
+	}
+}
+
 func TestInitStats51358(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("analyze V1 cannot support in the next gen")
