@@ -4238,11 +4238,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	dom.SetupExtractHandle(extractWorkerSctxs)
 
 	// setup init stats loader
-	initStatsCtx, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	if err = dom.LoadAndUpdateStatsLoop(concurrency, initStatsCtx); err != nil {
+	if err = dom.LoadAndUpdateStatsLoop(concurrency); err != nil {
 		return nil, err
 	}
 
