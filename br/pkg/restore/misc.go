@@ -220,11 +220,8 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 ) error {
 	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, restoreTargetTs uint64) bool {
 		// Skip if this restore's commit time is after our start time
-		if startTs >= restoreCommitTs {
-			return true
-		}
-		// Allow time rollback: skip blocklist check if restoring to earlier time
-		if restoredTs < restoreTargetTs {
+		// and the restored time is before last restore target time.
+		if startTs >= restoreCommitTs || restoredTs < restoreTargetTs {
 			return true
 		}
 		return false
