@@ -710,15 +710,8 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 }
 
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
-<<<<<<< HEAD
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) { // Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
-=======
-// The first return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
-// The 2nd return value indicates whether the "better path" is missing statistics or not.
-func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) {
-	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
->>>>>>> bf9c3284d70 (planner: remove fullRange check from skyline pruning (#63828))
 	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
 		return 0, false
@@ -733,11 +726,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
 	// they otherwise would have lost on cost.
 	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
-<<<<<<< HEAD
-	lhsFullMatch := isFullIndexMatch(lhs)
-	rhsFullMatch := isFullIndexMatch(rhs)
-=======
->>>>>>> bf9c3284d70 (planner: remove fullRange check from skyline pruning (#63828))
 	if statsTbl != nil {
 		tablePseudo = statsTbl.HistColl.Pseudo
 		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, statsTbl)
@@ -809,22 +797,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 func isCandidatesPseudo(lhs, rhs *candidatePath, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
 	lhsPseudo, rhsPseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
 	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
-<<<<<<< HEAD
-		if lhs.path.Index != nil {
-=======
 		if !lhs.path.IsTablePath() && lhs.path.Index != nil {
->>>>>>> bf9c3284d70 (planner: remove fullRange check from skyline pruning (#63828))
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
 				lhsPseudo = false // We have statistics for the lhs index
 			} else {
 				lhsPseudo = true
 			}
 		}
-<<<<<<< HEAD
-		if rhs.path.Index != nil {
-=======
 		if !rhs.path.IsTablePath() && rhs.path.Index != nil {
->>>>>>> bf9c3284d70 (planner: remove fullRange check from skyline pruning (#63828))
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
 				rhsPseudo = false // We have statistics on the rhs index
 			} else {
@@ -1291,23 +1271,16 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
-<<<<<<< HEAD
 			var unsignedIntHandle bool
 			if c.path.IsIntHandlePath && ds.TableInfo.PKIsHandle {
 				if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
 					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 				}
 			}
-			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
-				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-				indexFilters := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
-=======
 			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 			indexFilters := c.equalPredicateCount() > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 			if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
 				if !c.path.IsFullScanRange(ds.TableInfo) {
->>>>>>> bf9c3284d70 (planner: remove fullRange check from skyline pruning (#63828))
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
