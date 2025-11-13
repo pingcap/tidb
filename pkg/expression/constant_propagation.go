@@ -171,16 +171,18 @@ func replaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expression) (E
 		return cond, false
 	}
 	replaced := false
-	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
-		return cond, false
-	}
-	if _, ok := inequalFunctions[sf.FuncName.L]; ok {
-		return cond, false
-	}
 	args := sf.GetArgs()
 	evalCtx := ctx.GetEvalCtx()
 	switch sf.FuncName.L {
 	case ast.In:
+		if src.GetType(ctx.GetEvalCtx()).EvalType() == types.ETString || tgt.GetType(ctx.GetEvalCtx()).EvalType() == types.ETString {
+			// It is duo to ```CheckAndDeriveCollationFromExprs``` in the ```deriveCollation```.
+			// If we have an expression a in (b,c,d) with each column which has difference collation, the expression's
+			// return type is decided by ```CheckAndDeriveCollationFromExprs```. it will get diffence return type.
+			// so we must be sure that string equal condition has the same collation as the In expression's return type.
+			// then we can continue to replace condition.
+			return cond, false
+		}
 		// for 'a in (b, c, d)', if a = b or a = c or a = d, we can replace it with true
 		constTrue := false
 		switch {
@@ -200,7 +202,7 @@ func replaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expression) (E
 			}, true
 		}
 	case ast.EQ:
-		// for 'a = b', if (a = src and b = tgt) or (a = tgt and b = src), we can replace it with true
+		// If it has equal condition `a=b`, we meet it again and we can replace it with true
 		if (args[0].Equal(evalCtx, src) && args[1].Equal(evalCtx, tgt)) || (args[1].Equal(evalCtx, src) && args[0].Equal(evalCtx, tgt)) {
 			return &Constant{
 				Value:   types.NewDatum(true),
@@ -412,14 +414,18 @@ func (s *propConstSolver) propagateColumnEQ() {
 			if lOk && rOk && lCol.GetType(s.ctx.GetEvalCtx()).GetCollate() == rCol.GetType(s.ctx.GetEvalCtx()).GetCollate() && !lCol.GetType(s.ctx.GetEvalCtx()).Hybrid() && !rCol.GetType(s.ctx.GetEvalCtx()).Hybrid() {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
-				s.unionSet.Union(lID, rID)
-				visited[i] = true
+				if s.unionSet.FindRoot(lID) != s.unionSet.FindRoot(rID) {
+					// Add the equality relation to unionSet
+					// if it has been added, we don't need to process it again.
+					// It will be deleted in the replaceConditionsWithConstants
+					s.unionSet.Union(lID, rID)
+					visited[i] = true
+				}
 			}
 		}
 	}
-
-	condsLen := len(s.conditions)
 	s.replaceConditionsWithConstants(visited)
+	condsLen := len(s.conditions)
 	for i, coli := range s.columns {
 		for j := i + 1; j < len(s.columns); j++ {
 			// unionSet doesn't have iterate(), we use a two layer loop to iterate col_i = col_j relation
