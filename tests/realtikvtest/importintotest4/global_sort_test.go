@@ -222,7 +222,7 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	// 1 subtask, encoding 10 files using 4 threads.
 	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files/t.*.csv?endpoint=%s'
-		with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
+		with thread=1, cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
 	result := s.tk.MustQuery(importSQL + ", __force_merge_step").Rows()
 	s.Len(result, 1)
 	jobID, err := strconv.Atoi(result[0][0].(string))
