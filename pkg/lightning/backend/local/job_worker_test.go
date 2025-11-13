@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
@@ -39,6 +38,7 @@ import (
 )
 
 func newRegionJobOperatorForTest(
+	preRunJobFn func(ctx context.Context, job *regionJob) error,
 	writeFn func(ctx context.Context, job *regionJob) (*tikvWriteResult, error),
 	ingestFn func(ctx context.Context, job *regionJob) error,
 ) (
@@ -53,6 +53,11 @@ func newRegionJobOperatorForTest(
 	jobToWorkerCh := make(chan *regionJob, 256)
 	jobFromWorkerCh := make(chan *regionJob, 256) // make a larger channel for test
 
+	if preRunJobFn == nil {
+		preRunJobFn = func(ctx context.Context, job *regionJob) error {
+			return nil
+		}
+	}
 	if writeFn == nil {
 		writeFn = func(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
 			return &tikvWriteResult{}, nil
@@ -70,18 +75,13 @@ func newRegionJobOperatorForTest(
 		4,
 		func() workerpool.Worker[*regionJob, *regionJob] {
 			return &regionJobBaseWorker{
-				ctx:      wctx,
-				jobInCh:  jobToWorkerCh,
-				jobOutCh: jobFromWorkerCh,
-				jobWg:    jobWg,
-				preRunJobFn: func(ctx context.Context, job *regionJob) error {
-					failpoint.EnableCall("WriteToTiKVNotEnoughDiskSpace", func() {
-						failpoint.Return(errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
-					})
-					return nil
-				},
-				writeFn:  writeFn,
-				ingestFn: ingestFn,
+				ctx:         wctx,
+				jobInCh:     jobToWorkerCh,
+				jobOutCh:    jobFromWorkerCh,
+				jobWg:       jobWg,
+				preRunJobFn: preRunJobFn,
+				writeFn:     writeFn,
+				ingestFn:    ingestFn,
 				regenerateJobsFn: func(
 					ctx context.Context, data engineapi.IngestData, sortedJobRanges []engineapi.Range,
 					regionSplitSize, regionSplitKeys int64,
@@ -114,6 +114,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 	prepareAndExecute := func(
 		t *testing.T,
 		generateCount int,
+		preRunFn func(ctx context.Context, job *regionJob) error,
 		writeFn func(ctx context.Context, job *regionJob) (*tikvWriteResult, error),
 		ingestFn func(ctx context.Context, job *regionJob) error) (<-chan *regionJob, error,
 	) {
@@ -121,7 +122,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		testfailpoint.Enable(t,
 			"github.com/pingcap/tidb/pkg/lightning/backend/local/mockJobWgDone",
 			fmt.Sprintf("return(%d)", generateCount))
-		op, jobWg, jobInCh, jobOutCh := newRegionJobOperatorForTest(writeFn, ingestFn)
+		op, jobWg, jobInCh, jobOutCh := newRegionJobOperatorForTest(preRunFn, writeFn, ingestFn)
 
 		jobInCh <- &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		jobWg.Add(1)
@@ -135,7 +136,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 	}
 
 	t.Run("send job to out channel after run job", func(t *testing.T) {
-		jobOutCh, err := prepareAndExecute(t, 1, nil, nil)
+		jobOutCh, err := prepareAndExecute(t, 1, nil, nil, nil)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(jobOutCh))
 		outJob := <-jobOutCh
@@ -146,7 +147,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		writeFn := func(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
 			return &tikvWriteResult{emptyJob: true}, nil
 		}
-		jobOutCh, err := prepareAndExecute(t, 1, writeFn, nil)
+		jobOutCh, err := prepareAndExecute(t, 1, nil, writeFn, nil)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(jobOutCh))
 		outJob := <-jobOutCh
@@ -157,7 +158,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		ingestFn := func(ctx context.Context, job *regionJob) error {
 			return &ingestcli.IngestAPIError{Err: errdef.ErrKVDiskFull}
 		}
-		jobOutCh, err := prepareAndExecute(t, 1, nil, ingestFn)
+		jobOutCh, err := prepareAndExecute(t, 1, nil, nil, ingestFn)
 		require.ErrorIs(t, err, errdef.ErrKVDiskFull)
 		require.Equal(t, 1, len(jobOutCh))
 		outJob := <-jobOutCh
@@ -170,7 +171,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		ingestFn := func(ctx context.Context, job *regionJob) error {
 			return &ingestcli.IngestAPIError{Err: errdef.ErrKVIngestFailed}
 		}
-		jobOutCh, err := prepareAndExecute(t, 1, nil, ingestFn)
+		jobOutCh, err := prepareAndExecute(t, 1, nil, nil, ingestFn)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(jobOutCh))
 		outJob := <-jobOutCh
@@ -182,7 +183,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		ingestFn := func(ctx context.Context, job *regionJob) error {
 			return &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch, NewRegion: &split.RegionInfo{Region: &metapb.Region{Id: 123}}}
 		}
-		jobOutCh, err := prepareAndExecute(t, 1, nil, ingestFn)
+		jobOutCh, err := prepareAndExecute(t, 1, nil, nil, ingestFn)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(jobOutCh))
 		outJob := <-jobOutCh
@@ -196,18 +197,18 @@ func TestRegionJobBaseWorker(t *testing.T) {
 			return &ingestcli.IngestAPIError{Err: errdef.ErrKVNotLeader}
 		}
 		// put int 1 job, and generate 2 more jobs from regenerateFunc.
-		jobOutCh, err := prepareAndExecute(t, 3, nil, ingestFn)
+		jobOutCh, err := prepareAndExecute(t, 3, nil, nil, ingestFn)
 		require.NoError(t, err)
 		require.Equal(t, 3, len(jobOutCh))
 	})
 
 	t.Run("local write prewrite fail", func(t *testing.T) {
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)")
-		jobOutCh, err := prepareAndExecute(t, 1, nil, nil)
-
+		preRunFn := func(ctx context.Context, job *regionJob) error {
+			return errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again")
+		}
+		_, err := prepareAndExecute(t, 1, preRunFn, nil, nil)
 		require.Error(t, err)
 		require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
-		require.Len(t, jobOutCh, 0)
 	})
 }
 
