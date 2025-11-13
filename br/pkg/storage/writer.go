@@ -44,17 +44,6 @@ func (*emptyFlusher) Flush() error {
 	return nil
 }
 
-type callbackFlusher struct {
-	onFlush func()
-}
-
-func (f *callbackFlusher) Flush() error {
-	if f.onFlush != nil {
-		f.onFlush()
-	}
-	return nil
-}
-
 type interceptBuffer interface {
 	io.WriteCloser
 	flusher
@@ -191,9 +180,8 @@ func newSimpleCompressBuffer(chunkSize int, compressType CompressType) *simpleCo
 }
 
 type bufferedWriter struct {
-	buf     interceptBuffer
-	writer  ExternalFileWriter
-	onFlush func()
+	buf    interceptBuffer
+	writer ExternalFileWriter
 }
 
 func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
@@ -234,9 +222,6 @@ func (u *bufferedWriter) uploadChunk(ctx context.Context) error {
 	}
 	b := u.buf.Bytes()
 	u.buf.Reset()
-	if u.onFlush != nil {
-		u.onFlush()
-	}
 	_, err := u.writer.Write(ctx, b)
 	return errors.Trace(err)
 }
@@ -252,15 +237,14 @@ func (u *bufferedWriter) Close(ctx context.Context) error {
 
 // NewUploaderWriter wraps the Writer interface over an uploader.
 func NewUploaderWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType) ExternalFileWriter {
-	return newBufferedWriter(writer, chunkSize, compressType, nil)
+	return newBufferedWriter(writer, chunkSize, compressType)
 }
 
 // newBufferedWriter is used to build a buffered writer.
-func newBufferedWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType, onFlush func()) *bufferedWriter {
+func newBufferedWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType) *bufferedWriter {
 	return &bufferedWriter{
-		writer:  writer,
-		buf:     newInterceptBuffer(chunkSize, compressType),
-		onFlush: onFlush,
+		writer: writer,
+		buf:    newInterceptBuffer(chunkSize, compressType),
 	}
 }
 

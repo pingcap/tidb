@@ -1371,7 +1371,7 @@ type IndexArg struct {
 	SplitOpt *IndexArgSplitOpt `json:"split_opt,omitempty"`
 
 	// ConditionString is used to store the partial index condition string for the index.
-	ConditionString string `json:"partial_condition_str,omitempty"`
+	ConditionString string `json:"condition_string,omitempty"`
 }
 
 // GetColumnarIndexType gets the real columnar index type in a backward compatibility way.
