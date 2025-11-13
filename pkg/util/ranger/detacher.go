@@ -418,8 +418,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	for ; eqCount < len(accessConds); eqCount++ {
 		switch sc := accessConds[eqCount].(type) {
 		case *expression.ScalarFunction:
-			switch sc.FuncName.L {
-			case ast.EQ:
+			if sc.FuncName.L == ast.EQ {
 				eqCount++
 			}
 		default:
