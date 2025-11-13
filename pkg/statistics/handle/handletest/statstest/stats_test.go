@@ -489,11 +489,42 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get partition IDs
+	golbalID := tbl.Meta().ID
 	p0ID := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	p1ID := tbl.Meta().GetPartitionInfo().Definitions[1].ID
 
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
+
+	// Check global stats
+	globalStats := h.GetPhysicalTableStats(golbalID, tbl.Meta())
+	require.True(t, globalStats.IsAnalyzed())
+	require.Equal(t, int64(0), globalStats.ModifyCount)
+	require.Equal(t, int64(6), globalStats.RealtimeCount)
+	require.Equal(t, statistics.Version2, globalStats.StatsVer)
+	// Check index stats (TopN + Histogram)
+	globalIdx := globalStats.GetIdx(tbl.Meta().Indices[0].ID)
+	require.NotNil(t, globalIdx)
+	require.True(t, globalStats.ColAndIdxExistenceMap.Has(globalIdx.ID, true))
+	require.True(t, globalStats.ColAndIdxExistenceMap.HasAnalyzed(globalIdx.ID, true))
+	require.True(t, globalIdx.IsStatsInitialized())
+	require.True(t, globalIdx.IsFullLoad())
+	require.Equal(t, uint64(2), globalIdx.TopN.TotalCount())
+	require.Equal(t, float64(6), globalIdx.TotalRowCount())
+	require.Equal(t, 2, globalIdx.Histogram.Len())
+	// Check column stats (Only Basic Info, no TopN and Histogram)
+	globalStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.True(t, globalStats.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.True(t, globalStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsAllEvicted())
+		require.Equal(t, int64(6), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
 
 	// Check partition p0 stats
 	p0Stats := h.GetPhysicalTableStats(p0ID, tbl.Meta())
