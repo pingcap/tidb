@@ -143,17 +143,17 @@ func TestGetTSWithRetry(t *testing.T) {
 }
 
 func TestParseLogRestoreTableIDsBlocklistFileName(t *testing.T) {
-	restoreCommitTs, snapshotBackupTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName("RFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.meta")
+	restoreCommitTs, restoreTargetTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName("RFFFFFFFFFFFFFFFF_TFFFFFFFFFFFFFFFF.meta")
 	require.True(t, parsed)
 	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), restoreCommitTs)
-	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), snapshotBackupTs)
+	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), restoreTargetTs)
 	unparsedFilenames := []string{
-		"KFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.meta",
-		"RFFFFFFFFFFFFFFFF.SFFFFFFFFFFFFFFFF.meta",
+		"KFFFFFFFFFFFFFFFF_TFFFFFFFFFFFFFFFF.meta",
+		"RFFFFFFFFFFFFFFFF.TFFFFFFFFFFFFFFFF.meta",
 		"RFFFFFFFFFFFFFFFF_KFFFFFFFFFFFFFFFF.meta",
-		"RFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.mata",
-		"RFFFFFFFKFFFFFFFF_SFFFFFFFFFFFFFFFF.meta",
-		"RFFFFFFFFFFFFFFFF_SFFFFFFFFKFFFFFFF.meta",
+		"RFFFFFFFFFFFFFFFF_TFFFFFFFFFFFFFFFF.mata",
+		"RFFFFFFFKFFFFFFFF_TFFFFFFFFFFFFFFFF.meta",
+		"RFFFFFFFFFFFFFFFF_TFFFFFFFFKFFFFFFF.meta",
 	}
 	for _, filename := range unparsedFilenames {
 		_, _, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(filename)
@@ -168,10 +168,10 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 	require.NoError(t, err)
 	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(0xFFFFFCDEFFFFF, 0xFFFFFFABCFFFF, 0xFFFFFCCCFFFFF, []int64{1, 2, 3}, []int64{4})
 	require.NoError(t, err)
-	restoreCommitTs, snapshotBackupTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(name)
+	restoreCommitTs, restoreTargetTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(name)
 	require.True(t, parsed)
 	require.Equal(t, uint64(0xFFFFFCDEFFFFF), restoreCommitTs)
-	require.Equal(t, uint64(0xFFFFFFABCFFFF), snapshotBackupTs)
+	require.Equal(t, uint64(0xFFFFFFABCFFFF), restoreTargetTs)
 	err = stg.WriteFile(ctx, name, data)
 	require.NoError(t, err)
 	data, err = stg.ReadFile(ctx, name)
@@ -179,7 +179,7 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 	blocklist, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(data)
 	require.NoError(t, err)
 	require.Equal(t, uint64(0xFFFFFCDEFFFFF), blocklist.RestoreCommitTs)
-	require.Equal(t, uint64(0xFFFFFFABCFFFF), blocklist.SnapshotBackupTs)
+	require.Equal(t, uint64(0xFFFFFFABCFFFF), blocklist.RestoreTargetTs)
 	require.Equal(t, uint64(0xFFFFFCCCFFFFF), blocklist.RewriteTs)
 	require.Equal(t, []int64{1, 2, 3}, blocklist.TableIds)
 	require.Equal(t, []int64{4}, blocklist.DbIds)
@@ -187,9 +187,9 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 
 func writeBlocklistFile(
 	ctx context.Context, t *testing.T, s storage.ExternalStorage,
-	restoreCommitTs, snapshotBackupTs, rewriteTs uint64, tableIds, dbIds []int64,
+	restoreCommitTs, restoreTargetTs, rewriteTs uint64, tableIds, dbIds []int64,
 ) {
-	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, snapshotBackupTs, rewriteTs, tableIds, dbIds)
+	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreTargetTs, rewriteTs, tableIds, dbIds)
 	require.NoError(t, err)
 	err = s.WriteFile(ctx, name, data)
 	require.NoError(t, err)

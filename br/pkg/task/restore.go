@@ -968,7 +968,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			restoreTargetTs = cfg.piTRTaskInfo.RestoreTS
 		}
 
-		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, cfg.StartTS, restoreTargetTs, cfg.RewriteTS, downstreamTableIds, downstreamDbIds)
+		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreTargetTs, cfg.RewriteTS, downstreamTableIds, downstreamDbIds)
 		if err != nil {
 			restoreErr = err
 			return
