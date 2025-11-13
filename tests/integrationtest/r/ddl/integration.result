@@ -175,3 +175,8 @@ drop table t;
 create table t (a int, b int, key testidx(b) where a > 5);
 alter table t partition by range (b) (partition p0 values less than (5));
 Error 8200 (HY000): Unsupported add partial index: partial index is not supported on partitioned table
+drop table if exists t;
+create table t (col2 int, key (col2) where col2 > 0);
+alter table t add column col1 int first;
+insert into t values (1, 1);
+update t set col1 = 5;
