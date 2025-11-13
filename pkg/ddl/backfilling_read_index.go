@@ -25,10 +25,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -40,6 +43,7 @@ import (
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/table"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -121,12 +125,13 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 
 func (r *readIndexStepExecutor) runGlobalPipeline(
 	ctx context.Context,
-	opCtx *OperatorCtx,
+	wctx *workerpool.Context,
 	subtask *proto.Subtask,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
+	extStore storage.ExternalStorage,
 ) error {
-	pipe, err := r.buildExternalStorePipeline(opCtx, subtask.TaskID, subtask.ID, sm, concurrency)
+	pipe, err := r.buildExternalStorePipeline(wctx, extStore, subtask.TaskID, subtask.ID, sm, concurrency)
 	if err != nil {
 		return err
 	}
@@ -136,15 +141,15 @@ func (r *readIndexStepExecutor) runGlobalPipeline(
 		r.currPipe.Store(nil)
 	}()
 
-	if err = executeAndClosePipeline(opCtx, pipe, nil, nil, r.avgRowSize); err != nil {
+	if err = executeAndClosePipeline(wctx, pipe, nil, nil, r.avgRowSize); err != nil {
 		return errors.Trace(err)
 	}
-	return r.onFinished(ctx, subtask)
+	return r.onFinished(ctx, subtask, sm, extStore)
 }
 
 func (r *readIndexStepExecutor) runLocalPipeline(
 	ctx context.Context,
-	opCtx *OperatorCtx,
+	wctx *workerpool.Context,
 	subtask *proto.Subtask,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
@@ -162,7 +167,7 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 		return err
 	}
 	defer bCtx.Close()
-	pipe, err := r.buildLocalStorePipeline(opCtx, bCtx, sm, concurrency)
+	pipe, err := r.buildLocalStorePipeline(wctx, bCtx, sm, concurrency)
 	if err != nil {
 		return err
 	}
@@ -170,7 +175,7 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	defer func() {
 		r.currPipe.Store(nil)
 	}()
-	err = executeAndClosePipeline(opCtx, pipe, nil, nil, r.avgRowSize)
+	err = executeAndClosePipeline(wctx, pipe, nil, nil, r.avgRowSize)
 	if err != nil {
 		// For dist task local based ingest, checkpoint is unsupported.
 		// If there is an error we should keep local sort dir clean.
@@ -184,7 +189,7 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	if err = bCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup); err != nil {
 		return errors.Trace(err)
 	}
-	return r.onFinished(ctx, subtask)
+	return r.onFinished(ctx, subtask, sm, nil)
 }
 
 func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
@@ -194,26 +199,42 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	r.summaryMap.Store(subtask.ID, &readIndexSummary{
 		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
 	})
+	r.summary.Reset()
 	var err error
 	failpoint.InjectCall("beforeReadIndexStepExecRunSubtask", &err)
 	if err != nil {
 		return err
 	}
 
-	sm, err := decodeBackfillSubTaskMeta(ctx, r.cloudStorageURI, subtask.Meta)
+	var (
+		reqRec   = &recording.Requests{}
+		objStore storage.ExternalStorage
+	)
+	if r.isGlobalSort() {
+		reqRec, objStore, err = handle.NewObjStoreWithRecording(ctx, r.cloudStorageURI)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			objStore.Close()
+			r.summary.MergeObjStoreRequests(reqRec)
+			r.GetMeterRecorder().MergeObjStoreRequests(reqRec)
+		}()
+	}
+	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)
 	if err != nil {
 		return err
 	}
 
-	opCtx, cancel := NewDistTaskOperatorCtx(ctx)
-	defer cancel()
+	wctx := workerpool.NewContext(ctx)
+	defer wctx.Cancel()
 	r.summary.Reset()
 
 	concurrency := int(r.GetResource().CPU.Capacity())
 	if r.isGlobalSort() {
-		return r.runGlobalPipeline(ctx, opCtx, subtask, sm, concurrency)
+		return r.runGlobalPipeline(ctx, wctx, subtask, sm, concurrency, objStore)
 	}
-	return r.runLocalPipeline(ctx, opCtx, subtask, sm, concurrency)
+	return r.runLocalPipeline(ctx, wctx, subtask, sm, concurrency)
 }
 
 func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -271,16 +292,12 @@ func (r *readIndexStepExecutor) ResourceModified(_ context.Context, newResource 
 	return nil
 }
 
-func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore storage.ExternalStorage) error {
 	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish", r.backend)
 	if !r.isGlobalSort() {
 		return nil
 	}
 	// Rewrite the subtask meta to record statistics.
-	sm, err := decodeBackfillSubTaskMeta(ctx, r.cloudStorageURI, subtask.Meta)
-	if err != nil {
-		return err
-	}
 	sum, _ := r.summaryMap.LoadAndDelete(subtask.ID)
 	s := sum.(*readIndexSummary)
 	sm.MetaGroups = s.metaGroups
@@ -301,7 +318,7 @@ func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 
 	// write external meta to storage when using global sort
 	if r.isGlobalSort() {
-		if err := writeExternalBackfillSubTaskMeta(ctx, r.cloudStorageURI, sm, external.SubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
+		if err := writeExternalBackfillSubTaskMeta(ctx, extStore, sm, external.SubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
 			return err
 		}
 	}
@@ -344,7 +361,7 @@ func (r *readIndexStepExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 }
 
 func (r *readIndexStepExecutor) buildLocalStorePipeline(
-	opCtx *OperatorCtx,
+	wctx *workerpool.Context,
 	backendCtx ingest.BackendCtx,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
@@ -366,7 +383,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 	}
 	engines, err := backendCtx.Register(indexIDs, uniques, r.ptbl)
 	if err != nil {
-		tidblogutil.Logger(opCtx).Error("cannot register new engine",
+		tidblogutil.Logger(wctx).Error("cannot register new engine",
 			zap.Error(err),
 			zap.Int64("job ID", r.job.ID),
 			zap.Int64s("index IDs", indexIDs))
@@ -374,7 +391,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 	}
 	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
 	return NewAddIndexIngestPipeline(
-		opCtx,
+		wctx,
 		r.store,
 		r.sessPool,
 		backendCtx,
@@ -392,7 +409,8 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 }
 
 func (r *readIndexStepExecutor) buildExternalStorePipeline(
-	opCtx *OperatorCtx,
+	wctx *workerpool.Context,
+	extStore storage.ExternalStorage,
 	taskID int64,
 	subtaskID int64,
 	sm *BackfillSubTaskMeta,
@@ -413,8 +431,6 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 			s.metaGroups[summary.GroupOffset] = kvMeta
 		}
 		kvMeta.MergeSummary(summary)
-		r.summary.PutReqCnt.Add(summary.PutRequestCount)
-		r.GetMeterRecorder().IncPutRequest(summary.PutRequestCount)
 		s.mu.Unlock()
 	}
 	var idxNames strings.Builder
@@ -426,9 +442,9 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 	}
 	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
 	return NewWriteIndexToExternalStoragePipeline(
-		opCtx,
+		wctx,
 		r.store,
-		r.cloudStorageURI,
+		extStore,
 		r.sessPool,
 		taskID,
 		subtaskID,

@@ -2280,3 +2280,21 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestFastAdminCheckWithError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockFastCheckTableError", "return(true)")
+
+	// Create a table with number of indexes larger than the worker pool size in check executor.
+	// And the admin check shouldn't be blocked when meeting error.
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec(`
+		create table admin_test (c1 int, c2 int,
+		key idx1(c1), key idx2(c1), key idx3(c1), key idx4(c1), key idx5(c1),
+		key idx6(c1), key idx7(c1), key idx8(c1), key idx9(c1), key idx10(c1))
+	`)
+	tk.MustExecToErr("admin check table admin_test")
+}

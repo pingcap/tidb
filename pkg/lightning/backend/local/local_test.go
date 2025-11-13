@@ -1810,7 +1810,6 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		16*units.GiB,
 		engineapi.OnDuplicateKeyIgnore,
 		"",
-		func(summary *external.ReaderSummary) {},
 	)
 
 	jobCh := make(chan *regionJob, 9)
@@ -2347,7 +2346,7 @@ func TestExternalEngine(t *testing.T) {
 	require.NoError(t, err)
 
 	externalCfg := &backend.ExternalEngineConfig{
-		StorageURI:    storageURI,
+		ExtStore:      extStorage,
 		DataFiles:     dataFiles,
 		StatFiles:     statFiles,
 		StartKey:      keys[0],

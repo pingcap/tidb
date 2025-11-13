@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
+	"github.com/aws/aws-sdk-go/aws/defaults"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
@@ -412,6 +414,12 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		awsSessionOpts.Profile = qs.Profile
 		// Use default credential chain when profile is specified
 		awsSessionOpts.SharedConfigState = session.SharedConfigEnable
+	}
+	if reqRec := recording.GetRequests(ctx); reqRec != nil {
+		awsSessionOpts.Handlers = defaults.Handlers()
+		awsSessionOpts.Handlers.Send.PushBack(func(r *request.Request) {
+			reqRec.Rec(r.HTTPRequest)
+		})
 	}
 	ses, err := session.NewSessionWithOptions(awsSessionOpts)
 	if err != nil {
@@ -1231,17 +1239,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	var onFlush func()
-	if option != nil {
-		onFlush = option.OnUpload
-		if onFlush != nil {
-			// Total number of PUT operations for a multipart uploaded file = total file size / part-size + 2. For details, see
-			// https://repost.aws/questions/QUXmwDga0VRvSOOjYWMfor-w/are-we-billed-a-put-request-for-each-part-with-s3-multipart-upload-or-only-once-for-the-final-merged-file
-			onFlush() // Initiate: PUT
-			onFlush() // Complete: PUT
-		}
-	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, onFlush)
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
 	return uploaderWriter, nil
 }
 
