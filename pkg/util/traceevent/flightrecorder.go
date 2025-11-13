@@ -251,7 +251,7 @@ func parseCategories(categories []string) TraceCategory {
 	return result
 }
 
-func newHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*HTTPFlightRecorder, error) {
+func newHTTPFlightRecorder(config *FlightRecorderConfig) (*HTTPFlightRecorder, error) {
 	var b strings.Builder
 	if err := config.Validate(&b); err != nil {
 		return nil, err
@@ -259,7 +259,6 @@ func newHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*HT
 
 	categories := parseCategories(config.EnabledCategories)
 	ret := &HTTPFlightRecorder{
-		ch:                   ch,
 		oldEnabledCategories: tracing.GetEnabledCategories(),
 		Config:               config,
 		triggerCanonicalName: b.String(),
