@@ -160,7 +160,12 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 			// if the region has no leader, such as when PD leader fail-over, and
 			// hasn't got the region heartbeat, the scanned regions might not
 			// contain the leader info. it's meaningless to write in this case.
-			if job.region.Leader == nil {
+			// here we check store ID, not the nilness of leader Peer, as PD will
+			// return an empty Peer if no leader instead of nil.
+			// GetStoreId will return 0 if the Peer is nil, so we can handle both
+			// cases here.
+			// Also note, valid store ID > 0.
+			if job.region.Leader.GetStoreId() == 0 {
 				job.lastRetryableErr = errdef.ErrNoLeader.GenWithStackByArgs(job.region.Region.GetId())
 				job.convertStageTo(needRescan)
 				return nil
