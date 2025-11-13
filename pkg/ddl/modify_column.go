@@ -1546,7 +1546,7 @@ func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.Tabl
 		// different partition. Better be safe and not allow decreasing of length.
 		// TODO: Should we allow it in strict mode? Wait for a use case / request.
 		if newCol.FieldType.GetFlen() < col.FieldType.GetFlen() {
-			return dbterror.ErrUnsupportedModifyCollation.GenWithStack("Unsupported modify column, decreasing length of int may result in truncation and change of partition")
+			return dbterror.ErrUnsupportedModifyColumn.GenWithStack("Unsupported modify column, decreasing length of int may result in truncation and change of partition")
 		}
 	}
 	// Basically only allow changes of the length/decimals for the column

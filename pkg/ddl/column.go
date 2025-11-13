@@ -596,10 +596,6 @@ func (w *worker) modifyTableColumn(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if pt, ok := t.(table.PartitionedTable); ok {
-			// Restart from first partition
-			reorgInfo.PhysicalTableID = pt.Meta().Partition.Definitions[0].ID
-		}
 	}
 
 	return nil
