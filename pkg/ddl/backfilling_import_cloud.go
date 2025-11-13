@@ -92,7 +92,6 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
-	e.summary.Reset()
 	sm, err := decodeBackfillSubTaskMeta(ctx, e.cloudStoreURI, subtask.Meta)
 	if err != nil {
 		return err
@@ -188,6 +187,11 @@ func (e *cloudImportExecutor) Cleanup(ctx context.Context) error {
 // RealtimeSummary returns the summary of the subtask execution.
 func (e *cloudImportExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return e.summary
+}
+
+// ResetSummary resets the summary of the subtask execution.
+func (e *cloudImportExecutor) ResetSummary() {
+	e.summary.Reset()
 }
 
 // TaskMetaModified changes the max write speed for ingest

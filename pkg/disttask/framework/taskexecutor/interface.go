@@ -147,6 +147,8 @@ func (*BaseStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return nil
 }
 
+func (*BaseStepExecutor) ResetSummary() {}
+
 // Cleanup implements the StepExecutor interface.
 func (*BaseStepExecutor) Cleanup(context.Context) error {
 	return nil

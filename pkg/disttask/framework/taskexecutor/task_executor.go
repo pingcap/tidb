@@ -467,6 +467,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		})
 
 		if e.hasRealtimeSummary(e.stepExec) {
+			e.stepExec.ResetSummary()
 			wg.RunWithLog(func() {
 				e.updateSubtaskSummaryLoop(checkCtx, subtaskCtx, e.stepExec)
 			})

@@ -208,7 +208,6 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	wctx := workerpool.NewContext(ctx)
 	defer wctx.Cancel()
-	r.summary.Reset()
 
 	concurrency := int(r.GetResource().CPU.Capacity())
 	if r.isGlobalSort() {
@@ -219,6 +218,10 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return r.summary
+}
+
+func (r *readIndexStepExecutor) ResetSummary() {
+	r.summary.Reset()
 }
 
 func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {

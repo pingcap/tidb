@@ -264,9 +264,11 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 		totalBytes += v.Bytes.Load()
 		totalPutReq += v.PutReqCnt.Load()
 		totalGetReq += v.GetReqCnt.Load()
-		logutil.BgLogger().Info("subtasks", zap.Int("seq", i), zap.Any("subtasks", v))
+		logutil.BgLogger().Info("subtasks",
+			zap.Int("seq", i), zap.Any("subtasks", v),
+			zap.Int64("rows", v.RowCnt.Load()), zap.Int64("bytes", v.Bytes.Load()))
 	}
-	s.Greater(totalRows, int64(0))  // Fixme: why not 10000?
+	s.EqualValues(totalRows, 10000) // Fixme: why not 10000?
 	s.Greater(totalBytes, int64(0)) // Fixme: unstable
 	s.Equal(uint64(0), totalPutReq)
 	s.Greater(totalGetReq, uint64(0))
