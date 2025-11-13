@@ -278,9 +278,12 @@ func (r *HTTPFlightRecorder) Close() {
 	globalHTTPFlightRecorder.Store(nil)
 }
 
+// collect sends events to the HTTP flight recorder channel.
+// The caller must pass a cloned slice to avoid data races; this function
+// does not clone the slice to avoid redundant allocations.
 func (r *HTTPFlightRecorder) collect(_ context.Context, events []Event) {
 	select {
-	case r.ch <- slices.Clone(events):
+	case r.ch <- events:
 	default:
 	}
 }
@@ -315,20 +318,19 @@ const maxEvents = 4096
 func (r *Trace) DiscardOrFlush(ctx context.Context) {
 	sink := globalHTTPFlightRecorder.Load()
 	if sink != nil {
-		// Read phase: use RLock to safely read keep flag and events
-		// NOTE: After releasing RLock we assume no new events are appended.
-		// DiscardOrFlush is called at statement boundaries, so Record callers
-		// are expected to be quiescent; otherwise new events might be skipped.
+		// Read phase: use RLock to safely read keep flag and clone events.
+		// We must clone while holding the lock to avoid data races where
+		// concurrent Record() or DiscardOrFlush() calls might modify the
+		// backing array after we release RLock.
 		r.mu.RLock()
 		shouldFlush := r.keep
-		eventsToFlush := r.events // shallow copy of slice header
+		eventsToFlush := slices.Clone(r.events) // Deep copy to avoid data race
 		r.mu.RUnlock()
 
 		// Process without holding any lock
 		if shouldFlush {
 			sink.collect(ctx, eventsToFlush)
-		}
-		if sink.Config.DumpTrigger.Type == "sampling" {
+		} else if sink.Config.DumpTrigger.Type == "sampling" {
 			sink.counter++
 			if sink.counter >= sink.Config.DumpTrigger.Sampling {
 				sink.collect(ctx, eventsToFlush)
