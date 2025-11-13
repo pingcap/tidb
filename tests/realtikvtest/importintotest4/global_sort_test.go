@@ -197,10 +197,8 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	checkExternalFields(s.T(), s.tk)
 }
 
-func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "taskManager")
+func (s *mockGCSSuite) prepare10Files(bucket string) []string {
+	s.T().Helper()
 	var allData []string
 	for i := range 10 {
 		var content []byte
@@ -211,11 +209,17 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 			allData = append(allData, fmt.Sprintf("%d test-%d", idx, idx))
 		}
 		s.server.CreateObject(fakestorage.Object{
-			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-multi-files", Name: fmt.Sprintf("t.%d.csv", i)},
+			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: bucket, Name: fmt.Sprintf("t.%d.csv", i)},
 			Content:     content,
 		})
 	}
 	slices.Sort(allData)
+	return allData
+}
+
+func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	allData := s.prepare10Files("gs-multi-files")
 	s.prepareAndUseDB("gs_multi_files")
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	s.tk.MustExec("create table t (a bigint primary key , b varchar(100), key(b), key(a,b), key(b,a));")
@@ -223,7 +227,24 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files/t.*.csv?endpoint=%s'
 		with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
+	_ = s.tk.MustQuery(importSQL + ", __force_merge_step").Rows()
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
+}
+
+func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	allData := s.prepare10Files("gsort_step_summary")
+	s.prepareAndUseDB("gsort_step_summary")
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.tk.MustExec("create table t (a bigint primary key , b varchar(100), key(b), key(a,b), key(b,a));")
+	// 1 subtask, encoding 10 files using 1 thread.
+	sortStorageURI := fmt.Sprintf("gs://sorted/gsort_step_summary?endpoint=%s", gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gsort_step_summary/t.*.csv?endpoint=%s'
+		with thread=1, cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
 	result := s.tk.MustQuery(importSQL + ", __force_merge_step").Rows()
+
 	s.Len(result, 1)
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
