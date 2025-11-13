@@ -396,9 +396,10 @@ func chooseBetweenRangeAndPoint(sctx *rangerctx.RangerContext, r1 *DetachRangeRe
 // considerDNF is true means it will try to extract access conditions from the DNF expressions.
 func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expression.Expression, newTpSlice []*types.FieldType, considerDNF bool) (*DetachRangeResult, error) {
 	var (
-		eqCount int
-		ranges  Ranges
-		err     error
+		eqCount     int
+		eqOrInCount int
+		ranges      Ranges
+		err         error
 	)
 	res := &DetachRangeResult{}
 
@@ -415,21 +416,24 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		filterConds = removeConditions(d.sctx.ExprCtx.GetEvalCtx(), filterConds, remainedConds)
 		newConditions = append(newConditions, remainedConds...)
 	}
-EQCOUNTLOOP:
 	for ; eqCount < len(accessConds); eqCount++ {
 		switch sc := accessConds[eqCount].(type) {
 		case *expression.ScalarFunction:
-			if sc.FuncName.L != ast.EQ {
-				break EQCOUNTLOOP
+			switch sc.FuncName.L {
+			case ast.EQ:
+
+				eqCount++
+				eqOrInCount++
+			case ast.In:
+				eqOrInCount++
 			}
-		case *expression.Constant:
+		default:
 			// PREPARE prepare_query FROM 'SELECT t0.c0 FROM t0, t1 WHERE ? OR ((? <=> t1.c0) AND (? <=> t1.c0))';
 			// In this case, predicate simplification will not continue during the prepare phase.
 			// Therefore, when it comes to the execute phase, the first placeholder becomes a constant.
 			continue
 		}
 	}
-	eqOrInCount := len(accessConds)
 	res.EqCondCount = eqCount
 	res.EqOrInCount = eqOrInCount
 	// If index has prefix column and d.mergeConsecutive is true, ranges may not be point ranges anymore after UnionRanges.

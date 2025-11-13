@@ -930,6 +930,11 @@ func TestPreparePlanCache4Function(t *testing.T) {
 	tk.MustExec(`SET @c = NULL;`)
 	tk.MustExec(`PREPARE prepare_query FROM 'SELECT t0.c0 FROM t0, t1 WHERE ? OR ((? <=> t1.c0) AND (? <=> t1.c0))';`)
 	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`select @@last_plan_from_cache;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(
+		"Warning 1105 skip prepared plan-cache: some parameters may be overwritten"))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
