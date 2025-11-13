@@ -1185,6 +1185,11 @@ func (m mockIngestData) DecRef() {}
 
 func (m mockIngestData) Finish(_, _ int64) {}
 
+var dummyRegionInfo = &split.RegionInfo{
+	Region: &metapb.Region{Id: 1, Peers: []*metapb.Peer{{Id: 1, StoreId: 1}}},
+	Leader: &metapb.Peer{Id: 1, StoreId: 1},
+}
+
 func TestCheckPeersBusy(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("skip this test on next-gen kernel")
@@ -1881,7 +1886,6 @@ func TestDoImport(t *testing.T) {
 	// test that
 	// - one job need rescan when ingest
 	// - one job need retry when write
-
 	initRegionKeys := [][]byte{{'a'}, {'b'}, {'c'}, {'d'}}
 	fakeRegionJobs = map[[2]string]struct {
 		jobs []*regionJob
@@ -1899,6 +1903,7 @@ func TestDoImport(t *testing.T) {
 							},
 						},
 					}, getSuccessInjectedBehaviour()...),
+					region: dummyRegionInfo,
 				},
 			},
 		},
@@ -1929,6 +1934,7 @@ func TestDoImport(t *testing.T) {
 							ingest: injectedIngestBehaviour{},
 						},
 					},
+					region: dummyRegionInfo,
 				},
 			},
 		},
@@ -1938,6 +1944,7 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
+					region:     dummyRegionInfo,
 				},
 				{
 					keyRange:   engineapi.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
@@ -1950,6 +1957,7 @@ func TestDoImport(t *testing.T) {
 							},
 						},
 					},
+					region: dummyRegionInfo,
 				},
 			},
 		},
@@ -1959,6 +1967,7 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -1968,6 +1977,7 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2000,6 +2010,7 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2022,11 +2033,13 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'a'}, End: []byte{'a', '2'}},
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
+					region:     dummyRegionInfo,
 				},
 				{
 					keyRange:   engineapi.Range{Start: []byte{'a', '2'}, End: []byte{'b'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2036,6 +2049,7 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'b'}, End: []byte{'c'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2045,6 +2059,7 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2069,6 +2084,7 @@ func TestDoImport(t *testing.T) {
 					ingestData: &Engine{},
 					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2079,6 +2095,7 @@ func TestDoImport(t *testing.T) {
 					ingestData: &Engine{},
 					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2096,6 +2113,7 @@ func TestDoImport(t *testing.T) {
 							},
 						},
 					},
+					region: dummyRegionInfo,
 				},
 			},
 		},
@@ -2139,6 +2157,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 								{Id: 3, StoreId: 3},
 							},
 						},
+						Leader: &metapb.Peer{Id: 1, StoreId: 1},
 					},
 				},
 				{
@@ -2154,6 +2173,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 								{Id: 6, StoreId: 6},
 							},
 						},
+						Leader: &metapb.Peer{Id: 4, StoreId: 4},
 					},
 				},
 			},
@@ -2172,6 +2192,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 								{Id: 9, StoreId: 9},
 							},
 						},
+						Leader: &metapb.Peer{Id: 7, StoreId: 7},
 					},
 				},
 			},
@@ -2220,6 +2241,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2229,6 +2251,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'d'}, End: []byte{'e'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},

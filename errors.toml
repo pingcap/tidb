@@ -371,6 +371,11 @@ error = '''
 store disk full
 '''
 
+["KV:ErrNoLeader"]
+error = '''
+region has no leader, region '%d'
+'''
+
 ["Lighting:Restore:ErrChecksumMismatch"]
 error = '''
 checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)
@@ -484,11 +489,6 @@ check multi-ingest support error
 ["Lightning:KV:ErrCreateKVClient"]
 error = '''
 create kv client error
-'''
-
-["Lightning:KV:ErrNoLeader"]
-error = '''
-write to tikv with no leader returned, region '%d', leader: %d
 '''
 
 ["Lightning:Loader:ErrInvalidSchemaFile"]
