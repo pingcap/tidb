@@ -467,6 +467,11 @@ func TestInitStats(t *testing.T) {
 	})
 }
 
+// TestInitStatsForPartitionedTable tests the InitStats function for partitioned tables.
+// I know this test is very similar to the non-partitioned one,
+// but I prefer not to share code between them. For these tests,
+// the status checks are very detailed, and moving them into a separate function
+// would significantly reduce readability when reviewing the tests.
 func TestInitStatsForPartitionedTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
