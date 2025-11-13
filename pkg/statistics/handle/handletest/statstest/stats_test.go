@@ -467,6 +467,196 @@ func TestInitStats(t *testing.T) {
 	})
 }
 
+func TestInitStatsForPartitionedTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(11,11,11),(12,12,12),(13,13,13)")
+	// With all columns.
+	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	// Get partition IDs
+	p0ID := tbl.Meta().GetPartitionInfo().Definitions[0].ID
+	p1ID := tbl.Meta().GetPartitionInfo().Definitions[1].ID
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+
+	// Check partition p0 stats
+	p0Stats := h.GetPhysicalTableStats(p0ID, tbl.Meta())
+	require.True(t, p0Stats.IsAnalyzed())
+	// Basic meta info check
+	require.Equal(t, int64(0), p0Stats.ModifyCount)
+	require.Equal(t, int64(3), p0Stats.RealtimeCount)
+	require.Equal(t, statistics.Version2, p0Stats.StatsVer)
+	// Check index stats (TopN + Histogram)
+	idx := p0Stats.GetIdx(tbl.Meta().Indices[0].ID)
+	require.NotNil(t, idx)
+	require.True(t, p0Stats.ColAndIdxExistenceMap.Has(idx.ID, true))
+	require.True(t, p0Stats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true))
+	require.True(t, idx.IsStatsInitialized())
+	require.True(t, idx.IsFullLoad())
+	require.Equal(t, float64(3), idx.TotalRowCount())
+	// Check column stats (Only Basic Info, no TopN and Histogram)
+	p0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.True(t, p0Stats.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.True(t, p0Stats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsAllEvicted())
+		require.Equal(t, int64(3), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
+
+	// Check partition p1 stats
+	p1Stats := h.GetPhysicalTableStats(p1ID, tbl.Meta())
+	require.True(t, p1Stats.IsAnalyzed())
+	require.Equal(t, int64(0), p1Stats.ModifyCount)
+	require.Equal(t, int64(3), p1Stats.RealtimeCount)
+	require.Equal(t, statistics.Version2, p1Stats.StatsVer)
+
+	// Another partitioned table with no analyze
+	tk.MustExec("create table t1(a int, b int, c int, primary key(a), key idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("insert into t1 values (1,1,1),(2,2,2),(3,3,3),(11,11,11),(12,12,12),(13,13,13)")
+	h = dom.StatsHandle()
+	is = dom.InfoSchema()
+	// Handle DDL event to init the stats meta and histogram meta.
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), is))
+	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+
+	// Get partition IDs for t1
+	t1p0ID := tbl1.Meta().GetPartitionInfo().Definitions[0].ID
+	t1p1ID := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+
+	// Check partition p0 stats (no analyze)
+	t1p0Stats := h.GetPhysicalTableStats(t1p0ID, tbl1.Meta())
+	require.False(t, t1p0Stats.Pseudo)
+	require.False(t, t1p0Stats.IsAnalyzed())
+	require.Equal(t, int64(0), t1p0Stats.ModifyCount)
+	require.Equal(t, int64(0), t1p0Stats.RealtimeCount)
+	require.Equal(t, statistics.Version0, t1p0Stats.StatsVer)
+
+	// Check index stats
+	require.Equal(t, 1, t1p0Stats.IdxNum())
+	idx1 := t1p0Stats.GetIdx(tbl1.Meta().Indices[0].ID)
+	require.NotNil(t, idx1)
+	require.True(t, t1p0Stats.ColAndIdxExistenceMap.Has(idx1.ID, true))
+	require.False(t, t1p0Stats.ColAndIdxExistenceMap.HasAnalyzed(idx1.ID, true))
+	require.False(t, idx1.IsStatsInitialized())
+	require.False(t, idx1.IsAllEvicted())
+	require.Equal(t, uint64(0), idx1.TopN.TotalCount())
+	require.Equal(t, float64(0), idx1.TotalRowCount())
+	require.Equal(t, 0, idx1.Histogram.Len())
+	// Check column stats
+	require.Equal(t, int(3), t1p0Stats.ColNum())
+	t1p0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.True(t, t1p0Stats.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.False(t, t1p0Stats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.False(t, col.IsStatsInitialized())
+		require.False(t, col.IsAllEvicted())
+		require.False(t, col.IsFullLoad())
+		require.Equal(t, int64(0), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
+
+	// Check partition p1 stats (no analyze)
+	t1p1Stats := h.GetPhysicalTableStats(t1p1ID, tbl1.Meta())
+	require.False(t, t1p1Stats.Pseudo)
+	require.False(t, t1p1Stats.IsAnalyzed())
+	require.Equal(t, int64(0), t1p1Stats.ModifyCount)
+	require.Equal(t, int64(0), t1p1Stats.RealtimeCount)
+
+	// Another partitioned table with predicate columns
+	tk.MustExec("create table t2(a int, b int, c int, primary key(a), key idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("insert into t2 values (1,1,1),(2,2,2),(3,3,3),(11,11,11),(12,12,12),(13,13,13)")
+	h = dom.StatsHandle()
+	is = dom.InfoSchema()
+	// Handle DDL event to init the stats meta and histogram meta.
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("analyze table t2 with 2 topn, 2 buckets")
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+
+	// Get partition IDs for t2
+	t2p0ID := tbl2.Meta().GetPartitionInfo().Definitions[0].ID
+	t2p1ID := tbl2.Meta().GetPartitionInfo().Definitions[1].ID
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+
+	// Check partition p0 stats (predicate columns)
+	t2p0Stats := h.GetPhysicalTableStats(t2p0ID, tbl2.Meta())
+	require.True(t, t2p0Stats.IsAnalyzed())
+	// Check index stats
+	require.Equal(t, 1, t2p0Stats.IdxNum())
+	idx2 := t2p0Stats.GetIdx(tbl2.Meta().Indices[0].ID)
+	require.NotNil(t, idx2)
+	require.True(t, t2p0Stats.ColAndIdxExistenceMap.Has(idx2.ID, true))
+	require.True(t, t2p0Stats.ColAndIdxExistenceMap.HasAnalyzed(idx2.ID, true))
+	require.True(t, idx2.IsStatsInitialized())
+	require.False(t, idx2.IsAllEvicted())
+	require.True(t, idx2.IsFullLoad())
+	require.Equal(t, float64(3), idx2.TotalRowCount())
+	// Check column stats
+	require.Equal(t, int(3), t2p0Stats.ColNum())
+	// For column c, it is not in the predicate columns, so its stats has not been collected.
+	t2p0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		if col.Info.Name.L == "c" {
+			require.True(t, t2p0Stats.ColAndIdxExistenceMap.Has(col.ID, false))
+			require.False(t, t2p0Stats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+			require.False(t, col.IsStatsInitialized())
+			require.False(t, col.IsAllEvicted())
+			require.False(t, col.IsFullLoad())
+			require.Equal(t, int64(0), col.NDV)
+			require.Equal(t, int64(0), col.NullCount)
+			require.Equal(t, float64(0), col.TotalRowCount())
+			require.Nil(t, col.TopN)
+			require.Equal(t, 0, col.Histogram.Len())
+			return false
+		}
+		require.True(t, t2p0Stats.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.True(t, t2p0Stats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsAllEvicted())
+		require.False(t, col.IsFullLoad())
+		require.Equal(t, int64(3), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
+
+	// Check partition p1 stats (predicate columns)
+	t2p1Stats := h.GetPhysicalTableStats(t2p1ID, tbl2.Meta())
+	require.True(t, t2p1Stats.IsAnalyzed())
+	require.Equal(t, int64(0), t2p1Stats.ModifyCount)
+	require.Equal(t, int64(3), t2p1Stats.RealtimeCount)
+}
+
 // TestInitStatsWithoutHandingDDLEvent tests the scenario that stats
 // meta exists but no histogram meta exists because no analyze has been done
 // and no DDL event has been handled.
