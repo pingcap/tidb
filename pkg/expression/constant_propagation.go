@@ -413,6 +413,9 @@ func (s *propConstSolver) propagateColumnEQ() {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
 				if s.unionSet.FindRoot(lID) != s.unionSet.FindRoot(rID) {
+					// Add the equality relation to unionSet
+					// if it has been added, we don't need to process it again.
+					// It will be deleted in the replaceConditionsWithConstants
 					s.unionSet.Union(lID, rID)
 					visited[i] = true
 				}
