@@ -810,14 +810,10 @@ workLoop:
 							row.Columns[col.Offset].Copy(&tmpDatum)
 							ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
 							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, tmpDatum)
-							err = errCtx.HandleError(err)
-							if err != nil {
-								resultCh <- err
-								continue workLoop
-							}
-							continue
+						} else {
+							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, row.Columns[col.Offset])
 						}
-						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, row.Columns[col.Offset])
+
 						err = errCtx.HandleError(err)
 						if err != nil {
 							resultCh <- err

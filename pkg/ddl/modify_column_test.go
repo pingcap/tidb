@@ -1377,15 +1377,9 @@ func TestHistogramFromStorageWithPriority(t *testing.T) {
 	tk.MustExec("set tidb_stats_update_during_ddl = ON")
 
 	// Prepare data
-	tk.MustExec("create table t2(a int auto_increment, b int, c int, primary key(a), key idxb(b))")
+	tk.MustExec("create table t2(a int auto_increment, b int, c int, primary key(a), key idxb(b), key idxc(c))")
 	for i := range 200 {
 		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", i, i))
-	}
-	for range 4 {
-		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", 20, 20))
-		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", 50, 50))
-		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", 111, 111))
-		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", 156, 156))
 	}
 	tk.MustExec("analyze table t2")
 
@@ -1449,6 +1443,7 @@ func TestHistogramFromStorageWithPriority(t *testing.T) {
 	oldTp := types.NewFieldType(mysql.TypeLong)
 	newTp := types.NewFieldType(mysql.TypeInt24)
 	newTp.AddFlag(mysql.UnsignedFlag)
+
 	// Check TopN
 	for i := range 3 {
 		oldTopN := oldTopNs[i]
@@ -1458,7 +1453,7 @@ func TestHistogramFromStorageWithPriority(t *testing.T) {
 		require.Equal(t, oldCount, newCount)
 	}
 
-	// Index historgram is stored as blob, we need to decode it.
+	// Index historgram is stored as blob from index value, we need to decode it.
 	decodeToInt := func(b *types.Datum) int64 {
 		d, err := codec.Decode(b.GetBytes(), 1)
 		require.NoError(t, err)

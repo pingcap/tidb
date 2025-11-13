@@ -368,18 +368,26 @@ type IndexColumn struct {
 	// When true, use ColumnInfo.ChangingFieldType, otherwise, usee ColumnInfo.FieldType.
 	//
 	// Example:
-	//   CREATE TABLE t (c1 CHAR(20), INDEX i1(c1));
-	//   ALTER TABLE t MODIFY COLUMN c1 VARCHAR(10);
-	//
-	// Before backfill:
-	//   ColumnInfo: FieldType=CHAR(20), ChangingFieldType=VARCHAR(10)
-	//   i1.c1.UseChangingType=false
-	//   _Idx$_i1.c1.UseChangingType=true
+	//   CREATE TABLE t (c1 CHAR(20), c2 CHAR(20), INDEX i1(c1, c2));
+	//   ALTER TABLE t MODIFY COLUMN c1 VARCHAR(10), c2 VARCHAR(10);
 	//
 	// After backfill:
-	//   ColumnInfo: FieldType=VARCHAR(10), ChangingFieldType=CHAR(20)
-	//   i1.c1.UseChangingType=true
-	//   _Idx$_i1.c1.UseChangingType=false
+	//   c1: FieldType=CHAR(20), ChangingFieldType=VARCHAR(10)
+	//   c2: FieldType=CHAR(20), ChangingFieldType=VARCHAR(10)
+	//   i1(UseChangingType=false, UseChangingType=false)
+	//   _Idx$_i1(UseChangingType=true, UseChangingType=true)
+	//
+	// After subjob1 becomes public:
+	//   c1: FieldType=VARCHAR(10), ChangingFieldType=CHAR(20)
+	//   c2: FieldType=CHAR(20), ChangingFieldType=VARCHAR(10)
+	//   i1(UseChangingType=true, UseChangingType=false)
+	//   _Idx$_i1(UseChangingType=false, UseChangingType=true)
+	//
+	// After subjob2 becomes public:
+	//   c1: FieldType=VARCHAR(10), ChangingFieldType=CHAR(20)
+	//   c2: FieldType=VARCHAR(10), ChangingFieldType=CHAR(20)
+	//   _Tombstone$_i1(UseChangingType=true, UseChangingType=true)
+	//   i1(UseChangingType=false, UseChangingType=false)
 	UseChangingType bool `json:"using_changing_type,omitempty"`
 }
 

@@ -62,8 +62,8 @@ type ColumnInfo struct {
 	Dependences         map[string]struct{} `json:"dependences"`
 	FieldType           types.FieldType     `json:"type"`
 	// ChangingFieldType stores the target field type during modify column that doesn't
-	// require row reorganization. Since we don't create a new column for such operations,
-	// this field substitutes the functionality of it to track both the old and new types
+	// require row reorg. Since we don't create a new column for such operations, this
+	// field substitutes the functionality of it to track both the old and new types
 	// simultaneously. Thus both old and new indexes can encode values with correct types.
 	// - Before backfill: FieldType=original type, ChangingFieldType=new type
 	// - After backfill: FieldType=new type, ChangingFieldType=original type
