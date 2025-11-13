@@ -560,6 +560,10 @@ type Instance struct {
 	MemQuotaBindingCache uint64 `toml:"tidb_mem_quota_binding_cache" json:"tidb_mem_quota_binding_cache"`
 	// SchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
 	SchemaCacheSize string `toml:"tidb_schema_cache_size" json:"tidb_schema_cache_size"`
+	// AddIndexReaderConcurrency indicates the concurrency of add index reader.
+	AddIndexReaderConcurrency int `toml:"tidb_add_index_reader_concurrency" json:"tidb_add_index_reader_concurrency"`
+	// AddIndexWriterConcurrency indicates the concurrency of add index writer.
+	AddIndexWriterConcurrency int `toml:"tidb_add_index_writer_concurrency" json:"tidb_add_index_writer_concurrency"`
 
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
