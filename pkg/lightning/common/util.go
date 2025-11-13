@@ -643,6 +643,15 @@ func GetPDEnableFollowerHandleRegion(ctx context.Context, db *sql.DB) (bool, err
 	return variable.TiDBOptOn(val), nil
 }
 
+// GetTiDBEnablePDRouterServicehandleRegion gets the tidb_enable_pd_router_service_handle_region from database.
+func GetTiDBEnablePDRouterServicehandleRegion(ctx context.Context, db *sql.DB) (bool, error) {
+	val, err := getSessionVariable(ctx, db, vardef.TiDBEnablePDRouterServiceHandleRegion)
+	if err != nil {
+		return false, err
+	}
+	return variable.TiDBOptOn(val), nil
+}
+
 // GetExplicitRequestSourceTypeFromDB gets the explicit request source type from database.
 func GetExplicitRequestSourceTypeFromDB(ctx context.Context, db *sql.DB) (string, error) {
 	return getSessionVariable(ctx, db, vardef.TiDBExplicitRequestSourceType)

@@ -808,6 +808,11 @@ var defaultSysVars = []*SysVar{
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		return (*SetPDClientDynamicOption.Load())(vardef.PDEnableFollowerHandleRegion, val)
 	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnablePDRouterServiceHandleRegion, Value: BoolToOnOff(vardef.DefTiDBEnablePDRouterServiceHandleRegion), Type: vardef.TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnablePDRouterServiceHandleRegion.Load()), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		return (*SetPDClientDynamicOption.Load())(vardef.TiDBEnablePDRouterServiceHandleRegion, val)
+	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableBatchQueryRegion, Value: BoolToOnOff(vardef.DefTiDBEnableBatchQueryRegion), Type: vardef.TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableBatchQueryRegion.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
