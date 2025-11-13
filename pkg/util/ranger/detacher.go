@@ -396,9 +396,10 @@ func chooseBetweenRangeAndPoint(sctx *rangerctx.RangerContext, r1 *DetachRangeRe
 // considerDNF is true means it will try to extract access conditions from the DNF expressions.
 func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expression.Expression, newTpSlice []*types.FieldType, considerDNF bool) (*DetachRangeResult, error) {
 	var (
-		eqCount int
-		ranges  Ranges
-		err     error
+		eqCount     int
+		eqOrInCount int
+		ranges      Ranges
+		err         error
 	)
 	res := &DetachRangeResult{}
 
@@ -418,7 +419,11 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	for _, cond := range accessConds {
 		switch sc := cond.(type) {
 		case *expression.ScalarFunction:
-			if sc.FuncName.L == ast.EQ {
+			switch sc.FuncName.L {
+			case ast.In:
+				eqCount++
+				eqOrInCount++
+			case ast.EQ:
 				eqCount++
 			}
 		default:
@@ -428,7 +433,6 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 			continue
 		}
 	}
-	eqOrInCount := len(accessConds)
 	res.EqCondCount = eqCount
 	res.EqOrInCount = eqOrInCount
 	// If index has prefix column and d.mergeConsecutive is true, ranges may not be point ranges anymore after UnionRanges.
