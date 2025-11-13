@@ -24,6 +24,7 @@ partition by range (year(dob)) (
  partition p1980 values less than (1990),
  partition p1990 values less than (2000));
  create temporary table temp (a int);
+ create global temporary table temp_global(a int) on commit delete rows;
 
 # test information_schema.schemata_extensions
 desc information_schema.schemata_extensions;
@@ -127,6 +128,8 @@ drop table t;
 -- error 3809
 drop table temp;
 -- error 3809
+drop table temp_global;
+-- error 3809
 drop view v1;
 -- error 3809
 load data local infile '' into table t;
@@ -140,7 +143,6 @@ create or replace view v as select * from t;
 alter table t auto_increment = 10000;
 
 # DDL can be executed in read-only mode
-# temporary table
 alter table t compact tiflash replica;
 
 # finish test
@@ -288,6 +290,8 @@ select * from t1 join t2 on t1.a= t2.a for share;
 select t1.a from t1 join t2 on t1.a= t2.a for share;
 -- error 3809
 table t1 for share;
+-- error 3809
+select * from temp for update;
 
 # select should be ok
 select * from t1;
@@ -306,3 +310,102 @@ update db2.parent_3 set id_3 = 10;
 
 # finish test
 alter schema db1 read only 0;
+
+## test prepare/execute statement in read only mode
+drop database if exists read_only;
+create database read_only;
+use read_only;
+create table t1(a int, b int, index idx_b(b));
+prepare stmt_insert from 'insert into t1 values(?, ?)';
+prepare stmt_update from 'update t1 set b = ? where a = ?';
+prepare stmt_delete from 'delete from t1 where a = ?';
+prepare stmt_select_for_update from 'select * from t1 where a = ? for update';
+prepare stmt_select from 'select * from t1 where a = ?';
+prepare stmt_truncate from 'truncate table t1';
+prepare stmt_drop_database from 'drop database read_only';
+prepare stmt_alter_database from 'alter database read_only charset gbk';
+prepare stmt_create_table from 'create table t2(a int)';
+prepare stmt_drop_table from 'drop table t2';
+prepare stmt_alter_table from 'alter table t1 add column c int';
+set @a = 1;
+set @b = 2;
+alter schema read_only read only 1;
+
+-- error 3809
+prepare stmt from 'insert into t1 values(?, ?)';  # different from mysql, mysql allows prepare in read only mode
+-- error 8113
+execute stmt_insert using @a, @b; # error 3809 is wrapped by prepare/execute as 8113
+-- error 8113
+execute stmt_update using @b, @a;
+-- error 8113
+execute stmt_delete using @a;
+-- error 8113
+execute stmt_select_for_update using @a;
+execute stmt_select using @a;
+-- error 8113
+execute stmt_truncate;
+-- error 8113
+execute stmt_drop_database;
+-- error 8113
+execute stmt_alter_database;
+-- error 8113
+execute stmt_create_table;
+-- error 8113
+execute stmt_drop_table;
+-- error 8113
+execute stmt_alter_table;
+
+
+## test prepared plan cache after altering read only mode
+alter schema read_only read only 0;
+set @a = 1;
+execute stmt_select using @a;
+execute stmt_select using @a;
+select @@last_plan_from_cache; # should be 1
+# read only 0 -> 1, can't use plan cache
+alter schema read_only read only 1;
+execute stmt_select using @a;
+select @@last_plan_from_cache; # should be 0
+# read only 1 -> 0, can use plan cache
+alter schema read_only read only 0;
+execute stmt_select using @a;
+select @@last_plan_from_cache; # should be 0
+
+## test non-prepared plan cache
+SET tidb_enable_non_prepared_plan_cache = ON;
+select * from read_only.t1 where a = 1;
+select * from read_only.t1 where a = 1;
+SELECT @@last_plan_from_cache; # should be 1
+# read only 0 -> 1, can't use plan cache
+alter schema read_only read only 1;
+select * from read_only.t1 where a = 1;
+SELECT @@last_plan_from_cache; # should be 0
+# read only 1 -> 0, can use plan cache
+alter schema read_only read only 0;
+select * from read_only.t1 where a = 1;
+SELECT @@last_plan_from_cache; # should be 0
+
+
+## test create binding in read only mode
+alter schema read_only read only 1;
+create binding for select * from t1 where b = 1 using select /*+ use_index(t1, idx_b) */ * from t1 where b = 1;
+
+## test explain/explain analyze in read only mode
+-- error 3809
+explain select * from t1 where b = 1 for update;
+-- error 3809
+explain insert into t1 values(1, 2);
+-- error 3809
+explain update t1 set b = 2 where a = 1;
+-- error 3809
+explain delete from t1 where a = 1;
+-- error 3809
+explain analyze select * from t1 where b = 1 for update;
+-- error 3809
+explain analyze insert into t1 values(1, 2);
+-- error 3809
+explain analyze update t1 set b = 2 where a = 1;
+-- error 3809
+explain analyze delete from t1 where a = 1;
+
+alter schema read_only read only 0;
