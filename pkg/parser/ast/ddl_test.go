@@ -123,6 +123,7 @@ func TestDDLIndexOption(t *testing.T) {
 		{"key_block_size=16", "KEY_BLOCK_SIZE=16"},
 		{"USING HASH", "USING HASH"},
 		{"comment 'hello'", "COMMENT 'hello'"},
+		{"parameter '{\"foo\":1}'", "PARAMETER '{\"foo\":1}'"},
 		{"key_block_size=16 USING HASH", "KEY_BLOCK_SIZE=16 USING HASH"},
 		{"USING HASH KEY_BLOCK_SIZE=16", "KEY_BLOCK_SIZE=16 USING HASH"},
 		{"USING HASH COMMENT 'foo'", "USING HASH COMMENT 'foo'"},
