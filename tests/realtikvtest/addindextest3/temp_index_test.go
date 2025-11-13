@@ -179,7 +179,7 @@ func TestMergeTempIndexStuck(t *testing.T) {
 		pkBegin   = 0
 		pkEnd     = 50 // workerNum * batchNum = pkEnd - pkBegin
 		rowNum    = 100
-		values    []string
+		values    = make([]string, 0, rowNum+1)
 		execCnt   atomic.Int64
 	)
 	for i := range rowNum {
