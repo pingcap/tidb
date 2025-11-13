@@ -2,7 +2,6 @@
 set -eu
 . run_services
 
-CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PREFIX="blocklist_backup"
 TASK_NAME="br_blocklist"
 
@@ -16,7 +15,9 @@ restart_services || { echo "Failed to restart services"; exit 1; }
 # ==================== 阶段 0: 准备初始数据 ====================
 echo ""
 echo ">>> Phase 0: Preparing initial data at T0..."
-run_sql_file "$CUR/prepare_data/init_data.sql"
+run_sql "CREATE DATABASE original_db;"
+run_sql "CREATE TABLE original_db.t1 (id INT PRIMARY KEY, val VARCHAR(50));"
+run_sql "INSERT INTO original_db.t1 (id, val) VALUES (1, 'initial_data_row1'), (2, 'initial_data_row2'), (3, 'initial_data_row3');"
 
 # 验证 T0 数据
 t1_count=$(run_sql "SELECT COUNT(*) FROM original_db.t1;" | tail -n1)
@@ -47,7 +48,9 @@ sleep 2
 # ==================== 阶段 3: 插入 T1 数据 ====================
 echo ""
 echo ">>> Phase 3: Inserting data at T1..."
-run_sql_file "$CUR/incremental_data/t1_data.sql"
+run_sql "INSERT INTO original_db.t1 (id, val) VALUES (4, 'data_at_t1');"
+run_sql "CREATE TABLE original_db.t2 (id INT PRIMARY KEY, description TEXT);"
+run_sql "INSERT INTO original_db.t2 (id, description) VALUES (100, 't2_data_row1'), (101, 't2_data_row2');"
 
 # 等待数据写入日志备份
 sleep 2
@@ -74,7 +77,9 @@ echo "✓ T1 data prepared: t1 has 4 rows, t2 has 2 rows"
 # ==================== 阶段 4: 插入 T2 数据 ====================
 echo ""
 echo ">>> Phase 4: Inserting data at T2 (creating new_db)..."
-run_sql_file "$CUR/incremental_data/t2_data.sql"
+run_sql "CREATE DATABASE new_db;"
+run_sql "CREATE TABLE new_db.t3 (id INT PRIMARY KEY, description TEXT);"
+run_sql "INSERT INTO new_db.t3 (id, description) VALUES (200, 'new_db_data'), (201, 'created_at_t2');"
 
 # 等待数据写入日志备份
 sleep 2
@@ -96,7 +101,8 @@ echo "✓ T2 data prepared: database new_db and table t3 created"
 # ==================== 阶段 6: 插入 T3 数据 ====================
 echo ""
 echo ">>> Phase 6: Inserting data at T3 (operations on new_db)..."
-run_sql_file "$CUR/incremental_data/t3_data.sql"
+run_sql "INSERT INTO new_db.t3 (id, description) VALUES (202, 'data_at_t3_row1'), (203, 'data_at_t3_row2'), (204, 'data_at_t3_row3');"
+run_sql "UPDATE original_db.t1 SET val = 'updated_at_t3' WHERE id = 4;"
 
 # 等待数据写入日志备份
 sleep 2
