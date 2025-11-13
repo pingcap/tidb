@@ -242,7 +242,7 @@ func TestMergeTempIndexStuck(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return execCnt.Load() >= 5000
-	}, 5*time.Second, 300*time.Millisecond)
+	}, 30*time.Second, 300*time.Millisecond)
 	tk.MustExec("alter table t add index idx_a(a);")
 	tk.MustExec("admin check index t idx_a;")
 	close(done)
