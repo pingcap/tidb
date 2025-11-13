@@ -25,7 +25,8 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	litstorage "github.com/pingcap/tidb/br/pkg/storage"
+	extstorage "github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
@@ -290,7 +291,7 @@ func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 	cloudURI := vardef.CloudStorageURI.Load()
 	if s, ok := store.(kv.StorageWithPD); ok {
 		// When setting the cloudURI value by SQL, we already checked the effectiveness, so we don't need to check it again here.
-		u, _ := litstorage.ParseRawURL(cloudURI)
+		u, _ := extstorage.ParseRawURL(cloudURI)
 		if len(u.Path) != 0 {
 			u.Path = path.Join(u.Path, strconv.FormatUint(s.GetPDClient().GetClusterID(ctx), 10))
 			return u.String()
@@ -346,6 +347,31 @@ func GetScheduleTuneFactors(ctx context.Context, keyspace string) (*schstatus.Tu
 		return schstatus.GetDefaultTuneFactors(), nil
 	}
 	return &factors.TuneFactors, nil
+}
+
+// NewObjStoreWithRecording creates an object storage for global sort with
+// request recording.
+func NewObjStoreWithRecording(ctx context.Context, uri string) (*recording.Requests, extstorage.ExternalStorage, error) {
+	reqRec := &recording.Requests{}
+	ctx2 := recording.WithRequests(ctx, reqRec)
+	store, err := NewObjStore(ctx2, uri)
+	if err != nil {
+		return nil, nil, err
+	}
+	return reqRec, store, nil
+}
+
+// NewObjStore creates an object storage for global sort.
+func NewObjStore(ctx context.Context, uri string) (extstorage.ExternalStorage, error) {
+	storeBackend, err := extstorage.ParseBackend(uri, nil)
+	if err != nil {
+		return nil, err
+	}
+	store, err := extstorage.NewWithDefaultOpt(ctx, storeBackend)
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 func init() {
