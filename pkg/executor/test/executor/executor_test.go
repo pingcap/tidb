@@ -2526,8 +2526,7 @@ func TestIssue48756(t *testing.T) {
 				(2, _binary '12012-05-19 09:06:07', 120120519090607),
 				(2, _binary '12012-05-19 09:06:07', 120120519090607)`)
 
-			tk.MustQuery("SELECT SUBTIME(BIT_OR(b), '1 1:1:1.000002') FROM t GROUP BY id").
-				Sort().
+			tk.MustQuery("SELECT SUBTIME(BIT_OR(b), '1 1:1:1.000002') FROM t GROUP BY id ORDER BY id").
 				Check(testkit.Rows(
 					"2012-05-18 08:05:05.999998",
 					"<nil>",

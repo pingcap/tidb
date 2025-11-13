@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
+	"golang.org/x/time/rate"
 )
 
 /*
@@ -233,6 +234,10 @@ const (
 
 	// TiDBSlowLogRules defines multi-dimensional trigger rules for flexible slow log control.
 	TiDBSlowLogRules = "tidb_slow_log_rules"
+
+	// TiDBSlowLogMaxPerSec is the maximum number of slow logs that can be recorded per second in the server.
+	// The default value is 0, which means no rate limiting is applied.
+	TiDBSlowLogMaxPerSec = "tidb_slow_log_max_per_sec"
 
 	// TiDBSlowTxnLogThreshold is used to set the slow transaction log threshold in the server.
 	TiDBSlowTxnLogThreshold = "tidb_slow_txn_log_threshold"
@@ -1445,7 +1450,7 @@ const (
 	DefTiDBMemQuotaApplyCache               = 32 << 20 // 32MB.
 	DefTiDBMemQuotaBindingCache             = 64 << 20 // 64MB.
 	DefTiDBGeneralLog                       = false
-	DefTiDBTraceEvent                       = Off
+	DefTiDBTraceEvent                       = ""
 	DefTiDBPProfSQLCPU                      = 0
 	DefTiDBRetryLimit                       = 10
 	DefTiDBDisableTxnAutoRetry              = true
@@ -1759,19 +1764,20 @@ var (
 	//    the value of `tidb_analyze_column_options` determines the behavior of the analyze operation.
 	// 2. If `tidb_persist_analyze_options` is disabled, `tidb_analyze_column_options` is used directly to decide
 	//    whether to analyze all columns or just the predicate columns.
-	AnalyzeColumnOptions          = atomic.NewString(DefTiDBAnalyzeColumnOptions)
-	GlobalLogMaxDays              = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
-	QueryLogMaxLen                = atomic.NewInt32(DefTiDBQueryLogMaxLen)
-	EnablePProfSQLCPU             = atomic.NewBool(false)
-	EnableBatchDML                = atomic.NewBool(false)
-	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
-	DDLReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
-	DDLReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
-	DDLFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
-	DDLErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
-	DDLReorgRowFormat       int64 = DefTiDBRowFormatV2
-	DDLReorgMaxWriteSpeed         = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
-	MaxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
+	AnalyzeColumnOptions           = atomic.NewString(DefTiDBAnalyzeColumnOptions)
+	GlobalLogMaxDays               = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	QueryLogMaxLen                 = atomic.NewInt32(DefTiDBQueryLogMaxLen)
+	EnablePProfSQLCPU              = atomic.NewBool(false)
+	EnableBatchDML                 = atomic.NewBool(false)
+	EnableTmpStorageOnOOM          = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	DDLReorgWorkerCounter    int32 = DefTiDBDDLReorgWorkerCount
+	DDLReorgBatchSize        int32 = DefTiDBDDLReorgBatchSize
+	DDLFlashbackConcurrency  int32 = DefTiDBDDLFlashbackConcurrency
+	DDLErrorCountLimit       int64 = DefTiDBDDLErrorCountLimit
+	DDLReorgRowFormat        int64 = DefTiDBRowFormatV2
+	DDLReorgMaxWriteSpeed          = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
+	MaxDeltaSchemaCount      int64 = DefTiDBMaxDeltaSchemaCount
+	GlobalSlowLogRateLimiter       = rate.NewLimiter(rate.Inf, 1)
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	GlobalSlowLogRules  = atomic.NewPointer[slowlogrule.GlobalSlowLogRules](

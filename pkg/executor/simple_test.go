@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -333,4 +334,75 @@ func TestRefreshStatsWithLiteMode(t *testing.T) {
 	indexVersionAfterLoad := statsAfterLoad.GetIdx(1).LastUpdateVersion
 	require.Len(t, statsAfterLoad.GetIdx(1).Buckets, 2, "nothing should be changed")
 	require.Equal(t, indexVersionAfterLoad, indexVersionAfterAnalyze, "nothing should be changed")
+}
+
+func TestRefreshStatsConcurrently(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t_partition")
+	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int, index idx_a(a))")
+	tk.MustExec(`create table t_partition (
+		id int,
+		a int,
+		b int,
+		index idx_a(a)
+	) partition by hash(id) partitions 4`)
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,4)")
+	tk.MustExec("insert into t2 values (5,5),(6,6),(7,7),(8,8)")
+	tk.MustExec("insert into t_partition values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6)")
+	tk.MustExec("analyze table t1, t2, t_partition all columns with 1 topn, 2 buckets")
+
+	handle := dom.StatsHandle()
+
+	sqls := []string{
+		"REFRESH STATS test.t1",
+		"REFRESH STATS test.t2 FULL",
+		"REFRESH STATS test.t_partition",
+		"REFRESH STATS test.*",
+		"REFRESH STATS test.t1 FULL",
+		"REFRESH STATS test.t_partition FULL",
+		"REFRESH STATS test.t2",
+		"REFRESH STATS *.* FULL",
+	}
+
+	const rounds = 2
+	const workerCount = 4
+
+	workers := make([]*testkit.TestKit, workerCount)
+	for i := range workers {
+		worker := testkit.NewTestKit(t, store)
+		worker.MustExec("use test")
+		workers[i] = worker
+	}
+
+	var wg sync.WaitGroup
+	for _, tkWorker := range workers {
+		wg.Add(1)
+		go func(tkWorker *testkit.TestKit) {
+			defer wg.Done()
+			for i := 0; i < rounds; i++ {
+				for _, sql := range sqls {
+					tkWorker.MustExec(sql)
+				}
+			}
+		}(tkWorker)
+	}
+	wg.Wait()
+
+	ctx := context.Background()
+	is := dom.InfoSchema()
+	checkFullIndex := func(tblName string) {
+		tbl, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr(tblName))
+		require.NoError(t, err)
+		stats := handle.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+		require.NotNil(t, stats)
+		idx := stats.GetIdx(1)
+		require.NotNilf(t, idx, "index stats for %s should be present", tblName)
+		require.Truef(t, idx.IsFullLoad(), "index stats for %s should be fully loaded", tblName)
+	}
+	checkFullIndex("t1")
+	checkFullIndex("t2")
+	checkFullIndex("t_partition")
 }
