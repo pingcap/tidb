@@ -200,7 +200,7 @@ func replaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expression) (E
 			}, true
 		}
 	case ast.EQ:
-		// for 'a = b', if (a = src and b = tgt) or (a = tgt and b = src), we can replace it with true
+		// If it has equal condition `a=b`, we meet it again and we can replace it with true
 		if (args[0].Equal(evalCtx, src) && args[1].Equal(evalCtx, tgt)) || (args[1].Equal(evalCtx, src) && args[0].Equal(evalCtx, tgt)) {
 			return &Constant{
 				Value:   types.NewDatum(true),
