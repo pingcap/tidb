@@ -396,10 +396,9 @@ func chooseBetweenRangeAndPoint(sctx *rangerctx.RangerContext, r1 *DetachRangeRe
 // considerDNF is true means it will try to extract access conditions from the DNF expressions.
 func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expression.Expression, newTpSlice []*types.FieldType, considerDNF bool) (*DetachRangeResult, error) {
 	var (
-		eqCount     int
-		eqOrInCount int
-		ranges      Ranges
-		err         error
+		eqCount int
+		ranges  Ranges
+		err     error
 	)
 	res := &DetachRangeResult{}
 
