@@ -421,11 +421,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		case *expression.ScalarFunction:
 			switch sc.FuncName.L {
 			case ast.EQ:
-
 				eqCount++
-				eqOrInCount++
-			case ast.In:
-				eqOrInCount++
 			}
 		default:
 			// PREPARE prepare_query FROM 'SELECT t0.c0 FROM t0, t1 WHERE ? OR ((? <=> t1.c0) AND (? <=> t1.c0))';
@@ -434,6 +430,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 			continue
 		}
 	}
+	eqOrInCount := len(accessConds)
 	res.EqCondCount = eqCount
 	res.EqOrInCount = eqOrInCount
 	// If index has prefix column and d.mergeConsecutive is true, ranges may not be point ranges anymore after UnionRanges.
