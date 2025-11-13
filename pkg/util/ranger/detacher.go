@@ -421,10 +421,10 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		case *expression.ScalarFunction:
 			switch sc.FuncName.L {
 			case ast.In:
-				eqCount++
 				eqOrInCount++
 			case ast.EQ:
 				eqCount++
+				eqOrInCount++
 			}
 		default:
 			// PREPARE prepare_query FROM 'SELECT t0.c0 FROM t0, t1 WHERE ? OR ((? <=> t1.c0) AND (? <=> t1.c0))';
