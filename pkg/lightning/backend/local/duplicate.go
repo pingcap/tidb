@@ -549,7 +549,7 @@ func (m *dupeDetector) saveIndexHandles(ctx context.Context, handles pendingInde
 	return errors.Trace(err)
 }
 
-type KV struct {
+type kvPair struct {
 	Key []byte
 	Val []byte
 }
@@ -581,13 +581,13 @@ func (d *dupIter) add(key, val []byte) {
 	}
 }
 
-func (d *dupIter) getOutput() []KV {
-	var result []KV
+func (d *dupIter) getOutput() []kvPair {
+	var result []kvPair
 
 	for kstr, vals := range d.cache {
 		if len(vals) > 1 {
 			for _, v := range vals {
-				result = append(result, KV{
+				result = append(result, kvPair{
 					Key: []byte(kstr),
 					Val: v,
 				})
