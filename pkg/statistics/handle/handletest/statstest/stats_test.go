@@ -331,7 +331,7 @@ func TestInitStats(t *testing.T) {
 	require.NoError(t, h.InitStats(context.Background(), is))
 	tableStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.True(t, tableStats.IsAnalyzed())
-	// Baisc meta info check
+	// Basic meta info check
 	require.Equal(t, int64(0), tableStats.ModifyCount)
 	require.Equal(t, int64(6), tableStats.RealtimeCount)
 	require.Equal(t, statistics.Version2, tableStats.StatsVer)
