@@ -19,6 +19,7 @@ import (
 	"context"
 	goerrors "errors"
 	"fmt"
+	"math/rand"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -492,6 +493,13 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		return subtaskErr
 	}
 
+	if rand.Intn(2) == 0 {
+		logutil.BgLogger().Info("rerun aaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+		bases := make([]*proto.SubtaskBase, 0, 1)
+		bases = append(bases, &subtask.SubtaskBase)
+		err := e.taskTable.RunningSubtasksBack2Pending(e.stepCtx, bases)
+		return err
+	}
 	err := e.finishSubtask(e.stepCtx, subtask)
 	failpoint.InjectCall("syncAfterSubtaskFinish")
 	return err

@@ -549,20 +549,83 @@ func (m *dupeDetector) saveIndexHandles(ctx context.Context, handles pendingInde
 	return errors.Trace(err)
 }
 
+type KV struct {
+	Key []byte
+	Val []byte
+}
+
+type dupIter struct {
+	cache map[string][][]byte
+}
+
+func newDupIter() *dupIter {
+	return &dupIter{
+		cache: make(map[string][][]byte),
+	}
+}
+
+func (d *dupIter) add(key, val []byte) {
+	kstr := string(key)
+	vals := d.cache[kstr]
+
+	exists := false
+	for _, vv := range vals {
+		if bytes.Equal(vv, val) {
+			exists = true
+			break
+		}
+	}
+
+	if !exists {
+		d.cache[kstr] = append(vals, val)
+	}
+}
+
+func (d *dupIter) getOutput() []KV {
+	var result []KV
+
+	for kstr, vals := range d.cache {
+		if len(vals) > 1 {
+			for _, v := range vals {
+				result = append(result, KV{
+					Key: []byte(kstr),
+					Val: v,
+				})
+			}
+		}
+	}
+
+	return result
+}
+
 // RecordIndexConflictError records index conflicts to errorMgr. The key received from stream must be an index key.
 func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupKVStream, tableID int64, indexInfo *model.IndexInfo, algorithm config.DuplicateResolutionAlgorithm) error {
 	//nolint: errcheck
 	defer stream.Close()
 	indexHandles := makePendingIndexHandlesWithCapacity(0)
+
+	iter := newDupIter()
+
 	for {
 		key, val, err := stream.Next()
+		iter.add(key, val)
+		m.logger.Warn("record index conflict error", zap.ByteString("key", key), zap.ByteString("val", val), zap.Error(err))
 		if errors.Cause(err) == io.EOF {
 			break
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
-		key, err = m.tikvCodec.DecodeKey(key)
+	}
+	kvs := iter.getOutput()
+	if len(kvs) == 0 {
+		return nil
+	}
+
+	for _, kv := range kvs {
+		key := kv.Key
+		val := kv.Val
+		key, err := m.tikvCodec.DecodeKey(key)
 		if err != nil {
 			return errors.Trace(err)
 		}
