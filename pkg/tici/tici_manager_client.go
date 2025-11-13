@@ -572,7 +572,6 @@ func DropFullTextIndex(ctx context.Context, store kv.Storage, tableID int64, ind
 // through an int32 narrowing (int(int32(flen))). This ensures TiCI parses the
 // length as int32 and avoids 4GB default-value related errors.
 func cloneAndNormalizeTableInfo(tbl *model.TableInfo) (*model.TableInfo, error) {
-
 	intest.Assert(tbl != nil, "tableInfo is nil")
 
 	// deep clone via JSON marshal/unmarshal
