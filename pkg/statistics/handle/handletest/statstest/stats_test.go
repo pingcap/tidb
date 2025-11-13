@@ -702,12 +702,12 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	require.Equal(t, int64(3), t2p1Stats.RealtimeCount)
 }
 
-// TestInitStatsWithoutHandingDDLEvent tests the scenario that stats
+// TestInitStatsWithoutHandlingDDLEvent tests the scenario that stats
 // meta exists but no histogram meta exists because no analyze has been done
 // and no DDL event has been handled.
 // TODO: this test is incomplete because we should figure out what
 // is the real impact to sync load and async load in this scenario.
-func TestInitStatsWithoutHandingDDLEvent(t *testing.T) {
+func TestInitStatsWithoutHandlingDDLEvent(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
