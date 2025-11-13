@@ -104,7 +104,7 @@ func (t *CopTask) finishIndexPlan() {
 
 func (t *CopTask) getStoreType() kv.StoreType {
 	p := t.indexPlan
-	if t.tablePlan != nil {
+	if t.tablePlan != nil && t.indexPlanFinished {
 		p = t.tablePlan
 	}
 	for len(p.Children()) > 0 {
