@@ -55,11 +55,6 @@ type regionJobWorker interface {
 	HandleTask(job *regionJob, f func(*regionJob)) error
 
 	Close() error
-
-	// run is only used in test, to process jobs from jobInCh.
-	// It's used to minimize the code change for tests for
-	// regionJobBaseWorker
-	run() error
 }
 
 type regionJobBaseWorker struct {
@@ -82,9 +77,9 @@ type regionJobBaseWorker struct {
 	) ([]*regionJob, error)
 }
 
-// HandleTask get jobs from the job channel and process them.
-// job.done() must be called if we can't put the job into jobOutCh
-// to make worker group quit.
+// HandleTask process a single job that reads from the job channel.
+// If the worker fails to process the job, it will set the error to the context.
+// Besides, the worker must call jobWg.done() if it does not put the job into jobOutCh.
 func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) error {
 	// As we need to call job.done() after panic, we recover here rather than in worker pool.
 	defer putil.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
@@ -96,25 +91,15 @@ func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) err
 		panic("mock panic")
 	})
 
-	return w.process(job)
-}
+	defer func() {
+		failpoint.Inject("mockJobWgDone", func(val failpoint.Value) {
+			if v, ok := val.(int); ok {
+				w.jobWg.Add(-v)
+			}
+		})
+	}()
 
-func (w *regionJobBaseWorker) run() error {
-	ctx := w.ctx
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case job, ok := <-w.jobInCh:
-			if !ok {
-				return nil
-			}
-			err := w.process(job)
-			if err != nil {
-				return err
-			}
-		}
-	}
+	return w.process(job)
 }
 
 func (w *regionJobBaseWorker) process(job *regionJob) error {
@@ -439,9 +424,6 @@ type jobOperator struct {
 	ctx *workerpool.Context
 	*operator.AsyncOperator[*regionJob, *regionJob]
 
-	// cancel is used to close the worker pool in happy path
-	cancel context.CancelFunc
-
 	// workerGroup is used to notify other component to quit in error case
 	workerGroup *putil.ErrorGroupWithRecover
 }
@@ -498,8 +480,8 @@ func (j *jobOperator) Open() error {
 	// In happy path, this goroutine will exit when we call j.Close().
 	// In error case:
 	// 1. if other goroutine in the worker group returns error, j.ctx will be canceled
-	// 2. if this worker pool meets error, this context will also be canceled by
-	//     j.ctx.OnError(err). And this error will be exposed to the worker pool.
+	// 2. if this worker pool meets error, this error will be exposed to the worker pool,
+	//    so all components in the worker pool can quit and make `jobWg.Wait()` pass.
 	j.workerGroup.Go(func() error {
 		<-j.ctx.Done()
 		return j.ctx.OperatorErr()
@@ -508,7 +490,7 @@ func (j *jobOperator) Open() error {
 }
 
 func (j *jobOperator) Close() error {
-	j.cancel()
+	j.ctx.Cancel()
 	//nolint: errcheck
 	j.AsyncOperator.Close()
 	return j.ctx.OperatorErr()

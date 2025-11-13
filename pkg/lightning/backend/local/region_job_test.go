@@ -647,7 +647,7 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 			case jobToWorkerCh <- job:
 				counter++
 				if mockErr && counter > 2 {
-					return errors.Errorf("dispatcher error")
+					return errors.Errorf("generator error")
 				}
 			case <-workerCtx.Done():
 				job.done(&jobWg)
@@ -732,8 +732,9 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 		})
 
 		err := workGroup.Wait()
-		require.NoError(t, op.Close())
-		require.Error(t, err, "should get the error from drainer")
+		// worker pool is quit by cancelled context
+		require.ErrorIs(t, op.Close(), context.Canceled)
+		require.ErrorContains(t, err, "drainer error")
 	})
 
 	t.Run("generator error", func(t *testing.T) {
@@ -756,8 +757,9 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 		})
 
 		err := workGroup.Wait()
-		require.NoError(t, op.Close())
-		require.Error(t, err, "should get the error from generator")
+		// worker pool is quit by cancelled context
+		require.ErrorIs(t, op.Close(), context.Canceled)
+		require.ErrorContains(t, err, "generator error")
 	})
 
 	t.Run("worker pool error", func(t *testing.T) {
@@ -780,7 +782,7 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 		})
 
 		err := workGroup.Wait()
-		require.Error(t, op.Close())
-		require.Error(t, err, "should get the error from worker pool")
+		require.ErrorContains(t, op.Close(), "panic")
+		require.ErrorContains(t, err, "panic")
 	})
 }

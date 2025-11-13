@@ -54,11 +54,11 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
-	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -1084,23 +1084,6 @@ func TestMultiIngest(t *testing.T) {
 	}
 }
 
-func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("skip this test on next-gen kernel")
-	}
-	bak := Backend{}
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)")
-	toCh := make(chan *regionJob, 1)
-	wctx := workerpool.NewContext(context.Background())
-	worker := bak.newRegionJobWorker(wctx, 1, toCh, make(chan *regionJob, 1), nil, nil)
-
-	toCh <- &regionJob{}
-	err := worker.run()
-	require.Error(t, err)
-	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
-	require.Len(t, toCh, 0)
-}
-
 // mockIngestData must be ordered on the first element of each [2][]byte.
 // there cannot be duplicated items.
 type mockIngestData [][2][]byte
@@ -1197,9 +1180,6 @@ func TestCheckPeersBusy(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	apiInvokeRecorder := map[string][]uint64{}
 	serverIsBusyResp := &sst.IngestResponse{
 		Error: &errorpb.Error{
@@ -1243,7 +1223,12 @@ func TestCheckPeersBusy(t *testing.T) {
 
 	data := mockIngestData{{[]byte("a"), []byte("a")}, {[]byte("b"), []byte("b")}}
 
-	jobCh := make(chan *regionJob, 10)
+	var (
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(context.Background())
+		jobToWorkerCh        = make(chan *regionJob, 10)
+		jobFromWorkerCh      = make(chan *regionJob)
+	)
+	op := newRegionJobOperator(workerCtx, workGroup, &sync.WaitGroup{}, local, nil, jobToWorkerCh, jobFromWorkerCh, 0)
 
 	retryJob := &regionJob{
 		keyRange: engineapi.Range{Start: []byte("a"), End: []byte("b")},
@@ -1263,9 +1248,9 @@ func TestCheckPeersBusy(t *testing.T) {
 		retryCount: 20,
 		waitUntil:  time.Now().Add(-time.Second),
 	}
-	jobCh <- retryJob
+	jobToWorkerCh <- retryJob
 
-	jobCh <- &regionJob{
+	jobToWorkerCh <- &regionJob{
 		keyRange: engineapi.Range{Start: []byte("b"), End: []byte("")},
 		region: &split.RegionInfo{
 			Region: &metapb.Region{
@@ -1288,22 +1273,17 @@ func TestCheckPeersBusy(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	jobOutCh := make(chan *regionJob)
 	go func() {
-		job := <-jobOutCh
+		job := <-jobFromWorkerCh
 		job.retryCount++
 		retryJobs <- job
-		<-jobOutCh
+		<-jobFromWorkerCh
+		require.NoError(t, op.Close())
 		wg.Done()
 	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		wctx := workerpool.NewContext(ctx)
-		worker := local.newRegionJobWorker(wctx, 1, jobCh, jobOutCh, nil, nil)
-		err := worker.run()
-		require.NoError(t, err)
-	}()
+
+	require.NoError(t, op.Open())
+	wg.Wait()
 
 	require.Eventually(t, func() bool {
 		return len(retryJobs) == 1
@@ -1312,9 +1292,6 @@ func TestCheckPeersBusy(t *testing.T) {
 	require.Same(t, retryJob, j)
 	require.Equal(t, 21, retryJob.retryCount)
 	require.Equal(t, wrote, retryJob.stage)
-
-	cancel()
-	wg.Wait()
 
 	require.Equal(t, []uint64{11, 12, 13, 21, 22, 23}, apiInvokeRecorder["Write"])
 	// store 12 has a follower busy, so it will break the workflow for region (11, 12, 13)
@@ -1328,9 +1305,6 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("skip this test on next-gen kernel")
 	}
-	log.InitLogger(&log.Config{Level: "debug"}, "")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// test lightning using stale region info (1,2,3), now the region is (11,12,13)
 	apiInvokeRecorder := map[string][]uint64{}
@@ -1370,9 +1344,14 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)
 
-	data := mockIngestData{{[]byte("a"), []byte("a")}}
+	var (
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(context.Background())
+		jobToWorkerCh        = make(chan *regionJob, 10)
+		jobFromWorkerCh      = make(chan *regionJob)
+	)
+	op := newRegionJobOperator(workerCtx, workGroup, &sync.WaitGroup{}, local, nil, jobToWorkerCh, jobFromWorkerCh, 0)
 
-	jobCh := make(chan *regionJob, 10)
+	data := mockIngestData{{[]byte("a"), []byte("a")}}
 
 	staleJob := &regionJob{
 		keyRange: engineapi.Range{Start: []byte("a"), End: []byte("b")},
@@ -1390,35 +1369,23 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 		stage:      regionScanned,
 		ingestData: data,
 	}
-	var jobWg sync.WaitGroup
-	jobWg.Add(1)
-	jobCh <- staleJob
+	jobToWorkerCh <- staleJob
+
+	require.NoError(t, op.Open())
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	jobOutCh := make(chan *regionJob)
 	go func() {
 		defer wg.Done()
 		for {
-			job := <-jobOutCh
+			job := <-jobFromWorkerCh
 			if job.stage == ingested {
-				jobWg.Done()
+				require.NoError(t, op.Close())
 				return
 			}
-			jobCh <- job
+			jobToWorkerCh <- job
 		}
 	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		wctx := workerpool.NewContext(ctx)
-		worker := local.newRegionJobWorker(wctx, 1, jobCh, jobOutCh, &jobWg, nil)
-		err := worker.run()
-		require.NoError(t, err)
-	}()
-
-	jobWg.Wait()
-	cancel()
 	wg.Wait()
 
 	// "ingest" to test peers busy of stale region: 1,2,3
@@ -1434,8 +1401,6 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("skip this test on next-gen kernel")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// let lightning meet any error that will call convertStageTo(needRescan)
 	apiInvokeRecorder := map[string][]uint64{}
@@ -1475,7 +1440,12 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 
 	data := mockIngestData{{[]byte("a"), []byte("a")}, {[]byte("a2"), []byte("a2")}}
 
-	jobCh := make(chan *regionJob, 10)
+	var (
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(context.Background())
+		jobToWorkerCh        = make(chan *regionJob, 10)
+		jobFromWorkerCh      = make(chan *regionJob)
+	)
+	op := newRegionJobOperator(workerCtx, workGroup, &sync.WaitGroup{}, local, nil, jobToWorkerCh, jobFromWorkerCh, 0)
 
 	partialWriteJob := &regionJob{
 		keyRange: engineapi.Range{Start: []byte("a"), End: []byte("c")},
@@ -1495,35 +1465,24 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 		// use small regionSplitSize to trigger partial write
 		regionSplitSize: 1,
 	}
-	var jobWg sync.WaitGroup
-	jobWg.Add(1)
-	jobCh <- partialWriteJob
+
+	jobToWorkerCh <- partialWriteJob
+
+	require.NoError(t, op.Open())
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	jobOutCh := make(chan *regionJob)
 	go func() {
 		defer wg.Done()
 		for {
-			job := <-jobOutCh
+			job := <-jobFromWorkerCh
 			if job.stage == regionScanned {
-				jobWg.Done()
+				require.NoError(t, op.Close())
 				return
 			}
 			require.Fail(t, "job stage %s is not expected", job.stage)
 		}
 	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		wctx := workerpool.NewContext(ctx)
-		worker := local.newRegionJobWorker(wctx, 1, jobCh, jobOutCh, &jobWg, nil)
-		err := worker.run()
-		require.NoError(t, err)
-	}()
-
-	jobWg.Wait()
-	cancel()
 	wg.Wait()
 
 	require.Equal(t, []uint64{1, 2, 3}, apiInvokeRecorder["Write"])
@@ -1534,8 +1493,6 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("skip this test on next-gen kernel")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	apiInvokeRecorder := map[string][]uint64{}
 	notLeaderResp := &sst.IngestResponse{
@@ -1593,7 +1550,12 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	err = db.Set([]byte("a2"), []byte("a2"), nil)
 	require.NoError(t, err)
 
-	jobCh := make(chan *regionJob, 10)
+	var (
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(context.Background())
+		jobToWorkerCh        = make(chan *regionJob, 10)
+		jobFromWorkerCh      = make(chan *regionJob)
+	)
+	op := newRegionJobOperator(workerCtx, workGroup, &sync.WaitGroup{}, local, nil, jobToWorkerCh, jobFromWorkerCh, 0)
 
 	partialWriteJob := &regionJob{
 		keyRange: engineapi.Range{Start: []byte("a"), End: []byte("c")},
@@ -1613,43 +1575,32 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 		// use small regionSplitSize to trigger partial write
 		regionSplitSize: 1,
 	}
-	var jobWg sync.WaitGroup
-	jobWg.Add(1)
-	jobCh <- partialWriteJob
+
+	jobToWorkerCh <- partialWriteJob
+
+	require.NoError(t, op.Open())
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	jobOutCh := make(chan *regionJob)
 	go func() {
 		defer wg.Done()
 		for {
-			job := <-jobOutCh
+			job := <-jobFromWorkerCh
 			switch job.stage {
 			case wrote:
 				// mimic retry later
-				jobCh <- job
+				jobToWorkerCh <- job
 			case ingested:
 				// partially write will change the start key
 				require.Equal(t, []byte("a2"), job.keyRange.Start)
 				require.Equal(t, []byte("c"), job.keyRange.End)
-				jobWg.Done()
+				require.NoError(t, op.Close())
 				return
 			default:
 				require.Fail(t, "job stage %s is not expected, job: %v", job.stage, job)
 			}
 		}
 	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		wctx := workerpool.NewContext(ctx)
-		worker := local.newRegionJobWorker(wctx, 1, jobCh, jobOutCh, &jobWg, nil)
-		err := worker.run()
-		require.NoError(t, err)
-	}()
-
-	jobWg.Wait()
-	cancel()
 	wg.Wait()
 
 	require.Equal(t, int64(2), f.importedKVCount.Load())
