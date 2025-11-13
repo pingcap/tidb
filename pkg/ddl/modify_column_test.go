@@ -1423,10 +1423,10 @@ func TestHistogramFromStorageWithPriority(t *testing.T) {
 	}
 
 	var (
-		oldTopNs []*statistics.TopN
-		newTopNs []*statistics.TopN
-		oldHgs   []*statistics.Histogram
-		newHgs   []*statistics.Histogram
+		oldTopNs = make([]*statistics.TopN, 0, 3)
+		newTopNs = make([]*statistics.TopN, 0, 3)
+		oldHgs   = make([]*statistics.Histogram, 0, 3)
+		newHgs   = make([]*statistics.Histogram, 0, 3)
 	)
 	for _, check := range [][]int64{{1, 0}, {2, 0}, {0, 1}} {
 		oldTopN, oldHg := getTopNAndHg(check[0], int(check[1]))
