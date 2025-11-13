@@ -412,8 +412,10 @@ func (s *propConstSolver) propagateColumnEQ() {
 			if lOk && rOk && lCol.GetType(s.ctx.GetEvalCtx()).GetCollate() == rCol.GetType(s.ctx.GetEvalCtx()).GetCollate() && !lCol.GetType(s.ctx.GetEvalCtx()).Hybrid() && !rCol.GetType(s.ctx.GetEvalCtx()).Hybrid() {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
-				s.unionSet.Union(lID, rID)
-				visited[i] = true
+				if s.unionSet.FindRoot(lID) != s.unionSet.FindRoot(rID) {
+					s.unionSet.Union(lID, rID)
+					visited[i] = true
+				}
 			}
 		}
 	}
