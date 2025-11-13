@@ -1418,14 +1418,14 @@ func RunStreamRestore(
 		stream.LogDBReplaceMap("scanned log meta kv before snapshot restore", dbReplace)
 	}
 
+	// Save PITR-related info to cfg for blocklist creation in defer function
+	cfg.piTRTaskInfo = taskInfo
+	cfg.tableMappingManager = metaInfoProcessor.GetTableMappingManager()
+
 	// restore full snapshot.
 	if taskInfo.NeedFullRestore {
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
-
-		// Save PITR-related info to cfg for blocklist creation in defer function
-		cfg.piTRTaskInfo = taskInfo
-		cfg.tableMappingManager = metaInfoProcessor.GetTableMappingManager()
 
 		snapshotRestoreConfig := SnapshotRestoreConfig{
 			RestoreConfig:          cfg,
@@ -1446,22 +1446,6 @@ func RunStreamRestore(
 		if taskInfo.hasTiFlashItemsInCheckpoint() {
 			log.Info("load tiflash records of snapshot restore from checkpoint")
 			cfg.tiflashRecorder.Load(taskInfo.CheckpointInfo.Metadata.TiFlashItems)
-		}
-
-		// Save PITR-related info for checkpoint case as well
-		if cfg.piTRTaskInfo == nil {
-			cfg.piTRTaskInfo = taskInfo
-		}
-		if cfg.tableMappingManager == nil {
-			cfg.tableMappingManager = metaInfoProcessor.GetTableMappingManager()
-		}
-	} else {
-		// For pure log restore without full snapshot, still save PITR info
-		if cfg.piTRTaskInfo == nil {
-			cfg.piTRTaskInfo = taskInfo
-		}
-		if cfg.tableMappingManager == nil {
-			cfg.tableMappingManager = metaInfoProcessor.GetTableMappingManager()
 		}
 	}
 	logRestoreConfig := &LogRestoreConfig{
