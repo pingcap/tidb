@@ -219,8 +219,6 @@ func (s *mockGCSSuite) prepare10Files(bucket string) []string {
 
 func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	allData := s.prepare10Files("gs-multi-files")
 	s.prepareAndUseDB("gs_multi_files")
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
