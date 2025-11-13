@@ -489,7 +489,7 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get partition IDs
-	golbalID := tbl.Meta().ID
+	globalIDID := tbl.Meta().ID
 	p0ID := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	p1ID := tbl.Meta().GetPartitionInfo().Definitions[1].ID
 
@@ -497,7 +497,7 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	require.NoError(t, h.InitStats(context.Background(), is))
 
 	// Check global stats
-	globalStats := h.GetPhysicalTableStats(golbalID, tbl.Meta())
+	globalStats := h.GetPhysicalTableStats(globalIDID, tbl.Meta())
 	require.True(t, globalStats.IsAnalyzed())
 	require.Equal(t, int64(0), globalStats.ModifyCount)
 	require.Equal(t, int64(6), globalStats.RealtimeCount)
@@ -576,7 +576,7 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get partition IDs for t1
-	golbalT1ID := tbl1.Meta().ID
+	globalT1ID := tbl1.Meta().ID
 	t1p0ID := tbl1.Meta().GetPartitionInfo().Definitions[0].ID
 	t1p1ID := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
 
@@ -584,7 +584,7 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	require.NoError(t, h.InitStats(context.Background(), is))
 
 	// Check global stats (no analyze)
-	t1GlobalStats := h.GetPhysicalTableStats(golbalT1ID, tbl1.Meta())
+	t1GlobalStats := h.GetPhysicalTableStats(globalT1ID, tbl1.Meta())
 	require.False(t, t1GlobalStats.Pseudo)
 	require.False(t, t1GlobalStats.IsAnalyzed())
 	require.Equal(t, int64(0), t1GlobalStats.ModifyCount)
