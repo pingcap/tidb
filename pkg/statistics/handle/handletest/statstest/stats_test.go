@@ -576,11 +576,20 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get partition IDs for t1
+	golbalT1ID := tbl1.Meta().ID
 	t1p0ID := tbl1.Meta().GetPartitionInfo().Definitions[0].ID
 	t1p1ID := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
 
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
+
+	// Check global stats (no analyze)
+	t1GlobalStats := h.GetPhysicalTableStats(golbalT1ID, tbl1.Meta())
+	require.False(t, t1GlobalStats.Pseudo)
+	require.False(t, t1GlobalStats.IsAnalyzed())
+	require.Equal(t, int64(0), t1GlobalStats.ModifyCount)
+	require.Equal(t, int64(0), t1GlobalStats.RealtimeCount)
+	require.Equal(t, statistics.Version0, t1GlobalStats.StatsVer)
 
 	// Check partition p0 stats (no analyze)
 	t1p0Stats := h.GetPhysicalTableStats(t1p0ID, tbl1.Meta())
