@@ -212,10 +212,99 @@ func (fbc *fuzzyBindingCache) SetBinding(sqlDigest string, bindings Bindings) (e
 	return fbc.BindingCache.SetBinding(sqlDigest, bindings)
 }
 
+<<<<<<< HEAD
 func (fbc *fuzzyBindingCache) RemoveBinding(sqlDigest string) {
 	fbc.mu.Lock()
 	defer fbc.mu.Unlock()
 	fuzzyDigest, ok := fbc.sql2FuzzyDigest[sqlDigest]
+=======
+// UpdateBindingUsageInfoToStorage is to update the binding usage info into storage
+func (u *bindingCacheUpdater) UpdateBindingUsageInfoToStorage() error {
+	defer func() {
+		if r := recover(); r != nil {
+			bindingLogger().Warn("panic when update usage info for binding", zap.Any("recover", r))
+		}
+	}()
+	if !vardef.EnableBindingUsage.Load() {
+		return nil
+	}
+	bindings := u.GetAllBindings()
+	return updateBindingUsageInfoToStorage(u.sPool, bindings)
+}
+
+// LastUpdateTime returns the last update time.
+func (u *bindingCacheUpdater) LastUpdateTime() types.Time {
+	return u.lastUpdateTime.Load().(types.Time)
+}
+
+// NewBindingCacheUpdater creates a new BindingCacheUpdater.
+func NewBindingCacheUpdater(sPool util.DestroyableSessionPool) BindingCacheUpdater {
+	u := new(bindingCacheUpdater)
+	u.lastUpdateTime.Store(types.ZeroTimestamp)
+	u.sPool = sPool
+	u.BindingCache = newBindCache()
+	return u
+}
+
+// digestBiMap represents a bidirectional map between noDBDigest and sqlDigest, used to support cross-db binding.
+// One noDBDigest can map to multiple sqlDigests, but one sqlDigest can only map to one noDBDigest.
+type digestBiMap interface {
+	// Add adds a pair of noDBDigest and sqlDigest.
+	// noDBDigest is the digest calculated after eliminating all DB names, e.g. `select * from test.t` -> `select * from t` -> noDBDigest.
+	// sqlDigest is the digest where all DB names are kept, e.g. `select * from test.t` -> exactDigest.
+	Add(noDBDigest, sqlDigest string)
+
+	// Del deletes the pair of noDBDigest and sqlDigest.
+	Del(sqlDigest string)
+
+	// All returns all the sqlDigests.
+	All() (sqlDigests []string)
+
+	// NoDBDigest2SQLDigest converts noDBDigest to sqlDigest.
+	NoDBDigest2SQLDigest(noDBDigest string) []string
+
+	// SQLDigest2NoDBDigest converts sqlDigest to noDBDigest.
+	SQLDigest2NoDBDigest(sqlDigest string) string
+}
+
+type digestBiMapImpl struct {
+	mu                   sync.RWMutex
+	noDBDigest2SQLDigest map[string][]string // noDBDigest --> sqlDigests
+	sqlDigest2noDBDigest map[string]string   // sqlDigest --> noDBDigest
+}
+
+func newDigestBiMap() digestBiMap {
+	return &digestBiMapImpl{
+		noDBDigest2SQLDigest: make(map[string][]string),
+		sqlDigest2noDBDigest: make(map[string]string),
+	}
+}
+
+// Add adds a pair of noDBDigest and sqlDigest.
+// noDBDigest is the digest calculated after eliminating all DB names, e.g. `select * from test.t` -> `select * from t` -> noDBDigest.
+// sqlDigest is the digest where all DB names are kept, e.g. `select * from test.t` -> exactDigest.
+func (b *digestBiMapImpl) Add(noDBDigest, sqlDigest string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	exist := false
+	for _, d := range b.noDBDigest2SQLDigest[noDBDigest] {
+		if d == sqlDigest {
+			exist = true
+			break
+		}
+	}
+	if !exist { // avoid adding duplicated binding digests
+		b.noDBDigest2SQLDigest[noDBDigest] = append(b.noDBDigest2SQLDigest[noDBDigest], sqlDigest)
+	}
+	b.sqlDigest2noDBDigest[sqlDigest] = noDBDigest
+}
+
+// Del deletes the pair of noDBDigest and sqlDigest.
+func (b *digestBiMapImpl) Del(sqlDigest string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	noDBDigest, ok := b.sqlDigest2noDBDigest[sqlDigest]
+>>>>>>> 637b7aa8a56 (planner: fix wrong binding cache status when adding duplicated bindings (#64497))
 	if !ok {
 		return
 	}

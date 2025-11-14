@@ -67,8 +67,12 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":bindinfo"],
     flaky = True,
+<<<<<<< HEAD
     race = "on",
     shard_count = 50,
+=======
+    shard_count = 47,
+>>>>>>> 637b7aa8a56 (planner: fix wrong binding cache status when adding duplicated bindings (#64497))
     deps = [
         "//pkg/bindinfo/internal",
         "//pkg/bindinfo/norm",
