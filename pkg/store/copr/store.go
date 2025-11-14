@@ -130,7 +130,7 @@ func NewStore(s *tikv.KVStore, tls *tls.Config, coprCacheConfig *config.Coproces
 
 	/* #nosec G404 */
 	return &Store{
-		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}, TiCIShardCache: NewTiCIShardCache(ticiClient)},
+		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}, TiCIShardCache: NewTiCIShardCache(ticiClient, s.GetPDClient().(*tikv.CodecPDClient).GetCodec())},
 		coprCache:       coprCache,
 		replicaReadSeed: rand.Uint32(),
 		numcpu:          runtime.GOMAXPROCS(0),

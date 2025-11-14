@@ -1751,7 +1751,14 @@ func buildBatchCopTasksForFullText(store *kvStore, tableID int64, indexID int64,
 	cmdType := tikvrpc.CmdBatchCop
 	cache := store.GetTiCIShardCache()
 	tasks := make([]*batchCopTask, 0)
-	ret, err := cache.BatchLocateKeyRanges(context.TODO(), tableID, indexID, keyRanges.ToRanges())
+
+	var keyspaceID uint32 = uint32(cache.codec.GetKeyspaceID())
+	keyRanges.Do(func(ran *kv.KeyRange) {
+		ran.StartKey = cache.codec.EncodeKey(ran.StartKey)
+		ran.EndKey = cache.codec.EncodeKey(ran.EndKey)
+	})
+
+	ret, err := cache.BatchLocateKeyRanges(context.TODO(), keyspaceID, tableID, indexID, keyRanges.ToRanges())
 	if err != nil {
 		return nil, err
 	}
