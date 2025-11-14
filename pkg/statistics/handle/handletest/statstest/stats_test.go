@@ -266,7 +266,7 @@ func testInitStatsMemTraceFunc(t *testing.T, liteInitStats bool) {
 	testInitStatsMemTrace(t)
 }
 
-func TestInitStats(t *testing.T) {
+func TestInitStatsWithAnalyzeVersion1(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("analyze V1 cannot support in the next gen")
 	}
@@ -311,6 +311,440 @@ num: 1 lower_bound: 7 upper_bound: 7 repeats: 1 ndv: 0`, tbl.Meta().ID)
 	h.SetLease(0)
 }
 
+func TestInitStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	// With all columns.
+	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+	tableStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.True(t, tableStats.IsAnalyzed())
+	// Basic meta info check
+	require.Equal(t, int64(0), tableStats.ModifyCount)
+	require.Equal(t, int64(6), tableStats.RealtimeCount)
+	require.Equal(t, statistics.Version2, tableStats.StatsVer)
+	// Check index stats (TopN + Histogram)
+	idx := tableStats.GetIdx(tbl.Meta().Indices[0].ID)
+	require.NotNil(t, idx)
+	require.True(t, tableStats.ColAndIdxExistenceMap.Has(idx.ID, true))
+	require.True(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true))
+	require.True(t, idx.IsStatsInitialized())
+	require.True(t, idx.IsFullLoad())
+	require.Equal(t, uint64(2), idx.TopN.TotalCount())
+	require.Equal(t, float64(6), idx.TotalRowCount())
+	require.Equal(t, 2, idx.Histogram.Len())
+	// Check column stats (Only Basic Info, no TopN and Histogram)
+	tableStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.True(t, tableStats.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.True(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsAllEvicted())
+		require.Equal(t, int64(6), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
+
+	// Another table with no analyze
+	tk.MustExec("create table t1(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t1 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	h = dom.StatsHandle()
+	is = dom.InfoSchema()
+	// Handle DDL event to init the stats meta and histogram meta.
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), is))
+	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+	tableStats1 := h.GetPhysicalTableStats(tbl1.Meta().ID, tbl1.Meta())
+	require.False(t, tableStats1.Pseudo)
+	require.False(t, tableStats1.IsAnalyzed())
+	require.Equal(t, int64(0), tableStats1.ModifyCount)
+	require.Equal(t, int64(0), tableStats1.RealtimeCount)
+	require.Equal(t, statistics.Version0, tableStats1.StatsVer)
+
+	// Check index stats
+	require.Equal(t, 1, tableStats1.IdxNum())
+	idx1 := tableStats1.GetIdx(tbl1.Meta().Indices[0].ID)
+	require.NotNil(t, idx1)
+	require.True(t, tableStats1.ColAndIdxExistenceMap.Has(idx1.ID, true))
+	require.False(t, tableStats1.ColAndIdxExistenceMap.HasAnalyzed(idx1.ID, true))
+	require.False(t, idx1.IsStatsInitialized())
+	require.False(t, idx1.IsAllEvicted())
+	require.Equal(t, uint64(0), idx1.TopN.TotalCount())
+	require.Equal(t, float64(0), idx1.TotalRowCount())
+	require.Equal(t, 0, idx1.Histogram.Len())
+	// Check column stats
+	require.Equal(t, int(3), tableStats1.ColNum())
+	tableStats1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.True(t, tableStats1.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.False(t, tableStats1.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.False(t, col.IsStatsInitialized())
+		require.False(t, col.IsAllEvicted())
+		require.False(t, col.IsFullLoad())
+		require.Equal(t, int64(0), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
+
+	// Another table with predicate columns
+	tk.MustExec("create table t2(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t2 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	h = dom.StatsHandle()
+	is = dom.InfoSchema()
+	// Handle DDL event to init the stats meta and histogram meta.
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("analyze table t2 with 2 topn, 2 buckets")
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+	tableStats2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
+	require.True(t, tableStats2.IsAnalyzed())
+	// Check index stats
+	require.Equal(t, 1, tableStats2.IdxNum())
+	idx2 := tableStats2.GetIdx(tbl2.Meta().Indices[0].ID)
+	require.NotNil(t, idx2)
+	require.True(t, tableStats2.ColAndIdxExistenceMap.Has(idx2.ID, true))
+	require.True(t, tableStats2.ColAndIdxExistenceMap.HasAnalyzed(idx2.ID, true))
+	require.True(t, idx2.IsStatsInitialized())
+	require.False(t, idx2.IsAllEvicted())
+	require.True(t, idx2.IsFullLoad())
+	require.Equal(t, uint64(2), idx2.TopN.TotalCount())
+	require.Equal(t, float64(6), idx2.TotalRowCount())
+	require.Equal(t, 2, idx2.Histogram.Len())
+	// Check column stats
+	require.Equal(t, int(3), tableStats2.ColNum())
+	// For column c, it is not in the predicate columns, so its stats has not been collected.
+	tableStats2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		if col.Info.Name.L == "c" {
+			require.True(t, tableStats2.ColAndIdxExistenceMap.Has(col.ID, false))
+			require.False(t, tableStats2.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+			require.False(t, col.IsStatsInitialized())
+			require.False(t, col.IsAllEvicted())
+			require.False(t, col.IsFullLoad())
+			require.Equal(t, int64(0), col.NDV)
+			require.Equal(t, int64(0), col.NullCount)
+			require.Equal(t, float64(0), col.TotalRowCount())
+			require.Nil(t, col.TopN)
+			require.Equal(t, 0, col.Histogram.Len())
+			return false
+		}
+		require.True(t, tableStats2.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.True(t, tableStats2.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsAllEvicted())
+		require.False(t, col.IsFullLoad())
+		require.Equal(t, int64(6), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
+}
+
+// TestInitStatsForPartitionedTable tests the InitStats function for partitioned tables.
+// I know this test is very similar to the non-partitioned one,
+// but I prefer not to share code between them. For these tests,
+// the status checks are very detailed, and moving them into a separate function
+// would significantly reduce readability when reviewing the tests.
+func TestInitStatsForPartitionedTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(11,11,11),(12,12,12),(13,13,13)")
+	// With all columns.
+	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	// Get partition IDs
+	globalIDID := tbl.Meta().ID
+	p0ID := tbl.Meta().GetPartitionInfo().Definitions[0].ID
+	p1ID := tbl.Meta().GetPartitionInfo().Definitions[1].ID
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+
+	// Check global stats
+	globalStats := h.GetPhysicalTableStats(globalIDID, tbl.Meta())
+	require.True(t, globalStats.IsAnalyzed())
+	require.Equal(t, int64(0), globalStats.ModifyCount)
+	require.Equal(t, int64(6), globalStats.RealtimeCount)
+	require.Equal(t, statistics.Version2, globalStats.StatsVer)
+	// Check index stats (TopN + Histogram)
+	globalIdx := globalStats.GetIdx(tbl.Meta().Indices[0].ID)
+	require.NotNil(t, globalIdx)
+	require.True(t, globalStats.ColAndIdxExistenceMap.Has(globalIdx.ID, true))
+	require.True(t, globalStats.ColAndIdxExistenceMap.HasAnalyzed(globalIdx.ID, true))
+	require.True(t, globalIdx.IsStatsInitialized())
+	require.True(t, globalIdx.IsFullLoad())
+	require.Equal(t, uint64(2), globalIdx.TopN.TotalCount())
+	require.Equal(t, float64(6), globalIdx.TotalRowCount())
+	require.Equal(t, 2, globalIdx.Histogram.Len())
+	// Check column stats (Only Basic Info, no TopN and Histogram)
+	globalStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.True(t, globalStats.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.True(t, globalStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsAllEvicted())
+		require.Equal(t, int64(6), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
+
+	// Check partition p0 stats
+	p0Stats := h.GetPhysicalTableStats(p0ID, tbl.Meta())
+	require.True(t, p0Stats.IsAnalyzed())
+	// Basic meta info check
+	require.Equal(t, int64(0), p0Stats.ModifyCount)
+	require.Equal(t, int64(3), p0Stats.RealtimeCount)
+	require.Equal(t, statistics.Version2, p0Stats.StatsVer)
+	// Check index stats (TopN + Histogram)
+	idx := p0Stats.GetIdx(tbl.Meta().Indices[0].ID)
+	require.NotNil(t, idx)
+	require.True(t, p0Stats.ColAndIdxExistenceMap.Has(idx.ID, true))
+	require.True(t, p0Stats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true))
+	require.True(t, idx.IsStatsInitialized())
+	require.True(t, idx.IsFullLoad())
+	require.Equal(t, float64(3), idx.TotalRowCount())
+	// Check column stats (Only Basic Info, no TopN and Histogram)
+	p0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.True(t, p0Stats.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.True(t, p0Stats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsAllEvicted())
+		require.Equal(t, int64(3), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
+
+	// Check partition p1 stats
+	p1Stats := h.GetPhysicalTableStats(p1ID, tbl.Meta())
+	require.True(t, p1Stats.IsAnalyzed())
+	require.Equal(t, int64(0), p1Stats.ModifyCount)
+	require.Equal(t, int64(3), p1Stats.RealtimeCount)
+	require.Equal(t, statistics.Version2, p1Stats.StatsVer)
+
+	// Another partitioned table with no analyze
+	tk.MustExec("create table t1(a int, b int, c int, primary key(a), key idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("insert into t1 values (1,1,1),(2,2,2),(3,3,3),(11,11,11),(12,12,12),(13,13,13)")
+	h = dom.StatsHandle()
+	is = dom.InfoSchema()
+	// Handle DDL event to init the stats meta and histogram meta.
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), is))
+	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+
+	// Get partition IDs for t1
+	globalT1ID := tbl1.Meta().ID
+	t1p0ID := tbl1.Meta().GetPartitionInfo().Definitions[0].ID
+	t1p1ID := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+
+	// Check global stats (no analyze)
+	t1GlobalStats := h.GetPhysicalTableStats(globalT1ID, tbl1.Meta())
+	require.False(t, t1GlobalStats.Pseudo)
+	require.False(t, t1GlobalStats.IsAnalyzed())
+	require.Equal(t, int64(0), t1GlobalStats.ModifyCount)
+	require.Equal(t, int64(0), t1GlobalStats.RealtimeCount)
+	require.Equal(t, statistics.Version0, t1GlobalStats.StatsVer)
+
+	// Check partition p0 stats (no analyze)
+	t1p0Stats := h.GetPhysicalTableStats(t1p0ID, tbl1.Meta())
+	require.False(t, t1p0Stats.Pseudo)
+	require.False(t, t1p0Stats.IsAnalyzed())
+	require.Equal(t, int64(0), t1p0Stats.ModifyCount)
+	require.Equal(t, int64(0), t1p0Stats.RealtimeCount)
+	require.Equal(t, statistics.Version0, t1p0Stats.StatsVer)
+
+	// Check index stats
+	require.Equal(t, 1, t1p0Stats.IdxNum())
+	idx1 := t1p0Stats.GetIdx(tbl1.Meta().Indices[0].ID)
+	require.NotNil(t, idx1)
+	require.True(t, t1p0Stats.ColAndIdxExistenceMap.Has(idx1.ID, true))
+	require.False(t, t1p0Stats.ColAndIdxExistenceMap.HasAnalyzed(idx1.ID, true))
+	require.False(t, idx1.IsStatsInitialized())
+	require.False(t, idx1.IsAllEvicted())
+	require.Equal(t, uint64(0), idx1.TopN.TotalCount())
+	require.Equal(t, float64(0), idx1.TotalRowCount())
+	require.Equal(t, 0, idx1.Histogram.Len())
+	// Check column stats
+	require.Equal(t, int(3), t1p0Stats.ColNum())
+	t1p0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.True(t, t1p0Stats.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.False(t, t1p0Stats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.False(t, col.IsStatsInitialized())
+		require.False(t, col.IsAllEvicted())
+		require.False(t, col.IsFullLoad())
+		require.Equal(t, int64(0), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
+
+	// Check partition p1 stats (no analyze)
+	t1p1Stats := h.GetPhysicalTableStats(t1p1ID, tbl1.Meta())
+	require.False(t, t1p1Stats.Pseudo)
+	require.False(t, t1p1Stats.IsAnalyzed())
+	require.Equal(t, int64(0), t1p1Stats.ModifyCount)
+	require.Equal(t, int64(0), t1p1Stats.RealtimeCount)
+
+	// Another partitioned table with predicate columns
+	tk.MustExec("create table t2(a int, b int, c int, primary key(a), key idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("insert into t2 values (1,1,1),(2,2,2),(3,3,3),(11,11,11),(12,12,12),(13,13,13)")
+	h = dom.StatsHandle()
+	is = dom.InfoSchema()
+	// Handle DDL event to init the stats meta and histogram meta.
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("analyze table t2 with 2 topn, 2 buckets")
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+
+	// Get partition IDs for t2
+	t2p0ID := tbl2.Meta().GetPartitionInfo().Definitions[0].ID
+	t2p1ID := tbl2.Meta().GetPartitionInfo().Definitions[1].ID
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+
+	// Check partition p0 stats (predicate columns)
+	t2p0Stats := h.GetPhysicalTableStats(t2p0ID, tbl2.Meta())
+	require.True(t, t2p0Stats.IsAnalyzed())
+	// Check index stats
+	require.Equal(t, 1, t2p0Stats.IdxNum())
+	idx2 := t2p0Stats.GetIdx(tbl2.Meta().Indices[0].ID)
+	require.NotNil(t, idx2)
+	require.True(t, t2p0Stats.ColAndIdxExistenceMap.Has(idx2.ID, true))
+	require.True(t, t2p0Stats.ColAndIdxExistenceMap.HasAnalyzed(idx2.ID, true))
+	require.True(t, idx2.IsStatsInitialized())
+	require.False(t, idx2.IsAllEvicted())
+	require.True(t, idx2.IsFullLoad())
+	require.Equal(t, float64(3), idx2.TotalRowCount())
+	// Check column stats
+	require.Equal(t, int(3), t2p0Stats.ColNum())
+	// For column c, it is not in the predicate columns, so its stats has not been collected.
+	t2p0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		if col.Info.Name.L == "c" {
+			require.True(t, t2p0Stats.ColAndIdxExistenceMap.Has(col.ID, false))
+			require.False(t, t2p0Stats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+			require.False(t, col.IsStatsInitialized())
+			require.False(t, col.IsAllEvicted())
+			require.False(t, col.IsFullLoad())
+			require.Equal(t, int64(0), col.NDV)
+			require.Equal(t, int64(0), col.NullCount)
+			require.Equal(t, float64(0), col.TotalRowCount())
+			require.Nil(t, col.TopN)
+			require.Equal(t, 0, col.Histogram.Len())
+			return false
+		}
+		require.True(t, t2p0Stats.ColAndIdxExistenceMap.Has(col.ID, false))
+		require.True(t, t2p0Stats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsAllEvicted())
+		require.False(t, col.IsFullLoad())
+		require.Equal(t, int64(3), col.NDV)
+		require.Equal(t, int64(0), col.NullCount)
+		require.Equal(t, float64(0), col.TotalRowCount())
+		require.Nil(t, col.TopN)
+		require.Equal(t, 0, col.Histogram.Len())
+		return false
+	})
+
+	// Check partition p1 stats (predicate columns)
+	t2p1Stats := h.GetPhysicalTableStats(t2p1ID, tbl2.Meta())
+	require.True(t, t2p1Stats.IsAnalyzed())
+	require.Equal(t, int64(0), t2p1Stats.ModifyCount)
+	require.Equal(t, int64(3), t2p1Stats.RealtimeCount)
+}
+
+// TestInitStatsWithoutHandlingDDLEvent tests the scenario that stats
+// meta exists but no histogram meta exists because no analyze has been done
+// and no DDL event has been handled.
+// TODO: this test is incomplete because we should figure out what
+// is the real impact to sync load and async load in this scenario.
+func TestInitStatsWithoutHandlingDDLEvent(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+	tableStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.False(t, tableStats.Pseudo)
+	require.False(t, tableStats.IsAnalyzed())
+	// Basic meta info check
+	require.Equal(t, int64(6), tableStats.ModifyCount)
+	require.Equal(t, int64(6), tableStats.RealtimeCount)
+	require.Equal(t, statistics.Version0, tableStats.StatsVer)
+	// Check index stats
+	require.Equal(t, 0, tableStats.IdxNum())
+	idxID := tbl.Meta().Indices[0].ID
+	idx := tableStats.GetIdx(idxID)
+	require.Nil(t, idx)
+	require.False(t, tableStats.ColAndIdxExistenceMap.Has(idxID, true))
+	require.False(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(idxID, true))
+	// Check column stats
+	for _, colInfo := range tbl.Meta().Columns {
+		col := tableStats.GetCol(colInfo.ID)
+		require.Nil(t, col)
+		require.False(t, tableStats.ColAndIdxExistenceMap.Has(colInfo.ID, false))
+		require.False(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(colInfo.ID, false))
+	}
+}
+
 func TestInitStats51358(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("analyze V1 cannot support in the next gen")
@@ -353,15 +787,6 @@ func TestInitStats51358(t *testing.T) {
 }
 
 func TestInitStatsVer2(t *testing.T) {
-	originValue := config.GetGlobalConfig().Performance.LiteInitStats
-	defer func() {
-		config.GetGlobalConfig().Performance.LiteInitStats = originValue
-	}()
-	config.GetGlobalConfig().Performance.LiteInitStats = false
-	initStatsVer2(t)
-}
-
-func TestInitStatsVer2Concurrency(t *testing.T) {
 	originValue := config.GetGlobalConfig().Performance.LiteInitStats
 	defer func() {
 		config.GetGlobalConfig().Performance.LiteInitStats = originValue
