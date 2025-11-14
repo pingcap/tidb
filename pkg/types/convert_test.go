@@ -945,6 +945,9 @@ func TestGetValidFloat(t *testing.T) {
 		{"5e", "5", false, false},
 		{"+.e", "0", false, true},
 		{"1e5e", "1e5", false, true},
+		{"e", "0", false, true},
+		{"e123", "0", false, true},
+		{"e+", "0", false, true},
 	}
 	ctx := DefaultStmtNoWarningContext
 	for _, tt := range tests {

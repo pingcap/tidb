@@ -733,7 +733,10 @@ func getValidFloatPrefix(ctx Context, s string, isFuncCast bool) (valid string, 
 				break
 			}
 			eIdx = i
-			validLen = i + 1
+			if i+1 == len(s) {
+				// ParseFloat doesn't accept 'e' as last char, MySQL does.
+				return s[:i], nil
+			}
 		} else if c == '\u0000' {
 			s = s[:validLen]
 			break
@@ -750,10 +753,6 @@ func getValidFloatPrefix(ctx Context, s string, isFuncCast bool) (valid string, 
 	}
 	if validLen == 0 || validLen != len(s) {
 		err = errors.Trace(ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", s)))
-	}
-	if valid[len(valid)-1] == 'e' || valid[len(valid)-1] == 'E' {
-		// ParseFloat doesn't accept 'e' as last char, MySQL does.
-		return valid[:len(valid)-1], err
 	}
 	return valid, err
 }
