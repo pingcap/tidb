@@ -77,7 +77,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 28,
+    shard_count = 32,
     deps = [
         ":ingest",
         "//pkg/config",
@@ -86,6 +86,7 @@ go_test(
         "//pkg/ddl/session",
         "//pkg/ddl/testutil",
         "//pkg/errno",
+        "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

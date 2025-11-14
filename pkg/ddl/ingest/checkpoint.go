@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -158,10 +160,15 @@ func (s *DistTaskCheckpointStorage) SaveCheckpoint(ctx context.Context, checkpoi
 	return s.updateFunc(ctx, s.subtaskID, checkpoint)
 }
 
-// CheckpointManager is a checkpoint manager implementation that used by
-// non-distributed reorganization. It manages the data as two-level checkpoints:
-// "flush"ed to local storage and "import"ed to TiKV. The checkpoint is saved in
-// a table in the TiDB cluster.
+// ProcessedRange represents a processed key range with closed interval [StartKey, EndKey].
+// PrevTailKey is the last key of the previous interval (if known) to help stitch/merge continuous ranges.
+type ProcessedRange struct {
+	StartKey    kv.Key
+	EndKey      kv.Key
+	PrevTailKey kv.Key
+}
+
+// CheckpointManager is a checkpoint manager implementation that used by reorganization.
 type CheckpointManager struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -174,20 +181,21 @@ type CheckpointManager struct {
 	storage CheckpointStorage
 
 	// Derived and unchanged after the initialization.
-	instanceAddr     string
-	localDataIsValid bool
+	instanceAddr string
 
 	// Live in memory.
-	mu          sync.Mutex
-	checkpoints map[int]*taskCheckpoint // task ID -> checkpoint
-	// we require each task ID to be continuous and start from 0.
-	minTaskIDFinished int
-	dirty             bool
+	mu    sync.Mutex
+	dirty bool
+
+	// pendingFinishedRanges: locally written, not yet merged, closed intervals
+	pendingFinishedRanges []ProcessedRange
+	// importedRanges: imported but not fully contiguous from watermark, closed intervals
+	importedRanges   []ProcessedRange
+	localWrittenRows int
 
 	// Persisted to the storage.
-	flushedKeyLowWatermark  kv.Key
+	// importedKeyLowWatermark: first not-yet-imported key
 	importedKeyLowWatermark kv.Key
-	flushedKeyCnt           int
 	importedKeyCnt          int
 
 	ts uint64
@@ -195,14 +203,9 @@ type CheckpointManager struct {
 	// For persisting the checkpoint periodically.
 	updaterWg sync.WaitGroup
 	updaterCh chan chan struct{}
-}
 
-// taskCheckpoint is the checkpoint for a single task.
-type taskCheckpoint struct {
-	totalKeys     int
-	writtenKeys   int
-	endKey        kv.Key
-	lastBatchRead bool
+	// initial start key to set low watermark in resumeOrInitCheckpoint
+	initialStartKey kv.Key
 }
 
 // newCheckpointManagerWithStorage is the common constructor
@@ -212,24 +215,26 @@ func newCheckpointManagerWithStorage(
 	physicalID int64,
 	localStoreDir string,
 	pdCli pd.Client,
+	startKey kv.Key,
 ) (*CheckpointManager, error) {
 	instanceAddr := InstanceAddr()
 	ctx2, cancel := context.WithCancel(ctx)
 	logger := logutil.DDLIngestLogger().With(zap.Int64("physicalID", physicalID))
 
 	cm := &CheckpointManager{
-		ctx:           ctx2,
-		cancel:        cancel,
-		storage:       storage,
-		localStoreDir: localStoreDir,
-		pdCli:         pdCli,
-		logger:        logger,
-		checkpoints:   make(map[int]*taskCheckpoint, 16),
-		mu:            sync.Mutex{},
-		instanceAddr:  instanceAddr,
-		physicalID:    physicalID,
-		updaterWg:     sync.WaitGroup{},
-		updaterCh:     make(chan chan struct{}),
+		ctx:                   ctx2,
+		cancel:                cancel,
+		storage:               storage,
+		localStoreDir:         localStoreDir,
+		pdCli:                 pdCli,
+		logger:                logger,
+		instanceAddr:          instanceAddr,
+		physicalID:            physicalID,
+		updaterWg:             sync.WaitGroup{},
+		updaterCh:             make(chan chan struct{}),
+		pendingFinishedRanges: make([]ProcessedRange, 0),
+		importedRanges:        make([]ProcessedRange, 0),
+		initialStartKey:       startKey,
 	}
 	err := cm.resumeOrInitCheckpoint()
 	if err != nil {
@@ -244,7 +249,7 @@ func newCheckpointManagerWithStorage(
 	return cm, nil
 }
 
-// NewCheckpointManager creates a new checkpoint manager with reorg storage
+// NewCheckpointManager creates a new checkpoint manager with normal storage
 func NewCheckpointManager(
 	ctx context.Context,
 	sessPool *sess.Pool,
@@ -252,6 +257,7 @@ func NewCheckpointManager(
 	jobID int64,
 	localStoreDir string,
 	pdCli pd.Client,
+	startKey kv.Key,
 ) (*CheckpointManager, error) {
 	storage := &NormalCheckpointStorage{
 		sessPool:   sessPool,
@@ -259,10 +265,10 @@ func NewCheckpointManager(
 		physicalID: physicalID,
 	}
 
-	return newCheckpointManagerWithStorage(ctx, storage, physicalID, localStoreDir, pdCli)
+	return newCheckpointManagerWithStorage(ctx, storage, physicalID, localStoreDir, pdCli, startKey)
 }
 
-// NewCheckpointManagerForDistTask creates a new checkpoint manager with distributed task storage
+// NewCheckpointManagerForDistTask creates a new checkpoint manager with DXF task storage
 func NewCheckpointManagerForDistTask(
 	ctx context.Context,
 	subtaskID int64,
@@ -271,6 +277,7 @@ func NewCheckpointManagerForDistTask(
 	pdCli pd.Client,
 	updateFunc func(context.Context, int64, any) error,
 	getFunc func(context.Context, int64) (string, error),
+	startKey kv.Key,
 ) (*CheckpointManager, error) {
 	storage := &DistTaskCheckpointStorage{
 		updateFunc: updateFunc,
@@ -278,7 +285,7 @@ func NewCheckpointManagerForDistTask(
 		subtaskID:  subtaskID,
 	}
 
-	return newCheckpointManagerWithStorage(ctx, storage, physicalID, localStoreDir, pdCli)
+	return newCheckpointManagerWithStorage(ctx, storage, physicalID, localStoreDir, pdCli, startKey)
 }
 
 // InstanceAddr returns the string concat with instance address and temp-dir.
@@ -288,27 +295,11 @@ func InstanceAddr() string {
 	return fmt.Sprintf("%s:%s", dsn, cfg.TempDir)
 }
 
-// IsKeyProcessed checks if the key is processed. The key may not be imported.
-// This is called before the reader reads the data and decides whether to skip
-// the current task.
-func (s *CheckpointManager) IsKeyProcessed(end kv.Key) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.importedKeyLowWatermark) > 0 && end.Cmp(s.importedKeyLowWatermark) <= 0 {
-		return true
-	}
-	return s.localDataIsValid && len(s.flushedKeyLowWatermark) > 0 && end.Cmp(s.flushedKeyLowWatermark) <= 0
-}
-
 // NextStartKey finds the next unprocessed key in checkpoint.
 // If there is no such key, it returns nil.
 func (s *CheckpointManager) NextStartKey() kv.Key {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if s.localDataIsValid && len(s.flushedKeyLowWatermark) > 0 {
-		return s.flushedKeyLowWatermark.Clone()
-	}
 	if len(s.importedKeyLowWatermark) > 0 {
 		return s.importedKeyLowWatermark.Clone()
 	}
@@ -320,51 +311,34 @@ func (s *CheckpointManager) NextStartKey() kv.Key {
 func (s *CheckpointManager) TotalKeyCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	total := 0
-	for _, cp := range s.checkpoints {
-		total += cp.writtenKeys
+	return s.importedKeyCnt + s.localWrittenRows
+}
+
+// FinishChunk records write-to-local progress for a range.
+// delta: written rows in this batch;
+// prevTailKey: the last key of the previous chunk to help stitch/merge continuous ranges.
+func (s *CheckpointManager) FinishChunk(rg kv.KeyRange, delta int, prevTailKey kv.Key) {
+	if len(rg.StartKey) == 0 || len(rg.EndKey) == 0 || rg.StartKey.Cmp(rg.EndKey) > 0 {
+		s.logger.Warn("FinishChunk skip invalid range",
+			zap.String("start", hex.EncodeToString(rg.StartKey)),
+			zap.String("end", hex.EncodeToString(rg.EndKey)),
+			zap.Int("delta", delta))
+		return
 	}
-	return s.flushedKeyCnt + total
-}
 
-// AddChunk registers a new task. taskID MUST be continuous ascending and start
-// from 0.
-//
-// TODO(lance6716): remove this constraint, use endKey as taskID and use
-// ordered map type for checkpoints.
-func (s *CheckpointManager) AddChunk(taskID int, end kv.Key) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.checkpoints[taskID] = &taskCheckpoint{
-		endKey: end,
-	}
-}
-
-// UpdateChunk updates the total keys of the task.
-// This is called by the reader after reading the data to update the number of rows contained in the current chunk.
-func (s *CheckpointManager) UpdateChunk(taskID int, delta int, last bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cp := s.checkpoints[taskID]
-	cp.totalKeys += delta
-	cp.lastBatchRead = last
-}
-
-// FinishChunk updates the written keys of the task.
-// This is called by the writer after writing the local engine to update the current number of rows written.
-func (s *CheckpointManager) FinishChunk(taskID int, delta int) {
-	s.mu.Lock()
-	cp := s.checkpoints[taskID]
-	cp.writtenKeys += delta
+	s.localWrittenRows += delta
+	s.pendingFinishedRanges = append(s.pendingFinishedRanges, ProcessedRange{
+		StartKey:    rg.StartKey.Clone(),
+		EndKey:      rg.EndKey.Clone(),
+		PrevTailKey: prevTailKey.Clone(),
+	})
 	s.mu.Unlock()
 }
 
-// AdvanceWatermark advances the watermark according to flushed or imported status.
-func (s *CheckpointManager) AdvanceWatermark(imported bool) error {
-	if s.noUpdate() {
-		return nil
-	}
-
+// AdvanceWatermark merges finished local ranges, advances the low watermark if contiguous,
+// allocates a new TS and persists checkpoint.
+func (s *CheckpointManager) AdvanceWatermark() error {
 	failpoint.Inject("resignAfterFlush", func() {
 		// used in a manual test
 		ResignOwnerForTest.Store(true)
@@ -374,37 +348,208 @@ func (s *CheckpointManager) AdvanceWatermark(imported bool) error {
 		}
 	})
 
-	s.afterFlush()
-
-	if imported {
-		err := s.afterImport()
-		if err != nil {
-			return err
-		}
-		err = s.updateCheckpoint()
-		if err != nil {
-			return err
-		}
+	s.mu.Lock()
+	if len(s.pendingFinishedRanges) == 0 {
+		s.mu.Unlock()
 		return nil
 	}
-	return nil
+	// Detach pending ranges.
+	pend := append([]ProcessedRange(nil), s.pendingFinishedRanges...)
+	s.pendingFinishedRanges = s.pendingFinishedRanges[:0]
+	oldWM := s.importedKeyLowWatermark.Clone()
+
+	s.importedRanges = MergeAndCompactRanges(append(s.importedRanges, pend...))
+	s.importedRanges = PruneRanges(s.importedRanges, s.importedKeyLowWatermark)
+
+	consumed := 0
+	for len(s.importedRanges) > 0 && CanPromoteWatermark(s.importedRanges[0], s.importedKeyLowWatermark) {
+		s.importedKeyLowWatermark = rangeExclusiveUpper(s.importedRanges[0]).Clone()
+		s.importedRanges = s.importedRanges[1:]
+		consumed++
+	}
+
+	s.importedKeyCnt += s.localWrittenRows
+	s.localWrittenRows = 0
+	newWM := s.importedKeyLowWatermark.Clone()
+	s.dirty = true
+	remain := len(s.importedRanges)
+	s.mu.Unlock()
+
+	s.logger.Info("watermark advanced",
+		zap.String("old", hex.EncodeToString(oldWM)),
+		zap.String("new", hex.EncodeToString(newWM)),
+		zap.Int("consumed_ranges", consumed),
+		zap.Int("remaining_ranges", remain),
+		zap.Int("imported_keys", s.importedKeyCnt),
+	)
+
+	if err := s.afterImport(); err != nil {
+		return err
+	}
+	return s.updateCheckpoint()
 }
 
-// afterFlush should be called after all engine is flushed.
-func (s *CheckpointManager) afterFlush() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for {
-		cp := s.checkpoints[s.minTaskIDFinished]
-		if cp == nil || !cp.lastBatchRead || cp.writtenKeys < cp.totalKeys {
-			break
-		}
-		delete(s.checkpoints, s.minTaskIDFinished)
-		s.minTaskIDFinished++
-		s.flushedKeyLowWatermark = cp.endKey
-		s.flushedKeyCnt += cp.totalKeys
-		s.dirty = true
+// CanPromoteWatermark reports whether the first imported range can extend the low watermark.
+// export for test.
+func CanPromoteWatermark(r ProcessedRange, low kv.Key) bool {
+	if len(r.PrevTailKey) > 0 {
+		return r.PrevTailKey.Cmp(low) <= 0
 	}
+	return r.StartKey.Cmp(low) <= 0
+}
+
+// MergeAndCompactRanges merges (pending + existing) ranges into non-overlapping sorted segments.
+// It:
+//  1. Filters invalid ranges
+//  2. Sorts by [StartKey, EndKey]
+//  3. Merges overlapping or PrevTailKey-stitched segments
+//
+// export for test.
+func MergeAndCompactRanges(rs []ProcessedRange) []ProcessedRange {
+	if len(rs) <= 1 {
+		return rs
+	}
+	tmp := make([]ProcessedRange, 0, len(rs))
+	for _, r := range rs {
+		if len(r.StartKey) == 0 || len(r.EndKey) == 0 || r.StartKey.Cmp(r.EndKey) > 0 {
+			continue
+		}
+		tmp = append(tmp, r)
+	}
+	if len(tmp) <= 1 {
+		return tmp
+	}
+	sort.Slice(tmp, func(i, j int) bool {
+		if c := tmp[i].StartKey.Cmp(tmp[j].StartKey); c != 0 {
+			return c < 0
+		}
+		return tmp[i].EndKey.Cmp(tmp[j].EndKey) < 0
+	})
+	out := tmp[:0]
+	cur := tmp[0]
+	for i := 1; i < len(tmp); i++ {
+		n := tmp[i]
+		overlap := n.StartKey.Cmp(cur.EndKey) <= 0
+		stitch := len(n.PrevTailKey) > 0 &&
+			(n.PrevTailKey.Cmp(cur.EndKey) == 0 || n.PrevTailKey.Next().Cmp(cur.EndKey) == 0)
+		if overlap || stitch {
+			if n.EndKey.Cmp(cur.EndKey) > 0 {
+				cur.EndKey = n.EndKey.Clone()
+			}
+			continue
+		}
+		out = append(out, cur)
+		cur = n
+	}
+	out = append(out, cur)
+	return out
+}
+
+// PruneRanges discards ranges fully below the global low watermark.
+// export for test.
+func PruneRanges(rs []ProcessedRange, low kv.Key) []ProcessedRange {
+	if len(low) == 0 || len(rs) == 0 {
+		return rs
+	}
+	i := 0
+	for i < len(rs) && rs[i].EndKey.Cmp(low) < 0 {
+		i++
+	}
+	if i == 0 {
+		return rs
+	}
+	if i >= len(rs) {
+		return nil
+	}
+	return append([]ProcessedRange(nil), rs[i:]...)
+}
+
+func rangeExclusiveUpper(r ProcessedRange) kv.Key {
+	if len(r.EndKey) == 0 {
+		return nil
+	}
+	return r.EndKey.Next()
+}
+
+// SubtractRanges subtracts imported ranges from input
+// input: half-open [StartKey, EndKey)
+// imported: closed [StartKey, EndKey]
+// export for test.
+func SubtractRanges(input []kv.KeyRange, imported []ProcessedRange) []kv.KeyRange {
+	if len(imported) == 0 || len(input) == 0 {
+		return input
+	}
+	res := make([]kv.KeyRange, 0, len(input))
+	for _, r := range input {
+		cur := []kv.KeyRange{r}
+		for _, im := range imported {
+			next := cur[:0]
+			for _, piece := range cur {
+				next = append(next, SubtractOne(piece, im)...)
+			}
+			cur = next
+			if len(cur) == 0 {
+				break
+			}
+		}
+		res = append(res, cur...)
+	}
+	return res
+}
+
+// SubtractOne subtracts range b from a and may return up to two residual pieces.
+// a is half-open [StartKey, EndKey)
+// b is closed [StartKey, EndKey]
+// export for test.
+func SubtractOne(a kv.KeyRange, b ProcessedRange) []kv.KeyRange {
+	// Non-overlap cases:
+	// 1) b entirely before a: b.End < a.Start  (strict < because if == they share a.Start key -> overlap)
+	// 2) b starts at or after a's exclusive end: b.Start >= a.End
+	if b.EndKey.Cmp(a.StartKey) < 0 || b.StartKey.Cmp(a.EndKey) >= 0 {
+		return []kv.KeyRange{a}
+	}
+	out := make([]kv.KeyRange, 0, 2)
+	if b.StartKey.Cmp(a.StartKey) > 0 {
+		// left residual: [a.Start, b.Start)
+		out = append(out, kv.KeyRange{StartKey: a.StartKey.Clone(), EndKey: b.StartKey.Clone()})
+	}
+	if b.EndKey.Cmp(a.EndKey) < 0 {
+		// right residual: start after b.End
+		out = append(out, kv.KeyRange{StartKey: b.EndKey.Clone().Next(), EndKey: a.EndKey.Clone()})
+	}
+	return out
+}
+
+// FilterUnimportedRanges removes already imported (or below watermark) portions from the input ranges.
+func (s *CheckpointManager) FilterUnimportedRanges(ranges []kv.KeyRange) []kv.KeyRange {
+	s.mu.Lock()
+	global := s.importedKeyLowWatermark.Clone()
+	s.mu.Unlock()
+
+	out := make([]kv.KeyRange, 0, len(ranges))
+	for _, r := range ranges {
+		if len(global) > 0 && r.EndKey.Cmp(global) <= 0 {
+			continue
+		}
+		if len(global) > 0 && r.StartKey.Cmp(global) < 0 {
+			r.StartKey = global.Clone()
+			if r.StartKey.Cmp(r.EndKey) >= 0 {
+				continue
+			}
+		}
+		out = append(out, r)
+	}
+	if len(out) == 0 {
+		s.logger.Info("filter ranges result empty")
+		return nil
+	}
+	res := SubtractRanges(out, s.importedRanges)
+	s.logger.Info("filter ranges done",
+		zap.Int("input_count", len(ranges)),
+		zap.Int("output_count", len(res)),
+		zap.Int("imported_segments", len(s.importedRanges)),
+	)
+	return res
 }
 
 func (s *CheckpointManager) afterImport() error {
@@ -420,16 +565,6 @@ func (s *CheckpointManager) afterImport() error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if s.importedKeyLowWatermark.Cmp(s.flushedKeyLowWatermark) > 0 {
-		s.logger.Warn("lower watermark of flushed key is less than imported key",
-			zap.String("flushed", hex.EncodeToString(s.flushedKeyLowWatermark)),
-			zap.String("imported", hex.EncodeToString(s.importedKeyLowWatermark)),
-		)
-		return errors.Errorf("flushed key is less than imported key")
-	}
-	s.importedKeyLowWatermark = s.flushedKeyLowWatermark
-	s.importedKeyCnt = s.flushedKeyCnt
 	intest.Assert(s.ts < newTS)
 	if s.ts < newTS {
 		s.ts = newTS
@@ -438,10 +573,21 @@ func (s *CheckpointManager) afterImport() error {
 	return nil
 }
 
-func (s *CheckpointManager) noUpdate() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.checkpoints) == 0 && s.minTaskIDFinished == 0
+// cleanupLocalStoreDirUnsafe removes the on-disk sorted data to avoid re-importing
+// lingering SSTs after a resume. It recreates the directory empty.
+func (s *CheckpointManager) cleanupLocalStoreDirUnsafe() {
+	if s.localStoreDir == "" {
+		return
+	}
+	if err := os.RemoveAll(s.localStoreDir); err != nil {
+		s.logger.Warn("failed to cleanup local store dir", zap.String("dir", s.localStoreDir), zap.Error(err))
+		return
+	}
+	if err := os.MkdirAll(s.localStoreDir, 0o700); err != nil {
+		s.logger.Warn("failed to recreate local store dir", zap.String("dir", s.localStoreDir), zap.Error(err))
+		return
+	}
+	s.logger.Info("cleaned local sorted dir on resume to avoid re-importing lingering SSTs", zap.String("dir", s.localStoreDir))
 }
 
 // Close closes the checkpoint manager.
@@ -481,12 +627,15 @@ type ReorgCheckpoint struct {
 	TS uint64 `json:"ts"`
 
 	Version int64 `json:"version"`
+
+	ImportedRanges []ProcessedRange `json:"imported_ranges,omitempty"`
 }
 
 // JobCheckpointVersionCurrent is the current version of the checkpoint.
 const (
-	JobCheckpointVersionCurrent = JobCheckpointVersion1
+	JobCheckpointVersionCurrent = JobCheckpointVersion2
 	JobCheckpointVersion1       = 1
+	JobCheckpointVersion2       = 2
 )
 
 func (s *CheckpointManager) resumeOrInitCheckpoint() error {
@@ -494,6 +643,9 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 	if err != nil {
 		return err
 	}
+
+	// Always discard any existing local sorted data to avoid re‑ingesting stale SSTs.
+	s.cleanupLocalStoreDirUnsafe()
 
 	if cp != nil {
 		if cp.PhysicalID != s.physicalID {
@@ -503,26 +655,43 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 			return nil
 		}
 
-		s.importedKeyLowWatermark = cp.GlobalSyncKey
+		if len(cp.GlobalSyncKey) > 0 {
+			s.importedKeyLowWatermark = cp.GlobalSyncKey
+		} else if len(s.initialStartKey) > 0 {
+			s.importedKeyLowWatermark = s.initialStartKey.Clone()
+		}
+
 		s.importedKeyCnt = cp.GlobalKeyCount
 		s.ts = cp.TS
-		folderNotEmpty := util.FolderNotEmpty(s.localStoreDir)
-		if folderNotEmpty &&
-			(s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */) {
-			s.localDataIsValid = true
-			s.flushedKeyLowWatermark = cp.LocalSyncKey
-			s.flushedKeyCnt = cp.LocalKeyCount
+
+		// Load imported ranges.
+		var imp []ProcessedRange
+		if len(cp.ImportedRanges) > 0 {
+			imp = make([]ProcessedRange, 0, len(cp.ImportedRanges))
+			for _, r := range cp.ImportedRanges {
+				imp = append(imp, ProcessedRange{
+					StartKey: r.StartKey, EndKey: r.EndKey, PrevTailKey: r.PrevTailKey,
+				})
+			}
 		}
+		if len(imp) > 0 {
+			imp = MergeAndCompactRanges(imp)
+			imp = PruneRanges(imp, s.importedKeyLowWatermark)
+			s.importedRanges = imp
+		}
+
 		s.logger.Info("resume checkpoint",
-			zap.String("flushed key low watermark", hex.EncodeToString(s.flushedKeyLowWatermark)),
 			zap.String("imported key low watermark", hex.EncodeToString(s.importedKeyLowWatermark)),
 			zap.Int64("physical table ID", cp.PhysicalID),
 			zap.String("previous instance", cp.InstanceAddr),
 			zap.String("current instance", s.instanceAddr),
-			zap.Bool("folder is empty", !folderNotEmpty))
+			zap.Int("imported_range_count", len(s.importedRanges)))
 		return nil
 	}
 	s.logger.Info("checkpoint not found")
+	if len(s.initialStartKey) > 0 {
+		s.importedKeyLowWatermark = s.initialStartKey.Clone()
+	}
 
 	if s.ts > 0 {
 		return nil
@@ -543,14 +712,13 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 func (s *CheckpointManager) updateCheckpointImpl() error {
 	s.mu.Lock()
 	checkpoint := &ReorgCheckpoint{
-		LocalSyncKey:   s.flushedKeyLowWatermark,
 		GlobalSyncKey:  s.importedKeyLowWatermark,
-		LocalKeyCount:  s.flushedKeyCnt,
 		GlobalKeyCount: s.importedKeyCnt,
 		InstanceAddr:   s.instanceAddr,
 		PhysicalID:     s.physicalID,
 		TS:             s.ts,
 		Version:        JobCheckpointVersionCurrent,
+		ImportedRanges: append([]ProcessedRange(nil), s.importedRanges...),
 	}
 	s.mu.Unlock()
 
@@ -560,12 +728,12 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 		logFunc = s.logger.With(zap.Error(err)).Error
 	}
 	logFunc("update checkpoint",
-		zap.String("local checkpoint", hex.EncodeToString(checkpoint.LocalSyncKey)),
 		zap.String("global checkpoint", hex.EncodeToString(checkpoint.GlobalSyncKey)),
-		zap.Int("flushed keys", checkpoint.LocalKeyCount),
 		zap.Int("imported keys", checkpoint.GlobalKeyCount),
 		zap.Int64("global physical ID", checkpoint.PhysicalID),
-		zap.Uint64("ts", checkpoint.TS))
+		zap.Uint64("ts", checkpoint.TS),
+		zap.Int("imported_range_count", len(checkpoint.ImportedRanges)),
+	)
 
 	if err == nil {
 		s.mu.Lock()

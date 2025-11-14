@@ -154,6 +154,10 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) error {
+	start, _, _, err := r.getTableStartEndKey(sm)
+	if err != nil {
+		return err
+	}
 	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.store, r.job).
 		WithImportDistributedLock(r.etcdCli, sm.TS).
 		WithDistTaskCheckpointManagerParam(
@@ -161,6 +165,7 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 			r.ptbl.GetPhysicalID(),
 			r.GetCheckpointUpdateFunc(),
 			r.GetCheckpointFunc(),
+			start,
 		).
 		Build(r.backendCfg, r.backend)
 	if err != nil {

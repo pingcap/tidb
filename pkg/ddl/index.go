@@ -2590,7 +2590,7 @@ func writeChunk(
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
 	tblInfo *model.TableInfo,
-) (rowCnt int, bytes int, err error) {
+) (rowCnt int, bytes int, rg kv.KeyRange, err error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
 	ectx := c.ExprCtx.GetEvalCtx()
@@ -2598,9 +2598,14 @@ func writeChunk(
 	maxIdxColCnt := maxIndexColumnCount(indexes)
 	idxDataBuf := make([]types.Datum, maxIdxColCnt)
 	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
-	var restoreDataBuf []types.Datum
-	count := 0
-	totalBytes := 0
+	var (
+		restoreDataBuf []types.Datum
+		count          = 0
+		totalBytes     = 0
+		firstHandle    kv.Handle
+		lastHandle     kv.Handle
+		haveFirst      bool
+	)
 
 	unlockFns := make([]func(), 0, len(writers))
 	for _, w := range writers {
@@ -2636,15 +2641,21 @@ func writeChunk(
 		}
 		h, err := BuildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, loc, errCtx)
 		if err != nil {
-			return 0, totalBytes, errors.Trace(err)
+			return 0, totalBytes, kv.KeyRange{}, errors.Trace(err)
 		}
+		if !haveFirst {
+			firstHandle = h
+			haveFirst = true
+		}
+		lastHandle = h
+
 		for i, index := range indexes {
 			// If the `IndexRecordChunk.conditionPushed` is true and we have only 1 index, the `indexConditionCheckers`
 			// will not be initialized.
 			if index.Meta().HasCondition() && indexConditionCheckers != nil {
 				ok, err := indexConditionCheckers[i](row)
 				if err != nil {
-					return 0, 0, errors.Trace(err)
+					return 0, 0, kv.KeyRange{}, errors.Trace(err)
 				}
 				if !ok {
 					continue
@@ -2662,13 +2673,19 @@ func writeChunk(
 			kvBytes, err := writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
 				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
-				return 0, totalBytes, errors.Trace(err)
+				return 0, totalBytes, kv.KeyRange{}, errors.Trace(err)
 			}
 			totalBytes += int(kvBytes)
 		}
 		count++
 	}
-	return count, totalBytes, nil
+	if count > 0 && haveFirst {
+		prefix := tablecodec.GenTableRecordPrefix(c.PhysicalID)
+		startKey := tablecodec.EncodeRecordKey(prefix, firstHandle)
+		endKey := tablecodec.EncodeRecordKey(prefix, lastHandle)
+		rg = kv.KeyRange{StartKey: startKey, EndKey: endKey}
+	}
+	return count, totalBytes, rg, nil
 }
 
 func maxIndexColumnCount(indexes []table.Index) int {
