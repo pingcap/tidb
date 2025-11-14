@@ -305,11 +305,38 @@ func RegisterMetrics() {
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
 
+<<<<<<< HEAD
 	// IndexLookup
 	prometheus.MustRegister(IndexLookUpExecutorDuration)
 	prometheus.MustRegister(IndexLookRowsCounter)
 	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
 	prometheus.MustRegister(IndexLookUpCopTaskCount)
+=======
+	prometheus.MustRegister(GlobalMemArbitrationDuration)
+	prometheus.MustRegister(GlobalMemArbitratorWorkMode)
+	prometheus.MustRegister(GlobalMemArbitratorQuota)
+	prometheus.MustRegister(GlobalMemArbitratorWaitingTask)
+	prometheus.MustRegister(GlobalMemArbitratorRuntimeMemMagnifi)
+	prometheus.MustRegister(GlobalMemArbitratorRootPool)
+	prometheus.MustRegister(GlobalMemArbitratorEventCounter)
+	prometheus.MustRegister(GlobalMemArbitratorTaskExecCounter)
+
+	// TLS
+	prometheus.MustRegister(TLSVersion)
+	prometheus.MustRegister(TLSCipher)
+}
+
+// Register registers custom collectors.
+func Register(cs ...prometheus.Collector) {
+	prometheus.MustRegister(cs...)
+}
+
+// Unregister unregisters custom collectors.
+func Unregister(cs ...prometheus.Collector) {
+	for _, c := range cs {
+		prometheus.Unregister(c)
+	}
+>>>>>>> af24a62da27 (infoschema, server: add per connection TLS status (#62563))
 }
 
 var mode struct {
