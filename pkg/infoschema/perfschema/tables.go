@@ -73,6 +73,7 @@ const (
 	tableNameSessionAccountConnectAttrs      = "session_account_connect_attrs"
 	tableNameSessionConnectAttrs             = "session_connect_attrs"
 	tableNameSessionVariables                = "session_variables"
+	tableNameStatusByConnection              = "status_by_connection"
 )
 
 var tableIDMap = map[string]int64{
@@ -109,6 +110,11 @@ var tableIDMap = map[string]int64{
 	tableNameSessionVariables:                autoid.PerformanceSchemaDBID + 31,
 	tableNameSessionConnectAttrs:             autoid.PerformanceSchemaDBID + 32,
 	tableNameSessionAccountConnectAttrs:      autoid.PerformanceSchemaDBID + 33,
+<<<<<<< HEAD
+=======
+	tableNameGlobalVariables:                 autoid.PerformanceSchemaDBID + 34,
+	tableNameStatusByConnection:              autoid.PerformanceSchemaDBID + 35,
+>>>>>>> af24a62da27 (infoschema, server: add per connection TLS status (#62563))
 }
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -259,6 +265,8 @@ func (vt *perfSchemaTable) getRows(ctx context.Context, sctx sessionctx.Context,
 		fullRows, err = infoschema.GetDataFromSessionConnectAttrs(sctx, false)
 	case tableNameSessionAccountConnectAttrs:
 		fullRows, err = infoschema.GetDataFromSessionConnectAttrs(sctx, true)
+	case tableNameStatusByConnection:
+		fullRows, err = infoschema.GetDataFromStatusByConn(sctx)
 	}
 	if err != nil {
 		return

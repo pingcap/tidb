@@ -70,6 +70,16 @@ var (
 	CPUProfileCounter               prometheus.Counter
 	LoadTableCacheDurationHistogram prometheus.Histogram
 	RCCheckTSWriteConfilictCounter  *prometheus.CounterVec
+<<<<<<< HEAD
+=======
+	MemoryLimit                     prometheus.Gauge
+	InternalSessions                prometheus.Gauge
+	ActiveUser                      prometheus.Gauge
+
+	// TLS
+	TLSVersion *prometheus.CounterVec
+	TLSCipher  *prometheus.CounterVec
+>>>>>>> af24a62da27 (infoschema, server: add per connection TLS status (#62563))
 )
 
 // InitServerMetrics initializes server metrics.
@@ -373,6 +383,47 @@ func InitServerMetrics() {
 			Name:      "rc_check_ts_conflict_total",
 			Help:      "Counter of WriteConflict caused by RCCheckTS.",
 		}, []string{LblType})
+<<<<<<< HEAD
+=======
+
+	MemoryLimit = metricscommon.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "memory_quota_bytes",
+			Help:      "The value of memory quota bytes.",
+		})
+
+	InternalSessions = metricscommon.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "internal_sessions",
+			Help:      "The total count of internal sessions.",
+		})
+
+	ActiveUser = metricscommon.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "active_users",
+			Help:      "The total count of active user.",
+		})
+	TLSVersion = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "tls_version",
+			Help:      "Counter per TLS Version.",
+		}, []string{LblVersion})
+	TLSCipher = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "tls_cipher",
+			Help:      "Counter per TLS Cipher.",
+		}, []string{LblCipher})
+>>>>>>> af24a62da27 (infoschema, server: add per connection TLS status (#62563))
 }
 
 // ExecuteErrorToLabel converts an execute error to label.
