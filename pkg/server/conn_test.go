@@ -2155,27 +2155,27 @@ func TestConnAddMetrics(t *testing.T) {
 	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	// default
-	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	cc.addQueryMetrics(mysql.ComQuery, time.Now(), nil)
 	counter := metrics.QueryTotalCounter
 	v := promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "default"))
 	require.Equal(t, 1.0, v)
 
 	// rg1
 	cc.getCtx().GetSessionVars().ResourceGroupName = "test_rg1"
-	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	cc.addQueryMetrics(mysql.ComQuery, time.Now(), nil)
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "default")), 1.0)
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "test_rg1")), 1.0)
 	/// inc the counter again
-	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	cc.addQueryMetrics(mysql.ComQuery, time.Now(), nil)
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "test_rg1")), 2.0)
 
 	// rg2
 	cc.getCtx().GetSessionVars().ResourceGroupName = "test_rg2"
 	// error
-	cc.addMetrics(mysql.ComQuery, time.Now(), errors.New("unknown error"))
+	cc.addQueryMetrics(mysql.ComQuery, time.Now(), errors.New("unknown error"))
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "Error", "test_rg2")), 1.0)
 	// ok
-	cc.addMetrics(mysql.ComStmtExecute, time.Now(), nil)
+	cc.addQueryMetrics(mysql.ComStmtExecute, time.Now(), nil)
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("StmtExecute", "OK", "test_rg2")), 1.0)
 }
 
