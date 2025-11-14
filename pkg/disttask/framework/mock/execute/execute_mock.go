@@ -61,6 +61,34 @@ func (mr *MockStepExecutorMockRecorder) Cleanup(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cleanup", reflect.TypeOf((*MockStepExecutor)(nil).Cleanup), arg0)
 }
 
+// GetCheckpointFunc mocks base method.
+func (m *MockStepExecutor) GetCheckpointFunc() func(context.Context, int64) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetCheckpointFunc")
+	ret0, _ := ret[0].(func(context.Context, int64) (string, error))
+	return ret0
+}
+
+// GetCheckpointFunc indicates an expected call of GetCheckpointFunc.
+func (mr *MockStepExecutorMockRecorder) GetCheckpointFunc() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCheckpointFunc", reflect.TypeOf((*MockStepExecutor)(nil).GetCheckpointFunc))
+}
+
+// GetCheckpointUpdateFunc mocks base method.
+func (m *MockStepExecutor) GetCheckpointUpdateFunc() func(context.Context, int64, any) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetCheckpointUpdateFunc")
+	ret0, _ := ret[0].(func(context.Context, int64, any) error)
+	return ret0
+}
+
+// GetCheckpointUpdateFunc indicates an expected call of GetCheckpointUpdateFunc.
+func (mr *MockStepExecutorMockRecorder) GetCheckpointUpdateFunc() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCheckpointUpdateFunc", reflect.TypeOf((*MockStepExecutor)(nil).GetCheckpointUpdateFunc))
+}
+
 // GetResource mocks base method.
 func (m *MockStepExecutor) GetResource() *proto.StepResource {
 	m.ctrl.T.Helper()

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
@@ -104,6 +105,14 @@ func NewKS3Storage(
 		return nil, errors.Errorf("ks3 does not support role arn, arn: %s", qs.RoleArn)
 	}
 	c := s3.New(awsConfig)
+
+	if reqRec := recording.GetRequests(ctx); reqRec != nil {
+		// unlike AWS SDK, ks3 only support change handlers after we initialize
+		// the client, so no need to call defaults.Handlers().
+		c.Handlers.Send.PushBack(func(r *aws.Request) {
+			reqRec.Rec(r.HTTPRequest)
+		})
+	}
 
 	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
 		qs.Prefix += "/"
@@ -728,11 +737,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	var onFlush func()
-	if option != nil {
-		onFlush = option.OnUpload
-	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, onFlush)
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
 	return uploaderWriter, nil
 }
 

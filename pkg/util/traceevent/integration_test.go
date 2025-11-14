@@ -15,16 +15,23 @@
 package traceevent_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/hex"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/require"
@@ -261,4 +268,43 @@ func TestFlightRecorder(t *testing.T) {
 		require.Len(t, eventCh, 0)
 		flightRecorder.Close()
 	}
+}
+
+func TestTiDBTraceEventVariable(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("@@tidb_trace_event only works on nextgen tidb")
+	}
+	dir, err := os.MkdirTemp("", "tidb_test_trace_event")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir) // clean up
+
+	logFile := filepath.Join(dir, "tidb.log")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.File.Filename = logFile
+	})
+	cfg := config.GetGlobalConfig()
+	// Very important, by default CreateMockStore will not initialize the logger!
+	err = logutil.InitLogger(cfg.Log.ToLogConfig(), keyspace.WrapZapcoreWithKeyspace())
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	sink := traceevent.NewTrace()
+	ctx = tracing.WithFlightRecorder(ctx, sink)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExecWithContext(ctx, `set @@global.tidb_trace_event = json_object('enabled_categories', json_array('*'), 'dump_trigger', json_object('type', 'sampling', 'sampling', 1))`)
+	sink.DiscardOrFlush(ctx)
+	tk.MustExecWithContext(ctx, "use test")
+	sink.DiscardOrFlush(ctx)
+	tk.MustExecWithContext(ctx, "create table t (id int)")
+	sink.DiscardOrFlush(ctx)
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows())
+	sink.DiscardOrFlush(ctx)
+
+	// Just check the log contains the trace event.
+	file, err := os.Open(logFile)
+	require.NoError(t, err)
+	matched, err := regexp.MatchReader(`\[trace-event\]`, bufio.NewReader(file))
+	require.NoError(t, err)
+	require.True(t, matched)
 }
