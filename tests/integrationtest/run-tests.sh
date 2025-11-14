@@ -198,7 +198,7 @@ if [ $build -eq 1 ]; then
     fi
     build_mysql_tester
 else
-    if [ -z "$tidb_server" -a $runs_on_port -eq 0 ]; then
+    if [ -z "$tidb_server" ] && [ "$runs_on_port" -eq 0 ]; then
         tidb_server="./integrationtest_tidb-server"
         if [[ ! -f "$tidb_server" ]]; then
             build_tidb_server
@@ -218,7 +218,7 @@ fi
 
 rm -rf $mysql_tester_log
 
-if [ ${runs_on_port} -eq 0 ]
+if [ "$runs_on_port" -eq 0 ]
 then
     ports=($(find_multiple_available_ports 4000 2))
     port=${ports[0]}
@@ -324,12 +324,12 @@ function check_case_name() {
 check_case_name
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
-    if [ ${runs_on_port} -eq 0 ]
+    if [ "$runs_on_port" -eq 0 ]
     then
         start_tidb_server
     fi
     run_mysql_tester
-    if [ ${runs_on_port} -eq 0 ]
+    if [ "$runs_on_port" -eq 0 ]
     then
         kill -15 $SERVER_PID
         while ps -p $SERVER_PID > /dev/null; do
@@ -341,12 +341,12 @@ fi
 
 if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
-    if [ ${runs_on_port} -eq 0 ]
+    if [ "$runs_on_port" -eq 0 ]
     then
         start_tidb_server
     fi
     run_mysql_tester
-    if [ ${runs_on_port} -eq 0 ]
+    if [ "$runs_on_port" -eq 0 ]
     then
         kill -15 $SERVER_PID
         while ps -p $SERVER_PID > /dev/null; do
