@@ -198,19 +198,19 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	var (
-		reqRec   = &recording.Requests{}
-		objStore storage.ExternalStorage
+		accessRec = &recording.AccessStats{}
+		objStore  storage.ExternalStorage
 	)
 	if s.tableImporter.IsGlobalSort() {
 		var err3 error
-		reqRec, objStore, err3 = handle.NewObjStoreWithRecording(ctx, s.tableImporter.CloudStorageURI)
+		accessRec, objStore, err3 = handle.NewObjStoreWithRecording(ctx, s.tableImporter.CloudStorageURI)
 		if err3 != nil {
 			return err3
 		}
 		defer func() {
 			objStore.Close()
-			s.summary.MergeObjStoreRequests(reqRec)
-			s.GetMeterRecorder().MergeObjStoreRequests(reqRec)
+			s.summary.MergeObjStoreRequests(&accessRec.Requests)
+			s.GetMeterRecorder().MergeObjStoreRequests(&accessRec.Requests)
 		}()
 	}
 	// read import step meta from external storage when using global sort.
@@ -403,14 +403,14 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	m.summary.Reset()
 
-	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, m.taskMeta.Plan.CloudStorageURI)
+	accessRec, objStore, err := handle.NewObjStoreWithRecording(ctx, m.taskMeta.Plan.CloudStorageURI)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		objStore.Close()
-		m.summary.MergeObjStoreRequests(reqRec)
-		m.GetMeterRecorder().MergeObjStoreRequests(reqRec)
+		m.summary.MergeObjStoreRequests(&accessRec.Requests)
+		m.GetMeterRecorder().MergeObjStoreRequests(&accessRec.Requests)
 	}()
 	// read merge sort step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
@@ -549,14 +549,14 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	e.summary.Reset()
 
-	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.tableImporter.CloudStorageURI)
+	accessRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.tableImporter.CloudStorageURI)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		objStore.Close()
-		e.summary.MergeObjStoreRequests(reqRec)
-		e.GetMeterRecorder().MergeObjStoreRequests(reqRec)
+		e.summary.MergeObjStoreRequests(&accessRec.Requests)
+		e.GetMeterRecorder().MergeObjStoreRequests(&accessRec.Requests)
 	}()
 	// read write and ingest step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {

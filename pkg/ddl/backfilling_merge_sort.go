@@ -81,14 +81,14 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	m.summary.Reset()
 
-	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, m.cloudStoreURI)
+	accessRec, objStore, err := handle.NewObjStoreWithRecording(ctx, m.cloudStoreURI)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		objStore.Close()
-		m.summary.MergeObjStoreRequests(reqRec)
-		m.GetMeterRecorder().MergeObjStoreRequests(reqRec)
+		m.summary.MergeObjStoreRequests(&accessRec.Requests)
+		m.GetMeterRecorder().MergeObjStoreRequests(&accessRec.Requests)
 	}()
 
 	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)

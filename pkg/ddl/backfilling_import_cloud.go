@@ -95,14 +95,14 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 
 	e.summary.Reset()
 
-	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.cloudStoreURI)
+	accessRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.cloudStoreURI)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		objStore.Close()
-		e.summary.MergeObjStoreRequests(reqRec)
-		e.GetMeterRecorder().MergeObjStoreRequests(reqRec)
+		e.summary.MergeObjStoreRequests(&accessRec.Requests)
+		e.GetMeterRecorder().MergeObjStoreRequests(&accessRec.Requests)
 	}()
 
 	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)
