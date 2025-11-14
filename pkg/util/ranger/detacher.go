@@ -396,16 +396,31 @@ func chooseBetweenRangeAndPoint(sctx *rangerctx.RangerContext, r1 *DetachRangeRe
 // considerDNF is true means it will try to extract access conditions from the DNF expressions.
 func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expression.Expression, newTpSlice []*types.FieldType, considerDNF bool) (*DetachRangeResult, error) {
 	var (
-		eqCount     int
-		eqOrInCount int
-		ranges      Ranges
-		err         error
+		eqCount int
+		ranges  Ranges
+		err     error
 	)
 	res := &DetachRangeResult{}
 
 	accessConds, filterConds, newConditions, columnValues, emptyRange := ExtractEqAndInCondition(d.sctx, conditions, d.cols, d.lengths)
 	if emptyRange {
 		return res, nil
+	}
+	if len(accessConds) == 1 {
+		if value, ok := accessConds[0].(*expression.Constant); ok {
+			if value.Value.IsNull() {
+				return res, nil
+			}
+			isTrue, err := value.Value.ToBool(d.sctx.TypeCtx)
+			if err != nil {
+				return nil, err
+			}
+			if isTrue == 1 {
+				res.Ranges = FullRange()
+				return res, nil
+			}
+			return res, err
+		}
 	}
 	var remainedConds []expression.Expression
 	ranges, accessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(newTpSlice, len(accessConds), accessConds)
@@ -416,23 +431,12 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		filterConds = removeConditions(d.sctx.ExprCtx.GetEvalCtx(), filterConds, remainedConds)
 		newConditions = append(newConditions, remainedConds...)
 	}
-	for _, cond := range accessConds {
-		switch sc := cond.(type) {
-		case *expression.ScalarFunction:
-			switch sc.FuncName.L {
-			case ast.In:
-				eqOrInCount++
-			case ast.EQ:
-				eqCount++
-				eqOrInCount++
-			}
-		default:
-			// PREPARE prepare_query FROM 'SELECT t0.c0 FROM t0, t1 WHERE ? OR ((? <=> t1.c0) AND (? <=> t1.c0))';
-			// In this case, predicate simplification will not continue during the prepare phase.
-			// Therefore, when it comes to the execute phase, the first placeholder becomes a constant.
-			continue
+	for ; eqCount < len(accessConds); eqCount++ {
+		if accessConds[eqCount].(*expression.ScalarFunction).FuncName.L != ast.EQ {
+			break
 		}
 	}
+	eqOrInCount := len(accessConds)
 	res.EqCondCount = eqCount
 	res.EqOrInCount = eqOrInCount
 	// If index has prefix column and d.mergeConsecutive is true, ranges may not be point ranges anymore after UnionRanges.
