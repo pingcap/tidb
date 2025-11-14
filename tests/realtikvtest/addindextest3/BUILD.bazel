@@ -11,7 +11,7 @@ go_test(
         "temp_index_test.go",
     ],
     flaky = True,
-    shard_count = 38,
+    shard_count = 39,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -35,6 +35,7 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
+        "//pkg/util",
         "//pkg/util/chunk",
         "//tests/realtikvtest",
         "@com_github_ngaut_pools//:pools",

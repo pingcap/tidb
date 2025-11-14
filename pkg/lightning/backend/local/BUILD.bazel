@@ -30,7 +30,6 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/pdutil",
         "//br/pkg/restore/split",
-        "//br/pkg/storage",
         "//br/pkg/version",
         "//pkg/config/kerneltype",
         "//pkg/distsql",

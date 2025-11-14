@@ -124,7 +124,12 @@ func TestRegionJobBaseWorker(t *testing.T) {
 			fmt.Sprintf("return(%d)", generateCount))
 		op, jobWg, jobInCh, jobOutCh := newRegionJobOperatorForTest(preRunFn, writeFn, ingestFn)
 
-		jobInCh <- &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
+		dummyRegion := &split.RegionInfo{Region: &metapb.Region{
+			Id: 1, Peers: []*metapb.Peer{{StoreId: 1}}}, Leader: &metapb.Peer{StoreId: 1},
+		}
+
+		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion}
+		jobInCh <- job
 		jobWg.Add(1)
 		close(jobInCh)
 
@@ -141,6 +146,21 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		require.Equal(t, 1, len(jobOutCh))
 		outJob := <-jobOutCh
 		require.Equal(t, ingested, outJob.stage)
+	})
+
+	t.Run("if the region has no leader, rescan the region", func(t *testing.T) {
+		w := newWorker()
+		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: &split.RegionInfo{
+			Region: &metapb.Region{Id: 1, Peers: []*metapb.Peer{{StoreId: 1}}},
+		}}
+		w.jobInCh <- job
+		close(w.jobInCh)
+		require.NoError(t, w.run(context.Background()))
+		require.Equal(t, 3, len(w.jobOutCh))
+		for range 3 {
+			outJob := <-w.jobOutCh
+			require.ErrorIs(t, outJob.lastRetryableErr, errdef.ErrNoLeader)
+		}
 	})
 
 	t.Run("empty job", func(t *testing.T) {

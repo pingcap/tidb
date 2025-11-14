@@ -241,11 +241,6 @@ func (do *Domain) InfoCache() *infoschema.InfoCache {
 	return do.infoCache
 }
 
-// EtcdClient export for test.
-func (do *Domain) EtcdClient() *clientv3.Client {
-	return do.etcdClient
-}
-
 // UnprefixedEtcdCli export for test.
 func (do *Domain) UnprefixedEtcdCli() *clientv3.Client {
 	return do.unprefixedEtcdCli
