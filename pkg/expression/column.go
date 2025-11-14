@@ -768,27 +768,48 @@ func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.Index
 	return nil
 }
 
-func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo, onlyPrefixCols bool) ([]*Column, []int) {
-	retCols := make([]*Column, 0, len(index.Columns))
-	lens := make([]int, 0, len(index.Columns))
+func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo, onlyPrefixCols bool) (
+	prefixCols []*Column, prefixLens []int,
+	fullCols []*Column, fullLens []int,
+) {
+	prefixCols = make([]*Column, 0, len(index.Columns))
+	prefixLens = make([]int, 0, len(index.Columns))
+	prefixComplete := false
+
+	if onlyPrefixCols {
+		fullCols = nil
+		fullLens = nil
+	} else {
+		fullCols = make([]*Column, 0, len(index.Columns))
+		fullLens = make([]int, 0, len(index.Columns))
+	}
+
 	for _, c := range index.Columns {
 		col := IndexCol2Col(colInfos, cols, c)
 		if col == nil {
+			prefixComplete = true
 			if onlyPrefixCols {
-				return retCols, lens
+				return
 			}
-			retCols = append(retCols, col)
-			lens = append(lens, types.UnspecifiedLength)
+			fullCols = append(fullCols, col)
+			fullLens = append(fullLens, types.UnspecifiedLength)
 			continue
 		}
-		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
-			lens = append(lens, types.UnspecifiedLength)
-		} else {
-			lens = append(lens, c.Length)
+
+		length := c.Length
+		if length != types.UnspecifiedLength && length == col.RetType.GetFlen() {
+			length = types.UnspecifiedLength
+		}
+		if !prefixComplete {
+			prefixCols = append(prefixCols, col)
+			prefixLens = append(prefixLens, length)
+		}
+		if !onlyPrefixCols {
+			fullCols = append(fullCols, col)
+			fullLens = append(fullLens, length)
 		}
 	}
-	return retCols, lens
+	return
 }
 
 // IndexInfo2PrefixCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
@@ -797,14 +818,24 @@ func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*Column, index *mod
 // the return value will be only the 1st corresponding *Column and its length.
 // TODO: Use a struct to represent {*Column, int}.
 func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	return indexInfo2ColsImpl(colInfos, cols, index, true)
+	prefixCols, prefixLens, _, _ := indexInfo2ColsImpl(colInfos, cols, index, true)
+	return prefixCols, prefixLens
 }
 
-// IndexInfo2Cols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
+// IndexInfo2FullCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
 // together with a []int containing their lengths.
 // If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
 // the return value will be [col1, nil, col2].
-func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+func IndexInfo2FullCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+	_, _, fullCols, fullLens := indexInfo2ColsImpl(colInfos, cols, index, false)
+	return fullCols, fullLens
+}
+
+// IndexInfo2Cols returns the combined result of IndexInfo2PrefixCols and IndexInfo2FullCols.
+func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) (
+	prefixCols []*Column, prefixLens []int,
+	fullCols []*Column, fullLens []int,
+) {
 	return indexInfo2ColsImpl(colInfos, cols, index, false)
 }
 
