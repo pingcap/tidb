@@ -4484,6 +4484,9 @@ func (b *executorBuilder) buildIndexLookUpReader(v *physicalop.PhysicalIndexLook
 
 	ret.ranges = is.Ranges
 	executor_metrics.ExecutorCounterIndexLookUpExecutor.Inc()
+	if v.IndexLookUpPushDown {
+		executor_metrics.ExecutorCounterIndexLookUpExecutorWithPushDown.Inc()
+	}
 
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
