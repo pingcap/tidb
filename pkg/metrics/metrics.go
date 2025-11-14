@@ -350,6 +350,12 @@ func RegisterMetrics() {
 	// TLS
 	prometheus.MustRegister(TLSVersion)
 	prometheus.MustRegister(TLSCipher)
+
+	// IndexLookup
+	prometheus.MustRegister(IndexLookUpExecutorDuration)
+	prometheus.MustRegister(IndexLookRowsCounter)
+	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
+	prometheus.MustRegister(IndexLookUpCopTaskCount)
 }
 
 // Register registers custom collectors.
