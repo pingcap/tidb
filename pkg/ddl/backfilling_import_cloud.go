@@ -196,19 +196,19 @@ func (e *cloudImportExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return e.summary
 }
 
-// ResetSummary resets the summary of the subtask execution.
+// ResetSummary resets the summary stored in the executor.
 func (e *cloudImportExecutor) ResetSummary() {
 	e.summary.Reset()
 }
 
 // TaskMetaModified changes the max write speed for ingest
-func (*cloudImportExecutor) TaskMetaModified(_ context.Context, _ []byte) error {
+func (*cloudImportExecutor) TaskMetaModified(context.Context, []byte) error {
 	// Will be added in the future PR
 	return nil
 }
 
 // ResourceModified change the concurrency for ingest
-func (*cloudImportExecutor) ResourceModified(_ context.Context, _ *proto.StepResource) error {
+func (*cloudImportExecutor) ResourceModified(context.Context, *proto.StepResource) error {
 	// Will be added in the future PR
 	return nil
 }
