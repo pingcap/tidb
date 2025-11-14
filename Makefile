@@ -526,7 +526,7 @@ br_compatibility_test:
 mock_s3iface: mockgen
 	tools/bin/mockgen -package mock github.com/aws/aws-sdk-go/service/s3/s3iface S3API > br/pkg/mock/s3iface.go
 
-# mock interface for lightning, IMPORT INTO
+# mock interface for lightning and IMPORT INTO
 .PHONY: mock_import
 mock_import: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter > br/pkg/mock/backend.go

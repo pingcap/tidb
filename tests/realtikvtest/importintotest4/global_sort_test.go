@@ -37,14 +37,12 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"github.com/tikv/pd/client/opt"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -295,10 +293,6 @@ func (s *mockGCSSuite) getStepSummary(ctx context.Context, taskMgr *storage.Task
 		accumSummary.Bytes.Add(v.Bytes.Load())
 		accumSummary.PutReqCnt.Add(v.PutReqCnt.Load())
 		accumSummary.GetReqCnt.Add(v.GetReqCnt.Load())
-		logutil.BgLogger().Info("subtasks",
-			zap.Any("subtasks", v),
-			zap.Int64("rows", v.RowCnt.Load()),
-			zap.Int64("bytes", v.Bytes.Load()))
 	}
 	return &accumSummary
 }
