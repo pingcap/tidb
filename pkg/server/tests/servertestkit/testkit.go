@@ -67,6 +67,7 @@ func CreateTidbTestSuiteWithDDLLease(t *testing.T, ddlLease string) *TidbTestSui
 func newTestConfig() *config.Config {
 	cfg := util.NewTestConfig()
 	cfg.Port = 0
+	cfg.FlightSQLPort = 0 // Auto-assign port for Flight SQL
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 0
 	cfg.Status.RecordDBLabel = true

@@ -187,6 +187,22 @@ func (s *Server) StatusListenerAddr() net.Addr {
 	return s.statusListener.Addr()
 }
 
+// FlightSQLListenerAddr returns the server's Flight SQL listener's network address.
+func (s *Server) FlightSQLListenerAddr() net.Addr {
+	if s.flightListener == nil {
+		return nil
+	}
+	return s.flightListener.Addr()
+}
+
+// FlightSQLPort returns the server's Flight SQL port.
+func (s *Server) FlightSQLPort() uint {
+	if s.flightListener == nil {
+		return 0
+	}
+	return uint(s.flightListener.Addr().(*net.TCPAddr).Port)
+}
+
 // BitwiseXorCapability gets the capability of the server.
 func (s *Server) BitwiseXorCapability(capability uint32) {
 	s.capability ^= capability
