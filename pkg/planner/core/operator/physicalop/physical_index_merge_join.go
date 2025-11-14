@@ -83,7 +83,7 @@ func (p *PhysicalIndexMergeJoin) GetPlanCostVer1(taskType property.TaskType, opt
 
 // GetPlanCostVer2 implements PhysicalPlan interface.
 func (p *PhysicalIndexMergeJoin) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin(&p.PhysicalIndexJoin, taskType, option, 2)
+	return getIndexJoinCostVer24PhysicalIndexJoin(&p.PhysicalIndexJoin, taskType, option, 2)
 }
 
 // Attach2Task implements PhysicalPlan interface.

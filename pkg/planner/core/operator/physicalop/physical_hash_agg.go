@@ -24,11 +24,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	util2 "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tipb/go-tipb"
@@ -377,8 +379,39 @@ func (p *PhysicalHashAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 }
 
 // GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+// it returns the plan-cost of this sub-plan, which is:
+// plan-cost = child-cost + (agg-cost + group-cost + hash-build-cost + hash-probe-cost) / concurrency
 func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalHashAgg(p, taskType, option, isChildOfINL...)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	inputRows := max(cost.MinNumRows, cost.GetCardinality(p.Children()[0], option.CostFlag))
+	outputRows := max(cost.MinNumRows, cost.GetCardinality(p, option.CostFlag))
+	outputRowSize := max(cost.MinRowSize, cost.GetAvgRowSize(p.StatsInfo(), p.Schema().Columns))
+	cpuFactor := cost.GetTaskCPUFactorVer2(p, taskType)
+	memFactor := cost.GetTaskMemFactorVer2(p, taskType)
+	concurrency := float64(p.SCtx().GetSessionVars().HashAggFinalConcurrency())
+
+	aggCost := cost.AggCostVer2(option, inputRows, p.AggFuncs, cpuFactor)
+	groupCost := cost.GroupCostVer2(option, inputRows, p.GroupByItems, cpuFactor)
+	hashBuildCost := cost.HashBuildCostVer2(option, outputRows, outputRowSize, float64(len(p.GroupByItems)), cpuFactor, memFactor)
+	hashProbeCost := cost.HashProbeCostVer2(option, inputRows, float64(len(p.GroupByItems)), cpuFactor)
+	startCost := costusage.NewCostVer2(option, cpuFactor,
+		10*3*cpuFactor.Value, // 10rows * 3func * cpuFactor
+		func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
+
+	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option, isChildOfINL...)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost, costusage.DivCostVer2(costusage.SumCostVer2(aggCost, groupCost, hashBuildCost, hashProbeCost), concurrency))
+	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().HashAggCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptHashAggCostFactor)
+	return p.PlanCostVer2, nil
 }
 
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.

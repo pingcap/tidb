@@ -22,11 +22,13 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	util2 "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -230,8 +232,30 @@ func (p *PhysicalStreamAgg) GetPlanCostVer1(taskType property.TaskType, option *
 }
 
 // GetPlanCostVer2 implements the physical plan interface.
+// it returns the plan-cost of this sub-plan, which is:
+// plan-cost = child-cost + agg-cost + group-cost
 func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalStreamAgg(p, taskType, option, isChildOfINL...)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	rows := cost.GetCardinality(p.Children()[0], option.CostFlag)
+	cpuFactor := cost.GetTaskCPUFactorVer2(p, taskType)
+
+	aggCost := cost.AggCostVer2(option, rows, p.AggFuncs, cpuFactor)
+	groupCost := cost.GroupCostVer2(option, rows, p.GroupByItems, cpuFactor)
+
+	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option, isChildOfINL...)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	p.PlanCostVer2 = costusage.SumCostVer2(childCost, aggCost, groupCost)
+	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().StreamAggCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptStreamAggCostFactor)
+	return p.PlanCostVer2, nil
 }
 
 // Attach2Task implements PhysicalPlan interface.

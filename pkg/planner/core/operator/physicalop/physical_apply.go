@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -95,7 +96,31 @@ func (p *PhysicalApply) GetPlanCostVer1(taskType property.TaskType,
 // probe-cost = probe-child-cost * build-rows
 func (p *PhysicalApply) GetPlanCostVer2(taskType property.TaskType,
 	option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalApply(p, taskType, option)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	buildRows := cost.GetCardinality(p.Children()[0], option.CostFlag)
+	probeRowsOne := cost.GetCardinality(p.Children()[1], option.CostFlag)
+	probeRowsTot := buildRows * probeRowsOne
+	cpuFactor := cost.GetTaskCPUFactorVer2(p, taskType)
+
+	buildFilterCost := cost.FilterCostVer2(option, buildRows, p.LeftConditions, cpuFactor)
+	buildChildCost, err := p.Children()[0].GetPlanCostVer2(taskType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	probeFilterCost := cost.FilterCostVer2(option, probeRowsTot, p.RightConditions, cpuFactor)
+	probeChildCost, err := p.Children()[1].GetPlanCostVer2(taskType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+	probeCost := costusage.MulCostVer2(probeChildCost, buildRows)
+
+	p.PlanCostVer2 = costusage.SumCostVer2(buildChildCost, buildFilterCost, probeCost, probeFilterCost)
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
 }
 
 // MemoryUsage return the memory usage of PhysicalApply

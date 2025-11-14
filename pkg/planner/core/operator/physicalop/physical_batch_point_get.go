@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -141,7 +142,21 @@ func (p *PointGetPlan) GetPlanCostVer1(taskType property.TaskType, option *costu
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 func (p *PointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PointGetPlan(p, taskType, option)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	if p.AccessCols() == nil { // from fast plan code path
+		p.PlanCostVer2 = costusage.ZeroCostVer2
+		p.PlanCostInit = true
+		return costusage.ZeroCostVer2, nil
+	}
+	rowSize := cost.GetAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	netFactor := cost.GetTaskNetFactorVer2(isTemporaryTable(p), isMppNet(p), isTiFlashNet(p))
+
+	p.PlanCostVer2 = cost.NetCostVer2(option, 1, rowSize, netFactor)
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
 }
 
 // Cost implements PhysicalPlan interface
@@ -593,7 +608,22 @@ func (p *BatchPointGetPlan) GetPlanCostVer1(taskType property.TaskType, option *
 
 // GetPlanCostVer2 implements PhysicalPlan cost v2 for BatchPointGetPlan.
 func (p *BatchPointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24BatchPointGetPlan(p, taskType, option)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	if p.AccessCols() == nil { // from fast plan code path
+		p.PlanCostVer2 = costusage.ZeroCostVer2
+		p.PlanCostInit = true
+		return costusage.ZeroCostVer2, nil
+	}
+	rows := cost.GetCardinality(p, option.CostFlag)
+	rowSize := cost.GetAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	netFactor := cost.GetTaskNetFactorVer2(isTemporaryTable(p), isMppNet(p), isTiFlashNet(p))
+
+	p.PlanCostVer2 = cost.NetCostVer2(option, rows, rowSize, netFactor)
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
 }
 
 // Cost implements PhysicalPlan interface

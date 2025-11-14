@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -140,8 +141,26 @@ func (p PhysicalSelection) Init(ctx base.PlanContext, stats *property.StatsInfo,
 }
 
 // GetPlanCostVer2 implements the base.PhysicalPlan interface.
+// getPlanCostVer24PhysicalSelection returns the plan-cost of this sub-plan, which is:
+// plan-cost = child-cost + filter-cost
 func (p *PhysicalSelection) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalSelection(p, taskType, option, isChildOfINL...)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	inputRows := cost.GetCardinality(p.Children()[0], option.CostFlag)
+	cpuFactor := cost.GetTaskCPUFactorVer2(p, taskType)
+
+	filterCost := cost.FilterCostVer2(option, inputRows, p.Conditions, cpuFactor)
+
+	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option, isChildOfINL...)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	p.PlanCostVer2 = costusage.SumCostVer2(filterCost, childCost)
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
 }
 
 // ResolveIndices implements base.PhysicalPlan interface.

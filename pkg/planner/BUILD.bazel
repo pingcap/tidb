@@ -13,6 +13,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/cost",
         "//pkg/planner/core/resolve",
         "//pkg/planner/indexadvisor",
         "//pkg/planner/planctx",

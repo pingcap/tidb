@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -93,8 +94,34 @@ func (p *PhysicalExchangeReceiver) GetPlanCostVer1(taskType property.TaskType, o
 }
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan.
+// it returns the plan-cost of this sub-plan, which is:
+// plan-cost = child-cost + net-cost
 func (p *PhysicalExchangeReceiver) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer2PhysicalExchangeReceiver(p, taskType, option, args...)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	rows := cost.GetCardinality(p, option.CostFlag)
+	rowSize := cost.GetAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	netFactor := cost.GetTaskNetFactorVer2(isTemporaryTable(p), isMppNet(p), isTiFlashNet(p))
+	isBCast := false
+	if sender, ok := p.Children()[0].(*PhysicalExchangeSender); ok {
+		isBCast = sender.ExchangeType == tipb.ExchangeType_Broadcast
+	}
+	numNode := float64(3) // TODO: remove this empirical value
+
+	netCost := cost.NetCostVer2(option, rows, rowSize, netFactor)
+	if isBCast {
+		netCost = costusage.MulCostVer2(netCost, numNode)
+	}
+	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	p.PlanCostVer2 = costusage.SumCostVer2(childCost, netCost)
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
 }
 
 // ToPB generates the pb structure.

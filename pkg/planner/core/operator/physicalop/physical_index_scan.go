@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -608,7 +610,20 @@ func (p *PhysicalIndexScan) GetPlanCostVer1(taskType property.TaskType,
 // log2(row-size) is from experiments.
 func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType,
 	option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalIndexScan(p, taskType, option, args...)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	rows := cost.GetCardinality(p, option.CostFlag)
+	rowSize := cost.GetAvgRowSize(p.StatsInfo(), p.Schema().Columns) // consider all index columns
+	scanFactor := cost.GetTaskScanFactorVer2(kv.TiKV, taskType, isTemporaryTable(p), isDescScan(p))
+
+	p.PlanCostVer2 = cost.ScanCostVer2(option, rows, rowSize, scanFactor)
+	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexScanCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexScanCostFactor)
+	return p.PlanCostVer2, nil
 }
 
 // GetPhysicalIndexScan4LogicalIndexScan returns PhysicalIndexScan for the logical IndexScan.

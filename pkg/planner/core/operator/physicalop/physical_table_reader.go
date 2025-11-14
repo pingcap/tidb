@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
@@ -290,9 +292,43 @@ func (p *PhysicalTableReader) GetPlanCostVer1(_ property.TaskType,
 }
 
 // GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// plan-cost = (child-cost + net-cost) / concurrency
+// net-cost = rows * row-size * net-factor
 func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType,
 	option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalTableReader(p, taskType, option)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	rows := cost.GetCardinality(p.TablePlan, option.CostFlag)
+	rowSize := max(cost.MinRowSize, cost.GetAvgRowSize(p.StatsInfo(), p.Schema().Columns))
+	netFactor := cost.GetTaskNetFactorVer2(isTemporaryTable(p), isMppNet(p), isTiFlashNet(p))
+	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
+	childType := property.CopSingleReadTaskType
+	if p.StoreType == kv.TiFlash { // mpp protocol
+		childType = property.MppTaskType
+	}
+
+	netCost := cost.NetCostVer2(option, rows, rowSize, netFactor)
+
+	childCost, err := p.TablePlan.GetPlanCostVer2(childType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCost, netCost), concurrency)
+	p.PlanCostInit = true
+
+	// consider tidb_enforce_mpp
+	if p.StoreType == kv.TiFlash && p.SCtx().GetSessionVars().IsMPPEnforced() &&
+		!cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) { // show the real cost in explain-statements
+		p.PlanCostVer2 = costusage.DivCostVer2(p.PlanCostVer2, 1000000000)
+	}
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableReaderCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTableReaderCostFactor)
+	return p.PlanCostVer2, nil
 }
 
 func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
