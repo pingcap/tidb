@@ -187,8 +187,13 @@ type bufferedWriter struct {
 }
 
 func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
+	n, err := u.write0(ctx, p)
+	u.accessRec.RecWrite(n)
+	return n, errors.Trace(err)
+}
+
+func (u *bufferedWriter) write0(ctx context.Context, p []byte) (int, error) {
 	bytesWritten := 0
-	defer u.accessRec.RecWrite(bytesWritten)
 	for u.buf.Len()+len(p) > u.buf.Cap() {
 		// We won't fit p in this chunk
 
