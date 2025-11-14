@@ -218,10 +218,26 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 			e.logger.Info("update subtask row count failed", zap.Error(err))
 		}
 	}
+
+	lastUpdate := func() {
+		// Try the best effort to update the summary before exiting.
+		// Total retry time is 0.2s + 0.4s + 0.8s + 1.6s + 3.2s + 5s * 5 = 31.3s
+		backoffer := backoff.NewExponential(time.Millisecond*200, 10, time.Second*5)
+		if err := handle.RunWithRetry(runStepCtx, scheduler.RetrySQLTimes, backoffer, e.logger,
+			func(context.Context) (bool, error) {
+				summary := stepExec.RealtimeSummary()
+				err := taskMgr.UpdateSubtaskSummary(runStepCtx, curSubtaskID, summary)
+				return true, err
+			},
+		); err != nil {
+			e.logger.Info("update subtask row count failed", zap.Error(err))
+		}
+	}
+
 	for {
 		select {
 		case <-checkCtx.Done():
-			update()
+			lastUpdate()
 			return
 		case <-ticker.C:
 		}
