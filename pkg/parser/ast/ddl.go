@@ -746,6 +746,7 @@ type IndexOption struct {
 	SplitOpt                   *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
 	SecondaryEngineAttr        string
 	AddColumnarReplicaOnDemand int
+	TiCIParameter              string `json:"tici_parameter,omitempty"`
 }
 
 // IsEmpty is true if only default options are given
@@ -759,7 +760,8 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
 		n.SplitOpt != nil ||
-		len(n.SecondaryEngineAttr) > 0 {
+		len(n.SecondaryEngineAttr) > 0 ||
+		len(n.TiCIParameter) > 0 {
 		return false
 	}
 	return true
@@ -814,6 +816,15 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord("COMMENT ")
 		ctx.WriteString(n.Comment)
+		hasPrevOption = true
+	}
+
+	if n.TiCIParameter != "" {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("PARAMETER ")
+		ctx.WriteString(n.TiCIParameter)
 		hasPrevOption = true
 	}
 
@@ -910,13 +921,16 @@ const (
 	ConstraintUniqIndex
 	ConstraintForeignKey
 	// ConstraintFulltext is only used in AST.
-	// It will be rewritten into ConstraintIndex after preprocessor phase.
+	// It will be rewritten into ConstraintColumnar after preprocessor phase.
 	ConstraintFulltext
 	ConstraintCheck
 	// ConstraintVector is only used in AST.
 	// It will be rewritten into ConstraintColumnar after preprocessor phase.
 	ConstraintVector
 	ConstraintColumnar
+	// ConstraintHybrid is only used in AST.
+	// It will be rewritten into ConstraintColumnar after preprocessor phase.
+	ConstraintHybrid
 )
 
 // Constraint is constraint for table definition.
@@ -971,6 +985,8 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("UNIQUE INDEX")
 	case ConstraintFulltext:
 		ctx.WriteKeyWord("FULLTEXT")
+	case ConstraintHybrid:
+		ctx.WriteKeyWord("HYBRID INDEX")
 	case ConstraintCheck:
 		if n.Name != "" {
 			ctx.WriteKeyWord("CONSTRAINT ")
@@ -1886,12 +1902,15 @@ const (
 	IndexKeyTypeUnique
 	IndexKeyTypeSpatial
 	// IndexKeyTypeFulltext is only used in AST.
-	// It will be rewritten into IndexKeyTypeFulltext after preprocessor phase.
+	// It will be rewritten into IndexKeyTypeColumnar after preprocessor phase.
 	IndexKeyTypeFulltext
 	// IndexKeyTypeVector is only used in AST.
 	// It will be rewritten into IndexKeyTypeColumnar after preprocessor phase.
 	IndexKeyTypeVector
 	IndexKeyTypeColumnar
+	// IndexKeyTypeHybrid is only used in AST.
+	// It will be rewritten into IndexKeyTypeColumnar after preprocessor phase.
+	IndexKeyTypeHybrid
 )
 
 // CreateIndexStmt is a statement to create an index.
@@ -1925,6 +1944,8 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("VECTOR ")
 	case IndexKeyTypeColumnar:
 		ctx.WriteKeyWord("COLUMNAR ")
+	case IndexKeyTypeHybrid:
+		ctx.WriteKeyWord("HYBRID ")
 	}
 	ctx.WriteKeyWord("INDEX ")
 	if n.IfNotExists {

@@ -157,6 +157,7 @@ import (
 	hourMicrosecond   "HOUR_MICROSECOND"
 	hourMinute        "HOUR_MINUTE"
 	hourSecond        "HOUR_SECOND"
+	hybrid            "HYBRID"
 	ifKwd             "IF"
 	ignore            "IGNORE"
 	ilike             "ILIKE"
@@ -533,6 +534,7 @@ import (
 	optional                   "OPTIONAL"
 	packKeys                   "PACK_KEYS"
 	pageSym                    "PAGE"
+	parameter                  "PARAMETER"
 	parser                     "PARSER"
 	partial                    "PARTIAL"
 	partitioning               "PARTITIONING"
@@ -3933,6 +3935,21 @@ ConstraintElem:
 		}
 		$$ = c
 	}
+|	"HYBRID" KeyOrIndexOpt IndexName '(' IndexPartSpecificationList ')' IndexOptionList
+	{
+		c := &ast.Constraint{
+			Tp:           ast.ConstraintHybrid,
+			Keys:         $5.([]*ast.IndexPartSpecification),
+			Name:         $3.(*ast.NullString).String,
+			IsEmptyIndex: $3.(*ast.NullString).Empty,
+		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
+		}
+		$$ = c
+	}
 |	KeyOrIndex IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
@@ -4422,6 +4439,10 @@ IndexKeyTypeOpt:
 |	"FULLTEXT"
 	{
 		$$ = ast.IndexKeyTypeFulltext
+	}
+|	"HYBRID"
+	{
+		$$ = ast.IndexKeyTypeHybrid
 	}
 |	"VECTOR"
 	{
@@ -6777,6 +6798,8 @@ IndexOptionList:
 				opt1.SplitOpt = opt2.SplitOpt
 			} else if len(opt2.SecondaryEngineAttr) > 0 {
 				opt1.SecondaryEngineAttr = opt2.SecondaryEngineAttr
+			} else if len(opt2.TiCIParameter) > 0 {
+				opt1.TiCIParameter = opt2.TiCIParameter
 			}
 			$$ = opt1
 		}
@@ -6855,6 +6878,10 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{SecondaryEngineAttr: $3}
 	}
+|	"PARAMETER" stringLit
+	{
+		$$ = &ast.IndexOption{TiCIParameter: $2}
+	}
 
 /*
   See: https://github.com/mysql/mysql-server/blob/8.0/sql/sql_yacc.yy#L7179
@@ -6929,6 +6956,10 @@ IndexTypeName:
 |	"INVERTED"
 	{
 		$$ = ast.IndexTypeInverted
+	}
+|	"HYBRID"
+	{
+		$$ = ast.IndexTypeHybrid
 	}
 
 IndexInvisible:
@@ -7033,6 +7064,7 @@ UnReservedKeyword:
 |	"OFFSET"
 |	"PACK_KEYS"
 |	"PARSER"
+|	"PARAMETER"
 |	"PASSWORD" %prec lowerThanEq
 |	"PREPARE"
 |	"PRE_SPLIT_REGIONS"
@@ -12272,11 +12304,11 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
 	}
-| 	"IMPORT" "GROUPS"
+|	"IMPORT" "GROUPS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups}
 	}
-| 	"IMPORT" "GROUP" stringLit 
+|	"IMPORT" "GROUP" stringLit
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups, ShowGroupKey: $3}
 	}
