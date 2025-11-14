@@ -346,6 +346,10 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GlobalMemArbitratorRootPool)
 	prometheus.MustRegister(GlobalMemArbitratorEventCounter)
 	prometheus.MustRegister(GlobalMemArbitratorTaskExecCounter)
+
+	prometheus.MustRegister(IndexLookUpExecutorDuration)
+	prometheus.MustRegister(IndexLookUpPushDownRowsCounter)
+	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
 }
 
 // Register registers custom collectors.

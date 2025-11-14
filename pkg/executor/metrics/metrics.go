@@ -64,16 +64,17 @@ var (
 	// and it takes effect (which is determined according to whether lock-with-conflict has occurred during execution).
 	FairLockingStmtEffectiveCount prometheus.Counter
 
-	ExecutorCounterMergeJoinExec            prometheus.Counter
-	ExecutorCountHashJoinExec               prometheus.Counter
-	ExecutorCounterHashAggExec              prometheus.Counter
-	ExecutorStreamAggExec                   prometheus.Counter
-	ExecutorCounterSortExec                 prometheus.Counter
-	ExecutorCounterTopNExec                 prometheus.Counter
-	ExecutorCounterNestedLoopApplyExec      prometheus.Counter
-	ExecutorCounterIndexLookUpJoin          prometheus.Counter
-	ExecutorCounterIndexLookUpExecutor      prometheus.Counter
-	ExecutorCounterIndexMergeReaderExecutor prometheus.Counter
+	ExecutorCounterMergeJoinExec                   prometheus.Counter
+	ExecutorCountHashJoinExec                      prometheus.Counter
+	ExecutorCounterHashAggExec                     prometheus.Counter
+	ExecutorStreamAggExec                          prometheus.Counter
+	ExecutorCounterSortExec                        prometheus.Counter
+	ExecutorCounterTopNExec                        prometheus.Counter
+	ExecutorCounterNestedLoopApplyExec             prometheus.Counter
+	ExecutorCounterIndexLookUpJoin                 prometheus.Counter
+	ExecutorCounterIndexLookUpExecutor             prometheus.Counter
+	ExecutorCounterIndexLookUpExecutorWithPushDown prometheus.Counter
+	ExecutorCounterIndexMergeReaderExecutor        prometheus.Counter
 
 	SessionExecuteRunDurationInternal prometheus.Observer
 	SessionExecuteRunDurationGeneral  prometheus.Observer
@@ -138,6 +139,11 @@ var (
 	ExecutorNetworkTransmissionSentTiFlashCrossZone     prometheus.Counter
 	ExecutorNetworkTransmissionReceivedTiFlashTotal     prometheus.Counter
 	ExecutorNetworkTransmissionReceivedTiFlashCrossZone prometheus.Counter
+
+	IndexLookUpPushDownRowsCounterHit    prometheus.Counter
+	IndexLookUpPushDownRowsCounterMiss   prometheus.Counter
+	IndexLookUpExecutorRowNumberPushDown prometheus.Observer
+	IndexLookUpExecutorDurationPushDown  prometheus.Observer
 )
 
 func init() {
@@ -174,6 +180,7 @@ func InitMetricsVars() {
 	ExecutorCounterNestedLoopApplyExec = metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec")
 	ExecutorCounterIndexLookUpJoin = metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin")
 	ExecutorCounterIndexLookUpExecutor = metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor")
+	ExecutorCounterIndexLookUpExecutorWithPushDown = metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor(push-down)")
 	ExecutorCounterIndexMergeReaderExecutor = metrics.ExecutorCounter.WithLabelValues("IndexMergeReaderExecutor")
 
 	SessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
@@ -234,6 +241,11 @@ func InitMetricsVars() {
 	ExecutorNetworkTransmissionSentTiFlashCrossZone = metrics.NetworkTransmissionStats.WithLabelValues("sent_tiflash_cross_zone")
 	ExecutorNetworkTransmissionReceivedTiFlashTotal = metrics.NetworkTransmissionStats.WithLabelValues("received_tiflash_total")
 	ExecutorNetworkTransmissionReceivedTiFlashCrossZone = metrics.NetworkTransmissionStats.WithLabelValues("received_tiflash_cross_zone")
+
+	IndexLookUpPushDownRowsCounterHit = metrics.IndexLookUpPushDownRowsCounter.WithLabelValues("hit")
+	IndexLookUpPushDownRowsCounterMiss = metrics.IndexLookUpPushDownRowsCounter.WithLabelValues("miss")
+	IndexLookUpExecutorRowNumberPushDown = metrics.IndexLookUpExecutorRowNumber.WithLabelValues("lookup_push_down")
+	IndexLookUpExecutorDurationPushDown = metrics.IndexLookUpExecutorDuration.WithLabelValues("lookup_push_down")
 }
 
 // InitPhaseDurationObserverMap init observer map
