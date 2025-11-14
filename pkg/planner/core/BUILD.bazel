@@ -238,6 +238,7 @@ go_test(
         "partition_pruning_test.go",
         "physical_plan_test.go",
         "physical_plan_trace_test.go",
+        "physical_utils_test.go",
         "pkdb_procedure_sp_test.go",
         "pkdb_procedure_test.go",
         "plan_cache_instance_test.go",
