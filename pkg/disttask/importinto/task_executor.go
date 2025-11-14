@@ -172,13 +172,11 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 // Accepted implements Collector.Accepted interface.
 func (s *importStepExecutor) Accepted(bytes int64) {
 	s.summary.Bytes.Add(bytes)
-	s.GetMeterRecorder().IncReadBytes(uint64(bytes))
 }
 
 // Processed implements Collector.Processed interface.
 func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
 	s.summary.RowCnt.Add(rowCnt)
-	s.GetMeterRecorder().IncWriteBytes(uint64(bytes))
 }
 
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
@@ -210,7 +208,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		defer func() {
 			objStore.Close()
 			s.summary.MergeObjStoreRequests(&accessRec.Requests)
-			s.GetMeterRecorder().MergeObjStoreRequests(&accessRec.Requests)
+			s.GetMeterRecorder().MergeObjStoreAccess(accessRec)
 		}()
 	}
 	// read import step meta from external storage when using global sort.
@@ -410,7 +408,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	defer func() {
 		objStore.Close()
 		m.summary.MergeObjStoreRequests(&accessRec.Requests)
-		m.GetMeterRecorder().MergeObjStoreRequests(&accessRec.Requests)
+		m.GetMeterRecorder().MergeObjStoreAccess(accessRec)
 	}()
 	// read merge sort step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
@@ -556,7 +554,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	defer func() {
 		objStore.Close()
 		e.summary.MergeObjStoreRequests(&accessRec.Requests)
-		e.GetMeterRecorder().MergeObjStoreRequests(&accessRec.Requests)
+		e.GetMeterRecorder().MergeObjStoreAccess(accessRec)
 	}()
 	// read write and ingest step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {

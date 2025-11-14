@@ -218,7 +218,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		defer func() {
 			objStore.Close()
 			r.summary.MergeObjStoreRequests(&accessRec.Requests)
-			r.GetMeterRecorder().MergeObjStoreRequests(&accessRec.Requests)
+			r.GetMeterRecorder().MergeObjStoreAccess(accessRec)
 		}()
 	}
 	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)
@@ -483,12 +483,11 @@ func newDistTaskRowCntCollector(
 
 func (d *distTaskRowCntCollector) Accepted(bytes int64) {
 	d.summary.ReadBytes.Add(bytes)
-	d.meterRec.IncReadBytes(uint64(bytes))
+	d.meterRec.IncClusterReadBytes(uint64(bytes))
 }
 
 func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
 	d.summary.Bytes.Add(bytes)
 	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
-	d.meterRec.IncWriteBytes(uint64(bytes))
 }

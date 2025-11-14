@@ -59,6 +59,13 @@ type AccessStats struct {
 	Traffic  Traffic
 }
 
+// Merge merges another AccessStats into this one.
+func (s *AccessStats) Merge(other *AccessStats) {
+	s.Requests.Merge(&other.Requests)
+	s.Traffic.Read.Add(other.Traffic.Read.Load())
+	s.Traffic.Write.Add(other.Traffic.Write.Load())
+}
+
 // RecRequest records a request made to the object storage.
 func (s *AccessStats) RecRequest(httpReq *http.Request) {
 	if s == nil {

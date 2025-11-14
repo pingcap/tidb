@@ -88,7 +88,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	defer func() {
 		objStore.Close()
 		m.summary.MergeObjStoreRequests(&accessRec.Requests)
-		m.GetMeterRecorder().MergeObjStoreRequests(&accessRec.Requests)
+		m.GetMeterRecorder().MergeObjStoreAccess(accessRec)
 	}()
 
 	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)

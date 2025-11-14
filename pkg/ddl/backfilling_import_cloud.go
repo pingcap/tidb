@@ -102,7 +102,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	defer func() {
 		objStore.Close()
 		e.summary.MergeObjStoreRequests(&accessRec.Requests)
-		e.GetMeterRecorder().MergeObjStoreRequests(&accessRec.Requests)
+		e.GetMeterRecorder().MergeObjStoreAccess(accessRec)
 	}()
 
 	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)
