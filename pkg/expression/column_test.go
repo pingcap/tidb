@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -134,10 +135,12 @@ func TestColInfo2Col(t *testing.T) {
 func TestIndexInfo2Cols(t *testing.T) {
 	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col2 := &Column{UniqueID: 2, ID: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	colInfo0 := &model.ColumnInfo{ID: 0, Name: ast.NewCIStr("0")}
 	colInfo1 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("1")}
-	indexCol0, indexCol1 := &model.IndexColumn{Name: ast.NewCIStr("0")}, &model.IndexColumn{Name: ast.NewCIStr("1")}
-	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
+	colInfo2 := &model.ColumnInfo{ID: 2, Name: ast.NewCIStr("2")}
+	indexCol0, indexCol1, indexCol2 := &model.IndexColumn{Name: ast.NewCIStr("0")}, &model.IndexColumn{Name: ast.NewCIStr("1")}, &model.IndexColumn{Name: ast.NewCIStr("2")}
+	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1, indexCol2}}
 
 	cols := []*Column{col0}
 	colInfos := []*model.ColumnInfo{colInfo0}
@@ -159,6 +162,30 @@ func TestIndexInfo2Cols(t *testing.T) {
 	require.Len(t, lengths, 2)
 	require.True(t, resCols[0].EqualColumn(col0))
 	require.True(t, resCols[1].EqualColumn(col1))
+
+	// If col1 has been pruned, the prefix columns should just be [col0]
+	cols = []*Column{col0, col2}
+	colInfos = []*model.ColumnInfo{colInfo0, colInfo2}
+	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
+	require.Len(t, resCols, 1)
+	require.Len(t, lengths, 1)
+	require.True(t, resCols[0].EqualColumn(col0))
+	prefixCols, prefixLens, _, _ := IndexInfo2Cols(colInfos, cols, indexInfo)
+	require.True(t, slices.Equal(prefixCols, resCols))
+	require.True(t, slices.Equal(prefixLens, lengths))
+
+	// If col1 has been pruned, the full columns should be [col0, nil, col2]
+	resCols, lengths = IndexInfo2FullCols(colInfos, cols, indexInfo)
+	require.Len(t, resCols, 3)
+	require.Len(t, lengths, 3)
+	require.True(t, resCols[0].EqualColumn(col0))
+	require.Nil(t, resCols[1])
+	require.True(t, resCols[2].EqualColumn(col2))
+	prefixCols2, prefixLens2, fullCols, fullLens := IndexInfo2Cols(colInfos, cols, indexInfo)
+	require.True(t, slices.Equal(prefixCols2, prefixCols))
+	require.True(t, slices.Equal(prefixLens2, prefixLens))
+	require.True(t, slices.Equal(fullCols, resCols))
+	require.True(t, slices.Equal(fullLens, lengths))
 }
 
 func TestColHybird(t *testing.T) {
