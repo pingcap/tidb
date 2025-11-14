@@ -540,3 +540,88 @@ func BenchmarkCheckSlowLogRulesPreAlloc(b *testing.B) {
 		execStmt.LogSlowQuery(ts, true, false)
 	}
 }
+
+func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	testCases := []struct {
+		name             string
+		tsoDelayMs       int
+		maxExecutionTime uint64 // in milliseconds
+		expectTimeout    bool
+		description      string
+	}{
+		{
+			name:             "TSO delay 300ms, timeout 1000ms - should not timeout",
+			tsoDelayMs:       300,
+			maxExecutionTime: 1000,
+			expectTimeout:    false,
+			description:      "TSO wait time (300ms) should be included, total < 1000ms",
+		},
+		{
+			name:             "TSO delay 800ms, timeout 1000ms - should not timeout",
+			tsoDelayMs:       800,
+			maxExecutionTime: 1000,
+			expectTimeout:    false,
+			description:      "TSO wait time (800ms) should be included, total < 1000ms",
+		},
+		{
+			name:             "TSO delay 1200ms, timeout 500ms - should timeout",
+			tsoDelayMs:       1200,
+			maxExecutionTime: 500,
+			expectTimeout:    true,
+			description:      "TSO wait time (1200ms) exceeds timeout (500ms)",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Enable failpoint to inject delay in TSO Wait()
+			failpointName := "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
+			require.NoError(t, failpoint.Enable(failpointName, `return(`+fmt.Sprintf("%d", tc.tsoDelayMs)+`)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable(failpointName))
+			}()
+			// Set max_execution_time
+			tk.MustExec("set @@max_execution_time = ?", tc.maxExecutionTime)
+
+			// Execute a SELECT statement that will trigger TSO wait
+			// Use range scan instead of point get to avoid optimization
+			startTime := time.Now()
+			if tc.expectTimeout {
+				err := tk.QueryToErr("select * from t where a >= 1")
+				if err != nil {
+					require.Contains(t, err.Error(), "maximum statement execution time exceeded")
+				} else {
+					pi := tk.Session().ShowProcess()
+					require.NotNil(t, pi)
+					processElapsed := time.Since(pi.Time)
+					require.GreaterOrEqual(t, processElapsed, time.Duration(tc.maxExecutionTime)*time.Millisecond,
+						"ProcessInfo elapsed time should exceed max_execution_time. Got %v", processElapsed)
+				}
+			} else {
+				tk.MustQuery("select * from t where a >= 1")
+			}
+			elapsed := time.Since(startTime)
+
+			// Verify that the elapsed time includes the TSO delay
+			// Allow some skew (50ms) for test execution overhead
+			expectedMinTime := time.Duration(tc.tsoDelayMs) * time.Millisecond
+			require.GreaterOrEqual(t, elapsed, expectedMinTime-time.Millisecond*50,
+				"Elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, elapsed)
+
+			// Check ProcessInfo to verify the start time was set before TSO wait
+			pi := tk.Session().ShowProcess()
+			require.NotNil(t, pi)
+			if pi.MaxExecutionTime > 0 {
+				processElapsed := time.Since(pi.Time)
+				require.GreaterOrEqual(t, processElapsed, expectedMinTime-time.Millisecond*50,
+					"ProcessInfo elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, processElapsed)
+			}
+		})
+	}
+}
