@@ -906,7 +906,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
 	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
-	if !comparable1 && !comparable2 {
+	if !comparable1 || !comparable2 {
 		// These aren't comparable - meaning that they have different combinations of columns in
 		// the access conditions or filters.
 		// One or more predicates could carry high risk - so we want to compare that risk and other
