@@ -374,6 +374,11 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		if err := writeCli.Write(in); err != nil {
 			return nil, errors.Trace(err)
 		}
+
+		if w.collector != nil {
+			w.collector.Processed(size, int64(len(pairs)))
+		}
+
 		totalCount += int64(len(pairs))
 		totalSize += size
 		pairs = pairs[:0]
