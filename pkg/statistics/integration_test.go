@@ -719,3 +719,25 @@ func TestSaveMetaToStorage(t *testing.T) {
 		require.Equal(t, version, lastStatsHistogramsVersion)
 	}
 }
+
+func TestAutoAnalyzeAfterAnalyzeVersionChange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	// Trigger the sync load by query.
+	// set lease > 0 to trigger on-demand stats load.
+	h.SetLease(time.Millisecond)
+	// Set analyze version to 1.
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, index idx(a));")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustExec("analyze table t")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.NotZero(t, statsTbl.LastAnalyzeVersion)
+	require.Equal(t, 1, statsTbl.StatsVer)
+}
