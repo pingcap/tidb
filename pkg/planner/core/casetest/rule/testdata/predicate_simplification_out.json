@@ -31,7 +31,25 @@
           "          └─TableReader(Probe) 0.01 root  data:Selection",
           "            └─Selection 0.01 cop[tikv]  eq(test.t5.c2, \"production\")",
           "              └─TableRangeScan 12.50 cop[tikv] table:t5 range: decided by [eq(test.t5.c1, test.t1.id) eq(test.t5.c2, production)], keep order:false, stats:pseudo"
-        ]
+        ],
+        "LastPlanFromCache": [
+          "0"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "SELECT column_1, column_2, column_3, column_4, column_5, column_6 FROM ISSUE64263 WHERE column_3 = 'M 5 9 2 9 2 5 4 6 8 4 9' AND (column_2 IN (1) OR column_4 = 121092106) ORDER BY column_6 DESC, column_1 DESC LIMIT 1000;",
+        "Plan": [
+          "TopN 0.02 root  test.issue64263.column_6:desc, test.issue64263.column_1:desc, offset:0, count:1000",
+          "└─IndexLookUp 0.02 root  ",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:ISSUE64263, index:idx_3_2(column_3, column_2) range:[\"\\x00M\\x00 \\x005\\x00 \\x009\\x00 \\x002\\x00 \\x009\\x00 \\x002\\x00 \\x005\\x00 \\x004\\x00 \\x006\\x00 \\x008\\x00 \\x004\\x00 \\x009\",\"\\x00M\\x00 \\x005\\x00 \\x009\\x00 \\x002\\x00 \\x009\\x00 \\x002\\x00 \\x005\\x00 \\x004\\x00 \\x006\\x00 \\x008\\x00 \\x004\\x00 \\x009\"], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.02 cop[tikv]  or(eq(test.issue64263.column_2, 1), eq(test.issue64263.column_4, 121092106))",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:ISSUE64263 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "1"
+        ],
+        "Warning": null
       }
     ]
   }
