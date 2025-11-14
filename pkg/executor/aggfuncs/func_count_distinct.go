@@ -48,33 +48,79 @@ const (
 	DefPartialResult4ApproxCountDistinctSize = int64(unsafe.Sizeof(partialResult4ApproxCountDistinct{}))
 )
 
+type baseCountDistinct struct {
+	baseAggFunc
+}
+
+func (*baseCountDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	panic("Not implemented")
+}
+
+func (*baseCountDistinct) ResetPartialResult(pr PartialResult) {
+	panic("Not implemented")
+}
+
+func (e *baseCountDistinct) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+	panic("Not implemented")
+}
+
+func (e *baseCountDistinct) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	panic("Not implemented")
+}
+
+func (e *baseCountDistinct) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	panic("Not implemented")
+}
+
+func (e *baseCountDistinct) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	panic("Not implemented")
+}
+
 type partialResult4CountDistinctInt struct {
 	valSet set.Int64SetWithMemoryUsage
 }
 
-type baseCountDistinct4Int struct {
-	baseCount
+type countPartialWithDistinct4Int struct {
+	baseCountDistinct
 }
 
-func (*baseCountDistinct4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*countPartialWithDistinct4Int) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
+	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
+	s, d := (*partialResult4CountDistinctInt)(src), (*partialResult4CountDistinctInt)(dst)
+
+	for val := range s.valSet.Int64Set {
+		if d.valSet.Exist(val) {
+			continue
+		}
+
+		memDelta += d.valSet.Insert(val)
+	}
+	return
+}
+
+type countOriginalWithDistinct4Int struct {
+	baseCountDistinct
+}
+
+func (*countOriginalWithDistinct4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	valSet, setSize := set.NewInt64SetWithMemoryUsage()
 	return PartialResult(&partialResult4CountDistinctInt{
 		valSet: valSet,
 	}), DefPartialResult4CountDistinctIntSize + setSize
 }
 
-func (*baseCountDistinct4Int) ResetPartialResult(pr PartialResult) {
+func (*countOriginalWithDistinct4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctInt)(pr)
 	p.valSet, _ = set.NewInt64SetWithMemoryUsage()
 }
 
-func (e *baseCountDistinct4Int) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctInt)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
 }
 
-func (e *baseCountDistinct4Int) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4CountDistinctInt)(pr)
 
 	for _, row := range rowsInGroup {
@@ -94,24 +140,19 @@ func (e *baseCountDistinct4Int) UpdatePartialResult(sctx AggFuncUpdateContext, r
 	return memDelta, nil
 }
 
-func (e *baseCountDistinct4Int) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	panic("Not implemented")
+type partialResult4CountDistinctReal struct {
+	valSet set.Float64SetWithMemoryUsage
 }
 
-func (e *baseCountDistinct4Int) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	panic("Not implemented")
+type countPartialWithDistinct4Real struct {
+	baseCountDistinct
 }
 
-type countDistinctPartial4Int struct {
-	baseCountDistinct4Int
-}
-
-func (*countDistinctPartial4Int) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
+func (*countPartialWithDistinct4Real) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
 	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
+	s, d := (*partialResult4CountDistinctReal)(src), (*partialResult4CountDistinctReal)(dst)
 
-	s, d := (*partialResult4CountDistinctInt)(src), (*partialResult4CountDistinctInt)(dst)
-
-	for val := range s.valSet.Int64Set {
+	for val := range s.valSet.Float64Set {
 		if d.valSet.Exist(val) {
 			continue
 		}
@@ -121,16 +162,8 @@ func (*countDistinctPartial4Int) MergePartialResult(_ AggFuncUpdateContext, src 
 	return
 }
 
-type countOriginalWithDistinct4Int struct {
-	baseCountDistinct4Int
-}
-
-type partialResult4CountDistinctReal struct {
-	valSet set.Float64SetWithMemoryUsage
-}
-
 type countOriginalWithDistinct4Real struct {
-	baseCount
+	baseCountDistinct
 }
 
 func (*countOriginalWithDistinct4Real) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -175,8 +208,26 @@ type partialResult4CountDistinctDecimal struct {
 	valSet set.StringSetWithMemoryUsage
 }
 
+type countPartialWithDistinct4Decimal struct {
+	baseCountDistinct
+}
+
+func (*countPartialWithDistinct4Decimal) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
+	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
+	s, d := (*partialResult4CountDistinctDecimal)(src), (*partialResult4CountDistinctDecimal)(dst)
+
+	for val := range s.valSet.StringSet {
+		if d.valSet.Exist(val) {
+			continue
+		}
+
+		memDelta += d.valSet.Insert(val)
+	}
+	return
+}
+
 type countOriginalWithDistinct4Decimal struct {
-	baseCount
+	baseCountDistinct
 }
 
 func (*countOriginalWithDistinct4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -227,8 +278,26 @@ type partialResult4CountDistinctDuration struct {
 	valSet set.Int64SetWithMemoryUsage
 }
 
+type countPartialWithDistinct4Duration struct {
+	baseCountDistinct
+}
+
+func (*countPartialWithDistinct4Duration) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
+	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
+	s, d := (*partialResult4CountDistinctDuration)(src), (*partialResult4CountDistinctDuration)(dst)
+
+	for val := range s.valSet.Int64Set {
+		if d.valSet.Exist(val) {
+			continue
+		}
+
+		memDelta += d.valSet.Insert(val)
+	}
+	return
+}
+
 type countOriginalWithDistinct4Duration struct {
-	baseCount
+	baseCountDistinct
 }
 
 func (*countOriginalWithDistinct4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -274,29 +343,47 @@ type partialResult4CountDistinctString struct {
 	valSet set.StringSetWithMemoryUsage
 }
 
-type baseCountDistinct4String struct {
-	baseCount
+type countPartialWithDistinct4String struct {
+	baseCountDistinct
 }
 
-func (*baseCountDistinct4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (e *countPartialWithDistinct4String) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
+	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
+	s, d := (*partialResult4CountDistinctString)(src), (*partialResult4CountDistinctString)(dst)
+
+	for val := range s.valSet.StringSet {
+		if d.valSet.Exist(val) {
+			continue
+		}
+
+		memDelta += d.valSet.Insert(val)
+	}
+	return
+}
+
+type countOriginalWithDistinct4String struct {
+	baseCountDistinct
+}
+
+func (*countOriginalWithDistinct4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	valSet, setSize := set.NewStringSetWithMemoryUsage()
 	return PartialResult(&partialResult4CountDistinctString{
 		valSet: valSet,
 	}), DefPartialResult4CountDistinctStringSize + setSize
 }
 
-func (*baseCountDistinct4String) ResetPartialResult(pr PartialResult) {
+func (*countOriginalWithDistinct4String) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctString)(pr)
 	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }
 
-func (e *baseCountDistinct4String) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *countOriginalWithDistinct4String) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctString)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
 }
 
-func (e *baseCountDistinct4String) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4CountDistinctString)(pr)
 	collator := collate.GetCollator(e.args[0].GetType(sctx).GetCollate())
 
@@ -321,13 +408,13 @@ func (e *baseCountDistinct4String) UpdatePartialResult(sctx AggFuncUpdateContext
 	return memDelta, nil
 }
 
-type countDistinctPartial4String struct {
-	baseCountDistinct4String
+type countPartialWithDistinct struct {
+	baseCountDistinct
 }
 
-func (e *countDistinctPartial4String) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
+func (e *countPartialWithDistinct) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
 	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
-	s, d := (*partialResult4CountDistinctString)(src), (*partialResult4CountDistinctString)(dst)
+	s, d := (*partialResult4CountWithDistinct)(src), (*partialResult4CountWithDistinct)(dst)
 
 	for val := range s.valSet.StringSet {
 		if d.valSet.Exist(val) {
@@ -339,12 +426,8 @@ func (e *countDistinctPartial4String) MergePartialResult(_ AggFuncUpdateContext,
 	return
 }
 
-type countOriginalWithDistinct4String struct {
-	baseCountDistinct4String
-}
-
 type countOriginalWithDistinct struct {
-	baseCount
+	baseCountDistinct
 }
 
 type partialResult4CountWithDistinct struct {

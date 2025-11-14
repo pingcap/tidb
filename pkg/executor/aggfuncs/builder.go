@@ -213,7 +213,8 @@ func buildCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFuncDesc
 	// If HasDistinct and mode is CompleteMode or Partial1Mode, we should
 	// use countOriginalWithDistinct.
 	if aggFuncDesc.HasDistinct {
-		if aggFuncDesc.Mode == aggregation.CompleteMode || aggFuncDesc.Mode == aggregation.Partial1Mode {
+		switch aggFuncDesc.Mode {
+		case aggregation.CompleteMode, aggregation.Partial1Mode:
 			if len(base.args) == 1 {
 				// optimize with single column
 				// TODO: because Time and JSON does not have `hashcode()` or similar method
@@ -222,31 +223,36 @@ func buildCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFuncDesc
 				// https://github.com/pingcap/tidb/issues/15857
 				switch aggFuncDesc.Args[0].GetType(ctx).EvalType() {
 				case types.ETInt:
-					return &countOriginalWithDistinct4Int{baseCountDistinct4Int{baseCount{base}}}
+					return &countOriginalWithDistinct4Int{baseCountDistinct{base}}
 				case types.ETReal:
-					return &countOriginalWithDistinct4Real{baseCount{base}}
+					return &countOriginalWithDistinct4Real{baseCountDistinct{base}}
 				case types.ETDecimal:
-					return &countOriginalWithDistinct4Decimal{baseCount{base}}
+					return &countOriginalWithDistinct4Decimal{baseCountDistinct{base}}
 				case types.ETDuration:
-					return &countOriginalWithDistinct4Duration{baseCount{base}}
+					return &countOriginalWithDistinct4Duration{baseCountDistinct{base}}
 				case types.ETString:
-					return &countOriginalWithDistinct4String{baseCountDistinct4String{baseCount{base}}}
+					return &countOriginalWithDistinct4String{baseCountDistinct{base}}
 				}
 			}
-			return &countOriginalWithDistinct{baseCount{base}}
-		} else if aggFuncDesc.Mode == aggregation.FinalMode || aggFuncDesc.Mode == aggregation.Partial2Mode {
+			return &countOriginalWithDistinct{baseCountDistinct{base}}
+		case aggregation.FinalMode, aggregation.Partial2Mode:
 			if len(base.args) == 1 {
 				switch aggFuncDesc.Args[0].GetType(ctx).EvalType() {
 				case types.ETInt:
-					return &countDistinctPartial4Int{baseCountDistinct4Int{baseCount{base}}}
+					return &countPartialWithDistinct4Int{baseCountDistinct{base}}
+				case types.ETReal:
+					return &countPartialWithDistinct4Real{baseCountDistinct{base}}
+				case types.ETDecimal:
+					return &countPartialWithDistinct4Decimal{baseCountDistinct{base}}
+				case types.ETDuration:
+					return &countPartialWithDistinct4Duration{baseCountDistinct{base}}
 				case types.ETString:
-					return &countDistinctPartial4String{baseCountDistinct4String{baseCount{base}}}
-				default:
-					panic("Not implemented")
+					return &countPartialWithDistinct4String{baseCountDistinct{base}}
 				}
 			}
+			return &countPartialWithDistinct{baseCountDistinct{base}}
+		default:
 			panic("Not implemented")
-			// return &countOriginalWithDistinct{baseCount{base}}
 		}
 	}
 
