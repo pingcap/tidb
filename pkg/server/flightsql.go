@@ -39,9 +39,9 @@ func NewFlightSQLServer(server *Server) (*FlightSQLServer, error) {
 }
 
 func (s *FlightSQLServer) Serve(l net.Listener) error {
+	// Create server with auth middleware that uses our ServerAuthHandler
 	server := flight.NewServerWithMiddleware([]flight.ServerMiddleware{
-		// TODO: Auth
-		// flight.CreateServerBasicAuthMiddleware(s),
+		createFlightSQLAuthMiddleware(s),
 	})
 	server.RegisterFlightService(flightsql.NewFlightServer(s))
 	server.InitListener(l)
@@ -56,10 +56,10 @@ func (s *FlightSQLServer) Shutdown() {
 }
 
 func (s *FlightSQLServer) GetFlightInfoStatement(ctx context.Context, cmd flightsql.StatementQuery, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
-	dbs := metadata.ValueFromIncomingContext(ctx, "database")
-	if len(dbs) != 1 {
-		return nil, errors.New("invalid database selection")
-	}
+	// Database selection is optional - clients can use fully-qualified table names
+	// Extract database from metadata if provided
+	// dbs := metadata.ValueFromIncomingContext(ctx, "database")
+	// Database name is not used in this method, only stored in the ticket
 
 	query, txnid := cmd.GetQuery(), cmd.GetTransactionId()
 	tkt, err := encodeTransactionQuery(query, txnid)
@@ -97,24 +97,28 @@ func (s *FlightSQLServer) DoGetStatement(ctx context.Context, cmd flightsql.Stat
 	}
 	logutil.BgLogger().Info("DoGetStatement", zap.String("query", query))
 
+	// Extract database from metadata, default to empty string if not provided
+	var dbName string
 	dbs := metadata.ValueFromIncomingContext(ctx, "database")
-	if len(dbs) != 1 {
-		return nil, nil, errors.New("invalid database selection")
+	if len(dbs) > 0 {
+		dbName = dbs[0]
 	}
-	dbName := dbs[0]
 
 	ct, err := s.server.driver.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), dbName, nil, nil)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	useStmt, err := ct.Parse(ctx, "use `"+dbName+"`")
-	if err != nil {
-		return nil, nil, err
-	}
-	_, err = ct.ExecuteStmt(ctx, useStmt[0])
-	if err != nil {
-		return nil, nil, err
+	// Only execute USE statement if a database was specified
+	if dbName != "" {
+		useStmt, err := ct.Parse(ctx, "use `"+dbName+"`")
+		if err != nil {
+			return nil, nil, err
+		}
+		_, err = ct.ExecuteStmt(ctx, useStmt[0])
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	stmts, err := ct.Parse(ctx, query)
