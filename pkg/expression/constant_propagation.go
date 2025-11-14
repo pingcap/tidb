@@ -171,12 +171,6 @@ func replaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expression) (E
 		return cond, false
 	}
 	replaced := false
-	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
-		return cond, false
-	}
-	if _, ok := inequalFunctions[sf.FuncName.L]; ok {
-		return cond, false
-	}
 	args := sf.GetArgs()
 	evalCtx := ctx.GetEvalCtx()
 	switch sf.FuncName.L {
@@ -424,7 +418,6 @@ func (s *propConstSolver) propagateColumnEQ() {
 	}
 
 	condsLen := len(s.conditions)
-	s.replaceConditionsWithConstants(visited)
 	for i, coli := range s.columns {
 		for j := i + 1; j < len(s.columns); j++ {
 			// unionSet doesn't have iterate(), we use a two layer loop to iterate col_i = col_j relation
@@ -435,6 +428,18 @@ func (s *propConstSolver) propagateColumnEQ() {
 			for k := range condsLen {
 				if visited[k] {
 					// cond_k has been used to retrieve equality relation
+					continue
+				}
+				var constTrue bool
+				s.conditions[k], constTrue = replaceCond(s.ctx, coli, colj, s.conditions[k])
+				if constTrue {
+					// replaces eq condition in the condition list by constant values.
+					// For example, for conditions like
+					//
+					//	a = b and a = b => a = b, true
+					//	a = b and ( a = b or c =d ) => a = b and ( true or c = d )
+					//
+					// True can be removed in the shortCircuitLogicalConstants.
 					continue
 				}
 				cond := s.conditions[k]
@@ -462,33 +467,6 @@ func (s *propConstSolver) propagateColumnEQ() {
 						s.conditions = append(s.conditions, newExpr)
 					}
 				}
-			}
-		}
-	}
-}
-
-// replaceConditionsWithConstants replaces eq condition in the condition list by constant values.
-// For example, for conditions like
-//
-//	a = b and a = b => a = b, true
-//	a = b and ( a = b or c =d ) => a = b and ( true or c = d )
-//
-// True can be removed in the shortCircuitLogicalConstants.
-func (s *propConstSolver) replaceConditionsWithConstants(visited []bool) {
-	condsLen := len(s.conditions)
-	for i, coli := range s.columns {
-		for j := i + 1; j < len(s.columns); j++ {
-			// unionSet doesn't have iterate(), we use a two layer loop to iterate col_i = col_j relation
-			if s.unionSet.FindRoot(i) != s.unionSet.FindRoot(j) {
-				continue
-			}
-			colj := s.columns[j]
-			for k := range condsLen {
-				if visited[k] {
-					// cond_k has been used to retrieve equality relation
-					continue
-				}
-				s.conditions[k], _ = replaceCond(s.ctx, coli, colj, s.conditions[k])
 			}
 		}
 	}
