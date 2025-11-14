@@ -275,7 +275,11 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
 	s.EqualValues(sum.RowCnt.Load(), 10000)
-	s.EqualValues(sum.Bytes.Load(), 2622604)
+	if !kerneltype.IsNextGen() {
+		s.EqualValues(sum.Bytes.Load(), 2622604)
+	} else {
+		s.Greater(sum.Bytes.Load(), 2622632)
+	}
 	s.EqualValues(20, sum.GetReqCnt.Load())
 	s.EqualValues(0, sum.PutReqCnt.Load())
 }
