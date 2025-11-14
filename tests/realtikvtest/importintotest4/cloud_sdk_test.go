@@ -238,9 +238,9 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 		// CSV-only option applied to SQL file
 		{objectName: "data.sql", options: "fields_enclosed_by='\"'", wantSubstr: "Unsupported option fields_enclosed_by for non-CSV"},
 		// SQL data present but no suffix
-		{objectName: "sql_noext", options: "", wantSubstr: "encode kv erro"},
+		{objectName: "sql_noext", options: "", wantSubstr: "encode kv error"},
 		// CSV data but filename ends with .sql
-		{objectName: "csv_as_sql.sql", options: "", wantSubstr: "encode kv erro"},
+		{objectName: "csv_as_sql.sql", options: "", wantSubstr: "encode kv error"},
 	}
 
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", "return(true)")
