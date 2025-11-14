@@ -878,3 +878,14 @@ func (p *PdController) SetFollowerHandle(val bool) error {
 	log.Info("set follower handle", zap.Bool("enable", val))
 	return nil
 }
+
+// SetRouterServivehandle set the router service handle option of pd client.
+func (p *PdController) SetRouterServivehandle(val bool) error {
+	// todo: use pd client api when available
+	err := p.pdClient.UpdateOption(opt.EnableRouterServiceHandler, val)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("set router service handle", zap.Bool("enable", val))
+	return nil
+}

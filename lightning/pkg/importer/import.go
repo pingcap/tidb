@@ -1874,6 +1874,15 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return common.NormalizeOrWrapErr(common.ErrUpdatePD, err)
 		}
 
+		enablePDRouterServiceHandleRegion, err := common.GetTiDBEnablePDRouterServicehandleRegion(ctx, rc.db)
+		if err != nil {
+			return common.NormalizeOrWrapErr(common.ErrUpdatePD, err)
+		}
+		err = pdController.SetRouterServivehandle(enablePDRouterServiceHandleRegion)
+		if err != nil {
+			return common.NormalizeOrWrapErr(common.ErrUpdatePD, err)
+		}
+
 		// PdController will be closed when `taskMetaMgr` closes.
 		rc.taskMgr = rc.metaMgrBuilder.TaskMetaMgr(pdController)
 		taskExist, err = rc.taskMgr.CheckTaskExist(ctx)

@@ -646,18 +646,30 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time").Check(testkit.Rows("10"))
 	require.Error(t, tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 1"))
 
+	// test for tidb_enable_tso_follower_proxy
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_tso_follower_proxy = 1")
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_tso_follower_proxy = 0")
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("0"))
 	require.Error(t, tk.ExecToErr("set tidb_enable_tso_follower_proxy = 1"))
+
+	// test for pd_enable_follower_handle_region
 	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("1"))
 	tk.MustExec("set global pd_enable_follower_handle_region = 0")
 	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("0"))
 	tk.MustExec("set global pd_enable_follower_handle_region = 1")
 	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("1"))
 	require.Error(t, tk.ExecToErr("set pd_enable_follower_handle_region = 1"))
+
+	// test for tidb_enable_pd_router_service_handle_region
+	tk.MustQuery("select @@tidb_enable_pd_router_service_handle_region").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_pd_router_service_handle_region = 0")
+	tk.MustQuery("select @@tidb_enable_pd_router_service_handle_region").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_pd_router_service_handle_region = 1")
+	tk.MustQuery("select @@tidb_enable_pd_router_service_handle_region").Check(testkit.Rows("1"))
+	require.Error(t, tk.ExecToErr("set tidb_enable_pd_router_service_handle_region = 1"))
+
 	tk.MustQuery("select @@tidb_enable_batch_query_region").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_batch_query_region = 1")
 	tk.MustQuery("select @@tidb_enable_batch_query_region").Check(testkit.Rows("1"))

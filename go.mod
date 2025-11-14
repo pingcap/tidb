@@ -2,6 +2,8 @@ module github.com/pingcap/tidb
 
 go 1.23.12
 
+replace github.com/tikv/pd/client => github.com/bufferflies/pd/client v0.0.0-20251112122813-a248f17bcd98
+
 require (
 	cloud.google.com/go/kms v1.15.8
 	cloud.google.com/go/storage v1.39.1
@@ -89,7 +91,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20251104104744-291054671541
+	github.com/pingcap/kvproto v0.0.0-20251109100001-1907922fbd18
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/metering_sdk v0.0.0-20251110022152-dac449ac5389
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
@@ -348,7 +350,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250425173222-7b384671a197 // indirect
 	google.golang.org/protobuf v1.36.6
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apimachinery v0.29.11 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect

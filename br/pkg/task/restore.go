@@ -928,7 +928,11 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err != nil {
 			return err
 		}
-		return mgr.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
+		if err := mgr.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion)); err != nil {
+			return err
+		}
+		enableRouterServiceHandleRegion, err := se.GetGlobalSysVar(vardef.TiDBEnablePDRouterServiceHandleRegion)
+		return mgr.SetRouterServivehandle(variable.TiDBOptOn(enableRouterServiceHandleRegion))
 	}); err != nil {
 		return errors.Trace(err)
 	}

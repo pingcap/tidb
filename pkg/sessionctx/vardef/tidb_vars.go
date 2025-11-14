@@ -830,6 +830,9 @@ const (
 	// TODO: deprecated this variable to use a format like `tidb_enable_pd_follower_handle_region`.
 	PDEnableFollowerHandleRegion = "pd_enable_follower_handle_region"
 
+	// TiDBEnablePDRouterServiceHandleRegion indicates whether to enable the PD router service handle region API.
+	TiDBEnablePDRouterServiceHandleRegion = "tidb_enable_pd_router_service_handle_region"
+
 	// TiDBEnableBatchQueryRegion indicates whether to enable the batch query region feature.
 	TiDBEnableBatchQueryRegion = "tidb_enable_batch_query_region"
 
@@ -1551,6 +1554,7 @@ const (
 	DefTiDBTSOClientBatchMaxWaitTime                  = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy                     = false
 	DefPDEnableFollowerHandleRegion                   = true
+	DefTiDBEnablePDRouterServiceHandleRegion          = false
 	DefTiDBEnableBatchQueryRegion                     = false
 	DefTiDBEnableOrderedResultMode                    = false
 	DefTiDBEnablePseudoForOutdatedStats               = false
@@ -1782,28 +1786,29 @@ var (
 	DDLSlowOprThreshold = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	GlobalSlowLogRules  = atomic.NewPointer[slowlogrule.GlobalSlowLogRules](
 		&slowlogrule.GlobalSlowLogRules{RulesMap: make(map[int64]*slowlogrule.SlowLogRules)})
-	ForcePriority                        = int32(DefTiDBForcePriority)
-	MaxOfMaxAllowedPacket         uint64 = 1073741824
-	ExpensiveQueryTimeThreshold   uint64 = DefTiDBExpensiveQueryTimeThreshold
-	ExpensiveTxnTimeThreshold     uint64 = DefTiDBExpensiveTxnTimeThreshold
-	MemoryUsageAlarmRatio                = atomic.NewFloat64(DefMemoryUsageAlarmRatio)
-	MemoryUsageAlarmKeepRecordNum        = atomic.NewInt64(DefMemoryUsageAlarmKeepRecordNum)
-	EnableLocalTxn                       = atomic.NewBool(DefTiDBEnableLocalTxn)
-	MaxTSOBatchWaitInterval              = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
-	EnableTSOFollowerProxy               = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
-	EnablePDFollowerHandleRegion         = atomic.NewBool(DefPDEnableFollowerHandleRegion)
-	EnableBatchQueryRegion               = atomic.NewBool(DefTiDBEnableBatchQueryRegion)
-	RestrictedReadOnly                   = atomic.NewBool(DefTiDBRestrictedReadOnly)
-	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
-	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
-	TableCacheLease                      = atomic.NewInt64(DefTiDBTableCacheLease)
-	StatsLoadSyncWait                    = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
-	StatsLoadPseudoTimeout               = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
-	MemQuotaBindingCache                 = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
-	GCMaxWaitTime                        = atomic.NewInt64(DefTiDBGCMaxWaitTime)
-	StatsCacheMemQuota                   = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
-	OOMAction                            = atomic.NewString(DefTiDBMemOOMAction)
-	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
+	ForcePriority                            = int32(DefTiDBForcePriority)
+	MaxOfMaxAllowedPacket             uint64 = 1073741824
+	ExpensiveQueryTimeThreshold       uint64 = DefTiDBExpensiveQueryTimeThreshold
+	ExpensiveTxnTimeThreshold         uint64 = DefTiDBExpensiveTxnTimeThreshold
+	MemoryUsageAlarmRatio                    = atomic.NewFloat64(DefMemoryUsageAlarmRatio)
+	MemoryUsageAlarmKeepRecordNum            = atomic.NewInt64(DefMemoryUsageAlarmKeepRecordNum)
+	EnableLocalTxn                           = atomic.NewBool(DefTiDBEnableLocalTxn)
+	MaxTSOBatchWaitInterval                  = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
+	EnableTSOFollowerProxy                   = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
+	EnablePDFollowerHandleRegion             = atomic.NewBool(DefPDEnableFollowerHandleRegion)
+	EnablePDRouterServiceHandleRegion        = atomic.NewBool(DefTiDBEnablePDRouterServiceHandleRegion)
+	EnableBatchQueryRegion                   = atomic.NewBool(DefTiDBEnableBatchQueryRegion)
+	RestrictedReadOnly                       = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	VarTiDBSuperReadOnly                     = atomic.NewBool(DefTiDBSuperReadOnly)
+	PersistAnalyzeOptions                    = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
+	TableCacheLease                          = atomic.NewInt64(DefTiDBTableCacheLease)
+	StatsLoadSyncWait                        = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
+	StatsLoadPseudoTimeout                   = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
+	MemQuotaBindingCache                     = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
+	GCMaxWaitTime                            = atomic.NewInt64(DefTiDBGCMaxWaitTime)
+	StatsCacheMemQuota                       = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
+	OOMAction                                = atomic.NewString(DefTiDBMemOOMAction)
+	MaxAutoAnalyzeTime                       = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio   = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableInstancePlanCache             = atomic.NewBool(false)
