@@ -28,6 +28,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -35,6 +37,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
@@ -398,6 +401,9 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	if cred != nil {
 		configOpts = append(configOpts, config.WithCredentialsProvider(cred))
 	}
+	if qs.Profile != "" {
+		configOpts = append(configOpts, config.WithSharedConfigProfile(qs.Profile))
+	}
 
 	// Load the default configuration with our options
 	cfg, err := config.LoadDefaultConfig(ctx, configOpts...)
@@ -467,7 +473,28 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		cfg.Credentials = assumeRoleProvider
 	}
 
-	// Create S3 client
+	if reqRec := recording.GetRequests(ctx); reqRec != nil {
+		s3Opts = append(s3Opts, func(o *s3.Options) {
+			o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
+				return stack.Finalize.Add(middleware.FinalizeMiddlewareFunc(
+					"RecordRequests",
+					func(ctx context.Context, input middleware.FinalizeInput, next middleware.FinalizeHandler) (middleware.FinalizeOutput, middleware.Metadata, error) {
+						// Call the next middleware and get the result
+						output, metadata, err := next.HandleFinalize(ctx, input)
+						
+						// Record the request if we have an HTTP request
+						if req, ok := input.Request.(*smithyhttp.Request); ok {
+							reqRec.Rec(req.Request)
+						}
+						
+						return output, metadata, err
+					},
+				), middleware.After)
+			})
+		})
+	}
+
+	// Create S3 client with all configured options
 	client := s3.NewFromConfig(cfg, s3Opts...)
 
 	// Handle AWS provider endpoint configuration (must be done after client creation)
@@ -1289,17 +1316,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	var onFlush func()
-	if option != nil {
-		onFlush = option.OnUpload
-		if onFlush != nil {
-			// Total number of PUT operations for a multipart uploaded file = total file size / part-size + 2. For details, see
-			// https://repost.aws/questions/QUXmwDga0VRvSOOjYWMfor-w/are-we-billed-a-put-request-for-each-part-with-s3-multipart-upload-or-only-once-for-the-final-merged-file
-			onFlush() // Initiate: PUT
-			onFlush() // Complete: PUT
-		}
-	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, onFlush)
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
 	return uploaderWriter, nil
 }
 

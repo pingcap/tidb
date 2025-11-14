@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -155,7 +156,20 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 			// writes the data to TiKV and mark this job as wrote stage.
 			// we don't need to do cleanup for the pairs written to TiKV if encounters
 			// an error, TiKV will take the responsibility to do so.
-			// TODO: let client-go provide a high-level write interface.
+
+			// if the region has no leader, such as when PD leader fail-over, and
+			// hasn't got the region heartbeat, the scanned regions might not
+			// contain the leader info. it's meaningless to write in this case.
+			// here we check store ID, not the nilness of leader Peer, as PD will
+			// return an empty Peer if no leader instead of nil.
+			// GetStoreId will return 0 if the Peer is nil, so we can handle both
+			// cases here.
+			// Also note, valid store ID > 0.
+			if job.region.Leader.GetStoreId() == 0 {
+				job.lastRetryableErr = errdef.ErrNoLeader.GenWithStackByArgs(job.region.Region.GetId())
+				job.convertStageTo(needRescan)
+				return nil
+			}
 			res, err := w.writeFn(ctx, job)
 			err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 			if err != nil {

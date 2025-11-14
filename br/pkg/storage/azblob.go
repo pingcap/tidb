@@ -714,7 +714,7 @@ func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *WriterOptio
 		cpkInfo:  s.cpkInfo,
 	}
 
-	uploaderWriter := newBufferedWriter(uploader, azblobChunkSize, NoCompression, nil)
+	uploaderWriter := newBufferedWriter(uploader, azblobChunkSize, NoCompression)
 	return uploaderWriter, nil
 }
 

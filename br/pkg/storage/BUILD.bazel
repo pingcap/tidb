@@ -29,6 +29,7 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
+        "//br/pkg/storage/recording",
         "//br/pkg/utils",
         "//br/pkg/utils/iter",
         "//pkg/metrics",

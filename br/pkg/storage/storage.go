@@ -105,7 +105,6 @@ type Writer interface {
 type WriterOption struct {
 	Concurrency int
 	PartSize    int64
-	OnUpload    func()
 }
 
 type ReaderOption struct {
