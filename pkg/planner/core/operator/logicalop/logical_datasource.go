@@ -638,6 +638,24 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 	tmpMatchedExprSet := intset.NewFastIntSet()
 	matchedExprSetForChosenIndex := intset.NewFastIntSet()
 	hasUnmatchedFTSOverAllIdx := hasFTSFunc
+	// If there's no FTS functions, but there are hinted paths, we should only keep the hinted ones.
+	if !hasFTSFunc || expression.ContainsFullTextSearchFn(ds.AllConds...) {
+		hasHintedPath := false
+		for _, path := range ds.AllPossibleAccessPaths {
+			if path.Forced {
+				hasHintedPath = true
+				break
+			}
+		}
+		if hasHintedPath {
+			ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+				return !path.Forced
+			})
+			ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+				return !path.Forced
+			})
+		}
+	}
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.Index == nil || (path.Index.FullTextInfo == nil && path.Index.HybridInfo == nil) {
 			continue
