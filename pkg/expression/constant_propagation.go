@@ -440,7 +440,9 @@ func (s *propConstSolver) propagateColumnEQ() {
 					//	a = b and ( a = b or c =d ) => a = b and ( true or c = d )
 					//
 					// True can be removed in the shortCircuitLogicalConstants.
-					continue
+					if _, ok := s.conditions[k].(*Constant); ok {
+						continue
+					}
 				}
 				cond := s.conditions[k]
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
