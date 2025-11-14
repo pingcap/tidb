@@ -15,10 +15,12 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -140,4 +142,34 @@ func TestPartialIndex(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestMaintainAffectColumns(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (col2 int, key(col2) where col2 > 0);")
+	// Now, the offset of col2 is 0
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 0, tbl.Meta().Indices[0].AffectColumn[0].Offset)
+
+	tk.MustExec("alter table t add column col1 int first;")
+	// Now, the offset of col2 should be 1
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 1, tbl.Meta().Indices[0].AffectColumn[0].Offset)
+
+	tk.MustExec("alter table t add column col3 int after col1;")
+	// Now, the offset of col2 should be 2
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 2, tbl.Meta().Indices[0].AffectColumn[0].Offset)
+
+	tk.MustExec("alter table t drop column col1;")
+	// Now, the offset of col2 should be 1
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 1, tbl.Meta().Indices[0].AffectColumn[0].Offset)
 }
