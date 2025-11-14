@@ -103,7 +103,7 @@ If you modify the test set `t/planner/core/binary_plan.test`, then the `TestName
 
 ### PR title
 
-The PR title **must** strictly adhere to the following format. It uses the package name(s) affected or `*` if it's a non-package-specific change or too many packahes involved:
+The PR title **must** strictly adhere to the following format. It uses the package name(s) affected or `*` if it's a non-package-specific change or too many packages involved:
 
 **Format 1 (Specific Packages):** `pkg [, pkg2, pkg3]: what is changed`
 
