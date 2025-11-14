@@ -417,9 +417,8 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 			}
 			if isTrue == 1 {
 				res.Ranges = FullRange()
-				return res, nil
 			}
-			return res, err
+			return res, nil
 		}
 	}
 	var remainedConds []expression.Expression
