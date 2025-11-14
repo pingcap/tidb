@@ -223,6 +223,10 @@ func TestVectorizable(t *testing.T) {
 	exprs = append(exprs, sf)
 	sf = newFunctionWithMockCtx(ast.SetVal, column1, column2)
 	exprs = append(exprs, sf)
+	sf = newFunctionWithMockCtx(ast.GetProcedureVar, column0)
+	exprs = append(exprs, sf)
+	sf = newFunctionWithMockCtx(ast.SetProcedureVar, column1, column2)
+	exprs = append(exprs, sf)
 	require.False(t, Vectorizable(exprs))
 }
 
