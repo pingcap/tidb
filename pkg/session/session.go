@@ -235,8 +235,6 @@ type session struct {
 		syncutil.RWMutex
 		builtinFunctionUsage telemetry.BuiltinFunctionsUsage
 	}
-	// allowed when tikv disk full happened.
-	diskFullOpt kvrpcpb.DiskFullOpt
 
 	// StmtStats is used to count various indicators of each SQL in this session
 	// at each point in time. These data will be periodically taken away by the
