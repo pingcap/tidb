@@ -188,7 +188,7 @@ func (b *digestBiMapImpl) Add(noDBDigest, sqlDigest string) {
 			break
 		}
 	}
-	if !exist {
+	if !exist { // avoid adding duplicated binding digests
 		b.noDBDigest2SQLDigest[noDBDigest] = append(b.noDBDigest2SQLDigest[noDBDigest], sqlDigest)
 	}
 	b.sqlDigest2noDBDigest[sqlDigest] = noDBDigest
