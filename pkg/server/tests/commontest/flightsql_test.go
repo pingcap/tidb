@@ -328,3 +328,125 @@ func TestFlightSQLNullValues(t *testing.T) {
 	require.Equal(t, "test", nullableVarchar.String)
 	require.True(t, nullableDate.Valid)
 }
+
+// TestFlightSQLPreparedStatement tests prepared statement functionality.
+// Note: Parameter binding is not yet fully implemented, so we test basic prepared statement creation
+func TestFlightSQLPreparedStatement(t *testing.T) {
+	setupFlightSQLCerts(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	// Create test table via MySQL protocol
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`CREATE TABLE test.prep_test (
+			id INT PRIMARY KEY,
+			name VARCHAR(100),
+			value INT
+		)`)
+		dbt.MustExec(`INSERT INTO test.prep_test VALUES (1, 'alice', 100), (2, 'bob', 200), (3, 'charlie', 300)`)
+	})
+
+	dsn := fmt.Sprintf("flightsql://root@localhost:%d?timeout=10s", ts.Server.FlightSQLPort())
+	db, err := sql.Open("flightsql", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Test 1: Create prepared statement without parameters
+	t.Run("PrepareSelectNoParams", func(t *testing.T) {
+		stmt, err := db.Prepare("SELECT id, name, value FROM test.prep_test WHERE id = 2")
+		require.NoError(t, err, "Failed to prepare statement")
+		defer stmt.Close()
+
+		// Execute prepared statement
+		rows, err := stmt.Query()
+		require.NoError(t, err, "Failed to execute prepared statement")
+		defer rows.Close()
+
+		// Verify result
+		require.True(t, rows.Next(), "Expected at least one row")
+		var id int
+		var value int64
+		var name string
+		err = rows.Scan(&id, &name, &value)
+		require.NoError(t, err)
+		require.Equal(t, 2, id)
+		require.Equal(t, "bob", name)
+		require.Equal(t, int64(200), value)
+	})
+
+	// Test 2: Prepared statement with single parameter
+	t.Run("PrepareWithParameter", func(t *testing.T) {
+		stmt, err := db.Prepare("SELECT id, name, value FROM test.prep_test WHERE id = ?")
+		require.NoError(t, err, "Failed to prepare statement with placeholder")
+		defer stmt.Close()
+
+		// Execute with parameter
+		rows, err := stmt.Query(2)
+		require.NoError(t, err, "Failed to execute prepared statement with parameter")
+		defer rows.Close()
+
+		// Verify result
+		require.True(t, rows.Next(), "Expected at least one row")
+		var id int
+		var value int64
+		var name string
+		err = rows.Scan(&id, &name, &value)
+		require.NoError(t, err)
+		require.Equal(t, 2, id)
+		require.Equal(t, "bob", name)
+		require.Equal(t, int64(200), value)
+	})
+
+	// Test 3: Prepared INSERT with parameters
+	t.Run("PrepareInsertWithParameters", func(t *testing.T) {
+		stmt, err := db.Prepare("INSERT INTO test.prep_test VALUES (?, ?, ?)")
+		require.NoError(t, err, "Failed to prepare INSERT statement")
+		defer stmt.Close()
+
+		// Execute with parameters
+		result, err := stmt.Exec(4, "david", 400)
+		require.NoError(t, err, "Failed to execute prepared INSERT")
+		_ = result
+
+		// Verify the insert worked
+		rows, err := db.Query("SELECT name, value FROM test.prep_test WHERE id = 4")
+		require.NoError(t, err)
+		defer rows.Close()
+
+		require.True(t, rows.Next())
+		var name string
+		var value int64
+		err = rows.Scan(&name, &value)
+		require.NoError(t, err)
+		require.Equal(t, "david", name)
+		require.Equal(t, int64(400), value)
+	})
+
+	// Test 4: Multiple executions with different parameters
+	t.Run("MultipleExecutionsWithParams", func(t *testing.T) {
+		stmt, err := db.Prepare("SELECT name FROM test.prep_test WHERE id = ?")
+		require.NoError(t, err)
+		defer stmt.Close()
+
+		// Execute with different parameters
+		testCases := []struct {
+			id           int
+			expectedName string
+		}{
+			{1, "alice"},
+			{2, "bob"},
+			{3, "charlie"},
+		}
+
+		for _, tc := range testCases {
+			rows, err := stmt.Query(tc.id)
+			require.NoError(t, err, "Failed to query with id=%d", tc.id)
+
+			require.True(t, rows.Next(), "Expected result for id=%d", tc.id)
+			var name string
+			err = rows.Scan(&name)
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedName, name, "Wrong name for id=%d", tc.id)
+			rows.Close()
+		}
+	})
+}

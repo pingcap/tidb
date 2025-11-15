@@ -95,15 +95,54 @@ func (r *ResultSetRecordReader) Record() arrow.Record {
 	// 1. Reuse builders across multiple Record() calls
 	// 2. Create Arrow arrays directly from chunk memory when possible
 	// 3. Use zero-copy techniques for fixed-width types
-	numCols := r.cur.NumCols()
-	numRows := r.cur.NumRows()
+
+	// Extract field types from the result set
+	fieldTypes := make([]*types.FieldType, len(r.set.Fields()))
+	for i, field := range r.set.Fields() {
+		fieldTypes[i] = &field.Column.FieldType
+	}
+
+	// Use shared conversion logic
+	convertChunkToRecord(r.cur, fieldTypes, r.builder)
+
+	return r.builder.NewRecord()
+}
+
+func (r *ResultSetRecordReader) Err() error {
+	return r.err
+}
+
+func adaptSchema(fields []*resolve.ResultField) (*arrow.Schema, error) {
+	arrowFields := []arrow.Field{}
+
+	for _, field := range fields {
+		typ, err := adaptFieldType(&field.Column.FieldType)
+		if err != nil {
+			return nil, err
+		}
+		arrowField := arrow.Field{
+			Name:     field.Column.Name.String(),
+			Type:     typ,
+			Nullable: true,
+		}
+		arrowFields = append(arrowFields, arrowField)
+	}
+	schema := arrow.NewSchema(arrowFields, nil)
+
+	return schema, nil
+}
+
+// convertChunkToRecord converts a TiDB chunk to an Arrow record using the provided builder.
+// This shared logic is used by both ResultSetRecordReader and prepared statement execution.
+func convertChunkToRecord(chk *chunk.Chunk, fieldTypes []*types.FieldType, builder *array.RecordBuilder) {
+	numCols := chk.NumCols()
+	numRows := chk.NumRows()
 
 	for colIdx := 0; colIdx < numCols; colIdx++ {
-		col := r.cur.Column(colIdx)
-		colInfo := r.set.Fields()[colIdx].Column
-		ft := colInfo.FieldType
+		col := chk.Column(colIdx)
+		ft := fieldTypes[colIdx]
 
-		dest := r.builder.Field(colIdx)
+		dest := builder.Field(colIdx)
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 			// Check for NULL values first
 			if col.IsNull(rowIdx) {
@@ -175,32 +214,6 @@ func (r *ResultSetRecordReader) Record() arrow.Record {
 			}
 		}
 	}
-
-	return r.builder.NewRecord()
-}
-
-func (r *ResultSetRecordReader) Err() error {
-	return r.err
-}
-
-func adaptSchema(fields []*resolve.ResultField) (*arrow.Schema, error) {
-	arrowFields := []arrow.Field{}
-
-	for _, field := range fields {
-		typ, err := adaptFieldType(&field.Column.FieldType)
-		if err != nil {
-			return nil, err
-		}
-		arrowField := arrow.Field{
-			Name:     field.Column.Name.String(),
-			Type:     typ,
-			Nullable: true,
-		}
-		arrowFields = append(arrowFields, arrowField)
-	}
-	schema := arrow.NewSchema(arrowFields, nil)
-
-	return schema, nil
 }
 
 func adaptFieldType(ft *types.FieldType) (arrow.DataType, error) {
