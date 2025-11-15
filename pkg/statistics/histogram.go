@@ -1144,7 +1144,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	histWidth := histR - histL
 	// If we find that the histogram width is too small or too large - we still may need to consider
 	// the impact of modifications to the table
-	histInvalid := false
+	histInvalid, entirelyOutOfRange := false, false
 	if histWidth <= 0 {
 		histInvalid = true
 	}
@@ -1154,7 +1154,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-	var leftPercent, rightPercent, avgRowCount float64
+	var leftPercent, rightPercent, timeAdjLeft, timeAdjRight, avgRowCount float64
 	if debugTrace {
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx,
@@ -1201,20 +1201,45 @@ func (hg *Histogram) OutOfRangeRowCount(
 			// Calculate the percentage of "the shaded area" on the right side.
 			rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 		}
+		// Recalculate the out-of-range percentage to account for time decay (stale histogram).
+		// We do this by moving the predicate range closer to the histogram range, and
+		// recalculating the percentage of the shaded area.
+		actualL = l
+		actualR = r
+		predWidth := r - l
+		if predWidth < 0 {
+			predWidth = 0
+		}
+		// Predicate entirely on the right side of the histogram envelope.
+		if actualL > histR {
+			entirelyOutOfRange = true
+			adjLeft := histR
+			adjRight := adjLeft + predWidth
+			timeAdjRight = (math.Pow(boundR-adjLeft, 2) - math.Pow(boundR-adjRight, 2)) / math.Pow(histWidth, 2)
+		} else if actualR < histL {
+			entirelyOutOfRange = true
+			// Predicate entirely on the left side of the histogram envelope.
+			adjRight := histL
+			adjLeft := adjRight - predWidth
+			timeAdjLeft = (math.Pow(adjRight-boundL, 2) - math.Pow(adjLeft-boundL, 2)) / math.Pow(histWidth, 2)
+		}
 	}
 
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
 	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
-	// percentInHist is the percentage of rows that were included in the histogram.
-	// This is used to scale back the out-of-range estimate.
-	percentInHist := hg.NotNullCount() / hg.TotalRowCount()
-	addedOutOfRangePct := min(1.0-percentInHist, 0.5)
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
+	if entirelyOutOfRange {
+		// timeAdjPercent accounts for time decay between stats collection and current time.
+		// It is adjusted by a further 50% to reduce its impact.
+		timeAdjPercent := min(timeAdjLeft*0.5+timeAdjRight*0.5, 1.0) * 0.5
+		totalPercent = max(totalPercent, timeAdjPercent)
+	}
+
 	// Assume on average, half of newly added rows are within the histogram range, and the other
 	// half are distributed out of range according to the diagram in the function description.
-	avgRowCount = (addedRows * addedOutOfRangePct) * totalPercent
+	avgRowCount = (addedRows * 0.5) * totalPercent
 
 	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
 	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
