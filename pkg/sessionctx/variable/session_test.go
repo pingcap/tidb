@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/planscache"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -526,11 +526,11 @@ func TestNonPreparedPlanCacheStmt(t *testing.T) {
 	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
 	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
 
-	sessVars.AddNonPreparedPlanCacheStmt(sql1, new(plannercore.PlanCacheStmt))
+	sessVars.AddNonPreparedPlanCacheStmt(sql1, new(planscache.PlanCacheStmt))
 	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
 	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
 
-	sessVars.AddNonPreparedPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
+	sessVars.AddNonPreparedPlanCacheStmt(sql2, new(planscache.PlanCacheStmt))
 	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
 	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
 }

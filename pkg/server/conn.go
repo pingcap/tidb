@@ -2143,7 +2143,7 @@ func (cc *clientConn) handleStmt(
 }
 
 // Preprocess LOAD DATA. Load data from a local file requires reading from the connection.
-// The function pass a builder to build the connection reader to the context,
+// The function pass a build to builder the connection reader to the context,
 // which will be used in LoadDataExec.
 func (cc *clientConn) preprocessLoadDataLocal(ctx context.Context) error {
 	if cc.capability&mysql.ClientLocalFiles == 0 {
