@@ -61,6 +61,11 @@ const (
 	ReservedTablesBaseID int64 = SystemSchemaIDFlag | 5000
 )
 
+// IsMemSchemaID checks whether schemaID is memory schema ID.
+func IsMemSchemaID(schemaID int64) bool {
+	return schemaID&SystemSchemaIDFlag != 0
+}
+
 const (
 	minStep            = 30000
 	maxStep            = 2000000
