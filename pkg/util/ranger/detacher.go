@@ -406,6 +406,21 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	if emptyRange {
 		return res, nil
 	}
+	if len(accessConds) == 1 {
+		if value, ok := accessConds[0].(*expression.Constant); ok {
+			if value.Value.IsNull() {
+				return res, nil
+			}
+			isTrue, err := value.Value.ToBool(d.sctx.TypeCtx)
+			if err != nil {
+				return nil, err
+			}
+			if isTrue == 1 {
+				res.Ranges = FullRange()
+			}
+			return res, nil
+		}
+	}
 	var remainedConds []expression.Expression
 	ranges, accessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(newTpSlice, len(accessConds), accessConds)
 	if err != nil {
