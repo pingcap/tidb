@@ -71,7 +71,7 @@ func testCreateForeignKey(t *testing.T, d ddl.ExecutorForTest, ctx sessionctx.Co
 	ctx.SetValue(sessionctx.QueryString, "skip")
 
 	args := &model.AddForeignKeyArgs{FkInfo: fkInfo}
-	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
+	err = d.DoDDLJobWrapper(context.Background(), ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 	return job
 }
@@ -88,7 +88,7 @@ func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForT
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	args := &model.DropForeignKeyArgs{FkName: ast.NewCIStr(foreignKeyName)}
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
+	err := d.DoDDLJobWrapper(context.Background(), ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})

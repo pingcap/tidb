@@ -48,6 +48,8 @@ func (cr CallbackRecorder) RecordSpan(sp basictracer.RawSpan) {
 type TraceInfo struct {
 	// SessionAlias is the alias of session
 	SessionAlias string `json:"session_alias"`
+	// TraceID is the trace id for every SQL statement
+	TraceID []byte `json:"trace_id"`
 	// ConnectionID is the id of the connection
 	ConnectionID uint64 `json:"connection_id"`
 }
@@ -241,6 +243,10 @@ const (
 	UnknownClient
 	// General is used by tracing API
 	General
+	// DDLJob traces DDL job events.
+	DDLJob
+	// DevDebug traces development/debugging events.
+	DevDebug
 	traceCategorySentinel
 )
 
@@ -281,6 +287,10 @@ func getCategoryName(category TraceCategory) string {
 		return "unknown_client"
 	case General:
 		return "general"
+	case DDLJob:
+		return "ddl_job"
+	case DevDebug:
+		return "dev_debug"
 	default:
 		return "unknown(" + strconv.FormatUint(uint64(category), 10) + ")"
 	}

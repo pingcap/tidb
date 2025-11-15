@@ -54,7 +54,7 @@ func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d ddl.Execu
 	}
 
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, false))
+	err := d.DoDDLJobWrapper(context.Background(), ctx, ddl.NewJobWrapperWithArgs(job, args, false))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)

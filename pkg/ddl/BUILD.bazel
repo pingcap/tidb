@@ -194,6 +194,7 @@ go_library(
         "//pkg/util/timeutil",
         "//pkg/util/topsql",
         "//pkg/util/topsql/state",
+        "//pkg/util/traceevent",
         "//pkg/util/tracing",
         "@com_github_coreos_go_semver//semver",
         "@com_github_docker_go_units//:go-units",

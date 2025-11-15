@@ -169,7 +169,7 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.FlashBackDatabaseStmt:
 		err = e.executeFlashbackDatabase(x)
 	case *ast.CreateTableStmt:
-		err = e.executeCreateTable(x)
+		err = e.executeCreateTable(ctx, x)
 	case *ast.CreateViewStmt:
 		err = e.executeCreateView(ctx, x)
 	case *ast.DropIndexStmt:
@@ -284,8 +284,8 @@ func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
 	return err
 }
 
-func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
-	err := e.ddlExecutor.CreateTable(e.Ctx(), s)
+func (e *DDLExec) executeCreateTable(ctx context.Context, s *ast.CreateTableStmt) error {
+	err := e.ddlExecutor.CreateTable(ctx, e.Ctx(), s)
 	return err
 }
 
