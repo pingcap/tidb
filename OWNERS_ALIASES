@@ -1,11 +1,6 @@
 # See the OWNERS docs at https://www.kubernetes.dev/docs/guide/owners/#owners_aliases
 # The members of 'sig-community-*' are synced from memberships defined in repository: https://github.com/pingcap/community.
 aliases:
-  sig-approvers-stats:
-    - mjonss
-    - 0xPoe
-    - time-and-fate
-    - terry1purcell
   sig-critical-approvers-tidb-server:
     - yudongusa
     - BenMeadowcroft
@@ -36,7 +31,7 @@ aliases:
     - windtalker
     - XuHuaiyu
     - zanmato1984
-  sig-approvers-executor-import:
+  sig-approvers-import:
     - D3Hunter
     - gmhdbjd
     - Benjamin2037
@@ -121,6 +116,41 @@ aliases:
     - zimulala
     - yibin87
     - nolouch
+  sig-approvers-modules: &fallback-module-approvers
+    - Benjamin2037
+    - XuHuaiyu
+    - bb7133
+    - cfzjywxk
+    - fixdb
+    - kolafish
+    - niubell
+    - terry1purcell
+    - zanmato1984
+    - zhangjinpeng87
+  sig-approvers-docs: *fallback-module-approvers
+  sig-approvers-keyspace: *fallback-module-approvers
+  sig-approvers-kv: *fallback-module-approvers
+  sig-approvers-privilege: *fallback-module-approvers
+  sig-approvers-server: *fallback-module-approvers
+  sig-approvers-session: *fallback-module-approvers
+  sig-approvers-sessionctx: *fallback-module-approvers
+  sig-approvers-sessiontxn: *fallback-module-approvers
+  sig-approvers-store: *fallback-module-approvers
+  sig-approvers-telemetry: *fallback-module-approvers
+  sig-approvers-testkit: *fallback-module-approvers
+  sig-approvers-timer: *fallback-module-approvers
+  sig-approvers-ttl: *fallback-module-approvers
+  sig-approvers-extension:
+    - bb7133
+    - YangKeao
+  sig-approvers-plugin:
+    - bb7133
+    - YangKeao
+  sig-approvers-stats:
+    - mjonss
+    - 0xPoe
+    - time-and-fate
+    - terry1purcell
   sig-community-reviewers:
     - CabinfeverB
     - ChenPeng2013
