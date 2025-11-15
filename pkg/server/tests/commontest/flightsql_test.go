@@ -450,3 +450,78 @@ func TestFlightSQLPreparedStatement(t *testing.T) {
 		}
 	})
 }
+
+// TestFlightSQLStatementUpdate tests non-prepared DML statements (INSERT, UPDATE, DELETE).
+func TestFlightSQLStatementUpdate(t *testing.T) {
+	setupFlightSQLCerts(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	// Create test table via MySQL protocol
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`CREATE TABLE test.update_test (
+			id INT PRIMARY KEY,
+			name VARCHAR(100),
+			value INT
+		)`)
+		dbt.MustExec(`INSERT INTO test.update_test VALUES (1, 'initial', 100)`)
+	})
+
+	dsn := fmt.Sprintf("flightsql://root@localhost:%d?timeout=10s", ts.Server.FlightSQLPort())
+	db, err := sql.Open("flightsql", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Test 1: Direct INSERT
+	t.Run("DirectInsert", func(t *testing.T) {
+		result, err := db.Exec("INSERT INTO test.update_test VALUES (2, 'second', 200)")
+		require.NoError(t, err, "Failed to execute INSERT")
+		_ = result // TODO: Verify affected rows when implemented
+
+		// Verify the insert worked
+		rows, err := db.Query("SELECT name FROM test.update_test WHERE id = 2")
+		require.NoError(t, err)
+		defer rows.Close()
+
+		require.True(t, rows.Next())
+		var name string
+		err = rows.Scan(&name)
+		require.NoError(t, err)
+		require.Equal(t, "second", name)
+	})
+
+	// Test 2: Direct UPDATE
+	t.Run("DirectUpdate", func(t *testing.T) {
+		result, err := db.Exec("UPDATE test.update_test SET name = 'updated' WHERE id = 1")
+		require.NoError(t, err, "Failed to execute UPDATE")
+		_ = result
+
+		// Verify the update worked
+		rows, err := db.Query("SELECT name FROM test.update_test WHERE id = 1")
+		require.NoError(t, err)
+		defer rows.Close()
+
+		require.True(t, rows.Next())
+		var name string
+		err = rows.Scan(&name)
+		require.NoError(t, err)
+		require.Equal(t, "updated", name)
+	})
+
+	// Test 3: Direct DELETE
+	t.Run("DirectDelete", func(t *testing.T) {
+		result, err := db.Exec("DELETE FROM test.update_test WHERE id = 2")
+		require.NoError(t, err, "Failed to execute DELETE")
+		_ = result
+
+		// Verify the delete worked
+		rows, err := db.Query("SELECT COUNT(*) FROM test.update_test WHERE id = 2")
+		require.NoError(t, err)
+		defer rows.Close()
+
+		require.True(t, rows.Next())
+		var count int64
+		err = rows.Scan(&count)
+		require.NoError(t, err)
+		require.Equal(t, int64(0), count)
+	})
+}

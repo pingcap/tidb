@@ -384,8 +384,58 @@ func (s *FlightSQLServer) DoGetCrossReference(ctx context.Context, ref flightsql
 }
 
 func (s *FlightSQLServer) DoPutCommandStatementUpdate(ctx context.Context, cmd flightsql.StatementUpdate) (int64, error) {
-	panic("DoPutCommandStatementUpdate not implemented")
+	query := cmd.GetQuery()
+	logutil.BgLogger().Info("DoPutCommandStatementUpdate", zap.String("query", query))
 
+	// Extract database from metadata if provided
+	var dbName string
+	dbs := metadata.ValueFromIncomingContext(ctx, "database")
+	if len(dbs) > 0 {
+		dbName = dbs[0]
+	}
+
+	ct, err := s.server.driver.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), dbName, nil, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer ct.Close()
+
+	// Only execute USE statement if a database was specified
+	if dbName != "" {
+		useStmt, err := ct.Parse(ctx, "use `"+dbName+"`")
+		if err != nil {
+			return 0, err
+		}
+		_, err = ct.ExecuteStmt(ctx, useStmt[0])
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	// Parse and execute the statement
+	stmts, err := ct.Parse(ctx, query)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(stmts) != 1 {
+		return 0, errors.New("run multiple statements is not supported")
+	}
+
+	rs, err := ct.Session.ExecuteStmt(ctx, stmts[0])
+	if err != nil {
+		return 0, err
+	}
+
+	// For DML statements, we don't have a result set
+	// Return affected rows count (default to 0 for now)
+	// TODO: Extract actual affected rows from execution result
+	var affectedRows int64 = 0
+	if rs != nil {
+		rs.Close()
+	}
+
+	return affectedRows, nil
 }
 
 func (s *FlightSQLServer) DoPutCommandSubstraitPlan(ctx context.Context, plan flightsql.StatementSubstraitPlan) (int64, error) {
@@ -783,7 +833,13 @@ func (s *FlightSQLServer) prepareAndGetSchema(ctx context.Context, query string)
 
 // arrowRecordToExpressions converts an Arrow record (single row) to TiDB expressions.
 // The Arrow record should have one row representing the parameter values.
+// Returns empty slice if record has 0 rows (no parameters).
 func arrowRecordToExpressions(rec arrow.Record) ([]expression.Expression, error) {
+	if rec.NumRows() == 0 {
+		// No parameters
+		return nil, nil
+	}
+
 	if rec.NumRows() != 1 {
 		return nil, fmt.Errorf("parameter record must have exactly 1 row, got %d", rec.NumRows())
 	}
