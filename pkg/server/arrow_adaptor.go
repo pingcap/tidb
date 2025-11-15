@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -12,6 +14,11 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+)
+
+var (
+	// ErrUnsupportedType indicates that a MySQL type cannot be converted to Arrow type
+	ErrUnsupportedType = errors.New("unsupported MySQL type for Arrow conversion")
 )
 
 // ResultSetRecordReader reads from a ResultSet and retuns
@@ -53,8 +60,14 @@ func (r *ResultSetRecordReader) Retain() {
 }
 
 func (r *ResultSetRecordReader) Release() {
-	r.cur.Reset()
-	r.cur = nil
+	if r.cur != nil {
+		r.cur.Reset()
+		r.cur = nil
+	}
+	if r.builder != nil {
+		r.builder.Release()
+		r.builder = nil
+	}
 	r.err = r.set.Close()
 }
 
@@ -65,6 +78,9 @@ func (r *ResultSetRecordReader) Schema() *arrow.Schema {
 func (r *ResultSetRecordReader) Next() bool {
 	if r.cur == nil {
 		r.cur = r.set.NewChunk(r.tidbAllocator)
+	} else {
+		// Reset the chunk for reuse
+		r.cur.Reset()
 	}
 
 	r.err = r.set.Next(context.Background(), r.cur)
@@ -73,8 +89,12 @@ func (r *ResultSetRecordReader) Next() bool {
 }
 
 func (r *ResultSetRecordReader) Record() arrow.Record {
-	// Quick & dirty copy logic for MVP
-	// Should be rewritten to avoid double allocation
+	// TODO: Optimize memory allocation
+	// Current approach copies data from TiDB chunk to Arrow builders.
+	// Potential optimizations:
+	// 1. Reuse builders across multiple Record() calls
+	// 2. Create Arrow arrays directly from chunk memory when possible
+	// 3. Use zero-copy techniques for fixed-width types
 	numCols := r.cur.NumCols()
 	numRows := r.cur.NumRows()
 
@@ -85,14 +105,23 @@ func (r *ResultSetRecordReader) Record() arrow.Record {
 
 		dest := r.builder.Field(colIdx)
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+			// Check for NULL values first
+			if col.IsNull(rowIdx) {
+				dest.AppendNull()
+				continue
+			}
+
 			switch ft.GetType() {
 			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+				// Always convert to Int64 for compatibility with FlightSQL driver
 				if mysql.HasUnsignedFlag(ft.GetFlag()) {
 					val := col.GetUint64(rowIdx)
-					dest.(*array.Uint64Builder).Append(val)
+					// Convert uint64 to int64 (may overflow for very large values)
+					dest.(*array.Int64Builder).Append(int64(val))
+				} else {
+					val := col.GetInt64(rowIdx)
+					dest.(*array.Int64Builder).Append(val)
 				}
-				val := col.GetInt64(rowIdx)
-				dest.(*array.Int64Builder).Append(val)
 
 			case mysql.TypeFloat:
 				val := col.GetFloat32(rowIdx)
@@ -102,7 +131,45 @@ func (r *ResultSetRecordReader) Record() arrow.Record {
 				val := col.GetFloat64(rowIdx)
 				dest.(*array.Float64Builder).Append(val)
 
-			case mysql.TypeVarString, mysql.TypeString:
+			case mysql.TypeNewDecimal:
+				dec := col.GetDecimal(rowIdx)
+				// Convert MyDecimal to float64 for now
+				// TODO: Use Arrow Decimal128 for better precision
+				f64, _ := dec.ToFloat64()
+				dest.(*array.Float64Builder).Append(f64)
+
+			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+				t := col.GetTime(rowIdx)
+				// Convert to Unix milliseconds (Date64 in Arrow)
+				// Use time.UTC as the location
+				goTime, err := t.GoTime(time.UTC)
+				if err != nil {
+					// Handle invalid time by using zero time
+					goTime = time.Time{}.UTC()
+				}
+				unixMilli := goTime.UnixMilli()
+				dest.(*array.Date64Builder).Append(arrow.Date64(unixMilli))
+
+			case mysql.TypeDuration:
+				dur := col.GetDuration(rowIdx, 0)
+				// Store duration as int64 nanoseconds
+				dest.(*array.Int64Builder).Append(int64(dur.Duration))
+
+			case mysql.TypeJSON:
+				j := col.GetJSON(rowIdx)
+				// Convert JSON to string representation
+				dest.(*array.StringBuilder).Append(j.String())
+
+			case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
+				val := col.GetString(rowIdx)
+				dest.(*array.StringBuilder).Append(val)
+
+			case mysql.TypeBit:
+				val := col.GetInt64(rowIdx)
+				dest.(*array.Int64Builder).Append(val)
+
+			default:
+				// For unsupported types, convert to string representation
 				val := col.GetString(rowIdx)
 				dest.(*array.StringBuilder).Append(val)
 			}
@@ -139,9 +206,9 @@ func adaptSchema(fields []*resolve.ResultField) (*arrow.Schema, error) {
 func adaptFieldType(ft *types.FieldType) (arrow.DataType, error) {
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		if mysql.HasUnsignedFlag(ft.GetFlag()) {
-			return arrow.PrimitiveTypes.Uint64, nil
-		}
+		// Always use Int64 for integer types, even if unsigned
+		// FlightSQL driver has better compatibility with signed types
+		// TODO: Consider using Uint64 when driver support improves
 		return arrow.PrimitiveTypes.Int64, nil
 
 	case mysql.TypeFloat:
@@ -150,15 +217,38 @@ func adaptFieldType(ft *types.FieldType) (arrow.DataType, error) {
 	case mysql.TypeDouble:
 		return arrow.PrimitiveTypes.Float64, nil
 
-	// case mysql.TypeNewDecimal:
-	// 	return arrow.PrimitiveTypes.Float64, nil
+	case mysql.TypeNewDecimal:
+		// Using Float64 for now for simplicity
+		// TODO: Use arrow.Decimal128Type for better precision
+		return arrow.PrimitiveTypes.Float64, nil
 
-	// case mysql.TypeDate, mysql.TypeDatetime:
-	// 	return arrow.PrimitiveTypes.Date64, nil
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		// Date64 represents milliseconds since Unix epoch
+		return arrow.FixedWidthTypes.Date64, nil
 
-	case mysql.TypeVarString, mysql.TypeString:
-		return arrow.BinaryTypes.LargeString, nil
+	case mysql.TypeDuration:
+		// Store duration as int64 nanoseconds
+		return arrow.PrimitiveTypes.Int64, nil
+
+	case mysql.TypeJSON:
+		// JSON stored as string
+		return arrow.BinaryTypes.String, nil
+
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString:
+		return arrow.BinaryTypes.String, nil
+
+	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
+		// Binary data stored as string (can handle binary safely)
+		return arrow.BinaryTypes.String, nil
+
+	case mysql.TypeBit:
+		return arrow.PrimitiveTypes.Int64, nil
+
+	case mysql.TypeEnum, mysql.TypeSet:
+		// Store as string
+		return arrow.BinaryTypes.String, nil
+
+	default:
+		return nil, fmt.Errorf("%w: MySQL type %v", ErrUnsupportedType, ft.GetType())
 	}
-
-	return nil, errors.ErrUnsupported
 }
