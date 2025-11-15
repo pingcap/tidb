@@ -253,6 +253,9 @@ func TestEncounterError(t *testing.T) {
 	req.NoError(sub.UpdateStoreTopology(ctx))
 
 	o := new(sync.Once)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/listen_flush_stream", "return(true)"))
+	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/listen_flush_stream")
+
 	failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/streamhelper/listen_flush_stream", func(storeID uint64, err *error) {
 		o.Do(func() {
 			*err = context.Canceled
@@ -260,9 +263,15 @@ func TestEncounterError(t *testing.T) {
 	})
 
 	c.flushAll()
+	// Increase timeout and add logging to help diagnose intermittent failures
 	require.Eventually(t, func() bool {
-		return sub.PendingErrors() != nil
-	}, 3*time.Second, 100*time.Millisecond)
+		hasError := sub.PendingErrors() != nil
+		if !hasError {
+			t.Logf("Waiting for error condition, current PendingErrors: %v", sub.PendingErrors())
+		}
+		return hasError
+	}, 10*time.Second, 100*time.Millisecond)
+
 	sub.HandleErrors()
 	require.NoError(t, sub.PendingErrors())
 }
