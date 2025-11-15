@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	metering "github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	gomock "go.uber.org/mock/gomock"
@@ -89,6 +90,20 @@ func (mr *MockStepExecutorMockRecorder) GetCheckpointUpdateFunc() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCheckpointUpdateFunc", reflect.TypeOf((*MockStepExecutor)(nil).GetCheckpointUpdateFunc))
 }
 
+// GetMeterRecorder mocks base method.
+func (m *MockStepExecutor) GetMeterRecorder() *metering.Recorder {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetMeterRecorder")
+	ret0, _ := ret[0].(*metering.Recorder)
+	return ret0
+}
+
+// GetMeterRecorder indicates an expected call of GetMeterRecorder.
+func (mr *MockStepExecutorMockRecorder) GetMeterRecorder() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMeterRecorder", reflect.TypeOf((*MockStepExecutor)(nil).GetMeterRecorder))
+}
+
 // GetResource mocks base method.
 func (m *MockStepExecutor) GetResource() *proto.StepResource {
 	m.ctrl.T.Helper()
@@ -143,6 +158,18 @@ func (m *MockStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 func (mr *MockStepExecutorMockRecorder) RealtimeSummary() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RealtimeSummary", reflect.TypeOf((*MockStepExecutor)(nil).RealtimeSummary))
+}
+
+// ResetSummary mocks base method.
+func (m *MockStepExecutor) ResetSummary() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "ResetSummary")
+}
+
+// ResetSummary indicates an expected call of ResetSummary.
+func (mr *MockStepExecutorMockRecorder) ResetSummary() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetSummary", reflect.TypeOf((*MockStepExecutor)(nil).ResetSummary))
 }
 
 // ResourceModified mocks base method.

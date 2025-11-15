@@ -79,8 +79,6 @@ func (*mergeSortExecutor) Init(ctx context.Context) error {
 func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort executor run subtask")
 
-	m.summary.Reset()
-
 	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, m.cloudStoreURI)
 	if err != nil {
 		return err
@@ -171,6 +169,10 @@ func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subta
 
 func (m *mergeSortExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return m.summary
+}
+
+func (m *mergeSortExecutor) ResetSummary() {
+	m.summary.Reset()
 }
 
 func (m *mergeSortExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {

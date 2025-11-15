@@ -188,8 +188,6 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
-	s.summary.Reset()
-
 	bs := subtask.Meta
 	var subtaskMeta ImportStepMeta
 	err = json.Unmarshal(bs, &subtaskMeta)
@@ -283,6 +281,10 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	s.summary.Update()
 	return &s.summary
+}
+
+func (s *importStepExecutor) ResetSummary() {
+	s.summary.Reset()
 }
 
 func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, extStore storage.ExternalStorage) error {
@@ -401,8 +403,6 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		return errors.Trace(err)
 	}
 
-	m.summary.Reset()
-
 	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, m.taskMeta.Plan.CloudStorageURI)
 	if err != nil {
 		return err
@@ -504,6 +504,10 @@ func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return &m.summary
 }
 
+func (m *mergeSortStepExecutor) ResetSummary() {
+	m.summary.Reset()
+}
+
 type ingestCollector struct {
 	execute.NoopCollector
 	summary *execute.SubtaskSummary
@@ -546,8 +550,6 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	e.summary.Reset()
 
 	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.tableImporter.CloudStorageURI)
 	if err != nil {
@@ -615,6 +617,10 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 func (e *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	e.summary.Update()
 	return &e.summary
+}
+
+func (e *writeAndIngestStepExecutor) ResetSummary() {
+	e.summary.Reset()
 }
 
 func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {

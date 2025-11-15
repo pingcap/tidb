@@ -335,6 +335,26 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	//nolint: errcheck
 	defer iter.Close()
 
+	flushKVs := func() error {
+		in := &ingestcli.WriteRequest{
+			Pairs: pairs,
+		}
+		if err := writeCli.Write(in); err != nil {
+			return errors.Trace(err)
+		}
+
+		if w.collector != nil {
+			w.collector.Processed(size, int64(len(pairs)))
+		}
+
+		totalCount += int64(len(pairs))
+		totalSize += size
+		size = 0
+		pairs = pairs[:0]
+		iter.ReleaseBuf()
+		return nil
+	}
+
 	for iter.First(); iter.Valid(); iter.Next() {
 		k, v := iter.Key(), iter.Value()
 		pairs = append(pairs, &sst.Pair{
@@ -344,22 +364,9 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		size += int64(len(k) + len(v))
 
 		if size >= w.writeBatchSize {
-			in := &ingestcli.WriteRequest{
-				Pairs: pairs,
-			}
-			if err := writeCli.Write(in); err != nil {
+			if err := flushKVs(); err != nil {
 				return nil, errors.Trace(err)
 			}
-
-			if w.collector != nil {
-				w.collector.Processed(size, int64(len(pairs)))
-			}
-
-			totalCount += int64(len(pairs))
-			totalSize += size
-			size = 0
-			pairs = pairs[:0]
-			iter.ReleaseBuf()
 		}
 	}
 
@@ -368,16 +375,9 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	}
 
 	if len(pairs) > 0 {
-		in := &ingestcli.WriteRequest{
-			Pairs: pairs,
-		}
-		if err := writeCli.Write(in); err != nil {
+		if err := flushKVs(); err != nil {
 			return nil, errors.Trace(err)
 		}
-		totalCount += int64(len(pairs))
-		totalSize += size
-		pairs = pairs[:0]
-		iter.ReleaseBuf()
 	}
 
 	resp, err := writeCli.Recv()
