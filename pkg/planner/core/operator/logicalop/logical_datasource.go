@@ -157,7 +157,7 @@ func (ds *DataSource) ExplainInfo() string {
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
-	predicates = ruleutil.ApplyPredicateSimplification(ds.SCtx(), predicates, true, nil)
+	predicates = ruleutil.ApplyPredicateSimplification(ds.SCtx(), predicates, true, false, nil)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = utilfuncp.AddPrefix4ShardIndexes(ds, ds.SCtx(), predicates)
@@ -282,8 +282,8 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 // PredicateSimplification implements the base.LogicalPlan.<7th> interface.
 func (ds *DataSource) PredicateSimplification() base.LogicalPlan {
 	p := ds.Self().(*DataSource)
-	p.PushedDownConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true, nil)
-	p.AllConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.AllConds, true, nil)
+	p.PushedDownConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true, false, nil)
+	p.AllConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.AllConds, true, false, nil)
 	return p
 }
 

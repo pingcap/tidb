@@ -803,7 +803,7 @@
       },
       {
         "SQL": "select /*+ tidb_inlj(a,b) */ sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.g > 60 group by a.g order by a.g limit 1",
-        "Best": "IndexJoin{IndexReader(Index(t.g)[(60,+inf]])->IndexReader(Index(t.g)[[NULL,NULL]]->Sel([gt(test.t.g, 60)]))}(test.t.g,test.t.g)->Projection->StreamAgg->Limit"
+        "Best": "IndexJoin{IndexReader(Index(t.g)[(60,+inf]])->IndexReader(Index(t.g)[[NULL,NULL]])}(test.t.g,test.t.g)->Projection->StreamAgg->Limit"
       },
       {
         "SQL": "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.a>5 group by a.g order by a.g limit 1",
