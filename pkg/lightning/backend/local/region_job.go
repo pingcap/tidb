@@ -129,6 +129,11 @@ type regionJob struct {
 	injected []injectedBehaviour
 }
 
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (*regionJob) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return "regionJob", "regionJob", nil
+}
+
 type tikvWriteResult struct {
 	// means there is no data inside this job
 	emptyJob          bool
