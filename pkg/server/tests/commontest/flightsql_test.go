@@ -173,3 +173,158 @@ func TestFlightSQLNoAuth(t *testing.T) {
 	_, err = db.Query("SELECT 1")
 	require.Error(t, err, "Query should fail without authentication")
 }
+
+// TestFlightSQLDataTypes tests that various MySQL data types are correctly converted to Arrow types.
+func TestFlightSQLDataTypes(t *testing.T) {
+	setupFlightSQLCerts(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	// Create test table with various data types
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`CREATE TABLE test.types_test (
+			id INT PRIMARY KEY,
+			tiny_int TINYINT,
+			small_int SMALLINT,
+			medium_int MEDIUMINT,
+			int_col INT,
+			big_int BIGINT,
+			unsigned_int INT UNSIGNED,
+			float_col FLOAT,
+			double_col DOUBLE,
+			decimal_col DECIMAL(10, 2),
+			varchar_col VARCHAR(100),
+			text_col TEXT,
+			date_col DATE,
+			datetime_col DATETIME,
+			timestamp_col TIMESTAMP,
+			json_col JSON,
+			blob_col BLOB
+		)`)
+
+		dbt.MustExec(`INSERT INTO test.types_test VALUES (
+			1,
+			127,
+			32767,
+			8388607,
+			2147483647,
+			9223372036854775807,
+			4294967295,
+			3.14,
+			2.718281828,
+			123.45,
+			'test varchar',
+			'test text',
+			'2024-01-15',
+			'2024-01-15 10:30:00',
+			'2024-01-15 10:30:00',
+			'{"key": "value"}',
+			'binary data'
+		)`)
+	})
+
+	flightPort := ts.Server.FlightSQLPort()
+	require.NotZero(t, flightPort)
+
+	// Connect with root user
+	dsn := fmt.Sprintf("flightsql://root@localhost:%d", flightPort)
+	db, err := sql.Open("flightsql", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Query the data
+	rows, err := db.Query("SELECT * FROM test.types_test WHERE id = 1")
+	require.NoError(t, err, "Query failed: %v", err)
+	defer rows.Close()
+
+	// Get column types
+	colTypes, err := rows.ColumnTypes()
+	require.NoError(t, err)
+	require.Len(t, colTypes, 17)
+
+	// Verify we can read the row
+	if !rows.Next() {
+		require.NoError(t, rows.Err(), "Failed to read row")
+		require.Fail(t, "No rows returned from query")
+	}
+
+	// Scan values
+	var (
+		id, tinyInt, smallInt, mediumInt, intCol                     int
+		bigInt, unsignedInt                                           int64
+		floatCol                                                      float32
+		doubleCol, decimalCol                                         float64
+		varcharCol, textCol, dateCol, datetimeCol, timestampCol       string
+		jsonCol, blobCol                                              []byte
+	)
+
+	err = rows.Scan(&id, &tinyInt, &smallInt, &mediumInt, &intCol, &bigInt, &unsignedInt,
+		&floatCol, &doubleCol, &decimalCol, &varcharCol, &textCol,
+		&dateCol, &datetimeCol, &timestampCol, &jsonCol, &blobCol)
+	require.NoError(t, err)
+
+	// Verify values
+	require.Equal(t, 1, id)
+	require.Equal(t, 127, tinyInt)
+	require.Equal(t, 32767, smallInt)
+	require.Equal(t, 2147483647, intCol)
+	require.Greater(t, bigInt, int64(0))
+	require.Equal(t, "test varchar", varcharCol)
+	require.Equal(t, "test text", textCol)
+}
+
+// TestFlightSQLNullValues tests that NULL values are correctly handled.
+func TestFlightSQLNullValues(t *testing.T) {
+	setupFlightSQLCerts(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	// Create test table with nullable columns
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`CREATE TABLE test.null_test (
+			id INT PRIMARY KEY,
+			nullable_int INT,
+			nullable_varchar VARCHAR(100),
+			nullable_date DATE
+		)`)
+
+		// Insert row with NULLs
+		dbt.MustExec(`INSERT INTO test.null_test VALUES (1, NULL, NULL, NULL)`)
+		// Insert row with values
+		dbt.MustExec(`INSERT INTO test.null_test VALUES (2, 42, 'test', '2024-01-15')`)
+	})
+
+	dsn := fmt.Sprintf("flightsql://root@localhost:%d", ts.Server.FlightSQLPort())
+	db, err := sql.Open("flightsql", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Query rows with NULLs
+	rows, err := db.Query("SELECT * FROM test.null_test ORDER BY id")
+	require.NoError(t, err)
+	defer rows.Close()
+
+	// First row: all nulls
+	require.True(t, rows.Next())
+	var (
+		id                                          int
+		nullableInt                                 sql.NullInt64
+		nullableVarchar                             sql.NullString
+		nullableDate                                sql.NullString
+	)
+	err = rows.Scan(&id, &nullableInt, &nullableVarchar, &nullableDate)
+	require.NoError(t, err)
+	require.Equal(t, 1, id)
+	require.False(t, nullableInt.Valid)
+	require.False(t, nullableVarchar.Valid)
+	require.False(t, nullableDate.Valid)
+
+	// Second row: all values
+	require.True(t, rows.Next())
+	err = rows.Scan(&id, &nullableInt, &nullableVarchar, &nullableDate)
+	require.NoError(t, err)
+	require.Equal(t, 2, id)
+	require.True(t, nullableInt.Valid)
+	require.Equal(t, int64(42), nullableInt.Int64)
+	require.True(t, nullableVarchar.Valid)
+	require.Equal(t, "test", nullableVarchar.String)
+	require.True(t, nullableDate.Valid)
+}
