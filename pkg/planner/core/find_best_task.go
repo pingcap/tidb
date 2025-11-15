@@ -746,6 +746,17 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
 
+<<<<<<< HEAD
+=======
+	// predicateResult is separated out. An index may "win" because it has a better
+	// accessResult - but that access has high risk.
+	// accessResult does not differentiate between range or equal/IN predicates.
+	// Summing these 3 metrics ensures that a "high risk" index wont win ONLY on
+	// accessResult. The high risk will negate that accessResult with erOrIn being the
+	// tiebreaker or equalizer.
+	predicateResult := accessResult + riskResult + eqOrInResult
+
+>>>>>>> e10a603ea1b (planner: Adjust risk assessment for plan choice (#64419))
 	// totalSum is the aggregate score of all comparison metrics
 	// riskResult is excluded because more work is required.
 	// TODO: - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
@@ -781,7 +792,27 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		}
 	}
 
+<<<<<<< HEAD
 	if !comparable1 && !comparable2 {
+=======
+	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
+	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
+	if !comparable1 || !comparable2 {
+		// These aren't comparable - meaning that they have different combinations of columns in
+		// the access conditions or filters.
+		// One or more predicates could carry high risk - so we want to compare that risk and other
+		// metrics to see if we can determine a clear winner.
+		// The 2 key metrics here are riskResult and predicateResult.
+		// - riskResult tells us which candidate has lower risk
+		// - predicateResult already includes risk - we need ">1" or "<-1" to counteract the risk factor.
+		// "DidNotLose" and totalSum are also factored in to ensure that the winner is better overall."
+		if riskResult > 0 && leftDidNotLose && totalSum >= 0 && predicateResult > 1 {
+			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
+		}
+		if riskResult < 0 && rightDidNotLose && totalSum <= 0 && predicateResult < 1 {
+			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
+		}
+>>>>>>> e10a603ea1b (planner: Adjust risk assessment for plan choice (#64419))
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && totalSum > 0 {
@@ -1270,6 +1301,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
+<<<<<<< HEAD
 			var unsignedIntHandle bool
 			if c.path.IsIntHandlePath && ds.TableInfo.PKIsHandle {
 				if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
@@ -1280,6 +1312,12 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 				indexFilters := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+=======
+			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
+			indexFilters := c.equalPredicateCount() > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
+				if !c.path.IsFullScanRange(ds.TableInfo) {
+>>>>>>> e10a603ea1b (planner: Adjust risk assessment for plan choice (#64419))
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
