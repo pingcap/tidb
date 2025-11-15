@@ -166,26 +166,23 @@ func TestIndexInfo2Cols(t *testing.T) {
 	// If col1 has been pruned, the prefix columns should just be [col0]
 	cols = []*Column{col0, col2}
 	colInfos = []*model.ColumnInfo{colInfo0, colInfo2}
+	prefixCols, prefixLens, fullCols, fullLens := IndexInfo2Cols(colInfos, cols, indexInfo)
 	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
+	require.True(t, slices.Equal(resCols, prefixCols))
+	require.True(t, slices.Equal(lengths, prefixLens))
 	require.Len(t, resCols, 1)
 	require.Len(t, lengths, 1)
 	require.True(t, resCols[0].EqualColumn(col0))
-	prefixCols, prefixLens, _, _ := IndexInfo2Cols(colInfos, cols, indexInfo)
-	require.True(t, slices.Equal(prefixCols, resCols))
-	require.True(t, slices.Equal(prefixLens, lengths))
 
 	// If col1 has been pruned, the full columns should be [col0, nil, col2]
 	resCols, lengths = IndexInfo2FullCols(colInfos, cols, indexInfo)
+	require.True(t, slices.Equal(resCols, fullCols))
+	require.True(t, slices.Equal(lengths, fullLens))
 	require.Len(t, resCols, 3)
 	require.Len(t, lengths, 3)
 	require.True(t, resCols[0].EqualColumn(col0))
 	require.Nil(t, resCols[1])
 	require.True(t, resCols[2].EqualColumn(col2))
-	prefixCols2, prefixLens2, fullCols, fullLens := IndexInfo2Cols(colInfos, cols, indexInfo)
-	require.True(t, slices.Equal(prefixCols2, prefixCols))
-	require.True(t, slices.Equal(prefixLens2, prefixLens))
-	require.True(t, slices.Equal(fullCols, resCols))
-	require.True(t, slices.Equal(fullLens, lengths))
 }
 
 func TestColHybird(t *testing.T) {
