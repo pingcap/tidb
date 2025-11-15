@@ -15,6 +15,7 @@
 package copr
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -53,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -335,10 +337,64 @@ type buildCopTaskOpt struct {
 	ignoreTiKVClientReadTimeout bool
 }
 
+func ensureMonotonicKeyRanges(ctx context.Context, ranges *KeyRanges) bool {
+	if ranges == nil || ranges.Len() == 0 {
+		return false
+	}
+	total := ranges.Len()
+	prev := ranges.At(0)
+	validateRange := func(r kv.KeyRange) bool {
+		if len(r.EndKey) > 0 && bytes.Compare(r.StartKey, r.EndKey) > 0 {
+			logutil.Logger(ctx).Error("invalid key range start > end",
+				zap.String("start", redact.Key(r.StartKey)),
+				zap.String("end", redact.Key(r.EndKey)))
+			return false
+		}
+		return true
+	}
+	valid := validateRange(prev)
+	sorted := true
+	for i := 1; i < total; i++ {
+		curr := ranges.At(i)
+		valid = validateRange(curr) && valid
+		if len(prev.EndKey) == 0 || bytes.Compare(prev.EndKey, curr.StartKey) > 0 {
+			sorted = false
+			break
+		}
+		prev = curr
+	}
+	if sorted && valid {
+		return false
+	}
+	flat := ranges.ToRanges()
+	logutil.Logger(ctx).Error("key ranges not monotonic, reorder before BatchLocateKeyRanges",
+		zap.Int("rangeCount", ranges.Len()),
+		formatRanges(NewKeyRanges(flat)),
+		zap.Stack("stack"))
+	sortedRanges := append([]kv.KeyRange(nil), flat...)
+	slices.SortFunc(sortedRanges, func(a, b kv.KeyRange) int {
+		if cmp := bytes.Compare(a.StartKey, b.StartKey); cmp != 0 {
+			return cmp
+		}
+		return bytes.Compare(a.EndKey, b.EndKey)
+	})
+	ranges.Reset(sortedRanges)
+	return true
+}
+
 func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
 	req, cache, eventCb, hints := opt.req, opt.cache, opt.eventCb, opt.rowHints
 	start := time.Now()
-	defer tracing.StartRegion(bo.GetCtx(), "copr.buildCopTasks").End()
+	ctx := bo.GetCtx()
+	defer tracing.StartRegion(ctx, "copr.buildCopTasks").End()
+	if traceevent.IsEnabled(traceevent.KvRequest) {
+		traceevent.TraceEvent(ctx, traceevent.KvRequest, "copr.build_ranges",
+			zap.Uint64("connID", req.ConnID),
+			zap.String("connAlias", req.ConnAlias),
+			zap.Int("rangeCount", ranges.Len()),
+			formatRanges(ranges))
+	}
+	reordered := ensureMonotonicKeyRanges(ctx, ranges)
 	cmdType := tikvrpc.CmdCop
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
@@ -346,6 +402,8 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	rangesLen := ranges.Len()
 	// something went wrong, disable hints to avoid out of range index.
 	if len(hints) != rangesLen {
+		hints = nil
+	} else if reordered {
 		hints = nil
 	}
 

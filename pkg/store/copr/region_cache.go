@@ -71,30 +71,20 @@ func formatRanges(ranges *KeyRanges) zap.Field {
 		enc.AddInt("count", count)
 
 		if count > 0 {
+			needRedact := redact.NeedRedact()
 			if err := enc.AddArray("ranges", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
-				// Log up to first 10 ranges
-				limit := count
-				if limit > 10 {
-					limit = 10
-				}
-
-				for i := range limit {
+				// Log all ranges for complete debugging (no limit)
+				for i := range count {
 					r := ranges.At(i)
 					if err := ae.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
-						enc.AddString("start", redact.Key(r.StartKey))
-						enc.AddString("end", redact.Key(r.EndKey))
-						return nil
-					})); err != nil {
-						return err
-					}
-				}
-
-				// If truncated, also log the last range to show the full span
-				if count > limit {
-					r := ranges.At(count - 1)
-					if err := ae.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
-						enc.AddString("start", redact.Key(r.StartKey))
-						enc.AddString("end", redact.Key(r.EndKey))
+						if needRedact {
+							enc.AddString("start", "?")
+							enc.AddString("end", "?")
+						} else {
+							// Use zap's binary encoding (base64) - faster and uses less memory
+							enc.AddBinary("start", r.StartKey)
+							enc.AddBinary("end", r.EndKey)
+						}
 						return nil
 					})); err != nil {
 						return err

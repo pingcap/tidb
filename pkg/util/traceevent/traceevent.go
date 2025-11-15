@@ -296,7 +296,7 @@ func (*LogSink) Record(ctx context.Context, event Event) {
 func logEvent(ctx context.Context, event Event) {
 	// Append to reserved capacity without allocation.
 	// Field order: [event fields] [category] [timestamp] [trace_id?]
-	fields := event.Fields
+	fields := convertBinaryFieldsToHex(event.Fields)
 	fields = append(fields, zap.String("category", event.Category.String()))
 	fields = append(fields, zap.Int64("event_ts", event.Timestamp.UnixMicro()))
 	if len(event.TraceID) > 0 {
@@ -304,6 +304,44 @@ func logEvent(ctx context.Context, event Event) {
 	}
 
 	logutil.Logger(ctx).Info("[trace-event] "+event.Name, fields...)
+}
+
+// convertBinaryFieldsToHex converts zap.Binary fields to hex-encoded strings for better readability in logs.
+//
+// IMPORTANT: This function allocates a new slice rather than modifying in-place to preserve the
+// immutability invariant of Event.Fields. The Fields array may be shared across multiple goroutines
+// (e.g., flight recorder, log sink), so in-place modification would cause data races.
+func convertBinaryFieldsToHex(fields []zap.Field) []zap.Field {
+	if len(fields) == 0 {
+		return fields
+	}
+
+	// Quick scan to see if we have any binary fields
+	hasBinary := false
+	for i := range fields {
+		if fields[i].Type == zapcore.BinaryType {
+			hasBinary = true
+			break
+		}
+	}
+
+	if !hasBinary {
+		return fields
+	}
+
+	// Convert binary fields to hex strings
+	result := make([]zap.Field, len(fields))
+	for i := range fields {
+		if fields[i].Type == zapcore.BinaryType {
+			// Extract the binary data and convert to hex
+			data := fields[i].Interface.([]byte)
+			result[i] = zap.String(fields[i].Key, strings.ToUpper(hex.EncodeToString(data)))
+		} else {
+			result[i] = fields[i]
+		}
+	}
+
+	return result
 }
 
 // copyFieldsWithCapacity copies fields with extra capacity for appending without reallocation.
