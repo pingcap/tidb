@@ -166,6 +166,11 @@ func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*
 	} else if isHistoryTable(e.table.Name.O) {
 		rows = reader.GetStmtSummaryHistoryRows()
 	}
+
+	if user != nil {
+		rows = filterRowsByUserAndPriv(rows, columns, user.Username, priv)
+	}
+
 	return newSimpleRowsReader(rows), nil
 }
 
@@ -259,6 +264,11 @@ func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx
 
 	var rowsReader *rowsReader
 	if isCurrentTable(r.table.Name.O) {
+		// filter for ordinary users
+		if user != nil {
+			memRows = filterRowsByUserAndPriv(memRows, columns, user.Username, priv)
+		}
+
 		rowsReader = newSimpleRowsReader(memRows)
 	}
 	if isHistoryTable(r.table.Name.O) {
@@ -268,6 +278,11 @@ func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx
 		if err != nil {
 			return nil, err
 		}
+
+		if user != nil {
+			memRows = filterRowsByUserAndPriv(memRows, columns, user.Username, priv)
+		}
+
 		rowsReader = newRowsReader(memRows, history)
 	}
 
@@ -417,4 +432,32 @@ func buildTimeRanges(tr *plannercore.TimeRange) []*stmtsummaryv2.StmtTimeRange {
 		Begin: tr.StartTime.Unix(),
 		End:   tr.EndTime.Unix(),
 	}}
+}
+
+// filter rows based on current session and its priviledges.
+func filterRowsByUserAndPriv(rows [][]types.Datum, columns []*model.ColumnInfo, username string, privileged bool) [][]types.Datum {
+	if privileged {
+		return rows
+	}
+	if len(columns) == 0 {
+		return rows
+	}
+	sampleUserCol := -1
+	for i, col := range columns {
+		if col != nil && col.Name.O == "SAMPLE_USER" {
+			sampleUserCol = i
+			break
+		}
+	}
+	if sampleUserCol < 0 {
+		return rows
+	}
+
+	filtered := rows[:0]
+	for _, r := range rows {
+		if r[sampleUserCol].GetString() == username {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
 }
