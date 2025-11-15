@@ -161,6 +161,63 @@ func validEqualCond(ctx EvalContext, cond Expression) (*Column, *Constant) {
 	return nil, nil
 }
 
+// replaceCond replaces eq condition in 'cond' by true if both 'src' and 'tgt' appear in 'eq cond'.
+func replaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expression) (Expression, bool) {
+	if src.RetType.GetType() != tgt.RetType.GetType() {
+		return cond, false
+	}
+	sf, ok := cond.(*ScalarFunction)
+	if !ok {
+		return cond, false
+	}
+	replaced := false
+	args := sf.GetArgs()
+	evalCtx := ctx.GetEvalCtx()
+	switch sf.FuncName.L {
+	case ast.In:
+		// for 'a in (b, c, d)', if a = b or a = c or a = d, we can replace it with true
+		constTrue := false
+		switch {
+		case args[0].Equal(ctx.GetEvalCtx(), src):
+			constTrue = slices.ContainsFunc(args[1:], func(arg Expression) bool {
+				return arg.Equal(ctx.GetEvalCtx(), tgt)
+			})
+		case args[0].Equal(ctx.GetEvalCtx(), tgt):
+			constTrue = slices.ContainsFunc(args[1:], func(arg Expression) bool {
+				return arg.Equal(ctx.GetEvalCtx(), src)
+			})
+		}
+		if constTrue {
+			return &Constant{
+				Value:   types.NewDatum(true),
+				RetType: types.NewFieldType(mysql.TypeTiny),
+			}, true
+		}
+	case ast.EQ:
+		// If it has equal condition `a=b`, we meet it again and we can replace it with true
+		if (args[0].Equal(evalCtx, src) && args[1].Equal(evalCtx, tgt)) || (args[1].Equal(evalCtx, src) && args[0].Equal(evalCtx, tgt)) {
+			return &Constant{
+				Value:   types.NewDatum(true),
+				RetType: types.NewFieldType(mysql.TypeTiny),
+			}, true
+		}
+	case ast.LogicOr, ast.LogicAnd:
+		for idx, expr := range args {
+			if sf, ok := expr.(*ScalarFunction); ok {
+				newExpr, subReplaced := replaceCond(ctx, src, tgt, sf)
+				if subReplaced {
+					replaced = true
+					args[idx] = newExpr
+				}
+			}
+		}
+		if replaced {
+			return NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(ctx.GetEvalCtx()), args...), true
+		}
+	}
+	return cond, false
+}
+
 // tryToReplaceCond aims to replace all occurrences of column 'src' and try to replace it with 'tgt' in 'cond'
 // It returns
 //
@@ -203,10 +260,11 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 			sf.FuncName.L == ast.NullEQ) {
 		return false, true, cond
 	}
+	evalCtx := ctx.GetEvalCtx()
 	for idx, expr := range sf.GetArgs() {
 		if src.EqualColumn(expr) {
 			_, coll := cond.CharsetAndCollation()
-			if tgt.GetType(ctx.GetEvalCtx()).GetCollate() != coll {
+			if tgt.GetType(evalCtx).GetCollate() != coll {
 				continue
 			}
 			replaced = true
@@ -348,8 +406,13 @@ func (s *propConstSolver) propagateColumnEQ() {
 			if lOk && rOk && lCol.GetType(s.ctx.GetEvalCtx()).GetCollate() == rCol.GetType(s.ctx.GetEvalCtx()).GetCollate() && !lCol.GetType(s.ctx.GetEvalCtx()).Hybrid() && !rCol.GetType(s.ctx.GetEvalCtx()).Hybrid() {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
-				s.unionSet.Union(lID, rID)
-				visited[i] = true
+				if s.unionSet.FindRoot(lID) != s.unionSet.FindRoot(rID) {
+					// Add the equality relation to unionSet
+					// if it has been added, we don't need to process it again.
+					// It will be deleted in the replaceConditionsWithConstants
+					s.unionSet.Union(lID, rID)
+					visited[i] = true
+				}
 			}
 		}
 	}
@@ -366,6 +429,20 @@ func (s *propConstSolver) propagateColumnEQ() {
 				if visited[k] {
 					// cond_k has been used to retrieve equality relation
 					continue
+				}
+				var constTrue bool
+				s.conditions[k], constTrue = replaceCond(s.ctx, coli, colj, s.conditions[k])
+				if constTrue {
+					// replaces eq condition in the condition list by constant values.
+					// For example, for conditions like
+					//
+					//	a = b and a = b => a = b, true
+					//	a = b and ( a = b or c =d ) => a = b and ( true or c = d )
+					//
+					// True can be removed in the shortCircuitLogicalConstants.
+					if _, ok := s.conditions[k].(*Constant); ok {
+						continue
+					}
 				}
 				cond := s.conditions[k]
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
