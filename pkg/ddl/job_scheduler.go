@@ -20,9 +20,11 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -45,9 +47,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -477,6 +481,250 @@ func (s *jobScheduler) mustReloadSchemas() {
 	}
 }
 
+var tableStruct sync.Map
+
+func compareStruct(old, new *model.TableInfo) bool {
+	if len(old.Columns) != len(new.Columns) {
+		return false
+	}
+	for i, oldCol := range old.Columns {
+		newCol := new.Columns[i]
+		if !oldCol.FieldType.Equal(&newCol.FieldType) {
+			return false
+		}
+		if newCol.ChangingFieldType != nil {
+			return false
+		}
+		if oldCol.Name.L != newCol.Name.L ||
+			oldCol.GetFlag() != newCol.GetFlag() ||
+			oldCol.ID != newCol.ID ||
+			oldCol.Offset != newCol.Offset ||
+			oldCol.OriginDefaultValue != newCol.OriginDefaultValue {
+			return false
+		}
+	}
+	if len(old.Indices) != len(new.Indices) {
+		return false
+	}
+	for i, oldIdx := range old.Indices {
+		newIdx := new.Indices[i]
+		if len(oldIdx.Columns) != len(newIdx.Columns) {
+			return false
+		}
+		for j, oldIdxCol := range oldIdx.Columns {
+			newIdxCol := newIdx.Columns[j]
+			if oldIdxCol.Name.L != newIdxCol.Name.L {
+				return false
+			}
+			if oldIdxCol.Length != newIdxCol.Length {
+				return false
+			}
+			if oldIdxCol.Offset != newIdxCol.Offset {
+				return false
+			}
+			if newIdxCol.UseChangingType {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+type statsRow struct {
+	isIndex    int64
+	histID     int64
+	bucketID   int64
+	count      int64
+	repeats    int64
+	lowerBound []byte
+	upperBound []byte
+	ndv        int64
+}
+
+type statsRowMap map[int64]statsRow
+
+var globalStats sync.Map
+
+func StoreStats(tableID int64, rows []chunk.Row) {
+	statsMap := make(statsRowMap, len(rows))
+	for _, row := range rows {
+		rid := (row.GetInt64(2)) | row.GetInt64(1)
+		statsMap[rid] = statsRow{
+			bucketID:   row.GetInt64(3),
+			count:      row.GetInt64(4),
+			repeats:    row.GetInt64(5),
+			lowerBound: row.GetBytes(6),
+			upperBound: row.GetBytes(7),
+			ndv:        row.GetInt64(8),
+		}
+	}
+	globalStats.Store(tableID, statsMap)
+}
+
+func CheckStats(tableID int64, rows []chunk.Row) (checked, equal bool) {
+	v, ok := globalStats.Load(tableID)
+	if !ok {
+		return false, false
+	}
+
+	statsMap := v.(statsRowMap)
+	for _, row := range rows {
+		rid := (row.GetInt64(2)) | row.GetInt64(1)
+		newRow := statsRow{
+			bucketID:   row.GetInt64(3),
+			count:      row.GetInt64(4),
+			repeats:    row.GetInt64(5),
+			lowerBound: row.GetBytes(6),
+			upperBound: row.GetBytes(7),
+			ndv:        row.GetInt64(8),
+		}
+		oldRow, ok := statsMap[rid]
+		if !ok {
+			return true, false
+		}
+		if !reflect.DeepEqual(oldRow, newRow) {
+			return true, false
+		}
+	}
+
+	return true, true
+}
+
+func collectStats(w *worker, ctx context.Context, job *model.Job) (bool, error) {
+	args, err := model.GetModifyColumnArgs(job)
+	if err != nil {
+		return false, err
+	}
+
+	sctx, err := w.sessPool.Get()
+	if err != nil {
+		return false, err
+	}
+	defer w.sessPool.Put(sctx)
+
+	initSQLs := []string{
+		fmt.Sprintf("ANALYZE TABLE `%s`.`%s` with 4 topn, 4 buckets", job.SchemaName, job.TableName),
+		"set @@tidb_stats_load_sync_wait = 60000",
+		fmt.Sprintf("EXPLAIN SELECT * FROM `%s`.`%s` WHERE `%s` > 1", job.SchemaName, job.TableName, args.Column.Name.L),
+	}
+
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
+	for _, sql := range initSQLs {
+		_, _, err = sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	collectSQL := fmt.Sprintf("select * from mysql.stats_buckets where table_id = %d", job.TableID)
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, collectSQL)
+	if err != nil {
+		return false, err
+	}
+
+	statsMap := make(statsRowMap, len(rows))
+	for _, row := range rows {
+		statsMap[toMapID(row.GetInt64(1), row.GetInt64(2))] = statsRow{
+			bucketID:   row.GetInt64(3),
+			count:      row.GetInt64(4),
+			repeats:    row.GetInt64(5),
+			lowerBound: row.GetBytes(6),
+			upperBound: row.GetBytes(7),
+			ndv:        row.GetInt64(8),
+		}
+	}
+
+	return true, nil
+}
+
+func runAdminCheck(w *worker, ctx context.Context, dbName, tblName string) bool {
+	var sctx sessionctx.Context
+	sctx, err := w.sessPool.Get()
+	if err != nil {
+		return true
+	}
+	defer w.sessPool.Put(sctx)
+
+	sql := fmt.Sprintf("ADMIN CHECK TABLE `%s`.`%s`", dbName, tblName)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
+	_, _, err = sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
+	return err == nil
+}
+
+func getTableInfoForCheck(wk *worker, tableID, schemaID int64) (*model.TableInfo, error) {
+	err := wk.sess.Begin(wk.workCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	txn, err := wk.sess.Txn()
+	if err != nil {
+		return nil, err
+	}
+	metaMut := meta.NewMutator(txn)
+	defer func() {
+		wk.sess.Commit(wk.workCtx)
+	}()
+
+	return getTableInfo(metaMut, tableID, schemaID)
+}
+
+func storeTableInfoBeforeExecution(wk *worker, jobW *model.JobW) bool {
+	store := false
+	switch jobW.Type {
+	case model.ActionModifyColumn:
+		store = true
+	case model.ActionMultiSchemaChange:
+		for _, sub := range jobW.MultiSchemaInfo.SubJobs {
+			if sub.Type == model.ActionModifyColumn {
+				store = true
+			}
+		}
+	}
+
+	if store {
+		tblInfo, err := getTableInfoForCheck(wk, jobW.TableID, jobW.SchemaID)
+		if err == nil {
+			tableStruct.Store(jobW.ID, tblInfo)
+			return true
+		}
+	}
+
+	return false
+}
+
+func checkTableInfoAfterExecution(wk *worker, jobW *model.JobW) {
+	v, ok := tableStruct.Load(jobW.ID)
+	if !ok {
+		return
+	}
+	prevTblInfo := v.(*model.TableInfo)
+
+	if jobW.State == model.JobStateDone ||
+		jobW.State == model.JobStateRollbackDone ||
+		jobW.State == model.JobStateCancelled {
+		if !runAdminCheck(wk, context.Background(), jobW.SchemaName, jobW.TableName) {
+			logutil.DDLLogger().Info("[debug log] admin check failed after ddl",
+				zap.Int64("job ID", jobW.ID),
+				zap.String("query", jobW.Query),
+			)
+		}
+	}
+	if jobW.State == model.JobStateRollbackDone || jobW.State == model.JobStateCancelled {
+		tblInfo, err := getTableInfoForCheck(wk, jobW.TableID, jobW.SchemaID)
+		if err == nil {
+			if !compareStruct(prevTblInfo, tblInfo) {
+				logutil.DDLLogger().Info("[debug log] the table structure has been changed after modify column",
+					zap.Int64("job ID", jobW.ID),
+					zap.String("query", jobW.Query),
+				)
+			}
+
+		}
+		tableStruct.Delete(jobW.ID)
+	}
+}
+
 // deliveryJob deliver the job to the worker to run it asynchronously.
 // the worker will run the job until it's finished, paused or another owner takes
 // over and finished it.
@@ -487,6 +735,8 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 	jobCtx := s.getJobRunCtx(jobW.ID, jobW.TraceInfo)
+
+	storeTableInfoBeforeExecution(wk, jobW)
 
 	s.wg.Run(func() {
 		start := time.Now()
@@ -510,6 +760,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 		}()
 		for {
 			err := s.transitOneJobStepAndWaitSync(wk, jobCtx, jobW)
+			checkTableInfoAfterExecution(wk, jobW)
 			if err != nil {
 				logutil.DDLLogger().Info("transit one job step and wait sync failed", zap.Error(err), zap.Stringer("job", jobW))
 			} else if jobW.InFinalState() {
