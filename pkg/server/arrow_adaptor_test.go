@@ -246,3 +246,189 @@ func TestErrUnsupportedType(t *testing.T) {
 	require.NotNil(t, ErrUnsupportedType)
 	require.Contains(t, ErrUnsupportedType.Error(), "unsupported")
 }
+
+// TestEncodePreparedHandle tests the encoding of prepared statement handles
+func TestEncodePreparedHandle(t *testing.T) {
+	tests := []struct {
+		name   string
+		query  string
+		params []byte
+	}{
+		{
+			name:   "query without parameters",
+			query:  "SELECT * FROM users WHERE id = 1",
+			params: nil,
+		},
+		{
+			name:   "query with empty parameters",
+			query:  "SELECT * FROM users",
+			params: []byte{},
+		},
+		{
+			name:   "query with parameters",
+			query:  "SELECT * FROM users WHERE id = ?",
+			params: []byte{1, 2, 3, 4},
+		},
+		{
+			name:   "complex query with parameters",
+			query:  "INSERT INTO users (name, email) VALUES (?, ?)",
+			params: []byte{0x10, 0x20, 0x30},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Encode
+			encoded := encodePreparedHandle(tt.query, tt.params)
+			require.NotNil(t, encoded)
+
+			// Decode
+			decodedQuery, decodedParams, err := decodePreparedHandle(encoded)
+			require.NoError(t, err)
+
+			// Verify
+			require.Equal(t, tt.query, decodedQuery)
+			if len(tt.params) == 0 {
+				require.Nil(t, decodedParams)
+			} else {
+				require.Equal(t, tt.params, decodedParams)
+			}
+		})
+	}
+}
+
+// TestDecodePreparedHandle tests decoding of various handle formats
+func TestDecodePreparedHandle(t *testing.T) {
+	tests := []struct {
+		name          string
+		handle        []byte
+		expectedQuery string
+		expectedParam []byte
+		expectError   bool
+	}{
+		{
+			name:          "simple query without params",
+			handle:        []byte("SELECT 1"),
+			expectedQuery: "SELECT 1",
+			expectedParam: nil,
+			expectError:   false,
+		},
+		{
+			name:          "query with separator but no params",
+			handle:        []byte("SELECT * FROM test|"),
+			expectedQuery: "SELECT * FROM test",
+			expectedParam: []byte{},
+			expectError:   false,
+		},
+		{
+			name:          "query with params",
+			handle:        []byte("SELECT * FROM test WHERE id = ?|param_data"),
+			expectedQuery: "SELECT * FROM test WHERE id = ?",
+			expectedParam: []byte("param_data"),
+			expectError:   false,
+		},
+		{
+			name:          "empty handle",
+			handle:        []byte{},
+			expectedQuery: "",
+			expectedParam: nil,
+			expectError:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			query, params, err := decodePreparedHandle(tt.handle)
+
+			if tt.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.expectedQuery, query)
+				require.Equal(t, tt.expectedParam, params)
+			}
+		})
+	}
+}
+
+// TestPreparedHandleRoundTrip tests that encoding and decoding are inverses
+func TestPreparedHandleRoundTrip(t *testing.T) {
+	testCases := []struct {
+		name   string
+		query  string
+		params []byte
+	}{
+		{
+			name:   "simple select",
+			query:  "SELECT 1",
+			params: nil,
+		},
+		{
+			name:   "select with placeholder",
+			query:  "SELECT * FROM users WHERE id = ?",
+			params: []byte{0x01},
+		},
+		{
+			name:   "insert with multiple placeholders",
+			query:  "INSERT INTO test VALUES (?, ?, ?)",
+			params: []byte{0x01, 0x02, 0x03},
+		},
+		{
+			name:   "empty query",
+			query:  "",
+			params: nil,
+		},
+		{
+			name:   "query with special chars",
+			query:  "SELECT * FROM test WHERE name LIKE '%test%'",
+			params: nil,
+		},
+		{
+			name:   "complex query with params",
+			query:  "UPDATE users SET name = ?, email = ? WHERE id = ?",
+			params: []byte("binary_params"),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Encode then decode
+			encoded := encodePreparedHandle(tc.query, tc.params)
+			decodedQuery, decodedParams, err := decodePreparedHandle(encoded)
+
+			require.NoError(t, err)
+			require.Equal(t, tc.query, decodedQuery)
+
+			if len(tc.params) == 0 {
+				require.Nil(t, decodedParams)
+			} else {
+				require.Equal(t, tc.params, decodedParams)
+			}
+		})
+	}
+}
+
+// TestPreparedHandleStateless verifies handles are stateless
+func TestPreparedHandleStateless(t *testing.T) {
+	query := "SELECT * FROM users WHERE id = ?"
+	params1 := []byte{0x01, 0x02}
+	params2 := []byte{0x03, 0x04}
+
+	// Create two different handles with same query but different params
+	handle1 := encodePreparedHandle(query, params1)
+	handle2 := encodePreparedHandle(query, params2)
+
+	// Handles should be different
+	require.NotEqual(t, handle1, handle2)
+
+	// Both should decode to correct values
+	q1, p1, err := decodePreparedHandle(handle1)
+	require.NoError(t, err)
+	require.Equal(t, query, q1)
+	require.Equal(t, params1, p1)
+
+	q2, p2, err := decodePreparedHandle(handle2)
+	require.NoError(t, err)
+	require.Equal(t, query, q2)
+	require.Equal(t, params2, p2)
+}
