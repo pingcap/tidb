@@ -449,10 +449,7 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 			Collators: make([]collate.Collator, 1),
 		},
 	}
-	var (
-		count float64
-		colID int64
-	)
+	var count float64
 	totalCount = float64(0)
 	maxCount = float64(0)
 	for _, indexRange := range indexRanges {
@@ -466,7 +463,7 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 				tmpRan[0].LowExclude = indexRange.LowExclude
 				tmpRan[0].HighExclude = indexRange.HighExclude
 			}
-			colID = idxCols[i].UniqueID
+			colID := idxCols[i].UniqueID
 			col := coll.GetCol(colID)
 			// GetRowCountByColumnRanges handles invalid stats internally by using pseudo estimation
 			var countEst statistics.RowEstimate
