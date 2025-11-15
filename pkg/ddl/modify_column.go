@@ -1112,6 +1112,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		}
 	case model.StatePublic:
+		metrics.RemoveBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O)
 		oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 		switch oldCol.State {
 		case model.StateWriteOnly:
@@ -1340,6 +1341,7 @@ func (w *worker) doModifyColumnIndexReorg(
 			}
 		}
 	case model.StatePublic:
+		metrics.RemoveBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O)
 		if len(oldIdxInfos) == 0 {
 			// All the old indexes has been deleted by previous modify column,
 			// we can just finish the job.
