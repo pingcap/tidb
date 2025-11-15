@@ -428,7 +428,7 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 	if len(idxCols) == 1 {
 		colID := idxCols[0].UniqueID
 		col := coll.GetCol(colID)
-		if col != nil && col.IsEssentialStatsLoaded() && col.Histogram.Len() > 0 {
+		if col != nil && col.IsEssentialStatsLoaded() {
 			var countEst statistics.RowEstimate
 			countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, indexRanges)
 			if err != nil {
@@ -470,7 +470,7 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 			col := coll.GetCol(colID)
 			// GetRowCountByColumnRanges handles invalid stats internally by using pseudo estimation
 			var countEst statistics.RowEstimate
-			if col != nil && col.IsEssentialStatsLoaded() && col.Histogram.Len() > 0 {
+			if col != nil && col.IsEssentialStatsLoaded() {
 				countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
 				if err != nil {
 					return 0, 0, errors.Trace(err)
