@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -32,6 +33,141 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/stretchr/testify/require"
 )
+
+// Helper functions for checking stats properties
+
+// checkAnalyzedTableBasicMeta checks the basic metadata for an analyzed table
+func checkAnalyzedTableBasicMeta(t *testing.T, tableStats *statistics.Table, expectedRealtimeCount int64) {
+	require.True(t, tableStats.IsAnalyzed(), "table should be marked as analyzed")
+	require.Equal(t, int64(0), tableStats.ModifyCount, "modify count should be 0 for freshly analyzed table")
+	require.Equal(t, expectedRealtimeCount, tableStats.RealtimeCount, "realtime count should match expected count")
+	require.Equal(t, statistics.Version2, tableStats.StatsVer, "stats version should be Version2 for analyzed table")
+}
+
+// checkAnalyzedIndexStats checks all index stats for an analyzed table
+func checkAnalyzedIndexStats(t *testing.T, tableStats *statistics.Table, tableInfo *model.TableInfo, expectedTopNCount uint64, expectedTotalRowCount float64, expectedHistLen int) {
+	require.Equal(t, len(tableInfo.Indices), tableStats.IdxNum(), "index count should match table info")
+	tableStats.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+		require.True(t, tableStats.ColAndIdxExistenceMap.Has(idx.ID, true), "analyzed index %d should exist in existence map", idx.ID)
+		require.True(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true), "analyzed index %d should be marked as analyzed", idx.ID)
+		require.True(t, idx.IsStatsInitialized(), "analyzed index %d stats should be initialized", idx.ID)
+		require.True(t, idx.IsFullLoad(), "analyzed index %d should be fully loaded", idx.ID)
+		require.Equal(t, expectedTopNCount, idx.TopN.TotalCount(), "analyzed index %d TopN count should match expected", idx.ID)
+		require.Equal(t, expectedTotalRowCount, idx.TotalRowCount(), "analyzed index %d total row count should match expected", idx.ID)
+		require.Equal(t, expectedHistLen, idx.Histogram.Len(), "analyzed index %d histogram length should match expected", idx.ID)
+		return false
+	})
+}
+
+// checkAnalyzedColumnStatsAllEvicted checks column stats for analyzed tables where columns are evicted
+func checkAnalyzedColumnStatsAllEvicted(t *testing.T, tableStats *statistics.Table, expectedNDV int64) {
+	tableStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.True(t, tableStats.ColAndIdxExistenceMap.Has(col.ID, false), "evicted column %s should exist in existence map", col.Info.Name.L)
+		require.True(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false), "evicted column %s should be marked as analyzed", col.Info.Name.L)
+		require.True(t, col.IsStatsInitialized(), "evicted column %s stats should be initialized", col.Info.Name.L)
+		require.True(t, col.IsAllEvicted(), "column %s should be marked as all evicted", col.Info.Name.L)
+		require.Equal(t, expectedNDV, col.NDV, "evicted column %s NDV should match expected", col.Info.Name.L)
+		require.Equal(t, int64(0), col.NullCount, "evicted column %s null count should be 0", col.Info.Name.L)
+
+		require.Nil(t, col.TopN, "evicted column %s TopN should be nil (evicted)", col.Info.Name.L)
+		require.Equal(t, uint64(0), col.TopN.TotalCount(), "evicted column %s TopN total count should be 0 (evicted)", col.Info.Name.L)
+		require.Equal(t, float64(0), col.TotalRowCount(), "evicted column %s total row count should be 0 (evicted)", col.Info.Name.L)
+		require.Equal(t, 0, col.Histogram.Len(), "evicted column %s histogram length should be 0 (evicted)", col.Info.Name.L)
+		return false
+	})
+}
+
+// checkNonAnalyzedTableBasicMeta checks the basic metadata for a non-analyzed table
+func checkNonAnalyzedTableBasicMeta(t *testing.T, tableStats *statistics.Table, expectedCount int64) {
+	require.False(t, tableStats.Pseudo, "table stats should not be pseudo for non-analyzed table")
+	require.False(t, tableStats.IsAnalyzed(), "table should not be marked as analyzed")
+	require.Equal(t, expectedCount, tableStats.ModifyCount, "modify count should match expected count")
+	require.Equal(t, expectedCount, tableStats.RealtimeCount, "realtime count should match expected count")
+	require.Equal(t, statistics.Version0, tableStats.StatsVer, "stats version should be Version0 for non-analyzed table")
+}
+
+// checkNonAnalyzedIndexStats checks all index stats for a non-analyzed table
+func checkNonAnalyzedIndexStats(t *testing.T, tableStats *statistics.Table, tableInfo *model.TableInfo) {
+	require.Equal(t, len(tableInfo.Indices), tableStats.IdxNum(), "index count should match table info")
+	tableStats.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+		require.True(t, tableStats.ColAndIdxExistenceMap.Has(idx.ID, true), "index %d should exist in existence map", idx.ID)
+		require.False(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true), "index %d should not be marked as analyzed", idx.ID)
+		require.False(t, idx.IsStatsInitialized(), "index %d stats should not be initialized", idx.ID)
+		require.False(t, idx.IsAllEvicted(), "index %d should not be marked as evicted", idx.ID)
+		require.False(t, idx.IsFullLoad(), "index %d should not be fully loaded", idx.ID)
+		require.Equal(t, int64(0), idx.NDV, "index %d NDV should be 0", idx.ID)
+		require.Equal(t, int64(0), idx.NullCount, "index %d null count should be 0", idx.ID)
+		require.Nil(t, idx.TopN, "index %d TopN should be nil", idx.ID)
+		require.Equal(t, uint64(0), idx.TopN.TotalCount(), "index %d TopN total count should be 0", idx.ID)
+		require.Equal(t, float64(0), idx.TotalRowCount(), "index %d total row count should be 0", idx.ID)
+		require.Equal(t, 0, idx.Histogram.Len(), "index %d histogram length should be 0", idx.ID)
+		return false
+	})
+}
+
+// checkNonAnalyzedColumnStats checks column stats for a non-analyzed table
+func checkNonAnalyzedColumnStats(t *testing.T, tableStats *statistics.Table, tableInfo *model.TableInfo) {
+	require.Equal(t, len(tableInfo.Columns), tableStats.ColNum(), "column count should match table info")
+	tableStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.True(t, tableStats.ColAndIdxExistenceMap.Has(col.ID, false), "column %s should exist in existence map", col.Info.Name.L)
+		require.False(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false), "column %s should not be marked as analyzed", col.Info.Name.L)
+		require.False(t, col.IsStatsInitialized(), "column %s stats should not be initialized", col.Info.Name.L)
+		require.False(t, col.IsAllEvicted(), "column %s should not be marked as evicted", col.Info.Name.L)
+		require.False(t, col.IsFullLoad(), "column %s should not be fully loaded", col.Info.Name.L)
+		require.Equal(t, int64(0), col.NDV, "column %s NDV should be 0", col.Info.Name.L)
+		require.Equal(t, int64(0), col.NullCount, "column %s null count should be 0", col.Info.Name.L)
+		require.Nil(t, col.TopN, "column %s TopN should be nil", col.Info.Name.L)
+		require.Equal(t, uint64(0), col.TopN.TotalCount(), "column %s TopN total count should be 0", col.Info.Name.L)
+		require.Equal(t, float64(0), col.TotalRowCount(), "column %s total row count should be 0", col.Info.Name.L)
+		require.Equal(t, 0, col.Histogram.Len(), "column %s histogram length should be 0", col.Info.Name.L)
+		return false
+	})
+}
+
+// checkPredicateColumnStats checks column stats for tables analyzed with predicate columns
+// nonPredicateCols specifies which columns should NOT be analyzed, while others should be analyzed but evicted
+func checkPredicateColumnStats(t *testing.T, tableStats *statistics.Table, tableInfo *model.TableInfo, nonPredicateCols []string, expectedNDV int64) {
+	nonPredicateMap := make(map[string]bool, len(nonPredicateCols))
+	for _, col := range nonPredicateCols {
+		nonPredicateMap[col] = true
+	}
+
+	require.Equal(t, len(tableInfo.Columns), tableStats.ColNum(), "column count should match table info")
+	tableStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		// Check if this column is in the non-predicate columns list
+		isNonPredicate := nonPredicateMap[col.Info.Name.L]
+
+		if isNonPredicate {
+			// Non-predicate column: should not be analyzed
+			require.True(t, tableStats.ColAndIdxExistenceMap.Has(col.ID, false), "non-predicate column %s should exist in existence map", col.Info.Name.L)
+			require.False(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false), "non-predicate column %s should not be marked as analyzed", col.Info.Name.L)
+			require.False(t, col.IsStatsInitialized(), "non-predicate column %s stats should not be initialized", col.Info.Name.L)
+			require.False(t, col.IsAllEvicted(), "non-predicate column %s should not be marked as evicted", col.Info.Name.L)
+			require.False(t, col.IsFullLoad(), "non-predicate column %s should not be fully loaded", col.Info.Name.L)
+			require.Equal(t, int64(0), col.NDV, "non-predicate column %s NDV should be 0", col.Info.Name.L)
+			require.Equal(t, int64(0), col.NullCount, "non-predicate column %s null count should be 0", col.Info.Name.L)
+			require.Nil(t, col.TopN, "non-predicate column %s TopN should be nil", col.Info.Name.L)
+			require.Equal(t, uint64(0), col.TopN.TotalCount(), "non-predicate column %s TopN total count should be 0", col.Info.Name.L)
+			require.Equal(t, float64(0), col.TotalRowCount(), "non-predicate column %s total row count should be 0", col.Info.Name.L)
+			require.Equal(t, 0, col.Histogram.Len(), "non-predicate column %s histogram length should be 0", col.Info.Name.L)
+			return false
+		}
+
+		// Predicate column: should be analyzed but evicted
+		require.True(t, tableStats.ColAndIdxExistenceMap.Has(col.ID, false), "predicate column %s should exist in existence map", col.Info.Name.L)
+		require.True(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false), "predicate column %s should be marked as analyzed", col.Info.Name.L)
+		require.True(t, col.IsStatsInitialized(), "predicate column %s stats should be initialized", col.Info.Name.L)
+		require.True(t, col.IsAllEvicted(), "predicate column %s should be marked as evicted", col.Info.Name.L)
+		require.False(t, col.IsFullLoad(), "predicate column %s should not be fully loaded", col.Info.Name.L)
+		require.Equal(t, expectedNDV, col.NDV, "predicate column %s NDV should match expected", col.Info.Name.L)
+		require.Equal(t, int64(0), col.NullCount, "predicate column %s null count should be 0", col.Info.Name.L)
+		require.Nil(t, col.TopN, "predicate column %s TopN should be nil (evicted)", col.Info.Name.L)
+		require.Equal(t, uint64(0), col.TopN.TotalCount(), "predicate column %s TopN total count should be 0 (evicted)", col.Info.Name.L)
+		require.Equal(t, float64(0), col.TotalRowCount(), "predicate column %s total row count should be 0 (evicted)", col.Info.Name.L)
+		require.Equal(t, 0, col.Histogram.Len(), "predicate column %s histogram length should be 0 (evicted)", col.Info.Name.L)
+		return false
+	})
+}
 
 func TestStatsCacheProcess(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -329,34 +465,12 @@ func TestInitStats(t *testing.T) {
 
 	require.NoError(t, h.InitStats(context.Background(), is))
 	tableStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-	require.True(t, tableStats.IsAnalyzed())
 	// Basic meta info check
-	require.Equal(t, int64(0), tableStats.ModifyCount)
-	require.Equal(t, int64(6), tableStats.RealtimeCount)
-	require.Equal(t, statistics.Version2, tableStats.StatsVer)
+	checkAnalyzedTableBasicMeta(t, tableStats, 6)
 	// Check index stats (TopN + Histogram)
-	idx := tableStats.GetIdx(tbl.Meta().Indices[0].ID)
-	require.NotNil(t, idx)
-	require.True(t, tableStats.ColAndIdxExistenceMap.Has(idx.ID, true))
-	require.True(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true))
-	require.True(t, idx.IsStatsInitialized())
-	require.True(t, idx.IsFullLoad())
-	require.Equal(t, uint64(2), idx.TopN.TotalCount())
-	require.Equal(t, float64(6), idx.TotalRowCount())
-	require.Equal(t, 2, idx.Histogram.Len())
+	checkAnalyzedIndexStats(t, tableStats, tbl.Meta(), 2, 6, 2)
 	// Check column stats (Only Basic Info, no TopN and Histogram)
-	tableStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.True(t, tableStats.ColAndIdxExistenceMap.Has(col.ID, false))
-		require.True(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
-		require.True(t, col.IsStatsInitialized())
-		require.True(t, col.IsAllEvicted())
-		require.Equal(t, int64(6), col.NDV)
-		require.Equal(t, int64(0), col.NullCount)
-		require.Equal(t, float64(0), col.TotalRowCount())
-		require.Nil(t, col.TopN)
-		require.Equal(t, 0, col.Histogram.Len())
-		return false
-	})
+	checkAnalyzedColumnStatsAllEvicted(t, tableStats, 6)
 
 	// Another table with no analyze
 	tk.MustExec("create table t1(a int, b int, c int, primary key(a), key idx(b))")
@@ -373,38 +487,12 @@ func TestInitStats(t *testing.T) {
 
 	require.NoError(t, h.InitStats(context.Background(), is))
 	tableStats1 := h.GetPhysicalTableStats(tbl1.Meta().ID, tbl1.Meta())
-	require.False(t, tableStats1.Pseudo)
-	require.False(t, tableStats1.IsAnalyzed())
-	require.Equal(t, int64(6), tableStats1.ModifyCount)
-	require.Equal(t, int64(6), tableStats1.RealtimeCount)
-	require.Equal(t, statistics.Version0, tableStats1.StatsVer)
+	checkNonAnalyzedTableBasicMeta(t, tableStats1, 6)
 
 	// Check index stats
-	require.Equal(t, 1, tableStats1.IdxNum())
-	idx1 := tableStats1.GetIdx(tbl1.Meta().Indices[0].ID)
-	require.NotNil(t, idx1)
-	require.True(t, tableStats1.ColAndIdxExistenceMap.Has(idx1.ID, true))
-	require.False(t, tableStats1.ColAndIdxExistenceMap.HasAnalyzed(idx1.ID, true))
-	require.False(t, idx1.IsStatsInitialized())
-	require.False(t, idx1.IsAllEvicted())
-	require.Equal(t, uint64(0), idx1.TopN.TotalCount())
-	require.Equal(t, float64(0), idx1.TotalRowCount())
-	require.Equal(t, 0, idx1.Histogram.Len())
+	checkNonAnalyzedIndexStats(t, tableStats1, tbl1.Meta())
 	// Check column stats
-	require.Equal(t, int(3), tableStats1.ColNum())
-	tableStats1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.True(t, tableStats1.ColAndIdxExistenceMap.Has(col.ID, false))
-		require.False(t, tableStats1.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
-		require.False(t, col.IsStatsInitialized())
-		require.False(t, col.IsAllEvicted())
-		require.False(t, col.IsFullLoad())
-		require.Equal(t, int64(0), col.NDV)
-		require.Equal(t, int64(0), col.NullCount)
-		require.Equal(t, float64(0), col.TotalRowCount())
-		require.Nil(t, col.TopN)
-		require.Equal(t, 0, col.Histogram.Len())
-		return false
-	})
+	checkNonAnalyzedColumnStats(t, tableStats1, tbl1.Meta())
 
 	// Another table with predicate columns
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a), key idx(b))")
@@ -422,53 +510,13 @@ func TestInitStats(t *testing.T) {
 	tableStats2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
 	require.True(t, tableStats2.IsAnalyzed())
 	// Check index stats
-	require.Equal(t, 1, tableStats2.IdxNum())
-	idx2 := tableStats2.GetIdx(tbl2.Meta().Indices[0].ID)
-	require.NotNil(t, idx2)
-	require.True(t, tableStats2.ColAndIdxExistenceMap.Has(idx2.ID, true))
-	require.True(t, tableStats2.ColAndIdxExistenceMap.HasAnalyzed(idx2.ID, true))
-	require.True(t, idx2.IsStatsInitialized())
-	require.False(t, idx2.IsAllEvicted())
-	require.True(t, idx2.IsFullLoad())
-	require.Equal(t, uint64(2), idx2.TopN.TotalCount())
-	require.Equal(t, float64(6), idx2.TotalRowCount())
-	require.Equal(t, 2, idx2.Histogram.Len())
+	checkAnalyzedIndexStats(t, tableStats2, tbl2.Meta(), 2, 6, 2)
 	// Check column stats
-	require.Equal(t, int(3), tableStats2.ColNum())
 	// For column c, it is not in the predicate columns, so its stats has not been collected.
-	tableStats2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		if col.Info.Name.L == "c" {
-			require.True(t, tableStats2.ColAndIdxExistenceMap.Has(col.ID, false))
-			require.False(t, tableStats2.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
-			require.False(t, col.IsStatsInitialized())
-			require.False(t, col.IsAllEvicted())
-			require.False(t, col.IsFullLoad())
-			require.Equal(t, int64(0), col.NDV)
-			require.Equal(t, int64(0), col.NullCount)
-			require.Equal(t, float64(0), col.TotalRowCount())
-			require.Nil(t, col.TopN)
-			require.Equal(t, 0, col.Histogram.Len())
-			return false
-		}
-		require.True(t, tableStats2.ColAndIdxExistenceMap.Has(col.ID, false))
-		require.True(t, tableStats2.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
-		require.True(t, col.IsStatsInitialized())
-		require.True(t, col.IsAllEvicted())
-		require.False(t, col.IsFullLoad())
-		require.Equal(t, int64(6), col.NDV)
-		require.Equal(t, int64(0), col.NullCount)
-		require.Equal(t, float64(0), col.TotalRowCount())
-		require.Nil(t, col.TopN)
-		require.Equal(t, 0, col.Histogram.Len())
-		return false
-	})
+	checkPredicateColumnStats(t, tableStats2, tbl2.Meta(), []string{"c"}, 6)
 }
 
 // TestInitStatsForPartitionedTable tests the InitStats function for partitioned tables.
-// I know this test is very similar to the non-partitioned one,
-// but I prefer not to share code between them. For these tests,
-// the status checks are very detailed, and moving them into a separate function
-// would significantly reduce readability when reviewing the tests.
 func TestInitStatsForPartitionedTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -486,77 +534,35 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get partition IDs
-	globalIDID := tbl.Meta().ID
+	globalID := tbl.Meta().ID
 	p0ID := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	p1ID := tbl.Meta().GetPartitionInfo().Definitions[1].ID
 
 	require.NoError(t, h.InitStats(context.Background(), is))
 
 	// Check global stats
-	globalStats := h.GetPhysicalTableStats(globalIDID, tbl.Meta())
-	require.True(t, globalStats.IsAnalyzed())
-	require.Equal(t, int64(0), globalStats.ModifyCount)
-	require.Equal(t, int64(6), globalStats.RealtimeCount)
-	require.Equal(t, statistics.Version2, globalStats.StatsVer)
+	globalStats := h.GetPhysicalTableStats(globalID, tbl.Meta())
+	checkAnalyzedTableBasicMeta(t, globalStats, 6)
 	// Check index stats (TopN + Histogram)
-	globalIdx := globalStats.GetIdx(tbl.Meta().Indices[0].ID)
-	require.NotNil(t, globalIdx)
-	require.True(t, globalStats.ColAndIdxExistenceMap.Has(globalIdx.ID, true))
-	require.True(t, globalStats.ColAndIdxExistenceMap.HasAnalyzed(globalIdx.ID, true))
-	require.True(t, globalIdx.IsStatsInitialized())
-	require.True(t, globalIdx.IsFullLoad())
-	require.Equal(t, uint64(2), globalIdx.TopN.TotalCount())
-	require.Equal(t, float64(6), globalIdx.TotalRowCount())
-	require.Equal(t, 2, globalIdx.Histogram.Len())
+	checkAnalyzedIndexStats(t, globalStats, tbl.Meta(), 2, 6, 2)
 	// Check column stats (Only Basic Info, no TopN and Histogram)
-	globalStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.True(t, globalStats.ColAndIdxExistenceMap.Has(col.ID, false))
-		require.True(t, globalStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
-		require.True(t, col.IsStatsInitialized())
-		require.True(t, col.IsAllEvicted())
-		require.Equal(t, int64(6), col.NDV)
-		require.Equal(t, int64(0), col.NullCount)
-		require.Equal(t, float64(0), col.TotalRowCount())
-		require.Nil(t, col.TopN)
-		require.Equal(t, 0, col.Histogram.Len())
-		return false
-	})
+	checkAnalyzedColumnStatsAllEvicted(t, globalStats, 6)
 
 	// Check partition p0 stats
 	p0Stats := h.GetPhysicalTableStats(p0ID, tbl.Meta())
-	require.True(t, p0Stats.IsAnalyzed())
-	// Basic meta info check
-	require.Equal(t, int64(0), p0Stats.ModifyCount)
-	require.Equal(t, int64(3), p0Stats.RealtimeCount)
-	require.Equal(t, statistics.Version2, p0Stats.StatsVer)
+	checkAnalyzedTableBasicMeta(t, p0Stats, 3)
 	// Check index stats (TopN + Histogram)
-	idx := p0Stats.GetIdx(tbl.Meta().Indices[0].ID)
-	require.NotNil(t, idx)
-	require.True(t, p0Stats.ColAndIdxExistenceMap.Has(idx.ID, true))
-	require.True(t, p0Stats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true))
-	require.True(t, idx.IsStatsInitialized())
-	require.True(t, idx.IsFullLoad())
-	require.Equal(t, float64(3), idx.TotalRowCount())
+	checkAnalyzedIndexStats(t, p0Stats, tbl.Meta(), 2, 3, 1)
 	// Check column stats (Only Basic Info, no TopN and Histogram)
-	p0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.True(t, p0Stats.ColAndIdxExistenceMap.Has(col.ID, false))
-		require.True(t, p0Stats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
-		require.True(t, col.IsStatsInitialized())
-		require.True(t, col.IsAllEvicted())
-		require.Equal(t, int64(3), col.NDV)
-		require.Equal(t, int64(0), col.NullCount)
-		require.Equal(t, float64(0), col.TotalRowCount())
-		require.Nil(t, col.TopN)
-		require.Equal(t, 0, col.Histogram.Len())
-		return false
-	})
+	checkAnalyzedColumnStatsAllEvicted(t, p0Stats, 3)
 
 	// Check partition p1 stats
 	p1Stats := h.GetPhysicalTableStats(p1ID, tbl.Meta())
-	require.True(t, p1Stats.IsAnalyzed())
-	require.Equal(t, int64(0), p1Stats.ModifyCount)
-	require.Equal(t, int64(3), p1Stats.RealtimeCount)
-	require.Equal(t, statistics.Version2, p1Stats.StatsVer)
+	checkAnalyzedTableBasicMeta(t, p1Stats, 3)
+	// Check index stats (TopN + Histogram)
+	checkAnalyzedIndexStats(t, p1Stats, tbl.Meta(), 2, 3, 1)
+	// Check column stats (Only Basic Info, no TopN and Histogram)
+	checkAnalyzedColumnStatsAllEvicted(t, p1Stats, 3)
 
 	// Another partitioned table with no analyze
 	tk.MustExec("create table t1(a int, b int, c int, primary key(a), key idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
@@ -580,53 +586,27 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 
 	// Check global stats (no analyze)
 	t1GlobalStats := h.GetPhysicalTableStats(globalT1ID, tbl1.Meta())
-	require.False(t, t1GlobalStats.Pseudo)
-	require.False(t, t1GlobalStats.IsAnalyzed())
-	require.Equal(t, int64(6), t1GlobalStats.ModifyCount)
-	require.Equal(t, int64(6), t1GlobalStats.RealtimeCount)
-	require.Equal(t, statistics.Version0, t1GlobalStats.StatsVer)
+	checkNonAnalyzedTableBasicMeta(t, t1GlobalStats, 6)
+	// Check index stats
+	checkNonAnalyzedIndexStats(t, t1GlobalStats, tbl1.Meta())
+	// Check column stats
+	checkNonAnalyzedColumnStats(t, t1GlobalStats, tbl1.Meta())
 
 	// Check partition p0 stats (no analyze)
 	t1p0Stats := h.GetPhysicalTableStats(t1p0ID, tbl1.Meta())
-	require.False(t, t1p0Stats.Pseudo)
-	require.False(t, t1p0Stats.IsAnalyzed())
-	require.Equal(t, int64(3), t1p0Stats.ModifyCount)
-	require.Equal(t, int64(3), t1p0Stats.RealtimeCount)
-	require.Equal(t, statistics.Version0, t1p0Stats.StatsVer)
-
+	checkNonAnalyzedTableBasicMeta(t, t1p0Stats, 3)
 	// Check index stats
-	require.Equal(t, 1, t1p0Stats.IdxNum())
-	idx1 := t1p0Stats.GetIdx(tbl1.Meta().Indices[0].ID)
-	require.NotNil(t, idx1)
-	require.True(t, t1p0Stats.ColAndIdxExistenceMap.Has(idx1.ID, true))
-	require.False(t, t1p0Stats.ColAndIdxExistenceMap.HasAnalyzed(idx1.ID, true))
-	require.False(t, idx1.IsStatsInitialized())
-	require.False(t, idx1.IsAllEvicted())
-	require.Equal(t, uint64(0), idx1.TopN.TotalCount())
-	require.Equal(t, float64(0), idx1.TotalRowCount())
-	require.Equal(t, 0, idx1.Histogram.Len())
+	checkNonAnalyzedIndexStats(t, t1p0Stats, tbl1.Meta())
 	// Check column stats
-	require.Equal(t, int(3), t1p0Stats.ColNum())
-	t1p0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.True(t, t1p0Stats.ColAndIdxExistenceMap.Has(col.ID, false))
-		require.False(t, t1p0Stats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
-		require.False(t, col.IsStatsInitialized())
-		require.False(t, col.IsAllEvicted())
-		require.False(t, col.IsFullLoad())
-		require.Equal(t, int64(0), col.NDV)
-		require.Equal(t, int64(0), col.NullCount)
-		require.Equal(t, float64(0), col.TotalRowCount())
-		require.Nil(t, col.TopN)
-		require.Equal(t, 0, col.Histogram.Len())
-		return false
-	})
+	checkNonAnalyzedColumnStats(t, t1p0Stats, tbl1.Meta())
 
 	// Check partition p1 stats (no analyze)
 	t1p1Stats := h.GetPhysicalTableStats(t1p1ID, tbl1.Meta())
-	require.False(t, t1p1Stats.Pseudo)
-	require.False(t, t1p1Stats.IsAnalyzed())
-	require.Equal(t, int64(3), t1p1Stats.ModifyCount)
-	require.Equal(t, int64(3), t1p1Stats.RealtimeCount)
+	checkNonAnalyzedTableBasicMeta(t, t1p1Stats, 3)
+	// Check index stats
+	checkNonAnalyzedIndexStats(t, t1p1Stats, tbl1.Meta())
+	// Check column stats
+	checkNonAnalyzedColumnStats(t, t1p1Stats, tbl1.Meta())
 
 	// Another partitioned table with predicate columns
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a), key idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
@@ -641,59 +621,38 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get partition IDs for t2
+	globalT2ID := tbl2.Meta().ID
 	t2p0ID := tbl2.Meta().GetPartitionInfo().Definitions[0].ID
 	t2p1ID := tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 
 	require.NoError(t, h.InitStats(context.Background(), is))
 
+	// Check global stats (predicate columns)
+	t2GlobalStats := h.GetPhysicalTableStats(globalT2ID, tbl2.Meta())
+	require.True(t, t2GlobalStats.IsAnalyzed())
+	// Check index stats
+	checkAnalyzedIndexStats(t, t2GlobalStats, tbl2.Meta(), 2, 6, 2)
+	// Check column stats
+	// For column c, it is not in the predicate columns, so its stats has not been collected.
+	checkPredicateColumnStats(t, t2GlobalStats, tbl2.Meta(), []string{"c"}, 6)
+
 	// Check partition p0 stats (predicate columns)
 	t2p0Stats := h.GetPhysicalTableStats(t2p0ID, tbl2.Meta())
 	require.True(t, t2p0Stats.IsAnalyzed())
 	// Check index stats
-	require.Equal(t, 1, t2p0Stats.IdxNum())
-	idx2 := t2p0Stats.GetIdx(tbl2.Meta().Indices[0].ID)
-	require.NotNil(t, idx2)
-	require.True(t, t2p0Stats.ColAndIdxExistenceMap.Has(idx2.ID, true))
-	require.True(t, t2p0Stats.ColAndIdxExistenceMap.HasAnalyzed(idx2.ID, true))
-	require.True(t, idx2.IsStatsInitialized())
-	require.False(t, idx2.IsAllEvicted())
-	require.True(t, idx2.IsFullLoad())
-	require.Equal(t, float64(3), idx2.TotalRowCount())
+	checkAnalyzedIndexStats(t, t2p0Stats, tbl2.Meta(), 2, 3, 1)
 	// Check column stats
-	require.Equal(t, int(3), t2p0Stats.ColNum())
 	// For column c, it is not in the predicate columns, so its stats has not been collected.
-	t2p0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		if col.Info.Name.L == "c" {
-			require.True(t, t2p0Stats.ColAndIdxExistenceMap.Has(col.ID, false))
-			require.False(t, t2p0Stats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
-			require.False(t, col.IsStatsInitialized())
-			require.False(t, col.IsAllEvicted())
-			require.False(t, col.IsFullLoad())
-			require.Equal(t, int64(0), col.NDV)
-			require.Equal(t, int64(0), col.NullCount)
-			require.Equal(t, float64(0), col.TotalRowCount())
-			require.Nil(t, col.TopN)
-			require.Equal(t, 0, col.Histogram.Len())
-			return false
-		}
-		require.True(t, t2p0Stats.ColAndIdxExistenceMap.Has(col.ID, false))
-		require.True(t, t2p0Stats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
-		require.True(t, col.IsStatsInitialized())
-		require.True(t, col.IsAllEvicted())
-		require.False(t, col.IsFullLoad())
-		require.Equal(t, int64(3), col.NDV)
-		require.Equal(t, int64(0), col.NullCount)
-		require.Equal(t, float64(0), col.TotalRowCount())
-		require.Nil(t, col.TopN)
-		require.Equal(t, 0, col.Histogram.Len())
-		return false
-	})
+	checkPredicateColumnStats(t, t2p0Stats, tbl2.Meta(), []string{"c"}, 3)
 
 	// Check partition p1 stats (predicate columns)
 	t2p1Stats := h.GetPhysicalTableStats(t2p1ID, tbl2.Meta())
-	require.True(t, t2p1Stats.IsAnalyzed())
-	require.Equal(t, int64(0), t2p1Stats.ModifyCount)
-	require.Equal(t, int64(3), t2p1Stats.RealtimeCount)
+	checkAnalyzedTableBasicMeta(t, t2p1Stats, 3)
+	// Check index stats
+	checkAnalyzedIndexStats(t, t2p1Stats, tbl2.Meta(), 2, 3, 1)
+	// Check column stats
+	// For column c, it is not in the predicate columns, so its stats has not been collected.
+	checkPredicateColumnStats(t, t2p1Stats, tbl2.Meta(), []string{"c"}, 3)
 }
 
 // TestInitStatsWithoutHandlingDDLEvent tests the scenario that stats
