@@ -1133,9 +1133,21 @@ func (hg *Histogram) OutOfRangeRowCount(
 		)
 	}
 
+	// Use absolute value to account for the case where rows may have been added on one side,
+	// but deleted from the other, resulting in qualifying out of range rows even though
+	// realtimeRowCount is less than histogram count
+	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
+
 	// make sure l < r
-	if l >= r {
+	if l > r {
 		return DefaultRowEst(0)
+	}
+	if l == r {
+		return RowEstimate{
+			Est:    addedRows,
+			MinEst: 1, // Assume a minimum of 1 row qualifies
+			MaxEst: float64(modifyCount),
+		}
 	}
 
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
@@ -1203,10 +1215,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 	}
 
-	// Use absolute value to account for the case where rows may have been added on one side,
-	// but deleted from the other, resulting in qualifying out of range rows even though
-	// realtimeRowCount is less than histogram count
-	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
 	// percentInHist is the percentage of rows that were included in the histogram.
 	// This is used to scale back the out-of-range estimate.
 	percentInHist := hg.NotNullCount() / hg.TotalRowCount()
