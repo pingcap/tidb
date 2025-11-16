@@ -171,12 +171,6 @@ func replaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expression) (E
 		return cond, false
 	}
 	replaced := false
-	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
-		return cond, false
-	}
-	if _, ok := inequalFunctions[sf.FuncName.L]; ok {
-		return cond, false
-	}
 	args := sf.GetArgs()
 	evalCtx := ctx.GetEvalCtx()
 	switch sf.FuncName.L {
@@ -422,9 +416,8 @@ func (s *propConstSolver) propagateColumnEQ() {
 			}
 		}
 	}
-
-	condsLen := len(s.conditions)
 	s.replaceConditionsWithConstants(visited)
+	condsLen := len(s.conditions)
 	for i, coli := range s.columns {
 		for j := i + 1; j < len(s.columns); j++ {
 			// unionSet doesn't have iterate(), we use a two layer loop to iterate col_i = col_j relation
