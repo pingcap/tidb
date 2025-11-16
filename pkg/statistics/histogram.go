@@ -1137,15 +1137,29 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
 	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
+	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
+	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
+	// account for at least 1% of the total row count as a worst case for "addedRows".
+	// We inflate this here so ONLY to impact the MaxEst value.
+	if modifyCount == 0 || addedRows == 0 {
+		if realtimeRowCount <= 0 {
+			realtimeRowCount = int64(hg.TotalRowCount())
+		}
+		// Use outOfRangeBetweenRate as a divisor to get a small percentage of the approximate
+		// modifyCount (since outOfRangeBetweenRate has a default value of 100).
+		addedRows = max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
+	}
+	modifyCount = max(int64(addedRows), modifyCount)
 
 	// make sure l < r
 	if l > r {
-		return DefaultRowEst(0)
+		return DefaultRowEst(oneValue)
 	}
 	if l == r {
+		// if l ==r, it means our byte comparison is too short.
 		return RowEstimate{
-			Est:    addedRows,
-			MinEst: 1, // Assume a minimum of 1 row qualifies
+			Est:    addedRows * 0.5, // Assume half of newly added rows qualify
+			MinEst: 1,               // Assume a minimum of 1 row qualifies
 			MaxEst: float64(modifyCount),
 		}
 	}
@@ -1223,19 +1237,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Assume on average, half of newly added rows are within the histogram range, and the other
 	// half are distributed out of range according to the diagram in the function description.
 	avgRowCount = (addedRows * addedOutOfRangePct) * totalPercent
-
-	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
-	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
-	// account for at least 1% of the total row count as a worst case for "addedRows".
-	// We inflate this here so ONLY to impact the MaxEst value.
-	if modifyCount == 0 || addedRows == 0 {
-		if realtimeRowCount <= 0 {
-			realtimeRowCount = int64(hg.TotalRowCount())
-		}
-		// Use outOfRangeBetweenRate as a divisor to get a small percentage of the approximate
-		// modifyCount (since outOfRangeBetweenRate has a default value of 100).
-		addedRows = max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
-	}
 
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
