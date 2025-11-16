@@ -29,7 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
-	"github.com/tikv/client-go/v2/metrics"
+	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
+	tikvmetrics "github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -567,6 +568,8 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 		opts = append(opts, tikv.WithNeedBuckets())
 	}
 	locs, err := c.BatchLocateKeyRanges(bo.TiKVBackoffer(), kvRanges, opts...)
+	// record batch locate region attempt
+	tidbmetrics.RegionCacheOperationsCounter.WithLabelValues("batch_locate", tidbmetrics.RetLabel(err)).Inc()
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
@@ -618,6 +621,8 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 			break
 		}
 	}
+	// record successful split by locations
+	tidbmetrics.RegionCacheOperationsCounter.WithLabelValues("split_locations", "ok").Inc()
 	return res, nil
 }
 
@@ -636,6 +641,8 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 	}
 
 	locs, err := c.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit, false, true)
+	// record split by buckets (based on location split result)
+	tidbmetrics.RegionCacheOperationsCounter.WithLabelValues("split_buckets", tidbmetrics.RetLabel(err)).Inc()
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
@@ -649,6 +656,8 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 	// This adds zero overhead in the normal case, only runs on panic
 	defer func() {
 		if r := recover(); r != nil {
+			// record failure on bucket split path
+			tidbmetrics.RegionCacheOperationsCounter.WithLabelValues("split_buckets", "err").Inc()
 			// Panic occurred - query PD for all regions to compare with cache
 			logutil.Logger(ctx).Error("Panic during bucket splitting - querying PD for fresh region data",
 				zap.Any("panicValue", r),
@@ -711,7 +720,11 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 
 // OnSendFailForBatchRegions handles send request fail logic.
 func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *tikv.Store, regionInfos []RegionInfo, scheduleReload bool, err error) {
-	metrics.RegionCacheCounterWithSendFail.Add(float64(len(regionInfos)))
+	tikvmetrics.RegionCacheCounterWithSendFail.Add(float64(len(regionInfos)))
+	// record TiDB-side region cache operation for send fail handling
+	if n := float64(len(regionInfos)); n > 0 {
+		tidbmetrics.RegionCacheOperationsCounter.WithLabelValues("on_send_fail", "err").Add(n)
+	}
 	if !store.IsTiFlash() {
 		logutil.Logger(bo.GetCtx()).Info("Should not reach here, OnSendFailForBatchRegions only support TiFlash")
 		return
