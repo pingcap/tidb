@@ -872,6 +872,9 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
 
+	// Periodically clean up orphaned backfill tasks left after cancelled/vanished DDL jobs.
+	d.wg.Run(d.orphanBackfillCleanupLoop)
+
 	ingestDataDir, err := ingest.GenIngestTempDataDir()
 	if err != nil {
 		logutil.DDLIngestLogger().Warn(ingest.LitWarnEnvInitFail,
