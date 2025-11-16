@@ -1000,6 +1000,26 @@ func TestPreparePlanCache4Function(t *testing.T) {
 		`│ └─IndexFullScan_26 10000.00 cop[tikv] table:t1, index:i0(c0) keep order:false, stats:pseudo`,
 		`└─TableReader_25(Probe) 10000.00 root  data:TableFullScan_24`,
 		`  └─TableFullScan_24 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
+	tk.MustExec(`PREPARE prepare_query FROM 'SELECT t0.c0 FROM t0, t1 WHERE ((? <=> t1.c0) AND (? <=> t1.c0) or (? > t1.c0))';`)
+	// ((1 <=> t1.c0) AND (1 <=> t1.c0) or (1 > t1.c0))
+	tk.MustExec(`SET @a = 1`)
+	tk.MustExec(`SET @b = 1;`)
+	tk.MustExec(`SET @c = 1;`)
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`select @@last_plan_from_cache;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tk.MustQuery(`show warnings`).Check(
+		testkit.Rows(`Warning 1105 skip prepared plan-cache: some parameters may be overwritten`))
+	tk.MustQuery(`EXECUTE prepare_query USING @a,@b,@c;`)
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows(
+		`HashJoin_26 33233333.33 root  CARTESIAN inner join`,
+		`├─IndexReader_28(Build) 3323.33 root  index:IndexRangeScan_27`,
+		`│ └─IndexRangeScan_27 3323.33 cop[tikv] table:t1, index:i0(c0) range:[-inf,1], keep order:false, stats:pseudo`,
+		`└─TableReader_30(Probe) 10000.00 root  data:TableFullScan_29`,
+		`  └─TableFullScan_29 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
 }
 
 func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
