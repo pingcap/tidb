@@ -407,6 +407,9 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		return res, nil
 	}
 	if len(accessConds) == 1 {
+		// `t1.c1 <=> ? and t1.c1 <=> ?`cannot be simplified by predicate simplifier,
+		// ExtractEqAndInCondition can fold them into one constant value, but we cannot use it to build range.
+		// So we check whether the only access condition is a constant here.
 		if value, ok := accessConds[0].(*expression.Constant); ok {
 			if value.Value.IsNull() {
 				return res, nil
