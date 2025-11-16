@@ -327,7 +327,6 @@ func TestInitStats(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
-	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	tableStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.True(t, tableStats.IsAnalyzed())
@@ -372,13 +371,12 @@ func TestInitStats(t *testing.T) {
 	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 
-	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	tableStats1 := h.GetPhysicalTableStats(tbl1.Meta().ID, tbl1.Meta())
 	require.False(t, tableStats1.Pseudo)
 	require.False(t, tableStats1.IsAnalyzed())
-	require.Equal(t, int64(0), tableStats1.ModifyCount)
-	require.Equal(t, int64(0), tableStats1.RealtimeCount)
+	require.Equal(t, int64(6), tableStats1.ModifyCount)
+	require.Equal(t, int64(6), tableStats1.RealtimeCount)
 	require.Equal(t, statistics.Version0, tableStats1.StatsVer)
 
 	// Check index stats
@@ -420,7 +418,6 @@ func TestInitStats(t *testing.T) {
 	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 
-	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	tableStats2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
 	require.True(t, tableStats2.IsAnalyzed())
@@ -493,7 +490,6 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	p0ID := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	p1ID := tbl.Meta().GetPartitionInfo().Definitions[1].ID
 
-	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 
 	// Check global stats
@@ -580,23 +576,22 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	t1p0ID := tbl1.Meta().GetPartitionInfo().Definitions[0].ID
 	t1p1ID := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
 
-	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 
 	// Check global stats (no analyze)
 	t1GlobalStats := h.GetPhysicalTableStats(globalT1ID, tbl1.Meta())
 	require.False(t, t1GlobalStats.Pseudo)
 	require.False(t, t1GlobalStats.IsAnalyzed())
-	require.Equal(t, int64(0), t1GlobalStats.ModifyCount)
-	require.Equal(t, int64(0), t1GlobalStats.RealtimeCount)
+	require.Equal(t, int64(6), t1GlobalStats.ModifyCount)
+	require.Equal(t, int64(6), t1GlobalStats.RealtimeCount)
 	require.Equal(t, statistics.Version0, t1GlobalStats.StatsVer)
 
 	// Check partition p0 stats (no analyze)
 	t1p0Stats := h.GetPhysicalTableStats(t1p0ID, tbl1.Meta())
 	require.False(t, t1p0Stats.Pseudo)
 	require.False(t, t1p0Stats.IsAnalyzed())
-	require.Equal(t, int64(0), t1p0Stats.ModifyCount)
-	require.Equal(t, int64(0), t1p0Stats.RealtimeCount)
+	require.Equal(t, int64(3), t1p0Stats.ModifyCount)
+	require.Equal(t, int64(3), t1p0Stats.RealtimeCount)
 	require.Equal(t, statistics.Version0, t1p0Stats.StatsVer)
 
 	// Check index stats
@@ -630,8 +625,8 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	t1p1Stats := h.GetPhysicalTableStats(t1p1ID, tbl1.Meta())
 	require.False(t, t1p1Stats.Pseudo)
 	require.False(t, t1p1Stats.IsAnalyzed())
-	require.Equal(t, int64(0), t1p1Stats.ModifyCount)
-	require.Equal(t, int64(0), t1p1Stats.RealtimeCount)
+	require.Equal(t, int64(3), t1p1Stats.ModifyCount)
+	require.Equal(t, int64(3), t1p1Stats.RealtimeCount)
 
 	// Another partitioned table with predicate columns
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a), key idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
@@ -649,7 +644,6 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	t2p0ID := tbl2.Meta().GetPartitionInfo().Definitions[0].ID
 	t2p1ID := tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 
-	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 
 	// Check partition p0 stats (predicate columns)
@@ -720,7 +714,6 @@ func TestInitStatsWithoutHandlingDDLEvent(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
-	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	tableStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.False(t, tableStats.Pseudo)
