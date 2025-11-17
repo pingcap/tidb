@@ -33,6 +33,8 @@ select sin(1), sin(100);
 select sin('abcd');
 select cos(0), cos(3.1415926535898);
 select cos('abcd');
+# On Mac arm64 floating point calculations slightly different than x86
+--replace_regex /0.9999999999999998/1/
 select tan(0.00), tan(PI()/4);
 select tan('abcd');
 select log2(0.0);
