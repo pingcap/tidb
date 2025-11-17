@@ -130,8 +130,8 @@ func sendMeterOnCleanUp(ctx context.Context, task *proto.Task, logger *zap.Logge
 	ts := subtask.UpdateTime.Truncate(time.Minute).Unix()
 	item := metering.GetBaseMeterItem(task.ID, task.Keyspace, task.Type.String())
 	item["row_count"] = rowCount
-	item["data_kv_size_in_bytes"] = dataKVSize
-	item["index_kv_size_in_bytes"] = indexKVSize
+	item["data_kv_bytes"] = dataKVSize
+	item["index_kv_bytes"] = indexKVSize
 	if err = metering.WriteMeterData(ctx, ts, []map[string]any{item}); err != nil {
 		return errors.Trace(err)
 	}
