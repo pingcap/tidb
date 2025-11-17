@@ -1444,9 +1444,9 @@ func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 
 // SoftdeleteInfo records the Softdelete config.
 type SoftdeleteInfo struct {
-	Enable          bool      `json:"enable"`
-	Retention       string    `json:"retention"`
-	JobInterval     string    `json:"job_interval"`
+	Enable      bool   `json:"enable"`
+	Retention   string `json:"retention"`
+	JobInterval string `json:"job_interval"`
 }
 
 // Clone clones TTLInfo
