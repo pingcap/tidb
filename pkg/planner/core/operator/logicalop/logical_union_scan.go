@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -76,7 +77,7 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression)
 	}
 	p.Conditions = make([]expression.Expression, 0, len(predicates))
 	p.Conditions = append(p.Conditions, predicates...)
-	p.Conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false)
+	p.Conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false, nil)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
 	retainedPredicates = append(retainedPredicates, predicatesWithVCol...)
 	return retainedPredicates, p, nil
