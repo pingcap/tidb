@@ -33,13 +33,13 @@ func (r *Recorder) MergeObjStoreAccess(other *recording.AccessStats) {
 }
 
 // IncClusterReadBytes records the read data bytes from cluster.
-func (r *Recorder) IncClusterReadBytes(v uint64) {
-	r.clusterTraffic.Read.Add(v)
+func (r *Recorder) IncClusterReadBytes(n uint64) {
+	r.clusterTraffic.Read.Add(n)
 }
 
 // IncClusterWriteBytes records the write data bytes to cluster.
-func (r *Recorder) IncClusterWriteBytes(v uint64) {
-	r.clusterTraffic.Write.Add(v)
+func (r *Recorder) IncClusterWriteBytes(n uint64) {
+	r.clusterTraffic.Write.Add(n)
 }
 
 func (r *Recorder) currData() *Data {
