@@ -323,6 +323,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		Max:                maxKey,
 		TotalSize:          w.totalSize,
 		TotalCnt:           w.totalCnt,
+		KVFileCount:        1,
 		MultipleFilesStats: mStats,
 		ConflictInfo:       conflictInfo,
 	})

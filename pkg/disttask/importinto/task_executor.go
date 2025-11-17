@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	dxfstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -182,8 +184,10 @@ func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	logger := s.logger.With(zap.Int64("subtask-id", subtask.ID))
 	task := log.BeginTask(logger, "run subtask")
+	var dataKVFiles, indexKVFiles atomic.Int64
 	defer func() {
-		task.End(zapcore.ErrorLevel, err)
+		task.End(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
+			zap.Int64("index-kv-files", indexKVFiles.Load()))
 	}()
 
 	s.summary.Reset()
@@ -244,6 +248,8 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		SortedDataMeta:   &external.SortedKVMeta{},
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 		globalSortStore:  objStore,
+		dataKVFileCount:  &dataKVFiles,
+		indexKVFileCount: &indexKVFiles,
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
@@ -504,8 +510,9 @@ func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 
 type ingestCollector struct {
 	execute.NoopCollector
-	summary *execute.SubtaskSummary
-	kvGroup string
+	summary  *execute.SubtaskSummary
+	kvGroup  string
+	meterRec *metering.Recorder
 }
 
 func (c *ingestCollector) Processed(bytes, rowCnt int64) {
@@ -513,6 +520,9 @@ func (c *ingestCollector) Processed(bytes, rowCnt int64) {
 	if c.kvGroup == dataKVGroup {
 		c.summary.RowCnt.Add(rowCnt)
 	}
+	// since the region job might be retried, this value might be larger than
+	// the total KV size.
+	c.meterRec.IncClusterWriteBytes(uint64(bytes))
 }
 
 type writeAndIngestStepExecutor struct {
@@ -551,10 +561,11 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if err != nil {
 		return err
 	}
+	meterRec := e.GetMeterRecorder()
 	defer func() {
 		objStore.Close()
 		e.summary.MergeObjStoreRequests(&accessRec.Requests)
-		e.GetMeterRecorder().MergeObjStoreAccess(accessRec)
+		meterRec.MergeObjStoreAccess(accessRec)
 	}()
 	// read write and ingest step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
@@ -579,8 +590,9 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	}
 
 	collector := &ingestCollector{
-		summary: &e.summary,
-		kvGroup: sm.KVGroup,
+		summary:  &e.summary,
+		kvGroup:  sm.KVGroup,
+		meterRec: meterRec,
 	}
 	localBackend.SetCollector(collector)
 
