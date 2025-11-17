@@ -84,6 +84,7 @@ SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER
 default_collate_name	maxlen
 ascii_bin	1
 binary	1
+gb18030_bin	4
 gbk_bin	2
 latin1_bin	1
 utf8_bin	3
@@ -92,6 +93,7 @@ SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER 
 character_set_name	id	sortlen
 ascii	65	1
 binary	63	1
+gb18030	249	1
 gbk	87	1
 latin1	47	1
 utf8	83	1
@@ -103,6 +105,7 @@ show charset;
 Charset	Description	Default collation	Maxlen
 ascii	US ASCII	ascii_bin	1
 binary	binary	binary	1
+gb18030	China National Standard GB18030	gb18030_bin	4
 gbk	Chinese Internal Code Specification	gbk_bin	2
 latin1	Latin1	latin1_bin	1
 utf8	UTF-8 Unicode	utf8_bin	3
@@ -115,6 +118,7 @@ binary	binary	63	Yes	Yes	1	NO PAD
 ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
 utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87	Yes	Yes	1	PAD SPACE
+gb18030_bin	gb18030	249	Yes	Yes	1	PAD SPACE
 create database if not exists cd_test_utf8mb4_0900_bin;
 use cd_test_utf8mb4_0900_bin;
 create table t (id varchar(255) primary key clustered, a varchar(255) collate utf8mb4_0900_bin, b varchar(255) collate utf8mb4_bin, key idx(a, b));

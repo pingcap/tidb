@@ -4,6 +4,7 @@ go_test(
     name = "sessiontest_test",
     timeout = "moderate",
     srcs = [
+        "create_from_select_test.go",
         "infoschema_v2_test.go",
         "main_test.go",
         "paging_test.go",
@@ -13,9 +14,12 @@ go_test(
     race = "on",
     deps = [
         "//pkg/config",
+        "//pkg/errno",
         "//pkg/infoschema",
         "//pkg/meta",
+        "//pkg/parser/auth",
         "//pkg/parser/model",
+        "//pkg/parser/mysql",
         "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/store/helper",
