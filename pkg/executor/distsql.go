@@ -817,8 +817,17 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		e.byItems = nil
 	}
 	var tps []*types.FieldType
+	partitionTableScanExecIdx := -1
 	if e.indexLookUpPushDown {
 		tps = e.RetFieldTypes()
+		if e.partitionTableMode {
+			for idx, executor := range e.dagPB.Executors {
+				if executor.Tp == tipb.ExecType_TypeTableScan {
+					partitionTableScanExecIdx = idx
+					break
+				}
+			}
+		}
 	} else {
 		tps = e.getRetTpsForIndexReader()
 	}
@@ -840,7 +849,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
-		for _, kvRange := range kvRanges {
+		for idx, kvRange := range kvRanges {
 			// check if executor is closed
 			finished := false
 			select {
@@ -850,6 +859,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			}
 			if finished {
 				break
+			}
+			if partitionTableScanExecIdx >= 0 {
+				e.dagPB.Executors[partitionTableScanExecIdx].TblScan.TableId = e.prunedPartitions[idx].GetPhysicalID()
 			}
 			var builder distsql.RequestBuilder
 			builder.SetDAGRequest(e.dagPB).

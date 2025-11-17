@@ -1187,8 +1187,8 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 	sessionVars := ctx.GetSessionVars()
 	if tblInfo.IsCommonHandle {
 		unSupportedReason = "common handle table is not supported"
-	} else if tblInfo.Partition != nil {
-		unSupportedReason = "partition table is not supported"
+	} else if tblInfo.Partition != nil && index.Global {
+		unSupportedReason = "partition table is not supported with global index"
 	} else if tblInfo.TempTableType != model.TempTableNone {
 		unSupportedReason = "temporary table is not supported"
 	} else if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
