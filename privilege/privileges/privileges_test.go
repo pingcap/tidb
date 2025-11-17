@@ -3090,3 +3090,302 @@ func TestPasswordExpireWithSandBoxMode(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, tk.Session().InSandBoxMode())
 }
+<<<<<<< HEAD:privilege/privileges/privileges_test.go
+=======
+
+func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
+	// prepare signing certs
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "test1_cert.pem")
+	keyPath := filepath.Join(tempDir, "test1_key.pem")
+	err := util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
+	require.NoError(t, err)
+	sessionstates.SetKeyPath(keyPath)
+	sessionstates.SetCertPath(certPath)
+
+	// prepare user
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE USER 'testuser'@'localhost' PASSWORD EXPIRE`)
+	// prepare session token
+	token, err := sessionstates.CreateSessionToken("testuser")
+	require.NoError(t, err)
+	tokenBytes, err := json.Marshal(token)
+	require.NoError(t, err)
+
+	// Test password expiration without sandbox.
+	user := &auth.UserIdentity{Username: "testuser", Hostname: "localhost", AuthPlugin: mysql.AuthTiDBSessionToken}
+	tk := testkit.NewTestKit(t, store)
+	err = tk.Session().Auth(user, tokenBytes, nil, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
+
+	// Test password expiration with sandbox.
+	vardef.IsSandBoxModeEnabled.Store(true)
+	err = tk.Session().Auth(user, tokenBytes, nil, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
+
+	// Enable resource group.
+	vardef.EnableResourceControl.Store(true)
+	err = tk.Session().Auth(user, tokenBytes, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "default", tk.Session().GetSessionVars().ResourceGroupName)
+
+	// Non-default resource group.
+	rootTk.MustExec("CREATE RESOURCE GROUP rg1 RU_PER_SEC = 999")
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' RESOURCE GROUP rg1`)
+	err = tk.Session().Auth(user, tokenBytes, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "rg1", tk.Session().GetSessionVars().ResourceGroupName)
+
+	// Wrong token
+	err = tk.Session().Auth(user, nil, nil, nil)
+	require.ErrorContains(t, err, "Access denied")
+}
+
+func TestNilHandleInSkipWithGrant(t *testing.T) {
+	config.GetGlobalConfig().Security.SkipGrantTable = true
+	privileges.SkipWithGrant = true
+	defer func() {
+		config.GetGlobalConfig().Security.SkipGrantTable = false
+		privileges.SkipWithGrant = false
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// check ConnectionVerification
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil, nil))
+	// check GetUserResources
+	pc := privilege.GetPrivilegeManager(tk.Session())
+	userLimit, err := pc.GetUserResources("root", "%")
+	require.NoError(t, err)
+	require.EqualValues(t, 0, userLimit)
+}
+
+func testShowGrantsSQLMode(t *testing.T, tk *testkit.TestKit, expected []string) {
+	pc := privilege.GetPrivilegeManager(tk.Session())
+	pc.MatchIdentity(context.Background(), "show_sql_mode", "localhost", false)
+	gs, err := pc.ShowGrants(context.Background(), tk.Session(), &auth.UserIdentity{Username: "show_sql_mode", Hostname: "localhost"}, nil)
+	require.NoError(t, err)
+	require.Len(t, gs, 2)
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
+}
+
+func TestShowGrantsSQLMode(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	ctx, _ := tk.Session().(sessionctx.Context)
+	tk.MustExec(`CREATE USER 'show_sql_mode'@'localhost' identified by '123';`)
+	tk.MustExec(`GRANT Select ON test.* TO 'show_sql_mode'@'localhost';`)
+
+	testShowGrantsSQLMode(t, tk, []string{
+		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
+		"GRANT SELECT ON `test`.* TO 'show_sql_mode'@'localhost'",
+	})
+
+	ctx.GetSessionVars().SQLMode = mysql.SetSQLMode(ctx.GetSessionVars().SQLMode, mysql.ModeANSIQuotes)
+	testShowGrantsSQLMode(t, tk, []string{
+		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
+		"GRANT SELECT ON \"test\".* TO 'show_sql_mode'@'localhost'",
+	})
+}
+
+func TestEnsureActiveUserCoverage(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create user 'test'")
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
+
+	cases := []struct {
+		sql     string
+		visited bool
+	}{
+		{"drop user if exists 'test1'", false},
+		{"alter user test identified by 'test1'", false},
+		{"set password for test = 'test2'", false},
+		{"show create user test", false},
+		{"create user test1", false},
+		{"grant select on test.* to test1", false},
+		{"show grants", true},
+		{"show grants for 'test'@'%'", true},
+	}
+
+	for ith, c := range cases {
+		var visited bool
+		ctx := context.WithValue(context.Background(), "mock", &visited)
+		rs, err := tk.ExecWithContext(ctx, c.sql)
+		require.NoError(t, err)
+
+		comment := fmt.Sprintf("testcase %d failed", ith)
+		if rs != nil {
+			tk.ResultSetToResultWithCtx(ctx, rs, comment)
+		}
+		require.Equal(t, c.visited, visited, comment)
+	}
+}
+
+func TestSQLVariableAccelerateUserCreationUpdate(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+	// 1. check the default variable value
+	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("0"))
+	// trigger priv reload
+	tk.MustExec("create user aaa")
+	handle := dom.PrivilegeHandle()
+	handle.CheckFullData(t, true)
+	priv := handle.Get()
+	require.False(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
+
+	// 2. change the variable and check
+	tk.MustExec("set @@global.tidb_accelerate_user_creation_update = on")
+	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("1"))
+	require.True(t, vardef.AccelerateUserCreationUpdate.Load())
+	tk.MustExec("create user bbb")
+	handle.CheckFullData(t, false)
+	// trigger priv reload, but data for bbb is not really loaded
+	tk.MustExec("grant select on test.* to bbb")
+	priv = handle.Get()
+	// data for bbb is not loaded, because that user is not active
+	// So this is **counterintuitive**, but it's still the expected behavior.
+	require.False(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
+	tk1 := testkit.NewTestKit(t, store)
+	// if user bbb login, everything works as expected
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "bbb", Hostname: "localhost"}, nil, nil, nil))
+	priv = handle.Get()
+	require.True(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
+
+	// 3. change the variable and check again
+	tk.MustExec("set @@global.tidb_accelerate_user_creation_update = off")
+	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("0"))
+	tk.MustExec("drop user aaa")
+	handle.CheckFullData(t, true)
+	priv = handle.Get()
+	require.True(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
+}
+
+func TestGrantOptionWithSEMv2(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec("CREATE USER varuser1")
+	rootTk.MustExec("CREATE USER varuser2")
+	rootTk.MustExec("CREATE USER varuser3")
+	rootTk.MustExec("CREATE USER varuser4")
+	rootTk.MustExec("CREATE USER grantee")
+
+	rootTk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, FILE ON *.* TO varuser1")
+	rootTk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, FILE ON *.* TO varuser2 WITH GRANT OPTION")
+	rootTk.MustExec("GRANT RESTRICTED_PRIV_ADMIN ON *.* TO varuser3")
+	rootTk.MustExec("GRANT RESTRICTED_PRIV_ADMIN ON *.* TO varuser4")
+	rootTk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, FILE ON *.* TO varuser4 WITH GRANT OPTION")
+
+	// SYSTEM_VARIABLES_ADMIN is not restricted, FILE is restricted.
+	defer sem.SwitchToSEMForTest(t, sem.V2)()
+	// try to grant SYSTEM_VARIABLES_ADMIN and FILE privilege to grantee with different user
+	tk1 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "varuser1", Hostname: "%"}, nil, nil, nil))
+	err := tk1.ExecToErr("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO grantee")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the GRANT OPTION privilege(s) for this operation")
+	err = tk1.ExecToErr("GRANT FILE ON *.* TO grantee")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	tk2 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "varuser2", Hostname: "%"}, nil, nil, nil))
+	err = tk2.ExecToErr("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO grantee")
+	require.NoError(t, err)
+	err = tk2.ExecToErr("GRANT FILE ON *.* TO grantee")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	tk3 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk3.Session().Auth(&auth.UserIdentity{Username: "varuser3", Hostname: "%"}, nil, nil, nil))
+	err = tk3.ExecToErr("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO grantee")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the GRANT OPTION privilege(s) for this operation")
+	err = tk3.ExecToErr("GRANT FILE ON *.* TO grantee")
+	require.EqualError(t, err, "[planner:8121]privilege check for 'FILE' fail")
+
+	tk4 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk4.Session().Auth(&auth.UserIdentity{Username: "varuser4", Hostname: "%"}, nil, nil, nil))
+	err = tk4.ExecToErr("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO grantee")
+	require.NoError(t, err)
+	err = tk4.ExecToErr("GRANT FILE ON *.* TO grantee")
+	require.NoError(t, err)
+}
+
+func testProtectUserAndRoleWithRestrictedPrivileges(t *testing.T, semVer string) {
+	store := createStoreAndPrepareDB(t)
+
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec("CREATE USER restricted_user")
+	rootTk.MustExec("GRANT RESTRICTED_USER_ADMIN, SUPER, CREATE USER, SELECT ON *.* TO restricted_user WITH GRANT OPTION")
+	rootTk.MustExec("CREATE USER normal_user")
+	rootTk.MustExec("GRANT SUPER, CREATE USER, SELECT ON *.* TO normal_user WITH GRANT OPTION")
+
+	rootTk.MustExec("CREATE USER restricted_user_1")
+	rootTk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* TO restricted_user_1")
+	rootTk.MustExec("CREATE USER restricted_user_2")
+	rootTk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* TO restricted_user_2")
+	rootTk.MustExec("CREATE USER restricted_user_3")
+	rootTk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* TO restricted_user_3")
+	rootTk.MustExec("CREATE USER normal_user_1")
+
+	defer sem.SwitchToSEMForTest(t, semVer)()
+	// Accounts with RESTRICTED_USER_ADMIN are not allowed to be deleted unless we also have the
+	// RESTRICTED_USER_ADMIN privilege
+	tk1 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "normal_user", Hostname: "%"}, nil, nil, nil))
+	err := tk1.ExecToErr("DROP USER restricted_user_1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	tk2 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "restricted_user", Hostname: "%"}, nil, nil, nil))
+	err = tk2.ExecToErr("DROP USER restricted_user_1")
+	require.NoError(t, err)
+
+	// Accounts with RESTRICTED_USER_ADMIN are not allowed to be altered unless we also have the
+	// RESTRICTED_USER_ADMIN privilege
+	tk3 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk3.Session().Auth(&auth.UserIdentity{Username: "normal_user", Hostname: "%"}, nil, nil, nil))
+	err = tk3.ExecToErr("ALTER USER restricted_user_2 IDENTIFIED BY 'new_password'")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	tk4 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk4.Session().Auth(&auth.UserIdentity{Username: "restricted_user", Hostname: "%"}, nil, nil, nil))
+	err = tk4.ExecToErr("ALTER USER restricted_user_2 IDENTIFIED BY 'new_password'")
+	require.NoError(t, err)
+
+	// Accounts with RESTRICTED_USER_ADMIN are not allowed to be granted or revoked unless we also
+	// have the RESTRICTED_USER_ADMIN privilege
+	tk5 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk5.Session().Auth(&auth.UserIdentity{Username: "normal_user", Hostname: "%"}, nil, nil, nil))
+	err = tk5.ExecToErr("GRANT SELECT ON test.* TO restricted_user_3")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	err = tk5.ExecToErr("REVOKE SELECT ON test.* FROM restricted_user_3")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	tk6 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk6.Session().Auth(&auth.UserIdentity{Username: "restricted_user", Hostname: "%"}, nil, nil, nil))
+	err = tk6.ExecToErr("GRANT SELECT ON test.* TO restricted_user_3")
+	require.NoError(t, err)
+	err = tk6.ExecToErr("REVOKE SELECT ON test.* FROM restricted_user_3")
+	require.NoError(t, err)
+
+	// Accounts with RESTRICTED_USER_ADMIN are not allowed to be granted/revoked as a role unless we
+	// also have the RESTRICTED_USER_ADMIN privilege
+	tk7 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk7.Session().Auth(&auth.UserIdentity{Username: "normal_user", Hostname: "%"}, nil, nil, nil))
+	err = tk7.ExecToErr("GRANT restricted_user TO normal_user_1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	err = tk7.ExecToErr("REVOKE restricted_user FROM normal_user_1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	tk8 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk8.Session().Auth(&auth.UserIdentity{Username: "restricted_user", Hostname: "%"}, nil, nil, nil))
+	err = tk8.ExecToErr("GRANT restricted_user TO normal_user_1")
+	require.NoError(t, err)
+	err = tk8.ExecToErr("REVOKE restricted_user FROM normal_user_1")
+	require.NoError(t, err)
+}
+
+func TestProtectUserAndRoleWithRestrictedPrivileges(t *testing.T) {
+	testProtectUserAndRoleWithRestrictedPrivileges(t, sem.V1)
+	testProtectUserAndRoleWithRestrictedPrivileges(t, sem.V2)
+}
+>>>>>>> 3328284abcb (privileges,planner: implement checks for `RESTRICTED_USER_ADMIN` for granting privileges and roles (#64297)):pkg/privilege/privileges/privileges_test.go
