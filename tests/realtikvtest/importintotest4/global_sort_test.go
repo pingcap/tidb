@@ -274,8 +274,13 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 	s.EqualValues(12, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
-	s.Greater(sum.RowCnt.Load(), int64(0)) // Fixme: why not 10000?
-	s.Greater(sum.Bytes.Load(), int64(0))  // Fixme: unstable
+	s.EqualValues(sum.RowCnt.Load(), 10000)
+	if kerneltype.IsClassic() {
+		s.EqualValues(sum.Bytes.Load(), 2622604)
+	} else {
+		// There are total 10000 * 4 kv pairs, each with 4 bytes keyspace prefix.
+		s.EqualValues(sum.Bytes.Load(), 2782604)
+	}
 	s.EqualValues(20, sum.GetReqCnt.Load())
 	s.EqualValues(0, sum.PutReqCnt.Load())
 }
