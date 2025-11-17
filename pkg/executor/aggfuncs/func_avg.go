@@ -227,8 +227,83 @@ type partialResult4AvgDistinctDecimal struct {
 	valSet set.StringSetWithMemoryUsage
 }
 
-type avgOriginal4DistinctDecimal struct {
+type baseAvgDistinct struct {
 	baseAggFunc
+}
+
+func (*baseAvgDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	panic("Not implemented")
+}
+
+func (*baseAvgDistinct) ResetPartialResult(pr PartialResult) {
+	panic("Not implemented")
+}
+
+func (*baseAvgDistinct) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	panic("Not implemented")
+}
+
+func (*baseAvgDistinct) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+	panic("Not implemented")
+}
+
+func (*baseAvgDistinct) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	panic("Not implemented")
+}
+
+func (*baseAvgDistinct) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	panic("Not implemented")
+}
+
+type baseAvgDistinct4Decimal struct {
+	baseAvgDistinct
+}
+
+func (e *baseAvgDistinct4Decimal) AppendFinalResult2Chunk(ctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4AvgDistinctDecimal)(pr)
+	if p.count == 0 {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	decimalCount := types.NewDecFromInt(p.count)
+	finalResult := new(types.MyDecimal)
+	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, ctx.GetDivPrecisionIncrement())
+	if err != nil {
+		return err
+	}
+	if e.retTp == nil {
+		return errors.New("e.retTp of avg should not be nil")
+	}
+	frac := e.retTp.GetDecimal()
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err = finalResult.Round(finalResult, frac, types.ModeHalfUp)
+	if err != nil {
+		return err
+	}
+	chk.AppendMyDecimal(e.ordinal, finalResult)
+	return nil
+}
+
+type avgPartial4DistinctDecimal struct {
+	baseAvgDistinct4Decimal
+}
+
+func (*avgPartial4DistinctDecimal) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+	s, d := (*partialResult4AvgDistinctDecimal)(src), (*partialResult4AvgDistinctDecimal)(dst)
+	for val := range s.valSet.StringSet {
+		if d.valSet.Exist(val) {
+			continue
+		}
+
+		// TODO implement it
+	}
+	return memDelta, nil
+}
+
+type avgOriginal4DistinctDecimal struct {
+	baseAvgDistinct4Decimal
 }
 
 func (*avgOriginal4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -275,33 +350,6 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx AggFuncUpdateCont
 		p.count++
 	}
 	return memDelta, nil
-}
-
-func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(ctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
-	p := (*partialResult4AvgDistinctDecimal)(pr)
-	if p.count == 0 {
-		chk.AppendNull(e.ordinal)
-		return nil
-	}
-	decimalCount := types.NewDecFromInt(p.count)
-	finalResult := new(types.MyDecimal)
-	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, ctx.GetDivPrecisionIncrement())
-	if err != nil {
-		return err
-	}
-	if e.retTp == nil {
-		return errors.New("e.retTp of avg should not be nil")
-	}
-	frac := e.retTp.GetDecimal()
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	err = finalResult.Round(finalResult, frac, types.ModeHalfUp)
-	if err != nil {
-		return err
-	}
-	chk.AppendMyDecimal(e.ordinal, finalResult)
-	return nil
 }
 
 // All the following avg function implementations return the float64 result,
@@ -453,8 +501,40 @@ type partialResult4AvgDistinctFloat64 struct {
 	valSet set.Float64SetWithMemoryUsage
 }
 
+type baseAvgDistinct4Float64 struct {
+	baseAvgDistinct
+}
+
+func (e *baseAvgDistinct4Float64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4AvgDistinctFloat64)(pr)
+	if p.count == 0 {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
+	return nil
+}
+
+type avgPartial4DistinctFloat64 struct {
+	baseAvgDistinct4Float64
+}
+
+func (*avgPartial4DistinctFloat64) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+	s, d := (*partialResult4AvgDistinctFloat64)(src), (*partialResult4AvgDistinctFloat64)(dst)
+	for val := range s.valSet.Float64Set {
+		if d.valSet.Exist(val) {
+			continue
+		}
+
+		memDelta += d.valSet.Insert(val)
+		d.sum += val
+		d.count++
+	}
+	return memDelta, nil
+}
+
 type avgOriginal4DistinctFloat64 struct {
-	baseAggFunc
+	baseAvgDistinct4Float64
 }
 
 func (*avgOriginal4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -488,14 +568,4 @@ func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx AggFuncUpdateCont
 		memDelta += p.valSet.Insert(input)
 	}
 	return memDelta, nil
-}
-
-func (e *avgOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
-	p := (*partialResult4AvgDistinctFloat64)(pr)
-	if p.count == 0 {
-		chk.AppendNull(e.ordinal)
-		return nil
-	}
-	chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
-	return nil
 }

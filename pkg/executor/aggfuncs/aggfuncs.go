@@ -90,22 +90,29 @@ var (
 	_ AggFunc = (*maxMin4Set)(nil)
 
 	// All the AggFunc implementations for "AVG" are listed here.
-	_ AggFunc = (*avgOriginal4Decimal)(nil)
-	_ AggFunc = (*avgOriginal4DistinctDecimal)(nil) // TODO support MergePartialResult
 	_ AggFunc = (*avgPartial4Decimal)(nil)
+	_ AggFunc = (*avgOriginal4Decimal)(nil)
 
-	_ AggFunc = (*avgOriginal4Float64)(nil)
 	_ AggFunc = (*avgPartial4Float64)(nil)
-	_ AggFunc = (*avgOriginal4DistinctFloat64)(nil) // TODO support MergePartialResult
+	_ AggFunc = (*avgOriginal4Float64)(nil)
+
+	_ AggFunc = (*avgPartial4DistinctDecimal)(nil)
+	_ AggFunc = (*avgPartial4DistinctFloat64)(nil)
+	_ AggFunc = (*avgOriginal4DistinctDecimal)(nil)
+	_ AggFunc = (*avgOriginal4DistinctFloat64)(nil)
 
 	// All the AggFunc implementations for "SUM" are listed here.
-	_ AggFunc = (*sum4DistinctFloat64)(nil) // TODO support MergePartialResult
-	_ AggFunc = (*sum4DistinctDecimal)(nil) // TODO support MergePartialResult
+	_ AggFunc = (*sum4PartialDistinctFloat64)(nil)
+	_ AggFunc = (*sum4PartialDistinct4Decimal)(nil)
+
+	_ AggFunc = (*sum4OriginalDistinct4Float64)(nil)
+	_ AggFunc = (*sum4OriginalDistinct4Decimal)(nil)
+
 	_ AggFunc = (*sum4Decimal)(nil)
 	_ AggFunc = (*sum4Float64)(nil)
 
 	// All the AggFunc implementations for "GROUP_CONCAT" are listed here.
-	_ AggFunc = (*groupConcatDistinct)(nil) // TODO support MergePartialResult
+	_ AggFunc = (*groupConcatDistinct)(nil) // TODO support distinct
 	_ AggFunc = (*groupConcat)(nil)
 
 	// All the AggFunc implementations for "BIT_OR" are listed here.
