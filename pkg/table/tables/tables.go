@@ -264,7 +264,10 @@ func initTableIndices(t *TableCommon) error {
 		}
 
 		// Use partition ID for index, because TableCommon may be table or partition.
-		idx := NewIndex(t.physicalTableID, tblInfo, idxInfo)
+		idx, err := NewIndex(t.physicalTableID, tblInfo, idxInfo)
+		if err != nil {
+			return err
+		}
 		intest.AssertFunc(func() bool {
 			// `TableCommon.indices` is type of `[]table.Index` to implement interface method `Table.Indices`.
 			// However, we have an assumption that the specific type of each element in it should always be `*index`.
@@ -275,6 +278,26 @@ func initTableIndices(t *TableCommon) error {
 			return true
 		})
 		t.indices = append(t.indices, idx)
+	}
+	return nil
+}
+
+// checkDataForModifyColumn checks if the data can be stored in the column with changingType.
+// It's used to prevent illegal data being inserted if we want to skip reorg.
+func checkDataForModifyColumn(row []types.Datum, col *table.Column) error {
+	if col.ChangingFieldType == nil {
+		return nil
+	}
+
+	data := row[col.Offset]
+	value, err := table.CastColumnValueWithStrictMode(data, col.ChangingFieldType)
+	if err != nil {
+		return err
+	}
+
+	// For the case from VARCHAR -> CHAR
+	if col.ChangingFieldType.GetType() == mysql.TypeString && value.GetString() != data.GetString() {
+		return errors.New("data truncation error during modify column")
 	}
 	return nil
 }
@@ -441,6 +464,10 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	for _, col := range t.Columns {
 		var value types.Datum
 		var err error
+		if err := checkDataForModifyColumn(newData, col); err != nil {
+			return err
+		}
+
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
@@ -547,6 +574,16 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		if idx.Meta().IsColumnarIndex() {
 			continue
 		}
+
+		oldDataMeetPartialCondition, err := idx.MeetPartialCondition(oldData)
+		if err != nil {
+			return err
+		}
+		if !oldDataMeetPartialCondition {
+			// If the partial index condition is not met, we don't need to delete it because
+			// it has never been written.
+			continue
+		}
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
@@ -580,9 +617,25 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			untouched = false
 			break
 		}
+		for _, ic := range idx.Meta().AffectColumn {
+			if !touched[ic.Offset] {
+				continue
+			}
+			untouched = false
+			break
+		}
 		if untouched && opt.SkipWriteUntouchedIndices() {
 			continue
 		}
+		newDataMeetPartialCondition, err := idx.MeetPartialCondition(newData)
+		if err != nil {
+			return err
+		}
+		if !newDataMeetPartialCondition {
+			// If the partial index condition is not met, we don't need to build the new index.
+			continue
+		}
+
 		newVs, err := idx.FetchValues(newData, nil)
 		if err != nil {
 			return err
@@ -766,6 +819,10 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	defer memBuffer.Cleanup(sh)
 
 	for _, col := range t.Columns {
+		if err := checkDataForModifyColumn(r, col); err != nil {
+			return nil, err
+		}
+
 		var value types.Datum
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			continue
@@ -936,10 +993,18 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if t.meta.IsCommonHandle && v.Meta().Primary {
 			continue
 		}
-		// We declared `err` here to make sure `indexVals` is assigned with `=` instead of `:=`.
+
+		meetPartialCondition, err := v.MeetPartialCondition(r)
+		if err != nil {
+			return nil, err
+		}
+		if !meetPartialCondition {
+			continue
+		}
+
+		// We should make sure `indexVals` is assigned with `=` instead of `:=`.
 		// The latter one will create a new variable that shadows the outside `indexVals` that makes `indexVals` outside
 		// always nil, and we cannot reuse it.
-		var err error
 		indexVals, err = v.FetchValues(r, indexVals)
 		if err != nil {
 			return nil, err
@@ -1196,6 +1261,20 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 		if v.Meta().IsColumnarIndex() {
 			continue
 		}
+		intest.AssertFunc(func() bool {
+			// if the index is partial index, it shouldn't have index layout.
+			return !(opt.HasIndexesLayout() && v.Meta().HasCondition())
+		})
+		meetPartialCondition, err := v.MeetPartialCondition(rec)
+		if err != nil {
+			return err
+		}
+		if !meetPartialCondition {
+			// If the partial index condition is not met, we don't need to delete it because
+			// it has never been written.
+			continue
+		}
+
 		var vals []types.Datum
 		if opt.HasIndexesLayout() {
 			vals, err = fetchIndexRow(v.Meta(), rec, nil, opt.GetIndexLayout(v.Meta().ID))
@@ -1219,7 +1298,6 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 	return nil
 }
 
-// buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx *index, txn kv.Transaction, untouched bool, opt *table.CreateIdxOpt) error {
 	rsData := TryGetHandleRestoredDataWrapper(t.meta, newData, nil, idx.Meta())
 	if _, err := idx.create(ctx, txn, vals, h, rsData, untouched, opt); err != nil {

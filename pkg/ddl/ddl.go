@@ -109,6 +109,8 @@ const (
 	// the DDL owner, to make sure all upgrade related DDLs are run on new version
 	// TiDB instance.
 	Upgrade StartMode = "upgrade"
+	// BR mode, Start DDL from br, with this mode can skip loadSystemStore in next-gen and initLogBackup.
+	BR StartMode = "br"
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -483,7 +485,7 @@ func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) *kv.ResourceGroup
 	return ctx.getResourceGroupTaggerForTopSQL()
 }
 
-func (dc *ddlCtx) setAnalyzeDoneCh(jobID int64, ch chan struct{}) {
+func (dc *ddlCtx) setAnalyzeDoneCh(jobID int64, ch chan error) {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
@@ -494,7 +496,7 @@ func (dc *ddlCtx) setAnalyzeDoneCh(jobID int64, ch chan struct{}) {
 	ctx.analyzeDone = ch
 }
 
-func (dc *ddlCtx) getAnalyzeDoneCh(jobID int64) chan struct{} {
+func (dc *ddlCtx) getAnalyzeDoneCh(jobID int64) chan error {
 	dc.jobCtx.RLock()
 	defer dc.jobCtx.RUnlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
@@ -502,6 +504,74 @@ func (dc *ddlCtx) getAnalyzeDoneCh(jobID int64) chan struct{} {
 		return nil
 	}
 	return ctx.analyzeDone
+}
+
+// setAnalyzeStartTime sets the analyze start time for a given job ID.
+func (dc *ddlCtx) setAnalyzeStartTime(jobID int64, t time.Time) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		ctx = NewReorgContext()
+		dc.jobCtx.jobCtxMap[jobID] = ctx
+	}
+	ctx.analyzeStartTime = t
+}
+
+// getAnalyzeStartTime returns the analyze start time for a given job ID. If not set, returns zero time and false.
+func (dc *ddlCtx) getAnalyzeStartTime(jobID int64) (time.Time, bool) {
+	dc.jobCtx.RLock()
+	defer dc.jobCtx.RUnlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		return time.Time{}, false
+	}
+	t := ctx.analyzeStartTime
+	return t, !t.IsZero()
+}
+
+// clearAnalyzeStartTime clears the analyze start time for a given job ID.
+func (dc *ddlCtx) clearAnalyzeStartTime(jobID int64) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	if ctx, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
+		ctx.analyzeStartTime = time.Time{}
+	}
+}
+
+// setAnalyzeCumulativeTimeout sets the computed cumulative timeout for analyze for a given job ID.
+func (dc *ddlCtx) setAnalyzeCumulativeTimeout(jobID int64, dur time.Duration) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		ctx = NewReorgContext()
+		dc.jobCtx.jobCtxMap[jobID] = ctx
+	}
+	ctx.analyzeCumulativeTimeout = dur
+}
+
+// getAnalyzeCumulativeTimeout returns the stored analyze cumulative timeout and true if set.
+func (dc *ddlCtx) getAnalyzeCumulativeTimeout(jobID int64) (time.Duration, bool) {
+	dc.jobCtx.RLock()
+	defer dc.jobCtx.RUnlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		return 0, false
+	}
+	if ctx.analyzeCumulativeTimeout == 0 {
+		return 0, false
+	}
+	return ctx.analyzeCumulativeTimeout, true
+}
+
+// clearAnalyzeCumulativeTimeout clears the stored analyze cumulative timeout for a given job ID.
+func (dc *ddlCtx) clearAnalyzeCumulativeTimeout(jobID int64) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	if ctx, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
+		ctx.analyzeCumulativeTimeout = 0
+	}
 }
 
 func (dc *ddlCtx) removeJobCtx(job *model.Job) {
@@ -826,6 +896,11 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 		zap.Stringer("jobVersion", model.GetJobVerInUse()),
 		zap.String("startMode", string(startMode)),
 	)
+
+	d.executor.startMode = startMode
+	failpoint.Inject("mockBRStartMode", func() {
+		d.executor.startMode = BR
+	})
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool

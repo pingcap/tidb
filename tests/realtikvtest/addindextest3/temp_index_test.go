@@ -16,12 +16,16 @@ package addindextest
 
 import (
 	"fmt"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -30,6 +34,7 @@ func TestMergeTempIndexBasic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode=''")
 
 	testCases := []struct {
 		name          string
@@ -93,6 +98,16 @@ func TestMergeTempIndexBasic(t *testing.T) {
 			readIdxRowCnt: []string{"1"},
 			mergeIdxCnt:   []string{"2", "2"},
 		},
+		{
+			name:          "modify column with index covered",
+			createTable:   "create table t (a int primary key, b int, c int, index idx(b));",
+			createIndex:   "alter table t modify column b smallint;",
+			adminCheck:    "admin check table t;",
+			initOp:        []string{"insert into t values (1, 1, 1);"},
+			incrOp:        []string{"insert into t values (2, 2, 2), (3, 3, 3);"},
+			readIdxRowCnt: []string{"1"},
+			mergeIdxCnt:   []string{"2"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -110,7 +125,10 @@ func TestMergeTempIndexBasic(t *testing.T) {
 
 		var jobID int64
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
-			if jobID == 0 || job.Type == model.ActionAddIndex || job.Type == model.ActionMultiSchemaChange {
+			if jobID == 0 ||
+				job.Type == model.ActionAddIndex ||
+				job.Type == model.ActionModifyColumn ||
+				job.Type == model.ActionMultiSchemaChange {
 				jobID = job.ID
 			}
 		})
@@ -147,4 +165,87 @@ func TestMergeTempIndexBasic(t *testing.T) {
 		mergeCntSQL := fmt.Sprintf("select json_extract(summary, '$.row_count') from all_subtasks where task_key = %s and step = 4", mergeTaskID)
 		tk.MustQuery(mergeCntSQL).Check(testkit.Rows(tc.mergeIdxCnt...))
 	}
+}
+
+func TestMergeTempIndexStuck(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a bigint)")
+	var (
+		workerNum = 5
+		batchNum  = 10
+		pkBegin   = 0
+		pkEnd     = 50 // workerNum * batchNum = pkEnd - pkBegin
+		rowNum    = 100
+		values    = make([]string, 0, rowNum+1)
+		execCnt   atomic.Int64
+	)
+	for i := range rowNum {
+		values = append(values, fmt.Sprintf("(%d, %d)", i, i))
+	}
+	tk.MustExec("insert into t values " + strings.Join(values, ","))
+	getSQLStmt := func(pk int, valNum int) string {
+		vals := make([]string, 0, valNum)
+		for i := pk; i < pk+valNum; i++ {
+			a := time.Now().UnixNano()
+			vals = append(vals, fmt.Sprintf("(%d, %d)", i, a))
+		}
+		valsStr := strings.Join(vals, ", ")
+		query := fmt.Sprintf("INSERT INTO t (id, a) VALUES %s ON DUPLICATE KEY UPDATE `a` = VALUES(`a`);", valsStr)
+		return query
+	}
+	// start workload
+	chPk := make(chan int, workerNum)
+	chPkFinish := make(chan int, workerNum)
+	done := make(chan struct{})
+	var wg util.WaitGroupWrapper
+	for i := 0; i < workerNum; i++ {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		wg.Run(func() {
+			for {
+				select {
+				case pk, ok := <-chPk:
+					if !ok {
+						return
+					}
+					query := getSQLStmt(pk, batchNum)
+					tk.MustExec(query)
+					select {
+					case chPkFinish <- pk:
+						execCnt.Add(1)
+					case <-done:
+						return
+					}
+
+				case <-done:
+					return
+				}
+			}
+		})
+	}
+	for i := pkBegin; i < pkEnd; i += batchNum {
+		chPk <- i
+	}
+	wg.Run(func() {
+		for {
+			select {
+			case pk := <-chPkFinish:
+				chPk <- pk
+			case <-done:
+				return
+			}
+		}
+	})
+
+	require.Eventually(t, func() bool {
+		return execCnt.Load() >= 5000
+	}, 30*time.Second, 300*time.Millisecond)
+	tk.MustExec("alter table t add index idx_a(a);")
+	tk.MustExec("admin check index t idx_a;")
+	close(done)
+	wg.Wait()
+	tk.MustExec("drop table t")
 }
