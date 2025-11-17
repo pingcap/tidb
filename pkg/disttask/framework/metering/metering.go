@@ -106,7 +106,13 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create storage provider")
 	}
-	meteringConfig := mconfig.DefaultConfig().WithLogger(logger)
+	// if there are network issues, we might successfully write the metering data,
+	// but the writer still returns error, we will retry write with the same TS
+	// in this case, which means the metering data file will have the same name,
+	// we set WithOverwriteExisting to true to avoid the retry write report error
+	// in this case.
+	// IgnoreExisting wound be more appropriate, but the SDK doesn't provide it.
+	meteringConfig := mconfig.DefaultConfig().WithLogger(logger).WithOverwriteExisting(true)
 	writer := meteringwriter.NewMeteringWriterFromConfig(provider, meteringConfig, cfg)
 	return newMeterWithWriter(logger, writer), nil
 }
