@@ -383,6 +383,7 @@ alter schema read_only read only 0;
 select * from read_only.t1 where a = 1;
 a	b
 SELECT @@last_plan_from_cache; # should be 0
+SET tidb_enable_non_prepared_plan_cache = OFF;
 @@last_plan_from_cache
 0
 alter schema read_only read only 1;

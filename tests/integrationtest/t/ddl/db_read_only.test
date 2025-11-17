@@ -355,7 +355,6 @@ execute stmt_drop_table;
 -- error 8113
 execute stmt_alter_table;
 
-
 ## test prepared plan cache after altering read only mode
 alter schema read_only read only 0;
 set @a = 1;
@@ -384,7 +383,7 @@ SELECT @@last_plan_from_cache; # should be 0
 alter schema read_only read only 0;
 select * from read_only.t1 where a = 1;
 SELECT @@last_plan_from_cache; # should be 0
-
+SET tidb_enable_non_prepared_plan_cache = OFF;
 
 ## test create binding in read only mode
 alter schema read_only read only 1;
