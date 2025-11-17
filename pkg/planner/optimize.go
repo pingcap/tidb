@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/build"
+	"github.com/pingcap/tidb/pkg/planner/core/planscache"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -104,7 +106,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		sctx.GetSessionVars().AddNonPreparedPlanCacheStmt(paramSQL, cachedStmt)
 		val = cachedStmt
 	}
-	cachedStmt := val.(*core.PlanCacheStmt)
+	cachedStmt := val.(*planscache.PlanCacheStmt)
 
 	cachedPlan, names, err := core.GetPlanFromPlanCache(ctx, sctx, true, is, cachedStmt, paramExprs)
 	if err != nil {
@@ -392,7 +394,7 @@ func OptimizeForForeignKeyCascade(ctx context.Context, sctx planctx.PlanContext,
 	if err != nil {
 		return nil, err
 	}
-	if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
+	if err := build.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -485,13 +487,13 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	// we need the table information to check privilege, which is collected
 	// into the visitInfo in the logical plan builder.
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		visitInfo := core.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
-		if err := core.CheckPrivilege(activeRoles, pm, visitInfo); err != nil {
+		visitInfo := build.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
+		if err := build.CheckPrivilege(activeRoles, pm, visitInfo); err != nil {
 			return nil, nil, 0, err
 		}
 	}
 
-	if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
+	if err := build.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
 		return nil, nil, 0, err
 	}
 
@@ -562,9 +564,9 @@ func buildLogicalPlan(ctx context.Context, sctx planctx.PlanContext, node *resol
 	}
 	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
 	if exec, ok := p.(*core.Execute); ok && exec.PrepStmt != nil {
-		sctx.GetSessionVars().StmtCtx.Tables = core.GetDBTableInfo(exec.PrepStmt.VisitInfos)
+		sctx.GetSessionVars().StmtCtx.Tables = build.GetDBTableInfo(exec.PrepStmt.VisitInfos)
 	} else {
-		sctx.GetSessionVars().StmtCtx.Tables = core.GetDBTableInfo(builder.GetVisitInfo())
+		sctx.GetSessionVars().StmtCtx.Tables = build.GetDBTableInfo(builder.GetVisitInfo())
 	}
 	return p, nil
 }

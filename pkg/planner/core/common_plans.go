@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/planscache"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -222,7 +223,7 @@ type Execute struct {
 
 	Name     string
 	Params   []expression.Expression
-	PrepStmt *PlanCacheStmt
+	PrepStmt *planscache.PlanCacheStmt
 	Stmt     ast.StmtNode
 	Plan     base.Plan
 }

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/planscache"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -90,7 +91,7 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 // paramSQL is the corresponding parameterized sql like 'select * from t where a<? and b>?'.
 // paramStmt is the Node of paramSQL.
 func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool,
-	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*PlanCacheStmt, base.Plan, int, error) {
+	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*planscache.PlanCacheStmt, base.Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
 	paramStmt.Accept(&extractor)
@@ -210,7 +211,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		relateVersion[id] = tbl.Meta().Revision
 	}
 
-	preparedObj := &PlanCacheStmt{
+	preparedObj := &planscache.PlanCacheStmt{
 		PreparedAst:         prepared,
 		ResolveCtx:          nodeW.GetResolveContext(),
 		StmtDB:              vars.CurrentDB,
@@ -222,8 +223,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
-		dbName:              dbName,
-		tbls:                tbls,
+		DBName:              dbName,
+		Tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
 		RelateVersion:       relateVersion,
 		Params:              extractor.markers,
@@ -257,7 +258,7 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
-func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
+func NewPlanCacheKey(sctx sessionctx.Context, stmt *planscache.PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
 	binding = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
 
 	// In rc or for update read, we need the latest schema version to decide whether we need to
@@ -340,7 +341,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = codec.EncodeInt(hash, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 
 	// whether this query has sub-query
-	if stmt.hasSubquery {
+	if stmt.HasSubquery {
 		if !vars.EnablePlanCacheForSubquery {
 			return "", "", false, "the switch 'tidb_enable_plan_cache_for_subquery' is off", nil
 		}
@@ -353,12 +354,12 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
-	if len(stmt.limits) > 0 {
+	if len(stmt.Limits) > 0 {
 		if !vars.EnablePlanCacheForParamLimit {
 			return "", "", false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off", nil
 		}
 		hash = append(hash, '|')
-		for _, node := range stmt.limits {
+		for _, node := range stmt.Limits {
 			for _, valNode := range []ast.ExprNode{node.Count, node.Offset} {
 				if valNode == nil {
 					continue
@@ -381,7 +382,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// stats ver can affect cached plan
 	if sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats {
 		var statsVerHash uint64
-		for _, t := range stmt.tables {
+		for _, t := range stmt.Tables {
 			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
 		}
 		hash = codec.EncodeUint(hash, statsVerHash)
@@ -526,7 +527,7 @@ var planCacheHasherPool = sync.Pool{
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(
 	sctx sessionctx.Context,
-	stmt *PlanCacheStmt,
+	stmt *planscache.PlanCacheStmt,
 	cacheKey string,
 	binding string,
 	plan base.Plan, // the cached plan,
@@ -583,20 +584,20 @@ func NewPlanCacheValue(
 type planCacheStmtProcessor struct {
 	ctx  context.Context
 	is   infoschema.InfoSchema
-	stmt *PlanCacheStmt
+	stmt *planscache.PlanCacheStmt
 }
 
 // Enter implements Visitor interface.
 func (f *planCacheStmtProcessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.Limit:
-		f.stmt.limits = append(f.stmt.limits, node)
+		f.stmt.Limits = append(f.stmt.Limits, node)
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
-		f.stmt.hasSubquery = true
+		f.stmt.HasSubquery = true
 	case *ast.TableName:
 		t, err := f.is.TableByName(f.ctx, node.Schema, node.Name)
 		if err == nil {
-			f.stmt.tables = append(f.stmt.tables, t)
+			f.stmt.Tables = append(f.stmt.Tables, t)
 		}
 	}
 	return in, false
@@ -607,69 +608,10 @@ func (*planCacheStmtProcessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
-// PointGetExecutorCache caches the PointGetExecutor to further improve its performance.
-// Don't forget to reset this executor when the prior plan is invalid.
-type PointGetExecutorCache struct {
-	ColumnInfos any
-	// Executor is only used for point get scene.
-	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
-	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
-	Executor any
-
-	// FastPlan is only used for instance plan cache.
-	// To ensure thread-safe, we have to clone each plan before reusing if using instance plan cache.
-	// To reduce the memory allocation and increase performance, we cache the FastPlan here.
-	FastPlan *physicalop.PointGetPlan
-}
-
-// PlanCacheStmt store prepared ast from PrepareExec and other related fields
-type PlanCacheStmt struct {
-	PreparedAst *ast.Prepared
-	ResolveCtx  *resolve.Context
-	StmtDB      string // which DB the statement will be processed over
-	VisitInfos  []visitInfo
-	Params      []ast.ParamMarkerExpr
-
-	PointGet PointGetExecutorCache
-
-	// below fields are for PointGet short path
-	SchemaVersion int64
-
-	// RelateVersion stores the true cache plan table schema version, since each table schema can be updated separately in transaction.
-	RelateVersion map[int64]uint64
-
-	StmtCacheable     bool   // Whether this stmt is cacheable.
-	UncacheableReason string // Why this stmt is uncacheable.
-
-	limits      []*ast.Limit
-	hasSubquery bool
-	tables      []table.Table // to capture table stats changes
-
-	NormalizedSQL       string
-	NormalizedPlan      string
-	SQLDigest           *parser.Digest
-	PlanDigest          *parser.Digest
-	ForUpdateRead       bool
-	SnapshotTSEvaluator func(context.Context, sessionctx.Context) (uint64, error)
-
-	BindingInfo bindinfo.BindingMatchInfo
-
-	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
-	//  for the query `select * from t where a>1 and b<?`, then
-	//  NormalizedSQL: select * from `t` where `a` > ? and `b` < ? --> constants are normalized to '?',
-	//  NormalizedSQL4PC: select * from `test` . `t` where `a` > ? and `b` < ? --> schema name is added,
-	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
-	StmtText string
-
-	// dbName and tbls are used to add metadata lock.
-	dbName []ast.CIStr
-	tbls   []table.Table
-}
-
 // GetPreparedStmt extract the prepared statement from the execute statement.
-func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCacheStmt, error) {
+func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*planscache.PlanCacheStmt, error) {
 	if stmt.PrepStmt != nil {
-		return stmt.PrepStmt.(*PlanCacheStmt), nil
+		return stmt.PrepStmt.(*planscache.PlanCacheStmt), nil
 	}
 	if stmt.Name != "" {
 		prepStmt, err := vars.GetPreparedStmtByName(stmt.Name)
@@ -677,7 +619,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 			return nil, err
 		}
 		stmt.PrepStmt = prepStmt
-		return prepStmt.(*PlanCacheStmt), nil
+		return prepStmt.(*planscache.PlanCacheStmt), nil
 	}
 	return nil, plannererrors.ErrStmtNotFound
 }

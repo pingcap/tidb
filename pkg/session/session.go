@@ -84,6 +84,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/planscache"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	planctx "github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/plugin"
@@ -332,11 +333,11 @@ func (s *session) cleanRetryInfo() {
 	planCacheEnabled := s.GetSessionVars().EnablePreparedPlanCache
 	var cacheKey string
 	var err error
-	var preparedObj *plannercore.PlanCacheStmt
+	var preparedObj *planscache.PlanCacheStmt
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
 		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
-			preparedObj, ok = preparedPointer.(*plannercore.PlanCacheStmt)
+			preparedObj, ok = preparedPointer.(*planscache.PlanCacheStmt)
 			if ok {
 				cacheKey, _, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
 				if err != nil {
@@ -3076,7 +3077,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
-	stmt, ok := prepStmt.(*plannercore.PlanCacheStmt)
+	stmt, ok := prepStmt.(*planscache.PlanCacheStmt)
 	if !ok {
 		return nil, errors.Errorf("invalid PlanCacheStmt type")
 	}
