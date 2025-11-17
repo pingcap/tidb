@@ -193,7 +193,6 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	r.summaryMap.Store(subtask.ID, &readIndexSummary{
 		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
 	})
-	r.summary.Reset()
 	var err error
 
 	var (
@@ -228,6 +227,10 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return r.summary
+}
+
+func (r *readIndexStepExecutor) ResetSummary() {
+	r.summary.Reset()
 }
 
 func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
