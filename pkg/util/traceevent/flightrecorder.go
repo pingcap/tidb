@@ -218,7 +218,7 @@ type FlightRecorderConfig struct {
 // Initialize initializes the default flight recorder configuration.
 // It will dump all the events.
 func (c *FlightRecorderConfig) Initialize() {
-	c.EnabledCategories = []string{"*"}
+	c.EnabledCategories = []string{"-", "dev_debug"}
 	c.DumpTrigger.Type = "sampling"
 	c.DumpTrigger.Sampling = 1
 }
