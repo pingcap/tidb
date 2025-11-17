@@ -128,7 +128,7 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	require.NoError(t, err)
 
 	// Clear the recorder and reset prev trace ID
-	recorder.Reset()
+	recorder.DiscardOrFlush()
 	se.GetSessionVars().PrevTraceID = nil
 
 	// Execute first statement
@@ -146,7 +146,7 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	t.Logf("First statement trace ID: %s", hex.EncodeToString(firstTraceID))
 
 	// Clear the recorder to capture only the second statement's events
-	recorder.Reset()
+	recorder.DiscardOrFlush()
 
 	// Execute second statement in the same session
 	stmt2, err := se.ParseWithParams(ctx, "insert into test.t2 values (2, 'second')")
