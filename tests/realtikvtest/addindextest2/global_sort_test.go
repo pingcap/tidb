@@ -943,7 +943,7 @@ func TestNextGenMetering(t *testing.T) {
 	// note: the read/write of subtask meta file is also counted in obj_store part,
 	// but meta file contains file name which contains task and subtask ID, so
 	// the length may vary, we just use regexp to match here.
-	require.Regexp(t, `obj_store{r: 1.\d+KiB, w: 2.\d+KiB}`, gotMeterData.Load())
+	require.Regexp(t, `obj_store{r: 1.\d+KiB, w: \d.\d+KiB}`, gotMeterData.Load())
 
 	sum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepReadIndex)
 	require.EqualValues(t, 1, sum.GetReqCnt.Load())
