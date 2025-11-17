@@ -14,6 +14,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -38,14 +39,15 @@ type TestResult struct {
 
 // TestReport contains all test results and summary information.
 type TestReport struct {
-	StorageURI  string       // The storage URI being tested
-	StartTime   time.Time    // When the test started
-	EndTime     time.Time    // When the test ended
-	TotalTests  int          // Total number of tests
-	PassedTests int          // Number of tests that passed
-	FailedTests int          // Number of tests that failed
-	TestResults []TestResult // Individual test results
-	TotalBytes  int64        // Total bytes read/written during tests
+	StorageURI  string              // The storage URI being tested
+	StartTime   time.Time           // When the test started
+	EndTime     time.Time           // When the test ended
+	TotalTests  int                 // Total number of tests
+	PassedTests int                 // Number of tests that passed
+	FailedTests int                 // Number of tests that failed
+	TestResults []TestResult        // Individual test results
+	TotalBytes  int64               // Total bytes read/written during tests
+	Requests    *recording.Requests // Request statistics (only for S3)
 }
 
 // AddResult adds a test result to the report.
@@ -75,6 +77,15 @@ func (r *TestReport) Print() {
 	fmt.Printf("Passed:          %s\n", color.GreenString("%d", r.PassedTests))
 	fmt.Printf("Failed:          %s\n", color.RedString("%d", r.FailedTests))
 	fmt.Printf("Total Data:      %s\n", formatBytes(r.TotalBytes))
+
+	// Display request statistics if available (S3 only)
+	if r.Requests != nil {
+		getReqs := r.Requests.Get.Load()
+		putReqs := r.Requests.Put.Load()
+		fmt.Printf("GET Requests:    %s\n", color.CyanString("%d", getReqs))
+		fmt.Printf("PUT Requests:    %s\n", color.CyanString("%d", putReqs))
+		fmt.Printf("Total Requests:  %s\n", color.CyanString("%d", getReqs+putReqs))
+	}
 	fmt.Println()
 
 	printStep("-" + repeatString("-", 70))
@@ -238,6 +249,15 @@ func RunTestStorage(ctx context.Context, cfg TestStorageConfig) error {
 	backend, err := storage.ParseBackend(cfg.StorageURI, &cfg.BackendOptions)
 	if err != nil {
 		return errors.Annotate(err, "failed to parse storage backend")
+	}
+
+	// Create request recorder for S3 storage
+	var reqRec *recording.Requests
+	if backend.GetS3() != nil {
+		reqRec = &recording.Requests{}
+		ctx = recording.WithRequests(ctx, reqRec)
+		report.Requests = reqRec
+		printStep("Request recording enabled (S3 storage detected)")
 	}
 
 	store, err := storage.New(ctx, backend, &storage.ExternalStorageOptions{
