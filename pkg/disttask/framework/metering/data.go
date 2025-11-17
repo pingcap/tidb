@@ -14,7 +14,11 @@
 
 package metering
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/docker/go-units"
+)
 
 const (
 	getRequestsField = "get_requests"
@@ -24,7 +28,7 @@ const (
 )
 
 // Data represents the metering data.
-// we might use this struct to store accumulated data.
+// we use this struct to store accumulated data.
 type Data struct {
 	getRequests uint64
 	putRequests uint64
@@ -73,12 +77,13 @@ func (d *Data) calMeterDataItem(other *Data) map[string]any {
 
 // String implements fmt.Stringer interface.
 func (d *Data) String() string {
-	return fmt.Sprintf("{taskID: %d, keyspace: %s, type: %s, getReqs: %d, putReqs: %d, readBytes: %d, writeBytes: %d}",
+	return fmt.Sprintf("{id: %d, keyspace: %s, type: %s, requests{get: %d, put: %d}, read: %s, write: %s}",
 		d.taskID,
 		d.keyspace,
 		d.taskType,
 		d.getRequests,
 		d.putRequests,
-		d.readBytes,
-		d.writeBytes)
+		units.BytesSize(float64(d.readBytes)),
+		units.BytesSize(float64(d.writeBytes)),
+	)
 }

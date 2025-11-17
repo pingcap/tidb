@@ -181,7 +181,16 @@ func newDigestBiMap() digestBiMap {
 func (b *digestBiMapImpl) Add(noDBDigest, sqlDigest string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.noDBDigest2SQLDigest[noDBDigest] = append(b.noDBDigest2SQLDigest[noDBDigest], sqlDigest)
+	exist := false
+	for _, d := range b.noDBDigest2SQLDigest[noDBDigest] {
+		if d == sqlDigest {
+			exist = true
+			break
+		}
+	}
+	if !exist { // avoid adding duplicated binding digests
+		b.noDBDigest2SQLDigest[noDBDigest] = append(b.noDBDigest2SQLDigest[noDBDigest], sqlDigest)
+	}
 	b.sqlDigest2noDBDigest[sqlDigest] = noDBDigest
 }
 

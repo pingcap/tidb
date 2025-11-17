@@ -262,7 +262,9 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 		for _, item := range items {
 			if item.IsIndex && item.TableID == tableInfo.ID && item.ID == addedIndexID {
-				return len(items) == 3
+				// NOTE: Because the real TiKV test enables sync load by default,
+				// the column stats may or may not be in the AsyncLoadHistogramNeededItems. Therefore, we only check the index here.
+				return true
 			}
 		}
 		return false
