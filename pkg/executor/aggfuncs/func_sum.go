@@ -26,6 +26,8 @@ import (
 )
 
 const (
+	pointerSize = int64(unsafe.Sizeof(&types.MyDecimal{}))
+	
 	// DefPartialResult4SumFloat64Size is the size of partialResult4SumFloat64
 	DefPartialResult4SumFloat64Size = int64(unsafe.Sizeof(partialResult4SumFloat64{}))
 	// DefPartialResult4SumDecimalSize is the size of partialResult4SumDecimal
@@ -55,7 +57,7 @@ type partialResult4SumDistinctFloat64 struct {
 type partialResult4SumDistinctDecimal struct {
 	val    types.MyDecimal
 	isNull bool
-	valSet set.StringSetWithMemoryUsage
+	valSet set.StringToDecimalSetWithMemoryUsage
 }
 
 type baseSumAggFunc struct {
@@ -432,23 +434,20 @@ type sum4PartialDistinct4Decimal struct {
 func (*sum4PartialDistinct4Decimal) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
 	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
 	s, d := (*partialResult4SumDistinctDecimal)(src), (*partialResult4SumDistinctDecimal)(dst)
-	for val := range s.valSet.StringSet {
-		if d.valSet.Exist(val) {
+	for key, val := range s.valSet.Data {
+		if d.valSet.Exist(key) {
 			continue
 		}
 
-		memDelta += d.valSet.Insert(val)
-		srcDec := new(types.MyDecimal)
-		err := srcDec.FromString([]byte(val))
-		if err != nil {
+		memDelta += d.valSet.Insert(key, val)
+		memDelta += int64(len(key)) + pointerSize
+
+		newSum := new(types.MyDecimal)
+		if err = types.DecimalAdd(&d.val, val, newSum); err != nil {
 			return memDelta, err
 		}
 
-		newSum := new(types.MyDecimal)
-		if err = types.DecimalAdd(&d.val, srcDec, newSum); err != nil {
-			return memDelta, err
-		}
-		d.val = *srcDec
+		d.val = *newSum
 		d.isNull = false
 	}
 	return memDelta, nil
@@ -462,14 +461,14 @@ func (*sum4OriginalDistinct4Decimal) AllocPartialResult() (pr PartialResult, mem
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
 	setSize := int64(0)
-	p.valSet, setSize = set.NewStringSetWithMemoryUsage()
+	p.valSet, setSize = set.NewStringToStringSetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize + setSize
 }
 
 func (*sum4OriginalDistinct4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	p.isNull = true
-	p.valSet, _ = set.NewStringSetWithMemoryUsage()
+	p.valSet, _ = set.NewStringToStringSetWithMemoryUsage()
 }
 
 func (e *sum4OriginalDistinct4Decimal) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -486,12 +485,12 @@ func (e *sum4OriginalDistinct4Decimal) UpdatePartialResult(sctx AggFuncUpdateCon
 		if err != nil {
 			return memDelta, err
 		}
-		decStr := string(hack.String(hash))
-		if p.valSet.Exist(decStr) {
+		keyStr := string(hack.String(hash))
+		if p.valSet.Exist(keyStr) {
 			continue
 		}
-		memDelta += p.valSet.Insert(decStr)
-		memDelta += int64(len(decStr))
+		memDelta += p.valSet.Insert(keyStr, input.Clone())
+		memDelta += int64(len(keyStr)) + pointerSize
 		if p.isNull {
 			p.val = *input
 			p.isNull = false

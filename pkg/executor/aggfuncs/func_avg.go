@@ -224,7 +224,7 @@ func (*avgPartial4Decimal) MergePartialResult(_ AggFuncUpdateContext, src, dst P
 
 type partialResult4AvgDistinctDecimal struct {
 	partialResult4AvgDecimal
-	valSet set.StringSetWithMemoryUsage
+	valSet set.StringToDecimalSetWithMemoryUsage
 }
 
 type baseAvgDistinct struct {
@@ -292,12 +292,21 @@ type avgPartial4DistinctDecimal struct {
 
 func (*avgPartial4DistinctDecimal) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4AvgDistinctDecimal)(src), (*partialResult4AvgDistinctDecimal)(dst)
-	for val := range s.valSet.StringSet {
-		if d.valSet.Exist(val) {
+	for key, val := range s.valSet.Data {
+		if d.valSet.Exist(key) {
 			continue
 		}
 
-		// TODO implement it
+		memDelta += d.valSet.Insert(key, val)
+		memDelta += int64(len(key)) + pointerSize
+
+		newSum := new(types.MyDecimal)
+		err = types.DecimalAdd(&d.sum, val, newSum)
+		if err != nil {
+			return memDelta, err
+		}
+		d.sum = *newSum
+		d.count++
 	}
 	return memDelta, nil
 }
@@ -307,7 +316,7 @@ type avgOriginal4DistinctDecimal struct {
 }
 
 func (*avgOriginal4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	valSet, setSize := set.NewStringSetWithMemoryUsage()
+	valSet, setSize := set.NewStringToStringSetWithMemoryUsage()
 	p := &partialResult4AvgDistinctDecimal{
 		valSet: valSet,
 	}
@@ -318,7 +327,7 @@ func (*avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	p.sum = *types.NewDecFromInt(0)
 	p.count = int64(0)
-	p.valSet, _ = set.NewStringSetWithMemoryUsage()
+	p.valSet, _ = set.NewStringToStringSetWithMemoryUsage()
 }
 
 func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -335,12 +344,12 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx AggFuncUpdateCont
 		if err != nil {
 			return memDelta, err
 		}
-		decStr := string(hack.String(hash))
-		if p.valSet.Exist(decStr) {
+		keyStr := string(hack.String(hash))
+		if p.valSet.Exist(keyStr) {
 			continue
 		}
-		memDelta += p.valSet.Insert(decStr)
-		memDelta += int64(len(decStr))
+		memDelta += p.valSet.Insert(keyStr, input.Clone())
+		memDelta += int64(len(keyStr)) + pointerSize
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {

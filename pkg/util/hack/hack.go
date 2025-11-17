@@ -71,6 +71,8 @@ const (
 	DefBucketMemoryUsageForMapIntToPtr = (8*(1+8+8) + 16) / 2 * 3
 	// DefBucketMemoryUsageForMapStringToAny = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(interface{}))+2*ptrSize
 	DefBucketMemoryUsageForMapStringToAny = (8*(1+16+16) + 16) / 2 * 3
+	// DefBucketMemoryUsageForMapStringToDecimal = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(MyDecimal))+2*ptrSize
+	DefBucketMemoryUsageForMapStringToDecimal = (8*(1+16+8) + 16) / 2 * 3
 	// DefBucketMemoryUsageForSetString = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(struct{}))+2*ptrSize
 	DefBucketMemoryUsageForSetString = (8*(1+16+0) + 16) / 2 * 3
 	// DefBucketMemoryUsageForSetFloat64 = bucketSize*(1+unsafe.Sizeof(float64) + unsafe.Sizeof(struct{}))+2*ptrSize
