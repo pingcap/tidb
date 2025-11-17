@@ -459,7 +459,7 @@ func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
 			tk.MustExec("insert into t values (?, ?)", i, i)
 		}
 
-		// Fire once: make the subtask fail AFTER checkpoint is updated, so task will be restarted from checkpoint.
+		// Fire once: make the subtask fail before checkpoint is updated, so task will be restarted from checkpoint.
 		testfailpoint.Enable(t,
 			"github.com/pingcap/tidb/pkg/ddl/ingest/ddlIngestFailOnceBeforeCheckpointUpdated",
 			"1*return")
