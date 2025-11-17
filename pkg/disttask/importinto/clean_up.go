@@ -90,7 +90,7 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 	}
 	// send metering data for nextgen kernel, only for succeed tasks
 	if kerneltype.IsNextGen() && task.State == proto.TaskStateSucceed {
-		if err = sendMeterOnCleanUp(ctx, task); err != nil {
+		if err = sendMeterOnCleanUp(ctx, task, logger); err != nil {
 			logger.Warn("failed to send metering data on cleanup", zap.Error(err))
 			return err
 		}
@@ -98,7 +98,8 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 	return nil
 }
 
-func sendMeterOnCleanUp(ctx context.Context, task *proto.Task) error {
+func sendMeterOnCleanUp(ctx context.Context, task *proto.Task, logger *zap.Logger) error {
+	start := time.Now()
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
@@ -131,7 +132,12 @@ func sendMeterOnCleanUp(ctx context.Context, task *proto.Task) error {
 	item["row_count"] = rowCount
 	item["data_kv_size_in_bytes"] = dataKVSize
 	item["index_kv_size_in_bytes"] = indexKVSize
-	return metering.WriteMeterData(ctx, ts, []map[string]any{item})
+	if err = metering.WriteMeterData(ctx, ts, []map[string]any{item}); err != nil {
+		return errors.Trace(err)
+	}
+	logger.Info("succeed to send size and row metering data", zap.Any("data", item),
+		zap.Duration("duration", time.Since(start)))
+	return nil
 }
 
 func init() {
