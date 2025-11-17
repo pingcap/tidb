@@ -177,7 +177,7 @@ func (s *importStepExecutor) Accepted(bytes int64) {
 }
 
 // Processed implements Collector.Processed interface.
-func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
+func (s *importStepExecutor) Processed(_, rowCnt int64) {
 	s.summary.RowCnt.Add(rowCnt)
 }
 
