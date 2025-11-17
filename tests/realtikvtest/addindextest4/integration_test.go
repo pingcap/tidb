@@ -481,5 +481,4 @@ func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
 
 	t.Run("dist_task_off", func(t *testing.T) { runCase(t, false) })
 	t.Run("dist_task_on", func(t *testing.T) { runCase(t, true) })
-	t.Fail()
 }

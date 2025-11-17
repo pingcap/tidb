@@ -602,6 +602,7 @@ func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 			return errors.Trace(err)
 		}
 
+		// flush previous group if key changes
 		if currentKey == nil || !bytes.Equal(currentKey, key) {
 			if err := flushCurrentGroup(); err != nil {
 				return errors.Trace(err)
