@@ -272,6 +272,7 @@ func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, i
 			"cloud_storage_uri",
 			"thread",
 			"__max_engine_size",
+			"checksum_table",
 		} {
 			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv' with %s='1'", option))
 			require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)

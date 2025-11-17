@@ -72,6 +72,15 @@ func UnregisterRecorder(taskID int64) {
 	meter.unregisterRecorder(taskID)
 }
 
+// WriteMeterData writes the metering data.
+func WriteMeterData(ctx context.Context, ts int64, items []map[string]any) error {
+	meter := meteringInstance.Load()
+	if kerneltype.IsClassic() || meter == nil {
+		return nil
+	}
+	return meter.WriteMeterData(ctx, ts, items)
+}
+
 // SetMetering sets the metering instance for dxf.
 func SetMetering(m *Meter) {
 	meteringInstance.Store(m)
@@ -251,7 +260,7 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 		return
 	}
 
-	if err := m.writeMeterData(ctx, ts, items); err != nil {
+	if err := m.WriteMeterData(ctx, ts, items); err != nil {
 		logger.Warn("failed to write metering data", zap.Error(err),
 			zap.Duration("duration", time.Since(startTime)),
 			zap.Any("data", items))
@@ -263,7 +272,8 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 	}
 }
 
-func (m *Meter) writeMeterData(ctx context.Context, ts int64, items []map[string]any) error {
+// WriteMeterData writes the metering data.
+func (m *Meter) WriteMeterData(ctx context.Context, ts int64, items []map[string]any) error {
 	failpoint.InjectCall("forceTSAtMinuteBoundary", &ts)
 	meteringData := &common.MeteringData{
 		SelfID:    m.uuid,

@@ -18,9 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -28,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -84,7 +88,50 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 		logger.Warn("failed to clean up files of task", zap.Error(err))
 		return err
 	}
+	// send metering data for nextgen kernel, only for succeed tasks
+	if kerneltype.IsNextGen() && task.State == proto.TaskStateSucceed {
+		if err = sendMeterOnCleanUp(ctx, task); err != nil {
+			logger.Warn("failed to send metering data on cleanup", zap.Error(err))
+			return err
+		}
+	}
 	return nil
+}
+
+func sendMeterOnCleanUp(ctx context.Context, task *proto.Task) error {
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	subtasks, err := taskManager.GetAllSubtasksByStepAndState(ctx, task.ID, proto.ImportStepPostProcess, proto.SubtaskStateSucceed)
+	if err != nil {
+		return err
+	}
+	if len(subtasks) != 1 {
+		// should not happen, checksum is required in nextgen
+		return nil
+	}
+	stMeta := &PostProcessStepMeta{}
+	subtask := subtasks[0]
+	if err = json.Unmarshal(subtask.Meta, stMeta); err != nil {
+		return errors.Trace(err)
+	}
+	var rowCount, dataKVSize, indexKVSize uint64
+	for group, ckSum := range stMeta.Checksum {
+		if group == verification.DataKVGroupID {
+			rowCount = ckSum.KVs
+			dataKVSize = ckSum.Size
+		} else {
+			indexKVSize += ckSum.Size
+		}
+	}
+	// we always use the subtask update time as the metering time.
+	ts := subtask.UpdateTime.Truncate(time.Minute).Unix()
+	item := metering.GetBaseMeterItem(task.ID, task.Keyspace, task.Type.String())
+	item["row_count"] = rowCount
+	item["data_kv_size_in_bytes"] = dataKVSize
+	item["index_kv_size_in_bytes"] = indexKVSize
+	return metering.WriteMeterData(ctx, ts, []map[string]any{item})
 }
 
 func init() {
