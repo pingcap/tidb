@@ -1065,6 +1065,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
 	realtimeRowCount, modifyCount, histNDV int64,
+	highIsOpenEnded bool,
 ) (result RowEstimate) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -1156,11 +1157,17 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return DefaultRowEst(oneValue)
 	}
 	if l == r {
+		returnEst := oneValue
+		returnMax := addedRows
+		if highIsOpenEnded { // if the high is open ended - there's a high probability that we're searching a large range
+			returnEst = addedRows * 0.5
+			returnMax = float64(modifyCount)
+		}
 		// if l ==r, it means our byte comparison is too short.
 		return RowEstimate{
-			Est:    addedRows * 0.5, // Assume half of newly added rows qualify
-			MinEst: 1,               // Assume a minimum of 1 row qualifies
-			MaxEst: float64(modifyCount),
+			Est:    returnEst,
+			MinEst: oneValue, // Assume a minimum of 1 row qualifies
+			MaxEst: returnMax,
 		}
 	}
 
@@ -1244,7 +1251,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// Add "ratio" of the maximum row count that could be out of range, i.e. all newly added rows
 		result := CalculateSkewRatioCounts(avgRowCount, addedRows, skewRatio)
 		result.Est = max(result.Est, oneValue)
-		result.MinEst = 1
+		result.MinEst = oneValue
 		result.MaxEst = max(result.Est, addedRows)
 		return result
 	}
@@ -1256,7 +1263,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	return RowEstimate{
 		Est:    finalEst,
-		MinEst: 1, // Assume a minimum of 1 row qualifies
+		MinEst: oneValue,
 		MaxEst: maxEst,
 	}
 }
