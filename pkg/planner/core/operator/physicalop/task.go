@@ -19,10 +19,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
-	"github.com/pingcap/tidb/pkg/planner/funcdep"
-	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -46,78 +42,6 @@ func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan base.Physi
 			collectPartitionInfosFromMPPPlan(p, ch)
 		}
 	}
-}
-
-// NeedEnforceExchanger checks if we need to enforce an exchange operator on the top of the mpp task.
-// TODO: make it as private
-func (t *MppTask) NeedEnforceExchanger(prop *property.PhysicalProperty, fd *funcdep.FDSet) bool {
-	switch prop.MPPPartitionTp {
-	case property.AnyType:
-		return false
-	case property.BroadcastType:
-		return true
-	case property.SinglePartitionType:
-		return t.partTp != property.SinglePartitionType
-	default:
-		if t.partTp != property.HashType {
-			return true
-		}
-		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
-		if fd != nil && len(t.HashCols) != 0 {
-			return prop.NeedMPPExchangeByEquivalence(t.HashCols, fd)
-		}
-		if len(prop.MPPPartitionCols) != len(t.HashCols) {
-			return true
-		}
-		for i, col := range prop.MPPPartitionCols {
-			if !col.Equal(t.HashCols[i]) {
-				return true
-			}
-		}
-		return false
-	}
-}
-
-// EnforceExchanger enforces an exchange operator on the top of the mpp task if necessary.
-// TODO: make it as private
-func (t *MppTask) EnforceExchanger(prop *property.PhysicalProperty, fd *funcdep.FDSet) *MppTask {
-	if !t.NeedEnforceExchanger(prop, fd) {
-		return t
-	}
-	return t.Copy().(*MppTask).EnforceExchangerImpl(prop)
-}
-
-// EnforceExchangerImpl enforces an exchange operator on the top of the mpp task.
-// TODO: make it as private
-func (t *MppTask) EnforceExchangerImpl(prop *property.PhysicalProperty) *MppTask {
-	if collate.NewCollationEnabled() && !t.p.SCtx().GetSessionVars().HashExchangeWithNewCollation && prop.MPPPartitionTp == property.HashType {
-		for _, col := range prop.MPPPartitionCols {
-			if types.IsString(col.Col.RetType.GetType()) {
-				t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.")
-				return &MppTask{}
-			}
-		}
-	}
-	ctx := t.p.SCtx()
-	sender := PhysicalExchangeSender{
-		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
-		HashCols:     prop.MPPPartitionCols,
-	}.Init(ctx, t.p.StatsInfo())
-
-	if ctx.GetSessionVars().ChooseMppVersion() >= kv.MppVersionV1 {
-		sender.CompressionMode = ctx.GetSessionVars().ChooseMppExchangeCompressionMode()
-	}
-
-	sender.SetChildren(t.p)
-	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.StatsInfo())
-	receiver.SetChildren(sender)
-	nt := &MppTask{
-		p:        receiver,
-		partTp:   prop.MPPPartitionTp,
-		HashCols: prop.MPPPartitionCols,
-	}
-	nt.Warnings.CopyFrom(&t.Warnings)
-	return nt
 }
 
 func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {

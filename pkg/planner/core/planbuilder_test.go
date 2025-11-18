@@ -28,7 +28,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -771,6 +770,62 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
 }
 
+func TestBuildRefreshStatsPrivileges(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	ctx.GetSessionVars().CurrentDB = "test"
+
+	p := parser.New()
+	testCases := []struct {
+		name            string
+		sql             string
+		expectedDB      string
+		expectedTable   string
+		expectedEntries int
+	}{
+		{
+			name:            "table scope",
+			sql:             "REFRESH STATS t1",
+			expectedDB:      "test",
+			expectedTable:   "t1",
+			expectedEntries: 1,
+		},
+		{
+			name:            "database scope",
+			sql:             "REFRESH STATS test.*",
+			expectedDB:      "test",
+			expectedTable:   "",
+			expectedEntries: 1,
+		},
+		{
+			name:            "global scope",
+			sql:             "REFRESH STATS *.*",
+			expectedDB:      "",
+			expectedTable:   "",
+			expectedEntries: 1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+			stmtNode, err := p.ParseOneStmt(tc.sql, "", "")
+			require.NoError(t, err)
+			rs := stmtNode.(*ast.RefreshStatsStmt)
+			builder.visitInfo = nil
+			_, err = builder.buildRefreshStats(rs)
+			require.NoError(t, err)
+			require.Len(t, builder.visitInfo, tc.expectedEntries)
+			vi := builder.visitInfo[0]
+			require.Equal(t, tc.expectedDB, vi.db)
+			require.Equal(t, tc.expectedTable, vi.table)
+			require.Equal(t, mysql.SelectPriv, vi.privilege)
+		})
+	}
+}
+
 func TestImportIntoCollAssignmentChecker(t *testing.T) {
 	cases := []struct {
 		expr       string
@@ -1057,24 +1112,14 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 func TestProcessNextGenS3Path(t *testing.T) {
 	u, err := url.Parse("S3://bucket?External-id=abc")
 	require.NoError(t, err)
-	_, err = processSemNextGenS3Path(u)
+	err = checkNextGenS3PathWithSem(u)
 	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
 	require.ErrorContains(t, err, "IMPORT INTO with S3 external ID")
 
-	bak := config.GetGlobalKeyspaceName()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.KeyspaceName = "sem-next-gen"
-	})
-	t.Cleanup(func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = bak
-		})
-	})
 	u, err = url.Parse("s3://bucket")
 	require.NoError(t, err)
-	newPath, err := processSemNextGenS3Path(u)
+	err = checkNextGenS3PathWithSem(u)
 	require.NoError(t, err)
-	require.Equal(t, "s3://bucket?external-id=sem-next-gen", newPath)
 }
 
 func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {

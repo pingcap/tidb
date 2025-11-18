@@ -96,7 +96,7 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 	updateTime0 := rows0[0][1]
 	require.Equal(t, updateTime0, "0000-00-00 00:00:00")
 
-	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'invalid_binding', 'test', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info (original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest) values('select * from `test` . `t`', 'invalid_binding', 'test', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.SourceManual + "', '', '')")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -260,7 +260,7 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 
 	// Simulate creating bindings on other machines
 	_, sqlDigest := parser.NormalizeDigestForBinding("select * from `test` . `t` where `a` > ?")
-	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info (original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest) values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
 		bindinfo.SourceManual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("set binding disabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
@@ -272,7 +272,7 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 	utilCleanBindingEnv(tk)
 
 	// Simulate creating bindings on other machines
-	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'disabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info (original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest) values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'disabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
 		bindinfo.SourceManual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("set binding enabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
@@ -400,6 +400,27 @@ var testSQLs = []struct {
 		dropSQL:     "binding for replace into t1 select * from t where t.i = 1",
 		memoryUsage: float64(256),
 	},
+}
+
+func TestLoadBindingTimeLag(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`create global binding using select * from t`)
+	numBindings := len(tk.MustQuery(`show global bindings`).Rows())
+	require.Equal(t, 1, numBindings)
+
+	tk.Session().SetValue(bindinfo.TestTimeLagInLoadingBinding, 5*time.Second)
+	tk.MustExec(`create global binding using select * from t where a < 1`)
+	numBindings = len(tk.MustQuery(`show global bindings`).Rows())
+	require.Equal(t, 2, numBindings)
+
+	tk.Session().SetValue(bindinfo.TestTimeLagInLoadingBinding, 15*time.Second)
+	tk.MustExec(`create global binding using select * from t where a > 1`)
+	numBindings = len(tk.MustQuery(`show global bindings`).Rows())
+	require.Equal(t, 2, numBindings) // can't see the latest one since the time lag tolerance is only 10s
 }
 
 func TestGlobalBinding(t *testing.T) {
@@ -858,6 +879,23 @@ func TestBindingQueryInList(t *testing.T) {
 		require.NoErrorf(t, dom.BindingHandle().LoadFromStorageToCache(true), "bindingInList: %+v", bindingInList)
 		require.Equalf(t, 0, len(tk.MustQuery(`show global bindings`).Rows()), "bindingInList: %+v", bindingInList)
 	}
+}
+
+func TestIssue64070(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_opt_enable_fuzzy_binding=true`)
+	tk.MustExec(`create table tttt (a int)`)
+	tk.MustExec(`create global binding using select * from test.tttt`)
+	sqlDigest := tk.MustQuery(`select sql_digest from mysql.bind_info where bind_sql like "%tttt%"`).Rows()[0][0].(string)
+	tk.MustExec(fmt.Sprintf(`SET BINDING DISABLED FOR SQL DIGEST '%v'`, sqlDigest)) // disable this binding
+	tk.MustExec(`create global binding using select * from *.tttt`)
+	tk.MustQuery(`select bind_sql, status from mysql.bind_info where source != "builtin" order by bind_sql`).Check(testkit.Rows(
+		"SELECT * FROM `*`.`tttt` enabled", // enabled cross-db binding v.s. disabled normal binding
+		"SELECT * FROM `test`.`tttt` disabled"))
+	tk.MustQuery(`select * from tttt`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1")) // use the cross-db binding
 }
 
 // TestBindingInListWithSingleLiteral tests sql with "IN (Lit)", fixes #44298

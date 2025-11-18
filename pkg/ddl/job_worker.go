@@ -127,16 +127,24 @@ func (c *jobContext) initStepCtx() {
 	}
 }
 
-func (c *jobContext) cleanStepCtx() {
+func (c *jobContext) cleanStepCtx(cause error) {
 	// reorgTimeoutOccurred indicates whether the current reorg process
 	// was temporarily exit due to a timeout condition. When set to true,
 	// it prevents premature cleanup of step context.
-	if c.reorgTimeoutOccurred {
+	if cause == context.Canceled && c.reorgTimeoutOccurred {
 		c.reorgTimeoutOccurred = false // reset flag
 		return
 	}
-	c.stepCtxCancel(context.Canceled)
+	if c.stepCtxCancel != nil {
+		c.stepCtxCancel(cause)
+	}
 	c.stepCtx = nil // unset stepCtx for the next step initialization
+}
+
+// genReorgTimeoutErr generates a reorganization timeout error.
+func (c *jobContext) genReorgTimeoutErr() error {
+	c.reorgTimeoutOccurred = true
+	return dbterror.ErrWaitReorgTimeout
 }
 
 func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
@@ -161,6 +169,8 @@ const (
 	generalWorker workerType = 0
 	// addIdxWorker is the worker who handles the operation of adding indexes.
 	addIdxWorker workerType = 1
+	// backgroundWorker is the worker that can use auto-scaled tidb-workers in next-gen.
+	backgroundWorker workerType = 2
 )
 
 // worker is used for handling DDL jobs.
@@ -195,6 +205,11 @@ type ReorgContext struct {
 
 	resourceGroupName string
 	cloudStorageURI   string
+	analyzeDone       chan error
+	// analyzeStartTime records when the analyze for a job was started.
+	analyzeStartTime time.Time
+	// analyzeCumulativeTimeout stores the computed cumulative timeout for analyze
+	analyzeCumulativeTimeout time.Duration
 }
 
 // NewReorgContext returns a new ddl job context.
@@ -229,6 +244,8 @@ func (w *worker) typeStr() string {
 		str = "general"
 	case addIdxWorker:
 		str = "add index"
+	case backgroundWorker:
+		str = "background"
 	default:
 		str = "unknown"
 	}
@@ -539,7 +556,7 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 		return txn, err
 	}
 	// Only general DDLs are allowed to be executed when TiKV is disk full.
-	if w.tp == addIdxWorker && job.IsRunning() {
+	if w.tp != generalWorker && job.IsRunning() {
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 	}
 	w.setDDLLabelForTopSQL(job.ID, job.Query)
@@ -843,6 +860,14 @@ func (w *worker) runOneJobStep(
 
 	// It would be better to do the positive check, but no idea to list all valid states here now.
 	if job.IsRollingback() {
+		if jobCtx.stepCtx != nil && jobCtx.stepCtx.Err() == nil {
+			// If the job switched to rolling back immediately after a reorg step
+			// timed out, the step context may still be active and hold reorg
+			// resources (workers, tickers, goroutines). Clean the step context
+			// explicitly to release those resources and avoid leaks before we
+			// continue rollback processing.
+			jobCtx.cleanStepCtx(dbterror.ErrCancelledDDLJob)
+		}
 		// when rolling back, we use worker context to process.
 		jobCtx.stepCtx = w.workCtx
 	} else {
@@ -854,7 +879,7 @@ func (w *worker) runOneJobStep(
 			defer close(stopCheckingJobCancelled)
 
 			jobCtx.initStepCtx()
-			defer jobCtx.cleanStepCtx()
+			defer jobCtx.cleanStepCtx(context.Canceled)
 			w.wg.Run(func() {
 				ticker := time.NewTicker(2 * time.Second)
 				defer ticker.Stop()
@@ -901,7 +926,7 @@ func (w *worker) runOneJobStep(
 	}
 	// When upgrading from a version where the ReorgMeta fields did not exist in the DDL job information,
 	// the unmarshalled job will have a nil value for the ReorgMeta field.
-	if w.tp == addIdxWorker && job.ReorgMeta == nil {
+	if (w.tp == addIdxWorker || w.tp == backgroundWorker) && job.ReorgMeta == nil {
 		job.ReorgMeta = &model.DDLReorgMeta{}
 	}
 

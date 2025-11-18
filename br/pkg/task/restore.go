@@ -16,7 +16,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
@@ -1135,10 +1134,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	schemaVersionPair := snapclient.SchemaVersionPairT{}
 	if loadStatsPhysical || loadSysTablePhysical {
-		upstreamClusterVersion, err := semver.NewVersion(backupMeta.ClusterVersion)
-		if err != nil {
+		upstreamClusterVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
+		if upstreamClusterVersion == nil {
 			log.Warn("The cluster version from backupmeta is invalid. Fallback to logically load system tables.",
-				zap.String("backupmeta cluster version", backupMeta.ClusterVersion), zap.Error(err))
+				zap.String("backupmeta cluster version", backupMeta.ClusterVersion))
 			loadStatsPhysical = false
 			loadSysTablePhysical = false
 		} else {
@@ -1152,10 +1151,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			loadStatsPhysical = false
 			loadSysTablePhysical = false
 		} else {
-			downstreamClusterVersion, err := semver.NewVersion(downstreamClusterVersionStr)
-			if err != nil {
+			downstreamClusterVersion := version.NormalizeBackupVersion(downstreamClusterVersionStr)
+			if downstreamClusterVersion == nil {
 				log.Warn("The downstream cluster version is invalid. Fallback to logically load system tables.",
-					zap.String("downstream cluster version", downstreamClusterVersionStr), zap.Error(err))
+					zap.String("downstream cluster version", downstreamClusterVersionStr))
 				loadStatsPhysical = false
 				loadSysTablePhysical = false
 			} else {
@@ -1229,6 +1228,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	err = RegisterRestoreIfNeeded(ctx, cfg.RestoreConfig, cmdName, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	isNextGenRestore := utils.CheckNextGenCompatibility(cfg.KeyspaceName, cfg.CheckRequirements)
+	if isNextGenRestore {
+		log.Info("start restore to next-gen cluster")
 	}
 
 	metaReader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
@@ -1521,7 +1525,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder)
+	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder, isNextGenRestore)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2214,7 +2218,21 @@ func PreCheckTableTiFlashReplica(
 	pdClient pd.Client,
 	tables []*metautil.Table,
 	recorder *tiflashrec.TiFlashRecorder,
+	isNextGenRestore bool,
 ) error {
+	if isNextGenRestore {
+		log.Warn("Restoring to NextGen TiFlash is experimental. TiFlash replicas are disabled; please reset them manually after restore.")
+		for _, tbl := range tables {
+			if tbl == nil || tbl.Info == nil {
+				// unreachable
+				continue
+			}
+			if tbl.Info.TiFlashReplica != nil {
+				tbl.Info.TiFlashReplica = nil
+			}
+		}
+		return nil
+	}
 	tiFlashStoreCount, err := getTiFlashNodeCount(ctx, pdClient)
 	if err != nil {
 		return err

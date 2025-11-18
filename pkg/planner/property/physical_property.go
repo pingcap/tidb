@@ -252,11 +252,15 @@ const (
 	PropNotMatched PhysicalPropMatchResult = iota
 	// PropMatched means the access path can satisfy the required property directly.
 	PropMatched
+	// PropMatchedNeedMergeSort means the access path can satisfy the required property, but a merge sort between range
+	// groups is needed.
+	// Corresponding information will be recorded in AccessPath.GroupedRanges and AccessPath.GroupByColIdxs.
+	PropMatchedNeedMergeSort
 )
 
 // Matched returns true if the required order can be satisfied.
 func (r PhysicalPropMatchResult) Matched() bool {
-	return r == PropMatched
+	return r == PropMatched || r == PropMatchedNeedMergeSort
 }
 
 // PhysicalProperty stands for the required physical property by parents.
@@ -601,4 +605,34 @@ func (p *PhysicalProperty) MemoryUsage() (sum int64) {
 		sum += mppCol.MemoryUsage()
 	}
 	return
+}
+
+// NeedEnforceExchanger checks if we need to enforce an exchange operator on the top of the mpp task.
+func NeedEnforceExchanger(mtp MPPPartitionType, mHashCols []*MPPPartitionColumn,
+	prop *PhysicalProperty, fd *funcdep.FDSet) bool {
+	switch prop.MPPPartitionTp {
+	case AnyType:
+		return false
+	case BroadcastType:
+		return true
+	case SinglePartitionType:
+		return mtp != SinglePartitionType
+	default:
+		if mtp != HashType {
+			return true
+		}
+		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
+		if fd != nil && len(mHashCols) != 0 {
+			return prop.NeedMPPExchangeByEquivalence(mHashCols, fd)
+		}
+		if len(prop.MPPPartitionCols) != len(mHashCols) {
+			return true
+		}
+		for i, col := range prop.MPPPartitionCols {
+			if !col.Equal(mHashCols[i]) {
+				return true
+			}
+		}
+		return false
+	}
 }

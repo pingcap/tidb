@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -156,6 +157,12 @@ func TestBootstrap(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, 0, req.NumRows())
+	se.Close()
+	r = MustExecToRecodeSet(t, se, fmt.Sprintf("select * from mysql.bind_info where original_sql = '%s'", bindinfo.BuiltinPseudoSQL4BindLock))
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
 	se.Close()
 }
 
@@ -2590,7 +2597,7 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 	var err error
 	if keyspaceMeta != nil {
 		store, err = mockstore.NewMockStore(
-			mockstore.WithKeyspaceMeta(keyspaceMeta),
+			mockstore.WithCurrentKeyspaceMeta(keyspaceMeta),
 			mockstore.WithStoreType(mockstore.EmbedUnistore),
 		)
 	} else {
@@ -2634,7 +2641,7 @@ func checkETCDNameSpace(t *testing.T, dom *domain.Domain, isHasPrefix bool) {
 	}
 
 	// Put key value into etcd.
-	_, err := dom.EtcdClient().Put(context.Background(), testKeyWithoutPrefix, testVal)
+	_, err := dom.GetEtcdClient().Put(context.Background(), testKeyWithoutPrefix, testVal)
 	require.NoError(t, err)
 
 	// Use expectTestKey to get the key from etcd.
@@ -2862,7 +2869,7 @@ func TestBindInfoUniqueIndex(t *testing.T) {
 	for _, sqlDigest := range []string{"null", "'x'", "'y'"} {
 		for _, planDigest := range []string{"null", "'x'", "'y'"} {
 			insertStmt := fmt.Sprintf(`insert into mysql.bind_info values (
-             "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s)`,
+             "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s, null)`,
 				sqlDigest, planDigest)
 			MustExec(t, seV245, insertStmt)
 			MustExec(t, seV245, insertStmt)

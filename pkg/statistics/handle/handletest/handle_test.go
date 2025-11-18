@@ -81,7 +81,9 @@ func TestColumnIDs(t *testing.T) {
 		HighExclude: true,
 		Collators:   collate.GetBinaryCollatorSlice(1),
 	}
-	count, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	var countEst statistics.RowEstimate
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	count := countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, float64(1), count)
 
@@ -96,7 +98,8 @@ func TestColumnIDs(t *testing.T) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// At that time, we should get c2's stats instead of c1's.
-	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 }
@@ -111,7 +114,6 @@ func TestDurationToTS(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit2 := testkit.NewTestKit(t, store)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
@@ -123,9 +125,8 @@ func TestVersion(t *testing.T) {
 	tableInfo1 := tbl1.Meta()
 	h, err := handle.NewHandle(
 		context.Background(),
-		testKit2.Session(),
 		time.Millisecond,
-		do.SysSessionPool(),
+		do.AdvancedSysSessionPool(),
 		do.SysProcTracker(),
 		do.DDLNotifier(),
 		do.NextConnID,

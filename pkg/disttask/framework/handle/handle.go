@@ -24,7 +24,9 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	litstorage "github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/failpoint"
+	extstorage "github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
@@ -100,6 +102,8 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, ke
 	if err != nil {
 		return nil, err
 	}
+
+	failpoint.InjectCall("afterDXFTaskSubmitted")
 
 	NotifyTaskChange()
 	return task, nil
@@ -287,7 +291,7 @@ func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 	cloudURI := vardef.CloudStorageURI.Load()
 	if s, ok := store.(kv.StorageWithPD); ok {
 		// When setting the cloudURI value by SQL, we already checked the effectiveness, so we don't need to check it again here.
-		u, _ := litstorage.ParseRawURL(cloudURI)
+		u, _ := extstorage.ParseRawURL(cloudURI)
 		if len(u.Path) != 0 {
 			u.Path = path.Join(u.Path, strconv.FormatUint(s.GetPDClient().GetClusterID(ctx), 10))
 			return u.String()
@@ -343,6 +347,36 @@ func GetScheduleTuneFactors(ctx context.Context, keyspace string) (*schstatus.Tu
 		return schstatus.GetDefaultTuneFactors(), nil
 	}
 	return &factors.TuneFactors, nil
+}
+
+// NewObjStoreWithRecording creates an object storage for global sort with
+// request recording.
+func NewObjStoreWithRecording(ctx context.Context, uri string) (*recording.AccessStats, extstorage.ExternalStorage, error) {
+	rec := &recording.AccessStats{}
+	store, err := newObjStore(ctx, uri, &extstorage.ExternalStorageOptions{
+		AccessRecording: rec,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return rec, store, nil
+}
+
+// NewObjStore creates an object storage for global sort.
+func NewObjStore(ctx context.Context, uri string) (extstorage.ExternalStorage, error) {
+	return newObjStore(ctx, uri, nil)
+}
+
+func newObjStore(ctx context.Context, uri string, opts *extstorage.ExternalStorageOptions) (extstorage.ExternalStorage, error) {
+	storeBackend, err := extstorage.ParseBackend(uri, nil)
+	if err != nil {
+		return nil, err
+	}
+	store, err := extstorage.New(ctx, storeBackend, opts)
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 func init() {

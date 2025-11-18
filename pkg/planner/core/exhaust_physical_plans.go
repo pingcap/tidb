@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
 )
@@ -51,49 +50,59 @@ import (
 // It will return:
 // 1. All possible plans that can match the required property.
 // 2. Whether the SQL hint can work. Return true if there is no hint.
-func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) (physicalPlans [][]base.PhysicalPlan, hintCanWork bool, err error) {
+	var ops []base.PhysicalPlan
+
 	switch x := lp.(type) {
 	case *logicalop.LogicalCTE:
-		return physicalop.ExhaustPhysicalPlans4LogicalCTE(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalCTE(x, prop)
 	case *logicalop.LogicalSort:
-		return physicalop.ExhaustPhysicalPlans4LogicalSort(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalSort(x, prop)
 	case *logicalop.LogicalTopN:
+		// ExhaustPhysicalPlans4LogicalTopN return PhysicalLimit and PhysicalTopN in different slice.
+		// So we can always choose limit plan with pushdown when comparing with a limit plan without pushdown directly,
+		// and choose a better plan by checking their cost when comparing a limit plan and a topn plan.
 		return physicalop.ExhaustPhysicalPlans4LogicalTopN(x, prop)
 	case *logicalop.LogicalLock:
-		return physicalop.ExhaustPhysicalPlans4LogicalLock(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalLock(x, prop)
 	case *logicalop.LogicalJoin:
-		return exhaustPhysicalPlans4LogicalJoin(x, prop)
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalJoin(x, prop)
 	case *logicalop.LogicalApply:
-		return exhaustPhysicalPlans4LogicalApply(x, prop)
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalApply(x, prop)
 	case *logicalop.LogicalLimit:
-		return physicalop.ExhaustPhysicalPlans4LogicalLimit(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalLimit(x, prop)
 	case *logicalop.LogicalWindow:
-		return exhaustPhysicalPlans4LogicalWindow(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalWindow(x, prop)
 	case *logicalop.LogicalExpand:
-		return exhaustPhysicalPlans4LogicalExpand(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalExpand(x, prop)
 	case *logicalop.LogicalUnionAll:
-		return exhaustPhysicalPlans4LogicalUnionAll(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalUnionAll(x, prop)
 	case *logicalop.LogicalSequence:
-		return exhaustPhysicalPlans4LogicalSequence(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalSequence(x, prop)
 	case *logicalop.LogicalSelection:
-		return physicalop.ExhaustPhysicalPlans4LogicalSelection(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalSelection(x, prop)
 	case *logicalop.LogicalMaxOneRow:
-		return exhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
 	case *logicalop.LogicalUnionScan:
-		return physicalop.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
 	case *logicalop.LogicalProjection:
-		return physicalop.ExhaustPhysicalPlans4LogicalProjection(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalProjection(x, prop)
 	case *logicalop.LogicalAggregation:
-		return physicalop.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
 	case *logicalop.LogicalPartitionUnionAll:
-		return exhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
 	case *memo.GroupExpression:
-		return x.ExhaustPhysicalPlans(prop)
+		return memo.ExhaustPhysicalPlans4GroupExpression(x, prop)
 	case *mockLogicalPlan4Test:
-		return x.ExhaustPhysicalPlans(prop)
+		ops, hintCanWork, err = ExhaustPhysicalPlans4MockLogicalPlan(x, prop)
 	default:
 		panic("unreachable")
 	}
+
+	if len(ops) == 0 || err != nil {
+		return nil, hintCanWork, err
+	}
+	return [][]base.PhysicalPlan{ops}, hintCanWork, nil
 }
 
 func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
@@ -919,7 +928,7 @@ func buildDataSource2IndexScanByIndexJoinProp(
 		}
 	}
 	var innerTask base.Task
-	if !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop).Matched() {
+	if !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
 		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 	} else {
 		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
@@ -969,7 +978,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 		rangeInfo := indexJoinPathRangeInfo(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
 		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
 		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
-		if matchProperty(ds, indexJoinResult.chosenPath, prop).Matched() {
+		if matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
 			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt)
 		} else {
 			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
@@ -988,7 +997,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 			return base.InvalidTask
 		}
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
-		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop).Matched() {
+		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched {
 			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt)
 		} else {
 			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
@@ -1885,10 +1894,12 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
 }
 
-func enumerationContainIndexJoin(candidates []base.PhysicalPlan) bool {
-	return slices.ContainsFunc(candidates, func(candidate base.PhysicalPlan) bool {
-		_, _, ok := getIndexJoinSideAndMethod(candidate)
-		return ok
+func enumerationContainIndexJoin(candidates [][]base.PhysicalPlan) bool {
+	return slices.ContainsFunc(candidates, func(candidate []base.PhysicalPlan) bool {
+		return slices.ContainsFunc(candidate, func(op base.PhysicalPlan) bool {
+			_, _, ok := getIndexJoinSideAndMethod(op)
+			return ok
+		})
 	})
 }
 
@@ -2005,9 +2016,9 @@ func recordIndexJoinHintWarnings(p *logicalop.LogicalJoin, prop *property.Physic
 	return nil
 }
 
-func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+func applyLogicalHintVarEigen(lp base.LogicalPlan, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
 	return applyLogicalJoinHint(lp, pp) ||
-		applyLogicalTopNAndLimitHint(lp, state, pp, childTasks) ||
+		applyLogicalTopNAndLimitHint(lp, pp, childTasks) ||
 		applyLogicalAggregationHint(lp, pp, childTasks)
 }
 
@@ -2063,8 +2074,8 @@ func applyLogicalAggregationHint(lp base.LogicalPlan, physicPlan base.PhysicalPl
 	return false
 }
 
-func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
-	hintPrefer, meetThreshold := pushLimitOrTopNForcibly(lp, pp)
+func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+	hintPrefer, _ := pushLimitOrTopNForcibly(lp, pp)
 	if hintPrefer {
 		// if there is a user hint control, try to get the copTask as the prior.
 		// here we don't assert task itself, because when topN attach 2 cop task, it will become root type automatically.
@@ -2073,6 +2084,11 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 		}
 		return false
 	}
+	return false
+}
+
+func hasNormalPreferTask(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+	_, meetThreshold := pushLimitOrTopNForcibly(lp, pp)
 	if meetThreshold {
 		// previously, we set meetThreshold for pruning root task type but mpp task type. so:
 		// 1: when one copTask exists, we will ignore root task type.
@@ -2768,63 +2784,6 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 	return joins, true, nil
 }
 
-func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	p := lp.(*logicalop.LogicalExpand)
-	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
-	if !prop.IsSortItemEmpty() {
-		// false, meaning we can add a sort enforcer.
-		return nil, false, nil
-	}
-	// when TiDB Expand execution is introduced: we can deal with two kind of physical plans.
-	// RootTaskType means expand should be run at TiDB node.
-	//	(RootTaskType is the default option, we can also generate a mpp candidate for it)
-	// MPPTaskType means expand should be run at TiFlash node.
-	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
-		return nil, true, nil
-	}
-	// now Expand mode can only be executed on TiFlash node.
-	// Upper layer shouldn't expect any mpp partition from an Expand operator.
-	// todo: data output from Expand operator should keep the origin data mpp partition.
-	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
-		return nil, true, nil
-	}
-	var physicalExpands []base.PhysicalPlan
-	// for property.RootTaskType and property.MppTaskType with no partition option, we can give an MPP Expand.
-	// we just remove whether subtree can be pushed to tiFlash check, and left child handle itself.
-	if p.SCtx().GetSessionVars().IsMPPAllowed() {
-		mppProp := prop.CloneEssentialFields()
-		mppProp.TaskTp = property.MppTaskType
-		expand := physicalop.PhysicalExpand{
-			GroupingSets:          p.RollupGroupingSets,
-			LevelExprs:            p.LevelExprs,
-			ExtraGroupingColNames: p.ExtraGroupingColNames,
-		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), mppProp)
-		expand.SetSchema(p.Schema())
-		physicalExpands = append(physicalExpands, expand)
-		// when the MppTaskType is required, we can return the physical plan directly.
-		if prop.TaskTp == property.MppTaskType {
-			return physicalExpands, true, nil
-		}
-	}
-	// for property.RootTaskType, we can give a TiDB Expand.
-	{
-		taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.MppTaskType, property.RootTaskType}
-		for _, taskType := range taskTypes {
-			// require cop task type for children.F
-			tidbProp := prop.CloneEssentialFields()
-			tidbProp.TaskTp = taskType
-			expand := physicalop.PhysicalExpand{
-				GroupingSets:          p.RollupGroupingSets,
-				LevelExprs:            p.LevelExprs,
-				ExtraGroupingColNames: p.ExtraGroupingColNames,
-			}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), tidbProp)
-			expand.SetSchema(p.Schema())
-			physicalExpands = append(physicalExpands, expand)
-		}
-	}
-	return physicalExpands, true, nil
-}
-
 func pushLimitOrTopNForcibly(p base.LogicalPlan, pp base.PhysicalPlan) (preferPushDown bool, meetThreshold bool) {
 	switch lp := p.(type) {
 	case *logicalop.LogicalTopN:
@@ -2901,256 +2860,4 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown})
 	apply.SetSchema(la.Schema())
 	return []base.PhysicalPlan{apply}, true, nil
-}
-
-func tryToGetMppWindows(lw *logicalop.LogicalWindow, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	if !prop.IsSortItemAllForPartition() {
-		return nil
-	}
-	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
-		return nil
-	}
-	if prop.MPPPartitionTp == property.BroadcastType {
-		return nil
-	}
-
-	{
-		allSupported := true
-		sctx := lw.SCtx()
-		for _, windowFunc := range lw.WindowFuncDescs {
-			if !windowFunc.CanPushDownToTiFlash(util.GetPushDownCtx(sctx)) {
-				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-					"MPP mode may be blocked because window function `" + windowFunc.Name + "` or its arguments are not supported now.")
-				allSupported = false
-			} else if !expression.IsPushDownEnabled(windowFunc.Name, kv.TiFlash) {
-				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because window function `" + windowFunc.Name + "` is blocked by blacklist, check `table mysql.expr_pushdown_blacklist;` for more information.")
-				return nil
-			}
-		}
-		if !allSupported {
-			return nil
-		}
-
-		if lw.Frame != nil && lw.Frame.Type == ast.Ranges {
-			ctx := lw.SCtx().GetExprCtx()
-			if _, err := expression.ExpressionsToPBList(ctx.GetEvalCtx(), lw.Frame.Start.CalcFuncs, lw.SCtx().GetClient()); err != nil {
-				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
-				return nil
-			}
-			if !expression.CanExprsPushDown(util.GetPushDownCtx(sctx), lw.Frame.Start.CalcFuncs, kv.TiFlash) {
-				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-					"MPP mode may be blocked because window function frame can't be pushed down")
-				return nil
-			}
-			if _, err := expression.ExpressionsToPBList(ctx.GetEvalCtx(), lw.Frame.End.CalcFuncs, lw.SCtx().GetClient()); err != nil {
-				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
-				return nil
-			}
-			if !expression.CanExprsPushDown(util.GetPushDownCtx(sctx), lw.Frame.End.CalcFuncs, kv.TiFlash) {
-				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-					"MPP mode may be blocked because window function frame can't be pushed down")
-				return nil
-			}
-
-			if !lw.CheckComparisonForTiFlash(lw.Frame.Start) || !lw.CheckComparisonForTiFlash(lw.Frame.End) {
-				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-					"MPP mode may be blocked because window function frame can't be pushed down, because Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.")
-				return nil
-			}
-		}
-	}
-
-	var byItems []property.SortItem
-	byItems = append(byItems, lw.PartitionBy...)
-	byItems = append(byItems, lw.OrderBy...)
-	childProperty := &property.PhysicalProperty{
-		ExpectedCnt:           math.MaxFloat64,
-		CanAddEnforcer:        true,
-		SortItems:             byItems,
-		TaskTp:                property.MppTaskType,
-		SortItemsForPartition: byItems,
-		CTEProducerStatus:     prop.CTEProducerStatus,
-	}
-	if !prop.IsPrefix(childProperty) {
-		return nil
-	}
-
-	if len(lw.PartitionBy) > 0 {
-		partitionCols := lw.GetPartitionKeys()
-		// trying to match the required partitions.
-		if prop.MPPPartitionTp == property.HashType {
-			matches := prop.IsSubsetOf(partitionCols)
-			if len(matches) == 0 {
-				// do not satisfy the property of its parent, so return empty
-				return nil
-			}
-			partitionCols = property.ChoosePartitionKeys(partitionCols, matches)
-		}
-		childProperty.MPPPartitionTp = property.HashType
-		childProperty.MPPPartitionCols = partitionCols
-	} else {
-		childProperty.MPPPartitionTp = property.SinglePartitionType
-	}
-
-	if prop.MPPPartitionTp == property.SinglePartitionType && childProperty.MPPPartitionTp != property.SinglePartitionType {
-		return nil
-	}
-
-	window := physicalop.PhysicalWindow{
-		WindowFuncDescs: lw.WindowFuncDescs,
-		PartitionBy:     lw.PartitionBy,
-		OrderBy:         lw.OrderBy,
-		Frame:           lw.Frame,
-		StoreTp:         kv.TiFlash,
-	}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(lw.SCtx().GetSessionVars(), prop.ExpectedCnt), lw.QueryBlockOffset(), childProperty)
-	window.SetSchema(lw.Schema())
-
-	return []base.PhysicalPlan{window}
-}
-
-func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	lw := lp.(*logicalop.LogicalWindow)
-	windows := make([]base.PhysicalPlan, 0, 2)
-
-	// we lift the p.CanPushToCop(tiFlash) check here.
-	if lw.SCtx().GetSessionVars().IsMPPAllowed() {
-		mppWindows := tryToGetMppWindows(lw, prop)
-		windows = append(windows, mppWindows...)
-	}
-
-	// if there needs a mpp task, we don't generate tidb window function.
-	if prop.TaskTp == property.MppTaskType {
-		return windows, true, nil
-	}
-	var byItems []property.SortItem
-	byItems = append(byItems, lw.PartitionBy...)
-	byItems = append(byItems, lw.OrderBy...)
-	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems,
-		CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
-	if !prop.IsPrefix(childProperty) {
-		return nil, true, nil
-	}
-	window := physicalop.PhysicalWindow{
-		WindowFuncDescs: lw.WindowFuncDescs,
-		PartitionBy:     lw.PartitionBy,
-		OrderBy:         lw.OrderBy,
-		Frame:           lw.Frame,
-	}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(lw.SCtx().GetSessionVars(), prop.ExpectedCnt), lw.QueryBlockOffset(), childProperty)
-	window.SetSchema(lw.Schema())
-
-	windows = append(windows, window)
-	return windows, true, nil
-}
-
-func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	p := lp.(*logicalop.LogicalUnionAll)
-	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
-	if !prop.IsSortItemEmpty() || (prop.IsFlashProp() && prop.TaskTp != property.MppTaskType) {
-		return nil, true, nil
-	}
-	// TODO: UnionAll can pass partition info, but for briefness, we prevent it from pushing down.
-	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
-		return nil, true, nil
-	}
-	// when arrived here, operator itself has already checked checkOpSelfSatisfyPropTaskTypeRequirement, we only need to feel allowMPP here.
-	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed()
-	chReqProps := make([]*property.PhysicalProperty, 0, p.ChildLen())
-	for range p.Children() {
-		if canUseMpp && prop.TaskTp == property.MppTaskType {
-			chReqProps = append(chReqProps, &property.PhysicalProperty{
-				ExpectedCnt:       prop.ExpectedCnt,
-				TaskTp:            property.MppTaskType,
-				CTEProducerStatus: prop.CTEProducerStatus,
-				NoCopPushDown:     prop.NoCopPushDown,
-			})
-		} else {
-			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt,
-				CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown})
-		}
-	}
-	ua := physicalop.PhysicalUnionAll{
-		Mpp: canUseMpp && prop.TaskTp == property.MppTaskType,
-	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
-	ua.SetSchema(p.Schema())
-	if canUseMpp && prop.TaskTp == property.RootTaskType {
-		chReqProps = make([]*property.PhysicalProperty, 0, p.ChildLen())
-		for range p.Children() {
-			chReqProps = append(chReqProps, &property.PhysicalProperty{
-				ExpectedCnt:       prop.ExpectedCnt,
-				TaskTp:            property.MppTaskType,
-				CTEProducerStatus: prop.CTEProducerStatus,
-				NoCopPushDown:     prop.NoCopPushDown,
-			})
-		}
-		mppUA := physicalop.PhysicalUnionAll{Mpp: true}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
-		mppUA.SetSchema(p.Schema())
-		return []base.PhysicalPlan{ua, mppUA}, true, nil
-	}
-	return []base.PhysicalPlan{ua}, true, nil
-}
-
-func exhaustPhysicalPlans4LogicalPartitionUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	p := lp.(*logicalop.LogicalPartitionUnionAll)
-	uas, flagHint, err := p.LogicalUnionAll.ExhaustPhysicalPlans(prop)
-	if err != nil {
-		return nil, false, err
-	}
-	for _, ua := range uas {
-		ua.(*physicalop.PhysicalUnionAll).SetTP(plancodec.TypePartitionUnion)
-	}
-	return uas, flagHint, nil
-}
-
-func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	p := lp.(*logicalop.LogicalMaxOneRow)
-	if !prop.IsSortItemEmpty() || prop.IsFlashProp() {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
-		return nil, true, nil
-	}
-	mor := physicalop.PhysicalMaxOneRow{}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), &property.PhysicalProperty{ExpectedCnt: 2, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown})
-	return []base.PhysicalPlan{mor}, true, nil
-}
-
-func exhaustPhysicalPlans4LogicalSequence(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	g, ls := base.GetGEAndLogicalOp[*logicalop.LogicalSequence](super)
-	possibleChildrenProps := make([][]*property.PhysicalProperty, 0, 2)
-	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true,
-		CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
-	if prop.TaskTp == property.MppTaskType {
-		if prop.CTEProducerStatus == property.SomeCTEFailedMpp {
-			return nil, true, nil
-		}
-		anyType.CTEProducerStatus = property.AllCTECanMpp
-		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{anyType, prop.CloneEssentialFields()})
-	} else {
-		copied := prop.CloneEssentialFields()
-		copied.CTEProducerStatus = property.SomeCTEFailedMpp
-		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: property.SomeCTEFailedMpp}, copied})
-	}
-
-	if prop.TaskTp != property.MppTaskType && prop.CTEProducerStatus != property.SomeCTEFailedMpp &&
-		ls.SCtx().GetSessionVars().IsMPPAllowed() && prop.IsSortItemEmpty() {
-		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{anyType, anyType.CloneEssentialFields()})
-	}
-	var seqSchema *expression.Schema
-	if g != nil {
-		ge := g.(*memo.GroupExpression)
-		seqSchema = ge.Inputs[len(ge.Inputs)-1].GetLogicalProperty().Schema
-	} else {
-		seqSchema = ls.Children()[ls.ChildLen()-1].Schema()
-	}
-	seqs := make([]base.PhysicalPlan, 0, len(possibleChildrenProps))
-	for _, propChoice := range possibleChildrenProps {
-		childReqs := make([]*property.PhysicalProperty, 0, ls.ChildLen())
-		for range ls.ChildLen() - 1 {
-			childReqs = append(childReqs, propChoice[0].CloneEssentialFields())
-		}
-		childReqs = append(childReqs, propChoice[1])
-		seq := physicalop.PhysicalSequence{}.Init(ls.SCtx(), ls.StatsInfo(), ls.QueryBlockOffset(), childReqs...)
-		seq.SetSchema(seqSchema)
-		seqs = append(seqs, seq)
-	}
-	return seqs, true, nil
 }

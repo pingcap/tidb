@@ -44,9 +44,13 @@ type PhysicalTopN struct {
 }
 
 // ExhaustPhysicalPlans4LogicalTopN exhausts PhysicalTopN plans from LogicalTopN.
-func ExhaustPhysicalPlans4LogicalTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func ExhaustPhysicalPlans4LogicalTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) ([][]base.PhysicalPlan, bool, error) {
 	if MatchItems(prop, lt.ByItems) {
-		return append(getPhysTopN(lt, prop), getPhysLimits(lt, prop)...), true, nil
+		// PhysicalTopN and PhysicalLimit are in different slices
+		// so we can support preferring a specific LIMIT or TopN within one slice.
+		// For example, among all LIMIT tasks, we prefer the one pushed down to TiKV.
+		// Then we compare the preferred task from each slice by their actual cost.
+		return [][]base.PhysicalPlan{getPhysTopN(lt, prop), getPhysLimits(lt, prop)}, true, nil
 	}
 	return nil, true, nil
 }
