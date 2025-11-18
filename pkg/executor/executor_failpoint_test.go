@@ -882,13 +882,3 @@ func TestIndexLookUpPushDownExec(t *testing.T) {
 	runSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, -1)
 	runSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, r.Intn(50)+1)
 }
-
-func TestIndexLookUpPushDownDev(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1(a int, b int, c int, d int, primary key(a, b) CLUSTERED, index i(c)) partition by hash (b) partitions 3;")
-	tk.MustExec("insert into t1 values (1,2,3,4), (5,6,7,8);")
-
-	tk.MustQuery("select /*+ index_lookup_pushdown(t1, i) */ a, b, d from t1 order by a;").Check(testkit.Rows("1 2 4", "5 6 8"))
-}

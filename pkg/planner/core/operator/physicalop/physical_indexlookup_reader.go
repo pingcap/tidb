@@ -223,7 +223,7 @@ func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext) {
 		return
 	}
 
-	indexLookUpPlan, err := buildPushDownIndexLookUpPlan(ctx, p.IndexPlan, p.TablePlan)
+	indexLookUpPlan, err := buildPushDownIndexLookUpPlan(ctx, p.IndexPlan, p.TablePlan, p.getHandleOffsetsInIndexPlanSchema())
 	if err != nil {
 		// This should not happen, but if it happens, we just log a warning and continue to use the original plan.
 		intest.AssertNoError(err)
@@ -246,6 +246,22 @@ func resetRowCountAsZeroRecursively(vars *variable.SessionVars, p base.PhysicalP
 	for _, child := range p.Children() {
 		resetRowCountAsZeroRecursively(vars, child)
 	}
+}
+
+// getHandleOffsetsInIndexPlanSchema returns the handle column offsets in the index schema,
+// the logic is from getHandleOffsets function.
+func (p *PhysicalIndexLookUpReader) getHandleOffsetsInIndexPlanSchema() []uint32 {
+	indexScanSchemaLen := p.IndexPlan.Schema().Len()
+	if len(p.CommonHandleCols) == 0 {
+		handleOffsets := []uint32{uint32(indexScanSchemaLen) - 1}
+		return handleOffsets
+	}
+	pkColumnsLen := len(p.CommonHandleCols)
+	handleOffsets := make([]uint32, 0, pkColumnsLen)
+	for i := 0; i < pkColumnsLen; i++ {
+		handleOffsets = append(handleOffsets, uint32(indexScanSchemaLen-pkColumnsLen+i))
+	}
+	return handleOffsets
 }
 
 // ResolveIndices implements Plan interface.

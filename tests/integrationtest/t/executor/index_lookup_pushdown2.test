@@ -9,11 +9,15 @@ insert into t3 values ('a',2,3,4), ('b',6,7,8);
 
 --enable_warnings
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+explain select /*+ index_lookup_pushdown(t1, i) */ a, b, d from t1 limit 1;
 select /*+ index_lookup_pushdown(t1, i) */ * from t1;
 select /*+ index_lookup_pushdown(t1, i) */ a, b, d from t1;
+select /*+ index_lookup_pushdown(t1, i) */ a, b, d from t1 limit 1;
 explain select /*+ index_lookup_pushdown(t2, i) */ * from t2;
 select /*+ index_lookup_pushdown(t2, i) */ * from t2;
 select /*+ index_lookup_pushdown(t2, i) */ a, b, d from t2;
 explain select /*+ index_lookup_pushdown(t3, i) */ a, b, d from t3;
+explain select /*+ index_lookup_pushdown(t3, i) */ a, b, d from t3 limit 1;
 --sorted_result
 select /*+ index_lookup_pushdown(t3, i) */ a, b, d from t3;
+select /*+ index_lookup_pushdown(t3, i) */ a, b, d from t3 limit 1;

@@ -45,7 +45,7 @@ func resetPlanIDRecursively(ctx base.PlanContext, p base.PhysicalPlan) {
 }
 
 func buildPushDownIndexLookUpPlan(
-	ctx base.PlanContext, indexPlan base.PhysicalPlan, tablePlan base.PhysicalPlan,
+	ctx base.PlanContext, indexPlan base.PhysicalPlan, tablePlan base.PhysicalPlan, handleOffsets []uint32,
 ) (indexLookUpPlan base.PhysicalPlan, err error) {
 	tablePlan, err = tablePlan.Clone(ctx)
 	if err != nil {
@@ -56,7 +56,7 @@ func buildPushDownIndexLookUpPlan(
 	tableScanPlan, parentOfTableScan := detachRootTableScanPlan(tablePlan)
 	indexLookUpPlan = PhysicalLocalIndexLookUp{
 		// Only int handle is supported now, so the handle is always the last column of index schema.
-		IndexHandleOffsets: []uint32{uint32(indexPlan.Schema().Len()) - 1},
+		IndexHandleOffsets: handleOffsets,
 	}.Init(ctx, indexPlan, tableScanPlan, tablePlan.QueryBlockOffset())
 
 	if parentOfTableScan != nil {
