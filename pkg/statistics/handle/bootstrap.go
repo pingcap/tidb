@@ -195,6 +195,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 			}
 			var ok bool
+			// This table must be already in the cache since we load stats_meta first.
 			table, ok = cache.Get(tblID)
 			if !ok {
 				continue
