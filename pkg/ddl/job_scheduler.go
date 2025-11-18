@@ -311,8 +311,7 @@ func (s *jobScheduler) schedule() error {
 	s.mustReloadSchemas()
 
 	trace := traceevent.NewTrace()
-	ctx := context.Background()
-	ctx = tracing.WithFlightRecorder(ctx, trace)
+	ctx := tracing.WithFlightRecorder(s.schCtx, trace)
 
 	for {
 		if err := s.schCtx.Err(); err != nil {

@@ -111,8 +111,8 @@ type SuspiciousEventConfig struct {
 	// QueryFail error code?
 	// ResolveLock?
 	// RegionError
-	// IsInternal
-	DevDebug *DevDebugConfig `json:"dev_debug,omitempty"`
+	IsInternal bool            `json:"is_internal,omitempty"`
+	DevDebug   *DevDebugConfig `json:"dev_debug,omitempty"`
 }
 
 // DevDebugConfig is the configuration for development debugging.
@@ -146,6 +146,7 @@ func (c *SuspiciousEventConfig) Validate(b *strings.Builder) error {
 	case "resolve_lock":
 	case "region_error":
 	case "is_internal":
+		b.WriteString(".is_internal")
 	case "dev_debug":
 		return c.DevDebug.Validate(b)
 	default:

@@ -113,6 +113,18 @@ func testFlightRecorderConfigGoodCase(t *testing.T) {
 }`
 	name8 := "dump_trigger.suspicious_event.dev_debug"
 
+	conf9 := `{
+	"enabled_categories": ["*"],
+	"dump_trigger": {
+	"type": "suspicious_event",
+	"suspicious_event": {
+	"type": "is_internal",
+	"is_internal": true
+	}
+	}
+	}`
+	name9 := "dump_trigger.suspicious_event.is_internal"
+
 	testcases := []struct {
 		conf string
 		name string
@@ -125,6 +137,7 @@ func testFlightRecorderConfigGoodCase(t *testing.T) {
 		{conf6, name6},
 		{conf7, name7},
 		{conf8, name8},
+		{conf9, name9},
 	}
 
 	var b strings.Builder

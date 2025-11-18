@@ -1058,7 +1058,7 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 // createTableWithInfoJob returns the table creation job.
 // WARNING: it may return a nil job, which means you don't need to submit any DDL job.
 func (e *executor) createTableWithInfoJob(
-	sctx sessionctx.Context,
+	ctx sessionctx.Context,
 	dbName ast.CIStr,
 	tbInfo *model.TableInfo,
 	involvingRef []model.InvolvingSchemaInfo,
@@ -1070,7 +1070,7 @@ func (e *executor) createTableWithInfoJob(
 		return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
 	}
 
-	if err = handleTablePlacement(sctx, tbInfo); err != nil {
+	if err = handleTablePlacement(ctx, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1079,7 +1079,7 @@ func (e *executor) createTableWithInfoJob(
 		err = infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schema.Name, Name: tbInfo.Name})
 		switch cfg.OnExist {
 		case OnExistIgnore:
-			sctx.GetSessionVars().StmtCtx.AppendNote(err)
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			// if target TableMode is ModeRestore, we check if the existing mode is consistent the new one
 			if tbInfo.Mode == model.TableModeRestore {
 				oldTableMode := oldTable.Meta().Mode
@@ -1105,7 +1105,7 @@ func (e *executor) createTableWithInfoJob(
 		}
 	}
 
-	if err := checkTableInfoValidExtra(sctx.GetSessionVars().StmtCtx.ErrCtx(), sctx.GetStore(), dbName, tbInfo); err != nil {
+	if err := checkTableInfoValidExtra(ctx.GetSessionVars().StmtCtx.ErrCtx(), ctx.GetStore(), dbName, tbInfo); err != nil {
 		return nil, err
 	}
 
@@ -1139,17 +1139,17 @@ func (e *executor) createTableWithInfoJob(
 		TableName:           tbInfo.Name.L,
 		Type:                actionType,
 		BinlogInfo:          &model.HistoryInfo{},
-		CDCWriteSource:      sctx.GetSessionVars().CDCWriteSource,
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemas,
-		SQLMode:             sctx.GetSessionVars().SQLMode,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
 		SessionVars:         make(map[string]string),
 	}
-	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(sctx))
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.CreateTableArgs{
 		TableInfo:      tbInfo,
 		OnExistReplace: cfg.OnExist == OnExistReplace,
 		OldViewTblID:   oldViewTblID,
-		FKCheck:        sctx.GetSessionVars().ForeignKeyChecks,
+		FKCheck:        ctx.GetSessionVars().ForeignKeyChecks,
 	}
 	return NewJobWrapperWithArgs(job, args, cfg.IDAllocated), nil
 }
@@ -6693,27 +6693,27 @@ func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.
 // DoDDLJobWrapper submit DDL job and wait it finishes.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
-func (e *executor) DoDDLJobWrapper(sctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
-	r := tracing.StartRegion(sctx.GetTraceCtx(), "ddl.DoDDLJobWrapper")
+func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
+	r := tracing.StartRegion(ctx.GetTraceCtx(), "ddl.DoDDLJobWrapper")
 	defer r.End()
 
 	job := jobW.Job
 	job.TraceInfo = &tracing.TraceInfo{
-		ConnectionID: sctx.GetSessionVars().ConnectionID,
-		SessionAlias: sctx.GetSessionVars().SessionAlias,
-		TraceID:      traceevent.TraceIDFromContext(sctx.GetTraceCtx()),
+		ConnectionID: ctx.GetSessionVars().ConnectionID,
+		SessionAlias: ctx.GetSessionVars().SessionAlias,
+		TraceID:      traceevent.TraceIDFromContext(ctx.GetTraceCtx()),
 	}
-	if mci := sctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
+	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
 		// In multiple schema change, we don't run the job.
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, jobW)
 	}
 	e.checkInvolvingSchemaInfoInTest(job)
 	// Get a global job ID and put the DDL job in the queue.
-	setDDLJobQuery(sctx, job)
+	setDDLJobQuery(ctx, job)
 
 	if traceevent.IsEnabled(tracing.DDLJob) {
-		traceevent.TraceEvent(sctx.GetTraceCtx(), tracing.DDLJob, "ddlDelieverJobTask",
+		traceevent.TraceEvent(ctx.GetTraceCtx(), tracing.DDLJob, "ddlDelieverJobTask",
 			zap.Int64("jobID", job.ID),
 			zap.String("traceID", hex.EncodeToString(job.TraceInfo.TraceID)))
 	}
@@ -6749,7 +6749,7 @@ func (e *executor) DoDDLJobWrapper(sctx sessionctx.Context, jobW *JobWrapper) (r
 	}
 	failpoint.InjectCall("waitJobSubmitted")
 
-	sessVars := sctx.GetSessionVars()
+	sessVars := ctx.GetSessionVars()
 	sessVars.StmtCtx.IsDDLJobInQueue.Store(true)
 
 	ddlAction := job.Type
@@ -6767,9 +6767,9 @@ func (e *executor) DoDDLJobWrapper(sctx sessionctx.Context, jobW *JobWrapper) (r
 	// to release the new locked table id when this ddl job was executed successfully
 	// but the session was killed before return.
 	if config.TableLockEnabled() {
-		HandleLockTablesOnSuccessSubmit(sctx, jobW)
+		HandleLockTablesOnSuccessSubmit(ctx, jobW)
 		defer func() {
-			HandleLockTablesOnFinish(sctx, jobW, resErr)
+			HandleLockTablesOnFinish(ctx, jobW, resErr)
 		}()
 	}
 
@@ -6777,7 +6777,7 @@ func (e *executor) DoDDLJobWrapper(sctx sessionctx.Context, jobW *JobWrapper) (r
 
 	// Attach the context of the jobId to the calling session so that
 	// KILL can cancel this DDL job.
-	sctx.GetSessionVars().StmtCtx.DDLJobID = jobID
+	ctx.GetSessionVars().StmtCtx.DDLJobID = jobID
 
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
@@ -6790,7 +6790,7 @@ func (e *executor) DoDDLJobWrapper(sctx sessionctx.Context, jobW *JobWrapper) (r
 		ticker.Stop()
 		metrics.JobsGauge.WithLabelValues(ddlAction.String()).Dec()
 		metrics.HandleJobHistogram.WithLabelValues(ddlAction.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-		recordLastDDLInfo(sctx, historyJob)
+		recordLastDDLInfo(ctx, historyJob)
 	}()
 	i := 0
 	notifyCh, _ := e.getJobDoneCh(jobID)
@@ -6853,7 +6853,7 @@ func (e *executor) DoDDLJobWrapper(sctx sessionctx.Context, jobW *JobWrapper) (r
 			continue
 		}
 
-		e.checkHistoryJobInTest(sctx, historyJob)
+		e.checkHistoryJobInTest(ctx, historyJob)
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
@@ -6865,16 +6865,16 @@ func (e *executor) DoDDLJobWrapper(sctx sessionctx.Context, jobW *JobWrapper) (r
 					for key, warning := range historyJob.ReorgMeta.Warnings {
 						keyCount := historyJob.ReorgMeta.WarningsCount[key]
 						if keyCount == 1 {
-							sctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+							ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 						} else {
 							newMsg := fmt.Sprintf("%d warnings with this error code, first warning: "+warning.GetMsg(), keyCount)
 							newWarning := dbterror.ClassTypes.Synthesize(terror.ErrCode(warning.Code()), newMsg)
-							sctx.GetSessionVars().StmtCtx.AppendWarning(newWarning)
+							ctx.GetSessionVars().StmtCtx.AppendWarning(newWarning)
 						}
 					}
 				}
 			}
-			appendMultiChangeWarningsToOwnerCtx(sctx, historyJob)
+			appendMultiChangeWarningsToOwnerCtx(ctx, historyJob)
 
 			logutil.DDLLogger().Info("DDL job is finished", zap.Int64("jobID", jobID))
 			return nil
