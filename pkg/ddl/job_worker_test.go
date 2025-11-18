@@ -56,7 +56,7 @@ func TestInvalidDDLJob(t *testing.T) {
 	ctx := testNewContext(t, store)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	de := dom.DDLExecutor().(ddl.ExecutorForTest)
-	err := de.DoDDLJobWrapper(context.Background(), ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
+	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
 	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job type: none")
 }
 
@@ -74,7 +74,7 @@ func TestAddBatchJobError(t *testing.T) {
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	de := dom.DDLExecutor().(ddl.ExecutorForTest)
-	err := de.DoDDLJobWrapper(context.Background(), ctx, ddl.NewJobWrapper(job, true))
+	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "mockAddBatchDDLJobsErr")
 	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockAddBatchDDLJobsErr"))

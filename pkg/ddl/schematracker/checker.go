@@ -240,26 +240,26 @@ func (*Checker) RecoverSchema(_ sessionctx.Context, _ *model.RecoverSchemaInfo) 
 }
 
 // CreateTable implements the DDL interface.
-func (d *Checker) CreateTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.CreateTableStmt) error {
-	err := d.realExecutor.CreateTable(ctx, sctx, stmt)
+func (d *Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error {
+	err := d.realExecutor.CreateTable(ctx, stmt)
 	if err != nil || d.closed.Load() {
 		return err
 	}
 
 	// some unit test will also check warnings, we reset the warnings after SchemaTracker use session context again.
-	count := sctx.GetSessionVars().StmtCtx.WarningCount()
+	count := ctx.GetSessionVars().StmtCtx.WarningCount()
 	// backup old session variables because CreateTable will change them.
-	enableClusteredIndex := sctx.GetSessionVars().EnableClusteredIndex
+	enableClusteredIndex := ctx.GetSessionVars().EnableClusteredIndex
 
-	err = d.tracker.CreateTable(ctx, sctx, stmt)
+	err = d.tracker.CreateTable(ctx, stmt)
 	if err != nil {
 		panic(err)
 	}
 
-	sctx.GetSessionVars().EnableClusteredIndex = enableClusteredIndex
-	sctx.GetSessionVars().StmtCtx.TruncateWarnings(int(count))
+	ctx.GetSessionVars().EnableClusteredIndex = enableClusteredIndex
+	ctx.GetSessionVars().StmtCtx.TruncateWarnings(int(count))
 
-	d.checkTableInfo(sctx, stmt.Table.Schema, stmt.Table.Name)
+	d.checkTableInfo(ctx, stmt.Table.Schema, stmt.Table.Name)
 	return nil
 }
 
@@ -496,7 +496,7 @@ func (d *Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInf
 }
 
 // CreateTableWithInfo implements the DDL interface.
-func (*Checker) CreateTableWithInfo(_ context.Context, _ sessionctx.Context, _ ast.CIStr, _ *model.TableInfo, _ []model.InvolvingSchemaInfo, _ ...ddl.CreateTableOption) error {
+func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ ast.CIStr, _ *model.TableInfo, _ []model.InvolvingSchemaInfo, _ ...ddl.CreateTableOption) error {
 	//TODO implement me
 	panic("implement me")
 }
@@ -572,7 +572,7 @@ func (d *Checker) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
 // DoDDLJobWrapper implements the DDL interface.
 func (d *Checker) DoDDLJobWrapper(ctx sessionctx.Context, jobW *ddl.JobWrapper) error {
 	de := d.realExecutor.(ddl.ExecutorForTest)
-	return de.DoDDLJobWrapper(context.Background(), ctx, jobW)
+	return de.DoDDLJobWrapper(ctx, jobW)
 }
 
 // InitFromIS initializes the schema tracker from an InfoSchema.

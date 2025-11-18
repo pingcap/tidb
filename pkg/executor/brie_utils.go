@@ -16,7 +16,6 @@ package executor
 
 import (
 	"bytes"
-	"context"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -109,7 +108,7 @@ func BRIECreateTable(
 		sctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
 	}()
 
-	return d.CreateTableWithInfo(context.Background(), sctx, dbName, clonedTable, nil, append(cs, ddl.WithOnExist(ddl.OnExistIgnore))...)
+	return d.CreateTableWithInfo(sctx, dbName, clonedTable, nil, append(cs, ddl.WithOnExist(ddl.OnExistIgnore))...)
 }
 
 // BRIECreateTables creates the tables with OnExistIgnore option in batch

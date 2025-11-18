@@ -68,7 +68,7 @@ func runInterruptedJob(t *testing.T, store kv.Storage, d ddl.Executor, job *mode
 	de := d.(ddl.ExecutorForTest)
 	ctx := testkit.NewTestKit(t, store).Session()
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = de.DoDDLJobWrapper(context.Background(), ctx, ddl.NewJobWrapperWithArgs(job, args, true))
+	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	if errors.Is(err, context.Canceled) {
 		endlessLoopTime := time.Now().Add(time.Minute)
 		for history == nil {

@@ -261,6 +261,11 @@ type session struct {
 	commitWaitGroup sync.WaitGroup
 }
 
+// GetTraceCtx returns the trace context of the session.
+func (s *session) GetTraceCtx() context.Context {
+	return s.currentCtx
+}
+
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	for _, l := range locks {
@@ -2636,6 +2641,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		stmtCount := uint64(s.sessionVars.TxnCtx.StatementCount)
 		traceID := traceevent.GenerateTraceID(ctx, startTS, stmtCount)
 		ctx = trace.ContextWithTraceID(ctx, traceID)
+		s.currentCtx = ctx
 
 		// Store trace ID for next statement
 		s.sessionVars.PrevTraceID = traceID

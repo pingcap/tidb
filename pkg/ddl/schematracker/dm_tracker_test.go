@@ -44,7 +44,7 @@ func execCreate(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	err = tracker.CreateTable(context.Background(), sctx, stmt.(*ast.CreateTableStmt))
+	err = tracker.CreateTable(sctx, stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 }
 

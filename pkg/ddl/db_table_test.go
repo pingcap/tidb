@@ -928,7 +928,7 @@ func TestCreateTableWithBR(t *testing.T) {
 	count = 0
 	se := tk.Session()
 	se.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, dom.DDLExecutor().CreateTableWithInfo(context.Background(),
+	require.NoError(t, dom.DDLExecutor().CreateTableWithInfo(
 		se, ast.NewCIStr("test"), tblInfo, involvingRef,
 		ddl.WithOnExist(ddl.OnExistError)))
 
