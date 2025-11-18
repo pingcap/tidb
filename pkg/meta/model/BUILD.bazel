@@ -19,7 +19,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config/kerneltype",
-        "//pkg/meta/metadef",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/charset",

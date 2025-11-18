@@ -68,8 +68,7 @@ import (
 
 // reorgCtx is for reorganization.
 type reorgCtx struct {
-	// doneCh is used to notify.
-	// If the reorganization job is done, we will use this channel to notify outer.
+	// doneCh is used to notify outer when the reorganization job is done.
 	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
 	// use a persistent job list.
 	doneCh chan reorgFnResult
@@ -346,7 +345,6 @@ func (w *worker) runReorgJob(
 	reorgFn func() error,
 ) error {
 	job := reorgInfo.Job
-	d := reorgInfo.jobCtx.oldDDLCtx
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
 	// without reorg meta info, which will cause nil pointer in here.
 	if job.ReorgMeta == nil {
@@ -396,7 +394,6 @@ func (w *worker) runReorgJob(
 			err := res.err
 			curTS := w.ddlCtx.reorgCtx.getOwnerTS()
 			if res.ownerTS != curTS {
-				d.removeReorgCtx(job.ID)
 				logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
 					zap.Int64("prevTS", res.ownerTS),
 					zap.Int64("curTS", curTS))
@@ -405,7 +402,6 @@ func (w *worker) runReorgJob(
 			// Since job is cancelled，we don't care about its partial counts.
 			// TODO(lance6716): should we also do for paused job?
 			if terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
-				d.removeReorgCtx(job.ID)
 				return err
 			}
 			rowCount := rc.getRowCount()
@@ -422,8 +418,6 @@ func (w *worker) runReorgJob(
 
 			// Update a job's warnings.
 			w.mergeWarningsIntoJob(job)
-
-			d.removeReorgCtx(job.ID)
 
 			updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
@@ -500,6 +494,7 @@ func (w *worker) mergeWarningsIntoJob(job *model.Job) {
 
 func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 	addedRowCount int64) {
+	jobID := reorgInfo.ID
 	if tblInfo == nil {
 		return
 	}
@@ -534,7 +529,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		} else {
 			idxNames = getIdxNamesFromArgs(args)
 		}
-		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), idxNames).Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(jobID, label, reorgInfo.SchemaName, tblInfo.Name.String(), idxNames).Set(progress * 100)
 	case model.ActionModifyColumn:
 		colName := ""
 		args, err := model.GetModifyColumnArgs(reorgInfo.Job)
@@ -543,10 +538,10 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		} else {
 			colName = args.OldColumnName.O
 		}
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String(), colName).Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(jobID, metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String(), colName).Set(progress * 100)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String(), "").Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(jobID, metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String(), "").Set(progress * 100)
 	}
 }
 

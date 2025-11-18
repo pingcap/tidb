@@ -577,6 +577,7 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 		ctx.references.Sub(1)
 		if ctx.references.Load() == 0 {
 			delete(dc.reorgCtx.reorgCtxMap, jobID)
+			metrics.CleanupAllMetricsForJob(jobID)
 		}
 	}
 }

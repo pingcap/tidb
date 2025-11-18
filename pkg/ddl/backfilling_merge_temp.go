@@ -92,12 +92,12 @@ func (e *mergeTempIndexExecutor) initializeByMeta(subtask *proto.Subtask, meta *
 		zap.Bool("isPartition", e.parentTable.GetPartitionedTable() != nil),
 		zap.Bool("isGlobal", e.idxInfo.Global),
 	)
-	// init metrics
 
-	e.mergeCounter = metrics.GetBackfillTotalByLabel(
+	// init metrics
+	e.mergeCounter = metrics.GetBackfillTotalByLabel(e.job.ID,
 		metrics.LblMergeTmpIdxRate,
 		e.job.SchemaName, e.physicalTable.Meta().Name.String(), e.idxInfo.Name.L)
-	e.conflictCounter = metrics.GetBackfillTotalByLabel(
+	e.conflictCounter = metrics.GetBackfillTotalByLabel(e.job.ID,
 		fmt.Sprintf("%s-conflict", metrics.LblMergeTmpIdxRate),
 		e.job.SchemaName, e.physicalTable.Meta().Name.String(), e.idxInfo.Name.L)
 	return nil
@@ -164,6 +164,7 @@ func (e *mergeTempIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
 }
 
 func (e *mergeTempIndexExecutor) Cleanup(ctx context.Context) error {
+	metrics.CleanupAllMetricsForJob(e.job.ID)
 	logutil.Logger(ctx).Info("merge temp index executor clean up subtask env", zap.Int64("rows", e.totalRows))
 	return nil
 }

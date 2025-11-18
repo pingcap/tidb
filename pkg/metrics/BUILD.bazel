@@ -32,7 +32,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/disttask/framework/dxfmetric",
-        "//pkg/ddl/logutil",
         "//pkg/lightning/metric",
         "//pkg/metrics/common",
         "//pkg/parser/terror",

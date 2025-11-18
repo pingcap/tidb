@@ -20,12 +20,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
 )
 
 var (
@@ -283,32 +281,52 @@ func generateReorgLabel(label, schemaName, tableName, colOrIdxNames string) stri
 	return stringBuilder.String()
 }
 
-// GetBackfillTotalByLabel returns the Counter showing the speed of backfilling for the given type label.
-func GetBackfillTotalByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
-	return BackfillTotalCounter.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
+var cleanupFuncs = make(map[int64]map[string]func(), 8)
+
+// CleanupAllMetricsForJob cleans up all metrics registered for the given job ID.
+func CleanupAllMetricsForJob(id int64) {
+	mu.Lock()
+	defer mu.Unlock()
+	if funcs, ok := cleanupFuncs[id]; ok {
+		for _, fn := range funcs {
+			fn()
+		}
+		delete(cleanupFuncs, id)
+	}
 }
 
-// RemoveBackfillTotalByLabel returns the Counter showing the speed of backfilling for the given type label.
-func RemoveBackfillTotalByLabel(label, schemaName, tableName, optionalColOrIdxName string) {
-	lvs := generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
-	if BackfillTotalCounter.DeleteLabelValues(lvs) {
-		logutil.DDLLogger().Info("fail to delete backfill total counter label",
-			zap.String("label", lvs))
+// GetBackfillTotalByLabel returns the Counter showing the speed of backfilling for the given type label.
+func GetBackfillTotalByLabel(id int64, label, schemaName, tableName, colOrIdxName string) prometheus.Counter {
+	mu.Lock()
+	defer mu.Unlock()
+	lv := generateReorgLabel(label, schemaName, tableName, colOrIdxName)
+	counter := BackfillTotalCounter.WithLabelValues(lv)
+
+	if _, ok := cleanupFuncs[id]; !ok {
+		cleanupFuncs[id] = make(map[string]func(), 8)
 	}
+
+	cleanupFuncs[id][lv] = func() {
+		BackfillTotalCounter.DeleteLabelValues(lv)
+	}
+	return counter
 }
 
 // GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
-func GetBackfillProgressByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
-	return BackfillProgressGauge.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
-}
+func GetBackfillProgressByLabel(id int64, label, schemaName, tableName, colOrIdxName string) prometheus.Gauge {
+	mu.Lock()
+	defer mu.Unlock()
+	lv := generateReorgLabel(label, schemaName, tableName, colOrIdxName)
+	counter := BackfillProgressGauge.WithLabelValues(lv)
 
-// RemoveBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
-func RemoveBackfillProgressByLabel(label, schemaName, tableName, optionalColOrIdxName string) {
-	lvs := generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
-	if BackfillProgressGauge.DeleteLabelValues(lvs) {
-		logutil.DDLLogger().Info("fail to delete backfill progress gauge label",
-			zap.String("label", lvs))
+	if _, ok := cleanupFuncs[id]; !ok {
+		cleanupFuncs[id] = make(map[string]func(), 8)
 	}
+
+	cleanupFuncs[id][lv] = func() {
+		BackfillProgressGauge.DeleteLabelValues(lv)
+	}
+	return counter
 }
 
 // RegisterLightningCommonMetricsForDDL returns the registered common metrics.

@@ -54,7 +54,6 @@ type backfillExecutor interface {
 
 	currentWorkerSize() int
 	adjustWorkerSize() error
-	cleanupMetrics()
 }
 
 var (
@@ -101,13 +100,6 @@ func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess
 		taskCh:       make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultCh:     make(chan *backfillResult, backfillTaskChanSize),
 	}, nil
-}
-
-// cleanupMetrics cleans up the metrics used by this backfill executor.
-func (b *txnBackfillExecutor) cleanupMetrics() {
-	if b.backfillCtx != nil {
-		b.backfillCtx.CleanupMetrics()
-	}
 }
 
 func (b *txnBackfillExecutor) setupWorkers() error {

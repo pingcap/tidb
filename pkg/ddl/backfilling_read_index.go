@@ -363,7 +363,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), taskID)
+	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job, tbl.Meta().Name.O, idxNames.String(), taskID)
 	return NewAddIndexIngestPipeline(
 		opCtx,
 		r.store,
@@ -416,7 +416,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		idxNames.WriteString(idx.Name.O)
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), taskID)
+	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job, tbl.Meta().Name.O, idxNames.String(), taskID)
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
 		r.store,
@@ -448,10 +448,11 @@ type distTaskRowCntCollector struct {
 func newDistTaskRowCntCollector(
 	store kv.Storage,
 	summary *execute.SubtaskSummary,
-	dbName, tblName, idxName string,
+	job *model.Job,
+	tblName, idxName string,
 	taskID int64,
 ) *distTaskRowCntCollector {
-	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName)
+	counter := metrics.GetBackfillTotalByLabel(job.ID, metrics.LblAddIdxRate, job.SchemaName, tblName, idxName)
 	return &distTaskRowCntCollector{
 		summary: summary,
 		counter: counter,

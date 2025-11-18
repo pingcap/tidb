@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
@@ -168,7 +167,6 @@ type backfillCtx struct {
 	batchCnt   int
 	jobContext *ReorgContext
 
-	cleanupFunc     func()
 	metricCounter   prometheus.Counter
 	conflictCounter prometheus.Counter
 }
@@ -226,21 +224,10 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 		batchCnt:   batchCnt,
 		jobContext: jobCtx,
 		metricCounter: metrics.GetBackfillTotalByLabel(
-			label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
+			rInfo.Job.ID, label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
 		conflictCounter: metrics.GetBackfillTotalByLabel(
-			fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
-		cleanupFunc: func() {
-			metrics.RemoveBackfillTotalByLabel(label, schemaName, tbl.Meta().Name.String(), colOrIdxName)
-			metrics.RemoveBackfillTotalByLabel(fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName)
-		},
+			rInfo.Job.ID, fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
 	}, nil
-}
-
-func (b *backfillCtx) CleanupMetrics() {
-	intest.Assert(b.cleanupFunc != nil, "cleanupFunc should not be nil")
-	if b.cleanupFunc != nil {
-		b.cleanupFunc()
-	}
 }
 
 func getIdxNamesFromArgs(args *model.ModifyIndexArgs) string {
@@ -268,7 +255,6 @@ type backfiller interface {
 	AddMetricInfo(float64)
 	GetCtx() *backfillCtx
 	String() string
-	CleanupMetrics()
 }
 
 type backfillResult struct {
@@ -806,10 +792,8 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	rowCntListener := &localRowCntCollector{
 		prevPhysicalRowCnt: reorgCtx.getRowCount(),
 		reorgCtx:           reorgCtx,
-		counter:            metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
+		counter:            metrics.GetBackfillTotalByLabel(job.ID, metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
 	}
-
-	defer metrics.RemoveBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String())
 
 	sctx, err := sessPool.Get()
 	if err != nil {
@@ -1010,8 +994,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	defer exec.cleanupMetrics()
 
 	var splitKeys []kv.Key
 	if reorgInfo.mergingTmpIdx {
