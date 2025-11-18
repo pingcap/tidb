@@ -120,7 +120,7 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (base.PhysicalPlan, erro
 		return nil, err
 	}
 	schema := b.buildTableScanSchema(tbl.Meta(), columns)
-	p := PhysicalMemTable{
+	p := physicalop.PhysicalMemTable{
 		DBName:  dbInfo.Name,
 		Table:   tbl.Meta(),
 		Columns: columns,
@@ -168,7 +168,7 @@ func (b *PBPlanBuilder) pbToProjection(e *tipb.Executor) (base.PhysicalPlan, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := PhysicalProjection{
+	p := physicalop.PhysicalProjection{
 		Exprs: exprs,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
@@ -179,7 +179,7 @@ func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (base.PhysicalPlan, erro
 	if err != nil {
 		return nil, err
 	}
-	p := PhysicalSelection{
+	p := physicalop.PhysicalSelection{
 		Conditions: conds,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
@@ -196,7 +196,7 @@ func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (base.PhysicalPlan, error) {
 		}
 		byItems = append(byItems, &util.ByItems{Expr: expr, Desc: item.Desc})
 	}
-	p := PhysicalTopN{
+	p := physicalop.PhysicalTopN{
 		ByItems: byItems,
 		Count:   topN.Limit,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
@@ -216,16 +216,15 @@ func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (base.Physic
 		return nil, errors.Trace(err)
 	}
 	schema := b.buildAggSchema(aggFuncs, groupBys)
-	baseAgg := basePhysicalAgg{
+	baseAgg := physicalop.BasePhysicalAgg{
 		AggFuncs:     aggFuncs,
 		GroupByItems: groupBys,
 	}
-	baseAgg.SetSchema(schema)
 	var partialAgg base.PhysicalPlan
 	if isStreamAgg {
-		partialAgg = baseAgg.initForStream(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+		partialAgg = baseAgg.InitForStream(b.sctx, &property.StatsInfo{}, 0, schema, &property.PhysicalProperty{})
 	} else {
-		partialAgg = baseAgg.initForHash(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+		partialAgg = baseAgg.InitForHash(b.sctx, &property.StatsInfo{}, 0, schema, &property.PhysicalProperty{})
 	}
 	return partialAgg, nil
 }
@@ -307,7 +306,7 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		return predicates, physicalPlan
 	}
 	switch plan := physicalPlan.(type) {
-	case *PhysicalMemTable:
+	case *physicalop.PhysicalMemTable:
 		memTable := plan
 		if memTable.Extractor == nil {
 			return predicates, plan
@@ -324,13 +323,13 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		// Set the expression column unique ID.
 		// Since the expression is build from PB, It has not set the expression column ID yet.
 		schemaCols := memTable.Schema().Columns
-		cols := expression.ExtractColumnsFromExpressions([]*expression.Column{}, predicates, nil)
-		for i := range cols {
-			cols[i].UniqueID = schemaCols[cols[i].Index].UniqueID
+		cols := expression.ExtractAllColumnsFromExpressions(predicates, nil)
+		for _, col := range cols {
+			col.UniqueID = schemaCols[col.Index].UniqueID
 		}
 		predicates = memTable.Extractor.Extract(b.sctx, memTable.Schema(), names, predicates)
 		return predicates, memTable
-	case *PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		selection := plan
 		conditions, child := b.predicatePushDown(plan.Children()[0], selection.Conditions)
 		if len(conditions) > 0 {

@@ -19,26 +19,33 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"go.uber.org/zap"
 )
 
 // TaskMeta is the task of IMPORT INTO.
 // All the field should be serializable.
 type TaskMeta struct {
 	// IMPORT INTO job id, see mysql.tidb_import_jobs.
-	JobID  int64
-	Plan   importer.Plan
-	Stmt   string
-	Result Result
+	JobID int64
+	Plan  importer.Plan
+	Stmt  string
+
+	// Summary is the summary of the whole import task.
+	Summary importer.Summary
+
 	// eligible instances to run this task, we run on all instances if it's empty.
 	// we only need this when run IMPORT INTO without distributed option now, i.e.
 	// running on the instance that initiate the IMPORT INTO.
-	EligibleInstances []*infosync.ServerInfo
+	EligibleInstances []*serverinfo.ServerInfo
 	// the file chunks to import, when import from server file, we need to pass those
 	// files to the framework scheduler which might run on another instance.
 	// we use a map from engine ID to chunks since we need support split_file for CSV,
@@ -132,6 +139,9 @@ type SharedVars struct {
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
 	SortedIndexMetas map[int64]*external.SortedKVMeta
 	ShareMu          sync.Mutex
+	globalSortStore  storage.ExternalStorage
+	dataKVFileCount  *atomic.Int64
+	indexKVFileCount *atomic.Int64
 }
 
 func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {
@@ -158,14 +168,12 @@ type importStepMinimalTask struct {
 	Plan       importer.Plan
 	Chunk      importer.Chunk
 	SharedVars *SharedVars
-	panicked   *atomic.Bool
+	logger     *zap.Logger
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (t *importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "encodeAndSortOperator", "RecoverArgs", func() {
-		t.panicked.Store(true)
-	}, false
+func (*importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return proto.ImportInto.String(), "importStepMininalTask", errors.Errorf("panic occurred during import, please check log")
 }
 
 func (t *importStepMinimalTask) String() string {
@@ -177,10 +185,4 @@ type Checksum struct {
 	Sum  uint64
 	KVs  uint64
 	Size uint64
-}
-
-// Result records the metrics information.
-// This portion of the code may be implemented uniformly in the framework in the future.
-type Result struct {
-	LoadedRowCnt uint64
 }

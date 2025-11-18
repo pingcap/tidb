@@ -28,8 +28,11 @@ import (
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
+
+const asyncMergeWarn = "Warning 1105 The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future release; changing it is discouraged."
 
 func TestShowGlobalStatsWithAsyncMergeGlobal(t *testing.T) {
 	testShowGlobalStats(t, true)
@@ -49,6 +52,7 @@ func testShowGlobalStats(t *testing.T, isAsync bool) {
 	} else {
 		tk.MustExec("set @@global.tidb_enable_async_merge_global_stats = 1")
 	}
+	tk.MustQuery("show warnings").Check(testkit.Rows(asyncMergeWarn))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
@@ -551,14 +555,14 @@ partition by range (a) (
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	globalStats := h.GetTableStats(tableInfo)
+	globalStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// global.count = p0.count(3) + p1.count(4) + p2.count(2)
 	// modify count is 2 because we didn't analyze p1 after the second insert
 	require.Equal(t, int64(9), globalStats.RealtimeCount)
 	require.Equal(t, int64(2), globalStats.ModifyCount)
 
 	tk.MustExec("analyze table t partition p1;")
-	globalStats = h.GetTableStats(tableInfo)
+	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// global.count = p0.count(3) + p1.count(4) + p2.count(4)
 	// The value of modify count is 0 now.
 	require.Equal(t, int64(9), globalStats.RealtimeCount)
@@ -567,7 +571,7 @@ partition by range (a) (
 	tk.MustExec("alter table t drop partition p2;")
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t;")
-	globalStats = h.GetTableStats(tableInfo)
+	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// global.count = p0.count(3) + p1.count(4)
 	require.Equal(t, int64(7), globalStats.RealtimeCount)
 }
@@ -604,7 +608,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	globalStats := h.GetTableStats(tableInfo)
+	globalStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, int64(15), globalStats.RealtimeCount)
 
 	tk.MustExec("alter table t truncate partition p2, p4;")
@@ -613,7 +617,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
 	// We will update the global-stats after the truncate operation.
-	globalStats = h.GetTableStats(tableInfo)
+	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, int64(11), globalStats.RealtimeCount)
 
 	tk.MustExec("analyze table t;")
@@ -621,7 +625,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	// The truncate operation only delete the data from the partition p2 and p4. It will not delete the partition-stats.
 	require.Len(t, result, 7)
 	// The result for the globalStats.count will be right now
-	globalStats = h.GetTableStats(tableInfo)
+	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, int64(11), globalStats.RealtimeCount)
 }
 
@@ -760,8 +764,7 @@ func TestGlobalStatsIndexNDV(t *testing.T) {
 }
 
 func TestGlobalStats(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -864,79 +867,71 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	h.SetLease(time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
 
-	for i, version := range []string{"1", "2"} {
-		tk.MustExec("set @@session.tidb_analyze_version = " + version)
+	// analyze table t
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, key(a) )" +
+		"PARTITION BY RANGE (a) (" +
+		"PARTITION p0 VALUES LESS THAN (10)," +
+		"PARTITION p1 VALUES LESS THAN (20)," +
+		"PARTITION p2 VALUES LESS THAN (30)," +
+		"PARTITION p3 VALUES LESS THAN (40))")
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
+	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
+	<-h.DDLEventCh()
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t")
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
+		Check(testkit.Rows("1", "2", "3", "15"))
+	tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
+		Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
+			"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+	// analyze table t index idx
+	tk.MustExec("drop table if exists t")
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered)" +
+		"PARTITION BY RANGE (a) (" +
+		"PARTITION p0 VALUES LESS THAN (10)," +
+		"PARTITION p1 VALUES LESS THAN (20)," +
+		"PARTITION p2 VALUES LESS THAN (30)," +
+		"PARTITION p3 VALUES LESS THAN (40));")
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
+	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
+	<-h.DDLEventCh()
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t index idx")
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	rows := tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
+	require.Equal(t, "4.00", rows[0][1])
 
-		// analyze table t
-		tk.MustExec("drop table if exists t")
-		if i != 0 {
-			err := statstestutil.HandleNextDDLEventWithTxn(h)
-			require.NoError(t, err)
-		}
-		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, key(a) )" +
-			"PARTITION BY RANGE (a) (" +
-			"PARTITION p0 VALUES LESS THAN (10)," +
-			"PARTITION p1 VALUES LESS THAN (20)," +
-			"PARTITION p2 VALUES LESS THAN (30)," +
-			"PARTITION p3 VALUES LESS THAN (40))")
-		err := statstestutil.HandleNextDDLEventWithTxn(h)
-		require.NoError(t, err)
-		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
-		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
-		<-h.DDLEventCh()
-		require.Nil(t, h.DumpStatsDeltaToKV(true))
-		tk.MustExec("analyze table t")
-		require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
-		tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
-			Check(testkit.Rows("1", "2", "3", "15"))
-		tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
-			Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
-				"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
-
-		// analyze table t index idx
-		tk.MustExec("drop table if exists t")
-		err = statstestutil.HandleNextDDLEventWithTxn(h)
-		require.NoError(t, err)
-		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered)" +
-			"PARTITION BY RANGE (a) (" +
-			"PARTITION p0 VALUES LESS THAN (10)," +
-			"PARTITION p1 VALUES LESS THAN (20)," +
-			"PARTITION p2 VALUES LESS THAN (30)," +
-			"PARTITION p3 VALUES LESS THAN (40));")
-		err = statstestutil.HandleNextDDLEventWithTxn(h)
-		require.NoError(t, err)
-		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
-		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
-		<-h.DDLEventCh()
-		require.Nil(t, h.DumpStatsDeltaToKV(true))
-		tk.MustExec("analyze table t index idx")
-		require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
-		rows := tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
-		require.Equal(t, "4.00", rows[0][1])
-
-		// analyze table t index
-		tk.MustExec("drop table if exists t")
-		err = statstestutil.HandleNextDDLEventWithTxn(h)
-		require.NoError(t, err)
-		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
-			"PARTITION BY RANGE (a) (" +
-			"PARTITION p0 VALUES LESS THAN (10)," +
-			"PARTITION p1 VALUES LESS THAN (20)," +
-			"PARTITION p2 VALUES LESS THAN (30)," +
-			"PARTITION p3 VALUES LESS THAN (40));")
-		err = statstestutil.HandleNextDDLEventWithTxn(h)
-		require.NoError(t, err)
-		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
-		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
-		<-h.DDLEventCh()
-		require.Nil(t, h.DumpStatsDeltaToKV(true))
-		tk.MustExec("analyze table t index")
-		require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
-		tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
-			Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
-				"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
-	}
+	// analyze table t index
+	tk.MustExec("drop table if exists t")
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
+		"PARTITION BY RANGE (a) (" +
+		"PARTITION p0 VALUES LESS THAN (10)," +
+		"PARTITION p1 VALUES LESS THAN (20)," +
+		"PARTITION p2 VALUES LESS THAN (30)," +
+		"PARTITION p3 VALUES LESS THAN (40));")
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
+	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
+	<-h.DDLEventCh()
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t index")
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
+		Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
+			"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 }
 
 func TestIssues24349(t *testing.T) {
@@ -1017,7 +1012,9 @@ partitions 12;`)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tk.MustExec("set @@tidb_enable_async_merge_global_stats=ON;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(asyncMergeWarn))
 	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
 	tk.MustExec("set @@tidb_enable_async_merge_global_stats=OFF;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(asyncMergeWarn))
 	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
 }

@@ -193,6 +193,71 @@ func TestBuildStatsOnRowSample(t *testing.T) {
 		"num: 196 lower_bound: 805 upper_bound: 1000 repeats: 1 ndv: 0", hist.ToString(0))
 }
 
+func TestBuildSampleFullNDV(t *testing.T) {
+	// Testing building TopN when the column NDV is larger than the NDV in the sample.
+	// This tests the scenario where ndv > sampleNDV in BuildHistAndTopN.
+	ctx := mock.NewContext()
+	sketch := NewFMSketch(8)
+	data := make([]*SampleItem, 0, 8)
+
+	// Create sample data with only 3 distinct values
+	for i := 1; i < 41; i++ {
+		d := types.NewIntDatum(int64(2))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(t, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for i := 1; i < 31; i++ {
+		d := types.NewIntDatum(int64(4))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(t, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for i := 1; i < 25; i++ {
+		d := types.NewIntDatum(int64(7))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(t, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+
+	// Add many more distinct values to the FMSketch to make column NDV > sample NDV
+	// This simulates a scenario where the full column has many more distinct values
+	// than what's captured in the sample
+	for i := 100; i < 200; i++ {
+		d := types.NewIntDatum(int64(i))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(t, err)
+		// Don't add these to sample data - this creates the discrepancy
+	}
+
+	collector := &SampleCollector{
+		Samples:   data,
+		NullCount: 0,
+		Count:     int64(200),
+		FMSketch:  sketch,
+		TotalSize: int64(len(data)) * 8,
+	}
+
+	// Verify that column NDV > sample NDV
+	columnNDV := collector.FMSketch.NDV()
+	require.Greater(t, columnNDV, int64(3), "Column NDV should be greater than sample NDV (3)")
+
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	// Build histogram buckets with 0 buckets, and default 100 TopN.
+	_, topN, err := BuildHistAndTopN(ctx, 0, 100, 1, collector, tp, true, nil, false)
+	require.NoError(t, err)
+	topNStr, err := topN.DecodedString(ctx, []byte{tp.GetType()})
+	require.NoError(t, err)
+
+	// When ndv > sampleNDV, the TopN list gets trimmed to sampleNDV-1 items
+	// So with sampleNDV=3, we expect 2 items: max(1, 3-1) = 2
+	require.Equal(t, "TopN{length: 2, [(2, 85), (4, 63)]}", topNStr)
+
+	// Verify that the condition ndv > sampleNDV is properly handled
+	// The TopN should be trimmed to sampleNDV-1 items when ndv > sampleNDV
+	require.Equal(t, 2, len(topN.TopN), "TopN should be trimmed to sampleNDV-1 items when ndv > sampleNDV")
+}
+
 type testSampleSuite struct {
 	count int
 	rs    sqlexec.RecordSet

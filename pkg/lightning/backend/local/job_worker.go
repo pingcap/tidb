@@ -26,7 +26,9 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -34,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -153,7 +156,20 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 			// writes the data to TiKV and mark this job as wrote stage.
 			// we don't need to do cleanup for the pairs written to TiKV if encounters
 			// an error, TiKV will take the responsibility to do so.
-			// TODO: let client-go provide a high-level write interface.
+
+			// if the region has no leader, such as when PD leader fail-over, and
+			// hasn't got the region heartbeat, the scanned regions might not
+			// contain the leader info. it's meaningless to write in this case.
+			// here we check store ID, not the nilness of leader Peer, as PD will
+			// return an empty Peer if no leader instead of nil.
+			// GetStoreId will return 0 if the Peer is nil, so we can handle both
+			// cases here.
+			// Also note, valid store ID > 0.
+			if job.region.Leader.GetStoreId() == 0 {
+				job.lastRetryableErr = errdef.ErrNoLeader.GenWithStackByArgs(job.region.Region.GetId())
+				job.convertStageTo(needRescan)
+				return nil
+			}
 			res, err := w.writeFn(ctx, job)
 			err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 			if err != nil {
@@ -170,7 +186,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 					job.convertStageTo(needRescan)
 				}
 				job.lastRetryableErr = err
-				log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
+				tidblogutil.Logger(ctx).Warn("meet retryable error when writing to TiKV",
 					log.ShortError(err), zap.Stringer("job stage", job.stage))
 				return nil
 			}
@@ -199,7 +215,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 				}
 				job.lastRetryableErr = err
 
-				log.FromContext(ctx).Warn("meet retryable error when ingesting, will handle the job later",
+				tidblogutil.Logger(ctx).Warn("meet retryable error when ingesting, will handle the job later",
 					log.ShortError(err), zap.Stringer("job stage", job.stage),
 					job.region.ToZapFields(),
 					logutil.Key("start", job.keyRange.Start),
@@ -252,7 +268,7 @@ func (w *blkStoreRegionJobWorker) preRunJob(ctx context.Context, job *regionJob)
 		for _, peer := range job.region.Region.GetPeers() {
 			store, err := w.pdHTTPCli.GetStore(ctx, peer.StoreId)
 			if err != nil {
-				log.FromContext(ctx).Warn("failed to get StoreInfo from pd http api", zap.Error(err))
+				tidblogutil.Logger(ctx).Warn("failed to get StoreInfo from pd http api", zap.Error(err))
 				continue
 			}
 			err = checkDiskAvail(ctx, store)
@@ -270,6 +286,7 @@ type objStoreRegionJobWorker struct {
 	ingestCli      ingestcli.Client
 	writeBatchSize int64
 	bufPool        *membuf.Pool
+	collector      execute.Collector
 }
 
 func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error {
@@ -318,6 +335,26 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	//nolint: errcheck
 	defer iter.Close()
 
+	flushKVs := func() error {
+		in := &ingestcli.WriteRequest{
+			Pairs: pairs,
+		}
+		if err := writeCli.Write(in); err != nil {
+			return errors.Trace(err)
+		}
+
+		if w.collector != nil {
+			w.collector.Processed(size, int64(len(pairs)))
+		}
+
+		totalCount += int64(len(pairs))
+		totalSize += size
+		size = 0
+		pairs = pairs[:0]
+		iter.ReleaseBuf()
+		return nil
+	}
+
 	for iter.First(); iter.Valid(); iter.Next() {
 		k, v := iter.Key(), iter.Value()
 		pairs = append(pairs, &sst.Pair{
@@ -327,17 +364,9 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		size += int64(len(k) + len(v))
 
 		if size >= w.writeBatchSize {
-			in := &ingestcli.WriteRequest{
-				Pairs: pairs,
-			}
-			if err := writeCli.Write(in); err != nil {
+			if err := flushKVs(); err != nil {
 				return nil, errors.Trace(err)
 			}
-			totalCount += int64(len(pairs))
-			totalSize += size
-			size = 0
-			pairs = pairs[:0]
-			iter.ReleaseBuf()
 		}
 	}
 
@@ -346,16 +375,9 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	}
 
 	if len(pairs) > 0 {
-		in := &ingestcli.WriteRequest{
-			Pairs: pairs,
-		}
-		if err := writeCli.Write(in); err != nil {
+		if err := flushKVs(); err != nil {
 			return nil, errors.Trace(err)
 		}
-		totalCount += int64(len(pairs))
-		totalSize += size
-		pairs = pairs[:0]
-		iter.ReleaseBuf()
 	}
 
 	resp, err := writeCli.Recv()

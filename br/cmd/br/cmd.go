@@ -234,7 +234,10 @@ func Init(cmd *cobra.Command) (err error) {
 			return
 		}
 		log.ReplaceGlobals(lg, p)
-		memory.InitMemoryHook()
+		err = memory.InitMemoryHook()
+		if err != nil {
+			return
+		}
 		if debug.SetMemoryLimit(-1) == math.MaxInt64 {
 			memtotal, e := memory.MemTotal()
 			if e != nil {

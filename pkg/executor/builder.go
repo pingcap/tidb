@@ -66,8 +66,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -85,6 +87,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
@@ -156,7 +159,8 @@ type MockExecutorBuilder struct {
 // NewMockExecutorBuilderForTest is ONLY used in test.
 func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *MockExecutorBuilder {
 	return &MockExecutorBuilder{
-		executorBuilder: newExecutorBuilder(ctx, is, ti)}
+		executorBuilder: newExecutorBuilder(ctx, is, ti),
+	}
 }
 
 // Build builds an executor tree according to `p`.
@@ -188,7 +192,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildDDL(v)
 	case *plannercore.Deallocate:
 		return b.buildDeallocate(v)
-	case *plannercore.Delete:
+	case *physicalop.Delete:
 		return b.buildDelete(v)
 	case *plannercore.Execute:
 		return b.buildExecute(v)
@@ -196,11 +200,11 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildTrace(v)
 	case *plannercore.Explain:
 		return b.buildExplain(v)
-	case *plannercore.PointGetPlan:
+	case *physicalop.PointGetPlan:
 		return b.buildPointGet(v)
-	case *plannercore.BatchPointGetPlan:
+	case *physicalop.BatchPointGetPlan:
 		return b.buildBatchPointGet(v)
-	case *plannercore.Insert:
+	case *physicalop.Insert:
 		return b.buildInsert(v)
 	case *plannercore.ImportInto:
 		return b.buildImportInto(v)
@@ -220,7 +224,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildLimit(v)
 	case *plannercore.Prepare:
 		return b.buildPrepare(v)
-	case *plannercore.PhysicalLock:
+	case *physicalop.PhysicalLock:
 		return b.buildSelectLock(v)
 	case *plannercore.CancelDDLJobs:
 		return b.buildCancelDDLJobs(v)
@@ -234,7 +238,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildShowNextRowID(v)
 	case *plannercore.ShowDDL:
 		return b.buildShowDDL(v)
-	case *plannercore.PhysicalShowDDLJobs:
+	case *physicalop.PhysicalShowDDLJobs:
 		return b.buildShowDDLJobs(v)
 	case *plannercore.ShowDDLJobQueries:
 		return b.buildShowDDLJobQueries(v)
@@ -242,7 +246,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildShowDDLJobQueriesWithRange(v)
 	case *plannercore.ShowSlow:
 		return b.buildShowSlow(v)
-	case *plannercore.PhysicalShow:
+	case *physicalop.PhysicalShow:
 		return b.buildShow(v)
 	case *plannercore.Simple:
 		return b.buildSimple(v)
@@ -254,55 +258,55 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildSetConfig(v)
 	case *physicalop.PhysicalSort:
 		return b.buildSort(v)
-	case *plannercore.PhysicalTopN:
+	case *physicalop.PhysicalTopN:
 		return b.buildTopN(v)
 	case *physicalop.PhysicalUnionAll:
 		return b.buildUnionAll(v)
-	case *plannercore.Update:
+	case *physicalop.Update:
 		return b.buildUpdate(v)
-	case *plannercore.PhysicalUnionScan:
+	case *physicalop.PhysicalUnionScan:
 		return b.buildUnionScanExec(v)
-	case *plannercore.PhysicalHashJoin:
+	case *physicalop.PhysicalHashJoin:
 		return b.buildHashJoin(v)
-	case *plannercore.PhysicalMergeJoin:
+	case *physicalop.PhysicalMergeJoin:
 		return b.buildMergeJoin(v)
-	case *plannercore.PhysicalIndexJoin:
+	case *physicalop.PhysicalIndexJoin:
 		return b.buildIndexLookUpJoin(v)
-	case *plannercore.PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexMergeJoin:
 		return b.buildIndexLookUpMergeJoin(v)
-	case *plannercore.PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		return b.buildIndexNestedLoopHashJoin(v)
-	case *plannercore.PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		return b.buildSelection(v)
-	case *plannercore.PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		return b.buildHashAgg(v)
-	case *plannercore.PhysicalStreamAgg:
+	case *physicalop.PhysicalStreamAgg:
 		return b.buildStreamAgg(v)
-	case *plannercore.PhysicalProjection:
+	case *physicalop.PhysicalProjection:
 		return b.buildProjection(v)
-	case *plannercore.PhysicalMemTable:
+	case *physicalop.PhysicalMemTable:
 		return b.buildMemTable(v)
-	case *plannercore.PhysicalTableDual:
+	case *physicalop.PhysicalTableDual:
 		return b.buildTableDual(v)
-	case *plannercore.PhysicalApply:
+	case *physicalop.PhysicalApply:
 		return b.buildApply(v)
-	case *plannercore.PhysicalMaxOneRow:
+	case *physicalop.PhysicalMaxOneRow:
 		return b.buildMaxOneRow(v)
 	case *plannercore.Analyze:
 		return b.buildAnalyze(v)
-	case *plannercore.PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		return b.buildTableReader(v)
-	case *plannercore.PhysicalTableSample:
+	case *physicalop.PhysicalTableSample:
 		return b.buildTableSample(v)
-	case *plannercore.PhysicalIndexReader:
+	case *physicalop.PhysicalIndexReader:
 		return b.buildIndexReader(v)
-	case *plannercore.PhysicalIndexLookUpReader:
+	case *physicalop.PhysicalIndexLookUpReader:
 		return b.buildIndexLookUpReader(v)
-	case *plannercore.PhysicalWindow:
+	case *physicalop.PhysicalWindow:
 		return b.buildWindow(v)
-	case *plannercore.PhysicalShuffle:
+	case *physicalop.PhysicalShuffle:
 		return b.buildShuffle(v)
-	case *plannercore.PhysicalShuffleReceiverStub:
+	case *physicalop.PhysicalShuffleReceiverStub:
 		return b.buildShuffleReceiverStub(v)
 	case *plannercore.SQLBindPlan:
 		return b.buildSQLBindExec(v)
@@ -310,19 +314,19 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildSplitRegion(v)
 	case *plannercore.DistributeTable:
 		return b.buildDistributeTable(v)
-	case *plannercore.PhysicalIndexMergeReader:
+	case *physicalop.PhysicalIndexMergeReader:
 		return b.buildIndexMergeReader(v)
 	case *plannercore.SelectInto:
 		return b.buildSelectInto(v)
-	case *plannercore.PhysicalCTE:
+	case *physicalop.PhysicalCTE:
 		return b.buildCTE(v)
-	case *plannercore.PhysicalCTETable:
+	case *physicalop.PhysicalCTETable:
 		return b.buildCTETableReader(v)
 	case *plannercore.CompactTable:
 		return b.buildCompactTable(v)
 	case *plannercore.AdminShowBDRRole:
 		return b.buildAdminShowBDRRole(v)
-	case *plannercore.PhysicalExpand:
+	case *physicalop.PhysicalExpand:
 		return b.buildExpand(v)
 	case *plannercore.RecommendIndexPlan:
 		return b.buildRecommendIndex(v)
@@ -422,7 +426,7 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) exec.Executor {
 	return e
 }
 
-func (b *executorBuilder) buildShowDDLJobs(v *plannercore.PhysicalShowDDLJobs) exec.Executor {
+func (b *executorBuilder) buildShowDDLJobs(v *physicalop.PhysicalShowDDLJobs) exec.Executor {
 	loc := b.ctx.GetSessionVars().Location()
 	ddlJobRetriever := DDLJobRetriever{TZLoc: loc}
 	e := &ShowDDLJobsExec{
@@ -460,9 +464,10 @@ func (b *executorBuilder) buildShowSlow(v *plannercore.ShowSlow) exec.Executor {
 }
 
 // buildIndexLookUpChecker builds check information to IndexLookUpReader.
-func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLookUpReader,
-	e *IndexLookUpExecutor) {
-	is := p.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+func buildIndexLookUpChecker(b *executorBuilder, p *physicalop.PhysicalIndexLookUpReader,
+	e *IndexLookUpExecutor,
+) {
+	is := p.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	fullColLen := len(is.Index.Columns) + len(p.CommonHandleCols)
 	if !e.isCommonHandle() {
 		fullColLen++
@@ -475,7 +480,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 		e.dagPB.OutputOffsets[i] = uint32(i)
 	}
 
-	ts := p.TablePlans[0].(*plannercore.PhysicalTableScan)
+	ts := p.TablePlans[0].(*physicalop.PhysicalTableScan)
 	e.handleIdx = ts.HandleIdx
 
 	e.ranges = ranger.FullRange()
@@ -507,29 +512,29 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 }
 
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
-	noMVIndexOrPrefixIndexOrColumnarIndex := true
+	canUseFastCheck := true
 	for _, idx := range v.IndexInfos {
 		if idx.MVIndex || idx.IsColumnarIndex() {
-			noMVIndexOrPrefixIndexOrColumnarIndex = false
+			canUseFastCheck = false
 			break
 		}
 		for _, col := range idx.Columns {
 			if col.Length != types.UnspecifiedLength {
-				noMVIndexOrPrefixIndexOrColumnarIndex = false
+				canUseFastCheck = false
 				break
 			}
 		}
-		if !noMVIndexOrPrefixIndexOrColumnarIndex {
+		if !canUseFastCheck {
 			break
 		}
 	}
-	if b.ctx.GetSessionVars().FastCheckTable && noMVIndexOrPrefixIndexOrColumnarIndex {
+	if b.ctx.GetSessionVars().FastCheckTable && canUseFastCheck {
 		e := &FastCheckTableExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			dbName:       v.DBName,
 			table:        v.Table,
 			indexInfos:   v.IndexInfos,
-			err:          &atomic.Pointer[error]{},
+			is:           b.is,
 		}
 		return e
 	}
@@ -768,7 +773,7 @@ func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) exec.Execut
 	return e
 }
 
-func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) exec.Executor {
+func (b *executorBuilder) buildSelectLock(v *physicalop.PhysicalLock) exec.Executor {
 	if !b.inSelectLockStmt {
 		b.inSelectLockStmt = true
 		defer func() { b.inSelectLockStmt = false }()
@@ -879,7 +884,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) exec.Executor {
 	return e
 }
 
-func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
+func (b *executorBuilder) buildShow(v *physicalop.PhysicalShow) exec.Executor {
 	e := &ShowExec{
 		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		Tp:                    v.Tp,
@@ -901,7 +906,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
 		DistributionJobID:     v.DistributionJobID,
-		SQLOrDigest:           v.SQLOrDigest,
+		ImportGroupKey:        v.ImportGroupKey,
 	}
 	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {
 		// show master status need start ts.
@@ -996,7 +1001,7 @@ func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) exec.Executor
 	}
 }
 
-func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
+func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 	b.inInsertStmt = true
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
@@ -1421,7 +1426,7 @@ func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) exec.Execut
 	}
 }
 
-func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) exec.Executor {
+func (b *executorBuilder) buildUnionScanExec(v *physicalop.PhysicalUnionScan) exec.Executor {
 	oriEncounterUnionScan := b.encounterUnionScan
 	b.encounterUnionScan = true
 	defer func() {
@@ -1435,10 +1440,27 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) e
 	return b.buildUnionScanFromReader(reader, v)
 }
 
+func collectColIdxFromByItems(byItems []*plannerutil.ByItems, cols []*model.ColumnInfo) ([]int, error) {
+	var colIdxs []int
+	for _, item := range byItems {
+		col, ok := item.Expr.(*expression.Column)
+		if !ok {
+			return nil, errors.Errorf("Not support non-column in orderBy pushed down")
+		}
+		for i, c := range cols {
+			if c.ID == col.ID {
+				colIdxs = append(colIdxs, i)
+				break
+			}
+		}
+	}
+	return colIdxs, nil
+}
+
 // buildUnionScanFromReader builds union scan executor from child executor.
 // Note that this function may be called by inner workers of index lookup join concurrently.
 // Be careful to avoid data race.
-func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plannercore.PhysicalUnionScan) exec.Executor {
+func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *physicalop.PhysicalUnionScan) exec.Executor {
 	// If reader is union, it means a partition table and we should transfer as above.
 	if x, ok := reader.(*unionexec.UnionExec); ok {
 		for i, child := range x.AllChildren() {
@@ -1476,7 +1498,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 	case *MPPGather:
 		us.desc = false
 		us.keepOrder = false
-		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
+		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = x.virtualColumnIndex
@@ -1484,7 +1506,16 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
-		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
+		colIdxes, err := collectColIdxFromByItems(x.byItems, x.columns)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		us.usedIndex = colIdxes
+		if len(us.usedIndex) > 0 {
+			us.needExtraSorting = true
+		}
+		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = x.virtualColumnIndex
@@ -1492,15 +1523,25 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
-		for _, ic := range x.index.Columns {
-			for i, col := range x.columns {
-				if col.Name.L == ic.Name.L {
-					us.usedIndex = append(us.usedIndex, i)
-					break
+		colIdxes, err := collectColIdxFromByItems(x.byItems, x.columns)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		us.usedIndex = colIdxes
+		if len(us.usedIndex) > 0 {
+			us.needExtraSorting = true
+		} else {
+			for _, ic := range x.index.Columns {
+				for i, col := range x.columns {
+					if col.Name.L == ic.Name.L {
+						us.usedIndex = append(us.usedIndex, i)
+						break
+					}
 				}
 			}
 		}
-		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
+		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.partitionIDMap = x.partitionIDMap
 		us.table = x.table
@@ -1508,15 +1549,25 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
-		for _, ic := range x.index.Columns {
-			for i, col := range x.columns {
-				if col.Name.L == ic.Name.L {
-					us.usedIndex = append(us.usedIndex, i)
-					break
+		colIdxes, err := collectColIdxFromByItems(x.byItems, x.columns)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		us.usedIndex = colIdxes
+		if len(us.usedIndex) > 0 {
+			us.needExtraSorting = true
+		} else {
+			for _, ic := range x.index.Columns {
+				for i, col := range x.columns {
+					if col.Name.L == ic.Name.L {
+						us.usedIndex = append(us.usedIndex, i)
+						break
+					}
 				}
 			}
 		}
-		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
+		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
 		us.partitionIDMap = x.partitionIDMap
@@ -1526,28 +1577,25 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		if len(x.byItems) != 0 {
 			us.keepOrder = x.keepOrder
 			us.desc = x.byItems[0].Desc
-			for _, item := range x.byItems {
-				c, ok := item.Expr.(*expression.Column)
-				if !ok {
-					b.err = errors.Errorf("Not support non-column in orderBy pushed down")
-					return nil
-				}
-				for i, col := range x.columns {
-					if col.ID == c.ID {
-						us.usedIndex = append(us.usedIndex, i)
-						break
-					}
-				}
+			colIdxes, err := collectColIdxFromByItems(x.byItems, x.columns)
+			if err != nil {
+				b.err = err
+				return nil
 			}
+			us.usedIndex = colIdxes
+			us.needExtraSorting = true
 		}
 		us.partitionIDMap = x.partitionIDMap
-		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
+		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
-	case *PointGetExecutor, *BatchPointGetExec, // PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
-		*TableDualExec,       // If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
-		*TableSampleExecutor: // TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
+	case *PointGetExecutor, *BatchPointGetExec,
+		// PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
+		// If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
+		// TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
+		*TableDualExec,
+		*TableSampleExecutor:
 		return originReader
 	default:
 		// TODO: consider more operators like Projection.
@@ -1583,7 +1631,7 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 }
 
 // buildMergeJoin builds MergeJoinExec executor.
-func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.Executor {
+func (b *executorBuilder) buildMergeJoin(v *physicalop.PhysicalMergeJoin) exec.Executor {
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -1596,7 +1644,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.
 
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
-		if v.JoinType == logicalop.RightOuterJoin {
+		if v.JoinType == base.RightOuterJoin {
 			defaultValues = make([]types.Datum, leftExec.Schema().Len())
 		} else {
 			defaultValues = make([]types.Datum, rightExec.Schema().Len())
@@ -1604,7 +1652,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.
 	}
 
 	colsFromChildren := v.Schema().Columns
-	if v.JoinType == logicalop.LeftOuterSemiJoin || v.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
 	}
 
@@ -1615,7 +1663,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.
 		Joiner: join.NewJoiner(
 			b.ctx,
 			v.JoinType,
-			v.JoinType == logicalop.RightOuterJoin,
+			v.JoinType == base.RightOuterJoin,
 			defaultValues,
 			v.OtherConditions,
 			exec.RetTypes(leftExec),
@@ -1638,7 +1686,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.
 		Filters:    v.RightConditions,
 	}
 
-	if v.JoinType == logicalop.RightOuterJoin {
+	if v.JoinType == base.RightOuterJoin {
 		e.InnerTable = leftTable
 		e.OuterTable = rightTable
 	} else {
@@ -1690,7 +1738,7 @@ func extractUsedColumnsInJoinOtherCondition(expr expression.CNFExprs, leftColumn
 	return leftColumnIndex, rightColumnIndex
 }
 
-func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.Executor {
+func (b *executorBuilder) buildHashJoinV2(v *physicalop.PhysicalHashJoin) exec.Executor {
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -1703,7 +1751,7 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 	return b.buildHashJoinV2FromChildExecs(leftExec, rightExec, v)
 }
 
-func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec.Executor, v *plannercore.PhysicalHashJoin) *join.HashJoinV2Exec {
+func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec.Executor, v *physicalop.PhysicalHashJoin) *join.HashJoinV2Exec {
 	joinOtherCondition := v.OtherConditions
 	joinLeftCondition := v.LeftConditions
 	joinRightCondition := v.RightConditions
@@ -1727,7 +1775,7 @@ func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec
 		HashJoinCtxV2: &join.HashJoinCtxV2{
 			OtherCondition: joinOtherCondition,
 		},
-		IsGA: plannercore.IsGAForHashJoinV2(v.JoinType, v.LeftJoinKeys, v.IsNullEQ, v.LeftNAJoinKeys),
+		IsGA: physicalop.IsGAForHashJoinV2(v.JoinType, v.LeftJoinKeys, v.IsNullEQ, v.LeftNAJoinKeys),
 	}
 	e.HashJoinCtxV2.SessCtx = b.ctx
 	e.HashJoinCtxV2.JoinType = v.JoinType
@@ -1791,7 +1839,7 @@ func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec
 	}
 
 	colsFromChildren := v.Schema().Columns
-	if v.JoinType == logicalop.LeftOuterSemiJoin || v.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
 		// the matched column is added inside join
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
 	}
@@ -1865,7 +1913,7 @@ func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec
 	return e
 }
 
-func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Executor {
+func (b *executorBuilder) buildHashJoin(v *physicalop.PhysicalHashJoin) exec.Executor {
 	if b.ctx.GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && v.CanUseHashJoinV2() {
 		return b.buildHashJoinV2(v)
 	}
@@ -1881,7 +1929,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Ex
 	return b.buildHashJoinFromChildExecs(leftExec, rightExec, v)
 }
 
-func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.Executor, v *plannercore.PhysicalHashJoin) *join.HashJoinV1Exec {
+func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.Executor, v *physicalop.PhysicalHashJoin) *join.HashJoinV1Exec {
 	e := &join.HashJoinV1Exec{
 		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
 		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV1{},
@@ -1963,7 +2011,7 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 	}
 	isNAJoin := len(v.LeftNAJoinKeys) > 0
 	colsFromChildren := v.Schema().Columns
-	if v.JoinType == logicalop.LeftOuterSemiJoin || v.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
 	}
 	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
@@ -2030,7 +2078,7 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 	return e
 }
 
-func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) exec.Executor {
+func (b *executorBuilder) buildHashAgg(v *physicalop.PhysicalHashAgg) exec.Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2038,7 +2086,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) exec.Exec
 	return b.buildHashAggFromChildExec(src, v)
 }
 
-func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *plannercore.PhysicalHashAgg) *aggregate.HashAggExec {
+func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *physicalop.PhysicalHashAgg) *aggregate.HashAggExec {
 	sessionVars := b.ctx.GetSessionVars()
 	e := &aggregate.HashAggExec{
 		BaseExecutor:    exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
@@ -2115,7 +2163,7 @@ func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *
 	return e
 }
 
-func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) exec.Executor {
+func (b *executorBuilder) buildStreamAgg(v *physicalop.PhysicalStreamAgg) exec.Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2123,7 +2171,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) exec.
 	return b.buildStreamAggFromChildExec(src, v)
 }
 
-func (b *executorBuilder) buildStreamAggFromChildExec(childExec exec.Executor, v *plannercore.PhysicalStreamAgg) *aggregate.StreamAggExec {
+func (b *executorBuilder) buildStreamAggFromChildExec(childExec exec.Executor, v *physicalop.PhysicalStreamAgg) *aggregate.StreamAggExec {
 	exprCtx := b.ctx.GetExprCtx()
 	e := &aggregate.StreamAggExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
@@ -2152,7 +2200,7 @@ func (b *executorBuilder) buildStreamAggFromChildExec(childExec exec.Executor, v
 	return e
 }
 
-func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) exec.Executor {
+func (b *executorBuilder) buildSelection(v *physicalop.PhysicalSelection) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2165,7 +2213,7 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) exec.
 	return e
 }
 
-func (b *executorBuilder) buildExpand(v *plannercore.PhysicalExpand) exec.Executor {
+func (b *executorBuilder) buildExpand(v *physicalop.PhysicalExpand) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2200,7 +2248,7 @@ func (b *executorBuilder) buildExpand(v *plannercore.PhysicalExpand) exec.Execut
 	return e
 }
 
-func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) exec.Executor {
+func (b *executorBuilder) buildProjection(v *physicalop.PhysicalProjection) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2228,7 +2276,7 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) exe
 	return e
 }
 
-func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) exec.Executor {
+func (b *executorBuilder) buildTableDual(v *physicalop.PhysicalTableDual) exec.Executor {
 	if v.RowCount != 0 && v.RowCount != 1 {
 		b.err = errors.Errorf("buildTableDual failed, invalid row count for dual table: %v", v.RowCount)
 		return nil
@@ -2303,7 +2351,7 @@ func InitSnapshotWithSessCtx(snapshot kv.Snapshot, ctx sessionctx.Context, txnRe
 	}
 }
 
-func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Executor {
+func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Executor {
 	switch v.DBName.L {
 	case metadef.MetricSchemaName.L:
 		return &MemTableReaderExec{
@@ -2608,7 +2656,7 @@ func (b *executorBuilder) buildSort(v *physicalop.PhysicalSort) exec.Executor {
 	return &sortExec
 }
 
-func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
+func (b *executorBuilder) buildTopN(v *physicalop.PhysicalTopN) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2642,7 +2690,7 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
 	return t
 }
 
-func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor {
+func (b *executorBuilder) buildApply(v *physicalop.PhysicalApply) exec.Executor {
 	var (
 		innerPlan base.PhysicalPlan
 		outerPlan base.PhysicalPlan
@@ -2687,7 +2735,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor
 			OuterExec:    outerExec,
 			OuterFilter:  outerFilter,
 			InnerFilter:  innerFilter,
-			Outer:        v.JoinType != logicalop.InnerJoin,
+			Outer:        v.JoinType != base.InnerJoin,
 			Joiner:       tupleJoiner,
 			OuterSchema:  v.OuterSchema,
 			Sctx:         b.ctx,
@@ -2704,7 +2752,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor
 		corCols := make([][]*expression.CorrelatedColumn, 0, v.Concurrency)
 		joiners := make([]join.Joiner, 0, v.Concurrency)
 		for range v.Concurrency {
-			clonedInnerPlan, err := plannercore.SafeClone(v.SCtx(), innerPlan)
+			clonedInnerPlan, err := physicalop.SafeClone(v.SCtx(), innerPlan)
 			if err != nil {
 				b.err = nil
 				return constructSerialExec()
@@ -2730,7 +2778,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor
 			outerExec:    outerExec,
 			outerFilter:  outerFilter,
 			innerFilter:  innerFilters,
-			outer:        v.JoinType != logicalop.InnerJoin,
+			outer:        v.JoinType != base.InnerJoin,
 			joiners:      joiners,
 			corCols:      corCols,
 			concurrency:  v.Concurrency,
@@ -2740,7 +2788,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor
 	return constructSerialExec()
 }
 
-func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) exec.Executor {
+func (b *executorBuilder) buildMaxOneRow(v *physicalop.PhysicalMaxOneRow) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2840,7 +2888,7 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) exec.Exec
 	}
 }
 
-func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
+func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 	b.inUpdateStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
@@ -2904,7 +2952,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 	return updateExec
 }
 
-func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int) ([]int, error) {
+func getAssignFlag(ctx sessionctx.Context, v *physicalop.Update, schemaLen int) ([]int, error) {
 	assignFlag := make([]int, schemaLen)
 	for i := range assignFlag {
 		assignFlag[i] = -1
@@ -2922,7 +2970,7 @@ func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int)
 	return assignFlag, nil
 }
 
-func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
+func (b *executorBuilder) buildDelete(v *physicalop.Delete) exec.Executor {
 	b.inDeleteStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
@@ -3156,9 +3204,9 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 	var statsTbl *statistics.Table
 	tid := task.TableID.GetStatisticsID()
 	if tid == task.TblInfo.ID {
-		statsTbl = statsHandle.GetTableStats(task.TblInfo)
+		statsTbl = statsHandle.GetPhysicalTableStats(task.TblInfo.ID, task.TblInfo)
 	} else {
-		statsTbl = statsHandle.GetPartitionStats(task.TblInfo, tid)
+		statsTbl = statsHandle.GetPhysicalTableStats(tid, task.TblInfo)
 	}
 	approxiCount, hasPD := b.getApproximateTableCountFromStorage(tid, task)
 	// If there's no stats meta and no pd, return the default rate.
@@ -3409,25 +3457,25 @@ func markChildrenUsedCols(outputCols []*expression.Column, childSchemas ...*expr
 func (*executorBuilder) corColInDistPlan(plans []base.PhysicalPlan) bool {
 	for _, p := range plans {
 		switch x := p.(type) {
-		case *plannercore.PhysicalSelection:
+		case *physicalop.PhysicalSelection:
 			for _, cond := range x.Conditions {
 				if len(expression.ExtractCorColumns(cond)) > 0 {
 					return true
 				}
 			}
-		case *plannercore.PhysicalProjection:
+		case *physicalop.PhysicalProjection:
 			for _, expr := range x.Exprs {
 				if len(expression.ExtractCorColumns(expr)) > 0 {
 					return true
 				}
 			}
-		case *plannercore.PhysicalTopN:
+		case *physicalop.PhysicalTopN:
 			for _, byItem := range x.ByItems {
 				if len(expression.ExtractCorColumns(byItem.Expr)) > 0 {
 					return true
 				}
 			}
-		case *plannercore.PhysicalTableScan:
+		case *physicalop.PhysicalTableScan:
 			for _, cond := range x.LateMaterializationFilterCondition {
 				if len(expression.ExtractCorColumns(cond)) > 0 {
 					return true
@@ -3442,9 +3490,9 @@ func (*executorBuilder) corColInDistPlan(plans []base.PhysicalPlan) bool {
 func (*executorBuilder) corColInAccess(p base.PhysicalPlan) bool {
 	var access []expression.Expression
 	switch x := p.(type) {
-	case *plannercore.PhysicalTableScan:
+	case *physicalop.PhysicalTableScan:
 		access = x.AccessCondition
-	case *plannercore.PhysicalIndexScan:
+	case *physicalop.PhysicalIndexScan:
 		access = x.AccessCondition
 	}
 	for _, cond := range access {
@@ -3471,7 +3519,7 @@ func (b *executorBuilder) newDataReaderBuilder(p base.PhysicalPlan) (*dataReader
 	}, nil
 }
 
-func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin) exec.Executor {
+func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) exec.Executor {
 	outerExec := b.build(v.Children()[1-v.InnerChildIdx])
 	if b.err != nil {
 		return nil
@@ -3571,7 +3619,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		Finished:      &atomic.Value{},
 	}
 	colsFromChildren := v.Schema().Columns
-	if v.JoinType == logicalop.LeftOuterSemiJoin || v.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
 	}
 	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
@@ -3611,7 +3659,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	return e
 }
 
-func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndexMergeJoin) exec.Executor {
+func (b *executorBuilder) buildIndexLookUpMergeJoin(v *physicalop.PhysicalIndexMergeJoin) exec.Executor {
 	outerExec := b.build(v.Children()[1-v.InnerChildIdx])
 	if b.err != nil {
 		return nil
@@ -3697,7 +3745,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		LastColHelper: v.CompareFilters,
 	}
 	colsFromChildren := v.Schema().Columns
-	if v.JoinType == logicalop.LeftOuterSemiJoin || v.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
 	}
 	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
@@ -3709,7 +3757,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	return e
 }
 
-func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIndexHashJoin) exec.Executor {
+func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *physicalop.PhysicalIndexHashJoin) exec.Executor {
 	joinExec := b.buildIndexLookUpJoin(&(v.PhysicalIndexJoin))
 	if b.err != nil {
 		return nil
@@ -3727,7 +3775,7 @@ func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIn
 	return idxHash
 }
 
-func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
+func buildNoRangeTableReader(b *executorBuilder, v *physicalop.PhysicalTableReader) (*TableReaderExecutor, error) {
 	tablePlans := v.TablePlans
 	if v.StoreType == kv.TiFlash {
 		tablePlans = []base.PhysicalPlan{v.GetTablePlan()}
@@ -3777,7 +3825,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:                      v.TablePlans,
 		tablePlan:                  v.GetTablePlan(),
 		storeType:                  v.StoreType,
-		batchCop:                   v.ReadReqType == plannercore.BatchCop,
+		batchCop:                   v.ReadReqType == physicalop.BatchCop,
 	}
 	e.buildVirtualColumnInfo()
 
@@ -3800,7 +3848,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	return e, nil
 }
 
-func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) exec.Executor {
+func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec.Executor {
 	startTs, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -3869,9 +3917,24 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) exe
 	return gather
 }
 
+// assertByItemsAreColumns asserts that all expressions in ByItems are Column types.
+// This function is used to validate PhysicalIndexScan and PhysicalTableScan ByItems.
+func assertByItemsAreColumns(byItems []*plannerutil.ByItems) {
+	intest.AssertFunc(func() bool {
+		for _, byItem := range byItems {
+			_, ok := byItem.Expr.(*expression.Column)
+			if !ok {
+				return false
+			}
+		}
+		return true
+	},
+		"The executor only supports Column type in ByItems")
+}
+
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
-func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) exec.Executor {
+func (b *executorBuilder) buildTableReader(v *physicalop.PhysicalTableReader) exec.Executor {
 	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
 		if !b.ctx.GetSessionVars().InRestrictedSQL && val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {
@@ -3886,8 +3949,17 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	if len(v.Schema().Columns) == 0 && len(v.GetTablePlan().Schema().Columns) > 0 {
 		v.SetSchema(v.GetTablePlan().Schema())
 	}
+
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	switch v.StoreType {
+	case kv.TiKV:
+		sctx.IsTiKV.Store(true)
+	case kv.TiFlash:
+		sctx.IsTiFlash.Store(true)
+	}
+
 	useMPP := useMPPExecution(b.ctx, v)
-	useTiFlashBatchCop := v.ReadReqType == plannercore.BatchCop
+	useTiFlashBatchCop := v.ReadReqType == physicalop.BatchCop
 	useTiFlash := useMPP || useTiFlashBatchCop
 	if useTiFlash {
 		if _, isTiDBZoneLabelSet := config.GetGlobalConfig().Labels[placement.DCLabelKey]; b.ctx.GetSessionVars().TiFlashReplicaRead != tiflash.AllReplicas && !isTiDBZoneLabelSet {
@@ -3902,6 +3974,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 		b.err = err
 		return nil
 	}
+	assertByItemsAreColumns(ts.ByItems)
 	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
 		b.err = err
@@ -3913,7 +3986,8 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	}
 
 	ret.ranges = ts.Ranges
-	sctx := b.ctx.GetSessionVars().StmtCtx
+	ret.groupedRanges = ts.GroupedRanges
+	ret.groupByColIdxs = ts.GroupByColIdxs
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -3936,9 +4010,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 		b.err = err
 		return nil
 	}
-	if v.StoreType == kv.TiFlash {
-		sctx.IsTiFlash.Store(true)
-	}
 
 	if len(partitions) == 0 {
 		return &TableDualExec{BaseExecutorV2: ret.BaseExecutorV2}
@@ -3956,7 +4027,8 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 }
 
 func buildIndexRangeForEachPartition(rctx *rangerctx.RangerContext, usedPartitions []table.PhysicalTable, contentPos []int64,
-	lookUpContent []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (map[int64][]*ranger.Range, error) {
+	lookUpContent []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager,
+) (map[int64][]*ranger.Range, error) {
 	contentBucket := make(map[int64][]*join.IndexJoinLookUpContent)
 	for _, p := range usedPartitions {
 		contentBucket[p.GetPhysicalID()] = make([]*join.IndexJoinLookUpContent, 0, 8)
@@ -4016,7 +4088,7 @@ func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []i
 	return keyColOffsets
 }
 
-func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, physPlanPartInfo *plannercore.PhysPlanPartInfo,
+func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, physPlanPartInfo *physicalop.PhysPlanPartInfo,
 	lookUpContent []*join.IndexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
 	partitionTbl := tbl.(table.PartitionedTable)
 
@@ -4075,14 +4147,14 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 	return usedPartition, true, contentPos, nil
 }
 
-func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexReader) (*IndexReaderExecutor, error) {
+func buildNoRangeIndexReader(b *executorBuilder, v *physicalop.PhysicalIndexReader) (*IndexReaderExecutor, error) {
 	dagReq, err := builder.ConstructDAGReq(b.ctx, v.IndexPlans, kv.TiKV)
 	if err != nil {
 		return nil, err
 	}
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	tbl, _ := b.is.TableByID(context.Background(), is.Table.ID)
-	isPartition, physicalTableID := is.IsPartition()
+	isPartition, physicalTableID := is.IsPartitionTable()
 	if isPartition {
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
@@ -4094,6 +4166,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		return nil, err
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
+
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	e := &IndexReaderExecutor{
 		indexReaderExecutorContext: newIndexReaderExecutorContext(b.ctx),
@@ -4119,6 +4193,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		colLens:                    is.IdxColLens,
 		plans:                      v.IndexPlans,
 		outputColumns:              v.OutputColumns,
+		groupedRanges:              is.GroupedRanges,
 	}
 
 	for _, col := range v.OutputColumns {
@@ -4132,8 +4207,9 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	return e, nil
 }
 
-func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) exec.Executor {
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+func (b *executorBuilder) buildIndexReader(v *physicalop.PhysicalIndexReader) exec.Executor {
+	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
+	assertByItemsAreColumns(is.ByItems)
 	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
 		return nil
@@ -4153,7 +4229,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 		return ret
 	}
 	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
-	if ok, _ := is.IsPartition(); ok {
+	if ok, _ := is.IsPartitionTable(); ok {
 		return ret
 	}
 
@@ -4190,7 +4266,7 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan)
 	for i := range schemaLen {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
-	ts := plans[0].(*plannercore.PhysicalTableScan)
+	ts := plans[0].(*physicalop.PhysicalTableScan)
 	tbl, _ := b.is.TableByID(context.Background(), ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
 	if isPartition {
@@ -4200,20 +4276,77 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan)
 	return tableReq, tbl, err
 }
 
+func buildIndexLookUpPushDownDAGReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan, planUnNatureOrders map[int]int) (dagReq *tipb.DAGRequest, err error) {
+	indexReq, err := builder.ConstructDAGReqForUnNatureOrderPlans(ctx, plans, planUnNatureOrders, kv.TiKV)
+	if err != nil {
+		return nil, err
+	}
+
+	idxScan := plans[0].(*physicalop.PhysicalIndexScan)
+	intermediateOutputOffsets, err := buildIndexScanOutputOffsets(idxScan, columns, handleLen)
+	if err != nil {
+		return nil, err
+	}
+
+	var intermediateOutputIndex uint32
+	found := false
+	for i, e := range indexReq.Executors {
+		if e.Tp == tipb.ExecType_TypeIndexLookUp {
+			intermediateOutputIndex = uint32(i)
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return nil, errors.New("IndexLookUp executor not found")
+	}
+
+	indexReq.IntermediateOutputChannels = []*tipb.IntermediateOutputChannel{
+		{
+			ExecutorIdx:   intermediateOutputIndex,
+			OutputOffsets: intermediateOutputOffsets,
+		},
+	}
+
+	outputOffsetsLen := plans[len(plans)-1].Schema().Len()
+	indexReq.OutputOffsets = make([]uint32, outputOffsetsLen)
+	for i := range outputOffsetsLen {
+		indexReq.OutputOffsets[i] = uint32(i)
+	}
+	return indexReq, nil
+}
+
 // buildIndexReq is designed to create a DAG for index request.
-// If len(ByItems) != 0 means index request should return related columns
-// to sort result rows in TiDB side for partition tables.
 func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	indexReq, err := builder.ConstructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, err
 	}
 
-	indexReq.OutputOffsets = []uint32{}
-	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
-	if len(idxScan.ByItems) != 0 {
-		schema := idxScan.Schema()
-		for _, item := range idxScan.ByItems {
+	idxScan := plans[0].(*physicalop.PhysicalIndexScan)
+	outputOffsets, err := buildIndexScanOutputOffsets(idxScan, columns, handleLen)
+	if err != nil {
+		return nil, err
+	}
+	indexReq.OutputOffsets = outputOffsets
+	return indexReq, nil
+}
+
+// buildIndexReqOutputOffsets builds the output offsets for indexScan rows
+// If len(ByItems) != 0 means index request should return related columns
+// to sort result rows in TiDB side for partition tables.
+func buildIndexScanOutputOffsets(p *physicalop.PhysicalIndexScan, columns []*model.IndexColumn, handleLen int) ([]uint32, error) {
+	estCap := len(p.ByItems) + handleLen
+	needExtraOutputCol := p.NeedExtraOutputCol()
+	if needExtraOutputCol {
+		estCap++
+	}
+
+	outputOffsets := make([]uint32, 0, estCap)
+	if len(p.ByItems) != 0 {
+		schema := p.Schema()
+		for _, item := range p.ByItems {
 			c, ok := item.Expr.(*expression.Column)
 			if !ok {
 				return nil, errors.Errorf("Not support non-column in orderBy pushed down")
@@ -4221,7 +4354,7 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 			find := false
 			for i, schemaColumn := range schema.Columns {
 				if schemaColumn.ID == c.ID {
-					indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
+					outputOffsets = append(outputOffsets, uint32(i))
 					find = true
 					break
 				}
@@ -4233,25 +4366,32 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 	}
 
 	for i := range handleLen {
-		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
+		outputOffsets = append(outputOffsets, uint32(len(columns)+i))
 	}
 
-	if idxScan.NeedExtraOutputCol() {
+	if needExtraOutputCol {
 		// need add one more column for pid or physical table id
-		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+handleLen))
+		outputOffsets = append(outputOffsets, uint32(len(columns)+handleLen))
 	}
-	return indexReq, err
+	return outputOffsets, nil
 }
 
-func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
+	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	var handleLen int
 	if len(v.CommonHandleCols) != 0 {
 		handleLen = len(v.CommonHandleCols)
 	} else {
 		handleLen = 1
 	}
-	indexReq, err := buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
+
+	var indexReq *tipb.DAGRequest
+	var err error
+	if v.IndexLookUpPushDown {
+		indexReq, err = buildIndexLookUpPushDownDAGReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans, v.IndexPlansUnNatureOrders)
+	} else {
+		indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -4263,7 +4403,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if err != nil {
 		return nil, err
 	}
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	ts := v.TablePlans[0].(*physicalop.PhysicalTableScan)
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		return nil, err
@@ -4273,6 +4413,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if err != nil {
 		return nil, err
 	}
+
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	e := &IndexLookUpExecutor{
 		indexLookUpExecutorContext: newIndexLookUpExecutorContext(b.ctx),
@@ -4299,6 +4441,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		PushedLimit:                v.PushedLimit,
 		idxNetDataSize:             v.GetAvgTableRowSize(),
 		avgRowSize:                 v.GetAvgTableRowSize(),
+		groupedRanges:              is.GroupedRanges,
+		indexLookUpPushDown:        v.IndexLookUpPushDown,
 	}
 
 	if v.ExtraHandleCol != nil {
@@ -4318,11 +4462,12 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	return e, nil
 }
 
-func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) exec.Executor {
+func (b *executorBuilder) buildIndexLookUpReader(v *physicalop.PhysicalIndexLookUpReader) exec.Executor {
 	if b.Ti != nil {
 		b.Ti.UseTableLookUp.Store(true)
 	}
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
+	assertByItemsAreColumns(is.ByItems)
 	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
 		return nil
@@ -4334,7 +4479,8 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		return nil
 	}
 
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	ts := v.TablePlans[0].(*physicalop.PhysicalTableScan)
+	assertByItemsAreColumns(ts.ByItems)
 
 	ret.ranges = is.Ranges
 	executor_metrics.ExecutorCounterIndexLookUpExecutor.Inc()
@@ -4360,7 +4506,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 
 		return ret
 	}
-	if ok, _ := is.IsPartition(); ok {
+	if ok, _ := is.IsPartitionTable(); ok {
 		// Already pruned when translated to logical union.
 		return ret
 	}
@@ -4377,13 +4523,13 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	return ret
 }
 
-func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalIndexMergeReader) (*IndexMergeReaderExecutor, error) {
+func buildNoRangeIndexMergeReader(b *executorBuilder, v *physicalop.PhysicalIndexMergeReader) (*IndexMergeReaderExecutor, error) {
 	partialPlanCount := len(v.PartialPlans)
 	partialReqs := make([]*tipb.DAGRequest, 0, partialPlanCount)
 	partialDataSizes := make([]float64, 0, partialPlanCount)
 	indexes := make([]*model.IndexInfo, 0, partialPlanCount)
 	descs := make([]bool, 0, partialPlanCount)
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	ts := v.TablePlans[0].(*physicalop.PhysicalTableScan)
 	isCorColInPartialFilters := make([]bool, 0, partialPlanCount)
 	isCorColInPartialAccess := make([]bool, 0, partialPlanCount)
 	hasGlobalIndex := false
@@ -4391,7 +4537,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		var tempReq *tipb.DAGRequest
 		var err error
 
-		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
+		if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok {
 			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
@@ -4399,7 +4545,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 				hasGlobalIndex = true
 			}
 		} else {
-			ts := v.PartialPlans[i][0].(*plannercore.PhysicalTableScan)
+			ts := v.PartialPlans[i][0].(*physicalop.PhysicalTableScan)
 			tempReq, _, err = buildTableReq(b, len(ts.Columns), v.PartialPlans[i])
 			descs = append(descs, ts.Desc)
 			indexes = append(indexes, nil)
@@ -4428,6 +4574,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	if err != nil {
 		return nil, err
 	}
+
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	e := &IndexMergeReaderExecutor{
 		BaseExecutor:             exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -4486,12 +4634,13 @@ func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader, load
 	return buildIndexUsageReporter(b.ctx, plan, loadStats)
 }
 
-func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) exec.Executor {
+func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMergeReader) exec.Executor {
 	if b.Ti != nil {
 		b.Ti.UseIndexMerge = true
 		b.Ti.UseTableLookUp.Store(true)
 	}
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	ts := v.TablePlans[0].(*physicalop.PhysicalTableScan)
+	assertByItemsAreColumns(ts.ByItems)
 	if err := b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil
@@ -4506,14 +4655,17 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	hasGlobalIndex := false
 	for i := range v.PartialPlans {
-		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
+		if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok {
+			assertByItemsAreColumns(is.ByItems)
 			ret.ranges = append(ret.ranges, is.Ranges)
 			sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 			if is.Index.Global {
 				hasGlobalIndex = true
 			}
 		} else {
-			ret.ranges = append(ret.ranges, v.PartialPlans[i][0].(*plannercore.PhysicalTableScan).Ranges)
+			partialTS := v.PartialPlans[i][0].(*physicalop.PhysicalTableScan)
+			assertByItemsAreColumns(partialTS.ByItems)
+			ret.ranges = append(ret.ranges, partialTS.Ranges)
 			if ret.table.Meta().IsCommonHandle {
 				tblInfo := ret.table.Meta()
 				sctx.IndexNames = append(sctx.IndexNames, tblInfo.Name.O+":"+tables.FindPrimaryIndex(tblInfo).Name.O)
@@ -4576,26 +4728,28 @@ func (*mockPhysicalIndexReader) MemoryUsage() (sum int64) {
 }
 
 func (builder *dataReaderBuilder) BuildExecutorForIndexJoin(ctx context.Context, lookUpContents []*join.IndexJoinLookUpContent,
-	indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
+	indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value,
+) (exec.Executor, error) {
 	return builder.buildExecutorForIndexJoinInternal(ctx, builder.plan, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.Context, plan base.Plan, lookUpContents []*join.IndexJoinLookUpContent,
-	indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
+	indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value,
+) (exec.Executor, error) {
 	switch v := plan.(type) {
-	case *plannercore.PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
-	case *plannercore.PhysicalIndexReader:
+	case *physicalop.PhysicalIndexReader:
 		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
-	case *plannercore.PhysicalIndexLookUpReader:
+	case *physicalop.PhysicalIndexLookUpReader:
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
-	case *plannercore.PhysicalUnionScan:
+	case *physicalop.PhysicalUnionScan:
 		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
-	case *plannercore.PhysicalProjection:
+	case *physicalop.PhysicalProjection:
 		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
-	case *plannercore.PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
@@ -4607,7 +4761,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		}
 		err = exec.open(ctx)
 		return exec, err
-	case *plannercore.PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
@@ -4615,7 +4769,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		exec := builder.buildHashAggFromChildExec(childExec, v)
 		err = exec.OpenSelf()
 		return exec, err
-	case *plannercore.PhysicalStreamAgg:
+	case *physicalop.PhysicalStreamAgg:
 		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
@@ -4623,7 +4777,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		exec := builder.buildStreamAggFromChildExec(childExec, v)
 		err = exec.OpenSelf()
 		return exec, err
-	case *plannercore.PhysicalHashJoin:
+	case *physicalop.PhysicalHashJoin:
 		// since merge join is rarely used now, we can only support hash join now.
 		// we separate the child build flow out because we want to pass down the runtime constant --- lookupContents.
 		// todo: support hash join in index join inner side.
@@ -4634,9 +4788,10 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }
 
-func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *plannercore.PhysicalUnionScan,
+func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *physicalop.PhysicalUnionScan,
 	values []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
-	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
+	cwc *physicalop.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value,
+) (exec.Executor, error) {
 	childBuilder, err := builder.newDataReaderBuilder(v.Children()[0])
 	if err != nil {
 		return nil, err
@@ -4657,9 +4812,10 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	return ret, err
 }
 
-func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader,
+func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *physicalop.PhysicalTableReader,
 	lookUpContents []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
-	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
+	cwc *physicalop.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value,
+) (exec.Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
 	if !canReorderHandles {
 		// `canReorderHandles` is set to false only in IndexMergeJoin. IndexMergeJoin will trigger a dead loop problem
@@ -4923,8 +5079,9 @@ func (builder *dataReaderBuilder) buildTableReaderFromKvRanges(ctx context.Conte
 	return builder.buildTableReaderBase(ctx, e, b)
 }
 
-func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexReader,
-	lookUpContents []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memoryTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
+func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *physicalop.PhysicalIndexReader,
+	lookUpContents []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, memoryTracker *memory.Tracker, interruptSignal *atomic.Value,
+) (exec.Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, err
@@ -4939,7 +5096,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return e, err
 	}
 
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	if is.Index.Global {
 		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
@@ -4984,8 +5141,9 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	return ret, err
 }
 
-func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexLookUpReader,
-	lookUpContents []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
+func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *physicalop.PhysicalIndexLookUpReader,
+	lookUpContents []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value,
+) (exec.Executor, error) {
 	if builder.Ti != nil {
 		builder.Ti.UseTableLookUp.Store(true)
 	}
@@ -4996,15 +5154,19 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 
 	tbInfo := e.table.Meta()
 	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		e.kvRanges, err = buildKvRangesForIndexJoin(e.dctx, e.rctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
+		kvRange, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
 		}
+		e.groupedKVRanges = []*kvRangesWithPhysicalTblID{{
+			PhysicalTableID: getPhysicalTableID(e.table),
+			KeyRanges:       kvRange,
+		}}
 		err = e.open(ctx)
 		return e, err
 	}
 
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	if is.Index.Global {
 		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
@@ -5054,11 +5216,11 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 
 func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	ctx context.Context,
-	v *plannercore.PhysicalProjection,
+	v *physicalop.PhysicalProjection,
 	lookUpContents []*join.IndexJoinLookUpContent,
 	indexRanges []*ranger.Range,
 	keyOff2IdxOff []int,
-	cwc *plannercore.ColWithCmpFuncManager,
+	cwc *physicalop.ColWithCmpFuncManager,
 	canReorderHandles bool,
 	memTracker *memory.Tracker,
 	interruptSignal *atomic.Value,
@@ -5105,7 +5267,8 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 
 // buildRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
 func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*join.IndexJoinLookUpContent,
-	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) ([]*ranger.Range, error) {
+	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager,
+) ([]*ranger.Range, error) {
 	retRanges := make([]*ranger.Range, 0, len(ranges)*len(lookUpContents))
 	lastPos := len(ranges[0].LowVal) - 1
 	tmpDatumRanges := make([]*ranger.Range, 0, len(lookUpContents))
@@ -5148,7 +5311,8 @@ func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*jo
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
 func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.RangerContext, tableID, indexID int64, lookUpContents []*join.IndexJoinLookUpContent,
-	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value) (_ []kv.KeyRange, err error) {
+	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value,
+) (_ []kv.KeyRange, err error) {
 	kvRanges := make([]kv.KeyRange, 0, len(ranges)*len(lookUpContents))
 	if len(ranges) == 0 {
 		return []kv.KeyRange{}, nil
@@ -5221,7 +5385,7 @@ func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.
 	return tmpKeyRanges.FirstPartitionRange(), err
 }
 
-func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Executor {
+func (b *executorBuilder) buildWindow(v *physicalop.PhysicalWindow) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -5337,14 +5501,15 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 
 		processor = tmpProcessor
 	}
-	return &WindowExec{BaseExecutor: base,
+	return &WindowExec{
+		BaseExecutor:   base,
 		processor:      processor,
 		groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx().GetEvalCtx(), b.ctx.GetSessionVars().EnableVectorizedExpression, groupByItems),
 		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }
 
-func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleExec {
+func (b *executorBuilder) buildShuffle(v *physicalop.PhysicalShuffle) *ShuffleExec {
 	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
 	shuffle := &ShuffleExec{
 		BaseExecutor: base,
@@ -5354,11 +5519,11 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	// 1. initialize the splitters
 	splitters := make([]partitionSplitter, len(v.ByItemArrays))
 	switch v.SplitterType {
-	case plannercore.PartitionHashSplitterType:
+	case physicalop.PartitionHashSplitterType:
 		for i, byItems := range v.ByItemArrays {
 			splitters[i] = buildPartitionHashSplitter(shuffle.concurrency, byItems)
 		}
-	case plannercore.PartitionRangeSplitterType:
+	case physicalop.PartitionRangeSplitterType:
 		for i, byItems := range v.ByItemArrays {
 			splitters[i] = buildPartitionRangeSplitter(b.ctx, shuffle.concurrency, byItems)
 		}
@@ -5380,9 +5545,9 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	head := v.Children()[0]
 	// A `PhysicalShuffleReceiverStub` for every worker have the same `DataSource` but different `Receiver`.
 	// We preallocate `PhysicalShuffleReceiverStub`s here and reuse them below.
-	stubs := make([]*plannercore.PhysicalShuffleReceiverStub, 0, len(v.DataSources))
+	stubs := make([]*physicalop.PhysicalShuffleReceiverStub, 0, len(v.DataSources))
 	for _, dataSource := range v.DataSources {
-		stub := plannercore.PhysicalShuffleReceiverStub{
+		stub := physicalop.PhysicalShuffleReceiverStub{
 			DataSource: dataSource,
 		}.Init(b.ctx.GetPlanCtx(), dataSource.StatsInfo(), dataSource.QueryBlockOffset(), nil)
 		stub.SetSchema(dataSource.Schema())
@@ -5418,7 +5583,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	return shuffle
 }
 
-func (*executorBuilder) buildShuffleReceiverStub(v *plannercore.PhysicalShuffleReceiverStub) *shuffleReceiver {
+func (*executorBuilder) buildShuffleReceiverStub(v *physicalop.PhysicalShuffleReceiverStub) *shuffleReceiver {
 	return (*shuffleReceiver)(v.Receiver)
 }
 
@@ -5488,7 +5653,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	return rowcodec.NewChunkDecoder(reqCols, pkCols, defVal, ctx.GetSessionVars().Location())
 }
 
-func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) exec.Executor {
+func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan) exec.Executor {
 	var err error
 	if err = b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
 		b.err = err
@@ -5513,6 +5678,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			numDualRows:    0,
 		}
 	}
+
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
@@ -5627,7 +5794,7 @@ func getPhysicalTableID(t table.Table) int64 {
 	return t.Meta().ID
 }
 
-func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, planPartInfo *plannercore.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
+func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, planPartInfo *physicalop.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
 	builder.once.Do(func() {
 		condPruneResult, err := partitionPruning(builder.executorBuilder.ctx, tbl, planPartInfo)
 		builder.once.condPruneResult = condPruneResult
@@ -5636,7 +5803,7 @@ func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, p
 	return builder.once.condPruneResult, builder.once.err
 }
 
-func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPartInfo *plannercore.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
+func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPartInfo *physicalop.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
 	var pruningConds []expression.Expression
 	var partitionNames []ast.CIStr
 	var columns []*expression.Column
@@ -5647,7 +5814,7 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPa
 		columns = planPartInfo.Columns
 		columnNames = planPartInfo.ColumnNames
 	}
-	idxArr, err := plannercore.PartitionPruning(ctx.GetPlanCtx(), tbl, pruningConds, partitionNames, columns, columnNames)
+	idxArr, err := partitionpruning.PartitionPruning(ctx.GetPlanCtx(), tbl, pruningConds, partitionNames, columns, columnNames)
 	if err != nil {
 		return nil, err
 	}
@@ -5671,11 +5838,11 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPa
 	return ret, nil
 }
 
-func getPartitionIDsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTable, physPlanPartInfo *plannercore.PhysPlanPartInfo) (map[int64]struct{}, error) {
+func getPartitionIDsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTable, physPlanPartInfo *physicalop.PhysPlanPartInfo) (map[int64]struct{}, error) {
 	if physPlanPartInfo == nil {
 		return nil, errors.New("physPlanPartInfo in getPartitionIDsAfterPruning must not be nil")
 	}
-	idxArr, err := plannercore.PartitionPruning(ctx.GetPlanCtx(), tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
+	idxArr, err := partitionpruning.PartitionPruning(ctx.GetPlanCtx(), tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
 	if err != nil {
 		return nil, err
 	}
@@ -5699,7 +5866,7 @@ func getPartitionIDsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTa
 }
 
 func fullRangePartition(idxArr []int) bool {
-	return len(idxArr) == 1 && idxArr[0] == plannercore.FullRange
+	return len(idxArr) == 1 && idxArr[0] == rule.FullRange
 }
 
 type emptySampler struct{}
@@ -5712,12 +5879,13 @@ func (*emptySampler) finished() bool {
 	return true
 }
 
-func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
+func (b *executorBuilder) buildTableSample(v *physicalop.PhysicalTableSample) *TableSampleExecutor {
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
 	}
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 	e := &TableSampleExecutor{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		table:        v.TableInfo,
@@ -5740,7 +5908,7 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 	return e
 }
 
-func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) exec.Executor {
+func (b *executorBuilder) buildCTE(v *physicalop.PhysicalCTE) exec.Executor {
 	if b.Ti != nil {
 		b.Ti.UseNonRecursive = true
 	}
@@ -5833,7 +6001,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) exec.Executor {
 	}
 }
 
-func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) exec.Executor {
+func (b *executorBuilder) buildCTETableReader(v *physicalop.PhysicalCTETable) exec.Executor {
 	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
 	if !ok {
 		b.err = errors.New("type assertion for CTEStorageMap failed")
@@ -5850,6 +6018,7 @@ func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) e
 		chkIdx:       0,
 	}
 }
+
 func (b *executorBuilder) validCanReadTemporaryOrCacheTable(tbl *model.TableInfo) error {
 	err := b.validCanReadTemporaryTable(tbl)
 	if err != nil {

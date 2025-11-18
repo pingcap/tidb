@@ -28,7 +28,16 @@ func TestAnalyzeVirtualColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE t1 (id bigint NOT NULL,c1 varchar(50) NOT NULL ,c2 int DEFAULT NULL ,c3 json DEFAULT NULL ,c4 varchar(255) GENERATED ALWAYS AS (json_unquote(json_extract(c3, '$.oppositePlaceId'))) VIRTUAL ,PRIMARY KEY (id),UNIQUE KEY idx_unique (c1,c2)) ;`)
+	tk.MustExec(`CREATE TABLE t1 (
+		id bigint NOT NULL,
+		c1 varchar(50) NOT NULL,
+		c2 int DEFAULT NULL,
+		c3 json DEFAULT NULL,
+		c4 varchar(255) GENERATED ALWAYS AS (json_unquote(json_extract(c3, '$.oppositePlaceId'))) VIRTUAL,
+		c5 vector(3),
+		c6 double GENERATED ALWAYS AS (vec_l2_distance(c5, '[0,0,0]')) VIRTUAL,
+		PRIMARY KEY (id),
+		UNIQUE KEY idx_unique (c1,c2)) ;`)
 	tk.MustExec("analyze table t1 all columns")
 }
 

@@ -571,7 +571,7 @@ timezone.*
      curl http://{TiDBIP}:10080/ddl/history
      ```
 
-     **Note**: When the DDL history is very very long, system table may containg too many jobs. This interface will get a maximum of 2048 history ddl jobs by default. If you want get more jobs, consider adding `start_job_id` and `limit`.
+     **Note**: When the DDL history is very very long, system table may containing too many jobs. This interface will get a maximum of 2048 history ddl jobs by default. If you want get more jobs, consider adding `start_job_id` and `limit`.
 
 26. Get count {number} TiDB DDL job history information.
 
@@ -732,3 +732,9 @@ timezone.*
     curl http://{TiDBIP}:10080/ingest/max-ingest-per-sec -X POST -d "{\"value\": 0.5}"
     curl http://{TiDBIP}:10080/ingest/max-ingest-inflight -X POST -d "{\"value\": 2}"
     ```
+
+42. Get TiDB transaction GC states:
+
+     ```shell
+     curl http://{TiDBIP}:10080/txn-gc-states
+     ```

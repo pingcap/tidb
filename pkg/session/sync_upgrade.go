@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -63,7 +63,7 @@ func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
 
 		var op owner.OpType
 		childCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		op, err = owner.GetOwnerOpValue(childCtx, dom.EtcdClient(), ddl.DDLOwnerKey)
+		op, err = owner.GetOwnerOpValue(childCtx, dom.GetEtcdClient(), ddl.DDLOwnerKey)
 		cancel()
 		if err == nil && op.IsSyncedUpgradingState() {
 			break
@@ -132,7 +132,7 @@ func IsUpgradingClusterState(s sessionctx.Context) (bool, error) {
 	return stateInfo.State == serverstate.StateUpgrading, nil
 }
 
-func printClusterState(s sessiontypes.Session, ver int64) {
+func printClusterState(s sessionapi.Session, ver int64) {
 	// After SupportUpgradeHTTPOpVer version, the upgrade by paused user DDL can be notified through the HTTP API.
 	// We check the global state see if we are upgrading by paused the user DDL.
 	if ver >= SupportUpgradeHTTPOpVer {

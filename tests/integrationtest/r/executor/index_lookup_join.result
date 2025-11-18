@@ -132,15 +132,15 @@ Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 drop table if exists t1, t2;
 create table t1 (a int, key(a));
 create table t2 (a int, key(a));
-explain format='brief' select /*+ tidb_inlj(bb) */ aa.* from (select * from t1) as aa left join
+explain format='plan_tree' select /*+ tidb_inlj(bb) */ aa.* from (select * from t1) as aa left join
 (select t2.a, t2.a*2 as a2 from t2) as bb on aa.a=bb.a;
-id	estRows	task	access object	operator info
-IndexJoin	12487.50	root		left outer join, inner:IndexReader, left side:IndexReader, outer key:executor__index_lookup_join.t1.a, inner key:executor__index_lookup_join.t2.a, equal cond:eq(executor__index_lookup_join.t1.a, executor__index_lookup_join.t2.a)
-├─IndexReader(Build)	10000.00	root		index:IndexFullScan
-│ └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
-└─IndexReader(Probe)	12487.50	root		index:Selection
-  └─Selection	12487.50	cop[tikv]		not(isnull(executor__index_lookup_join.t2.a))
-    └─IndexRangeScan	12500.00	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(executor__index_lookup_join.t2.a, executor__index_lookup_join.t1.a)], keep order:false, stats:pseudo
+id	task	access object	operator info
+IndexJoin	root		left outer join, inner:IndexReader, left side:IndexReader, outer key:executor__index_lookup_join.t1.a, inner key:executor__index_lookup_join.t2.a, equal cond:eq(executor__index_lookup_join.t1.a, executor__index_lookup_join.t2.a)
+├─IndexReader(Build)	root		index:IndexFullScan
+│ └─IndexFullScan	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
+└─IndexReader(Probe)	root		index:Selection
+  └─Selection	cop[tikv]		not(isnull(executor__index_lookup_join.t2.a))
+    └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(executor__index_lookup_join.t2.a, executor__index_lookup_join.t1.a)], keep order:false, stats:pseudo
 drop table if exists t1, t2;
 create table t1(a int);
 insert into t1 values (-1);
@@ -534,16 +534,16 @@ PRIMARY KEY (pk) /*T![clustered_index] CLUSTERED */
 insert into t2 values ( pow(2,32), 1, 1), ( pow(2,32)+1, 2, 0);
 analyze table t1 all columns;
 analyze table t2 all columns;
-explain format='brief' select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 );
-id	estRows	task	access object	operator info
-IndexJoin	1.25	root		inner join, inner:TableReader, outer key:executor__index_lookup_join.t2.prefiller, inner key:executor__index_lookup_join.t1.id, equal cond:eq(executor__index_lookup_join.t2.prefiller, executor__index_lookup_join.t1.id)
-├─HashAgg(Build)	1.00	root		group by:executor__index_lookup_join.t2.prefiller, funcs:firstrow(executor__index_lookup_join.t2.prefiller)->executor__index_lookup_join.t2.prefiller
-│ └─TableReader	1.00	root		data:HashAgg
-│   └─HashAgg	1.00	cop[tikv]		group by:executor__index_lookup_join.t2.prefiller, 
-│     └─Selection	1.00	cop[tikv]		eq(executor__index_lookup_join.t2.postfiller, 1)
-│       └─TableFullScan	2.00	cop[tikv]	table:t2	keep order:false
-└─TableReader(Probe)	1.00	root	partition:all	data:TableRangeScan
-  └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [eq(executor__index_lookup_join.t1.id, executor__index_lookup_join.t2.prefiller)], keep order:false, stats:pseudo
+explain format='plan_tree' select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 );
+id	task	access object	operator info
+IndexJoin	root		inner join, inner:TableReader, outer key:executor__index_lookup_join.t2.prefiller, inner key:executor__index_lookup_join.t1.id, equal cond:eq(executor__index_lookup_join.t2.prefiller, executor__index_lookup_join.t1.id)
+├─HashAgg(Build)	root		group by:executor__index_lookup_join.t2.prefiller, funcs:firstrow(executor__index_lookup_join.t2.prefiller)->executor__index_lookup_join.t2.prefiller
+│ └─TableReader	root		data:HashAgg
+│   └─HashAgg	cop[tikv]		group by:executor__index_lookup_join.t2.prefiller, 
+│     └─Selection	cop[tikv]		eq(executor__index_lookup_join.t2.postfiller, 1)
+│       └─TableFullScan	cop[tikv]	table:t2	keep order:false
+└─TableReader(Probe)	root	partition:all	data:TableRangeScan
+  └─TableRangeScan	cop[tikv]	table:t1	range: decided by [eq(executor__index_lookup_join.t1.id, executor__index_lookup_join.t2.prefiller)], keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 );

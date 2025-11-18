@@ -15,6 +15,7 @@
 PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
 GOMODCACHE ?= $(shell go env GOMODCACHE)
+GOOS ?= $(shell go env GOOS)
 P=8
 
 # Ensure GOPATH is set before running build process.
@@ -28,6 +29,8 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 BUILD_TAGS          := codes
+CHECK_BUILD_TAGS    := deadlock,enableassert
+UNIT_TEST_TAGS      := deadlock,intest
 REAL_TIKV_TEST_TAGS := deadlock,intest
 GOEXPERIMENT=
 ifeq ("${ENABLE_FIPS}", "1")
@@ -37,6 +40,8 @@ endif
 
 ifeq ("${NEXT_GEN}", "1")
 	BUILD_TAGS := $(BUILD_TAGS),nextgen
+	CHECK_BUILD_TAGS := $(CHECK_BUILD_TAGS),nextgen
+	UNIT_TEST_TAGS := $(UNIT_TEST_TAGS),nextgen
 	REAL_TIKV_TEST_TAGS := $(REAL_TIKV_TEST_TAGS),nextgen
 endif
 
@@ -129,8 +134,8 @@ DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitHash=$(shell git
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GoVersion=$(shell go version)"
 
-DUMPLING_GOBUILD := CGO_ENABLED=1 GO111MODULE=on go build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'
-DUMPLING_GOTEST  := CGO_ENABLED=1 GO111MODULE=on go test -ldflags '$(DUMPLING_LDFLAGS)'
+DUMPLING_GOBUILD := CGO_ENABLED=1 ${GO} build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'
+DUMPLING_GOTEST  := CGO_ENABLED=1 ${GO} test -ldflags '$(DUMPLING_LDFLAGS)'
 
 TEST_COVERAGE_DIR := "test_coverage"
 

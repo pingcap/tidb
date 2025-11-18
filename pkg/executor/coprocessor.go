@@ -220,7 +220,7 @@ func (h *CoprocessorDAGHandler) buildUnaryResponse(chunks []tipb.Chunk) *coproce
 		Chunks:     chunks,
 		EncodeType: h.dagReq.EncodeType,
 	}
-	if h.dagReq.CollectExecutionSummaries != nil && *h.dagReq.CollectExecutionSummaries {
+	if h.dagReq.GetCollectExecutionSummaries() {
 		execSummary := make([]*tipb.ExecutorExecutionSummary, len(h.dagReq.Executors))
 		for i := range execSummary {
 			// TODO: Add real executor execution summary information.

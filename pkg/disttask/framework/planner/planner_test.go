@@ -57,7 +57,7 @@ func TestPlanner(t *testing.T) {
 	mockLogicalPlan := mock.NewMockLogicalPlan(ctrl)
 	mockLogicalPlan.EXPECT().ToTaskMeta().Return([]byte("mock"), nil)
 	mockLogicalPlan.EXPECT().GetTaskExtraParams().Return(proto.ExtraParams{ManualRecovery: true})
-	taskID, err := p.Run(pCtx, mockLogicalPlan)
+	taskID, err := p.Run(pCtx, mockLogicalPlan, mgr)
 	require.NoError(t, err)
 	task, err := mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)

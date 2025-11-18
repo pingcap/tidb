@@ -22,9 +22,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -174,18 +177,92 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 	require.NoError(t, err)
 
 	// job 4 is matched using WaitVersionSynced
-	vardef.EnableMDL.Store(true)
-	serverInfos := map[string]*infosync.ServerInfo{"aa": {StaticServerInfo: infosync.StaticServerInfo{ID: "aa", IP: "test", Port: 4000}}}
+	vardef.SetEnableMDL(true)
+	serverInfos := map[string]*serverinfo.ServerInfo{"aa": {StaticInfo: serverinfo.StaticInfo{ID: "aa", IP: "test", Port: 4000}}}
 	bytes, err := json.Marshal(serverInfos)
 	require.NoError(t, err)
 	inTerms := fmt.Sprintf("return(`%s`)", string(bytes))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", inTerms))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", inTerms))
 	_, err = etcdCli.Put(ctx, util.DDLAllSchemaVersionsByJob+"/4/aa", "333")
 	require.NoError(t, err)
-	require.NoError(t, s.WaitVersionSynced(ctx, 4, 333))
+	syncSummary, err := s.WaitVersionSynced(ctx, 4, 333, false)
+	require.NoError(t, err)
+	require.EqualValues(t, &SyncSummary{ServerCount: 1}, syncSummary)
 	_, err = etcdCli.Delete(ctx, util.DDLAllSchemaVersionsByJob+"/4/aa")
 	require.NoError(t, err)
 
 	cancel()
 	wg.Wait()
+}
+
+func TestCalculateUpdatedMap(t *testing.T) {
+	updatedMap, summary := calculateUpdatedMap(map[string]*serverinfo.ServerInfo{
+		"a": {StaticInfo: serverinfo.StaticInfo{ID: "a", IP: "a"}},
+		"b": {StaticInfo: serverinfo.StaticInfo{ID: "b", IP: "b"}},
+		"c": {StaticInfo: serverinfo.StaticInfo{ID: "c", IP: "c"}},
+	})
+	require.EqualValues(t, 3, len(updatedMap))
+	require.EqualValues(t, &SyncSummary{ServerCount: 3}, summary)
+
+	updatedMap, summary = calculateUpdatedMap(map[string]*serverinfo.ServerInfo{
+		"a": {StaticInfo: serverinfo.StaticInfo{ID: "a", IP: "a"}},
+		"b": {StaticInfo: serverinfo.StaticInfo{ID: "b", IP: "b"}},
+		"c": {StaticInfo: serverinfo.StaticInfo{ID: "c", IP: "c", AssumedKeyspace: "a"}},
+	})
+	require.EqualValues(t, 3, len(updatedMap))
+	require.EqualValues(t, &SyncSummary{ServerCount: 3, AssumedServerCount: 1}, summary)
+
+	updatedMap, summary = calculateUpdatedMap(map[string]*serverinfo.ServerInfo{
+		"a": {StaticInfo: serverinfo.StaticInfo{ID: "a", IP: "a", StartTimestamp: 100}},
+		"b": {StaticInfo: serverinfo.StaticInfo{ID: "b", IP: "a", StartTimestamp: 200}},
+		"c": {StaticInfo: serverinfo.StaticInfo{ID: "c", IP: "a", StartTimestamp: 300, AssumedKeyspace: "a"}},
+	})
+	require.EqualValues(t, 1, len(updatedMap))
+	require.EqualValues(t, &SyncSummary{ServerCount: 1, AssumedServerCount: 1}, summary)
+
+	updatedMap, summary = calculateUpdatedMap(map[string]*serverinfo.ServerInfo{
+		"a": {StaticInfo: serverinfo.StaticInfo{ID: "a", IP: "a", StartTimestamp: 100}},
+		"b": {StaticInfo: serverinfo.StaticInfo{ID: "b", IP: "a", StartTimestamp: 200, AssumedKeyspace: "a"}},
+		"c": {StaticInfo: serverinfo.StaticInfo{ID: "c", IP: "a", StartTimestamp: 300}},
+	})
+	require.EqualValues(t, 1, len(updatedMap))
+	require.EqualValues(t, &SyncSummary{ServerCount: 1}, summary)
+}
+
+func TestGetServersForISSync(t *testing.T) {
+	var syncer *serverinfo.Syncer
+	if kerneltype.IsClassic() {
+		syncer = serverinfo.NewSyncer("1", func() uint64 { return 1 }, nil, nil)
+	} else {
+		syncer = serverinfo.NewCrossKSSyncer("1", func() uint64 { return 1 }, nil, nil, "ks1")
+	}
+	mockedAllServerInfos := map[string]*serverinfo.ServerInfo{
+		"s1": {StaticInfo: serverinfo.StaticInfo{Keyspace: "ks1"}},
+		"s2": {StaticInfo: serverinfo.StaticInfo{Keyspace: "ks1"}},
+		"s3": {StaticInfo: serverinfo.StaticInfo{Keyspace: "ks1", AssumedKeyspace: keyspace.System}},
+	}
+	makeFailPointRes := func(v any) string {
+		bytes, err := json.Marshal(v)
+		require.NoError(t, err)
+		return fmt.Sprintf("return(`%s`)", string(bytes))
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailPointRes(mockedAllServerInfos))
+
+	schVerSyncer := &etcdSyncer{svrInfoSyncer: syncer}
+	// checkAssumedSvr = false
+	infos, err := schVerSyncer.getServersForISSync(context.Background(), false)
+	require.NoError(t, err)
+	if kerneltype.IsClassic() {
+		require.Len(t, infos, 3)
+	} else {
+		require.Len(t, infos, 2)
+		for _, info := range infos {
+			require.False(t, info.IsAssumed())
+		}
+	}
+
+	// checkAssumedSvr = true
+	infos, err = schVerSyncer.getServersForISSync(context.Background(), true)
+	require.NoError(t, err)
+	require.Len(t, infos, 3)
 }

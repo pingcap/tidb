@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -81,7 +81,7 @@ type server struct {
 type ddlSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
-	s     sessiontypes.Session
+	s     sessionapi.Session
 	ctx   sessionctx.Context
 
 	m     sync.Mutex
@@ -104,7 +104,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	require.NoError(t, err)
 
 	// Make sure the schema lease of this session is equal to other TiDB servers'.
-	session.SetSchemaLease(time.Duration(*lease) * time.Second)
+	vardef.SetSchemaLease(time.Duration(*lease) * time.Second)
 	require.NoError(t, ddl.StartOwnerManager(context.Background(), s.store))
 	s.dom, err = session.BootstrapSession(s.store)
 	require.NoError(t, err)
@@ -123,7 +123,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	err = domain.GetDomain(s.ctx).DDL().Stop()
 	require.NoError(t, err)
 	config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
-	ddl.CloseOwnerManager()
+	ddl.CloseOwnerManager(s.store)
 	session.ResetStoreForWithTiKVTest(s.store)
 	s.dom.Close()
 	require.NoError(t, s.store.Close())

@@ -204,12 +204,11 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, defaultValue, v)
 
-	// session.GetGlobalSysVar would not get the value which session.SetGlobalSysVar writes,
-	// because SetGlobalSysVar calls SetGlobalFromHook, which uses TiDBGeneralLog's SetGlobal,
-	// but GetGlobalSysVar could not access TiDBGeneralLog's GetGlobal.
+	// session.GetGlobalSysVar would not get the value which session.SetInstanceSysVar writes,
+	// because SetInstanceSysVar did not persist values into the mysql.global_variable table.
 
 	// set to "1"
-	err = se.SetGlobalSysVar(context.Background(), varName, "ON")
+	err = se.SetInstanceSysVar(context.Background(), varName, "ON")
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("1"))
@@ -217,7 +216,7 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.Equal(t, defaultValue, v)
 
 	// set back to "0"
-	err = se.SetGlobalSysVar(context.Background(), varName, defaultValue)
+	err = se.SetInstanceSysVar(context.Background(), varName, defaultValue)
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("0"))
@@ -421,4 +420,11 @@ func TestTiDBValidateTS(t *testing.T) {
 	// set on
 	tk.MustExec("set global tidb_enable_ts_validation = on")
 	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
+}
+
+func TestTiDBAdvancerCheckPointLagLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_advancer_check_point_lag_limit = '100h'")
+	require.Equal(t, time.Hour*100, vardef.AdvancerCheckPointLagLimit.Load())
 }

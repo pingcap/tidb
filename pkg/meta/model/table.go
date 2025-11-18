@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
@@ -396,6 +397,8 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 	if from == to {
 		return
 	}
+
+	// Update column offsets.
 	updatedOffsets := make(map[int]int)
 	src := t.Columns[from]
 	if from < to {
@@ -413,12 +416,31 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 	}
 	t.Columns[to] = src
 	t.Columns[to].Offset = to
+
+	// Update index column offsets.
 	updatedOffsets[from] = to
 	for _, idx := range t.Indices {
 		for _, idxCol := range idx.Columns {
 			newOffset, ok := updatedOffsets[idxCol.Offset]
 			if ok {
 				idxCol.Offset = newOffset
+			}
+		}
+
+		for _, affectedCol := range idx.AffectColumn {
+			newOffset, ok := updatedOffsets[affectedCol.Offset]
+			if ok {
+				affectedCol.Offset = newOffset
+			}
+		}
+	}
+
+	// Reconstruct the dependency column offsets.
+	for _, col := range t.Columns {
+		if col.ChangeStateInfo != nil {
+			newOffset, ok := updatedOffsets[col.ChangeStateInfo.DependencyColumnOffset]
+			if ok {
+				col.ChangeStateInfo.DependencyColumnOffset = newOffset
 			}
 		}
 	}
@@ -565,6 +587,22 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 		}
 	}
 	return nil
+}
+
+// GetIdxChangingFieldType gets the field type of index column.
+// Since both old/new type may coexist in one column during modify column,
+// we need to get the correct type for index column.
+func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
+	if idxCol.UseChangingType && col.ChangingFieldType != nil {
+		return col.ChangingFieldType
+	}
+	return &col.FieldType
+}
+
+// ColumnNeedRestoredData checks whether a single index column needs restored data.
+func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
+	col := colInfos[idxCol.Offset]
+	return types.NeedRestoredData(GetIdxChangingFieldType(idxCol, col))
 }
 
 // TableNameInfo provides meta data describing a table name info.
@@ -823,8 +861,7 @@ type PartitionInfo struct {
 // Clone clones itself.
 func (pi *PartitionInfo) Clone() *PartitionInfo {
 	newPi := *pi
-	newPi.Columns = make([]ast.CIStr, len(pi.Columns))
-	copy(newPi.Columns, pi.Columns)
+	newPi.Columns = slices.Clone(pi.Columns)
 
 	newPi.Definitions = make([]PartitionDefinition, len(pi.Definitions))
 	for i := range pi.Definitions {
@@ -1143,8 +1180,7 @@ type PartitionDefinition struct {
 // Clone clones PartitionDefinition.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
-	nci.LessThan = make([]string, len(ci.LessThan))
-	copy(nci.LessThan, ci.LessThan)
+	nci.LessThan = slices.Clone(ci.LessThan)
 	return nci
 }
 
@@ -1188,8 +1224,7 @@ type ConstraintInfo struct {
 func (ci *ConstraintInfo) Clone() *ConstraintInfo {
 	nci := *ci
 
-	nci.ConstraintCols = make([]ast.CIStr, len(ci.ConstraintCols))
-	copy(nci.ConstraintCols, ci.ConstraintCols)
+	nci.ConstraintCols = slices.Clone(ci.ConstraintCols)
 	return &nci
 }
 
@@ -1248,10 +1283,8 @@ func (fk *FKInfo) String(db, tb string) string {
 func (fk *FKInfo) Clone() *FKInfo {
 	nfk := *fk
 
-	nfk.RefCols = make([]ast.CIStr, len(fk.RefCols))
-	nfk.Cols = make([]ast.CIStr, len(fk.Cols))
-	copy(nfk.RefCols, fk.RefCols)
-	copy(nfk.Cols, fk.Cols)
+	nfk.RefCols = slices.Clone(fk.RefCols)
+	nfk.Cols = slices.Clone(fk.Cols)
 
 	return &nfk
 }

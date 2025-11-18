@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -272,24 +273,24 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 // planSkipGetTsoFromPD identifies the plans which don't need get newest ts from PD.
 func planSkipGetTsoFromPD(sctx sessionctx.Context, plan base.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
-	case *plannercore.PointGetPlan:
+	case *physicalop.PointGetPlan:
 		return sctx.GetSessionVars().RcWriteCheckTS && (v.Lock || inLockOrWriteStmt)
 	case base.PhysicalPlan:
 		if len(v.Children()) == 0 {
 			return false
 		}
-		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
+		_, isPhysicalLock := v.(*physicalop.PhysicalLock)
 		for _, p := range v.Children() {
 			if !planSkipGetTsoFromPD(sctx, p, isPhysicalLock || inLockOrWriteStmt) {
 				return false
 			}
 		}
 		return true
-	case *plannercore.Update:
+	case *physicalop.Update:
 		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
-	case *plannercore.Delete:
+	case *physicalop.Delete:
 		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
-	case *plannercore.Insert:
+	case *physicalop.Insert:
 		return v.SelectPlan == nil && len(v.OnDuplicate) == 0 && !v.IsReplace
 	}
 	return false

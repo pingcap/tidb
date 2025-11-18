@@ -2993,6 +2993,11 @@ func (b *builtinOctStringSig) evalString(ctx EvalContext, row chunk.Row) (string
 		return "", isNull, err
 	}
 
+	// for issue #59446 should return NULL for empty string
+	if len(val) == 0 {
+		return "", true, nil
+	}
+
 	negative, overflow := false, false
 	val = getValidPrefix(strings.TrimSpace(val), 10)
 	if len(val) == 0 {
@@ -3603,11 +3608,13 @@ func (b *builtinFormatWithLocaleSig) evalString(ctx EvalContext, row chunk.Row) 
 	tc := typeCtx(ctx)
 	if isNull {
 		tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
-	} else if !strings.EqualFold(locale, "en_US") { // TODO: support other locales.
+		locale = "en_US"
+	}
+	formatString, found, err := mysql.FormatByLocale(x, d, locale)
+	// If locale was not NULL and not found, warn unknown locale.
+	if !isNull && !found {
 		tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 	}
-	locale = "en_US"
-	formatString, err := mysql.GetLocaleFormatFunction(locale)(x, d)
 	return formatString, false, err
 }
 
@@ -3632,7 +3639,7 @@ func (b *builtinFormatSig) evalString(ctx EvalContext, row chunk.Row) (string, b
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	formatString, err := mysql.GetLocaleFormatFunction("en_US")(x, d)
+	formatString, _, err := mysql.FormatByLocale(x, d, "en_US")
 	return formatString, false, err
 }
 

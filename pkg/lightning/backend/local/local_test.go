@@ -35,13 +35,13 @@ import (
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
@@ -557,14 +557,6 @@ func TestLocalIngestLoop(t *testing.T) {
 	require.Equal(t, f.TotalSize.Load(), totalSize)
 	require.Equal(t, int64(concurrency*count), f.Length.Load())
 	require.Equal(t, atomic.LoadInt32(&maxMetaSeq), f.finishedMetaSeq.Load())
-}
-
-func makeRanges(input []string) []engineapi.Range {
-	ranges := make([]engineapi.Range, 0, len(input)/2)
-	for i := 0; i < len(input)-1; i += 2 {
-		ranges = append(ranges, engineapi.Range{Start: []byte(input[i]), End: []byte(input[i+1])})
-	}
-	return ranges
 }
 
 func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
@@ -1092,11 +1084,11 @@ func TestMultiIngest(t *testing.T) {
 }
 
 func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	bak := Backend{}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)")
 	toCh := make(chan *regionJob, 1)
 	worker := bak.newRegionJobWorker(1, toCh, make(chan *regionJob, 1), nil, nil)
 
@@ -1193,7 +1185,15 @@ func (m mockIngestData) DecRef() {}
 
 func (m mockIngestData) Finish(_, _ int64) {}
 
+var dummyRegionInfo = &split.RegionInfo{
+	Region: &metapb.Region{Id: 1, Peers: []*metapb.Peer{{Id: 1, StoreId: 1}}},
+	Leader: &metapb.Peer{Id: 1, StoreId: 1},
+}
+
 func TestCheckPeersBusy(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 300
 	t.Cleanup(func() {
@@ -1327,6 +1327,9 @@ func TestCheckPeersBusy(t *testing.T) {
 }
 
 func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	log.InitLogger(&log.Config{Level: "debug"}, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1429,6 +1432,9 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 }
 
 func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1525,6 +1531,9 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 }
 
 func TestPartialWriteIngestBusy(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1761,6 +1770,9 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 }
 
 func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	ctx := context.Background()
 	local := &Backend{
 		splitCli: initTestSplitClient(
@@ -1782,6 +1794,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	require.NoError(t, err)
 
 	extEngine := external.NewExternalEngine(
+		ctx,
 		memStore,
 		dataFiles,
 		statFiles,
@@ -1857,23 +1870,21 @@ func getNeedRescanWhenIngestBehaviour() []injectedBehaviour {
 }
 
 func TestDoImport(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
 
 	// test that
 	// - one job need rescan when ingest
 	// - one job need retry when write
-
 	initRegionKeys := [][]byte{{'a'}, {'b'}, {'c'}, {'d'}}
 	fakeRegionJobs = map[[2]string]struct {
 		jobs []*regionJob
@@ -1891,6 +1902,7 @@ func TestDoImport(t *testing.T) {
 							},
 						},
 					}, getSuccessInjectedBehaviour()...),
+					region: dummyRegionInfo,
 				},
 			},
 		},
@@ -1921,6 +1933,7 @@ func TestDoImport(t *testing.T) {
 							ingest: injectedIngestBehaviour{},
 						},
 					},
+					region: dummyRegionInfo,
 				},
 			},
 		},
@@ -1930,6 +1943,7 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
+					region:     dummyRegionInfo,
 				},
 				{
 					keyRange:   engineapi.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
@@ -1942,6 +1956,7 @@ func TestDoImport(t *testing.T) {
 							},
 						},
 					},
+					region: dummyRegionInfo,
 				},
 			},
 		},
@@ -1951,6 +1966,7 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -1960,6 +1976,7 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -1992,6 +2009,7 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2014,11 +2032,13 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'a'}, End: []byte{'a', '2'}},
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
+					region:     dummyRegionInfo,
 				},
 				{
 					keyRange:   engineapi.Range{Start: []byte{'a', '2'}, End: []byte{'b'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2028,6 +2048,7 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'b'}, End: []byte{'c'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2037,6 +2058,7 @@ func TestDoImport(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2061,6 +2083,7 @@ func TestDoImport(t *testing.T) {
 					ingestData: &Engine{},
 					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2071,6 +2094,7 @@ func TestDoImport(t *testing.T) {
 					ingestData: &Engine{},
 					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2088,6 +2112,7 @@ func TestDoImport(t *testing.T) {
 							},
 						},
 					},
+					region: dummyRegionInfo,
 				},
 			},
 		},
@@ -2097,18 +2122,17 @@ func TestDoImport(t *testing.T) {
 }
 
 func TestRegionJobResetRetryCounter(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
 
 	// test that job need rescan when ingest
 
@@ -2132,6 +2156,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 								{Id: 3, StoreId: 3},
 							},
 						},
+						Leader: &metapb.Peer{Id: 1, StoreId: 1},
 					},
 				},
 				{
@@ -2147,6 +2172,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 								{Id: 6, StoreId: 6},
 							},
 						},
+						Leader: &metapb.Peer{Id: 4, StoreId: 4},
 					},
 				},
 			},
@@ -2165,6 +2191,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 								{Id: 9, StoreId: 9},
 							},
 						},
+						Leader: &metapb.Peer{Id: 7, StoreId: 7},
 					},
 				},
 			},
@@ -2188,22 +2215,19 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 }
 
 func TestCtxCancelIsIgnored(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/beforeGenerateJob", "sleep(1000)")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/beforeGenerateJob")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/beforeGenerateJob", "sleep(1000)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
 
 	initRegionKeys := [][]byte{{'c'}, {'d'}, {'e'}}
 	fakeRegionJobs = map[[2]string]struct {
@@ -2216,6 +2240,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2225,6 +2250,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 					keyRange:   engineapi.Range{Start: []byte{'d'}, End: []byte{'e'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region:     dummyRegionInfo,
 				},
 			},
 		},
@@ -2242,22 +2268,19 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 }
 
 func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/sendDummyJob", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockGetFirstAndLastKey", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/sendDummyJob")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockGetFirstAndLastKey")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/sendDummyJob", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockGetFirstAndLastKey", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
 
 	initRegionKeys := [][]byte{{'c'}, {'d'}}
 
@@ -2323,7 +2346,7 @@ func TestExternalEngine(t *testing.T) {
 	require.NoError(t, err)
 
 	externalCfg := &backend.ExternalEngineConfig{
-		StorageURI:    storageURI,
+		ExtStore:      extStorage,
 		DataFiles:     dataFiles,
 		StatFiles:     statFiles,
 		StartKey:      keys[0],

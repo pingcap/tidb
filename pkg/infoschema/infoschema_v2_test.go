@@ -168,7 +168,8 @@ func TestMisc(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	builder := NewBuilder(r, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -291,7 +292,8 @@ func TestBundles(t *testing.T) {
 
 	schemaName := ast.NewCIStr("testDB")
 	tableName := ast.NewCIStr("test")
-	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	builder := NewBuilder(r, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -412,7 +414,8 @@ func TestReferredFKInfo(t *testing.T) {
 
 	schemaName := ast.NewCIStr("testDB")
 	tableName := ast.NewCIStr("testTable")
-	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	builder := NewBuilder(r, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -514,7 +517,8 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 
 	schemaName := ast.NewCIStr("testDB")
 	tableName := ast.NewCIStr("testTable")
-	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	builder := NewBuilder(r, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -606,7 +610,8 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 
 	schemaName := ast.NewCIStr("testDB")
 	tableName := ast.NewCIStr("testTable")
-	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	builder := NewBuilder(r, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)

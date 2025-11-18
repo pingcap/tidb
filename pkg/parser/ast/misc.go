@@ -61,6 +61,7 @@ var (
 	_ StmtNode = &CompactTableStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
 	_ StmtNode = &TrafficStmt{}
+	_ StmtNode = &RecommendIndexStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -717,6 +718,7 @@ type ExecuteStmt struct {
 	UsingVars  []ExprNode
 	BinaryArgs any
 	PrepStmt   any // the corresponding prepared statement
+	PrepStmtId uint32
 	IdxInMulti int
 
 	// FromGeneralStmt indicates whether this execute-stmt is converted from a general query.
@@ -950,15 +952,19 @@ const (
 	SetCharset = "SetCharset"
 	// TiDBCloudStorageURI is the const for set tidb_cloud_storage_uri stmt.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
+	// CloudStorageURI is similar to above tidb var, but it's used in import into
+	// to set a separate param for a single import job.
+	CloudStorageURI = "cloud_storage_uri"
 )
 
 // VariableAssignment is a variable assignment struct.
 type VariableAssignment struct {
 	node
-	Name     string
-	Value    ExprNode
-	IsGlobal bool
-	IsSystem bool
+	Name       string
+	Value      ExprNode
+	IsInstance bool
+	IsGlobal   bool
+	IsSystem   bool
 
 	// ExtendValue is a way to store extended info.
 	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
@@ -973,6 +979,8 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("@@")
 		if n.IsGlobal {
 			ctx.WriteKeyWord("GLOBAL")
+		} else if n.IsInstance {
+			ctx.WriteKeyWord("INSTANCE")
 		} else {
 			ctx.WriteKeyWord("SESSION")
 		}
@@ -1393,41 +1401,6 @@ func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetPwdStmt)
-	return v.Leave(n)
-}
-
-type ChangeStmt struct {
-	stmtNode
-
-	NodeType string
-	State    string
-	NodeID   string
-}
-
-// Restore implements Node interface.
-func (n *ChangeStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("CHANGE ")
-	ctx.WriteKeyWord(n.NodeType)
-	ctx.WriteKeyWord(" TO NODE_STATE ")
-	ctx.WritePlain("=")
-	ctx.WriteString(n.State)
-	ctx.WriteKeyWord(" FOR NODE_ID ")
-	ctx.WriteString(n.NodeID)
-	return nil
-}
-
-// SecureText implements SensitiveStatement interface.
-func (n *ChangeStmt) SecureText() string {
-	return fmt.Sprintf("change %s to node_state='%s' for node_id '%s'", strings.ToLower(n.NodeType), n.State, n.NodeID)
-}
-
-// Accept implements Node Accept interface.
-func (n *ChangeStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ChangeStmt)
 	return v.Leave(n)
 }
 
@@ -2571,6 +2544,8 @@ const (
 	AdminUnsetBDRRole
 	AdminAlterDDLJob
 	AdminWorkloadRepoCreate
+	// adminTpCount is the total number of admin statement types.
+	adminTpCount
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -3505,6 +3480,8 @@ const (
 	BRIEKindShowJob
 	BRIEKindShowQuery
 	BRIEKindShowBackupMeta
+	// brieKindCount is the total number of BRIE kinds.
+	brieKindCount
 	// common BRIE options
 	BRIEOptionRateLimit BRIEOptionType = iota + 1
 	BRIEOptionConcurrency
@@ -3959,6 +3936,16 @@ type HintTimeRange struct {
 	To   string
 }
 
+// LeadingList represents a nested structure in LEADING hints.
+// It could be *HintTable or LeadingList
+//
+//	eg: LEADING(a, (b, c), d)
+//	will be parsed into a LeadingList like:
+//	Items = [HintTable("a"), LeadingList{[HintTable("b"), HintTable("c")]}, HintTable("d")]
+type LeadingList struct {
+	Items []interface{}
+}
+
 // HintSetVar is the payload of `SET_VAR` hint
 type HintSetVar struct {
 	VarName string
@@ -3971,6 +3958,25 @@ type HintTable struct {
 	TableName     CIStr
 	QBName        CIStr
 	PartitionList []CIStr
+}
+
+// FlattenLeadingList collects all HintTable nodes from a possibly nested LeadingList into a flat slice.
+// Note:
+//   - Only table names are preserved.
+func FlattenLeadingList(list *LeadingList) []HintTable {
+	if list == nil {
+		return nil
+	}
+	var result []HintTable
+	for _, item := range list.Items {
+		switch t := item.(type) {
+		case *HintTable:
+			result = append(result, *t)
+		case *LeadingList:
+			result = append(result, FlattenLeadingList(t)...)
+		}
+	}
+	return result
 }
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
@@ -3998,11 +4004,52 @@ func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	}
 }
 
+func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName CIStr, needParen bool, isTop bool, qbOnTable bool) error {
+	if lt == nil || len(lt.Items) == 0 {
+		return nil
+	}
+	if needParen {
+		ctx.WritePlain("(")
+	}
+
+	currentQBName := qbName // hint level QBName
+
+	for i, item := range lt.Items {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+
+		switch t := item.(type) {
+		case *HintTable:
+			if i == 0 && currentQBName.L != "" && !qbOnTable {
+				ctx.WriteKeyWord("@")
+				ctx.WriteName(currentQBName.String())
+				ctx.WritePlain(" ")
+				t.Restore(ctx)
+				currentQBName = CIStr{}
+			} else {
+				t.Restore(ctx)
+			}
+		case *LeadingList:
+			if err := t.RestoreWithQB(ctx, currentQBName, true, false, qbOnTable); err != nil {
+				return err
+			}
+			currentQBName = CIStr{}
+		default:
+			return fmt.Errorf("unexpected type in LeadingList: %T", t)
+		}
+	}
+	if needParen {
+		ctx.WritePlain(")")
+	}
+	return nil
+}
+
 // Restore implements Node interface.
 func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(n.HintName.String())
 	ctx.WritePlain("(")
-	if n.QBName.L != "" {
+	if n.HintName.L != "leading" && n.QBName.L != "" {
 		if n.HintName.L != "qb_name" {
 			ctx.WriteKeyWord("@")
 		}
@@ -4018,7 +4065,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 		return nil
 	}
-	if n.QBName.L != "" {
+	if n.HintName.L != "leading" && n.QBName.L != "" {
 		ctx.WritePlain(" ")
 	}
 	// Hints with args except query block.
@@ -4029,8 +4076,26 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
+	case "leading":
+		if list, ok := n.HintData.(*LeadingList); ok && list != nil {
+			// if table level QBName or not
+			qbOnTable := false
+			if len(n.Tables) > 0 && n.Tables[0].QBName.L != "" {
+				qbOnTable = true
+			}
+			if err := list.RestoreWithQB(ctx, n.QBName, false, true, qbOnTable); err != nil {
+				return err
+			}
+		} else {
+			for i, table := range n.Tables {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				table.Restore(ctx)
+			}
+		}
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
-		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading", "no_hash_join", "no_merge_join",
+		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "no_hash_join", "no_merge_join",
 		"no_index_join", "no_index_hash_join", "no_index_merge_join":
 		for i, table := range n.Tables {
 			if i != 0 {
@@ -4038,7 +4103,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			}
 			table.Restore(ctx)
 		}
-	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index":
+	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index", "index_lookup_pushdown":
 		n.Tables[0].Restore(ctx)
 		ctx.WritePlain(" ")
 		for i, index := range n.Indexes {

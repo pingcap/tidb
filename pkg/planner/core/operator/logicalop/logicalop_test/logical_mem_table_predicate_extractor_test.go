@@ -32,10 +32,11 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -43,7 +44,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool) {
+func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessionapi.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool) {
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -488,13 +489,13 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			startTime: timestamp(t, "2019-10-10 10:10:10"),
-			patterns:  []string{".*a.*"},
+			patterns:  []string{"^.*a.*$"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where message like '%a%' and message regexp '^b'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			patterns:  []string{".*a.*", "^b"},
+			patterns:  []string{"^.*a.*$", "^b"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where message='gc'",
@@ -518,13 +519,13 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			nodeTypes: set.NewStringSet("tidb", "pd"),
 			instances: set.NewStringSet("123.1.1.5:1234", "123.1.1.4:1234"),
 			level:     set.NewStringSet("debug", "info", "error"),
-			patterns:  []string{".*coprocessor.*", ".*txn=123.*"},
+			patterns:  []string{"^.*coprocessor.*$", ".*txn=123.*"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where (message regexp '.*pd.*' or message regexp '.*tidb.*' or message like '%tikv%')",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			patterns:  []string{".*pd.*|.*tidb.*|.*tikv.*"},
+			patterns:  []string{".*pd.*|.*tidb.*|^.*tikv.*$"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where (level = 'debug' or level = 'ERROR')",
@@ -1853,7 +1854,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
+		extractor := plan.(*plannercore.Execute).Plan.(*physicalop.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 
@@ -1871,7 +1872,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(execStmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
+		extractor := plan.(*plannercore.Execute).Plan.(*physicalop.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 }
