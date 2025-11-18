@@ -873,9 +873,9 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		return nil, false
 	}
 
-	refill := false
+	forceRefill := false
 	if opt := ctx.Value(refillOptionKey); opt != nil {
-		refill = opt.(bool)
+		forceRefill = opt.(bool)
 	}
 
 	// get cache with item key
@@ -891,8 +891,10 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		return nil, false
 	}
 
-	if refill {
+	if forceRefill {
 		is.tableCache.Set(key, ret)
+	} else {
+		is.refillIfNoEvict(key, ret)
 	}
 	return ret, true
 }
@@ -911,6 +913,7 @@ func (is *infoschemaV2) TableItemByID(tableID int64) (TableItem, bool) {
 type TableItem struct {
 	DBName    ast.CIStr
 	TableName ast.CIStr
+	TableID   int64
 }
 
 // IterateAllTableItems is used for special performance optimization.
@@ -933,7 +936,7 @@ func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 		}
 		pivot = item
 		if !item.tomb {
-			return visit(TableItem{DBName: item.dbName, TableName: item.tableName})
+			return visit(TableItem{DBName: item.dbName, TableName: item.tableName, TableID: item.tableID})
 		}
 		return true
 	})
@@ -1041,12 +1044,14 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl ast.CIStr) 
 		return nil, errors.Trace(err)
 	}
 
-	refill := true
+	forceRefill := true
 	if opt := ctx.Value(refillOptionKey); opt != nil {
-		refill = opt.(bool)
+		forceRefill = opt.(bool)
 	}
-	if refill {
+	if forceRefill {
 		is.tableCache.Set(oldKey, ret)
+	} else {
+		is.refillIfNoEvict(oldKey, ret)
 	}
 
 	metrics.TableByNameMissDuration.Observe(float64(time.Since(start)))
@@ -1097,6 +1102,31 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) 
 	}
 
 	is.keepAlive()
+
+	allInCache := true
+	is.IterateAllTableItems(func(t TableItem) bool {
+		if t.DBName.L != schema.L {
+			return true
+		}
+		if !is.TableIsCached(t.TableID) {
+			allInCache = false
+			return false
+		}
+		return true
+	})
+	if allInCache {
+		tables := make([]*model.TableInfo, 1024)
+		is.IterateAllTableItems(func(t TableItem) bool {
+			if t.DBName.L != schema.L {
+				return true
+			}
+			tbl, _ := is.TableByID(ctx, t.TableID)
+			tables = append(tables, tbl.Meta())
+			return true
+		})
+		return tables, nil
+	}
+
 retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
@@ -1788,8 +1818,16 @@ type refillOption struct{}
 var refillOptionKey refillOption
 
 // WithRefillOption controls the infoschema v2 cache refill operation.
-// By default, TableByID does not refill schema cache, and TableByName does.
+// By default, TableByID does not refill schema cache if the available cache size is less than 30%, and TableByName does.
 // The behavior can be changed by providing the context.Context.
-func WithRefillOption(ctx context.Context, refill bool) context.Context {
-	return context.WithValue(ctx, refillOptionKey, refill)
+func WithRefillOption(ctx context.Context, evict bool) context.Context {
+	return context.WithValue(ctx, refillOptionKey, evict)
+}
+
+// refillIfNoEvict refills the table cache only if the current size is larger than 70% of the capacity.
+// We want to cache as many tables as possible, but we also want to avoid evicting useful cached tables by some list operations.
+func (is *infoschemaV2) refillIfNoEvict(key tableCacheKey, value table.Table) {
+	if is.tableCache.Size() < uint64(float64(is.tableCache.Capacity())*0.7) {
+		is.tableCache.Set(key, value)
+	}
 }
