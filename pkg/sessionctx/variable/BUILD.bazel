@@ -90,6 +90,7 @@ go_library(
         "@com_github_tikv_client_go_v2//util",
         "@com_github_twmb_murmur3//:murmur3",
         "@org_golang_x_exp//maps",
+        "@org_golang_x_time//rate",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],

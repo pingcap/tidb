@@ -68,11 +68,11 @@ func (s *basePropConstSolver) getColID(col *Column) int {
 	return s.colMapper[col.UniqueID]
 }
 
-func (s *basePropConstSolver) insertCols(cols ...*Column) {
-	for _, col := range cols {
-		_, ok := s.colMapper[col.UniqueID]
+func (s *basePropConstSolver) insertCols(cols map[int64]*Column) {
+	for uniqueID, col := range cols {
+		_, ok := s.colMapper[uniqueID]
 		if !ok {
-			s.colMapper[col.UniqueID] = len(s.colMapper)
+			s.colMapper[uniqueID] = len(s.colMapper)
 			s.columns = append(s.columns, col)
 		}
 	}
@@ -371,18 +371,26 @@ func (s *propConstSolver) propagateColumnEQ() {
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
 					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
-					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
-						continue
+					if isConstant(newExpr) || s.vaildExprFunc == nil || s.vaildExprFunc(newExpr) {
+						s.conditions = append(s.conditions, newExpr)
 					}
-					s.conditions = append(s.conditions, newExpr)
 				}
+				// Why do we need to replace colj with coli again?
+				// Consider the case: col1 = col3
+				// Join Schema: left schema: {col1,col2}, right schema: {col3,col4}
+				// Conditions: col1 in (col3, col4)
+				//
+				// because the order of columns in equaility relation is not guaranteed,
+				// We may replace col3 with col1 first, it cannot push down the condition to the child.
+				// because two columns are from different side.
+				// But if we replace col1 with col3, it can be pushed down.
+				// So we need to try both directions.
 				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
 					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
-					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
-						continue
+					if isConstant(newExpr) || s.vaildExprFunc == nil || s.vaildExprFunc(newExpr) {
+						s.conditions = append(s.conditions, newExpr)
 					}
-					s.conditions = append(s.conditions, newExpr)
 				}
 			}
 		}
@@ -469,10 +477,7 @@ func (s *propConstSolver) solve(keepJoinKey bool, conditions []Expression) []Exp
 		joinKeys = cloneJoinKeys(conditions, s.schema1, s.schema2)
 	}
 	s.conditions = slices.Grow(s.conditions, len(conditions))
-	for _, cond := range conditions {
-		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
-		s.insertCols(ExtractColumns(cond)...)
-	}
+	s.extractColumns(conditions)
 	if len(s.columns) > MaxPropagateColsCnt {
 		logutil.BgLogger().Warn("too many columns in a single CNF",
 			zap.Int("numCols", len(s.columns)),
@@ -486,6 +491,12 @@ func (s *propConstSolver) solve(keepJoinKey bool, conditions []Expression) []Exp
 	s.conditions = append(s.conditions, joinKeys...)
 	s.conditions = RemoveDupExprs(s.conditions)
 	return slices.Clone(s.conditions)
+}
+
+func (s *propConstSolver) extractColumns(conditions []Expression) {
+	mp := GetUniqueIDToColumnMap()
+	defer PutUniqueIDToColumnMap(mp)
+	s.conditions = s.extractColumnsInternal(mp, s.conditions, conditions)
 }
 
 // PropagateConstantForJoin propagate constants for inner joins.
@@ -621,6 +632,16 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 		return con, true
 	}
 	return nil, false
+}
+
+func (s *basePropConstSolver) extractColumnsInternal(mp map[int64]*Column, splitConds []Expression, conds []Expression) []Expression {
+	for _, cond := range conds {
+		splitConds = append(splitConds, SplitCNFItems(cond)...)
+		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
+		s.insertCols(mp)
+		clear(mp)
+	}
+	return splitConds
 }
 
 // pickEQCondsOnOuterCol picks constant equal expression from specified conditions.
@@ -840,14 +861,7 @@ func (s *propOuterJoinConstSolver) solve(keepJoinKey bool, joinConds, filterCond
 		// and index join selection. (#63314, #60076)
 		joinKeys = cloneJoinKeys(joinConds, s.outerSchema, s.innerSchema)
 	}
-	for _, cond := range joinConds {
-		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
-		s.insertCols(ExtractColumns(cond)...)
-	}
-	for _, cond := range filterConds {
-		s.filterConds = append(s.filterConds, SplitCNFItems(cond)...)
-		s.insertCols(ExtractColumns(cond)...)
-	}
+	s.extractColumns(joinConds, filterConds)
 	if len(s.columns) > MaxPropagateColsCnt {
 		logutil.BgLogger().Warn("too many columns",
 			zap.Int("numCols", len(s.columns)),
@@ -861,6 +875,13 @@ func (s *propOuterJoinConstSolver) solve(keepJoinKey bool, joinConds, filterCond
 	s.joinConds = RemoveDupExprs(append(s.joinConds, joinKeys...))
 	s.filterConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.filterConds...)
 	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
+}
+
+func (s *propOuterJoinConstSolver) extractColumns(joinConds, filterConds []Expression) {
+	mp := GetUniqueIDToColumnMap()
+	defer PutUniqueIDToColumnMap(mp)
+	s.joinConds = s.extractColumnsInternal(mp, s.joinConds, joinConds)
+	s.filterConds = s.extractColumnsInternal(mp, s.filterConds, filterConds)
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.

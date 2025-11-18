@@ -90,32 +90,34 @@ func TestSQLModeVar(t *testing.T) {
 }
 
 func TestTiDBTraceEventSysVar(t *testing.T) {
-	prevCategories := traceevent.GetEnabledCategories()
-	prevMode := traceevent.CurrentMode()
-	traceevent.SetCategories(traceevent.AllCategories)
-	_, _ = traceevent.SetMode(traceevent.ModeOff)
 	t.Cleanup(func() {
-		traceevent.SetCategories(prevCategories)
-		_, _ = traceevent.SetMode(prevMode)
+		if fr := traceevent.GetFlightRecorder(); fr != nil {
+			fr.Close()
+		}
 	})
 
 	vars := NewSessionVars(nil)
 	sv := GetSysVar(vardef.TiDBTraceEvent)
 
-	require.Equal(t, traceevent.ModeOff, traceevent.CurrentMode())
-	require.Equal(t, traceevent.AllCategories, traceevent.GetEnabledCategories())
-
 	if kerneltype.IsClassic() {
-		err := sv.SetGlobal(context.Background(), vars, vardef.On)
+		err := sv.SetGlobal(context.Background(), vars, `{"enabled_categories": ["*"], "dump_trigger": {"type": "sampling", "sampling": 1}}`)
 		require.Error(t, err)
 		return
 	}
 
-	require.NoError(t, sv.SetGlobal(context.Background(), vars, "baSe"))
-	require.Equal(t, traceevent.ModeBase, traceevent.CurrentMode())
+	err := sv.SetGlobal(context.Background(), vars, `{"enabled_categories": ["-", "tikv_write_details", "tikv_read_details"], "dump_trigger": {"type": "sampling", "sampling": 1}}`)
+	require.NoError(t, err)
+	var config traceevent.FlightRecorderConfig
+	config.Initialize()
+	require.Equal(t, traceevent.GetFlightRecorder().Config, &config)
 
-	require.NoError(t, sv.SetGlobal(context.Background(), vars, "FulL"))
-	require.Equal(t, traceevent.ModeFull, traceevent.CurrentMode())
+	config.DumpTrigger.Sampling = 10
+	config.EnabledCategories = []string{"general"}
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, `{"enabled_categories": ["general"], "dump_trigger": {"type": "sampling", "sampling": 10}}`))
+	require.Equal(t, traceevent.GetFlightRecorder().Config, &config)
+
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, ""))
+	require.Nil(t, traceevent.GetFlightRecorder())
 }
 
 func TestMaxExecutionTime(t *testing.T) {
@@ -1066,7 +1068,7 @@ func TestTiDBServerMemoryLimit2(t *testing.T) {
 		val, err = mock.GetGlobalSysVar(vardef.TiDBServerMemoryLimit)
 		require.NoError(t, err)
 		require.Equal(t, "75%", val)
-		require.Equal(t, memory.ServerMemoryLimit.Load(), total/100*75)
+		require.Equal(t, memory.ServerMemoryLimit.Load(), total*75/100)
 	}
 	// Test can't obtain physical memory
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/GetMemTotalError", `return(true)`))

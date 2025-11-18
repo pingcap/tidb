@@ -287,6 +287,10 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName ast.CIStr) error {
 	if err != nil {
 		return err
 	}
+	err = checkColumnReferencedByPartialCondition(tblInfo, colName)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -473,6 +477,17 @@ func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.Inde
 		return 0
 	})
 	return indexInfos
+}
+
+func getIngestTempIndexIDs(job *model.Job, idxInfos []*model.IndexInfo) []int64 {
+	ids := make([]int64, 0, len(idxInfos))
+	if !job.ReorgMeta.ReorgTp.NeedMergeProcess() {
+		return ids
+	}
+	for _, idx := range idxInfos {
+		ids = append(ids, tablecodec.TempIndexPrefix|idx.ID)
+	}
+	return ids
 }
 
 func getRelatedIndexIDs(tblInfo *model.TableInfo, colID int64, needTempIndex bool) []int64 {

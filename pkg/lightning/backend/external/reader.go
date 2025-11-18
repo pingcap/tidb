@@ -32,17 +32,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// ReaderSummary is used to collect some statistics during reading.
-type ReaderSummary struct {
-	GetRequestCount uint64
-}
-
-// OnReaderCloseFunc is the callback function when a reader is closed.
-type OnReaderCloseFunc func(summary *ReaderSummary)
-
-// dummyOnReaderCloseFunc is a dummy OnReaderCloseFunc.
-func dummyOnReaderCloseFunc(*ReaderSummary) {}
-
 func readAllData(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -51,7 +40,6 @@ func readAllData(
 	smallBlockBufPool *membuf.Pool,
 	largeBlockBufPool *membuf.Pool,
 	output *memKVsAndBuffers,
-	onClose OnReaderCloseFunc,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx), "read all data")
 	task.Info("arguments",
@@ -118,7 +106,6 @@ func readAllData(
 						smallBlockBuf,
 						largeBlockBuf,
 						output,
-						onClose,
 					)
 					if err2 != nil {
 						return errors.Annotatef(err2, "failed to read file %s", dataFiles[fileIdx])
@@ -149,7 +136,6 @@ func readOneFile(
 	smallBlockBuf *membuf.Buffer,
 	largeBlockBuf *membuf.Buffer,
 	output *memKVsAndBuffers,
-	onClose OnReaderCloseFunc,
 ) error {
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
 
@@ -161,9 +147,6 @@ func readOneFile(
 	}
 	defer func() {
 		rd.Close()
-		onClose(&ReaderSummary{
-			GetRequestCount: uint64(rd.byteReader.requestCnt.Load()),
-		})
 	}()
 	if concurrency > 1 {
 		rd.byteReader.enableConcurrentRead(
@@ -179,7 +162,7 @@ func readOneFile(
 		}
 	}
 
-	kvs := make([]kvPair, 0, 1024)
+	kvs := make([]KVPair, 0, 1024)
 	size := 0
 	droppedSize := 0
 
@@ -200,7 +183,7 @@ func readOneFile(
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
-		kvs = append(kvs, kvPair{key: smallBlockBuf.AddBytes(k), value: smallBlockBuf.AddBytes(v)})
+		kvs = append(kvs, KVPair{Key: smallBlockBuf.AddBytes(k), Value: smallBlockBuf.AddBytes(v)})
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())

@@ -100,6 +100,7 @@ func InitMetrics() {
 	InitResourceGroupMetrics()
 	InitGlobalSortMetrics()
 	InitInfoSchemaV2Metrics()
+	InitMemoryMetrics()
 	timermetrics.InitTimerMetrics()
 
 	InitBRMetrics()
@@ -128,6 +129,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(collectors.NewGoCollector(collectors.WithGoCollectorRuntimeMetrics(collectors.MetricsGC, collectors.MetricsMemory, collectors.MetricsScheduler)))
 
 	prometheus.MustRegister(AutoAnalyzeCounter)
+	prometheus.MustRegister(ManualAnalyzeCounter)
 	prometheus.MustRegister(AutoAnalyzeHistogram)
 	prometheus.MustRegister(AutoIDHistogram)
 	prometheus.MustRegister(BatchAddIdxHistogram)
@@ -335,6 +337,25 @@ func RegisterMetrics() {
 	tikvmetrics.InitMetricsWithConstLabels(TiDB, TiKVClient, metricscommon.GetConstLabels())
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+
+	prometheus.MustRegister(GlobalMemArbitrationDuration)
+	prometheus.MustRegister(GlobalMemArbitratorWorkMode)
+	prometheus.MustRegister(GlobalMemArbitratorQuota)
+	prometheus.MustRegister(GlobalMemArbitratorWaitingTask)
+	prometheus.MustRegister(GlobalMemArbitratorRuntimeMemMagnifi)
+	prometheus.MustRegister(GlobalMemArbitratorRootPool)
+	prometheus.MustRegister(GlobalMemArbitratorEventCounter)
+	prometheus.MustRegister(GlobalMemArbitratorTaskExecCounter)
+
+	// TLS
+	prometheus.MustRegister(TLSVersion)
+	prometheus.MustRegister(TLSCipher)
+
+	// IndexLookup
+	prometheus.MustRegister(IndexLookUpExecutorDuration)
+	prometheus.MustRegister(IndexLookRowsCounter)
+	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
+	prometheus.MustRegister(IndexLookUpCopTaskCount)
 }
 
 // Register registers custom collectors.

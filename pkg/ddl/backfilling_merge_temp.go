@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -115,14 +116,13 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.Reset()
 
-	opCtx, cancel := NewDistTaskOperatorCtx(ctx)
+	wctx := workerpool.NewContext(ctx)
 	collector := &mergeTempIndexCollector{}
 
-	srcOp := NewTempIndexScanTaskSource(opCtx, e.store, e.physicalTable, meta.StartKey, meta.EndKey)
-	mergeOp := NewMergeTempIndexOperator(opCtx, e.store, e.physicalTable, e.idxInfo, e.job.ID, subtask.Concurrency, e.batchCnt, e.job.ReorgMeta)
-	sinkOp := newTempIndexResultSink(opCtx, e.physicalTable, collector)
+	srcOp := NewTempIndexScanTaskSource(wctx, e.store, e.physicalTable, meta.StartKey, meta.EndKey)
+	mergeOp := NewMergeTempIndexOperator(wctx, e.store, e.physicalTable, e.idxInfo, e.job.ID, subtask.Concurrency, e.batchCnt, e.job.ReorgMeta)
+	sinkOp := newTempIndexResultSink(wctx, e.physicalTable, collector)
 
 	operator.Compose(srcOp, mergeOp)
 	operator.Compose(mergeOp, sinkOp)
@@ -130,22 +130,17 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	pipe := operator.NewAsyncPipeline(srcOp, mergeOp, sinkOp)
 	err = pipe.Execute()
 	if err != nil {
-		cancel()
 		return err
 	}
 	err = pipe.Close()
-	cancel()
-	if opErr := opCtx.OperatorErr(); opErr != nil {
+	if opErr := wctx.OperatorErr(); opErr != nil {
 		return opErr
-	}
-	if err != nil {
-		return err
 	}
 	e.mergeCounter.Add(float64(collector.addCount))
 	e.RowCnt.Add(int64(collector.addCount))
 	e.totalRows += int64(collector.scanCount)
 	logutil.Logger(ctx).Info("merge temp index executor finish subtask", zap.Int("added", collector.addCount), zap.Int("scanned", collector.scanCount))
-	return nil
+	return err
 }
 
 type mergeTempIndexCollector struct {
@@ -161,6 +156,10 @@ func (m *mergeTempIndexCollector) Processed(_, rows int64) {
 
 func (e *mergeTempIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return e.SubtaskSummary
+}
+
+func (e *mergeTempIndexExecutor) ResetSummary() {
+	e.SubtaskSummary.Reset()
 }
 
 func (e *mergeTempIndexExecutor) Cleanup(ctx context.Context) error {

@@ -11,5 +11,6 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/planner/core/base",
         "//pkg/util/intset",
+        "//pkg/util/zeropool",
     ],
 )

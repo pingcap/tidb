@@ -186,6 +186,16 @@ type executor struct {
 	sessPool    *sess.Pool
 	statsHandle *handle.Handle
 
+	// startMode stores the start mode of the ddl executor, it's used to indicate
+	// whether the executor is responsible for auto ID rebase.
+	// Since https://github.com/pingcap/tidb/pull/64356, we move rebase logic from
+	// executor into DDL job worker. So typically, the job worker is responsible for
+	// rebase. But sometimes we use higher version of BR to restore db to lower version
+	// of TiDB cluster, which may cause rebase is not executed on both executor(BR) and
+	// worker(downstream TiDB) side. So we use this mode to check if this is runned by BR.
+	// If so, the executor should handle auto ID rebase.
+	startMode StartMode
+
 	ctx        context.Context
 	uuid       string
 	store      kv.Storage
@@ -1191,6 +1201,11 @@ func (e *executor) CreateTableWithInfo(
 		}
 
 		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
+		if e.startMode == BR {
+			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	return errors.Trace(err)
 }
@@ -1287,6 +1302,11 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	}
 	for _, tblArgs := range args.Tables {
 		preSplitAndScatterTable(ctx, e.store, tblArgs.TableInfo, scatterScope)
+		if e.startMode == BR {
+			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tblArgs.TableInfo); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 
 	return nil
@@ -3181,6 +3201,11 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
 		return false, dbterror.ErrCantDropColWithAutoInc
 	}
+	// Check the partial index condition
+	err = checkColumnReferencedByPartialCondition(t.Meta(), col.ColumnInfo.Name)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
 	return true, nil
 }
 
@@ -4145,13 +4170,7 @@ func (e *executor) dropTableObject(
 
 			tempTableType := tableInfo.Meta().TempTableType
 			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
-				logutil.DDLLogger().Warn("admin check table before drop",
-					zap.String("database", fullti.Schema.O),
-					zap.String("table", fullti.Name.O),
-				)
-				exec := ctx.GetRestrictedSQLExecutor()
-				internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-				_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+				err := adminCheckTableBeforeDrop(ctx, fullti)
 				if err != nil {
 					return err
 				}
@@ -4219,6 +4238,40 @@ func (e *executor) dropTableObject(
 		for _, table := range notExistTables {
 			sessVars.StmtCtx.AppendNote(dropExistErr.FastGenByArgs(table))
 		}
+	}
+	return nil
+}
+
+// adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
+// Actually this function doesn't do anything specific for `DROP TABLE`, but to avoid
+// using it in other places by mistake, it's named like this.
+func adminCheckTableBeforeDrop(ctx sessionctx.Context, fullti ast.Ident) error {
+	logutil.DDLLogger().Warn("admin check table before drop",
+		zap.String("database", fullti.Schema.O),
+		zap.String("table", fullti.Name.O),
+	)
+	exec := ctx.GetRestrictedSQLExecutor()
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
+	// `tidb_enable_fast_table_check` is already the default value, and some feature (e.g. partial index)
+	// doesn't support admin check with `tidb_enable_fast_table_check = OFF`, so we just set it to `ON` here.
+	// TODO: set the value of `tidb_enable_fast_table_check` to 'ON' for all internal sessions if it's OK.
+	originalFastTableCheck := ctx.GetSessionVars().FastCheckTable
+	_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'ON';")
+	if err != nil {
+		return err
+	}
+	if !originalFastTableCheck {
+		defer func() {
+			_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'OFF';")
+			if err != nil {
+				logutil.DDLLogger().Warn("set tidb_enable_fast_table_check = 'OFF' failed", zap.Error(err))
+			}
+		}()
+	}
+	_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -4945,6 +4998,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		conditionString, err = CheckAndBuildIndexConditionString(tblInfo, indexOption.Condition)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if len(conditionString) > 0 && !job.ReorgMeta.IsFastReorg {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg is not supported")
 		}
 	}
 	args := &model.ModifyIndexArgs{
@@ -6981,7 +7037,7 @@ func getEnableDDLAnalyze(sctx sessionctx.Context) string {
 	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBEnableDDLAnalyze); ok {
 		return val
 	}
-	logutil.DDLLogger().Info("system variable tidb_enable_ddl_analyze not found, use default value")
+	logutil.DDLLogger().Info("system variable tidb_stats_update_during_ddl not found, use default value")
 	return variable.BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze)
 }
 
@@ -6991,4 +7047,16 @@ func getAnalyzeVersion(sctx sessionctx.Context) string {
 	}
 	logutil.DDLLogger().Info("system variable tidb_analyze_version not found, use default value")
 	return strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
+}
+
+// checkColumnReferencedByPartialCondition checks whether alter column is referenced by a partial index condition
+func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName ast.CIStr) error {
+	for _, idx := range t.Indices {
+		_, ic := model.FindIndexColumnByName(idx.AffectColumn, colName.L)
+		if ic != nil {
+			return dbterror.ErrModifyColumnReferencedByPartialCondition.GenWithStackByArgs(colName.O, idx.Name.O)
+		}
+	}
+
+	return nil
 }
