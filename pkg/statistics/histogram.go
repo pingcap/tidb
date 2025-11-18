@@ -1207,9 +1207,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		actualL = l
 		actualR = r
 		predWidth := r - l
-		if predWidth < 0 {
-			predWidth = 0
-		}
 		// Predicate entirely on the right side of the histogram envelope.
 		if actualL > histR {
 			entirelyOutOfRange = true
