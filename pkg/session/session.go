@@ -2379,8 +2379,12 @@ func queryFailDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
 	return config.Event.Type == "query_fail"
 }
 
-func isInternalDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
-	return config.Event.Type == "is_internal"
+type isInternalAlias struct {
+	bool
+}
+
+func (i isInternalAlias) isInternalDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.Event.IsInternal == i.bool
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
@@ -2404,7 +2408,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 
 	sessVars := s.sessionVars
 	sessVars.StartTime = time.Now()
-	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event", isInternalDumpTriggerCheck)
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.is_internal", isInternalAlias{s.isInternal()}.isInternalDumpTriggerCheck)
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
