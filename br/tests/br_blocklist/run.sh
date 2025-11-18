@@ -21,7 +21,7 @@ run_sql "CREATE TABLE initial_db.t0 (id INT PRIMARY KEY);"
 run_sql "INSERT INTO initial_db.t0 VALUES (1);"
 
 # Verify T0 data
-t0_count=$(run_sql "SELECT COUNT(*) FROM initial_db.t0;" | tail -n1)
+t0_count=$(run_sql "SELECT COUNT(*) FROM initial_db.t0;" | tail -n1 | awk '{print $NF}')
 if [ "$t0_count" != "1" ]; then
     echo "ERROR: Expected 1 row in initial_db.t0, got $t0_count"
     exit 1
@@ -50,8 +50,8 @@ run_sql "CREATE TABLE test_db.t2 (id INT PRIMARY KEY);"
 run_sql "INSERT INTO test_db.t2 VALUES (10), (20);"
 
 # Verify T1 data
-t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1)
-t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1)
+t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1 | awk '{print $NF}')
+t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1 | awk '{print $NF}')
 if [ "$t1_count" != "3" ]; then
     echo "ERROR: Expected 3 rows in test_db.t1, got $t1_count"
     exit 1
@@ -78,8 +78,8 @@ run_sql "INSERT INTO test_db.t1 VALUES (4), (5);"
 run_sql "INSERT INTO test_db.t2 VALUES (30), (40);"
 
 # Verify T3 data
-t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1)
-t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1)
+t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1 | awk '{print $NF}')
+t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1 | awk '{print $NF}')
 if [ "$t1_count" != "5" ]; then
     echo "ERROR: Expected 5 rows in test_db.t1, got $t1_count"
     exit 1
@@ -116,8 +116,8 @@ run_br restore point \
 echo "✓ First PITR completed (restored to T2)"
 
 # Verify first PITR data correctness
-t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1)
-t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1)
+t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1 | awk '{print $NF}')
+t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1 | awk '{print $NF}')
 if [ "$t1_count" != "3" ]; then
     echo "ERROR: Expected 3 rows in test_db.t1 at T2, got $t1_count"
     exit 1
@@ -177,8 +177,8 @@ run_br restore point \
 echo "✓ Restore to T3 completed"
 
 # Verify data correctness: should be T3 data (5 rows), not T2 data (3 rows)
-t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1)
-t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1)
+t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1 | awk '{print $NF}')
+t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1 | awk '{print $NF}')
 
 if [ "$t1_count" != "5" ]; then
     echo "ERROR: Expected 5 rows in test_db.t1 at T3, got $t1_count"
@@ -260,7 +260,7 @@ if grep -q "because it is log restored" "$TEST_DIR/restore_t10_output.log"; then
     echo "✓✓✓ TEST 2 PASSED: Forward restore blocked correctly ✓✓✓"
 else
     # Check if restore unexpectedly succeeded
-    test_db_exists=$(run_sql "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='test_db';" 2>/dev/null | tail -n1 || echo "0")
+    test_db_exists=$(run_sql "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='test_db';" 2>/dev/null | tail -n1 | awk '{print $NF}' || echo "0")
 
     if [ "$test_db_exists" == "0" ]; then
         echo "ERROR: Restore failed but not due to blocklist"
