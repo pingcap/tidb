@@ -41,7 +41,7 @@ import (
 
 const CheckpointDir = "checkpoints"
 
-type flushPosition struct {
+type flushPath struct {
 	CheckpointDataDir     string
 	CheckpointChecksumDir string
 	CheckpointLockPath    string
@@ -67,13 +67,7 @@ type RangeType struct {
 	*rtree.Range
 }
 
-func (r RangeType) IdentKey() []byte {
-	return r.StartKey
-}
-
-type ValueType interface {
-	IdentKey() []byte
-}
+type ValueType any
 
 type CheckpointMessage[K KeyType, V ValueType] struct {
 	// start-key of the origin range
@@ -97,7 +91,7 @@ type CheckpointMessage[K KeyType, V ValueType] struct {
 // with multi-ranges in the ChecksumData.
 
 type RangeGroup[K KeyType, V ValueType] struct {
-	GroupKey K   `json:"group-key"`
+	GroupKey K   `json:"group-key,omitempty"`
 	Group    []V `json:"groups"`
 }
 
@@ -261,7 +255,6 @@ func (r *CheckpointRunner[K, V]) WaitForFinish(ctx context.Context, flush bool) 
 	// wait the range flusher exit
 	r.wg.Wait()
 	// remove the checkpoint lock
-	r.checkpointStorage.deleteLock(ctx)
 	r.checkpointStorage.close()
 }
 
@@ -620,7 +613,7 @@ func parseCheckpointData[K KeyType, V ValueType](
 	content []byte,
 	pastDureTime *time.Duration,
 	cipher *backuppb.CipherInfo,
-	fn func(groupKey K, value V),
+	fn func(groupKey K, value V) error,
 ) error {
 	checkpointData := &CheckpointData{}
 	if err := json.Unmarshal(content, checkpointData); err != nil {
@@ -652,7 +645,9 @@ func parseCheckpointData[K KeyType, V ValueType](
 		}
 
 		for _, g := range group.Group {
-			fn(group.GroupKey, g)
+			if err := fn(group.GroupKey, g); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -665,7 +660,7 @@ func walkCheckpointFile[K KeyType, V ValueType](
 	s storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	subDir string,
-	fn func(groupKey K, value V),
+	fn func(groupKey K, value V) error,
 ) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0

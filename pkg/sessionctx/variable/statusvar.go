@@ -19,25 +19,26 @@ import (
 	"crypto/tls"
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 )
 
 var statisticsList []Statistics
 var statisticsListLock sync.RWMutex
 
 // DefaultStatusVarScopeFlag is the default scope of status variables.
-var DefaultStatusVarScopeFlag = ScopeGlobal | ScopeSession
+var DefaultStatusVarScopeFlag = vardef.ScopeGlobal | vardef.ScopeSession
 
 // StatusVal is the value of the corresponding status variable.
 type StatusVal struct {
-	Scope ScopeFlag
+	Scope vardef.ScopeFlag
 	Value any
 }
 
 // Statistics is the interface of statistics.
 type Statistics interface {
 	// GetScope gets the status variables scope.
-	GetScope(status string) ScopeFlag
+	GetScope(status string) vardef.ScopeFlag
 	// Stats returns the statistics status variables.
 	Stats(*SessionVars) (map[string]any, error)
 }
@@ -121,24 +122,17 @@ var tlsCiphers = []uint16{
 
 var tlsSupportedCiphers string
 
-// Taken from https://github.com/openssl/openssl/blob/c784a838e0947fcca761ee62def7d077dc06d37f/include/openssl/ssl.h#L141 .
-// Update: remove tlsv1.0 and v1.1 support
-var tlsVersionString = map[uint16]string{
-	tls.VersionTLS12: "TLSv1.2",
-	tls.VersionTLS13: "TLSv1.3",
-}
-
 var defaultStatus = map[string]*StatusVal{
-	"Ssl_cipher":      {ScopeGlobal | ScopeSession, ""},
-	"Ssl_cipher_list": {ScopeGlobal | ScopeSession, ""},
-	"Ssl_verify_mode": {ScopeGlobal | ScopeSession, 0},
-	"Ssl_version":     {ScopeGlobal | ScopeSession, ""},
+	"Ssl_cipher":      {vardef.ScopeGlobal | vardef.ScopeSession, ""},
+	"Ssl_cipher_list": {vardef.ScopeGlobal | vardef.ScopeSession, ""},
+	"Ssl_verify_mode": {vardef.ScopeGlobal | vardef.ScopeSession, 0},
+	"Ssl_version":     {vardef.ScopeGlobal | vardef.ScopeSession, ""},
 }
 
 type defaultStatusStat struct {
 }
 
-func (s defaultStatusStat) GetScope(status string) ScopeFlag {
+func (s defaultStatusStat) GetScope(status string) vardef.ScopeFlag {
 	return defaultStatus[status].Scope
 }
 
@@ -151,15 +145,11 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]any, error) {
 
 	// `vars` may be nil in unit tests.
 	if vars != nil && vars.TLSConnectionState != nil {
-		statusVars["Ssl_cipher"] = util.TLSCipher2String(vars.TLSConnectionState.CipherSuite)
+		statusVars["Ssl_cipher"] = tlsutil.CipherSuiteName(vars.TLSConnectionState.CipherSuite)
 		statusVars["Ssl_cipher_list"] = tlsSupportedCiphers
 		// tls.VerifyClientCertIfGiven == SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE
 		statusVars["Ssl_verify_mode"] = 0x01 | 0x04
-		if tlsVersion, tlsVersionKnown := tlsVersionString[vars.TLSConnectionState.Version]; tlsVersionKnown {
-			statusVars["Ssl_version"] = tlsVersion
-		} else {
-			statusVars["Ssl_version"] = "unknown_tls_version"
-		}
+		statusVars["Ssl_version"] = tlsutil.VersionName(vars.TLSConnectionState.Version)
 	}
 
 	return statusVars, nil
@@ -168,7 +158,7 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]any, error) {
 func init() {
 	var ciphersBuffer bytes.Buffer
 	for _, v := range tlsCiphers {
-		ciphersBuffer.WriteString(util.TLSCipher2String(v))
+		ciphersBuffer.WriteString(tlsutil.CipherSuiteName(v))
 		ciphersBuffer.WriteString(":")
 	}
 	tlsSupportedCiphers = ciphersBuffer.String()

@@ -152,13 +152,13 @@ func TestFDSet_ExtractFD(t *testing.T) {
 			// scalar sub query will be substituted with constant datum.
 			sql:  "select c > (select b from x1) from x1 group by c",
 			best: "DataScan(x1)->Aggr(firstrow(test.x1.c))->Projection",
-			fd:   "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(3)-->(15)}",
+			fd:   "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(3)-->(16)}",
 		},
 		{
 			sql:  "select exists (select * from x1) from x1 group by d",
 			best: "DataScan(x1)->Aggr(firstrow(1))->Projection",
 			// 14 is added in the logicAgg pruning process cause all the columns of agg has been pruned.
-			fd: "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {()-->(13)}",
+			fd: "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {()-->(17)}",
 		},
 		{
 			sql:  "select c is null from x1 group by c",
@@ -208,6 +208,11 @@ func TestFDSet_ExtractFD(t *testing.T) {
 			// 2: c and d are equivalent.
 			fd: "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(1)-->(2-4), (2,3)-->(1,4), (2,4)-->(1,3), (3,4)==(3,4)} >>> {(1)-->(2-4), (2,3)-->(1,4), (2,4)-->(1,3), (3,4)==(3,4)}",
 		},
+		{
+			sql:  "select (select t1.a from t2) from t1",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Projection->MaxOneRow}->Projection",
+			fd:   "{(1)-->(2,3,10), (2,3)~~>(1), (10)~~>(1)} >>> {}",
+		},
 	}
 
 	ctx := context.TODO()
@@ -215,7 +220,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	for i, tt := range tests {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
-		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO(), nil))
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
@@ -238,7 +243,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 	}
 }
 
-func TestFDSet_ExtractFDForApply(t *testing.T) {
+func TestFDSet_ExtractFDForApplyAndUnion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
@@ -249,6 +254,8 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 	tk.MustExec("CREATE TABLE X (a INT PRIMARY KEY, b INT, c INT, d INT, e INT)")
 	tk.MustExec("CREATE UNIQUE INDEX uni ON X (b, c)")
 	tk.MustExec("CREATE TABLE Y (m INT, n INT, p INT, q INT, PRIMARY KEY (m, n))")
+	tk.MustExec("create table t1 (a int not null, b int, c int)")
+	tk.MustExec("create table t2 (e int not null, f int, g int)")
 
 	tests := []struct {
 		sql  string
@@ -308,13 +315,23 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 			// p=1 is semi join's right condition which should **NOT** be conserved.
 			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
 		},
+		{
+			sql:  "select * from t1 union all select * from t2",
+			best: "UnionAll{DataScan(t1)->Projection->DataScan(t2)->Projection}",
+			fd:   "{}",
+		},
+		{
+			sql:  "select * from t1 where a=b union all select * from t2 where e=f",
+			best: "UnionAll{DataScan(t1)->Projection->DataScan(t2)->Projection}",
+			fd:   "{(9,10)==(9,10)}",
+		},
 	}
 
 	ctx := context.TODO()
 	is := testGetIS(t, tk.Session())
 	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	for i, tt := range tests {
-		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO(), nil))
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")

@@ -96,7 +96,7 @@ func (l *List) GetChunk(chkIdx int) *Chunk {
 func (l *List) AppendRow(row Row) RowPtr {
 	chkIdx := len(l.chunks) - 1
 	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() || chkIdx == l.consumedIdx {
-		newChk := l.allocChunk()
+		newChk := l.AllocChunk()
 		l.chunks = append(l.chunks, newChk)
 		if chkIdx != l.consumedIdx {
 			l.memTracker.Consume(l.chunks[chkIdx].MemoryUsage())
@@ -129,7 +129,8 @@ func (l *List) Add(chk *Chunk) {
 	l.length += chk.NumRows()
 }
 
-func (l *List) allocChunk() (chk *Chunk) {
+// AllocChunk allocates a chunk from the freelist or creates a new one.
+func (l *List) AllocChunk() (chk *Chunk) {
 	if len(l.freelist) > 0 {
 		lastIdx := len(l.freelist) - 1
 		chk = l.freelist[lastIdx]
@@ -176,9 +177,9 @@ type ListWalkFunc = func(row Row) error
 
 // Walk iterate the list and call walkFunc for each row.
 func (l *List) Walk(walkFunc ListWalkFunc) error {
-	for i := 0; i < len(l.chunks); i++ {
+	for i := range l.chunks {
 		chk := l.chunks[i]
-		for j := 0; j < chk.NumRows(); j++ {
+		for j := range chk.NumRows() {
 			err := walkFunc(chk.GetRow(j))
 			if err != nil {
 				return errors.Trace(err)

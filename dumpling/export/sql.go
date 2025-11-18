@@ -22,7 +22,7 @@ import (
 	dbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -368,10 +368,10 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 	listType listTableType, tableTypes ...TableType) (DatabaseTables, error) { // revive:disable-line:flag-parameter
 	dbTables := DatabaseTables{}
 	var (
-		schema, table, tableTypeStr string
-		tableType                   TableType
-		avgRowLength                uint64
-		err                         error
+		table, tableTypeStr string
+		tableType           TableType
+		avgRowLength        uint64
+		err                 error
 	)
 
 	tableTypeConditions := make([]string, len(tableTypes))
@@ -380,38 +380,35 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 	}
 	switch listType {
 	case listTableByInfoSchema:
-		query := fmt.Sprintf("SELECT TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE %s", strings.Join(tableTypeConditions, " OR "))
 		for _, schema := range databaseNames {
+			query := fmt.Sprintf("SELECT TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=? AND (%s)", strings.Join(tableTypeConditions, " OR "))
 			dbTables[schema] = make([]*TableInfo, 0)
-		}
-		if err = simpleQueryWithArgs(tctx, db, func(rows *sql.Rows) error {
-			var (
-				sqlAvgRowLength sql.NullInt64
-				err2            error
-			)
-			if err2 = rows.Scan(&schema, &table, &tableTypeStr, &sqlAvgRowLength); err != nil {
-				return errors.Trace(err2)
-			}
-			tableType, err2 = ParseTableType(tableTypeStr)
-			if err2 != nil {
-				return errors.Trace(err2)
-			}
+			if err = simpleQueryWithArgs(tctx, db, func(rows *sql.Rows) error {
+				var (
+					sqlAvgRowLength sql.NullInt64
+					err2            error
+				)
+				if err2 = rows.Scan(&table, &tableTypeStr, &sqlAvgRowLength); err != nil {
+					return errors.Trace(err2)
+				}
+				tableType, err2 = ParseTableType(tableTypeStr)
+				if err2 != nil {
+					return errors.Trace(err2)
+				}
 
-			if sqlAvgRowLength.Valid {
-				avgRowLength = uint64(sqlAvgRowLength.Int64)
-			} else {
-				avgRowLength = 0
-			}
-			// only append tables to schemas in databaseNames
-			if _, ok := dbTables[schema]; ok {
+				if sqlAvgRowLength.Valid {
+					avgRowLength = uint64(sqlAvgRowLength.Int64)
+				} else {
+					avgRowLength = 0
+				}
 				dbTables[schema] = append(dbTables[schema], &TableInfo{table, avgRowLength, tableType})
+				return nil
+			}, query, schema); err != nil {
+				return nil, errors.Annotatef(err, "sql: %s", query)
 			}
-			return nil
-		}, query); err != nil {
-			return nil, errors.Annotatef(err, "sql: %s", query)
 		}
 	case listTableByShowFullTables:
-		for _, schema = range databaseNames {
+		for _, schema := range databaseNames {
 			dbTables[schema] = make([]*TableInfo, 0)
 			query := fmt.Sprintf("SHOW FULL TABLES FROM `%s` WHERE %s",
 				escapeString(schema), strings.Join(tableTypeConditions, " OR "))
@@ -437,7 +434,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 		for _, tableType = range tableTypes {
 			selectedTableType[tableType] = struct{}{}
 		}
-		for _, schema = range databaseNames {
+		for _, schema := range databaseNames {
 			dbTables[schema] = make([]*TableInfo, 0)
 			query := fmt.Sprintf(queryTemplate, escapeString(schema))
 			rows, err := db.QueryContext(tctx, query)
@@ -624,11 +621,7 @@ func GetColumnTypes(tctx *tcontext.Context, db *BaseConn, fields, database, tabl
 }
 
 // GetPrimaryKeyAndColumnTypes gets all primary columns and their types in ordinal order
-func GetPrimaryKeyAndColumnTypes(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) ([]string, []string, error) {
-	var (
-		colNames, colTypes []string
-		err                error
-	)
+func GetPrimaryKeyAndColumnTypes(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (colNames, colTypes []string, err error) {
 	colNames, err = GetPrimaryKeyColumns(tctx, conn, meta.DatabaseName(), meta.TableName())
 	if err != nil {
 		return nil, nil, err
@@ -748,7 +741,7 @@ func UnlockTables(ctx context.Context, db *sql.Conn) error {
 }
 
 // ShowMasterStatus get SHOW MASTER STATUS result from database
-func ShowMasterStatus(db *sql.Conn) ([]string, error) {
+func ShowMasterStatus(db *sql.Conn, serverInfo version.ServerInfo) ([]string, error) {
 	var oneRow []string
 	handleOneRow := func(rows *sql.Rows) error {
 		cols, err := rows.Columns()
@@ -763,7 +756,17 @@ func ShowMasterStatus(db *sql.Conn) ([]string, error) {
 		}
 		return rows.Scan(addr...)
 	}
-	const showMasterStatusQuery = "SHOW MASTER STATUS"
+
+	// MySQL 8.4.0 and newer: SHOW BINARY LOG STATUS
+	// TiDB, MariaDB, Old MySQL: SHOW MASTER STATUS
+	showMasterStatusQuery := "SHOW MASTER STATUS"
+	if serverInfo.ServerVersion != nil {
+		if serverInfo.ServerType == version.ServerTypeMySQL &&
+			!serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) {
+			showMasterStatusQuery = "SHOW BINARY LOG STATUS"
+		}
+	}
+
 	err := simpleQuery(db, showMasterStatusQuery, handleOneRow)
 	if err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", showMasterStatusQuery)
@@ -897,7 +900,7 @@ func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 		}()
 		tidbConfig, err := getTiDBConfig(conn)
 		if err == nil {
-			return tidbConfig.Store == "tikv", nil
+			return tidbConfig.Store == dbconfig.StoreTypeTiKV, nil
 		}
 	}
 	var count int
@@ -912,8 +915,8 @@ func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	return count > 0, nil
 }
 
-// CheckIfSeqExists use sql to check whether sequence exists
-func CheckIfSeqExists(db *sql.Conn) (bool, error) {
+// checkIfSeqExists use sql to check whether sequence exists
+func checkIfSeqExists(db *sql.Conn) (bool, error) {
 	var count int
 	const query = "SELECT COUNT(1) as c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='SEQUENCE'"
 	row := db.QueryRowContext(context.Background(), query)
@@ -935,7 +938,10 @@ func CheckTiDBEnableTableLock(db *sql.Conn) (bool, error) {
 }
 
 func getSnapshot(db *sql.Conn) (string, error) {
-	str, err := ShowMasterStatus(db)
+	serverInfo := version.ServerInfo{
+		ServerType: version.ServerTypeTiDB,
+	}
+	str, err := ShowMasterStatus(db, serverInfo)
 	if err != nil {
 		return "", err
 	}
@@ -1105,7 +1111,7 @@ func buildCompareClause(buf *bytes.Buffer, quotaCols []string, bound []string, c
 		if i > 0 {
 			buf.WriteString("or(")
 		}
-		for j := 0; j < i; j++ {
+		for j := range i {
 			buf.WriteString(quotaCols[j])
 			buf.WriteByte(equal)
 			buf.WriteString(bound[j])
@@ -1158,7 +1164,7 @@ func buildBetweenClause(buf *bytes.Buffer, quotaCols []string, low []string, up 
 			buf.WriteString("false")
 			return
 		}
-		for i := 0; i < commonLen; i++ {
+		for i := range commonLen {
 			if i > 0 {
 				buf.WriteString(" and ")
 			}
@@ -1549,7 +1555,7 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 		}
 		last := len(schemas) - 1
 		if last < 0 || schemas[last].Name.O != tableSchema {
-			dbInfo := &model.DBInfo{Name: pmodel.CIStr{O: tableSchema}}
+			dbInfo := &model.DBInfo{Name: ast.CIStr{O: tableSchema}}
 			dbInfo.Deprecated.Tables = make([]*model.TableInfo, 0, len(tables[tableSchema]))
 			schemas = append(schemas, dbInfo)
 			last++
@@ -1561,14 +1567,14 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 				for partitionName, partitionID := range ptm {
 					partition.Definitions = append(partition.Definitions, model.PartitionDefinition{
 						ID:   partitionID,
-						Name: pmodel.CIStr{O: partitionName},
+						Name: ast.CIStr{O: partitionName},
 					})
 				}
 			}
 		}
 		schemas[last].Deprecated.Tables = append(schemas[last].Deprecated.Tables, &model.TableInfo{
 			ID:        tidbTableID,
-			Name:      pmodel.CIStr{O: tableName},
+			Name:      ast.CIStr{O: tableName},
 			Partition: partition,
 		})
 		return nil

@@ -101,7 +101,7 @@ func (b *Builder) addTemporaryTable(tblID int64) {
 	b.infoSchema.temporaryTableIDs[tblID] = struct{}{}
 }
 
-func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo) {
+func (b *Builder) initMisc(policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo) {
 	info := b.infoSchema
 	// build the policies.
 	for _, policy := range policies {
@@ -111,21 +111,5 @@ func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo
 	// build the groups.
 	for _, group := range resourceGroups {
 		info.setResourceGroup(group)
-	}
-
-	// Maintain foreign key reference information.
-	if b.enableV2 {
-		rs := b.ListTablesWithSpecialAttribute(ForeignKeysAttribute)
-		for _, db := range rs {
-			for _, tbl := range db.TableInfos {
-				info.addReferredForeignKeys(db.DBName, tbl)
-			}
-		}
-		return
-	}
-	for _, di := range dbInfos {
-		for _, t := range di.Deprecated.Tables {
-			b.infoSchema.addReferredForeignKeys(di.Name, t)
-		}
 	}
 }

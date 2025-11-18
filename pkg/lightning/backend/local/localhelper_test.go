@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/atomic"
 )
 
@@ -167,7 +168,7 @@ func (c *testSplitClient) SplitWaitAndScatter(ctx context.Context, region *split
 	return newRegions, err
 }
 
-func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
+func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*split.RegionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -253,7 +254,7 @@ func initTestSplitClient3Replica(keys [][]byte, hook clientHook) *testSplitClien
 		}
 		baseID := (i-1)*10 + 1
 		peers := make([]*metapb.Peer, 3)
-		for j := 0; j < 3; j++ {
+		for j := range 3 {
 			peers[j] = &metapb.Peer{
 				Id:      baseID + uint64(j),
 				StoreId: baseID + uint64(j),
@@ -303,7 +304,7 @@ func TestStoreWriteLimiter(t *testing.T) {
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel()
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(storeID uint64) {
 			defer wg.Done()
@@ -324,4 +325,41 @@ func TestStoreWriteLimiter(t *testing.T) {
 		}(uint64(i))
 	}
 	wg.Wait()
+}
+
+func TestTuneStoreWriteLimiter(t *testing.T) {
+	limiter := newStoreWriteLimiter(100)
+	testLimiter := func(ctx context.Context, maxT int) {
+		var wg sync.WaitGroup
+		for i := range 10 {
+			wg.Add(1)
+			go func(storeID uint64) {
+				defer wg.Done()
+				start := time.Now()
+				var gotTokens int
+				for {
+					n := rand.Intn(50)
+					if limiter.WaitN(ctx, storeID, n) != nil {
+						break
+					}
+					gotTokens += n
+				}
+				elapsed := time.Since(start)
+				maxTokens := int(1.2*float64(maxT)) + int(elapsed.Seconds()*float64(maxT))
+				// In theory, gotTokens should be less than or equal to maxT.
+				// But we allow a little of error to avoid the test being flaky.
+				require.LessOrEqual(t, gotTokens, maxTokens+1)
+			}(uint64(i))
+		}
+		wg.Wait()
+	}
+
+	ctx0, cancel0 := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel0()
+	testLimiter(ctx0, 100)
+
+	limiter.UpdateLimit(200)
+	ctx1, cancel1 := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel1()
+	testLimiter(ctx1, 200)
 }

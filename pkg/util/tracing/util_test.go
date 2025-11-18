@@ -20,7 +20,6 @@ import (
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/require"
 )
@@ -140,7 +139,7 @@ func TestTraceInfoFromContext(t *testing.T) {
 	require.Equal(t, ctx, tracing.ContextWithTraceInfo(ctx, nil))
 	// create a context with trace info
 	ctx, cancel := context.WithCancel(context.WithValue(ctx, "val1", "a"))
-	ctx = tracing.ContextWithTraceInfo(ctx, &model.TraceInfo{ConnectionID: 12345, SessionAlias: "alias1"})
+	ctx = tracing.ContextWithTraceInfo(ctx, &tracing.TraceInfo{ConnectionID: 12345, SessionAlias: "alias1"})
 	// new context should have the same value as the original one
 	info := tracing.TraceInfoFromContext(ctx)
 	require.Equal(t, uint64(12345), info.ConnectionID)

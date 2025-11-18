@@ -18,10 +18,12 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"math"
 	"slices"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -55,6 +57,21 @@ func (h *exhaustedHeap) Pop() any {
 	x := old[n-1]
 	*h = old[:n-1]
 	return x
+}
+
+// CalRangeSize calculates the range size and range keys.
+// see writeStepMemShareCount for more info.
+func CalRangeSize(memPerCore int64, regionSplitSize, regionSplitKeys int64) (int64, int64) {
+	ss := int64(float64(memPerCore) / writeStepMemShareCount)
+	var rangeSize int64
+	if ss < regionSplitSize {
+		rangeCnt := int64(math.Ceil(float64(regionSplitSize) / float64(ss)))
+		rangeSize = regionSplitSize/rangeCnt + 1
+	} else {
+		rangeSize = (ss / regionSplitSize) * regionSplitSize
+	}
+	avgKeySize := float64(regionSplitSize) / float64(regionSplitKeys)
+	return rangeSize, int64(float64(rangeSize) / avgKeySize)
 }
 
 // RangeSplitter is used to split key ranges of an external engine. Please see
@@ -147,8 +164,12 @@ func NewRangeSplitter(
 // Close release the resources of RangeSplitter.
 func (r *RangeSplitter) Close() error {
 	err := r.propIter.Close()
-	r.logger.Info("close range splitter", zap.Error(err))
-	return err
+	if err != nil {
+		r.logger.Error("close range splitter error", zap.Error(err))
+		return err
+	}
+	r.logger.Info("close range splitter")
+	return nil
 }
 
 // SplitOneRangesGroup splits one ranges group may contain multiple range jobs
@@ -156,14 +177,15 @@ func (r *RangeSplitter) Close() error {
 // but it will be nil when the group is the last one. `dataFiles` and `statFiles`
 // are all the files that have overlapping key ranges in this group.
 // `interiorRangeJobKeys` are the interior boundary keys of the range jobs, the
-// range can be constructed with start/end key at caller. `regionSplitKeys` are
-// the split keys that will be used later to split regions.
+// range can be constructed with start/end key at caller.
+// `interiorRegionSplitKeys` are the split keys that will be used later to split
+// regions.
 func (r *RangeSplitter) SplitOneRangesGroup() (
 	endKeyOfGroup []byte,
 	dataFiles []string,
 	statFiles []string,
 	interiorRangeJobKeys [][]byte,
-	regionSplitKeys [][]byte,
+	interiorRegionSplitKeys [][]byte,
 	err error,
 ) {
 	var (
@@ -230,7 +252,10 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 			r.recordRegionSplitAfterNextProp = false
 		}
 
-		if r.curRangeJobSize >= r.rangeJobSize || r.curRangeJobKeyCnt >= r.rangeJobKeyCnt {
+		// each KV need additional memory for 2 slice.
+		// we can enhance it later using SliceLocation.
+		rangeMemSize := r.curRangeJobSize + r.curRangeJobKeyCnt*size.SizeOfSlice*2
+		if rangeMemSize >= r.rangeJobSize || r.curRangeJobKeyCnt >= r.rangeJobKeyCnt {
 			r.curRangeJobSize = 0
 			r.curRangeJobKeyCnt = 0
 			r.recordRangeJobAfterNextProp = true

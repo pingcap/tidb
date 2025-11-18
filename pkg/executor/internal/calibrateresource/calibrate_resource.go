@@ -37,9 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/duration"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -196,10 +195,10 @@ func (e *Executor) parseCalibrateDuration(ctx context.Context) (startTime time.T
 		if startTimeExpr == nil {
 			toTimeExpr := endTimeExpr
 			if endTime.IsZero() {
-				toTimeExpr = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
+				toTimeExpr = &ast.FuncCallExpr{FnName: ast.NewCIStr("CURRENT_TIMESTAMP")}
 			}
 			startTimeExpr = &ast.FuncCallExpr{
-				FnName: model.NewCIStr("DATE_SUB"),
+				FnName: ast.NewCIStr("DATE_SUB"),
 				Args: []ast.ExprNode{
 					toTimeExpr,
 					op.Ts,
@@ -213,7 +212,7 @@ func (e *Executor) parseCalibrateDuration(ctx context.Context) (startTime time.T
 		// If endTime is set, duration will be ignored.
 		if endTime.IsZero() {
 			endTime, err = e.parseTsExpr(ctx, &ast.FuncCallExpr{
-				FnName: model.NewCIStr("DATE_ADD"),
+				FnName: ast.NewCIStr("DATE_ADD"),
 				Args: []ast.ExprNode{startTimeExpr,
 					op.Ts,
 					&ast.TimeUnitExpr{Unit: op.Unit}},
@@ -252,7 +251,7 @@ func (e *Executor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
-	if !variable.EnableResourceControl.Load() {
+	if !vardef.EnableResourceControl.Load() {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)

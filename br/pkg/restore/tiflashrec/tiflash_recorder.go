@@ -130,15 +130,15 @@ func (r *TiFlashRecorder) GenerateResetAlterTableDDLs(info infoschema.InfoSchema
 
 func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []string {
 	items := make([]string, 0, len(r.items))
-	r.Iterate(func(id int64, replica model.TiFlashReplicaInfo) {
-		table, ok := info.TableByID(context.Background(), id)
+	r.Iterate(func(tableId int64, replica model.TiFlashReplicaInfo) {
+		table, ok := info.TableByID(context.Background(), tableId)
 		if !ok {
-			log.Warn("Table do not exist, skipping", zap.Int64("id", id))
+			log.Warn("Table does not exist, might get filtered out if a custom filter is specified, skipping", zap.Int64("tableId", tableId))
 			return
 		}
 		schema, ok := infoschema.SchemaByTable(info, table.Meta())
 		if !ok {
-			log.Warn("Schema do not exist, skipping", zap.Int64("id", id), zap.Stringer("table", table.Meta().Name))
+			log.Warn("Schema do not exist, skipping", zap.Int64("tableId", tableId), zap.Stringer("table", table.Meta().Name))
 			return
 		}
 		altTableSpec, err := alterTableSpecOf(replica, false)

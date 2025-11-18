@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -100,7 +100,7 @@ func (w *worker) onAddCheckConstraint(jobCtx *jobContext, job *model.Job) (ver i
 		constraintInfoInMeta.State = model.StateWriteReorganization
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	case model.StateWriteReorganization:
-		err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfoInMeta)
+		err = w.verifyRemainRecordsForCheckConstraint(jobCtx.stepCtx, dbInfo, tblInfo, constraintInfoInMeta)
 		if err != nil {
 			if dbterror.ErrCheckConstraintIsViolated.Equal(err) {
 				job.State = model.JobStateRollingback
@@ -121,13 +121,13 @@ func (w *worker) onAddCheckConstraint(jobCtx *jobContext, job *model.Job) (ver i
 	return ver, errors.Trace(err)
 }
 
-func checkAddCheckConstraint(t *meta.Mutator, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, *model.ConstraintInfo, error) {
+func checkAddCheckConstraint(t *meta.Mutator, job *model.Job) (dbInfo *model.DBInfo, tblInfo *model.TableInfo, _, _ *model.ConstraintInfo, err error) {
 	schemaID := job.SchemaID
-	dbInfo, err := t.GetDatabase(job.SchemaID)
+	dbInfo, err = t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return nil, nil, nil, nil, errors.Trace(err)
 	}
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err = GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, nil, nil, errors.Trace(err)
 	}
@@ -245,7 +245,7 @@ func (w *worker) onAlterCheckConstraint(jobCtx *jobContext, job *model.Job) (ver
 			constraintInfo.State = model.StateWriteOnly
 			ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		case model.StateWriteOnly:
-			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo)
+			err = w.verifyRemainRecordsForCheckConstraint(jobCtx.stepCtx, dbInfo, tblInfo, constraintInfo)
 			if err != nil {
 				if dbterror.ErrCheckConstraintIsViolated.Equal(err) {
 					job.State = model.JobStateRollingback
@@ -301,8 +301,8 @@ func allocateConstraintID(tblInfo *model.TableInfo) int64 {
 	return tblInfo.MaxConstraintID
 }
 
-func buildConstraintInfo(tblInfo *model.TableInfo, dependedCols []pmodel.CIStr, constr *ast.Constraint, state model.SchemaState) (*model.ConstraintInfo, error) {
-	constraintName := pmodel.NewCIStr(constr.Name)
+func buildConstraintInfo(tblInfo *model.TableInfo, dependedCols []ast.CIStr, constr *ast.Constraint, state model.SchemaState) (*model.ConstraintInfo, error) {
+	constraintName := ast.NewCIStr(constr.Name)
 	if err := checkTooLongConstraint(constraintName); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -333,7 +333,7 @@ func buildConstraintInfo(tblInfo *model.TableInfo, dependedCols []pmodel.CIStr, 
 	return constraintInfo, nil
 }
 
-func checkTooLongConstraint(constr pmodel.CIStr) error {
+func checkTooLongConstraint(constr ast.CIStr) error {
 	if len(constr.L) > mysql.MaxConstraintIdentifierLen {
 		return dbterror.ErrTooLongIdent.GenWithStackByArgs(constr)
 	}
@@ -351,7 +351,12 @@ func findDependentColsInExpr(expr ast.ExprNode) map[string]struct{} {
 	return colsMap
 }
 
-func (w *worker) verifyRemainRecordsForCheckConstraint(dbInfo *model.DBInfo, tableInfo *model.TableInfo, constr *model.ConstraintInfo) error {
+func (w *worker) verifyRemainRecordsForCheckConstraint(
+	ctx context.Context,
+	dbInfo *model.DBInfo,
+	tableInfo *model.TableInfo,
+	constr *model.ConstraintInfo,
+) error {
 	// Inject a fail-point to skip the remaining records check.
 	failpoint.Inject("mockVerifyRemainDataSuccess", func(val failpoint.Value) {
 		if val.(bool) {
@@ -371,7 +376,7 @@ func (w *worker) verifyRemainRecordsForCheckConstraint(dbInfo *model.DBInfo, tab
 	// can let the check expression restored string as the filter in where clause directly.
 	// Prepare internal SQL to fetch data from physical table under this filter.
 	sql := fmt.Sprintf("select 1 from `%s`.`%s` where not %s limit 1", dbInfo.Name.L, tableInfo.Name.L, constr.ExprString)
-	ctx := kv.WithInternalSourceType(w.ctx, kv.InternalTxnDDL)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -398,13 +403,13 @@ func setNameForConstraintInfo(tableLowerName string, namesMap map[string]bool, i
 				cnt++
 				constrName = fmt.Sprintf("%s%d", constraintPrefix, cnt)
 			}
-			constrInfo.Name = pmodel.NewCIStr(constrName)
+			constrInfo.Name = ast.NewCIStr(constrName)
 		}
 	}
 }
 
 // IsColumnDroppableWithCheckConstraint check whether the column in check-constraint whose dependent col is more than 1
-func IsColumnDroppableWithCheckConstraint(col pmodel.CIStr, tblInfo *model.TableInfo) error {
+func IsColumnDroppableWithCheckConstraint(col ast.CIStr, tblInfo *model.TableInfo) error {
 	for _, cons := range tblInfo.Constraints {
 		if len(cons.ConstraintCols) > 1 {
 			for _, colName := range cons.ConstraintCols {
@@ -418,7 +423,7 @@ func IsColumnDroppableWithCheckConstraint(col pmodel.CIStr, tblInfo *model.Table
 }
 
 // IsColumnRenameableWithCheckConstraint check whether the column is referenced in check-constraint
-func IsColumnRenameableWithCheckConstraint(col pmodel.CIStr, tblInfo *model.TableInfo) error {
+func IsColumnRenameableWithCheckConstraint(col ast.CIStr, tblInfo *model.TableInfo) error {
 	for _, cons := range tblInfo.Constraints {
 		for _, colName := range cons.ConstraintCols {
 			if colName.L == col.L {

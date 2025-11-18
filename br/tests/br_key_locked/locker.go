@@ -45,6 +45,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 )
 
@@ -85,7 +86,7 @@ func main() {
 		log.Panic("get table id failed", zap.Error(err))
 	}
 
-	pdclient, err := pd.NewClient([]string{*pdAddr}, pd.SecurityOption{
+	pdclient, err := pd.NewClient(caller.TestComponent, []string{*pdAddr}, pd.SecurityOption{
 		CAPath:   *ca,
 		CertPath: *cert,
 		KeyPath:  *key,
@@ -346,7 +347,7 @@ func (c *Locker) lockBatch(ctx context.Context, keys [][]byte, primary []byte) (
 func randStr() string {
 	length := rand.Intn(128)
 	res := ""
-	for i := 0; i < length; i++ {
+	for range length {
 		res += strconv.Itoa(rand.Intn(10))
 	}
 	return res

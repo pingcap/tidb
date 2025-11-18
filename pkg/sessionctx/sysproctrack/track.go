@@ -15,8 +15,8 @@
 package sysproctrack
 
 import (
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util"
 )
 
 // TrackProc is an interface for a process to track
@@ -24,13 +24,13 @@ type TrackProc interface {
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
 	// ShowProcess returns ProcessInfo running in current Context
-	ShowProcess() *util.ProcessInfo
+	ShowProcess() *sessmgr.ProcessInfo
 }
 
 // Tracker is an interface to track system processes.
 type Tracker interface {
 	Track(id uint64, proc TrackProc) error
 	UnTrack(id uint64)
-	GetSysProcessList() map[uint64]*util.ProcessInfo
+	GetSysProcessList() map[uint64]*sessmgr.ProcessInfo
 	KillSysProcess(id uint64)
 }

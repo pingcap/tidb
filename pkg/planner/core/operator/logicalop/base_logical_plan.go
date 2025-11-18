@@ -15,6 +15,9 @@
 package logicalop
 
 import (
+	"slices"
+	"strconv"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -23,15 +26,17 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 var _ base.LogicalPlan = &BaseLogicalPlan{}
+
+const (
+	// ApplyGenFromXFDeCorrelateRuleFlag is the flag marked for this op apply is intermediary.
+	ApplyGenFromXFDeCorrelateRuleFlag uint64 = 1 << 0
+)
 
 // BaseLogicalPlan is the common structure that used in logical plan.
 type BaseLogicalPlan struct {
@@ -40,6 +45,8 @@ type BaseLogicalPlan struct {
 	taskMap map[string]base.Task
 	// taskMapBak forms a backlog stack of taskMap, used to roll back the taskMap.
 	taskMapBak []string
+	// planIDsHash is the hash of the subtree root from this logical plan.
+	planIDsHash uint64
 	// taskMapBakTS stores the timestamps of logs.
 	taskMapBakTS []uint64
 	self         base.LogicalPlan
@@ -50,19 +57,30 @@ type BaseLogicalPlan struct {
 	// removing Max1Row operators, and mapping semi-joins to inner-joins.
 	// for now, it's hard to maintain in individual operator, build it from bottom up when using.
 	fdSet *fd.FDSet
+
+	// Flag is with that each bit has its meaning to mark this logical plan for special handling.
+	Flag uint64
 }
 
 // *************************** implementation of HashEquals interface ***************************
 
 // Hash64 implements HashEquals.<0th> interface.
 func (p *BaseLogicalPlan) Hash64(h base2.Hasher) {
-	intest.Assert(false, "Hash64 should not be called directly")
+	switch p.self.(type) {
+	case *LogicalSequence, *LogicalMaxOneRow, *LogicalLock:
+	default:
+		intest.Assert(false, "Hash64 should not be called directly")
+	}
 	h.HashInt(p.ID())
 }
 
 // Equals implements HashEquals.<1st> interface.
 func (p *BaseLogicalPlan) Equals(other any) bool {
-	intest.Assert(false, "Equals should not be called directly")
+	_, ok1 := p.self.(*LogicalSequence)
+	_, ok2 := p.self.(*LogicalMaxOneRow)
+	if !ok1 && !ok2 {
+		intest.Assert(false, "Equals should not be called directly")
+	}
 	if other == nil {
 		return false
 	}
@@ -95,15 +113,6 @@ func (p *BaseLogicalPlan) SetOutputNames(names types.NameSlice) {
 	p.children[0].SetOutputNames(names)
 }
 
-// BuildPlanTrace implements Plan
-func (p *BaseLogicalPlan) BuildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
-	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.BuildPlanTrace())
-	}
-	return planTrace
-}
-
 // *************************** implementation of logicalPlan interface ***************************
 
 // HashCode implements LogicalPlan.<0th> interface.
@@ -116,33 +125,30 @@ func (p *BaseLogicalPlan) HashCode() []byte {
 }
 
 // PredicatePushDown implements LogicalPlan.<1st> interface.
-func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	if len(p.children) == 0 {
-		return predicates, p.self
+		return predicates, p.self, nil
 	}
 	child := p.children[0]
-	rest, newChild := child.PredicatePushDown(predicates, opt)
-	addSelection(p.self, newChild, rest, 0, opt)
-	return nil, p.self
+	rest, newChild, err := child.PredicatePushDown(predicates)
+	if err != nil {
+		return nil, p.self, err
+	}
+	AddSelection(p.self, newChild, rest, 0)
+	return nil, p.self, nil
 }
 
 // PruneColumns implements LogicalPlan.<2nd> interface.
-func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	if len(p.children) == 0 {
 		return p.self, nil
 	}
 	var err error
-	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
+	p.children[0], err = p.children[0].PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
 	return p.self, nil
-}
-
-// FindBestTask implements LogicalPlan.<3rd> interface.
-func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
-	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask4BaseLogicalPlan(p, prop, planCounter, opt)
 }
 
 // BuildKeyInfo implements LogicalPlan.<4th> interface.
@@ -155,16 +161,16 @@ func (p *BaseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Sch
 }
 
 // PushDownTopN implements the LogicalPlan.<5th> interface.
-func (p *BaseLogicalPlan) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	return pushDownTopNForBaseLogicalPlan(p, topNLogicalPlan, opt)
+func (p *BaseLogicalPlan) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
+	return pushDownTopNForBaseLogicalPlan(p, topNLogicalPlan)
 }
 
 // DeriveTopN implements the LogicalPlan.<6th> interface.
-func (p *BaseLogicalPlan) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *BaseLogicalPlan) DeriveTopN() base.LogicalPlan {
 	s := p.self
 	if s.SCtx().GetSessionVars().AllowDeriveTopN {
 		for i, child := range s.Children() {
-			newChild := child.DeriveTopN(opt)
+			newChild := child.DeriveTopN()
 			s.SetChild(i, newChild)
 		}
 	}
@@ -172,17 +178,17 @@ func (p *BaseLogicalPlan) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.
 }
 
 // PredicateSimplification implements the LogicalPlan.<7th> interface.
-func (p *BaseLogicalPlan) PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *BaseLogicalPlan) PredicateSimplification() base.LogicalPlan {
 	s := p.self
 	for i, child := range s.Children() {
-		newChild := child.PredicateSimplification(opt)
+		newChild := child.PredicateSimplification()
 		s.SetChild(i, newChild)
 	}
 	return s
 }
 
 // ConstantPropagation implements the LogicalPlan.<8th> interface.
-func (*BaseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int, _ *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+func (*BaseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int) (newRoot base.LogicalPlan) {
 	// Only LogicalJoin can apply constant propagation
 	// Other Logical plan do nothing
 	return nil
@@ -196,33 +202,40 @@ func (*BaseLogicalPlan) PullUpConstantPredicates() []expression.Expression {
 }
 
 // RecursiveDeriveStats implements LogicalPlan.<10th> interface.
-func (p *BaseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *BaseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, bool, error) {
 	childStats := make([]*property.StatsInfo, len(p.children))
 	childSchema := make([]*expression.Schema, len(p.children))
 	cumColGroups := p.self.ExtractColGroups(colGroups)
+	reloads := make([]bool, 0, len(p.children))
 	for i, child := range p.children {
-		childProfile, err := child.RecursiveDeriveStats(cumColGroups)
+		childProfile, reload, err := child.RecursiveDeriveStats(cumColGroups)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
+		reloads = append(reloads, reload)
 		childStats[i] = childProfile
 		childSchema[i] = child.Schema()
 	}
-	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema, colGroups)
+	// when the child has reloaded their stats, current logical operator should reload itself too.
+	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema, reloads)
 }
 
 // DeriveStats implements LogicalPlan.<11th> interface.
-func (p *BaseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *BaseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	for _, one := range reloads {
+		reload = reload || one
+	}
 	if len(childStats) == 1 {
 		p.SetStats(childStats[0])
-		return p.StatsInfo(), nil
+		return p.StatsInfo(), true, nil
 	}
 	if len(childStats) > 1 {
 		err := plannererrors.ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own DeriveStats().")
-		return nil, err
+		return nil, false, err
 	}
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
+	if !reload && p.StatsInfo() != nil {
+		return p.StatsInfo(), false, nil
 	}
 	profile := &property.StatsInfo{
 		RowCount: float64(1),
@@ -232,7 +245,7 @@ func (p *BaseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 		profile.ColNDVs[col.UniqueID] = 1
 	}
 	p.SetStats(profile)
-	return profile, nil
+	return profile, true, nil
 }
 
 // ExtractColGroups implements LogicalPlan.<12th> interface.
@@ -243,11 +256,6 @@ func (*BaseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expressi
 // PreparePossibleProperties implements LogicalPlan.<13th> interface.
 func (*BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	return nil
-}
-
-// ExhaustPhysicalPlans implements LogicalPlan.<14th> interface.
-func (*BaseLogicalPlan) ExhaustPhysicalPlans(*property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	panic("baseLogicalPlan.ExhaustPhysicalPlans() should never be called.")
 }
 
 // ExtractCorrelatedCols implements LogicalPlan.<15th> interface.
@@ -290,8 +298,8 @@ func (p *BaseLogicalPlan) RollBackTaskMap(ts uint64) {
 			}
 
 			// Remove the i_th log.
-			p.taskMapBak = append(p.taskMapBak[:i], p.taskMapBak[i+1:]...)
-			p.taskMapBakTS = append(p.taskMapBakTS[:i], p.taskMapBakTS[i+1:]...)
+			p.taskMapBak = slices.Delete(p.taskMapBak, i, i+1)
+			p.taskMapBakTS = slices.Delete(p.taskMapBakTS, i, i+1)
 			i--
 			n--
 
@@ -308,8 +316,9 @@ func (p *BaseLogicalPlan) RollBackTaskMap(ts uint64) {
 // it checks if it can be pushed to some stores. For TiKV, it only checks datasource.
 // For TiFlash, it will check whether the operator is supported, but note that the check
 // might be inaccurate.
+// Deprecated: don't depend subtree based push check, see CanSelfBeingPushedToCopImpl based op-self push check.
 func (p *BaseLogicalPlan) CanPushToCop(storeTp kv.StoreType) bool {
-	return CanPushToCopImpl(p, storeTp, false)
+	return CanPushToCopImpl(p, storeTp)
 }
 
 // ExtractFD implements LogicalPlan.<22nd> interface.
@@ -351,20 +360,20 @@ func (p *BaseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
 
 // GetTask returns the history recorded Task for specified property.
 func (p *BaseLogicalPlan) GetTask(prop *property.PhysicalProperty) base.Task {
-	key := prop.HashCode()
-	return p.taskMap[string(key)]
+	key := strconv.FormatUint(p.planIDsHash, 10) + string(prop.HashCode())
+	return p.taskMap[key]
 }
 
 // StoreTask records Task for specified property as <k,v>.
 func (p *BaseLogicalPlan) StoreTask(prop *property.PhysicalProperty, task base.Task) {
-	key := prop.HashCode()
+	key := strconv.FormatUint(p.planIDsHash, 10) + string(prop.HashCode())
 	if p.SCtx().GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		// Empty string for useless change.
 		ts := p.GetLogicalTS4TaskMap()
 		p.taskMapBakTS = append(p.taskMapBakTS, ts)
-		p.taskMapBak = append(p.taskMapBak, string(key))
+		p.taskMapBak = append(p.taskMapBak, key)
 	}
-	p.taskMap[string(key)] = task
+	p.taskMap[key] = task
 }
 
 // ChildLen returns the child length of BaseLogicalPlan.
@@ -397,6 +406,31 @@ func (p *BaseLogicalPlan) SetMaxOneRow(b bool) {
 	p.maxOneRow = b
 }
 
+// SetPlanIDsHash set the hash of the subtree rooted from this logical plan.
+func (p *BaseLogicalPlan) SetPlanIDsHash(hash uint64) {
+	p.planIDsHash = hash
+}
+
+// GetPlanIDsHash return the plan ids hash rooted from this logical plan.
+func (p *BaseLogicalPlan) GetPlanIDsHash() uint64 {
+	return p.planIDsHash
+}
+
+// GetWrappedLogicalPlan implements the logical plan interface.
+func (p *BaseLogicalPlan) GetWrappedLogicalPlan() base.LogicalPlan {
+	return p.self
+}
+
+// GetChildStatsAndSchema gets the stats and schema of the first child.
+func (p *BaseLogicalPlan) GetChildStatsAndSchema() (*property.StatsInfo, *expression.Schema) {
+	return p.Children()[0].StatsInfo(), p.Children()[0].Schema()
+}
+
+// GetJoinChildStatsAndSchema gets the stats and schema of both children.
+func (*BaseLogicalPlan) GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
+	panic("baseLogicalPlan.GetJoinChildStatsAndSchema() should never be called.")
+}
+
 // NewBaseLogicalPlan is the basic constructor of BaseLogicalPlan.
 func NewBaseLogicalPlan(ctx base.PlanContext, tp string, self base.LogicalPlan, qbOffset int) BaseLogicalPlan {
 	return BaseLogicalPlan{
@@ -406,4 +440,33 @@ func NewBaseLogicalPlan(ctx base.PlanContext, tp string, self base.LogicalPlan, 
 		Plan:         baseimpl.NewBasePlan(ctx, tp, qbOffset),
 		self:         self,
 	}
+}
+
+// HasFlag checks if the logical plan has the specified flag.
+func (p *BaseLogicalPlan) HasFlag(mask uint64) bool {
+	return p.Flag&mask > 0
+}
+
+// SetFlag sets the flag for the logical plan.
+func (p *BaseLogicalPlan) SetFlag(mask uint64) {
+	p.Flag = p.Flag | mask
+}
+
+// ReAlloc4Cascades reset some elements in the logical plan.
+// those elements shouldn't be shared among different logical plans cuz it will induce unexpected behavior.
+// Usage scenario: in the xForm action, the original logical plan in the memo shouldn't be modified.
+// while if there is an alternative derived from current logical operator, we should have deep clone one.
+func (p *BaseLogicalPlan) ReAlloc4Cascades(tp string, self base.LogicalPlan) {
+	// reset the plan inside.
+	p.Plan.ReAlloc4Cascades(tp)
+	// task map is physical plan memorizing, it shouldn't be shared across different logical operator.
+	p.taskMap = make(map[string]base.Task)
+	p.taskMapBak = make([]string, 0, 10)
+	p.taskMapBakTS = make([]uint64, 0, 10)
+	// reset self
+	p.self = self
+	p.maxOneRow = false
+	// keep the children unchanged, unless outer side has some special requirements, do it in the caller.
+	// fdSet should be re-derived from the children, cuz apply -> join have different derive logic.
+	p.fdSet = nil
 }

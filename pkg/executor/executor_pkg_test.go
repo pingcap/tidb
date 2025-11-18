@@ -17,6 +17,7 @@ package executor
 import (
 	"fmt"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -131,13 +132,12 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 	}
 
 	require.Equal(t, 2*bytesConsumed1, bytesConsumed2)
-	require.Equal(t, int64(25560), bytesConsumed1)
+	require.Equal(t, int64(23640), bytesConsumed1)
 }
 
 func generateIndexRange(vals ...int64) *ranger.Range {
 	lowDatums := generateDatumSlice(vals...)
-	highDatums := make([]types.Datum, len(vals))
-	copy(highDatums, lowDatums)
+	highDatums := slices.Clone(lowDatums)
 	return &ranger.Range{LowVal: lowDatums, HighVal: highDatums, Collators: collate.GetBinaryCollatorSlice(len(lowDatums))}
 }
 
@@ -280,7 +280,7 @@ func TestAggPartialResultMapperB(t *testing.T) {
 	for _, tc := range cases {
 		aggMap := make(aggfuncs.AggPartialResultMapper)
 		tempSlice := make([]aggfuncs.PartialResult, 10)
-		for num := 0; num < tc.rowNum; num++ {
+		for num := range tc.rowNum {
 			aggMap[strconv.Itoa(num)] = tempSlice
 		}
 
@@ -332,7 +332,7 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 
 func TestErrLevelsForResetStmtContext(t *testing.T) {
 	ctx := mock.NewContext()
-	domain.BindDomain(ctx, &domain.Domain{})
+	ctx.BindDomainAndSchValidator(&domain.Domain{}, nil)
 
 	cases := []struct {
 		name    string
@@ -348,6 +348,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelError
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -362,6 +363,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -376,6 +378,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
@@ -390,6 +393,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
@@ -404,6 +408,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -418,6 +423,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -432,6 +438,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -446,6 +453,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -460,6 +468,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
@@ -474,6 +483,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn

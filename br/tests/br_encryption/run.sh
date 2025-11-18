@@ -14,6 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# disable global ENCRYPTION_ARGS and ENABLE_ENCRYPTION_CHECK for this script
+ENCRYPTION_ARGS=""
+ENABLE_ENCRYPTION_CHECK=false
+export ENCRYPTION_ARGS
+export ENABLE_ENCRYPTION_CHECK
+
 set -eu
 . run_services
 CUR=$(cd "$(dirname "$0")" && pwd)
@@ -50,39 +56,6 @@ insert_additional_data() {
     local prefix=$1
     for i in $(seq $DB_COUNT); do
         go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i} -p insertcount=1000 -p insertstart=1000000 -p recordcount=1001000 -p workload=core
-    done
-}
-
-wait_log_checkpoint_advance() {
-    echo "wait for log checkpoint to advance"
-    sleep 10
-    local current_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
-    echo "current ts: $current_ts"
-    i=0
-    while true; do
-        # extract the checkpoint ts of the log backup task. If there is some error, the checkpoint ts should be empty
-        log_backup_status=$(unset BR_LOG_TO_TERM && run_br --skip-goleak --pd $PD_ADDR log status --task-name $TASK_NAME --json 2>br.log)
-        echo "log backup status: $log_backup_status"
-        local checkpoint_ts=$(echo "$log_backup_status" | head -n 1 | jq 'if .[0].last_errors | length  == 0 then .[0].checkpoint else empty end')
-        echo "checkpoint ts: $checkpoint_ts"
-
-        # check whether the checkpoint ts is a number
-        if [ $checkpoint_ts -gt 0 ] 2>/dev/null; then
-            if [ $checkpoint_ts -gt $current_ts ]; then
-                echo "the checkpoint has advanced"
-                break
-            fi
-            echo "the checkpoint hasn't advanced"
-            i=$((i+1))
-            if [ "$i" -gt 50 ]; then
-                echo 'the checkpoint lag is too large'
-                exit 1
-            fi
-            sleep 10
-        else
-            echo "TEST: [$TEST_NAME] failed to wait checkpoint advance!"
-            exit 1
-        fi
     done
 }
 
@@ -164,7 +137,7 @@ run_backup_restore_test() {
         checksum_ori[${i}]=$(calculate_checksum "$DB${i}") || { echo "Failed to calculate checksum after insertion"; exit 1; }
     done
 
-    wait_log_checkpoint_advance || { echo "Failed to wait for log checkpoint"; exit 1; }
+    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance $TASK_NAME || { echo "Failed to wait for log checkpoint"; exit 1; }
 
     #sanity check pause still works
     run_br log pause --task-name $TASK_NAME --pd $PD_ADDR || { echo "Failed to pause log backup"; exit 1; }
@@ -264,7 +237,7 @@ test_backup_encrypted_restore_unencrypted() {
     # Insert additional test data
     insert_additional_data "insert_after_full_backup" || { echo "Failed to insert additional data"; exit 1; }
 
-    wait_log_checkpoint_advance || { echo "Failed to wait for log checkpoint"; exit 1; }
+    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance $TASK_NAME || { echo "Failed to wait for log checkpoint"; exit 1; }
 
 
     # Stop and clean the cluster
@@ -418,7 +391,7 @@ test_backup_encrypted_restore_unencrypted
 test_plaintext
 test_plaintext_data_key
 test_local_master_key
-# some issue running in CI, will fix later
+# localstack not working with older glibc version in our centos7 base image...
 #test_aws_kms
 #test_aws_kms_with_iam
 test_mixed_full_encrypted_log_plain

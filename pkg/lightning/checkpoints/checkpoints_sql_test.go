@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -102,7 +102,7 @@ func TestNormalOperations(t *testing.T) {
 					Name: "t2",
 					ID:   2,
 					Desired: &model.TableInfo{
-						Name: pmodel.NewCIStr("t2"),
+						Name: ast.NewCIStr("t2"),
 					},
 				},
 			},
@@ -127,31 +127,33 @@ func TestNormalOperations(t *testing.T) {
 		WillReturnRows(
 			sqlmock.NewRows([]string{
 				"engine_id", "path", "offset", "type", "compression", "sort_key", "file_size", "columns",
-				"pos", "end_offset", "prev_rowid_max", "rowid_max",
+				"pos", "real_pos", "end_offset", "prev_rowid_max", "rowid_max",
 				"kvc_bytes", "kvc_kvs", "kvc_checksum", "unix_timestamp(create_time)",
 			}).
 				AddRow(
 					0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", 123, "[]",
-					55904, 102400, 681, 5000,
+					55904, 55902, 102400, 681, 5000,
 					4491, 586, 486070148917, 1234567894,
 				),
 		)
 	s.mock.
 		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`table_v\\d+`").
 		WithArgs("`db1`.`t2`").
-		WillReturnRows(
-			sqlmock.NewRows([]string{"status", "alloc_base", "table_id", "table_info", "kv_bytes", "kv_kvs", "kv_checksum"}).
-				AddRow(60, 132861, int64(2), nil, uint64(4492), uint64(686), uint64(486070148910)),
-		)
+		WillReturnRows(sqlmock.NewRows([]string{
+			"status", "table_id", "table_info", "kv_bytes", "kv_kvs", "kv_checksum",
+			"auto_rand_base", "auto_incr_base", "auto_row_id_base"}).
+			AddRow(60, int64(2), nil, uint64(4492), uint64(686), uint64(486070148910), 132861, 132862, 132863))
 	s.mock.ExpectCommit()
 
 	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
 	require.Nil(t, err)
 	require.Equal(t, &checkpoints.TableCheckpoint{
-		Status:    checkpoints.CheckpointStatusAllWritten,
-		AllocBase: 132861,
-		TableID:   int64(2),
-		TableInfo: nil,
+		Status:        checkpoints.CheckpointStatusAllWritten,
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
+		TableID:       int64(2),
+		TableInfo:     nil,
 		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {Status: checkpoints.CheckpointStatusLoaded},
 			0: {
@@ -169,6 +171,7 @@ func TestNormalOperations(t *testing.T) {
 					ColumnPermutation: []int{},
 					Chunk: mydump.Chunk{
 						Offset:       55904,
+						RealOffset:   55902,
 						EndOffset:    102400,
 						PrevRowIDMax: 681,
 						RowIDMax:     5000,
@@ -191,15 +194,15 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 	// 2. initialize with checkpoint data.
 
 	t1Info, err := json.Marshal(&model.TableInfo{
-		Name: pmodel.NewCIStr("t1"),
+		Name: ast.NewCIStr("t1"),
 	})
 	require.NoError(t, err)
 	t2Info, err := json.Marshal(&model.TableInfo{
-		Name: pmodel.NewCIStr("t2"),
+		Name: ast.NewCIStr("t2"),
 	})
 	require.NoError(t, err)
 	t3Info, err := json.Marshal(&model.TableInfo{
-		Name: pmodel.NewCIStr("t3"),
+		Name: ast.NewCIStr("t3"),
 	})
 	require.NoError(t, err)
 
@@ -233,14 +236,14 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 					Name: "t1",
 					ID:   1,
 					Desired: &model.TableInfo{
-						Name: pmodel.NewCIStr("t1"),
+						Name: ast.NewCIStr("t1"),
 					},
 				},
 				"t2": {
 					Name: "t2",
 					ID:   2,
 					Desired: &model.TableInfo{
-						Name: pmodel.NewCIStr("t2"),
+						Name: ast.NewCIStr("t2"),
 					},
 				},
 			},
@@ -252,7 +255,7 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 					Name: "t3",
 					ID:   3,
 					Desired: &model.TableInfo{
-						Name: pmodel.NewCIStr("t3"),
+						Name: ast.NewCIStr("t3"),
 					},
 				},
 			},
@@ -279,7 +282,7 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 		ExpectPrepare("REPLACE INTO `mock-schema`\\.`chunk_v\\d+` .+")
 	insertChunkStmt.
 		ExpectExec().
-		WithArgs("`db1`.`t2`", 0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", 123, []byte("null"), 12, 102400, 1, 5000, 1234567890).
+		WithArgs("`db1`.`t2`", 0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", 123, []byte("null"), 12, 10, 102400, 1, 5000, 1234567890).
 		WillReturnResult(sqlmock.NewResult(10, 1))
 	s.mock.ExpectCommit()
 
@@ -299,6 +302,7 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 				},
 				Chunk: mydump.Chunk{
 					Offset:       12,
+					RealOffset:   10,
 					EndOffset:    102400,
 					PrevRowIDMax: 1,
 					RowIDMax:     5000,
@@ -329,7 +333,9 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 	}
 	scm.MergeInto(cpd)
 	rcm := checkpoints.RebaseCheckpointMerger{
-		AllocBase: 132861,
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
 	}
 	rcm.MergeInto(cpd)
 	cksum := checkpoints.TableChecksumMerger{
@@ -341,6 +347,7 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 		Key:      checkpoints.ChunkCheckpointKey{Path: "/tmp/path/1.sql", Offset: 0},
 		Checksum: verification.MakeKVChecksum(4491, 586, 486070148917),
 		Pos:      55904,
+		RealPos:  55902,
 		RowID:    681,
 	}
 	ccm.MergeInto(cpd)
@@ -350,14 +357,14 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 		ExpectPrepare("UPDATE `mock-schema`\\.`chunk_v\\d+` SET pos = .+").
 		ExpectExec().
 		WithArgs(
-			55904, 681, 4491, 586, 486070148917, []byte("null"),
+			55904, 55902, 681, 4491, 586, 486070148917, []byte("null"),
 			"`db1`.`t2`", 0, "/tmp/path/1.sql", 0,
 		).
 		WillReturnResult(sqlmock.NewResult(11, 1))
 	s.mock.
-		ExpectPrepare("UPDATE `mock-schema`\\.`table_v\\d+` SET alloc_base = .+").
+		ExpectPrepare("UPDATE `mock-schema`\\.`table_v\\d+` SET auto_rand_base = .+ auto_incr_base = .+ auto_row_id_base = .+").
 		ExpectExec().
-		WithArgs(132861, "`db1`.`t2`").
+		WithArgs(132861, 132862, 132863, "`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(12, 1))
 	s.mock.
 		ExpectPrepare("UPDATE `mock-schema`\\.`engine_v\\d+` SET status = .+").
@@ -399,12 +406,12 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 		WillReturnRows(
 			sqlmock.NewRows([]string{
 				"engine_id", "path", "offset", "type", "compression", "sort_key", "file_size", "columns",
-				"pos", "end_offset", "prev_rowid_max", "rowid_max",
+				"pos", "real_pos", "end_offset", "prev_rowid_max", "rowid_max",
 				"kvc_bytes", "kvc_kvs", "kvc_checksum", "unix_timestamp(create_time)",
 			}).
 				AddRow(
 					0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", 123, "[]",
-					55904, 102400, 681, 5000,
+					55904, 55902, 102400, 681, 5000,
 					4491, 586, 486070148917, 1234567894,
 				),
 		)
@@ -412,19 +419,23 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`table_v\\d+`").
 		WithArgs("`db1`.`t2`").
 		WillReturnRows(
-			sqlmock.NewRows([]string{"status", "alloc_base", "table_id", "table_info", "kv_bytes", "kv_kvs", "kv_checksum"}).
-				AddRow(60, 132861, int64(2), t2Info, uint64(4492), uint64(686), uint64(486070148910)),
+			sqlmock.NewRows([]string{
+				"status", "table_id", "table_info", "kv_bytes", "kv_kvs", "kv_checksum",
+				"auto_rand_base", "auto_incr_base", "auto_row_id_base"}).
+				AddRow(60, int64(2), t2Info, uint64(4492), uint64(686), uint64(486070148910), 132861, 132862, 132863),
 		)
 	s.mock.ExpectCommit()
 
 	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
 	require.Nil(t, err)
 	require.Equal(t, &checkpoints.TableCheckpoint{
-		Status:    checkpoints.CheckpointStatusAllWritten,
-		AllocBase: 132861,
-		TableID:   int64(2),
+		Status:        checkpoints.CheckpointStatusAllWritten,
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
+		TableID:       int64(2),
 		TableInfo: &model.TableInfo{
-			Name: pmodel.NewCIStr("t2"),
+			Name: ast.NewCIStr("t2"),
 		},
 		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {Status: checkpoints.CheckpointStatusLoaded},
@@ -443,6 +454,7 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 					ColumnPermutation: []int{},
 					Chunk: mydump.Chunk{
 						Offset:       55904,
+						RealOffset:   55902,
 						EndOffset:    102400,
 						PrevRowIDMax: 681,
 						RowIDMax:     5000,
@@ -478,13 +490,13 @@ func TestRemoveAllCheckpoints_SQL(t *testing.T) {
 		WillReturnRows(
 			sqlmock.NewRows([]string{
 				"engine_id", "path", "offset", "type", "compression", "sort_key", "file_size", "columns",
-				"pos", "end_offset", "prev_rowid_max", "rowid_max",
+				"pos", "real_pos", "end_offset", "prev_rowid_max", "rowid_max",
 				"kvc_bytes", "kvc_kvs", "kvc_checksum", "unix_timestamp(create_time)",
 			}))
 	s.mock.
 		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`table_v\\d+`").
 		WithArgs("`db1`.`t2`").
-		WillReturnRows(sqlmock.NewRows([]string{"status", "alloc_base", "table_id"}))
+		WillReturnRows(sqlmock.NewRows([]string{"status", "table_id"}))
 	s.mock.ExpectRollback()
 
 	cp, err := s.cpdb.Get(ctx, "`db1`.`t2`")
@@ -628,12 +640,12 @@ func TestDump(t *testing.T) {
 		WillReturnRows(
 			sqlmock.NewRows([]string{
 				"table_name", "path", "offset", "type", "compression", "sort_key", "file_size", "columns",
-				"pos", "end_offset", "prev_rowid_max", "rowid_max",
+				"pos", "real_pos", "end_offset", "prev_rowid_max", "rowid_max",
 				"kvc_bytes", "kvc_kvs", "kvc_checksum",
 				"create_time", "update_time",
 			}).AddRow(
 				"`db1`.`t2`", "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, mydump.CompressionNone, "", 456, "[]",
-				55904, 102400, 681, 5000,
+				55904, 55902, 102400, 681, 5000,
 				4491, 586, 486070148917,
 				tm, tm,
 			),
@@ -643,8 +655,8 @@ func TestDump(t *testing.T) {
 	err := s.cpdb.DumpChunks(ctx, &csvBuilder)
 	require.NoError(t, err)
 	require.Equal(t,
-		"table_name,path,offset,type,compression,sort_key,file_size,columns,pos,end_offset,prev_rowid_max,rowid_max,kvc_bytes,kvc_kvs,kvc_checksum,create_time,update_time\n"+
-			"`db1`.`t2`,/tmp/path/1.sql,0,3,0,,456,[],55904,102400,681,5000,4491,586,486070148917,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
+		"table_name,path,offset,type,compression,sort_key,file_size,columns,pos,real_pos,end_offset,prev_rowid_max,rowid_max,kvc_bytes,kvc_kvs,kvc_checksum,create_time,update_time\n"+
+			"`db1`.`t2`,/tmp/path/1.sql,0,3,0,,456,[],55904,55902,102400,681,5000,4491,586,486070148917,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
 		csvBuilder.String(),
 	)
 
@@ -666,16 +678,16 @@ func TestDump(t *testing.T) {
 
 	s.mock.
 		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`table_v\\d+`").
-		WillReturnRows(
-			sqlmock.NewRows([]string{"task_id", "table_name", "hash", "status", "alloc_base", "create_time", "update_time"}).
-				AddRow(1555555555, "`db1`.`t2`", 0, 90, 132861, tm, tm),
+		WillReturnRows(sqlmock.NewRows([]string{"task_id", "table_name", "hash", "status",
+			"create_time", "update_time", "auto_rand_base", "auto_incr_base", "auto_row_id_base"}).
+			AddRow(1555555555, "`db1`.`t2`", 0, 90, tm, tm, 132861, 132862, 132863),
 		)
 
 	csvBuilder.Reset()
 	err = s.cpdb.DumpTables(ctx, &csvBuilder)
 	require.NoError(t, err)
-	require.Equal(t, "task_id,table_name,hash,status,alloc_base,create_time,update_time\n"+
-		"1555555555,`db1`.`t2`,0,90,132861,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
+	require.Equal(t, "task_id,table_name,hash,status,create_time,update_time,auto_rand_base,auto_incr_base,auto_row_id_base\n"+
+		"1555555555,`db1`.`t2`,0,90,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC,132861,132862,132863\n",
 		csvBuilder.String(),
 	)
 }

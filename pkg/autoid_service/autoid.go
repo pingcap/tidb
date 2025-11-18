@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -73,6 +72,10 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 	// calcNeededBatchSize calculates the total batch size needed.
 	n1 := calcNeededBatchSize(alloc.base, int64(n), increment, offset, isUnsigned)
 
+	if math.MaxUint64-uint64(alloc.base) <= uint64(n1) {
+		return 0, 0, errors.Trace(autoid1.ErrAutoincReadFailed)
+	}
+
 	// The local rest is not enough for alloc.
 	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) || alloc.base == 0 {
 		var newBase, newEnd int64
@@ -98,7 +101,7 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 			if nextStep < n1 {
 				nextStep = n1
 			}
-			tmpStep := int64(mathutil.Min(math.MaxUint64-uint64(newBase), uint64(nextStep)))
+			tmpStep := int64(min(math.MaxUint64-uint64(newBase), uint64(nextStep)))
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return errAutoincReadFailed
@@ -174,7 +177,7 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 			if nextStep < n1 {
 				nextStep = n1
 			}
-			tmpStep := mathutil.Min(math.MaxInt64-newBase, nextStep)
+			tmpStep := min(math.MaxInt64-newBase, nextStep)
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return errAutoincReadFailed
@@ -229,8 +232,8 @@ func (alloc *autoIDValue) rebase4Unsigned(ctx context.Context,
 		}
 		oldValue = currentEnd
 		uCurrentEnd := uint64(currentEnd)
-		newBase = mathutil.Max(uCurrentEnd, requiredBase)
-		newEnd = mathutil.Min(math.MaxUint64-uint64(batch), newBase) + uint64(batch)
+		newBase = max(uCurrentEnd, requiredBase)
+		newEnd = min(math.MaxUint64-uint64(batch), newBase) + uint64(batch)
 		_, err1 = idAcc.Inc(int64(newEnd - uCurrentEnd))
 		return err1
 	})
@@ -270,8 +273,8 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 			return err1
 		}
 		oldValue = currentEnd
-		newBase = mathutil.Max(currentEnd, requiredBase)
-		newEnd = mathutil.Min(math.MaxInt64-batch, newBase) + batch
+		newBase = max(currentEnd, requiredBase)
+		newEnd = min(math.MaxInt64-batch, newBase) + batch
 		_, err1 = idAcc.Inc(newEnd - currentEnd)
 		return err1
 	})
@@ -380,8 +383,8 @@ func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 
 // Close closes the Service and clean up resource.
 func (s *Service) Close() {
-	if s.leaderShip != nil && s.leaderShip.IsOwner() {
-		s.leaderShip.Cancel()
+	if s.leaderShip != nil {
+		s.leaderShip.Close()
 	}
 }
 

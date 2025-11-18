@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -44,7 +45,7 @@ func TestBuildDupTask(t *testing.T) {
 	info, err := ddl.MockTableInfo(mock.NewContext(), node[0].(*ast.CreateTableStmt), 1)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 
 	// Test build duplicate detecting task.
@@ -67,7 +68,7 @@ func TestBuildDupTask(t *testing.T) {
 			nil,
 			tc.sessOpt,
 			4,
-			log.FromContext(context.Background()),
+			log.Wrap(logutil.Logger(context.Background())),
 			"test",
 			"lightning",
 		)
@@ -100,7 +101,7 @@ func TestBuildDupTask(t *testing.T) {
 	info, err = ddl.MockTableInfo(mock.NewContext(), node[0].(*ast.CreateTableStmt), 1)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	tbl, err = tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
+	tbl, err = tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 	require.Len(t, tbl.Meta().Indices, 3)
 	require.Equal(t, "primary", tbl.Meta().Indices[0].Name.L)
@@ -116,7 +117,7 @@ func TestBuildDupTask(t *testing.T) {
 		nil,
 		&encode.SessionOptions{},
 		4,
-		log.FromContext(context.Background()),
+		log.Wrap(logutil.Logger(context.Background())),
 		"test",
 		"lightning",
 	)
@@ -145,7 +146,7 @@ func buildTableForTestConvertToErrFoundConflictRecords(t *testing.T, node []ast.
 	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{

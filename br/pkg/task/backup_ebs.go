@@ -259,7 +259,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		}
 		log.Info("async snapshots finished.")
 	} else {
-		for i := 0; i < int(storeCount); i++ {
+		for i := range int(storeCount) {
 			progress.IncBy(100)
 			totalSize = 1024
 			timeToSleep := getMockSleepTime()
@@ -297,7 +297,7 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 	}
 	// we wait for nearly 15*40 = 600s = 10m
 	backoffer := utils.InitialRetryState(40, 5*time.Second, waitAllScheduleStoppedInterval)
-	for backoffer.Attempt() > 0 {
+	for backoffer.RemainingAttempts() > 0 {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -328,7 +328,7 @@ func isRegionsHasHole(allRegions []*metapb.Region) bool {
 		return bytes.Compare(left.StartKey, right.StartKey) < 0
 	})
 
-	for j := 0; j < len(allRegions)-1; j++ {
+	for j := range len(allRegions) - 1 {
 		left, right := allRegions[j], allRegions[j+1]
 		// we don't need to handle the empty end key specially, since
 		// we sort by start key of region, and the end key of the last region is not checked

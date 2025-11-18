@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -87,7 +88,7 @@ func prepareData4OptimizeTrace(t *testing.T, client *testserverclient.TestServer
 	tk.MustExec("create database optimizeTrace")
 	tk.MustExec("use optimizeTrace")
 	tk.MustExec("create table t(a int)")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	rows := tk.MustQuery("trace plan select * from t")
 	require.True(t, rows.Next(), "unexpected data")

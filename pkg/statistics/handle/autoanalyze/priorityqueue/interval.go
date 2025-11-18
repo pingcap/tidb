@@ -59,9 +59,11 @@ const lastFailedDurationQueryForTable = `
 	LIMIT 1;
 `
 
+// LastFailedDurationQueryForPartition is used to get the duration of the last failed analysis for each specified partition.
+// Exported for testing.
 // For multiple partitions, we only need to return the duration of the most recent failed analysis.
 // We pick the minimum duration of all failed analyses because we want to be conservative.
-const lastFailedDurationQueryForPartition = `
+const LastFailedDurationQueryForPartition = `
 	SELECT
 		MIN(TIMESTAMPDIFF(SECOND, aj.start_time, CURRENT_TIMESTAMP)) AS min_duration
 	FROM (
@@ -128,7 +130,7 @@ func GetLastFailedAnalysisDuration(
 		query = lastFailedDurationQueryForTable
 		params = append(params, schema, tableName)
 	} else {
-		query = lastFailedDurationQueryForPartition
+		query = LastFailedDurationQueryForPartition
 		params = append(params, schema, tableName, partitionNames)
 	}
 

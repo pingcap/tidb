@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,7 @@ import (
 	jwsRepo "github.com/lestrrat-go/jwx/v2/jws"
 	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
 	"github.com/lestrrat-go/jwx/v2/jwt/openid"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 )
@@ -417,3 +419,76 @@ func TestJWKSImpl(t *testing.T) {
 	_, err = jwksImpl.checkSigWithRetry(signedTokenString, 0)
 	require.Error(t, err)
 }
+
+func (p *MySQLPrivilege) User() []UserRecord {
+	var ret []UserRecord
+	p.user.Ascend(func(itm itemUser) bool {
+		ret = append(ret, itm.data...)
+		return true
+	})
+	slices.SortStableFunc(ret, compareUserRecord)
+	return ret
+}
+
+func (p *MySQLPrivilege) SetUser(user []UserRecord) {
+	p.user.Clear(false)
+	for _, u := range user {
+		old, exists := p.user.Get(itemUser{username: u.User})
+		if !exists {
+			old.username = u.User
+		}
+		old.data = append(old.data, u)
+		p.user.ReplaceOrInsert(old)
+	}
+}
+
+func (p *MySQLPrivilege) DB() []dbRecord {
+	var ret []dbRecord
+	p.db.Ascend(func(itm itemDB) bool {
+		ret = append(ret, itm.data...)
+		return true
+	})
+	return ret
+}
+
+func (p *MySQLPrivilege) TablesPriv() []tablesPrivRecord {
+	var ret []tablesPrivRecord
+	p.tablesPriv.Ascend(func(itm itemTablesPriv) bool {
+		ret = append(ret, itm.data...)
+		return true
+	})
+	return ret
+}
+
+func (p *MySQLPrivilege) ColumnsPriv() []columnsPrivRecord {
+	var ret []columnsPrivRecord
+	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
+		ret = append(ret, itm.data...)
+		return true
+	})
+	return ret
+}
+
+func (p *MySQLPrivilege) DefaultRoles() []defaultRoleRecord {
+	var ret []defaultRoleRecord
+	p.defaultRoles.Ascend(func(itm itemDefaultRole) bool {
+		ret = append(ret, itm.data...)
+		return true
+	})
+	return ret
+}
+
+func (p *MySQLPrivilege) GlobalPriv(user string) []globalPrivRecord {
+	ret, _ := p.globalPriv.Get(itemGlobalPriv{username: user})
+	return ret.data
+}
+
+func (p *MySQLPrivilege) RoleGraph() map[auth.RoleIdentity]roleGraphEdgesTable {
+	return p.roleGraph
+}
+
+func (h *Handle) CheckFullData(t *testing.T, value bool) {
+	require.True(t, h.fullData.Load() == value)
+}
+
+var NewMySQLPrivilege = newMySQLPrivilege

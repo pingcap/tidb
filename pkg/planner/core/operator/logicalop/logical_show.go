@@ -20,19 +20,16 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 // LogicalShow represents a show plan.
 type LogicalShow struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 	ShowContents
 
 	Extractor base.ShowPredicateExtractor
@@ -43,9 +40,9 @@ type ShowContents struct {
 	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName            string
 	Table             *resolve.TableNameW // Used for showing columns.
-	Partition         model.CIStr         // Use for showing partition
+	Partition         ast.CIStr           // Use for showing partition
 	Column            *ast.ColumnName     // Used for `desc table column`.
-	IndexName         model.CIStr
+	IndexName         ast.CIStr
 	ResourceGroupName string               // Used for showing resource group
 	Flag              int                  // Some flag parsed from sql, such as FULL.
 	User              *auth.UserIdentity   // Used for show grants.
@@ -59,7 +56,9 @@ type ShowContents struct {
 	Extended    bool       // Used for `show extended columns from ...`
 	Limit       *ast.Limit // Used for limit Result Set row number.
 
-	ImportJobID *int64 // Used for SHOW LOAD DATA JOB <jobID>
+	ImportJobID       *int64 // Used for SHOW LOAD DATA JOB <jobID>
+	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY>
+	DistributionJobID *int64 // Used for SHOW DISTRIBUTION JOB <JobID>
 }
 
 const emptyShowContentsSize = int64(unsafe.Sizeof(ShowContents{}))
@@ -89,11 +88,6 @@ func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
 
 // PruneColumns inherits BaseLogicalPlan.LogicalPlan.<2nd> implementation.
 
-// FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalShow) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
-	return utilfuncp.FindBestTask4LogicalShow(p, prop, planCounter, nil)
-}
-
 // BuildKeyInfo inherits BaseLogicalPlan.LogicalPlan.<4th> implementation.
 
 // PushDownTopN inherits BaseLogicalPlan.LogicalPlan.<5th> implementation.
@@ -109,13 +103,17 @@ func (p *LogicalShow) FindBestTask(prop *property.PhysicalProperty, planCounter 
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalShow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
+func (p *LogicalShow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && p.StatsInfo() != nil {
+		return p.StatsInfo(), false, nil
 	}
 	// A fake count, just to avoid panic now.
 	p.SetStats(getFakeStats(selfSchema))
-	return p.StatsInfo(), nil
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.

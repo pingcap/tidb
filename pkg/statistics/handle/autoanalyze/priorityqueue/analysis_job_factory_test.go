@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/stretchr/testify/require"
@@ -37,7 +37,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Unanalyzed table",
 			tblStats: &statistics.Table{
-				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, nil, nil),
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, nil, nil),
 				ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 0),
 			},
 			autoAnalyzeRatio: 0.5,
@@ -46,7 +46,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Analyzed table with change percentage above threshold",
 			tblStats: &statistics.Table{
-				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, 100, 60, nil, nil),
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, 100, 60, nil, nil),
 				ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(1, 1),
 				LastAnalyzeVersion:    1,
 			},
@@ -56,7 +56,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Analyzed table with change percentage below threshold",
 			tblStats: &statistics.Table{
-				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, 100, 40, nil, nil),
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, 100, 40, nil, nil),
 				ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(1, 1),
 				LastAnalyzeVersion:    1,
 			},
@@ -66,7 +66,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Auto analyze ratio set to 0",
 			tblStats: &statistics.Table{
-				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, 100, 60, nil, nil),
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, 100, 60, nil, nil),
 				ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(1, 1),
 				LastAnalyzeVersion:    1,
 			},
@@ -126,7 +126,7 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 		name     string
 		tblInfo  *model.TableInfo
 		tblStats *statistics.Table
-		want     []string
+		want     map[int64]struct{}
 	}{
 		{
 			name: "Test Table not analyzed",
@@ -134,7 +134,7 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 				Indices: []*model.IndexInfo{
 					{
 						ID:    1,
-						Name:  pmodel.NewCIStr("index1"),
+						Name:  ast.NewCIStr("index1"),
 						State: model.StatePublic,
 					},
 				},
@@ -148,13 +148,19 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 				Indices: []*model.IndexInfo{
 					{
 						ID:    1,
-						Name:  pmodel.NewCIStr("index1"),
+						Name:  ast.NewCIStr("index1"),
 						State: model.StatePublic,
+					},
+					{
+						ID:         2,
+						Name:       ast.NewCIStr("vec_index1"),
+						State:      model.StatePublic,
+						VectorInfo: &model.VectorIndexInfo{},
 					},
 				},
 			},
 			tblStats: &statistics.Table{
-				HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 0, 0, map[int64]*statistics.Column{
+				HistColl: *statistics.NewHistCollWithColsAndIdxs(0, 0, 0, map[int64]*statistics.Column{
 					1: {
 						StatsVer: 2,
 					},
@@ -162,7 +168,7 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 				ColAndIdxExistenceMap: analyzedMap,
 				LastAnalyzeVersion:    1,
 			},
-			want: []string{"index1"},
+			want: map[int64]struct{}{1: {}},
 		},
 	}
 
@@ -197,7 +203,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 		wantAvgChangePercentage    float64
 		wantAvgSize                float64
 		wantAvgLastAnalyzeDuration time.Duration
-		wantPartitions             []string
+		wantPartitions             map[int64]struct{}
 	}{
 		{
 			name: "Test Table not analyzed",
@@ -223,11 +229,11 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			defs: []model.PartitionDefinition{
 				{
 					ID:   1,
-					Name: pmodel.NewCIStr("p0"),
+					Name: ast.NewCIStr("p0"),
 				},
 				{
 					ID:   2,
-					Name: pmodel.NewCIStr("p1"),
+					Name: ast.NewCIStr("p1"),
 				},
 			},
 			autoAnalyzeRatio:           0.5,
@@ -235,7 +241,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			wantAvgChangePercentage:    1,
 			wantAvgSize:                2002,
 			wantAvgLastAnalyzeDuration: 1800 * time.Second,
-			wantPartitions:             []string{"p0", "p1"},
+			wantPartitions:             map[int64]struct{}{1: {}, 2: {}},
 		},
 		{
 			name: "Test Table analyzed and only one partition meets the threshold",
@@ -244,7 +250,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			},
 			partitionStats: map[priorityqueue.PartitionIDAndName]*statistics.Table{
 				priorityqueue.NewPartitionIDAndName("p0", 1): {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, (statistics.AutoAnalyzeMinCnt+1)*2, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, (statistics.AutoAnalyzeMinCnt+1)*2, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -263,7 +269,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					LastAnalyzeVersion:    lastUpdateTs,
 				},
 				priorityqueue.NewPartitionIDAndName("p1", 2): {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -285,11 +291,11 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			defs: []model.PartitionDefinition{
 				{
 					ID:   1,
-					Name: pmodel.NewCIStr("p0"),
+					Name: ast.NewCIStr("p0"),
 				},
 				{
 					ID:   2,
-					Name: pmodel.NewCIStr("p1"),
+					Name: ast.NewCIStr("p1"),
 				},
 			},
 			autoAnalyzeRatio:           0.5,
@@ -297,7 +303,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			wantAvgChangePercentage:    2,
 			wantAvgSize:                2002,
 			wantAvgLastAnalyzeDuration: 24 * time.Hour,
-			wantPartitions:             []string{"p0"},
+			wantPartitions:             map[int64]struct{}{1: {}},
 		},
 		{
 			name: "No partition meets the threshold",
@@ -306,7 +312,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			},
 			partitionStats: map[priorityqueue.PartitionIDAndName]*statistics.Table{
 				priorityqueue.NewPartitionIDAndName("p0", 1): {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -325,7 +331,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					LastAnalyzeVersion:    lastUpdateTs,
 				},
 				priorityqueue.NewPartitionIDAndName("p1", 2): {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -347,11 +353,11 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			defs: []model.PartitionDefinition{
 				{
 					ID:   1,
-					Name: pmodel.NewCIStr("p0"),
+					Name: ast.NewCIStr("p0"),
 				},
 				{
 					ID:   2,
-					Name: pmodel.NewCIStr("p1"),
+					Name: ast.NewCIStr("p1"),
 				},
 			},
 			autoAnalyzeRatio:           0.5,
@@ -359,7 +365,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			wantAvgChangePercentage:    0,
 			wantAvgSize:                0,
 			wantAvgLastAnalyzeDuration: 0,
-			wantPartitions:             []string{},
+			wantPartitions:             map[int64]struct{}{},
 		},
 	}
 	for _, tt := range tests {
@@ -376,9 +382,6 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			require.Equal(t, tt.wantAvgChangePercentage, gotAvgChangePercentage)
 			require.Equal(t, tt.wantAvgSize, gotAvgSize)
 			require.Equal(t, tt.wantAvgLastAnalyzeDuration, gotAvgLastAnalyzeDuration)
-			// Sort the partitions.
-			sort.Strings(tt.wantPartitions)
-			sort.Strings(gotPartitions)
 			require.Equal(t, tt.wantPartitions, gotPartitions)
 		})
 	}
@@ -389,13 +392,19 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 		Indices: []*model.IndexInfo{
 			{
 				ID:    1,
-				Name:  pmodel.NewCIStr("index1"),
+				Name:  ast.NewCIStr("index1"),
 				State: model.StatePublic,
 			},
 			{
 				ID:    2,
-				Name:  pmodel.NewCIStr("index2"),
+				Name:  ast.NewCIStr("index2"),
 				State: model.StatePublic,
+			},
+			{
+				ID:         3,
+				Name:       ast.NewCIStr("index3"),
+				State:      model.StatePublic,
+				VectorInfo: &model.VectorIndexInfo{},
 			},
 		},
 		Columns: []*model.ColumnInfo{
@@ -409,11 +418,11 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 	}
 	partitionStats := map[priorityqueue.PartitionIDAndName]*statistics.Table{
 		priorityqueue.NewPartitionIDAndName("p0", 1): {
-			HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{}),
+			HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{}),
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 0),
 		},
 		priorityqueue.NewPartitionIDAndName("p1", 2): {
-			HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{
+			HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{
 				2: {
 					StatsVer: 2,
 				},
@@ -424,16 +433,20 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 
 	factory := priorityqueue.NewAnalysisJobFactory(nil, 0, 0)
 	partitionIndexes := factory.CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(&tblInfo, partitionStats)
-	expected := map[string][]string{"index1": {"p0", "p1"}, "index2": {"p0"}}
+	expected := map[int64][]int64{1: {1, 2}, 2: {1}}
 	require.Equal(t, len(expected), len(partitionIndexes))
 
 	for k, v := range expected {
-		sort.Strings(v)
 		if val, ok := partitionIndexes[k]; ok {
-			sort.Strings(val)
+			sort.Slice(val, func(i, j int) bool {
+				return val[i] > val[j]
+			})
+			sort.Slice(v, func(i, j int) bool {
+				return v[i] > v[j]
+			})
 			require.Equal(t, v, val)
 		} else {
-			require.Fail(t, "key not found in partitionIndexes: "+k)
+			require.Failf(t, "key not found in partitionIndexes", "key: %d", k)
 		}
 	}
 }

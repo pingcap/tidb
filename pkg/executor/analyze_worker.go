@@ -57,9 +57,9 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 			worker.errCh <- err
 			return
 		}
-		err := statsHandle.SaveTableStatsToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
+		err := statsHandle.SaveAnalyzeResultToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
 		if err != nil {
-			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
+			logutil.Logger(ctx).Warn("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(statsHandle, results.Job, err)
 			worker.errCh <- err
 		} else {

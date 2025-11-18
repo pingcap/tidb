@@ -19,13 +19,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMemoryUsageOpsHistory(t *testing.T) {
-	info := util.ProcessInfo{}
+	info := sessmgr.ProcessInfo{}
 	genInfo := func(i int) {
 		info.ID = uint64(i)
 		info.DB = strconv.Itoa(2 * i)
@@ -35,7 +35,7 @@ func TestMemoryUsageOpsHistory(t *testing.T) {
 		info.Info = strconv.Itoa(6 * i)
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		genInfo(i)
 		GlobalMemoryOpsHistoryManager.recordOne(&info, time.Now(), uint64(i), uint64(2*i))
 	}
@@ -54,7 +54,7 @@ func TestMemoryUsageOpsHistory(t *testing.T) {
 
 	rows := GlobalMemoryOpsHistoryManager.GetRows()
 	require.Equal(t, 3, len(rows))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		checkResult(rows[i], i)
 	}
 	// Test evict

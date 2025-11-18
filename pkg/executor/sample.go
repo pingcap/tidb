@@ -153,10 +153,7 @@ func (s *tableRegionSampler) initRanges() error {
 
 func (s *tableRegionSampler) pickRanges(count int) ([]kv.KeyRange, error) {
 	var regionKeyRanges []kv.KeyRange
-	cutPoint := count
-	if len(s.restKVRanges) < cutPoint {
-		cutPoint = len(s.restKVRanges)
-	}
+	cutPoint := min(len(s.restKVRanges), count)
 	regionKeyRanges, s.restKVRanges = s.restKVRanges[:cutPoint], s.restKVRanges[cutPoint:]
 	return regionKeyRanges, nil
 }
@@ -235,7 +232,7 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 		if kv.Key(start).Cmp(startKey) < 0 {
 			start = startKey
 		}
-		if end == nil || kv.Key(end).Cmp(endKey) > 0 {
+		if len(end) == 0 || kv.Key(end).Cmp(endKey) > 0 {
 			end = endKey
 		}
 		ranges = append(ranges, kv.KeyRange{StartKey: start, EndKey: end})
@@ -302,13 +299,10 @@ func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 	ver := kv.Version{Ver: s.startTS}
 	snap := s.ctx.GetStore().GetSnapshot(ver)
 	setOptionForTopSQL(s.ctx.GetSessionVars().StmtCtx, snap)
-	concurrency := s.ctx.GetSessionVars().ExecutorConcurrency
-	if len(ranges) < concurrency {
-		concurrency = len(ranges)
-	}
+	concurrency := min(len(ranges), s.ctx.GetSessionVars().ExecutorConcurrency)
 
 	fetchers := make([]*sampleFetcher, concurrency)
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		fetchers[i] = &sampleFetcher{
 			workerID:    i,
 			concurrency: concurrency,
@@ -403,7 +397,7 @@ func (s *sampleSyncer) sync() error {
 			channel.Clear(f.kvChan)
 		}
 	}()
-	for i := 0; i < s.totalCount; i++ {
+	for i := range s.totalCount {
 		f := s.fetchers[i%len(s.fetchers)]
 		v, ok := <-f.kvChan
 		if f.err != nil {

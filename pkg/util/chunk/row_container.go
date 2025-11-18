@@ -161,7 +161,7 @@ func (c *RowContainer) spillToDisk(preSpillError error) {
 		if r := recover(); r != nil {
 			err := fmt.Errorf("%v", r)
 			c.m.records.spillError = err
-			logutil.BgLogger().Error("spill to disk failed", zap.Stack("stack"), zap.Error(err))
+			logutil.BgLogger().Warn("spill to disk failed", zap.Stack("stack"), zap.Error(err))
 		}
 	}()
 	failpoint.Inject("spillToDiskOutOfDiskQuota", func(val failpoint.Value) {
@@ -173,7 +173,7 @@ func (c *RowContainer) spillToDisk(preSpillError error) {
 		c.m.records.spillError = preSpillError
 		return
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		chk := c.m.records.inMemory.GetChunk(i)
 		err = c.m.records.inDisk.Add(chk)
 		if err != nil {
@@ -267,7 +267,7 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 
 // AllocChunk allocates a new chunk from RowContainer.
 func (c *RowContainer) AllocChunk() (chk *Chunk) {
-	return c.m.records.inMemory.allocChunk()
+	return c.m.records.inMemory.AllocChunk()
 }
 
 // GetChunk returns chkIdx th chunk of in memory records.
@@ -588,13 +588,13 @@ func (c *SortedRowContainer) Sort() (ret error) {
 		return
 	}
 	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow()) // The memory usage has been tracked in SortedRowContainer.Add() function
-	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
+	for chkIdx := range c.NumChunks() {
 		rowChk, err := c.GetChunk(chkIdx)
 		// err must be nil, because the chunk is in memory.
 		if err != nil {
 			panic(err)
 		}
-		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
+		for rowIdx := range rowChk.NumRows() {
 			c.ptrM.rowPtrs = append(c.ptrM.rowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}

@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -318,7 +317,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 			}
 			for i, tbl := range tblHint.Tables {
 				if tbl.DBName.String() == "" {
-					tblHint.Tables[i].DBName = model.NewCIStr(db)
+					tblHint.Tables[i].DBName = ast.NewCIStr(db)
 				}
 			}
 			newHints = append(newHints, tblHint)
@@ -387,7 +386,7 @@ func CheckBindingFromHistoryComplete(node ast.Node, hintStr string) (complete bo
 
 	checker := bindableChecker{
 		complete: true,
-		tables:   make(map[model.CIStr]struct{}, 2),
+		tables:   make(map[ast.CIStr]struct{}, 2),
 	}
 	node.Accept(&checker)
 	return checker.complete, checker.reason
@@ -397,7 +396,7 @@ func CheckBindingFromHistoryComplete(node ast.Node, hintStr string) (complete bo
 type bindableChecker struct {
 	complete bool
 	reason   string
-	tables   map[model.CIStr]struct{}
+	tables   map[ast.CIStr]struct{}
 }
 
 // Enter implements Visitor interface.

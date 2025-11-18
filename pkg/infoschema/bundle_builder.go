@@ -41,13 +41,10 @@ type bundleInfoBuilder struct {
 	updateTables map[int64]any
 	// all tables or partitions referring these policies should update placement bundle
 	updatePolicies map[int64]any
-	// partitions that need to update placement bundle
-	updatePartitions map[int64]any
 }
 
 func (b *bundleInfoBuilder) initBundleInfoBuilder() {
 	b.updateTables = make(map[int64]any)
-	b.updatePartitions = make(map[int64]any)
 	b.updatePolicies = make(map[int64]any)
 }
 
@@ -61,10 +58,6 @@ func (b *bundleInfoBuilder) deleteBundle(is *infoSchema, tblID int64) {
 
 func (b *bundleInfoBuilder) markTableBundleShouldUpdate(tblID int64) {
 	b.updateTables[tblID] = struct{}{}
-}
-
-func (b *bundleInfoBuilder) markPartitionBundleShouldUpdate(partID int64) {
-	b.updatePartitions[partID] = struct{}{}
 }
 
 func (b *bundleInfoBuilder) markBundlesReferPolicyShouldUpdate(policyID int64) {
@@ -90,7 +83,7 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundles(is *infoSchema) {
 }
 
 func (b *bundleInfoBuilder) completeUpdateTables(is *infoSchema) {
-	if len(b.updatePolicies) == 0 && len(b.updatePartitions) == 0 {
+	if len(b.updatePolicies) == 0 {
 		return
 	}
 
@@ -100,14 +93,6 @@ func (b *bundleInfoBuilder) completeUpdateTables(is *infoSchema) {
 			if tblInfo.PlacementPolicyRef != nil {
 				if _, ok := b.updatePolicies[tblInfo.PlacementPolicyRef.ID]; ok {
 					b.markTableBundleShouldUpdate(tblInfo.ID)
-				}
-			}
-
-			if tblInfo.Partition != nil {
-				for _, par := range tblInfo.Partition.Definitions {
-					if _, ok := b.updatePartitions[par.ID]; ok {
-						b.markTableBundleShouldUpdate(tblInfo.ID)
-					}
 				}
 			}
 		}

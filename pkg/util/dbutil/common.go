@@ -744,7 +744,7 @@ func ReplacePlaceholder(str string, args []string) string {
 
 // ExecSQLWithRetry executes sql with retry
 func ExecSQLWithRetry(ctx context.Context, db DBExecutor, sql string, args ...any) (err error) {
-	for i := 0; i < DefaultRetryTime; i++ {
+	for i := range DefaultRetryTime {
 		startTime := time.Now()
 		_, err = db.ExecContext(ctx, sql, args...)
 		takeDuration := time.Since(startTime)

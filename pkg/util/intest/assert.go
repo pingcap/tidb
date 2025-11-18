@@ -12,75 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build intest
+//go:build intest || enableassert
 
 package intest
 
-import (
-	"fmt"
-	"reflect"
-)
+// EnableAssert checks if the assert function should work.
+var EnableAssert = true
 
 // Assert asserts a condition is true
 func Assert(cond bool, msgAndArgs ...any) {
-	if InTest && !cond {
-		doPanic("", msgAndArgs...)
+	if EnableAssert || EnableInternalCheck {
+		doAssert(cond, msgAndArgs...)
 	}
 }
 
 // AssertNoError asserts an error is nil
 func AssertNoError(err error, msgAndArgs ...any) {
-	if InTest && err != nil {
-		doPanic(fmt.Sprintf("error is not nil: %+v", err), msgAndArgs...)
+	if EnableAssert || EnableInternalCheck {
+		doAssertNoError(err, msgAndArgs...)
 	}
 }
 
 // AssertNotNil asserts an object is not nil
 func AssertNotNil(obj any, msgAndArgs ...any) {
-	if InTest {
-		Assert(obj != nil, msgAndArgs...)
-		value := reflect.ValueOf(obj)
-		switch value.Kind() {
-		case reflect.Func, reflect.Chan, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
-			Assert(!value.IsNil(), msgAndArgs...)
-		}
+	if EnableAssert || EnableInternalCheck {
+		doAssertNotNil(obj, msgAndArgs...)
 	}
 }
 
 // AssertFunc asserts a function condition
 func AssertFunc(fn func() bool, msgAndArgs ...any) {
-	if InTest {
-		Assert(fn != nil, msgAndArgs...)
-		Assert(fn(), msgAndArgs...)
+	if EnableAssert || EnableInternalCheck {
+		doAssertFunc(fn, msgAndArgs...)
 	}
-}
-
-func doPanic(extraMsg string, userMsgAndArgs ...any) {
-	panic(assertionFailedMsg(extraMsg, userMsgAndArgs...))
-}
-
-func assertionFailedMsg(extraMsg string, userMsgAndArgs ...any) string {
-	msg := "assert failed"
-	if len(userMsgAndArgs) == 0 {
-		if extraMsg != "" {
-			msg = fmt.Sprintf("%s, %s", msg, extraMsg)
-		}
-		return msg
-	}
-
-	if len(userMsgAndArgs) == 0 {
-		return fmt.Sprintf("assert failed, %s", extraMsg)
-	}
-
-	userMsg, ok := userMsgAndArgs[0].(string)
-	if !ok {
-		userMsg = fmt.Sprintf("%+v", userMsgAndArgs[0])
-	}
-
-	msg = fmt.Sprintf("%s, %s", msg, userMsg)
-	if extraMsg != "" {
-		msg = fmt.Sprintf("%s, %s", msg, extraMsg)
-	}
-
-	return fmt.Sprintf(msg, userMsgAndArgs[1:]...)
 }

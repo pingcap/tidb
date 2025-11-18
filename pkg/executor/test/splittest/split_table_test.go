@@ -19,12 +19,13 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -45,24 +46,34 @@ func TestClusterIndexShowTableRegion(t *testing.T) {
 	tk.MustExec("drop database if exists cluster_index_regions;")
 	tk.MustExec("create database cluster_index_regions;")
 	tk.MustExec("use cluster_index_regions;")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2);")
 	tk.MustQuery("split table t between (1, 0) and (2, 3) regions 2;").Check(testkit.Rows("1 1"))
-	rows := tk.MustQuery("show table t regions").Rows()
 	tbl := external.GetTableByName(t, tk, "cluster_index_regions", "t")
-	// Check the region start key.
-	require.Regexp(t, fmt.Sprintf("t_%d_", tbl.Meta().ID), rows[0][1])
-	require.Regexp(t, fmt.Sprintf("t_%d_r_03800000000000000183800000000000", tbl.Meta().ID), rows[1][1])
+
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show table t regions").Rows()
+		// Check the region start key.
+		if rows[0][1].(string) != fmt.Sprintf("t_%d_", tbl.Meta().ID) {
+			return false
+		}
+		return rows[1][1].(string) == fmt.Sprintf("t_%d_r_03800000000000000183800000000000", tbl.Meta().ID)
+	}, 5*time.Second, 50*time.Millisecond)
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustQuery("split table t between (0) and (100000) regions 2;").Check(testkit.Rows("1 1"))
-	rows = tk.MustQuery("show table t regions").Rows()
 	tbl = external.GetTableByName(t, tk, "cluster_index_regions", "t")
-	// Check the region start key is int64.
-	require.Regexp(t, fmt.Sprintf("t_%d_", tbl.Meta().ID), rows[0][1])
-	require.Regexp(t, fmt.Sprintf("t_%d_r_50000", tbl.Meta().ID), rows[1][1])
+
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show table t regions").Rows()
+		// Check the region start key is int64.
+		if rows[0][1].(string) != fmt.Sprintf("t_%d_", tbl.Meta().ID) {
+			return false
+		}
+		return rows[1][1].(string) == fmt.Sprintf("t_%d_r_50000", tbl.Meta().ID)
+	}, 5*time.Second, 50*time.Millisecond)
 
 	// test split regions boundary, it's too slow in TiKV env, move it here.
 	tk.MustExec("drop table if exists t")
@@ -306,7 +317,7 @@ func TestShowTableRegion(t *testing.T) {
 	require.Len(t, rows, 24)
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Len(t, tbl.Meta().GetPartitionInfo().Definitions, 5)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		p := tbl.Meta().GetPartitionInfo().Definitions[i]
 		require.Equal(t, fmt.Sprintf("t_%d_", p.ID), rows[i*4+0][1])
 		require.Equal(t, fmt.Sprintf("t_%d_r_1000000", p.ID), rows[i*4+1][1])
@@ -326,7 +337,7 @@ func TestShowTableRegion(t *testing.T) {
 	}
 
 	// Test for show table partition regions.
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		re = tk.MustQuery(fmt.Sprintf("show table t partition (p%v) regions", i))
 		rows = re.Rows()
 		require.Len(t, rows, 4)
@@ -373,7 +384,7 @@ func TestShowTableRegion(t *testing.T) {
 	require.Len(t, rows, 40)
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Len(t, tbl.Meta().GetPartitionInfo().Definitions, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		p := tbl.Meta().GetPartitionInfo().Definitions[i]
 		require.Equal(t, fmt.Sprintf("t_%d_r", p.ID), rows[i*8+0][1])
 		require.Equal(t, fmt.Sprintf("t_%d_r_1000000", p.ID), rows[i*8+1][1])
@@ -392,7 +403,7 @@ func TestShowTableRegion(t *testing.T) {
 	require.Len(t, rows, 44)
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Len(t, tbl.Meta().GetPartitionInfo().Definitions, 5)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		p := tbl.Meta().GetPartitionInfo().Definitions[i]
 		require.Equal(t, fmt.Sprintf("t_%d_r", p.ID), rows[i*8+0][1])
 		require.Equal(t, fmt.Sprintf("t_%d_r_1000000", p.ID), rows[i*8+1][1])
@@ -424,7 +435,7 @@ func TestShowTableRegion(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, table.ErrUnknownPartition))
 
 	// Test show table partition index.
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		re = tk.MustQuery(fmt.Sprintf("show table t partition (p%v) index idx regions", i))
 		rows = re.Rows()
 		require.Len(t, rows, 4)
@@ -575,6 +586,29 @@ func TestShowTableRegion(t *testing.T) {
 		}
 		require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[i][12])
 	}
+
+	tk.MustExec("drop table if exists sbtest0000")
+	tk.MustExec("CREATE TABLE sbtest0000(" +
+		"  id bigint," +
+		"  k bigint DEFAULT '0' NOT NULL," +
+		"  c CHAR(120) DEFAULT '' NOT NULL," +
+		"  pad CHAR(60) DEFAULT '' NOT NULL," +
+		"  UNIQUE KEY uk(id) GLOBAL," +
+		"  key idx0(k,c)," +
+		"  key idx1(c))SHARD_ROW_ID_BITS=3 PRE_SPLIT_REGIONS=2 " +
+		"PARTITION BY RANGE(id)(PARTITION p VALUES LESS THAN (MAXVALUE))")
+	re = tk.MustQuery("show table sbtest0000 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 7) // 3 index regions + 4 record regions
+
+	tbl = external.GetTableByName(t, tk, "test", "sbtest0000")
+	require.Equal(t, fmt.Sprintf("t_%d_i_1_", tbl.Meta().ID), rows[0][1]) // index `uk``
+	require.Equal(t, fmt.Sprintf("t_%d_i_4_", tbl.Meta().ID+1), rows[1][1])
+	require.Regexp(t, fmt.Sprintf("t_%d_r_.*", tbl.Meta().ID+1), rows[2][1])
+	require.Regexp(t, fmt.Sprintf("t_%d_r_.*", tbl.Meta().ID+1), rows[3][1])
+	require.Regexp(t, fmt.Sprintf("t_%d_r_.*", tbl.Meta().ID+1), rows[4][1])
+	require.Equal(t, fmt.Sprintf("t_%d_", tbl.Meta().ID+1), rows[5][1])     // index `idx0`
+	require.Equal(t, fmt.Sprintf("t_%d_i_3_", tbl.Meta().ID+1), rows[6][1]) // index `idx1`
 }
 
 func BenchmarkLocateRegion(t *testing.B) {

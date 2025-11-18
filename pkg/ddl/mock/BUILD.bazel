@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/mock",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/ddl/session",
         "//pkg/meta/model",
         "@org_uber_go_mock//gomock",
     ],

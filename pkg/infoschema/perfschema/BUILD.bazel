@@ -16,6 +16,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/autoid",
         "//pkg/meta/metabuild",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
@@ -44,7 +45,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":perfschema"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 4,
     deps = [
         "//pkg/kv",
         "//pkg/parser/terror",

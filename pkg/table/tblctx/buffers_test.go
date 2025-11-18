@@ -106,7 +106,7 @@ func TestEncodeRow(t *testing.T) {
 
 		var checksum rowcodec.Checksum
 		if cfg.IsRowLevelChecksumEnabled {
-			checksum = rowcodec.RawChecksum{Key: kv.Key("key1")}
+			checksum = rowcodec.RawChecksum{Handle: kv.IntHandle(1)}
 		}
 
 		expectedVal, err := tablecodec.EncodeRow(
@@ -125,7 +125,7 @@ func TestEncodeRow(t *testing.T) {
 		}
 		err = buffer.WriteMemBufferEncoded(
 			cfg, c.loc, errctx.StrictNoWarningContext,
-			memBuffer, kv.Key("key1"), c.flags...,
+			memBuffer, kv.Key("key1"), kv.IntHandle(1), c.flags...,
 		)
 		require.NoError(t, err)
 		memBuffer.AssertExpectations(t)
@@ -166,7 +166,7 @@ func TestEncodeBufferReserve(t *testing.T) {
 	require.Equal(t, 2, len(buffer.row))
 	require.NoError(t, buffer.WriteMemBufferEncoded(RowEncodingConfig{
 		RowEncoder: &rowcodec.Encoder{Enable: true},
-	}, time.UTC, errctx.StrictNoWarningContext, mb, kv.Key("key1")))
+	}, time.UTC, errctx.StrictNoWarningContext, mb, kv.Key("key1"), kv.IntHandle(1)))
 	encodedCap := cap(buffer.writeStmtBufs.RowValBuf)
 	require.Greater(t, encodedCap, 0)
 	require.Equal(t, 4, len(buffer.writeStmtBufs.AddRowValues))
@@ -201,35 +201,6 @@ func TestCheckRowBuffer(t *testing.T) {
 	require.Equal(t, 6, cap(buffer.rowToCheck))
 }
 
-func TestColSizeDeltaBuffer(t *testing.T) {
-	buffer := &ColSizeDeltaBuffer{}
-	buffer.Reset(6)
-	require.Equal(t, 0, len(buffer.delta))
-	require.Equal(t, 6, cap(buffer.delta))
-	require.Nil(t, buffer.UpdateColSizeMap(nil))
-
-	buffer.AddColSizeDelta(1, 2)
-	buffer.AddColSizeDelta(3, -4)
-	buffer.AddColSizeDelta(10, 11)
-	require.Equal(t, []variable.ColSize{{ColID: 1, Size: 2}, {ColID: 3, Size: -4}, {ColID: 10, Size: 11}}, buffer.delta)
-
-	require.Equal(t, map[int64]int64{1: 2, 3: -4, 10: 11}, buffer.UpdateColSizeMap(nil))
-	m := make(map[int64]int64)
-	m2 := buffer.UpdateColSizeMap(m)
-	require.Equal(t, map[int64]int64{1: 2, 3: -4, 10: 11}, m2)
-	require.Equal(t, m2, m)
-
-	m = map[int64]int64{1: 3, 3: 5, 5: 7}
-	m2 = buffer.UpdateColSizeMap(m)
-	require.Equal(t, map[int64]int64{1: 5, 3: 1, 5: 7, 10: 11}, m2)
-	require.Equal(t, m2, m)
-
-	// reset should not shrink the capacity
-	buffer.Reset(2)
-	require.Equal(t, 0, len(buffer.delta))
-	require.Equal(t, 6, cap(buffer.delta))
-}
-
 func TestMutateBuffersGetter(t *testing.T) {
 	stmtBufs := &variable.WriteStmtBufs{}
 	buffers := NewMutateBuffers(stmtBufs)
@@ -240,9 +211,6 @@ func TestMutateBuffersGetter(t *testing.T) {
 	update := buffers.GetCheckRowBufferWithCap(6)
 	require.Equal(t, 6, cap(update.rowToCheck))
 	require.Equal(t, 6, cap(update.rowToCheck))
-
-	colSize := buffers.GetColSizeDeltaBufferWithCap(6)
-	require.Equal(t, 6, cap(colSize.delta))
 
 	require.Same(t, stmtBufs, buffers.GetWriteStmtBufs())
 }

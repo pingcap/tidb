@@ -17,15 +17,16 @@ package hint
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
@@ -93,6 +94,8 @@ const (
 	HintOrderIndex = "order_index"
 	// HintNoOrderIndex is hint enforce using some indexes and not keep the index's order.
 	HintNoOrderIndex = "no_order_index"
+	// HintIndexLookUpPushDown is hint to enforce index lookup push down.
+	HintIndexLookUpPushDown = "index_lookup_pushdown"
 	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
 	HintAggToCop = "agg_to_cop"
 	// HintReadFromStorage is hint enforce some tables read from specific type of storage.
@@ -124,6 +127,9 @@ const (
 	HintNoIndexMerge = "no_index_merge"
 	// HintMaxExecutionTime specifies the max allowed execution time in milliseconds
 	HintMaxExecutionTime = "max_execution_time"
+
+	// HintWriteSlowLog is a SQL hint used to explicitly trigger writing a statement into the slow log.
+	HintWriteSlowLog = "write_slow_log"
 
 	// HintFlagSemiJoinRewrite corresponds to HintSemiJoinRewrite.
 	HintFlagSemiJoinRewrite uint64 = 1 << iota
@@ -203,6 +209,9 @@ const (
 
 // StmtHints are hints that apply to the entire statement, like 'max_exec_time', 'memory_quota'.
 type StmtHints struct {
+	// This is true iff there were hints in the statement.
+	QueryHasHints bool
+
 	// Hint Information
 	MemQuotaQuery           int64
 	MaxExecutionTime        uint64
@@ -216,6 +225,9 @@ type StmtHints struct {
 	// -1 for disable.
 	ForceNthPlan  int64
 	ResourceGroup string
+	// Do not store plan in either plan cache.
+	IgnorePlanCache bool
+	WriteSlowLog    bool
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
@@ -245,16 +257,14 @@ func (sh *StmtHints) Clone() *StmtHints {
 		tableHints []*ast.TableOptimizerHint
 	)
 	if len(sh.SetVars) > 0 {
-		vars = make(map[string]string, len(sh.SetVars))
-		for k, v := range sh.SetVars {
-			vars[k] = v
-		}
+		vars = maps.Clone(sh.SetVars)
 	}
 	if len(sh.OriginalTableHints) > 0 {
 		tableHints = make([]*ast.TableOptimizerHint, len(sh.OriginalTableHints))
 		copy(tableHints, sh.OriginalTableHints)
 	}
 	return &StmtHints{
+		QueryHasHints:                  sh.QueryHasHints,
 		MemQuotaQuery:                  sh.MemQuotaQuery,
 		MaxExecutionTime:               sh.MaxExecutionTime,
 		ReplicaRead:                    sh.ReplicaRead,
@@ -264,6 +274,8 @@ func (sh *StmtHints) Clone() *StmtHints {
 		EnableCascadesPlanner:          sh.EnableCascadesPlanner,
 		ForceNthPlan:                   sh.ForceNthPlan,
 		ResourceGroup:                  sh.ResourceGroup,
+		IgnorePlanCache:                sh.IgnorePlanCache,
+		WriteSlowLog:                   sh.WriteSlowLog,
 		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
 		HasReplicaReadHint:             sh.HasReplicaReadHint,
@@ -291,12 +303,15 @@ func (sh *StmtHints) addHypoIndex(db, tbl, idx string, idxInfo *model.IndexInfo)
 // ParseStmtHints parses statement hints.
 func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	setVarHintChecker func(varName, hint string) (ok bool, warning error),
-	hypoIndexChecker func(db, tbl, col pmodel.CIStr) (colOffset int, err error),
+	hypoIndexChecker func(db, tbl, col ast.CIStr) (colOffset int, err error),
 	currentDB string, replicaReadFollower byte) ( // to avoid cycle import
 	stmtHints StmtHints, offs []int, warns []error) {
+	stmtHints.QueryHasHints = len(hints) != 0
+
 	if len(hints) == 0 {
 		return
 	}
+
 	hintOffs := make(map[string]int, len(hints))
 	var forceNthPlan *ast.TableOptimizerHint
 	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
@@ -304,31 +319,31 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
 		switch hint.HintName.L {
-		case "memory_quota":
+		case HintMemoryQuota:
 			hintOffs[hint.HintName.L] = i
 			memoryQuotaHintCnt++
 		case "resource_group":
 			hintOffs[hint.HintName.L] = i
 			resourceGroupHintCnt++
-		case "use_toja":
+		case HintUseToja:
 			hintOffs[hint.HintName.L] = i
 			useToJAHintCnt++
 		case "use_cascades":
 			hintOffs[hint.HintName.L] = i
 			useCascadesHintCnt++
-		case "no_index_merge":
+		case HintNoIndexMerge:
 			hintOffs[hint.HintName.L] = i
 			noIndexMergeHintCnt++
 		case "read_consistent_replica":
 			hintOffs[hint.HintName.L] = i
 			readReplicaHintCnt++
-		case "max_execution_time":
+		case HintMaxExecutionTime:
 			hintOffs[hint.HintName.L] = i
 			maxExecutionTimeCnt++
 		case "nth_plan":
 			forceNthPlanCnt++
 			forceNthPlan = hint
-		case "straight_join":
+		case HintStraightJoin:
 			hintOffs[hint.HintName.L] = i
 			straightJoinHintCnt++
 		case "hypo_index":
@@ -344,12 +359,12 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			}
 			tbl := hint.Tables[0].TableName
 			idx := hint.Tables[1].TableName
-			var colNames []pmodel.CIStr
+			var colNames []ast.CIStr
 			var cols []*model.IndexColumn
 			invalid := false
 			for i := 2; i < len(hint.Tables); i++ {
 				colNames = append(colNames, hint.Tables[i].TableName)
-				offset, err := hypoIndexChecker(pmodel.NewCIStr(db), tbl, hint.Tables[i].TableName)
+				offset, err := hypoIndexChecker(ast.NewCIStr(db), tbl, hint.Tables[i].TableName)
 				if err != nil {
 					invalid = true
 					warns = append(warns, errors.NewNoStackErrorf("invalid HYPO_INDEX hint: %v", err))
@@ -368,7 +383,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 				Name:    idx,
 				Columns: cols,
 				State:   model.StatePublic,
-				Tp:      pmodel.IndexTypeHypo,
+				Tp:      ast.IndexTypeHypo,
 			}
 			stmtHints.addHypoIndex(db, tbl.L, idx.L, idxInfo)
 		case "set_var":
@@ -391,6 +406,10 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			}
 			setVars[setVarHint.VarName] = setVarHint.Value
 			setVarsOffs = append(setVarsOffs, i)
+		case HintIgnorePlanCache:
+			stmtHints.IgnorePlanCache = true
+		case HintWriteSlowLog:
+			stmtHints.WriteSlowLog = true
 		}
 	}
 	stmtHints.OriginalTableHints = hints
@@ -398,14 +417,14 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 
 	// Handle MEMORY_QUOTA
 	if memoryQuotaHintCnt != 0 {
-		memoryQuotaHint := hints[hintOffs["memory_quota"]]
+		memoryQuotaHint := hints[hintOffs[HintMemoryQuota]]
 		if memoryQuotaHintCnt > 1 {
 			warn := errors.NewNoStackErrorf("MEMORY_QUOTA() is defined more than once, only the last definition takes effect: MEMORY_QUOTA(%v)", memoryQuotaHint.HintData.(int64))
 			warns = append(warns, warn)
 		}
 		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
 		if memoryQuota := memoryQuotaHint.HintData.(int64); memoryQuota < 0 {
-			delete(hintOffs, "memory_quota")
+			delete(hintOffs, HintMemoryQuota)
 			warn := errors.NewNoStackError("The use of MEMORY_QUOTA hint is invalid, valid usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
 			warns = append(warns, warn)
 		} else {
@@ -419,7 +438,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	}
 	// Handle USE_TOJA
 	if useToJAHintCnt != 0 {
-		useToJAHint := hints[hintOffs["use_toja"]]
+		useToJAHint := hints[hintOffs[HintUseToja]]
 		if useToJAHintCnt > 1 {
 			warn := errors.NewNoStackErrorf("USE_TOJA() is defined more than once, only the last definition takes effect: USE_TOJA(%v)", useToJAHint.HintData.(bool))
 			warns = append(warns, warn)
@@ -464,7 +483,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	}
 	// Handle MAX_EXECUTION_TIME
 	if maxExecutionTimeCnt != 0 {
-		maxExecutionTime := hints[hintOffs["max_execution_time"]]
+		maxExecutionTime := hints[hintOffs[HintMaxExecutionTime]]
 		if maxExecutionTimeCnt > 1 {
 			warn := errors.NewNoStackErrorf("MAX_EXECUTION_TIME() is defined more than once, only the last definition takes effect: MAX_EXECUTION_TIME(%v)", maxExecutionTime.HintData.(uint64))
 			warns = append(warns, warn)
@@ -509,7 +528,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 // isStmtHint checks whether this hint is a statement-level hint.
 func isStmtHint(h *ast.TableOptimizerHint) bool {
 	switch h.HintName.L {
-	case "max_execution_time", "memory_quota", "resource_group":
+	case HintMaxExecutionTime, HintMemoryQuota, "resource_group":
 		return true
 	default:
 		return false
@@ -526,21 +545,22 @@ type IndexJoinHints struct {
 // PlanHints are hints that are used to control the optimizer plan choices like 'use_index', 'hash_join'.
 // TODO: move ignore_plan_cache, straight_join, no_decorrelate here.
 type PlanHints struct {
-	IndexJoin          IndexJoinHints // inlj_join, inlhj_join, inlmj_join
-	NoIndexJoin        IndexJoinHints // no_inlj_join, no_inlhj_join, no_inlmj_join
-	HashJoin           []HintedTable  // hash_join
-	NoHashJoin         []HintedTable  // no_hash_join
-	SortMergeJoin      []HintedTable  // merge_join
-	NoMergeJoin        []HintedTable  // no_merge_join
-	BroadcastJoin      []HintedTable  // bcj_join
-	ShuffleJoin        []HintedTable  // shuffle_join
-	IndexHintList      []HintedIndex  // use_index, ignore_index
-	IndexMergeHintList []HintedIndex  // use_index_merge
-	TiFlashTables      []HintedTable  // isolation_read_engines(xx=tiflash)
-	TiKVTables         []HintedTable  // isolation_read_engines(xx=tikv)
-	LeadingJoinOrder   []HintedTable  // leading
-	HJBuild            []HintedTable  // hash_join_build
-	HJProbe            []HintedTable  // hash_join_probe
+	IndexJoin          IndexJoinHints   // inlj_join, inlhj_join, inlmj_join
+	NoIndexJoin        IndexJoinHints   // no_inlj_join, no_inlhj_join, no_inlmj_join
+	HashJoin           []HintedTable    // hash_join
+	NoHashJoin         []HintedTable    // no_hash_join
+	SortMergeJoin      []HintedTable    // merge_join
+	NoMergeJoin        []HintedTable    // no_merge_join
+	BroadcastJoin      []HintedTable    // bcj_join
+	ShuffleJoin        []HintedTable    // shuffle_join
+	IndexHintList      []HintedIndex    // use_index, ignore_index
+	IndexMergeHintList []HintedIndex    // use_index_merge
+	TiFlashTables      []HintedTable    // isolation_read_engines(xx=tiflash)
+	TiKVTables         []HintedTable    // isolation_read_engines(xx=tikv)
+	LeadingJoinOrder   []HintedTable    // leading
+	LeadingList        *ast.LeadingList // leading recursive
+	HJBuild            []HintedTable    // hash_join_build
+	HJProbe            []HintedTable    // hash_join_probe
 
 	// Hints belows are not associated with any particular table.
 	PreferAggType    uint // hash_agg, merge_agg, agg_to_cop and so on
@@ -552,19 +572,20 @@ type PlanHints struct {
 
 // HintedTable indicates which table this hint should take effect on.
 type HintedTable struct {
-	DBName       pmodel.CIStr   // the database name
-	TblName      pmodel.CIStr   // the table name
-	Partitions   []pmodel.CIStr // partition information
-	SelectOffset int            // the select block offset of this hint
-	Matched      bool           // whether this hint is applied successfully
+	DBName       ast.CIStr   // the database name
+	TblName      ast.CIStr   // the table name
+	Partitions   []ast.CIStr // partition information
+	SelectOffset int         // the select block offset of this hint
+	Matched      bool        // whether this hint is applied successfully
 }
 
 // HintedIndex indicates which index this hint should take effect on.
 type HintedIndex struct {
-	DBName     pmodel.CIStr   // the database name
-	TblName    pmodel.CIStr   // the table name
-	Partitions []pmodel.CIStr // partition information
-	IndexHint  *ast.IndexHint // the original parser index hint structure
+	DBName         ast.CIStr      // the database name
+	TblName        ast.CIStr      // the table name
+	Partitions     []ast.CIStr    // partition information
+	IndexHint      *ast.IndexHint // the original parser index hint structure
+	PushDownLookUp bool           // whether to push down the index lookup
 	// Matched indicates whether this index hint
 	// has been successfully applied to a DataSource.
 	// If an HintedIndex is not Matched after building
@@ -573,21 +594,29 @@ type HintedIndex struct {
 }
 
 // Match checks whether the hint is matched with the given dbName and tblName.
-func (hint *HintedIndex) Match(dbName, tblName pmodel.CIStr) bool {
+func (hint *HintedIndex) Match(dbName, tblName ast.CIStr) bool {
 	return hint.TblName.L == tblName.L &&
 		(hint.DBName.L == dbName.L ||
 			hint.DBName.L == "*") // for universal bindings, e.g. *.t
+}
+
+// ShouldPushDownIndexLookUp returns whether the hint indicates to push down index lookup.
+func (hint *HintedIndex) ShouldPushDownIndexLookUp() bool {
+	return hint.IndexHint.HintType == ast.HintUse && hint.PushDownLookUp
 }
 
 // HintTypeString returns the string representation of the hint type.
 func (hint *HintedIndex) HintTypeString() string {
 	switch hint.IndexHint.HintType {
 	case ast.HintUse:
-		return "use_index"
+		if hint.PushDownLookUp {
+			return HintIndexLookUpPushDown
+		}
+		return HintUseIndex
 	case ast.HintIgnore:
-		return "ignore_index"
+		return HintIgnoreIndex
 	case ast.HintForce:
-		return "force_index"
+		return HintForceIndex
 	}
 	return ""
 }
@@ -729,7 +758,7 @@ func (*PlanHints) MatchTableName(tables []*HintedTable, hintTables []HintedTable
 func ParsePlanHints(hints []*ast.TableOptimizerHint,
 	currentLevel int, currentDB string,
 	hintProcessor *QBHintHandler, straightJoinOrder bool,
-	handlingExistsSubquery, notHandlingSubquery bool,
+	handlingInSubquery, handlingExistsSubquery, notHandlingSubquery bool,
 	warnHandler hintWarnHandler) (p *PlanHints, subQueryHintFlags uint64, err error) {
 	var (
 		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []HintedTable
@@ -746,13 +775,14 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		leadingJoinOrder                                                                []HintedTable
 		hjBuildTables, hjProbeTables                                                    []HintedTable
 		leadingHintCnt                                                                  int
+		leadingList                                                                     *ast.LeadingList
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
-			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
@@ -807,12 +837,13 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			preferAggType |= PreferStreamAgg
 		case HintAggToCop:
 			preferAggToCop = true
-		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex:
+		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
-				dbName = pmodel.NewCIStr(currentDB)
+				dbName = ast.NewCIStr(currentDB)
 			}
 			var hintType ast.IndexHintType
+			var pushDownLookUp bool
 			switch hint.HintName.L {
 			case HintUseIndex:
 				hintType = ast.HintUse
@@ -824,6 +855,20 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				hintType = ast.HintOrderIndex
 			case HintNoOrderIndex:
 				hintType = ast.HintNoOrderIndex
+			case HintIndexLookUpPushDown:
+				inapplicableMsg := ""
+				switch {
+				case !kerneltype.IsClassic():
+					inapplicableMsg = "only classic kernel type is supported"
+				case len(hint.Indexes) == 0:
+					inapplicableMsg = "the index names should be specified"
+				}
+				if inapplicableMsg != "" {
+					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, " + inapplicableMsg)
+					continue
+				}
+				hintType = ast.HintUse
+				pushDownLookUp = true
 			}
 			indexHintList = append(indexHintList, HintedIndex{
 				DBName:     dbName,
@@ -834,9 +879,10 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 					HintType:   hintType,
 					HintScope:  ast.HintForScan,
 				},
+				PushDownLookUp: pushDownLookUp,
 			})
 		case HintReadFromStorage:
-			switch hint.HintData.(pmodel.CIStr).L {
+			switch hint.HintData.(ast.CIStr).L {
 			case HintTiFlash:
 				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 			case HintTiKV:
@@ -845,7 +891,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintIndexMerge:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
-				dbName = pmodel.NewCIStr(currentDB)
+				dbName = ast.NewCIStr(currentDB)
 			}
 			indexMergeHintList = append(indexMergeHintList, HintedIndex{
 				DBName:     dbName,
@@ -870,11 +916,17 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintLeading:
 			if leadingHintCnt == 0 {
 				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+				// get LeadingList
+				if hint.HintData != nil {
+					if list, ok := hint.HintData.(*ast.LeadingList); ok {
+						leadingList = list
+					}
+				}
 			}
 			leadingHintCnt++
 		case HintSemiJoinRewrite:
-			if !handlingExistsSubquery {
-				warnHandler.SetHintWarning("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause.")
+			if !handlingExistsSubquery && !handlingInSubquery {
+				warnHandler.SetHintWarning("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not IN/EXISTS clause.")
 				continue
 			}
 			subQueryHintFlags |= HintFlagSemiJoinRewrite
@@ -916,6 +968,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		PreferLimitToCop:   preferLimitToCop,
 		CTEMerge:           cteMerge,
 		LeadingJoinOrder:   leadingJoinOrder,
+		LeadingList:        leadingList,
 		HJBuild:            hjBuildTables,
 		HJProbe:            hjProbeTables,
 	}, subQueryHintFlags, nil
@@ -946,7 +999,7 @@ func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 		return nil
 	}
 	hintTableInfos := make([]HintedTable, 0, len(hintTables))
-	defaultDBName := pmodel.NewCIStr(currentDB)
+	defaultDBName := ast.NewCIStr(currentDB)
 	isInapplicable := false
 	for _, hintTable := range hintTables {
 		tableInfo := HintedTable{
@@ -1086,7 +1139,7 @@ func collectUnmatchedIndexHintWarning(indexHints []HintedIndex, usedForIndexMerg
 		if !hint.Matched {
 			var hintTypeString string
 			if usedForIndexMerge {
-				hintTypeString = "use_index_merge"
+				hintTypeString = HintIndexMerge
 			} else {
 				hintTypeString = hint.HintTypeString()
 			}

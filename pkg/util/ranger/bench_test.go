@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -130,9 +131,15 @@ WHERE
 
 	b.ResetTimer()
 	pctx := sctx.GetPlanCtx()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err = ranger.DetachCondAndBuildRangeForIndex(pctx.GetRangerCtx(), conds, cols, lengths, 0)
 		require.NoError(b, err)
 	}
 	b.StopTimer()
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkDetachCondAndBuildRangeForIndex,
+	)
 }

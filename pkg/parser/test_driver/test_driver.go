@@ -30,16 +30,16 @@ import (
 func init() {
 	ast.NewValueExpr = newValueExpr
 	ast.NewParamMarkerExpr = newParamMarkerExpr
-	ast.NewDecimal = func(str string) (interface{}, error) {
+	ast.NewDecimal = func(str string) (any, error) {
 		dec := new(MyDecimal)
 		err := dec.FromString([]byte(str))
 		return dec, err
 	}
-	ast.NewHexLiteral = func(str string) (interface{}, error) {
+	ast.NewHexLiteral = func(str string) (any, error) {
 		h, err := NewHexLiteral(str)
 		return h, err
 	}
-	ast.NewBitLiteral = func(str string) (interface{}, error) {
+	ast.NewBitLiteral = func(str string) (any, error) {
 		b, err := NewBitLiteral(str)
 		return b, err
 	}
@@ -158,7 +158,7 @@ func (n *ValueExpr) Format(w io.Writer) {
 }
 
 // newValueExpr creates a ValueExpr with value, and sets default field type.
-func newValueExpr(value interface{}, charset string, collate string) ast.ValueExpr {
+func newValueExpr(value any, charset string, collate string) ast.ValueExpr {
 	if ve, ok := value.(*ValueExpr); ok {
 		return ve
 	}

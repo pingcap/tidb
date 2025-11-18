@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"testing"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -15,7 +16,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -355,4 +358,37 @@ func (b HexBytes) String() string {
 // MarshalJSON implements json.Marshaler.
 func (b HexBytes) MarshalJSON() ([]byte, error) {
 	return json.Marshal(hex.EncodeToString(b))
+}
+
+func MarshalHistogram(m prometheus.Histogram) zapcore.ObjectMarshaler {
+	return zapcore.ObjectMarshalerFunc(func(mal zapcore.ObjectEncoder) error {
+		if m == nil {
+			return nil
+		}
+
+		met := metric.ReadHistogram(m)
+		if met == nil || met.Histogram == nil {
+			return nil
+		}
+
+		hist := met.Histogram
+		for _, b := range hist.GetBucket() {
+			key := fmt.Sprintf("lt_%f", b.GetUpperBound())
+			mal.AddUint64(key, b.GetCumulativeCount())
+		}
+		mal.AddUint64("count", hist.GetSampleCount())
+		mal.AddFloat64("total", hist.GetSampleSum())
+		return nil
+	})
+}
+
+// OverrideLevel temporary sets level to the global logger.
+//
+// Don't use this in parallel test cases.
+func OverrideLevelForTest(t *testing.T, lvl zapcore.Level) {
+	t.Helper()
+
+	oldLvl := log.GetLevel()
+	t.Cleanup(func() { log.SetLevel(oldLvl) })
+	log.SetLevel(lvl)
 }

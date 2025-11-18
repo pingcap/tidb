@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 )
@@ -52,7 +53,7 @@ type dbMetaMgrBuilder struct {
 func (b *dbMetaMgrBuilder) Init(ctx context.Context) error {
 	exec := common.SQLWithRetry{
 		DB:           b.db,
-		Logger:       log.FromContext(ctx),
+		Logger:       log.Wrap(logutil.Logger(ctx)),
 		HideQueryLog: redact.NeedRedact(),
 	}
 	metaDBSQL := common.SprintfWithIdentifiers("CREATE DATABASE IF NOT EXISTS %s", b.schema)
@@ -93,7 +94,7 @@ func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
 
 type tableMetaMgr interface {
 	InitTableMeta(ctx context.Context) error
-	AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error)
+	AllocTableRowIDs(ctx context.Context, requiredRowIDCnt int64) (*verify.KVChecksum, int64, error)
 	UpdateTableStatus(ctx context.Context, status metaStatus) error
 	UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error
 	CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (
@@ -177,7 +178,7 @@ func parseMetaStatus(s string) (metaStatus, error) {
 	}
 }
 
-func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {
+func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, requiredRowIDCnt int64) (*verify.KVChecksum, int64, error) {
 	conn, err := m.session.Conn(ctx)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
@@ -188,8 +189,10 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		DB:     conn,
 		Logger: m.tr.logger,
 	}
-	var newRowIDBase, newRowIDMax int64
-	curStatus := metaStatusInitial
+	// (myStartRowID, myEndRowID] is the range of row_id that current instance
+	// can use to encode the table.
+	var myStartRowID, myEndRowID int64
+	myStatus := metaStatusInitial
 	newStatus := metaStatusRowIDAllocated
 	var baseTotalKvs, baseTotalBytes, baseChecksum uint64
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
@@ -197,13 +200,20 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		return nil, 0, errors.Annotate(err, "enable pessimistic transaction failed")
 	}
 
-	needAutoID := common.TableHasAutoID(m.tr.tableInfo.Core)
+	hasAutoID := common.TableHasAutoID(m.tr.tableInfo.Core)
 	tableChecksumingMsg := "Target table is calculating checksum. Please wait until the checksum is finished and try again."
 	doAllocTableRowIDsFn := func() error {
 		return exec.Transact(ctx, "init table allocator base", func(ctx context.Context, tx *sql.Tx) error {
+			// lightning follows below calling sequence, so at most one client
+			// can execute the code after the FOR UPDATE part for some table,
+			// even though FOR UPDATE only lock rows that matches the condition:
+			// - insert into table_meta with key (table_id, task_id)
+			// - try lock with FOR UPDATE
 			rows, err := tx.QueryContext(
 				ctx,
-				common.SprintfWithIdentifiers("SELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status FROM %s.%s WHERE table_id = ? FOR UPDATE", m.schemaName, m.tableName),
+				common.SprintfWithIdentifiers(`
+SELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status
+FROM %s.%s WHERE table_id = ? FOR UPDATE`, m.schemaName, m.tableName),
 				m.tr.tableInfo.ID,
 			)
 			if err != nil {
@@ -234,16 +244,16 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				}
 
 				if metaTaskID == m.taskID {
-					curStatus = status
+					myStatus = status
 					baseChecksum = checksum
 					baseTotalKvs = totalKvs
 					baseTotalBytes = totalBytes
 					if status >= metaStatusRowIDAllocated {
-						if rowIDMax-rowIDBase != rawRowIDMax {
-							return common.ErrAllocTableRowIDs.GenWithStack("verify allocator base failed. local: '%d', meta: '%d'", rawRowIDMax, rowIDMax-rowIDBase)
+						if rowIDMax-rowIDBase != requiredRowIDCnt {
+							return common.ErrAllocTableRowIDs.GenWithStack("verify allocator base failed. local: '%d', meta: '%d'", requiredRowIDCnt, rowIDMax-rowIDBase)
 						}
-						newRowIDBase = rowIDBase
-						newRowIDMax = rowIDMax
+						myStartRowID = rowIDBase
+						myEndRowID = rowIDMax
 						break
 					}
 					continue
@@ -263,36 +273,43 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 			}
 
 			// no enough info are available, fetch row_id max for table
-			if curStatus == metaStatusInitial {
-				if needAutoID {
-					// maxRowIDMax is the max row_id that other tasks has allocated, we need to rebase the global autoid base first.
-					// TODO this is not right when AUTO_ID_CACHE=1 and have auto row id,
-					// the id allocators are separated in this case.
-					if err := common.RebaseGlobalAutoID(ctx, maxRowIDMax, m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core); err != nil {
-						return errors.Trace(err)
-					}
-					newRowIDBase, newRowIDMax, err = common.AllocGlobalAutoID(ctx, rawRowIDMax, m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core)
+			if myStatus == metaStatusInitial {
+				// if the table don't have auto id, we still guarantee that the
+				// row ID is unique across all lightning instances.
+				// or if someone have already allocated the auto id, we can continue
+				// allocating from previous maxRowIDMax.
+				if !hasAutoID || maxRowIDMax > 0 {
+					myStartRowID = maxRowIDMax
+				} else {
+					// we are the first one to allocate the auto id, we need to
+					// fetch the max auto id base from the table, and allocate
+					// from there.
+					// as we only have one estimated requiredRowIDCount, but the
+					// table might have multiple allocators, so we use the max
+					// of them.
+					maxAutoIDBase, err := common.GetMaxAutoIDBase(m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core)
 					if err != nil {
 						return errors.Trace(err)
 					}
-				} else {
-					// Though we don't need auto ID, we still guarantee that the row ID is unique across all lightning instances.
-					newRowIDBase = maxRowIDMax
-					newRowIDMax = newRowIDBase + rawRowIDMax
+					myStartRowID = maxAutoIDBase
 				}
+				myEndRowID = myStartRowID + requiredRowIDCnt
 
-				// table contains no data, can skip checksum
-				if needAutoID && newRowIDBase == 0 && newStatus < metaStatusRestoreStarted {
+				// if we are the first one to allocate, the table has auto-id,
+				// and our start is 0, it means the table is empty, so we move
+				// the state to next one directly without going through below
+				// checksum branch.
+				if hasAutoID && myStartRowID == 0 && newStatus < metaStatusRestoreStarted {
 					newStatus = metaStatusRestoreStarted
 				}
 
 				query := common.SprintfWithIdentifiers("UPDATE %s.%s SET row_id_base = ?, row_id_max = ?, status = ? WHERE table_id = ? AND task_id = ?", m.schemaName, m.tableName)
-				_, err := tx.ExecContext(ctx, query, newRowIDBase, newRowIDMax, newStatus.String(), m.tr.tableInfo.ID, m.taskID)
+				_, err := tx.ExecContext(ctx, query, myStartRowID, myEndRowID, newStatus.String(), m.tr.tableInfo.ID, m.taskID)
 				if err != nil {
 					return errors.Trace(err)
 				}
 
-				curStatus = newStatus
+				myStatus = newStatus
 			}
 			return nil
 		})
@@ -300,14 +317,14 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 	// TODO: the retry logic is duplicate with code in local.writeAndIngestByRanges, should encapsulate it later.
 	// max retry backoff time: 2+4+8+16+30*26=810s
 	backOffTime := time.Second
-	for i := 0; i < maxRetryOnStatusConflict; i++ {
+	for i := range maxRetryOnStatusConflict {
 		err = doAllocTableRowIDsFn()
 		if err == nil || !strings.Contains(err.Error(), tableChecksumingMsg) {
 			break
 		}
 		// we only retry if it's tableChecksuming error, it happens during parallel import.
 		// for detail see https://docs.pingcap.com/tidb/stable/tidb-lightning-distributed-import
-		log.FromContext(ctx).Warn("target table is doing checksum, will try again",
+		logutil.Logger(ctx).Warn("target table is doing checksum, will try again",
 			zap.Int("retry time", i+1), log.ShortError(err))
 		backOffTime *= 2
 		if backOffTime > maxBackoffTime {
@@ -325,9 +342,12 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 
 	var checksum *verify.KVChecksum
 	// need to do checksum and update checksum meta since we are the first one.
-	if curStatus < metaStatusRestoreStarted {
-		// table contains data but haven't do checksum yet
-		if (newRowIDBase > 0 || !needAutoID) && m.needChecksum && baseTotalKvs == 0 {
+	if myStatus < metaStatusRestoreStarted {
+		// the table might have data if our StartRowID is not 0, or if the table
+		// don't have any auto id.
+		if (myStartRowID > 0 || !hasAutoID) && m.needChecksum && baseTotalKvs == 0 {
+			// if another instance finished import before below checksum logic,
+			// it will cause checksum mismatch, but it's very rare.
 			remoteCk, err := DoChecksum(ctx, m.tr.tableInfo)
 			if err != nil {
 				return nil, 0, errors.Trace(err)
@@ -353,12 +373,12 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		ck := verify.MakeKVChecksum(baseTotalBytes, baseTotalKvs, baseChecksum)
 		checksum = &ck
 	}
-	log.FromContext(ctx).Info("allocate table row_id base", zap.String("table", m.tr.tableName),
-		zap.Int64("row_id_base", newRowIDBase))
+	logutil.Logger(ctx).Info("allocate table row_id base", zap.String("table", m.tr.tableName),
+		zap.Int64("startRowID", myStartRowID), zap.Int64("endRowID", myEndRowID))
 	if checksum != nil {
-		log.FromContext(ctx).Info("checksum base", zap.Any("checksum", checksum))
+		logutil.Logger(ctx).Info("checksum base", zap.Any("checksum", checksum))
 	}
-	return checksum, newRowIDBase, nil
+	return checksum, myStartRowID, nil
 }
 
 func (m *dbTableMetaMgr) UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error {
@@ -486,7 +506,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 		ck := verify.MakeKVChecksum(totalBytes, totalKvs, totalChecksum)
 		baseTotalChecksum = &ck
 	}
-	log.FromContext(ctx).Info("check table checksum", zap.String("table", m.tr.tableName),
+	logutil.Logger(ctx).Info("check table checksum", zap.String("table", m.tr.tableName),
 		zap.Bool("otherHasDupe", otherHasDupe), zap.Bool("needRemoteDupe", needRemoteDupe),
 		zap.String("new_status", newStatus.String()))
 	return
@@ -505,7 +525,7 @@ func (m *dbTableMetaMgr) FinishTable(ctx context.Context) error {
 func RemoveTableMetaByTableName(ctx context.Context, db *sql.DB, metaTable, tableName string) error {
 	exec := &common.SQLWithRetry{
 		DB:     db,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	query := fmt.Sprintf("DELETE FROM %s", metaTable)
 	var args []any
@@ -608,7 +628,7 @@ type storedCfgs struct {
 func (m *dbTaskMetaMgr) InitTask(ctx context.Context, tikvSourceSize, tiflashSourceSize int64) error {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	// avoid override existing metadata if the meta is already inserted.
 	stmt := common.SprintfWithIdentifiers(`
@@ -622,7 +642,7 @@ func (m *dbTaskMetaMgr) InitTask(ctx context.Context, tikvSourceSize, tiflashSou
 func (m *dbTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	// avoid override existing metadata if the meta is already inserted.
 	exist := false
@@ -665,7 +685,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     conn,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
 	if err != nil {
@@ -736,7 +756,7 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     conn,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
 	if err != nil {
@@ -822,7 +842,7 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 			// try to rollback the stopped schedulers
 			cancelFunc := m.pd.MakeUndoFunctionByConfig(pausedCfg.RestoreCfg)
 			if err1 := cancelFunc(ctx); err1 != nil {
-				log.FromContext(ctx).Warn("undo remove schedulers failed", zap.Error(err1))
+				logutil.Logger(ctx).Warn("undo remove schedulers failed", zap.Error(err1))
 			}
 			return errors.Trace(err)
 		}
@@ -876,7 +896,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     conn,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
 	if err != nil {
@@ -924,7 +944,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 				allFinished = false
 				// check if other task still running
 				if state == taskStateNormal {
-					log.FromContext(ctx).Info("unfinished task found", zap.Int64("task_id", taskID),
+					logutil.Logger(ctx).Info("unfinished task found", zap.Int64("task_id", taskID),
 						zap.Stringer("status", status))
 					switchBack = false
 				}
@@ -957,7 +977,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 
 		return nil
 	})
-	log.FromContext(ctx).Info("check all task finish status", zap.Bool("task_finished", finished),
+	logutil.Logger(ctx).Info("check all task finish status", zap.Bool("task_finished", finished),
 		zap.Bool("all_finished", allFinished), zap.Bool("switch_back", switchBack))
 
 	return switchBack, allFinished, err
@@ -966,7 +986,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 func (m *dbTaskMetaMgr) Cleanup(ctx context.Context) error {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	// avoid override existing metadata if the meta is already inserted.
 	stmt := common.SprintfWithIdentifiers("DROP TABLE %s.%s;", m.schemaName, m.tableName)
@@ -979,7 +999,7 @@ func (m *dbTaskMetaMgr) Cleanup(ctx context.Context) error {
 func (m *dbTaskMetaMgr) CleanupTask(ctx context.Context) error {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	stmt := common.SprintfWithIdentifiers("DELETE FROM %s.%s WHERE task_id = ?;", m.schemaName, m.tableName)
 	err := exec.Exec(ctx, "clean up task", stmt, m.taskID)
@@ -991,7 +1011,7 @@ func (m *dbTaskMetaMgr) Close() {
 }
 
 func (m *dbTaskMetaMgr) CleanupAllMetas(ctx context.Context) error {
-	return MaybeCleanupAllMetas(ctx, log.FromContext(ctx), m.session, m.schemaName, true)
+	return MaybeCleanupAllMetas(ctx, log.Wrap(logutil.Logger(ctx)), m.session, m.schemaName, true)
 }
 
 // MaybeCleanupAllMetas remove the meta schema if there is no unfinished tables

@@ -17,6 +17,7 @@ package ddl
 import (
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -28,12 +29,13 @@ type Option func(*Options)
 
 // Options represents all the options of the DDL module needs
 type Options struct {
-	EtcdCli      *clientv3.Client
-	Store        kv.Storage
-	AutoIDClient *autoid.ClientDiscover
-	InfoCache    *infoschema.InfoCache
-	Lease        time.Duration
-	SchemaLoader SchemaLoader
+	EtcdCli           *clientv3.Client
+	Store             kv.Storage
+	AutoIDClient      *autoid.ClientDiscover
+	InfoCache         *infoschema.InfoCache
+	Lease             time.Duration
+	SchemaLoader      SchemaLoader
+	EventPublishStore notifier.Store
 }
 
 // WithEtcdClient specifies the `clientv3.Client` of DDL used to request the etcd service
@@ -75,5 +77,12 @@ func WithLease(lease time.Duration) Option {
 func WithSchemaLoader(loader SchemaLoader) Option {
 	return func(options *Options) {
 		options.SchemaLoader = loader
+	}
+}
+
+// WithEventPublishStore specifies the store used to publish DDL events
+func WithEventPublishStore(store notifier.Store) Option {
+	return func(options *Options) {
+		options.EventPublishStore = store
 	}
 }

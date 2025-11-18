@@ -272,7 +272,7 @@ local qpsP = graphPanel.new(
 );
 
 local cpsByCMDP = graphPanel.new(
-  title='CPS by CMD',
+  title='CPS By CMD',
   datasource=myDS,
   legend_rightSide=true,
   description='MySQL command statistics by command type. See https://dev.mysql.com/doc/internals/en/text-protocol.html and https://dev.mysql.com/doc/internals/en/prepared-statements.html',
@@ -433,7 +433,7 @@ local maxTxnRetryP = graphPanel.new(
 
 // Merge together.
 local panelW = 12;
-local panelH = 6;
+local panelH = 7;
 local rowW = 24;
 local rowH = 1;
 

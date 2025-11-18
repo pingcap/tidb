@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -33,7 +33,7 @@ func GetTableByName(t *testing.T, tk *testkit.TestKit, db, table string) table.T
 	dom := domain.GetDomain(tk.Session())
 	// Make sure the table schema is the new schema.
 	require.NoError(t, dom.Reload())
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(table))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(table))
 	require.NoError(t, err)
 	return tbl
 }
@@ -59,7 +59,7 @@ func GetModifyColumn(t *testing.T, tk *testkit.TestKit, db, tbl, colName string,
 // GetIndexID is used to get the index ID from full qualified name.
 func GetIndexID(t *testing.T, tk *testkit.TestKit, dbName, tblName, idxName string) int64 {
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tt, err := is.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tblName))
+	tt, err := is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
 	require.NoError(t, err)
 
 	for _, idx := range tt.Indices() {

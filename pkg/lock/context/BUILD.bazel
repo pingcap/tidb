@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
     ],
 )

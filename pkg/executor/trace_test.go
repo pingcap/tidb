@@ -80,7 +80,6 @@ func TestTracePlanStmt(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table tp1(id int);")
 	tk.MustExec("create table tp2(id int);")
-	tk.MustExec("set @@tidb_cost_model_version=2")
 	rows := tk.MustQuery("trace plan select * from tp1 t1, tp2 t2 where t1.id = t2.id").Rows()
 	require.Len(t, rows, 1)
 	require.Len(t, rows[0], 1)

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -38,15 +38,15 @@ func BenchmarkExtractDatumByOffsets(b *testing.B) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bigint, b int, index idx (b));")
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx")
 	sctx := tk.Session()
-	copCtx, err := ddl.NewReorgCopContext(store, ddl.NewDDLReorgMeta(sctx), tblInfo, []*model.IndexInfo{idxInfo}, "")
+	copCtx, err := ddl.NewReorgCopContext(ddl.NewDDLReorgMeta(sctx), tblInfo, []*model.IndexInfo{idxInfo}, "")
 	require.NoError(b, err)
 	require.IsType(b, copCtx, &copr.CopContextSingleIndex{})
 	require.NoError(b, err)
@@ -78,15 +78,16 @@ func BenchmarkGenerateIndexKV(b *testing.B) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bigint, b int, index idx (b));")
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx")
 
-	index := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	index, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(b, err)
 	sctx := tk.Session().GetSessionVars().StmtCtx
 	idxDt := []types.Datum{types.NewIntDatum(10)}
 	buf := make([]byte, 0, 64)

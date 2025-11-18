@@ -14,33 +14,9 @@
 
 package ddl
 
-import (
-	"github.com/pingcap/tidb/pkg/meta"
-)
-
 const (
-	// JobTable stores the information of DDL jobs.
-	JobTable = "tidb_ddl_job"
-	// ReorgTable stores the information of DDL reorganization.
-	ReorgTable = "tidb_ddl_reorg"
-	// HistoryTable stores the history DDL jobs.
-	HistoryTable = "tidb_ddl_history"
-
-	// JobTableID is the table ID of `tidb_ddl_job`.
-	JobTableID = meta.MaxInt48 - 1
-	// ReorgTableID is the table ID of `tidb_ddl_reorg`.
-	ReorgTableID = meta.MaxInt48 - 2
-	// HistoryTableID is the table ID of `tidb_ddl_history`.
-	HistoryTableID = meta.MaxInt48 - 3
-	// MDLTableID is the table ID of `tidb_mdl_info`.
-	MDLTableID = meta.MaxInt48 - 4
-	// BackgroundSubtaskTableID is the table ID of `tidb_background_subtask`.
-	BackgroundSubtaskTableID = meta.MaxInt48 - 5
-	// BackgroundSubtaskHistoryTableID is the table ID of `tidb_background_subtask_history`.
-	BackgroundSubtaskHistoryTableID = meta.MaxInt48 - 6
-
 	// JobTableSQL is the CREATE TABLE SQL of `tidb_ddl_job`.
-	JobTableSQL = "create table " + JobTable + `(
+	JobTableSQL = `create table mysql.tidb_ddl_job (
 		job_id bigint not null,
 		reorg int,
 		schema_ids text(65535),
@@ -50,7 +26,7 @@ const (
 		processing int,
 		primary key(job_id))`
 	// ReorgTableSQL is the CREATE TABLE SQL of `tidb_ddl_reorg`.
-	ReorgTableSQL = "create table " + ReorgTable + `(
+	ReorgTableSQL = `create table mysql.tidb_ddl_reorg (
 		job_id bigint not null,
 		ele_id bigint,
 		ele_type blob,
@@ -60,7 +36,7 @@ const (
 		reorg_meta longblob,
 		unique key(job_id, ele_id, ele_type(20)))`
 	// HistoryTableSQL is the CREATE TABLE SQL of `tidb_ddl_history`.
-	HistoryTableSQL = "create table " + HistoryTable + `(
+	HistoryTableSQL = `create table mysql.tidb_ddl_history (
 		job_id bigint not null,
 		job_meta longblob,
 		db_name char(64),
@@ -69,8 +45,15 @@ const (
 		table_ids text(65535),
 		create_time datetime,
 		primary key(job_id))`
+	// MDLTableSQL is the CREATE TABLE SQL of `tidb_mdl_info`.
+	MDLTableSQL = `create table mysql.tidb_mdl_info (
+		job_id BIGINT NOT NULL PRIMARY KEY,
+		version BIGINT NOT NULL,
+		table_ids text(65535),
+		owner_id varchar(64) NOT NULL DEFAULT ''
+	);`
 	// BackgroundSubtaskTableSQL is the CREATE TABLE SQL of `tidb_background_subtask`.
-	BackgroundSubtaskTableSQL = `create table tidb_background_subtask (
+	BackgroundSubtaskTableSQL = `create table mysql.tidb_background_subtask (
 		id bigint not null auto_increment primary key,
 		step int,
 		namespace varchar(256),
@@ -95,7 +78,7 @@ const (
 		unique uk_task_key_step_ordinal(task_key, step, ordinal)
 	)`
 	// BackgroundSubtaskHistoryTableSQL is the CREATE TABLE SQL of `tidb_background_subtask_history`.
-	BackgroundSubtaskHistoryTableSQL = `create table tidb_background_subtask_history (
+	BackgroundSubtaskHistoryTableSQL = `create table mysql.tidb_background_subtask_history (
 	 	id bigint not null auto_increment primary key,
 		step int,
 		namespace varchar(256),
@@ -117,4 +100,15 @@ const (
 		summary json,
 		key idx_task_key(task_key),
 		key idx_state_update_time(state_update_time))`
+
+	// NotifierTableName is `tidb_ddl_notifier`.
+	NotifierTableName = "tidb_ddl_notifier"
+
+	// NotifierTableSQL is the CREATE TABLE SQL of `tidb_ddl_notifier`.
+	NotifierTableSQL = `CREATE TABLE mysql.tidb_ddl_notifier (
+		ddl_job_id BIGINT,
+		sub_job_id BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL or a merged DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL or a merged DDL',
+		schema_change LONGBLOB COMMENT 'SchemaChangeEvent at rest',
+		processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
+		PRIMARY KEY(ddl_job_id, sub_job_id))`
 )

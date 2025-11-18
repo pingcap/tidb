@@ -20,22 +20,18 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
-	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
-	Offset           uint64
-	Count            uint64
+	PartitionBy      []property.SortItem `hash64-equals:"true"` // This is used for enhanced topN optimization
+	Offset           uint64              `hash64-equals:"true"`
+	Count            uint64              `hash64-equals:"true"`
 	PreferLimitToCop bool
 	IsPartial        bool
 }
@@ -46,45 +42,6 @@ func (p LogicalLimit) Init(ctx base.PlanContext, offset int) *LogicalLimit {
 	return &p
 }
 
-// ************************ start implementation of HashEquals interface ************************
-
-// Hash64 returns the hash code for the operator.
-func (p *LogicalLimit) Hash64(h base2.Hasher) {
-	h.HashString(plancodec.TypeLimit)
-	h.HashInt(len(p.PartitionBy))
-	for _, one := range p.PartitionBy {
-		one.Hash64(h)
-	}
-	h.HashUint64(p.Offset)
-	h.HashUint64(p.Count)
-}
-
-// Equals checks whether the operator is equal to another operator.
-func (p *LogicalLimit) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
-	var p2 *LogicalLimit
-	switch x := other.(type) {
-	case *LogicalLimit:
-		p2 = x
-	case LogicalLimit:
-		p2 = &x
-	default:
-		return false
-	}
-	ok := len(p.PartitionBy) == len(p2.PartitionBy) && p.Offset == p2.Offset && p.Count == p2.Count
-	if !ok {
-		return false
-	}
-	for i, one := range p.PartitionBy {
-		if !one.Equals(p2.PartitionBy[i]) {
-			return false
-		}
-	}
-	return true
-}
-
 // *************************** start implementation of Plan interface ***************************
 
 // ExplainInfo implements Plan interface.
@@ -92,7 +49,7 @@ func (p *LogicalLimit) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
+		buffer = property.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
 		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	} else {
 		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
@@ -116,22 +73,22 @@ func (p *LogicalLimit) HashCode() []byte {
 }
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	// Limit forbids any condition to push down.
-	p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return predicates, p
+	_, _, err := p.BaseLogicalPlan.PredicatePushDown(nil)
+	return predicates, p, err
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
 	copy(savedUsedCols, parentUsedCols)
 	var err error
-	if p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt); err != nil {
+	if p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols); err != nil {
 		return nil, err
 	}
 	p.SetSchema(nil)
-	p.InlineProjection(savedUsedCols, opt)
+	p.InlineProjection(savedUsedCols)
 	return p, nil
 }
 
@@ -146,14 +103,14 @@ func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema [
 }
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
-func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
 	}
-	child := p.Children()[0].PushDownTopN(p.convertToTopN(opt), opt)
+	child := p.Children()[0].PushDownTopN(p.convertToTopN())
 	if topN != nil {
-		return topN.AttachChild(child, opt)
+		return topN.AttachChild(child)
 	}
 	return child
 }
@@ -169,22 +126,21 @@ func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optim
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
+func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
 	}
-	p.SetStats(util.DeriveLimitStats(childStats[0], float64(p.Count)))
-	return p.StatsInfo(), nil
+	if !reload && p.StatsInfo() != nil {
+		return p.StatsInfo(), false, nil
+	}
+	p.SetStats(property.DeriveLimitStats(childStats[0], float64(p.Count)))
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalLimit) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalLimit(p, prop)
-}
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
 
@@ -213,18 +169,7 @@ func (p *LogicalLimit) GetPartitionBy() []property.SortItem {
 	return p.PartitionBy
 }
 
-func (p *LogicalLimit) convertToTopN(opt *optimizetrace.LogicalOptimizeOp) *LogicalTopN {
+func (p *LogicalLimit) convertToTopN() *LogicalTopN {
 	topn := LogicalTopN{Offset: p.Offset, Count: p.Count, PreferLimitToCop: p.PreferLimitToCop}.Init(p.SCtx(), p.QueryBlockOffset())
-	appendConvertTopNTraceStep(p, topn, opt)
 	return topn
-}
-
-func appendConvertTopNTraceStep(p base.LogicalPlan, topN *LogicalTopN, opt *optimizetrace.LogicalOptimizeOp) {
-	reason := func() string {
-		return ""
-	}
-	action := func() string {
-		return fmt.Sprintf("%v_%v is converted into %v_%v", p.TP(), p.ID(), topN.TP(), topN.ID())
-	}
-	opt.AppendStepToCurrent(topN.ID(), topN.TP(), reason, action)
 }

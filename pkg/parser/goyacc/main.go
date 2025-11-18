@@ -139,10 +139,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cznic/mathutil"
-	"github.com/cznic/sortutil"
-	"github.com/cznic/strutil"
+	"modernc.org/mathutil"
 	parser "modernc.org/parser/yacc"
+	"modernc.org/sortutil"
+	"modernc.org/strutil"
 	"modernc.org/y"
 )
 
@@ -361,7 +361,7 @@ func main1(in string) (err error) {
 			if k == 'r' {
 				arg = -arg
 			}
-			minArg, maxArg = mathutil.Min(minArg, arg), mathutil.Max(maxArg, arg)
+			minArg, maxArg = min(minArg, arg), max(maxArg, arg)
 		}
 	}
 	su := make(symsUsed, 0, len(msu))
@@ -389,7 +389,7 @@ type %[1]sXError struct {
 	for sym := range msu {
 		nm := sym.Name
 		if nm == "$default" || nm == "$end" || sym.IsTerminal && nm[0] != '\'' && sym.Value > 0 {
-			maxTokName = mathutil.Max(maxTokName, len(nm))
+			maxTokName = max(maxTokName, len(nm))
 			a = append(a, nm)
 		}
 		nsyms[nm] = sym
@@ -476,7 +476,7 @@ type %[1]sXError struct {
 				panic("internal error 001")
 			}
 
-			maxv = mathutil.Max(maxv, xsym)
+			maxv = max(maxv, xsym)
 			kind, arg := act.Kind()
 			switch kind {
 			case 'a':
@@ -833,7 +833,7 @@ import __yyfmt__ "fmt"
 	}
 }
 
-func mustFormat(f strutil.Formatter, format string, args ...interface{}) {
+func mustFormat(f strutil.Formatter, format string, args ...any) {
 	_, err := f.Format(format, args...)
 	if err != nil {
 		log.Fatalf("format error %v", err)

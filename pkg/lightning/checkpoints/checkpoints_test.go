@@ -140,6 +140,7 @@ func TestMergeChunkCheckpoint(t *testing.T) {
 		Key:      key,
 		Checksum: verification.MakeKVChecksum(700, 15, 1234567890),
 		Pos:      1055,
+		RealPos:  1053,
 		RowID:    31,
 	}
 	m.MergeInto(cpd)
@@ -150,6 +151,7 @@ func TestMergeChunkCheckpoint(t *testing.T) {
 				chunks: map[ChunkCheckpointKey]chunkCheckpointDiff{
 					key: {
 						pos:      1055,
+						realPos:  1053,
 						rowID:    31,
 						checksum: verification.MakeKVChecksum(700, 15, 1234567890),
 					},
@@ -163,6 +165,7 @@ func TestMergeChunkCheckpoint(t *testing.T) {
 		Key:      key,
 		Checksum: verification.MakeKVChecksum(800, 20, 1357924680),
 		Pos:      1080,
+		RealPos:  1070,
 		RowID:    42,
 	}
 	m.MergeInto(cpd)
@@ -173,6 +176,7 @@ func TestMergeChunkCheckpoint(t *testing.T) {
 				chunks: map[ChunkCheckpointKey]chunkCheckpointDiff{
 					key: {
 						pos:      1080,
+						realPos:  1070,
 						rowID:    42,
 						checksum: verification.MakeKVChecksum(800, 20, 1357924680),
 					},
@@ -185,20 +189,38 @@ func TestMergeChunkCheckpoint(t *testing.T) {
 func TestRebaseCheckpoint(t *testing.T) {
 	cpd := NewTableCheckpointDiff()
 
-	m := RebaseCheckpointMerger{AllocBase: 10000}
+	m := RebaseCheckpointMerger{
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
+	}
 	m.MergeInto(cpd)
 
-	require.Equal(t, &TableCheckpointDiff{
-		hasRebase: true,
-		allocBase: 10000,
-		engines:   make(map[int32]engineCheckpointDiff),
-	}, cpd)
+	expected := &TableCheckpointDiff{
+		hasRebase:     true,
+		autoRandBase:  132861,
+		autoIncrBase:  132862,
+		autoRowIDBase: 132863,
+		engines:       make(map[int32]engineCheckpointDiff),
+	}
+	require.Equal(t, expected, cpd)
+
+	// shouldn't go backwards
+	m2 := RebaseCheckpointMerger{
+		AutoRandBase:  131,
+		AutoIncrBase:  132,
+		AutoRowIDBase: 133,
+	}
+	m2.MergeInto(cpd)
+	require.Equal(t, expected, cpd)
 }
 
 func TestApplyDiff(t *testing.T) {
 	cp := TableCheckpoint{
-		Status:    CheckpointStatusLoaded,
-		AllocBase: 123,
+		Status:        CheckpointStatusLoaded,
+		AutoRandBase:  131,
+		AutoIncrBase:  132,
+		AutoRowIDBase: 133,
 		Engines: map[int32]*EngineCheckpoint{
 			-1: {
 				Status: CheckpointStatusLoaded,
@@ -210,6 +232,7 @@ func TestApplyDiff(t *testing.T) {
 						Key: ChunkCheckpointKey{Path: "/tmp/01.sql"},
 						Chunk: mydump.Chunk{
 							Offset:       0,
+							RealOffset:   0,
 							EndOffset:    20000,
 							PrevRowIDMax: 0,
 							RowIDMax:     1000,
@@ -219,6 +242,7 @@ func TestApplyDiff(t *testing.T) {
 						Key: ChunkCheckpointKey{Path: "/tmp/04.sql"},
 						Chunk: mydump.Chunk{
 							Offset:       0,
+							RealOffset:   0,
 							EndOffset:    15000,
 							PrevRowIDMax: 1000,
 							RowIDMax:     1300,
@@ -233,38 +257,48 @@ func TestApplyDiff(t *testing.T) {
 	(&StatusCheckpointMerger{EngineID: -1, Status: CheckpointStatusImported}).MergeInto(cpd)
 	(&StatusCheckpointMerger{EngineID: WholeTableEngineID, Status: CheckpointStatusAllWritten}).MergeInto(cpd)
 	(&StatusCheckpointMerger{EngineID: 1234, Status: CheckpointStatusAnalyzeSkipped}).MergeInto(cpd)
-	(&RebaseCheckpointMerger{AllocBase: 11111}).MergeInto(cpd)
+	(&RebaseCheckpointMerger{
+		AutoRandBase:  1131,
+		AutoIncrBase:  1132,
+		AutoRowIDBase: 1133,
+	}).MergeInto(cpd)
 	(&ChunkCheckpointMerger{
 		EngineID: 0,
 		Key:      ChunkCheckpointKey{Path: "/tmp/01.sql"},
 		Checksum: verification.MakeKVChecksum(3333, 4444, 5555),
 		Pos:      6666,
+		RealPos:  6565,
 		RowID:    777,
 	}).MergeInto(cpd)
 	(&ChunkCheckpointMerger{
 		EngineID: 5678,
 		Key:      ChunkCheckpointKey{Path: "/tmp/04.sql"},
 		Pos:      9999,
+		RealPos:  9888,
 		RowID:    888,
 	}).MergeInto(cpd)
 	(&ChunkCheckpointMerger{
 		EngineID: 0,
 		Key:      ChunkCheckpointKey{Path: "/tmp/03.sql"},
 		Pos:      3636,
+		RealPos:  3535,
 		RowID:    2222,
 	}).MergeInto(cpd)
 	(&ChunkCheckpointMerger{
 		EngineID: 0,
 		Key:      ChunkCheckpointKey{Path: "/tmp/10.sql"},
 		Pos:      4949,
+		RealPos:  4848,
 		RowID:    444,
 	}).MergeInto(cpd)
 
 	cp.Apply(cpd)
 
 	require.Equal(t, TableCheckpoint{
-		Status:    CheckpointStatusAllWritten,
-		AllocBase: 11111,
+		Status:        CheckpointStatusAllWritten,
+		AutoRandBase:  1131,
+		AutoIncrBase:  1132,
+		AutoRowIDBase: 1133,
 		Engines: map[int32]*EngineCheckpoint{
 			-1: {
 				Status: CheckpointStatusImported,
@@ -276,6 +310,7 @@ func TestApplyDiff(t *testing.T) {
 						Key: ChunkCheckpointKey{Path: "/tmp/01.sql"},
 						Chunk: mydump.Chunk{
 							Offset:       6666,
+							RealOffset:   6565,
 							EndOffset:    20000,
 							PrevRowIDMax: 777,
 							RowIDMax:     1000,
@@ -286,6 +321,7 @@ func TestApplyDiff(t *testing.T) {
 						Key: ChunkCheckpointKey{Path: "/tmp/04.sql"},
 						Chunk: mydump.Chunk{
 							Offset:       0,
+							RealOffset:   0,
 							EndOffset:    15000,
 							PrevRowIDMax: 1000,
 							RowIDMax:     1300,
@@ -351,4 +387,21 @@ func TestSeparateCompletePath(t *testing.T) {
 		require.Equal(t, testCase.expectFileName, fileName)
 		require.Equal(t, testCase.expectPath, newPath)
 	}
+}
+
+func TestTableCheckpointApplyBases(t *testing.T) {
+	tblCP := TableCheckpoint{
+		AutoRowIDBase: 11,
+		AutoIncrBase:  12,
+		AutoRandBase:  13,
+	}
+	tblCP.Apply(&TableCheckpointDiff{
+		hasRebase:     true,
+		autoRowIDBase: 1,
+		autoIncrBase:  2,
+		autoRandBase:  3,
+	})
+	require.EqualValues(t, 11, tblCP.AutoRowIDBase)
+	require.EqualValues(t, 12, tblCP.AutoIncrBase)
+	require.EqualValues(t, 13, tblCP.AutoRandBase)
 }

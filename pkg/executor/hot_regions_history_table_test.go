@@ -68,7 +68,7 @@ func createHotRegionsHistoryTableSuite(t *testing.T) *hotRegionsHistoryTableSuit
 		make([]string, 3),
 	}
 	// start 3 PD server with hotRegionsServer and store them in s.store
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		httpServer, mockAddr := s.setUpMockPDHTTPServer()
 		require.NotNil(t, httpServer)
 		s.httpServers = append(s.httpServers, httpServer)

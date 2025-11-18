@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
@@ -165,37 +164,6 @@ func TestSensitiveStatement(t *testing.T) {
 	}
 }
 
-func TestUserSpec(t *testing.T) {
-	hashString := "*3D56A309CD04FA2EEF181462E59011F075C89548"
-	u := ast.UserSpec{
-		User: &auth.UserIdentity{
-			Username: "test",
-		},
-		AuthOpt: &ast.AuthOption{
-			ByAuthString: false,
-			AuthString:   "xxx",
-			HashString:   hashString,
-		},
-	}
-	pwd, ok := u.EncodedPassword()
-	require.True(t, ok)
-	require.Equal(t, u.AuthOpt.HashString, pwd)
-
-	u.AuthOpt.HashString = "not-good-password-format"
-	_, ok = u.EncodedPassword()
-	require.False(t, ok)
-
-	u.AuthOpt.ByAuthString = true
-	pwd, ok = u.EncodedPassword()
-	require.True(t, ok)
-	require.Equal(t, hashString, pwd)
-
-	u.AuthOpt.AuthString = ""
-	pwd, ok = u.EncodedPassword()
-	require.True(t, ok)
-	require.Equal(t, "", pwd)
-}
-
 func TestTableOptimizerHintRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"USE_INDEX(t1 c1)", "USE_INDEX(`t1` `c1`)"},
@@ -226,6 +194,12 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"NO_ORDER_INDEX(t1@sel_1 c1)", "NO_ORDER_INDEX(`t1`@`sel_1` `c1`)"},
 		{"NO_ORDER_INDEX(test.t1@sel_1 c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` `c1`)"},
 		{"NO_ORDER_INDEX(test.t1@sel_1 partition(p0) c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(t1 c1)", "INDEX_LOOKUP_PUSHDOWN(`t1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(test.t1 c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(@sel_1 t1 c1)", "INDEX_LOOKUP_PUSHDOWN(@`sel_1` `t1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`t1`@`sel_1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 partition(p0) c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
 		{"TIDB_SMJ(`t1`)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1,t2)", "TIDB_SMJ(`t1`, `t2`)"},
@@ -247,13 +221,23 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"HASH_JOIN_PROBE(t1)", "HASH_JOIN_PROBE(`t1`)"},
 		{"LEADING(t1)", "LEADING(`t1`)"},
 		{"LEADING(t1, c1)", "LEADING(`t1`, `c1`)"},
+		{"LEADING((t1, c1), t2)", "LEADING((`t1`, `c1`), `t2`)"},
+		{"LEADING(t1, (c1, t2))", "LEADING(`t1`, (`c1`, `t2`))"},
+		{"LEADING(((t1, c1), t2), t3)", "LEADING(((`t1`, `c1`), `t2`), `t3`)"},
+		{"LEADING(t1, (c1, (t2, t3)))", "LEADING(`t1`, (`c1`, (`t2`, `t3`)))"},
 		{"LEADING(t1, c1, t2)", "LEADING(`t1`, `c1`, `t2`)"},
 		{"LEADING(@sel1 t1, c1)", "LEADING(@`sel1` `t1`, `c1`)"},
 		{"LEADING(@sel1 t1)", "LEADING(@`sel1` `t1`)"},
 		{"LEADING(@sel1 t1, c1, t2)", "LEADING(@`sel1` `t1`, `c1`, `t2`)"},
+		{"LEADING(@sel1 t1, (c1, t2))", "LEADING(@`sel1` `t1`, (`c1`, `t2`))"},
+		{"LEADING(@sel1 t1, (c1, t2), d3)", "LEADING(@`sel1` `t1`, (`c1`, `t2`), `d3`)"},
 		{"LEADING(t1@sel1)", "LEADING(`t1`@`sel1`)"},
 		{"LEADING(t1@sel1, c1)", "LEADING(`t1`@`sel1`, `c1`)"},
 		{"LEADING(t1@sel1, c1, t2)", "LEADING(`t1`@`sel1`, `c1`, `t2`)"},
+		{"LEADING((t1@sel1, c1), t2)", "LEADING((`t1`@`sel1`, `c1`), `t2`)"},
+		{"LEADING(t1@sel1, (c1, t2))", "LEADING(`t1`@`sel1`, (`c1`, `t2`))"},
+		{"LEADING(t1@sel1, c1, t2, d3)", "LEADING(`t1`@`sel1`, `c1`, `t2`, `d3`)"},
+		{"LEADING(t1@sel1, (c1, t2), d3)", "LEADING(`t1`@`sel1`, (`c1`, `t2`), `d3`)"},
 		{"MAX_EXECUTION_TIME(3000)", "MAX_EXECUTION_TIME(3000)"},
 		{"MAX_EXECUTION_TIME(@sel1 3000)", "MAX_EXECUTION_TIME(@`sel1` 3000)"},
 		{"USE_INDEX_MERGE(t1 c1)", "USE_INDEX_MERGE(`t1` `c1`)"},
@@ -422,4 +406,29 @@ func TestAddQueryWatchStmtRestore(t *testing.T) {
 		return node.(*ast.AddQueryWatchStmt)
 	}
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestRedactTrafficStmt(t *testing.T) {
+	testCases := []struct {
+		input   string
+		secured string
+	}{
+		{
+			input:   "traffic capture to 's3://bucket/prefix?access-key=abcdefghi&secret-access-key=123&force-path-style=true' duration='1m'",
+			secured: "TRAFFIC CAPTURE TO 's3://bucket/prefix?access-key=xxxxxx&force-path-style=true&secret-access-key=xxxxxx' DURATION = '1m'",
+		},
+		{
+			input:   "traffic replay from 's3://bucket/prefix?access-key=abcdefghi&secret-access-key=123&force-path-style=true' user='root' password='123456'",
+			secured: "TRAFFIC REPLAY FROM 's3://bucket/prefix?access-key=xxxxxx&force-path-style=true&secret-access-key=xxxxxx' USER = 'root' PASSWORD = 'xxxxxx'",
+		},
+	}
+
+	p := parser.New()
+	for _, tc := range testCases {
+		node, err := p.ParseOneStmt(tc.input, "", "")
+		require.NoError(t, err, tc.input)
+		n, ok := node.(ast.SensitiveStmtNode)
+		require.True(t, ok, tc.input)
+		require.Equal(t, tc.secured, n.SecureText(), tc.input)
+	}
 }

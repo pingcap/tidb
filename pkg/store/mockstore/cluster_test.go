@@ -53,7 +53,7 @@ func TestClusterSplit(t *testing.T) {
 	colID := int64(3)
 	handle := int64(1)
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		rowKey := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(handle))
 		colValue := types.NewStringDatum(strconv.Itoa(int(handle)))
 		// TODO: Should use session's TimeZone instead of UTC.

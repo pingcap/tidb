@@ -15,6 +15,7 @@
 package exprstatic
 
 import (
+	"context"
 	"math"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -70,21 +72,19 @@ func (t *timeOnce) getTime(loc *time.Location) (tm time.Time, err error) {
 // evalCtxState is the internal state for `EvalContext`.
 // We make it as a standalone private struct here to make sure `EvalCtxOption` can only be called in constructor.
 type evalCtxState struct {
-	warnHandler                  contextutil.WarnHandler
-	sqlMode                      mysql.SQLMode
-	typeCtx                      types.Context
-	errCtx                       errctx.Context
-	currentDB                    string
-	currentTime                  *timeOnce
-	maxAllowedPacket             uint64
-	enableRedactLog              string
-	defaultWeekFormatMode        string
-	divPrecisionIncrement        int
-	requestVerificationFn        func(db, table, column string, priv mysql.PrivilegeType) bool
-	requestDynamicVerificationFn func(privName string, grantable bool) bool
-	paramList                    []types.Datum
-	userVars                     variable.UserVarsReader
-	props                        expropt.OptionalEvalPropProviders
+	warnHandler           contextutil.WarnHandler
+	sqlMode               mysql.SQLMode
+	typeCtx               types.Context
+	errCtx                errctx.Context
+	currentDB             string
+	currentTime           *timeOnce
+	maxAllowedPacket      uint64
+	enableRedactLog       string
+	defaultWeekFormatMode string
+	divPrecisionIncrement int
+	paramList             []types.Datum
+	userVars              variable.UserVarsReader
+	props                 expropt.OptionalEvalPropProviders
 }
 
 // EvalCtxOption is the option to set `EvalContext`.
@@ -172,20 +172,6 @@ func WithDivPrecisionIncrement(inc int) EvalCtxOption {
 	}
 }
 
-// WithPrivCheck sets the requestVerificationFn
-func WithPrivCheck(fn func(db, table, column string, priv mysql.PrivilegeType) bool) EvalCtxOption {
-	return func(s *evalCtxState) {
-		s.requestVerificationFn = fn
-	}
-}
-
-// WithDynamicPrivCheck sets the requestDynamicVerificationFn
-func WithDynamicPrivCheck(fn func(privName string, grantable bool) bool) EvalCtxOption {
-	return func(s *evalCtxState) {
-		s.requestDynamicVerificationFn = fn
-	}
-}
-
 // WithOptionalProperty sets the optional property providers
 func WithOptionalProperty(providers ...exprctx.OptionalEvalPropProvider) EvalCtxOption {
 	return func(s *evalCtxState) {
@@ -243,10 +229,10 @@ func NewEvalContext(opt ...EvalCtxOption) *EvalContext {
 		evalCtxState: evalCtxState{
 			currentTime:           &timeOnce{},
 			sqlMode:               defaultSQLMode,
-			maxAllowedPacket:      variable.DefMaxAllowedPacket,
-			enableRedactLog:       variable.DefTiDBRedactLog,
-			defaultWeekFormatMode: variable.DefDefaultWeekFormat,
-			divPrecisionIncrement: variable.DefDivPrecisionIncrement,
+			maxAllowedPacket:      vardef.DefMaxAllowedPacket,
+			enableRedactLog:       vardef.DefTiDBRedactLog,
+			defaultWeekFormatMode: vardef.DefDefaultWeekFormat,
+			divPrecisionIncrement: vardef.DefDivPrecisionIncrement,
 		},
 	}
 
@@ -366,22 +352,6 @@ func (ctx *EvalContext) GetUserVarsReader() variable.UserVarsReader {
 	return ctx.userVars
 }
 
-// RequestVerification verifies user privilege
-func (ctx *EvalContext) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
-	if fn := ctx.requestVerificationFn; fn != nil {
-		return fn(db, table, column, priv)
-	}
-	return true
-}
-
-// RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
-func (ctx *EvalContext) RequestDynamicVerification(privName string, grantable bool) bool {
-	if fn := ctx.requestDynamicVerificationFn; fn != nil {
-		return fn(privName, grantable)
-	}
-	return true
-}
-
 // GetOptionalPropSet gets the optional property set from context
 func (ctx *EvalContext) GetOptionalPropSet() exprctx.OptionalEvalPropKeySet {
 	return ctx.props.PropKeySet()
@@ -429,16 +399,6 @@ func (ctx *EvalContext) AllParamValues() []types.Datum {
 	return ctx.paramList
 }
 
-// GetDynamicPrivCheckFn implements context.StaticConvertibleEvalContext.
-func (ctx *EvalContext) GetDynamicPrivCheckFn() func(privName string, grantable bool) bool {
-	return ctx.requestDynamicVerificationFn
-}
-
-// GetRequestVerificationFn implements context.StaticConvertibleEvalContext.
-func (ctx *EvalContext) GetRequestVerificationFn() func(db string, table string, column string, priv mysql.PrivilegeType) bool {
-	return ctx.requestVerificationFn
-}
-
 // GetWarnHandler implements context.StaticConvertibleEvalContext.
 func (ctx *EvalContext) GetWarnHandler() contextutil.WarnHandler {
 	return ctx.warnHandler
@@ -460,19 +420,19 @@ func (ctx *EvalContext) loadSessionVarsInternal(
 	for name, val := range sysVars {
 		name = strings.ToLower(name)
 		switch name {
-		case variable.TimeZone:
+		case vardef.TimeZone:
 			opts = append(opts, WithLocation(sessionVars.Location()))
-		case variable.SQLModeVar:
+		case vardef.SQLModeVar:
 			opts = append(opts, WithSQLMode(sessionVars.SQLMode))
-		case variable.Timestamp:
+		case vardef.Timestamp:
 			opts = append(opts, WithCurrentTime(ctx.currentTimeFuncFromStringVal(val)))
-		case variable.MaxAllowedPacket:
+		case vardef.MaxAllowedPacket:
 			opts = append(opts, WithMaxAllowedPacket(sessionVars.MaxAllowedPacket))
-		case variable.TiDBRedactLog:
+		case vardef.TiDBRedactLog:
 			opts = append(opts, WithEnableRedactLog(sessionVars.EnableRedactLog))
-		case variable.DefaultWeekFormat:
+		case vardef.DefaultWeekFormat:
 			opts = append(opts, WithDefaultWeekFormatMode(val))
-		case variable.DivPrecisionIncrement:
+		case vardef.DivPrecisionIncrement:
 			opts = append(opts, WithDivPrecisionIncrement(sessionVars.DivPrecisionIncrement))
 		}
 	}
@@ -481,7 +441,7 @@ func (ctx *EvalContext) loadSessionVarsInternal(
 
 func (ctx *EvalContext) currentTimeFuncFromStringVal(val string) func() (time.Time, error) {
 	return func() (time.Time, error) {
-		if val == variable.DefTimestamp {
+		if val == vardef.DefTimestamp {
 			return time.Now(), nil
 		}
 
@@ -502,10 +462,15 @@ func newSessionVarsWithSystemVariables(vars map[string]string) (*variable.Sessio
 		// `charset_connection` and `collation_connection` will overwrite each other.
 		// To make the result more determinate, just set them at last step in order:
 		// `charset_connection` first, then `collation_connection`.
-		case variable.CharacterSetConnection:
+		case vardef.CharacterSetConnection:
 			cs = []string{name, val}
-		case variable.CollationConnection:
+		case vardef.CollationConnection:
 			col = []string{name, val}
+		case vardef.TiDBRedactLog:
+			sv := variable.GetSysVar(name)
+			if err := sv.SetGlobalFromHook(context.TODO(), sessionVars, val, false); err != nil {
+				return nil, err
+			}
 		default:
 			if err := sessionVars.SetSystemVar(name, val); err != nil {
 				return nil, err
@@ -561,8 +526,6 @@ func MakeEvalContextStatic(ctx exprctx.StaticConvertibleEvalContext) *EvalContex
 		WithMaxAllowedPacket(ctx.GetMaxAllowedPacket()),
 		WithDefaultWeekFormatMode(ctx.GetDefaultWeekFormatMode()),
 		WithDivPrecisionIncrement(ctx.GetDivPrecisionIncrement()),
-		WithPrivCheck(ctx.GetRequestVerificationFn()),
-		WithDynamicPrivCheck(ctx.GetDynamicPrivCheckFn()),
 		WithParamList(params),
 		WithUserVarsReader(ctx.GetUserVarsReader().Clone()),
 		WithOptionalProperty(props...),

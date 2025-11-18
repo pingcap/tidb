@@ -120,7 +120,7 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 				sequenceInfo.MinValue = model.DefaultPositiveSequenceMinValue
 			}
 			if !startSetFlag {
-				sequenceInfo.Start = mathutil.Max(sequenceInfo.MinValue, model.DefaultPositiveSequenceStartValue)
+				sequenceInfo.Start = max(sequenceInfo.MinValue, model.DefaultPositiveSequenceStartValue)
 			}
 			if !maxSetFlag {
 				sequenceInfo.MaxValue = model.DefaultPositiveSequenceMaxValue

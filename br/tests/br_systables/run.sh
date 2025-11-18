@@ -24,6 +24,13 @@ modify_systables() {
         -p mysql.db=mysql
 
     run_sql "ANALYZE TABLE mysql.usertable;"
+
+    # enable workload schema
+    run_sql "SET GLOBAL tidb_workload_repository_dest = 'table';"
+    sleep 5
+    run_sql "ADMIN CREATE WORKLOAD SNAPSHOT;"
+    # disable workload schema
+    run_sql "SET GLOBAL tidb_workload_repository_dest = '';"
 }
 
 add_user() {
@@ -53,6 +60,8 @@ rollback_modify() {
     # FIXME don't check the user table until we support restore user correctly.
     # run_sql "DROP USER 'Alyssa P. Hacker';"
     run_sql "DROP TABLE mysql.usertable;"
+
+    run_sql "DROP DATABASE IF EXISTS workload_schema;"
 }
 
 check() {
@@ -61,6 +70,10 @@ check() {
     run_sql "SHOW TABLES IN mysql;" | awk '/bar/{exit 1}'
     # we cannot let user overwrite `mysql.tidb` through br in any time.
     run_sql "SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'" | awk '/1h/{exit 1}'
+
+    run_sql "SELECT SCHEMA_NAME FROM information_schema.schemata;"
+    # workload_schema schema should not be recovered
+    check_not_contains "workload_schema"
 
     # FIXME don't check the user table until we support restore user correctly.
     # TODO remove this after supporting auto flush.
@@ -94,7 +107,14 @@ add_test_data
 run_br backup full -s "local://${backup_dir}1"
 delete_user
 delete_test_data
-run_br restore full -f "mysql*.*" -f "usertest.*" -s "local://${backup_dir}1"
+restore_fail=0
+run_br restore full -f "mysql*.*" -f "usertest.*" -s "local://${backup_dir}1" || restore_fail=1
+# TODO: debug here to check the checksum mismatch error
+if [ $restore_fail -ne 0 ]; then
+    echo "TEST: [$TEST_NAME] test restore failed!"
+    run_sql "SELECT * FROM mysql.analyze_jobs"
+    exit 1
+fi
 check2
 
 delete_user 

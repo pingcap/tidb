@@ -54,7 +54,7 @@ func TestPause(t *testing.T) {
 	// initially these calls should not be blocking.
 
 	wg.Add(10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			defer wg.Done()
 			err := p.Wait(context.Background())
@@ -70,7 +70,7 @@ func TestPause(t *testing.T) {
 	p.Pause()
 
 	wg.Add(10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			defer wg.Done()
 			err := p.Wait(context.Background())
@@ -95,7 +95,7 @@ func TestPause(t *testing.T) {
 	p.Pause()
 
 	wg.Add(10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			defer wg.Done()
 			err := p.Wait(ctx)

@@ -47,7 +47,7 @@ func (h *slowQueryHeap) Pop() any {
 func (h *slowQueryHeap) RemoveExpired(now time.Time, period time.Duration) {
 	// Remove outdated slow query element.
 	idx := 0
-	for i := 0; i < len(h.data); i++ {
+	for i := range h.data {
 		outdateTime := h.data[i].Start.Add(period)
 		if outdateTime.After(now) {
 			h.data[idx] = h.data[i]

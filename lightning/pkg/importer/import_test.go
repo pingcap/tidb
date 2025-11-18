@@ -221,7 +221,7 @@ func TestPreCheckFailed(t *testing.T) {
 		dbMetas:          make([]*mydump.MDDatabaseMeta, 0),
 	}
 	cpdb := panicCheckpointDB{}
-	theCheckBuilder := NewPrecheckItemBuilder(cfg, make([]*mydump.MDDatabaseMeta, 0), preInfoGetter, cpdb, nil)
+	theCheckBuilder := NewPrecheckItemBuilder(cfg, make([]*mydump.MDDatabaseMeta, 0), preInfoGetter, cpdb, nil, db)
 	ctl := &Controller{
 		cfg:                 cfg,
 		saveCpCh:            make(chan saveCp),
