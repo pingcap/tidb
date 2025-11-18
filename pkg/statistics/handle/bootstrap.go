@@ -190,13 +190,13 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
 		if table == nil || table.PhysicalID != tblID {
+			tblInfoValid = false
 			if table != nil {
 				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 			}
 			var ok bool
 			table, ok = cache.Get(tblID)
 			if !ok {
-				tblInfoValid = false
 				continue
 			}
 			table = table.CopyAs(statistics.BothMapsWritable)
@@ -205,7 +205,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			if !ok {
 				// Table not found - likely dropped but stats metadata not yet garbage collected. Skip loading stats for this table.
 				statslogutil.StatsSampleLogger().Warn("table info not found during stats initialization, skipping", zap.Int64("physicalID", table.PhysicalID))
-				tblInfoValid = false
 				continue
 			}
 			tblInfoValid = true
