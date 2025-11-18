@@ -30,7 +30,7 @@ import (
 
 // Trace implements Sink interface
 type Trace struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	events []Event
 	bits   uint64
 	rand32 uint32
@@ -327,7 +327,7 @@ func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, che
 	}
 	conf := flightRecorder.dumpTriggerConfigCompiled.configRef[idx]
 	if check(conf) {
-		trace.bits |= 1 << idx
+		trace.markBits(idx)
 	}
 }
 
@@ -362,9 +362,10 @@ type FlightRecorderConfig struct {
 }
 
 // Initialize initializes the default flight recorder configuration.
-// It will dump all the events.
+// It will dump all the events, but excludes TiKV write/read details by default
+// to avoid excessive overhead.
 func (c *FlightRecorderConfig) Initialize() {
-	c.EnabledCategories = []string{"*"}
+	c.EnabledCategories = []string{"-", "tikv_write_details", "tikv_read_details"}
 	c.DumpTrigger.Type = "sampling"
 	c.DumpTrigger.Sampling = 1
 }
@@ -458,6 +459,9 @@ func (r *HTTPFlightRecorder) shouldKeep(bits uint64) bool {
 	return checkTruthTable(bits, r.truthTable)
 }
 
+// collect sends events to the HTTP flight recorder channel.
+// The caller must pass a cloned slice to avoid data races; this function
+// does not clone the slice to avoid redundant allocations.
 func (r *HTTPFlightRecorder) collect(ctx context.Context, events []Event) {
 	if r.ch == nil {
 		// Used by log flight recorder
@@ -469,7 +473,7 @@ func (r *HTTPFlightRecorder) collect(ctx context.Context, events []Event) {
 
 	// Used by http flight recorder
 	select {
-	case r.ch <- slices.Clone(events):
+	case r.ch <- events:
 	default:
 	}
 }
@@ -488,6 +492,12 @@ func (r *Trace) Record(_ context.Context, event Event) {
 	r.events = append(r.events, event)
 }
 
+func (r *Trace) markBits(idx int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.bits |= 1 << idx
+}
+
 const maxEvents = 4096
 
 func (r *HTTPFlightRecorder) checkSampling(conf *DumpTriggerConfig) bool {
@@ -499,17 +509,32 @@ func (r *HTTPFlightRecorder) checkSampling(conf *DumpTriggerConfig) bool {
 	return false
 }
 
-// DiscardOrFlush will flush or discard the trace, depending on the whether MarkDump has been called.
+// DiscardOrFlush will flush or discard the trace.
 func (r *Trace) DiscardOrFlush(ctx context.Context) {
 	sink := globalHTTPFlightRecorder.Load()
 	if sink != nil {
 		CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.sampling", sink.checkSampling)
 
+		var shouldFlush bool
+		var eventsToFlush []Event
+		// Read phase: use RLock to safely read keep flag and clone events.
+		// We must clone while holding the lock to avoid data races where
+		// concurrent Record() or DiscardOrFlush() calls might modify the
+		// backing array after we release RLock.
+		r.mu.RLock()
 		if sink.shouldKeep(r.bits) {
-			sink.collect(ctx, r.events)
+			shouldFlush = true
+			eventsToFlush = slices.Clone(r.events) // Deep copy to avoid data race
+		}
+		r.mu.RUnlock()
+
+		// Process without holding any lock
+		if shouldFlush {
+			sink.collect(ctx, eventsToFlush)
 		}
 	}
 	newRand := rand.Uint32()
+	// Write phase: use Lock for cleanup
 	r.mu.Lock()
 	r.bits = 0
 	if len(r.events) > maxEvents {
