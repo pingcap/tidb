@@ -443,11 +443,11 @@ func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
 
 		if kerneltype.IsClassic() {
 			tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1")
-		}
-		if distTaskOn {
-			tk.MustExec("set global tidb_enable_dist_task = 1")
-		} else {
-			tk.MustExec("set global tidb_enable_dist_task = 0")
+			if distTaskOn {
+				tk.MustExec("set global tidb_enable_dist_task = 1")
+			} else {
+				tk.MustExec("set global tidb_enable_dist_task = 0")
+			}
 		}
 		ingest.ForceSyncFlagForTest.Store(true)
 
