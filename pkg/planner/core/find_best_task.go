@@ -781,7 +781,27 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		}
 	}
 
+<<<<<<< HEAD
 	if !comparable1 && !comparable2 {
+=======
+	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
+	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
+	if !comparable1 || !comparable2 {
+		// These aren't comparable - meaning that they have different combinations of columns in
+		// the access conditions or filters.
+		// One or more predicates could carry high risk - so we want to compare that risk and other
+		// metrics to see if we can determine a clear winner.
+		// The 2 key metrics here are riskResult and predicateResult.
+		// - riskResult tells us which candidate has lower risk
+		// - predicateResult already includes risk - we need ">1" or "<-1" to counteract the risk factor.
+		// "DidNotLose" and totalSum are also factored in to ensure that the winner is better overall."
+		if riskResult > 0 && leftDidNotLose && totalSum >= 0 && predicateResult > 1 {
+			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
+		}
+		if riskResult < 0 && rightDidNotLose && totalSum <= 0 && predicateResult < -1 {
+			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
+		}
+>>>>>>> 52cb3dc3b4b (planner: bug fix for compareCandidates (#64525))
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && totalSum > 0 {
