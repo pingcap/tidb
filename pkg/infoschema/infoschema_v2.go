@@ -1116,7 +1116,7 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) 
 		return true
 	})
 	if allInCache {
-		tables := make([]*model.TableInfo, 1024)
+		tables := make([]*model.TableInfo, 0)
 		is.IterateAllTableItems(func(t TableItem) bool {
 			if t.DBName.L != schema.L {
 				return true
