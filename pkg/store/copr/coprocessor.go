@@ -337,29 +337,119 @@ type buildCopTaskOpt struct {
 	ignoreTiKVClientReadTimeout bool
 }
 
+const (
+	rangeIssueDuplicate    = "duplicate"
+	rangeIssueOverlap      = "overlap"
+	rangeIssueContain      = "contain"
+	rangeIssueOutOfOrder   = "outOfOrder"
+	rangeIssueInvalidBound = "invalidBounds"
+	rangeIssueInfiniteTail = "infiniteTail"
+)
+
+type rangeIssueStats struct {
+	Duplicate    int `json:"duplicate,omitempty"`
+	Overlap      int `json:"overlap,omitempty"`
+	Contain      int `json:"contain,omitempty"`
+	OutOfOrder   int `json:"outOfOrder,omitempty"`
+	InvalidBound int `json:"invalidBounds,omitempty"`
+	InfiniteTail int `json:"infiniteTail,omitempty"`
+}
+
+func (s *rangeIssueStats) add(category string) {
+	switch category {
+	case rangeIssueDuplicate:
+		s.Duplicate++
+	case rangeIssueOverlap:
+		s.Overlap++
+	case rangeIssueContain:
+		s.Contain++
+	case rangeIssueOutOfOrder:
+		s.OutOfOrder++
+	case rangeIssueInvalidBound:
+		s.InvalidBound++
+	case rangeIssueInfiniteTail:
+		s.InfiniteTail++
+	}
+}
+
+func (s rangeIssueStats) empty() bool {
+	return s == (rangeIssueStats{})
+}
+
+func compareRangeEnd(a, b []byte) int {
+	if len(a) == 0 {
+		if len(b) == 0 {
+			return 0
+		}
+		return 1
+	}
+	if len(b) == 0 {
+		return -1
+	}
+	return bytes.Compare(a, b)
+}
+
+func rangeContains(a, b kv.KeyRange) bool {
+	if bytes.Compare(a.StartKey, b.StartKey) > 0 {
+		return false
+	}
+	return compareRangeEnd(a.EndKey, b.EndKey) >= 0
+}
+
+func rangesOverlap(a, b kv.KeyRange) bool {
+	if len(a.EndKey) > 0 && bytes.Compare(a.EndKey, b.StartKey) <= 0 {
+		return false
+	}
+	if len(b.EndKey) > 0 && bytes.Compare(b.EndKey, a.StartKey) <= 0 {
+		return false
+	}
+	return true
+}
+
+func classifyRangePair(prev, curr kv.KeyRange) string {
+	switch {
+	case bytes.Equal(prev.StartKey, curr.StartKey) && bytes.Equal(prev.EndKey, curr.EndKey):
+		return rangeIssueDuplicate
+	case rangeContains(prev, curr):
+		return rangeIssueContain
+	case rangeContains(curr, prev):
+		return rangeIssueContain
+	case rangesOverlap(prev, curr):
+		return rangeIssueOverlap
+	default:
+		return rangeIssueOutOfOrder
+	}
+}
+
 func ensureMonotonicKeyRanges(ctx context.Context, ranges *KeyRanges) bool {
 	if ranges == nil || ranges.Len() == 0 {
 		return false
 	}
 	total := ranges.Len()
 	prev := ranges.At(0)
-	validateRange := func(r kv.KeyRange) bool {
+	var stats rangeIssueStats
+	validateRange := func(idx int, r kv.KeyRange) bool {
 		if len(r.EndKey) > 0 && bytes.Compare(r.StartKey, r.EndKey) > 0 {
 			logutil.Logger(ctx).Error("invalid key range start > end",
 				zap.String("start", redact.Key(r.StartKey)),
 				zap.String("end", redact.Key(r.EndKey)))
+			stats.add(rangeIssueInvalidBound)
 			return false
 		}
 		return true
 	}
-	valid := validateRange(prev)
+	valid := validateRange(0, prev)
 	sorted := true
 	for i := 1; i < total; i++ {
 		curr := ranges.At(i)
-		valid = validateRange(curr) && valid
-		if len(prev.EndKey) == 0 || bytes.Compare(prev.EndKey, curr.StartKey) > 0 {
+		valid = validateRange(i, curr) && valid
+		switch {
+		case len(prev.EndKey) == 0:
 			sorted = false
-			break
+			stats.add(rangeIssueInfiniteTail)
+		case bytes.Compare(prev.EndKey, curr.StartKey) > 0:
+			sorted = false
+			stats.add(classifyRangePair(prev, curr))
 		}
 		prev = curr
 	}
@@ -367,10 +457,15 @@ func ensureMonotonicKeyRanges(ctx context.Context, ranges *KeyRanges) bool {
 		return false
 	}
 	flat := ranges.ToRanges()
-	logutil.Logger(ctx).Error("key ranges not monotonic, reorder before BatchLocateKeyRanges",
+	fields := []zap.Field{
 		zap.Int("rangeCount", ranges.Len()),
 		formatRanges(NewKeyRanges(flat)),
-		zap.Stack("stack"))
+		zap.Stack("stack"),
+	}
+	if !stats.empty() {
+		fields = append(fields, zap.Any("rangeIssues", stats))
+	}
+	logutil.Logger(ctx).Error("key ranges not monotonic, reorder before BatchLocateKeyRanges", fields...)
 	sortedRanges := append([]kv.KeyRange(nil), flat...)
 	slices.SortFunc(sortedRanges, func(a, b kv.KeyRange) int {
 		if cmp := bytes.Compare(a.StartKey, b.StartKey); cmp != 0 {
