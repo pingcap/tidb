@@ -543,7 +543,7 @@ func buildGroupConcat(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncD
 				}
 				return &groupConcatDistinctOrder{base, ctors, desc}
 			}
-			return &groupConcatDistinct{base}
+			return &groupOriginalConcatDistinct{base}
 		}
 		if len(aggFuncDesc.OrderByItems) > 0 {
 			desc := make([]bool, len(base.byItems))

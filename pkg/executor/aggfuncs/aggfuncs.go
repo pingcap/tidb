@@ -112,8 +112,10 @@ var (
 	_ AggFunc = (*sum4Float64)(nil)
 
 	// All the AggFunc implementations for "GROUP_CONCAT" are listed here.
-	_ AggFunc = (*groupConcatDistinct)(nil) // TODO support distinct
 	_ AggFunc = (*groupConcat)(nil)
+
+	_ AggFunc = (*groupPartialConcatDistinct)(nil)
+	_ AggFunc = (*groupOriginalConcatDistinct)(nil)
 
 	// All the AggFunc implementations for "BIT_OR" are listed here.
 	_ AggFunc = (*bitOrUint64)(nil)
