@@ -201,7 +201,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			table = table.CopyAs(statistics.BothMapsWritable)
 			// Fetch table info only once per table instead of once per row
-			tblInfo, ok = h.TableInfoByID(is, tblID)
+			tblInfo, ok = h.TableInfoByIDForInitStats(is, tblID)
 			if !ok {
 				// Table not found - likely dropped but stats metadata not yet garbage collected. Skip loading stats for this table.
 				statslogutil.StatsSampleLogger().Warn("table info not found during stats initialization, skipping", zap.Int64("physicalID", table.PhysicalID))
