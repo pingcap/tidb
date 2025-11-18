@@ -169,6 +169,7 @@ func newChunkWorker(
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
+					op.sharedVars.indexKVFileCount.Add(int64(summary.KVFileCount))
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
 				SetBlockSize(indexBlockSize).
@@ -184,6 +185,7 @@ func newChunkWorker(
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(func(summary *external.WriterSummary) {
 				op.sharedVars.mergeDataSummary(summary)
+				op.sharedVars.dataKVFileCount.Add(int64(summary.KVFileCount))
 			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).

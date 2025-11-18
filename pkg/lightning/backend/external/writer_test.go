@@ -108,11 +108,17 @@ func TestWriter(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 
-	var kvAndStat [2]string
+	var (
+		kvFileCount int
+		kvAndStat   [2]string
+	)
 	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
-		SetOnCloseFunc(func(s *WriterSummary) { kvAndStat = s.MultipleFilesStats[0].Filenames[0] }).
+		SetOnCloseFunc(func(s *WriterSummary) {
+			kvFileCount = s.KVFileCount
+			kvAndStat = s.MultipleFilesStats[0].Filenames[0]
+		}).
 		Build(memStore, "/test", "0")
 
 	writer := NewEngineWriter(w)
@@ -133,6 +139,7 @@ func TestWriter(t *testing.T) {
 	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
 	_, err := writer.Close(ctx)
 	require.NoError(t, err)
+	require.EqualValues(t, 1, kvFileCount)
 
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
@@ -346,6 +353,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 
 	err := writer.Close(ctx)
 	require.NoError(t, err)
+	require.EqualValues(t, 9, summary.KVFileCount)
 
 	require.Equal(t, 3, len(summary.MultipleFilesStats))
 	expected := MultipleFilesStat{
