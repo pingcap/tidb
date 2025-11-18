@@ -527,9 +527,13 @@ func (e *indexLookUpExec) fetchTableScans() (tableScans []*tableScanExec, counts
 		for i := range chk.NumRows() {
 			row := chk.GetRow(i)
 			indexRows = append(indexRows, row)
+			handle, err := e.buildHandle(row)
+			if err != nil {
+				return nil, nil, nil, errors.Trace(err)
+			}
 			sortedHandles = append(sortedHandles, Handle{
 				IndexOrder: rowCnt,
-				Handle:     e.buildIntHandle(row),
+				Handle:     handle,
 			})
 			rowCnt++
 		}
@@ -646,9 +650,22 @@ func (e *indexLookUpExec) regionContainsKey(r *metapb.Region, key []byte) bool {
 		(bytes.Compare(key, r.GetEndKey()) < 0 || len(r.GetEndKey()) == 0)
 }
 
-func (e *indexLookUpExec) buildIntHandle(row chunk.Row) kv.Handle {
-	i := row.GetInt64(int(e.indexHandleOffsets[0]))
-	return kv.IntHandle(i)
+func (e *indexLookUpExec) buildHandle(row chunk.Row) (kv.Handle, error) {
+	if !e.isCommonHandle {
+		i := row.GetInt64(int(e.indexHandleOffsets[0]))
+		return kv.IntHandle(i), nil
+	}
+	fieldTypes := e.children[0].getFieldTypes()
+	handleDatums := make([]types.Datum, 0, len(e.indexHandleOffsets))
+	for _, offset := range e.indexHandleOffsets {
+		d := row.GetDatum(int(offset), fieldTypes[offset])
+		handleDatums = append(handleDatums, d)
+	}
+	handleEncoded, err := codec.EncodeKey(e.sctx.GetSessionVars().Location(), nil, handleDatums...)
+	if err != nil {
+		return nil, err
+	}
+	return kv.NewCommonHandle(handleEncoded)
 }
 
 func (e *indexLookUpExec) takeIntermediateResults() (ret []*chunk.Chunk) {

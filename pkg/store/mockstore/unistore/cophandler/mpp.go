@@ -212,9 +212,6 @@ func (b *mppExecBuilder) buildIndexLookUp(pb *tipb.IndexLookUp) (*indexLookUpExe
 	}
 
 	tblScanPB := pb.Children[1].TblScan
-	if len(tblScanPB.PrimaryColumnIds) > 0 {
-		return nil, errors.New("common handle not supported")
-	}
 
 	indexScanChild, err := b.buildMPPExecutor(pb.Children[0])
 	if err != nil {
@@ -225,7 +222,17 @@ func (b *mppExecBuilder) buildIndexLookUp(pb *tipb.IndexLookUp) (*indexLookUpExe
 	for _, col := range tblScanPB.Columns {
 		fieldTypes = append(fieldTypes, fieldTypeFromPBColumn(col))
 	}
-
+	isCommonHandle := true
+	if len(pb.IndexHandleOffsets) == 1 {
+		offset := pb.IndexHandleOffsets[0]
+		fts := indexScanChild.getFieldTypes()
+		switch fts[offset].GetType() {
+		case mysql.TypeLong, mysql.TypeLonglong,
+			mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
+			isCommonHandle = false
+		}
+	}
+	indexScanChild.getFieldTypes()[0].GetType()
 	indexLookUp := &indexLookUpExec{
 		baseMPPExec: baseMPPExec{
 			sctx:       b.sctx,
@@ -243,7 +250,7 @@ func (b *mppExecBuilder) buildIndexLookUp(pb *tipb.IndexLookUp) (*indexLookUpExe
 		},
 		indexHandleOffsets:  pb.IndexHandleOffsets,
 		tblScanPB:           tblScanPB,
-		isCommonHandle:      false,
+		isCommonHandle:      isCommonHandle,
 		extraReaderProvider: b.dbReader.ExtraDbReaderProvider,
 		buildTableScan: func(reader *dbreader.DBReader, ranges []kv.KeyRange) (*tableScanExec, error) {
 			copRanges := make([]*coprocessor.KeyRange, len(ranges))

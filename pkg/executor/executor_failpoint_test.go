@@ -15,7 +15,6 @@
 package executor_test
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
@@ -888,21 +887,8 @@ func TestIndexLookUpPushDownDev(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t3 (id int, a int, b int, c int, primary key(id), index idx(b)) partition by hash (id) partitions 3;")
-	tk.MustExec("insert into t3 values (1,1,1,1), (2,2,2,2);")
+	tk.MustExec("create table t1(a int, b int, c int, d int, primary key(a, b) CLUSTERED, index i(c)) partition by hash (b) partitions 3;")
+	tk.MustExec("insert into t1 values (1,2,3,4), (5,6,7,8);")
 
-	//checkQueryPlan := func(query, plan string) {
-	//	result := tk.MustQuery(query)
-	//	require.Regexpf(t, plan, getExplainResult(result), query)
-	//}
-	//checkQueryPlan("explain analyze select /*+ index_lookup_pushdown(t3, idx)*/ * from t3 use index(idx) where id=0 and b>=0 and b<=10;", ".*IndexLookUp.*local_row_can: 2}.*")
-	tk.MustQuery("select /*+ index_lookup_pushdown(t3, idx)*/ * from t3 use index(idx) where b>=0 and b<=10;").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
-}
-
-func getExplainResult(res *testkit.Result) string {
-	resBuff := bytes.NewBufferString("")
-	for _, row := range res.Rows() {
-		_, _ = fmt.Fprintf(resBuff, "%s\t", row)
-	}
-	return resBuff.String()
+	tk.MustQuery("select /*+ index_lookup_pushdown(t1, i) */ a, b, d from t1 order by a;").Check(testkit.Rows("1 2 4", "5 6 8"))
 }

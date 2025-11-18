@@ -1,0 +1,48 @@
+drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
+create table t1(a int, b int, c int, d int, primary key(a, b) CLUSTERED, index i(c));
+create table t2(a varchar(10), b int, c int, d int, primary key(b, a) CLUSTERED, index i(c));
+create table t3(a varchar(10), b int, c int, d int, primary key(b, a) CLUSTERED, index i(c)) partition by hash (b) partitions 3;;
+insert into t1 values (1,2,3,4), (5,6,7,8);
+insert into t2 values ('a',2,3,4), ('b',6,7,8);
+insert into t3 values ('a',2,3,4), ('b',6,7,8);
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+id	estRows	task	access object	operator info
+IndexLookUp_6	10000.00	root		
+├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[1 2]
+│ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:t1, index:i(c)	keep order:false, stats:pseudo
+│ └─TableFullScan_7(Probe)	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableFullScan_5(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+a	b	c	d
+1	2	3	4
+5	6	7	8
+select /*+ index_lookup_pushdown(t1, i) */ a, b, d from t1;
+a	b	d
+1	2	4
+5	6	8
+explain select /*+ index_lookup_pushdown(t2, i) */ * from t2;
+id	estRows	task	access object	operator info
+IndexLookUp_6	10000.00	root		
+├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[1 2]
+│ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
+│ └─TableFullScan_7(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableFullScan_5(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t2, i) */ * from t2;
+a	b	c	d
+a	2	3	4
+b	6	7	8
+select /*+ index_lookup_pushdown(t2, i) */ a, b, d from t2;
+a	b	d
+a	2	4
+b	6	8
+explain select /*+ index_lookup_pushdown(t3, i) */ a, b, d from t3;
+id	estRows	task	access object	operator info
+IndexLookUp_6	10000.00	root	partition:all	
+├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[1 2]
+│ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:t3, index:i(c)	keep order:false, stats:pseudo
+│ └─TableFullScan_7(Probe)	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─TableFullScan_5(Probe)	0.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t3, i) */ a, b, d from t3;
+a	b	d
+a	2	4
+b	6	8

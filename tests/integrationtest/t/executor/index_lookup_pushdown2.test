@@ -1,0 +1,19 @@
+drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
+create table t1(a int, b int, c int, d int, primary key(a, b) CLUSTERED, index i(c));
+create table t2(a varchar(10), b int, c int, d int, primary key(b, a) CLUSTERED, index i(c));
+create table t3(a varchar(10), b int, c int, d int, primary key(b, a) CLUSTERED, index i(c)) partition by hash (b) partitions 3;;
+
+insert into t1 values (1,2,3,4), (5,6,7,8);
+insert into t2 values ('a',2,3,4), ('b',6,7,8);
+insert into t3 values ('a',2,3,4), ('b',6,7,8);
+
+--enable_warnings
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+select /*+ index_lookup_pushdown(t1, i) */ a, b, d from t1;
+explain select /*+ index_lookup_pushdown(t2, i) */ * from t2;
+select /*+ index_lookup_pushdown(t2, i) */ * from t2;
+select /*+ index_lookup_pushdown(t2, i) */ a, b, d from t2;
+explain select /*+ index_lookup_pushdown(t3, i) */ a, b, d from t3;
+--sorted_result
+select /*+ index_lookup_pushdown(t3, i) */ a, b, d from t3;

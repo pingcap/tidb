@@ -214,10 +214,11 @@ a	b
 115	50
 explain select /*+ index_lookup_pushdown(t2, i) */ * from t2;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle table is not supported
+IndexLookUp_6	10000.00	root		
+├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[1 2]
+│ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
+│ └─TableFullScan_7(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableFullScan_5(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > 'a' order by a asc;
 id	estRows	task	access object	operator info
 IndexLookUp_16	3333.33	root		
