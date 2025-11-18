@@ -612,7 +612,7 @@ func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 		}
 
 		// Skip duplicates that have identical key/value pairs but count them for logging.
-		// Due to the re-entrancy issue of `add index`, the same key-value pairs might be imported repeatedly. 
+		// Due to the re-entrancy issue of `add index`, the same key-value pairs might be imported repeatedly.
 		// Therefore, we only consider pairs with the same key but different values ​​as duplicates.
 		valueKey := string(val)
 		if _, exists := currentRecords[valueKey]; exists {
