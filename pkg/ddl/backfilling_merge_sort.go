@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -78,8 +79,17 @@ func (*mergeSortExecutor) Init(ctx context.Context) error {
 func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort executor run subtask")
 
-	m.summary.Reset()
-	sm, err := decodeBackfillSubTaskMeta(ctx, m.cloudStoreURI, subtask.Meta)
+	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, m.cloudStoreURI)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		objStore.Close()
+		m.summary.MergeObjStoreRequests(reqRec)
+		m.GetMeterRecorder().MergeObjStoreRequests(reqRec)
+	}()
+
+	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -89,21 +99,6 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		m.mu.Lock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 		m.mu.Unlock()
-		m.summary.PutReqCnt.Add(summary.PutRequestCount)
-		m.GetMeterRecorder().IncPutRequest(summary.PutRequestCount)
-	}
-	onReaderClose := func(summary *external.ReaderSummary) {
-		m.summary.GetReqCnt.Add(summary.GetRequestCount)
-		m.GetMeterRecorder().IncGetRequest(summary.GetRequestCount)
-	}
-
-	storeBackend, err := storage.ParseBackend(m.cloudStoreURI, nil)
-	if err != nil {
-		return err
-	}
-	store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
-	if err != nil {
-		return err
 	}
 
 	prefix := path.Join(strconv.Itoa(int(subtask.TaskID)), strconv.Itoa(int(subtask.ID)))
@@ -114,12 +109,11 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	wctx := workerpool.NewContext(ctx)
 	op := external.NewMergeOperator(
 		wctx,
-		store,
+		objStore,
 		partSize,
 		prefix,
 		external.DefaultBlockSize,
 		onWriterClose,
-		onReaderClose,
 		external.NewMergeCollector(ctx, nil),
 		int(res.CPU.Capacity()),
 		true,
@@ -148,7 +142,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		}
 		return errors.Trace(err)
 	}
-	return m.onFinished(ctx, subtask)
+	return m.onFinished(ctx, subtask, sm, objStore)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
@@ -156,16 +150,12 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore storage.ExternalStorage) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
-	sm, err := decodeBackfillSubTaskMeta(ctx, m.cloudStoreURI, subtask.Meta)
-	if err != nil {
-		return err
-	}
 	sm.MetaGroups = []*external.SortedKVMeta{m.subtaskSortedKVMeta}
 	m.subtaskSortedKVMeta = nil
 	// write external meta to storage when using global sort
-	if err := writeExternalBackfillSubTaskMeta(ctx, m.cloudStoreURI, sm, external.SubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
+	if err := writeExternalBackfillSubTaskMeta(ctx, extStore, sm, external.SubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
 		return err
 	}
 
@@ -179,6 +169,10 @@ func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subta
 
 func (m *mergeSortExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return m.summary
+}
+
+func (m *mergeSortExecutor) ResetSummary() {
+	m.summary.Reset()
 }
 
 func (m *mergeSortExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {

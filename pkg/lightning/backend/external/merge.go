@@ -101,7 +101,6 @@ func NewMergeOperator(
 	newFilePrefix string,
 	blockSize int,
 	onWriterClose OnWriterCloseFunc,
-	onReaderClose OnReaderCloseFunc,
 	collector execute.Collector,
 	concurrency int,
 	checkHotspot bool,
@@ -126,7 +125,6 @@ func NewMergeOperator(
 				newFilePrefix: newFilePrefix,
 				blockSize:     blockSize,
 				onWriterClose: onWriterClose,
-				onReaderClose: onReaderClose,
 				collector:     collector,
 				checkHotspot:  checkHotspot,
 				onDup:         onDup,
@@ -152,7 +150,6 @@ type mergeWorker struct {
 	newFilePrefix string
 	blockSize     int
 	onWriterClose OnWriterCloseFunc
-	onReaderClose OnReaderCloseFunc
 	collector     execute.Collector
 	checkHotspot  bool
 	onDup         engineapi.OnDuplicateKey
@@ -168,7 +165,6 @@ func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)
 		task.writerID,
 		w.blockSize,
 		w.onWriterClose,
-		w.onReaderClose,
 		w.collector,
 		w.checkHotspot,
 		w.onDup,
@@ -275,7 +271,6 @@ func mergeOverlappingFilesInternal(
 	writerID string,
 	blockSize int,
 	onWriterClose OnWriterCloseFunc,
-	onReaderClose OnReaderCloseFunc,
 	collector execute.Collector,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
@@ -314,9 +309,6 @@ func mergeOverlappingFilesInternal(
 		if err != nil {
 			logutil.Logger(ctx).Warn("close iterator failed", zap.Error(err))
 		}
-		onReaderClose(&ReaderSummary{
-			GetRequestCount: uint64(iter.ReloadCount()),
-		})
 	}()
 
 	writer := NewWriterBuilder().

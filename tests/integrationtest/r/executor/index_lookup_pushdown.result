@@ -374,3 +374,16 @@ TableReader_8	10.00	root		data:Selection_7
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, multi-valued index is not supported
+insert into t3 values(1, 2, 3);
+explain select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root	partition:all	
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t3, index:a(a)	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, partition table is not supported
+select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
+id	a	b
+1	2	3
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, partition table is not supported
