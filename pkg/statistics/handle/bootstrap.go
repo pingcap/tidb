@@ -211,6 +211,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			tblInfoValid = true
 		}
 		// Skip all rows for tables that could not find table info.
+		// This happens when a table is dropped but its stats metadata is not yet garbage collected.
 		if !tblInfoValid {
 			continue
 		}
