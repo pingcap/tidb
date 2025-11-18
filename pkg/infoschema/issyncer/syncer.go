@@ -295,6 +295,11 @@ func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 // SyncLoop is the main loop for syncing the info schema.
 func (s *Syncer) SyncLoop(ctx context.Context) {
 	defer util.Recover(metrics.LabelDomain, "SyncLoop", nil, true)
+
+	if s.loader.loadForBR {
+		s.logger.Warn("This syncer is opened for BR. Sync loop won't be started.")
+		return
+	}
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
 	ticker := time.NewTicker(s.schemaLease / 2)
