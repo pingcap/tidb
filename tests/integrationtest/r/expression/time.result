@@ -1715,6 +1715,23 @@ a	b	c
 7	2025-03-30 03:00:00	2025-03-30 02:50:00
 affected rows: 0
 info: 
+SELECT CAST('1111111111-' AS DATE);
+CAST('1111111111-' AS DATE)
+NULL
+affected rows: 0
+info: 
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '1111111111-'
+UPDATE t SET b = '1111111111-' WHERE a = 7;
+affected rows: 1
+info: Rows matched: 1  Changed: 1  Warnings: 1
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '1111111111-'
+select * from t where a = 7;
+a	b	c
+7	NULL	2025-03-30 02:50:00
+affected rows: 0
+info: 
 set @@sql_mode = @old_sql_mode;
 affected rows: 0
 info: 

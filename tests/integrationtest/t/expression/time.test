@@ -467,6 +467,11 @@ select * from t where a = 7;
 delete from t where b <=> CAST(c AS DATETIME) and a = 7;
 select * from t where a = 7;
 select * from t;
+# MySQL 8.0 returns NULL here (OK)
+SELECT CAST('1111111111-' AS DATE);
+# MySQL 8.0 sets b to 0000-00-00 here. TiDB sets it to NULL! TODO: FIXME!!!
+UPDATE t SET b = '1111111111-' WHERE a = 7;
+select * from t where a = 7;
 set @@sql_mode = @old_sql_mode;
 -- disable_info
 -- disable_warnings
