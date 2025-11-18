@@ -134,3 +134,10 @@ create table t7 (j json, index idx((cast(j->'$.path' as signed array))));
 explain select /*+ index_lookup_pushdown(t7, idx) */ * from t7 where (1 member of (j->'$.path'));
 
 --disable_warnings
+
+## issue #64519, the index_lookup_pushdown hint should not affect other hints in a same index.
+insert into t3 values(1, 2, 3);
+--enable_warnings
+explain select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
+select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
+--disable_warnings
