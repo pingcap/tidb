@@ -3364,5 +3364,5 @@ func TestMultiSchemaAddPartitionWithGlobalIndex(t *testing.T) {
 			"6 6 Filler",
 			"7 7 Filler"))
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }
