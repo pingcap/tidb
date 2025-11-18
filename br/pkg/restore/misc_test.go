@@ -143,17 +143,17 @@ func TestGetTSWithRetry(t *testing.T) {
 }
 
 func TestParseLogRestoreTableIDsBlocklistFileName(t *testing.T) {
-	restoreCommitTs, restoreTargetTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName("RFFFFFFFFFFFFFFFF_TFFFFFFFFFFFFFFFF.meta")
+	restoreCommitTs, restoreStartTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName("RFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.meta")
 	require.True(t, parsed)
 	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), restoreCommitTs)
-	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), restoreTargetTs)
+	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), restoreStartTs)
 	unparsedFilenames := []string{
-		"KFFFFFFFFFFFFFFFF_TFFFFFFFFFFFFFFFF.meta",
-		"RFFFFFFFFFFFFFFFF.TFFFFFFFFFFFFFFFF.meta",
+		"KFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.meta",
+		"RFFFFFFFFFFFFFFFF.SFFFFFFFFFFFFFFFF.meta",
 		"RFFFFFFFFFFFFFFFF_KFFFFFFFFFFFFFFFF.meta",
-		"RFFFFFFFFFFFFFFFF_TFFFFFFFFFFFFFFFF.mata",
-		"RFFFFFFFKFFFFFFFF_TFFFFFFFFFFFFFFFF.meta",
-		"RFFFFFFFFFFFFFFFF_TFFFFFFFFKFFFFFFF.meta",
+		"RFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.mata",
+		"RFFFFFFFKFFFFFFFF_SFFFFFFFFFFFFFFFF.meta",
+		"RFFFFFFFFFFFFFFFF_SFFFFFFFFKFFFFFFF.meta",
 	}
 	for _, filename := range unparsedFilenames {
 		_, _, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(filename)
@@ -168,10 +168,10 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 	require.NoError(t, err)
 	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(0xFFFFFCDEFFFFF, 0xFFFFFFABCFFFF, 0xFFFFFCCCFFFFF, []int64{1, 2, 3}, []int64{4})
 	require.NoError(t, err)
-	restoreCommitTs, restoreTargetTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(name)
+	restoreCommitTs, restoreStartTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(name)
 	require.True(t, parsed)
 	require.Equal(t, uint64(0xFFFFFCDEFFFFF), restoreCommitTs)
-	require.Equal(t, uint64(0xFFFFFFABCFFFF), restoreTargetTs)
+	require.Equal(t, uint64(0xFFFFFFABCFFFF), restoreStartTs)
 	err = stg.WriteFile(ctx, name, data)
 	require.NoError(t, err)
 	data, err = stg.ReadFile(ctx, name)
@@ -179,7 +179,7 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 	blocklist, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(data)
 	require.NoError(t, err)
 	require.Equal(t, uint64(0xFFFFFCDEFFFFF), blocklist.RestoreCommitTs)
-	require.Equal(t, uint64(0xFFFFFFABCFFFF), blocklist.RestoreTargetTs)
+	require.Equal(t, uint64(0xFFFFFFABCFFFF), blocklist.RestoreStartTs)
 	require.Equal(t, uint64(0xFFFFFCCCFFFFF), blocklist.RewriteTs)
 	require.Equal(t, []int64{1, 2, 3}, blocklist.TableIds)
 	require.Equal(t, []int64{4}, blocklist.DbIds)
@@ -187,9 +187,9 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 
 func writeBlocklistFile(
 	ctx context.Context, t *testing.T, s storage.ExternalStorage,
-	restoreCommitTs, restoreTargetTs, rewriteTs uint64, tableIds, dbIds []int64,
+	restoreCommitTs, restoreStartTs, rewriteTs uint64, tableIds, dbIds []int64,
 ) {
-	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreTargetTs, rewriteTs, tableIds, dbIds)
+	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreStartTs, rewriteTs, tableIds, dbIds)
 	require.NoError(t, err)
 	err = s.WriteFile(ctx, name, data)
 	require.NoError(t, err)
@@ -521,7 +521,7 @@ func TestFilteringBoundaryConditions(t *testing.T) {
 	stg, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
 
-	// Create a blocklist file with restoreCommitTs=100, restoreTargetTs=50
+	// Create a blocklist file with restoreCommitTs=100, restoreStartTs=50
 	writeBlocklistFile(ctx, t, stg, 100, 50, 30, []int64{1, 2, 3}, []int64{10})
 
 	tableNameByTableId := func(tableId int64) string {
@@ -552,22 +552,22 @@ func TestFilteringBoundaryConditions(t *testing.T) {
 	require.Error(t, err, "should not filter when startTs < restoreCommitTs")
 	require.Contains(t, err.Error(), "table_1")
 
-	// Scenario 3: restoredTs == restoreTargetTs (boundary value)
+	// Scenario 3: restoredTs == restoreStartTs (boundary value)
 	// Expected: should NOT be filtered (error because table IDs match)
 	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 		ctx, stg, fakeTrackerID([]int64{1, 2, 3}),
-		80, 50, // restoredTs == restoreTargetTs
+		80, 50, // restoredTs == restoreStartTs
 		tableNameByTableId, dbNameByDbId, checkIDLost, checkIDLost, cleanErr)
-	require.Error(t, err, "should not filter when restoredTs == restoreTargetTs")
+	require.Error(t, err, "should not filter when restoredTs == restoreStartTs")
 	require.Contains(t, err.Error(), "table_1")
 
-	// Scenario 4: restoredTs == restoreTargetTs - 1
+	// Scenario 4: restoredTs == restoreStartTs - 1
 	// Expected: should be filtered (no error because blocklist is skipped)
 	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 		ctx, stg, fakeTrackerID([]int64{1, 2, 3}),
-		80, 49, // restoredTs == restoreTargetTs - 1
+		80, 49, // restoredTs == restoreStartTs - 1
 		tableNameByTableId, dbNameByDbId, checkIDLost, checkIDLost, cleanErr)
-	require.NoError(t, err, "should filter when restoredTs < restoreTargetTs")
+	require.NoError(t, err, "should filter when restoredTs < restoreStartTs")
 }
 
 func TestBlocklistWithEmptyArrays(t *testing.T) {
@@ -634,7 +634,7 @@ func TestBlocklistWithEmptyArrays(t *testing.T) {
 			blocklistFile, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(readData)
 			require.NoError(t, err)
 			require.Equal(t, uint64(100+i), blocklistFile.RestoreCommitTs)
-			require.Equal(t, uint64(50+i), blocklistFile.RestoreTargetTs)
+			require.Equal(t, uint64(50+i), blocklistFile.RestoreStartTs)
 			require.Equal(t, uint64(30+i), blocklistFile.RewriteTs)
 
 			// Verify arrays - nil and empty slice should be equivalent after unmarshal
