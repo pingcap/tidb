@@ -16,6 +16,7 @@ package aggfuncs_test
 
 import (
 	"fmt"
+	"math/rand"
 	"strconv"
 	"testing"
 	"time"
@@ -44,7 +45,17 @@ import (
 const (
 	// separator argument for group_concat() test cases
 	separator = " "
+
+	letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 )
+
+func generateRandomString(length int) string {
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return string(b)
+}
 
 type aggTest struct {
 	dataType *types.FieldType
@@ -73,6 +84,135 @@ func (p *aggTest) messUpChunk(c *chunk.Chunk) {
 			raw[i] = 255
 		}
 	}
+}
+
+type parallelDistinctAggTestCase struct {
+	dataType *types.FieldType
+	funcName string
+	srcChks  []*chunk.Chunk
+	result   types.Datum
+}
+
+func newParallelDistinctAggTestCase(dataType *types.FieldType, numRows, ndv int, funcName string) *parallelDistinctAggTestCase {
+	ret := &parallelDistinctAggTestCase{
+		dataType: dataType,
+		funcName: funcName,
+	}
+
+	var dataGenFunc func() types.Datum
+
+	intDatums := make(map[int]struct{})
+	floatDatums := make(map[float64]struct{})
+	decimalDatums := make(map[string]*types.MyDecimal)
+	stringDatums := make(map[string]struct{})
+	durationDatums := make(map[int64]struct{})
+
+	switch dataType.GetType() {
+	case mysql.TypeLonglong:
+		dataGenFunc = func() types.Datum {
+			for {
+				newVal := rand.Intn(1000000000) - 500000000
+				_, ok := intDatums[newVal]
+				if ok {
+					continue
+				}
+
+				intDatums[newVal] = struct{}{}
+				return types.NewIntDatum(int64(newVal))
+			}
+		}
+	case mysql.TypeFloat:
+		dataGenFunc = func() types.Datum {
+			for {
+				newVal := rand.Float64()*100 - 50
+				_, ok := floatDatums[newVal]
+				if ok {
+					continue
+				}
+
+				floatDatums[newVal] = struct{}{}
+				return types.NewFloat64Datum(newVal)
+			}
+		}
+	case mysql.TypeNewDecimal:
+		dataGenFunc = func() types.Datum {
+			for {
+				newVal := types.NewDecFromStringForTest(fmt.Sprintf("%.4f", rand.Float64()*100-50))
+				hashKeyBytes, err := newVal.ToHashKey()
+				if err != nil {
+					panic(fmt.Sprintf("newVal: %s is invalid, err: %v", newVal, err))
+				}
+
+				_, ok := decimalDatums[string(hashKeyBytes)]
+				if ok {
+					continue
+				}
+
+				decimalDatums[string(hashKeyBytes)] = newVal
+				return types.NewDecimalDatum(newVal)
+			}
+		}
+	case mysql.TypeString:
+		dataGenFunc = func() types.Datum {
+			for {
+				newVal := generateRandomString(rand.Intn(100))
+				_, ok := stringDatums[newVal]
+				if ok {
+					continue
+				}
+
+				stringDatums[newVal] = struct{}{}
+				return types.NewStringDatum(newVal)
+			}
+		}
+	case mysql.TypeDuration:
+		dataGenFunc = func() types.Datum {
+			for {
+				newVal := types.NewDuration(rand.Intn(800), rand.Intn(60), rand.Intn(60), 0, 0)
+				_, ok := durationDatums[int64(newVal.Duration)]
+				if ok {
+					continue
+				}
+
+				durationDatums[int64(newVal.Duration)] = struct{}{}
+				return types.NewDurationDatum(newVal)
+			}
+		}
+	}
+
+	datumsForNDV := make([]types.Datum, 0, ndv)
+	for range ndv {
+		datumsForNDV = append(datumsForNDV, dataGenFunc())
+	}
+
+	srcChkNum := 10
+	ret.srcChks = make([]*chunk.Chunk, 0, srcChkNum)
+	for i := range ret.srcChks {
+		ret.srcChks[i] = chunk.NewChunkWithCapacity([]*types.FieldType{dataType}, numRows)
+	}
+
+	for range numRows {
+		ret.srcChks[rand.Intn(srcChkNum)].AppendDatum(0, &datumsForNDV[rand.Intn(ndv)])
+	}
+
+	for i := range ret.srcChks {
+		ret.srcChks[i].AppendDatum(0, &types.Datum{})
+	}
+
+	switch funcName {
+	case ast.AggFuncCount:
+		ret.result = types.NewIntDatum(int64(ndv))
+	case ast.AggFuncAvg:
+	case ast.AggFuncSum:
+	case ast.AggFuncGroupConcat:
+	default:
+		panic("Not supported")
+	}
+	for range ndv {
+
+	}
+	// types.NewIntDatum(int64(i))
+	return ret
 }
 
 type multiArgsAggTest struct {
