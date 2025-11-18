@@ -59,6 +59,11 @@ const (
 	// on nextgen, DXF works as a service and runs only on node with scope 'dxf_service',
 	// so all tasks must be submitted to that scope.
 	NextGenTargetScope = "dxf_service"
+
+	// TODO refactor and unify with lightning config, we copy them here to avoid
+	// import cycle.
+	defRegionSplitSize int64 = 96 * units.MiB
+	defRegionSplitKeys int64 = 960_000
 )
 
 // NotifyTaskChange is used to notify the scheduler manager that the task is changed,
@@ -273,6 +278,19 @@ func GetNodeResource() *proto.NodeResource {
 // SetNodeResource gets the node resource.
 func SetNodeResource(rc *proto.NodeResource) {
 	nodeResource.Store(rc)
+}
+
+// GetDefaultRegionSplitConfig gets the default region split size and keys.
+func GetDefaultRegionSplitConfig() (splitSize, splitKeys int64) {
+	if kerneltype.IsNextGen() {
+		const nextGenRegionSplitSize = units.GiB
+		// the keys:size ratio is 10 times larger than Classic, the reason seems
+		// that nextgen TiKV want to control region split through size only, so
+		// they set a very large keys limit.
+		const nextGenRegionSplitKeys = 102_400_000
+		return nextGenRegionSplitSize, nextGenRegionSplitKeys
+	}
+	return defRegionSplitSize, defRegionSplitKeys
 }
 
 // GetTargetScope get target scope for new tasks.
