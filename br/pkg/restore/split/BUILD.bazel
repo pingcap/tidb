@@ -65,7 +65,7 @@ go_test(
     ],
     embed = [":split"],
     flaky = True,
-    shard_count = 28,
+    shard_count = 30,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/restore/utils",
@@ -84,6 +84,9 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_kvproto//pkg/pdpb",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//clients/router",
+        "@com_github_tikv_pd_client//opt",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
     ],
