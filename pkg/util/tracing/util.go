@@ -322,6 +322,10 @@ const (
 )
 
 // Event represents a traced event.
+// INVARIANT: Event.Fields must be treated as immutable once created, as the
+// underlying array may be shared across multiple goroutines (e.g., flight
+// recorder, log sink, context-specific sinks). Modifications to Fields must
+// allocate a new slice to avoid data races.
 type Event struct {
 	Timestamp time.Time
 	Name      string
