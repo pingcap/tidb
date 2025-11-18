@@ -1400,9 +1400,11 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			if i >= indexHintsLen {
 				// Currently we only support to hint the index look up push down for comment-style sql hints.
 				// So only i >= indexHintsLen may have the hints here.
-				_, path.IsIndexLookUpPushDown = indexLookUpPushDownHints[i]
-				if path.IsIndexLookUpPushDown && !checkIndexLookUpPushDownSupported(ctx, tblInfo, path.Index) {
-					continue
+				if _, ok := indexLookUpPushDownHints[i]; ok {
+					if !checkIndexLookUpPushDownSupported(ctx, tblInfo, path.Index) {
+						continue
+					}
+					path.IsIndexLookUpPushDown = true
 				}
 			}
 			available = append(available, path)
