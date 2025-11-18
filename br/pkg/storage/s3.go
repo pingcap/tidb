@@ -481,12 +481,12 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 					func(ctx context.Context, input middleware.FinalizeInput, next middleware.FinalizeHandler) (middleware.FinalizeOutput, middleware.Metadata, error) {
 						// Call the next middleware and get the result
 						output, metadata, err := next.HandleFinalize(ctx, input)
-						
+
 						// Record the request if we have an HTTP request
 						if req, ok := input.Request.(*smithyhttp.Request); ok {
 							reqRec.Rec(req.Request)
 						}
-						
+
 						return output, metadata, err
 					},
 				), middleware.After)
