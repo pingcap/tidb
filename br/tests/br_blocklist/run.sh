@@ -8,350 +8,300 @@ TASK_NAME="br_blocklist"
 echo "=========================================="
 echo "BR Blocklist Integration Test"
 echo "=========================================="
+echo "Testing blocklist mechanism with RestoreStartTS"
+echo ""
 
 # Restart services
 restart_services || { echo "Failed to restart services"; exit 1; }
 
-# ==================== 阶段 0: 准备初始数据 ====================
-echo ""
-echo ">>> Phase 0: Preparing initial data at T0..."
-run_sql "CREATE DATABASE original_db;"
-run_sql "CREATE TABLE original_db.t1 (id INT PRIMARY KEY, val VARCHAR(50));"
-run_sql "INSERT INTO original_db.t1 (id, val) VALUES (1, 'initial_data_row1'), (2, 'initial_data_row2'), (3, 'initial_data_row3');"
+# ==================== T0: Prepare initial data and create snapshot backup ====================
+echo ">>> T0: Preparing initial data and creating snapshot backup..."
+run_sql "CREATE DATABASE initial_db;"
+run_sql "CREATE TABLE initial_db.t0 (id INT PRIMARY KEY);"
+run_sql "INSERT INTO initial_db.t0 VALUES (1);"
 
-# 验证 T0 数据
-t1_count=$(run_sql "SELECT COUNT(*) FROM original_db.t1;" | tail -n1)
-if [ "$t1_count" != "3" ]; then
-    echo "ERROR: Expected 3 rows in t1 at T0, got $t1_count"
+# Verify T0 data
+t0_count=$(run_sql "SELECT COUNT(*) FROM initial_db.t0;" | tail -n1)
+if [ "$t0_count" != "1" ]; then
+    echo "ERROR: Expected 1 row in initial_db.t0, got $t0_count"
     exit 1
 fi
-echo "✓ T0 data prepared: original_db.t1 has 3 rows"
+echo "✓ T0 initial data prepared"
 
-# ==================== 阶段 1: 快照备份 ====================
-echo ""
-echo ">>> Phase 1: Creating snapshot backup..."
+# Create full snapshot backup
 SNAPSHOT_DIR="local://$TEST_DIR/$PREFIX/full"
 run_br backup full -s "$SNAPSHOT_DIR" --pd "$PD_ADDR" \
     --log-file "$TEST_DIR/backup_full.log"
 echo "✓ Snapshot backup completed at $SNAPSHOT_DIR"
 
-# ==================== 阶段 2: 启动日志备份 ====================
-echo ""
-echo ">>> Phase 2: Starting log backup..."
+# Start log backup
 LOG_DIR="local://$TEST_DIR/$PREFIX/log"
 run_br log start --task-name "$TASK_NAME" -s "$LOG_DIR" --pd "$PD_ADDR"
 echo "✓ Log backup started to $LOG_DIR"
-
-# 等待日志备份任务完全启动
 sleep 2
 
-# ==================== 阶段 3: 插入 T1 数据 ====================
+# ==================== T1: Create test tables ====================
 echo ""
-echo ">>> Phase 3: Inserting data at T1..."
-run_sql "INSERT INTO original_db.t1 (id, val) VALUES (4, 'data_at_t1');"
-run_sql "CREATE TABLE original_db.t2 (id INT PRIMARY KEY, description TEXT);"
-run_sql "INSERT INTO original_db.t2 (id, description) VALUES (100, 't2_data_row1'), (101, 't2_data_row2');"
+echo ">>> T1: Creating test tables..."
+run_sql "CREATE DATABASE test_db;"
+run_sql "CREATE TABLE test_db.t1 (id INT PRIMARY KEY);"
+run_sql "INSERT INTO test_db.t1 VALUES (1), (2), (3);"
+run_sql "CREATE TABLE test_db.t2 (id INT PRIMARY KEY);"
+run_sql "INSERT INTO test_db.t2 VALUES (10), (20);"
 
-# 等待数据写入日志备份
-sleep 2
-
-# 记录 T1 时间戳
-T1=$(run_br validate decode \
-    --field="end-version" \
-    --storage="$LOG_DIR" | tail -n1)
-echo "✓ T1 timestamp: $T1"
-
-# 验证 T1 数据
-t1_count=$(run_sql "SELECT COUNT(*) FROM original_db.t1;" | tail -n1)
-t2_count=$(run_sql "SELECT COUNT(*) FROM original_db.t2;" | tail -n1)
-if [ "$t1_count" != "4" ]; then
-    echo "ERROR: Expected 4 rows in t1 at T1, got $t1_count"
+# Verify T1 data
+t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1)
+t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1)
+if [ "$t1_count" != "3" ]; then
+    echo "ERROR: Expected 3 rows in test_db.t1, got $t1_count"
     exit 1
 fi
 if [ "$t2_count" != "2" ]; then
-    echo "ERROR: Expected 2 rows in t2 at T1, got $t2_count"
+    echo "ERROR: Expected 2 rows in test_db.t2, got $t2_count"
     exit 1
 fi
-echo "✓ T1 data prepared: t1 has 4 rows, t2 has 2 rows"
+echo "✓ T1 data prepared: test_db.t1 has 3 rows, test_db.t2 has 2 rows"
 
-# ==================== 阶段 4: 插入 T2 数据 ====================
+# ==================== T2: Record first restore target timestamp ====================
 echo ""
-echo ">>> Phase 4: Inserting data at T2 (creating new_db)..."
-run_sql "CREATE DATABASE new_db;"
-run_sql "CREATE TABLE new_db.t3 (id INT PRIMARY KEY, description TEXT);"
-run_sql "INSERT INTO new_db.t3 (id, description) VALUES (200, 'new_db_data'), (201, 'created_at_t2');"
-
-# 等待数据写入日志备份
-sleep 2
-
-# 记录 T2 时间戳
+echo ">>> T2: Recording first restore target timestamp..."
+sleep 1  # Ensure log backup has recorded T1 data
 T2=$(run_br validate decode \
     --field="end-version" \
     --storage="$LOG_DIR" | tail -n1)
-echo "✓ T2 timestamp: $T2"
+echo "✓ T2 timestamp: $T2 (data state: t1=3 rows, t2=2 rows)"
 
-# 验证 T2 数据
-new_db_exists=$(run_sql "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='new_db';" | tail -n1)
-if [ "$new_db_exists" != "1" ]; then
-    echo "ERROR: Database new_db should exist"
+# ==================== T3: Insert additional data ====================
+echo ""
+echo ">>> T3: Inserting additional data..."
+run_sql "INSERT INTO test_db.t1 VALUES (4), (5);"
+run_sql "INSERT INTO test_db.t2 VALUES (30), (40);"
+
+# Verify T3 data
+t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1)
+t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1)
+if [ "$t1_count" != "5" ]; then
+    echo "ERROR: Expected 5 rows in test_db.t1, got $t1_count"
     exit 1
 fi
-echo "✓ T2 data prepared: database new_db and table t3 created"
+if [ "$t2_count" != "4" ]; then
+    echo "ERROR: Expected 4 rows in test_db.t2, got $t2_count"
+    exit 1
+fi
+echo "✓ T3 data prepared: test_db.t1 has 5 rows, test_db.t2 has 4 rows"
 
-# ==================== 阶段 6: 插入 T3 数据 ====================
-echo ""
-echo ">>> Phase 6: Inserting data at T3 (operations on new_db)..."
-run_sql "INSERT INTO new_db.t3 (id, description) VALUES (202, 'data_at_t3_row1'), (203, 'data_at_t3_row2'), (204, 'data_at_t3_row3');"
-run_sql "UPDATE original_db.t1 SET val = 'updated_at_t3' WHERE id = 4;"
-
-# 等待数据写入日志备份
-sleep 2
-
-# 记录 T3 时间戳
+# Record T3 timestamp
+sleep 1  # Ensure log backup has recorded new data
 T3=$(run_br validate decode \
     --field="end-version" \
     --storage="$LOG_DIR" | tail -n1)
-echo "✓ T3 timestamp: $T3"
+echo "✓ T3 timestamp: $T3 (data state: t1=5 rows, t2=4 rows)"
 
-# 验证 T3 数据
-t3_count=$(run_sql "SELECT COUNT(*) FROM new_db.t3;" | tail -n1)
-if [ "$t3_count" != "5" ]; then
-    echo "ERROR: Expected 5 rows in t3 at T3, got $t3_count"
-    exit 1
-fi
-echo "✓ T3 data prepared: new_db.t3 has 5 rows"
-
+# ==================== T4: Drop test tables ====================
 echo ""
-echo ">>> Data preparation completed"
-echo ">>> Timestamps: T1=$T1, T2=$T2, T3=$T3"
+echo ">>> T4: Dropping test tables to simulate data loss..."
+run_sql "DROP DATABASE test_db;"
+echo "✓ test_db dropped"
 
-# 定义 blocklist 文件目录
-blocklist_dir="$TEST_DIR/$PREFIX/log/v1/log_restore_tables_blocklists"
-
-# ==================== 测试 1: 成功场景 - 时间回滚 ====================
+# ==================== T6: First PITR restore to T2 ====================
 echo ""
-echo "=========================================="
-echo "TEST 1: Time Rollback (T2 → T1)"
-echo "=========================================="
-
-# Step 1.1: 删除所有数据
-echo ">>> Step 1.1: Dropping all databases..."
-run_sql "DROP DATABASE original_db;"
-run_sql "DROP DATABASE IF EXISTS new_db;"
-echo "✓ Databases dropped"
-
-# Step 1.2: PITR 恢复到 T2
-echo ">>> Step 1.2: Restoring to T2..."
+echo ">>> T6: First PITR restore to T2..."
+echo ">>> This will create blocklist with RestoreStartTs captured from PD"
 run_br restore point \
     --pd "$PD_ADDR" \
     -s "$LOG_DIR" \
     --full-backup-storage "$SNAPSHOT_DIR" \
     --restored-ts "$T2" \
     --log-file "$TEST_DIR/restore_t2.log"
-echo "✓ Restored to T2"
+echo "✓ First PITR completed (restored to T2)"
 
-# Step 1.3: 验证 T2 数据
-echo ">>> Step 1.3: Verifying T2 data..."
-t1_count=$(run_sql "SELECT COUNT(*) FROM original_db.t1;" | tail -n1)
-t2_count=$(run_sql "SELECT COUNT(*) FROM original_db.t2;" | tail -n1)
-t3_count=$(run_sql "SELECT COUNT(*) FROM new_db.t3;" | tail -n1)
-
-if [ "$t1_count" != "4" ]; then
-    echo "ERROR: Expected 4 rows in t1 at T2, got $t1_count"
+# Verify first PITR data correctness
+t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1)
+t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1)
+if [ "$t1_count" != "3" ]; then
+    echo "ERROR: Expected 3 rows in test_db.t1 at T2, got $t1_count"
     exit 1
 fi
 if [ "$t2_count" != "2" ]; then
-    echo "ERROR: Expected 2 rows in t2 at T2, got $t2_count"
+    echo "ERROR: Expected 2 rows in test_db.t2 at T2, got $t2_count"
     exit 1
 fi
-if [ "$t3_count" != "2" ]; then
-    echo "ERROR: Expected 2 rows in t3 at T2, got $t3_count"
-    exit 1
-fi
-echo "✓ T2 data verification passed"
+echo "✓ First PITR data verification passed (t1: 3 rows, t2: 2 rows)"
 
-# 验证第一个 blocklist 文件生成
-blocklist_count=$(find "$blocklist_dir" -name "R*_T*.meta" 2>/dev/null | wc -l | tr -d ' ')
+# Verify blocklist file generation
+blocklist_dir="$TEST_DIR/$PREFIX/log/v1/log_restore_tables_blocklists"
+blocklist_count=$(find "$blocklist_dir" -name "R*_S*.meta" 2>/dev/null | wc -l | tr -d ' ')
 if [ "$blocklist_count" != "1" ]; then
     echo "ERROR: Expected 1 blocklist file after first PITR, found $blocklist_count"
     exit 1
 fi
-echo "✓ First blocklist file generated"
+echo "✓ Blocklist file generated (R*_S*.meta format)"
 
-# Step 1.4: 删除所有数据，准备时间回滚
-echo ">>> Step 1.4: Dropping all databases for time rollback..."
-run_sql "DROP DATABASE original_db;"
-run_sql "DROP DATABASE new_db;"
+# ==================== T7: Record timestamp after first PITR completion ====================
+echo ""
+echo ">>> T7: Recording timestamp after first PITR completion..."
+T7=$(run_br validate decode \
+    --field="end-version" \
+    --storage="$LOG_DIR" | tail -n1)
+echo "✓ T7 timestamp: $T7 (first PITR completed)"
+echo ">>> Note: Blocklist contains RestoreStartTs ≤ T7"
+
+# ==================== TEST 1: Restore to T3 (should succeed) ====================
+echo ""
+echo "=========================================="
+echo "TEST 1: Restore to T3 (Different Time)"
+echo "=========================================="
+echo ">>> Objective: Verify blocklist doesn't block valid restore to different historical time"
+echo ">>> T2 = $T2 (first PITR target: t1=3 rows)"
+echo ">>> T3 = $T3 (second PITR target: t1=5 rows)"
+echo ">>> Blocklist check logic:"
+echo ">>>   - restoredTs=$T3 < RestoreStartTs (≤T7=$T7)"
+echo ">>>   - Expected: SUCCESS (tables didn't exist at T3)"
+
+# T8: Drop all databases
+echo ""
+echo ">>> T8: Dropping all databases for test..."
+run_sql "DROP DATABASE test_db;"
+run_sql "DROP DATABASE initial_db;"
 echo "✓ Databases dropped"
 
-# Step 1.5: PITR 恢复到 T1 (时间回滚: T1 < T2)
-echo ">>> Step 1.5: Restoring to T1 (time rollback: T1 < T2)..."
-echo ">>> T1=$T1, T2=$T2 (T1 < T2)"
-echo ">>> Blocklist check logic:"
-echo ">>>   - restoredTs=$T1 < restoreTargetTs=$T2 (filtered)"
-echo ">>>   - Expected: SUCCESS (time rollback allowed)"
-
+# T9: Restore to T3
+echo ""
+echo ">>> T9: Restoring to T3..."
 run_br restore point \
     --pd "$PD_ADDR" \
     -s "$LOG_DIR" \
     --full-backup-storage "$SNAPSHOT_DIR" \
-    --restored-ts "$T1" \
-    --log-file "$TEST_DIR/restore_t1.log"
-echo "✓ Restored to T1"
+    --restored-ts "$T3" \
+    --log-file "$TEST_DIR/restore_t3.log"
+echo "✓ Restore to T3 completed"
 
-# Step 1.6: 验证 T1 数据
-echo ">>> Step 1.6: Verifying T1 data..."
-t1_count=$(run_sql "SELECT COUNT(*) FROM original_db.t1;" | tail -n1)
-t2_count=$(run_sql "SELECT COUNT(*) FROM original_db.t2;" | tail -n1)
+# Verify data correctness: should be T3 data (5 rows), not T2 data (3 rows)
+t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1)
+t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1)
 
-if [ "$t1_count" != "4" ]; then
-    echo "ERROR: Expected 4 rows in t1 at T1, got $t1_count"
+if [ "$t1_count" != "5" ]; then
+    echo "ERROR: Expected 5 rows in test_db.t1 at T3, got $t1_count"
+    echo "ERROR: This indicates blocklist incorrectly blocked the restore"
     exit 1
 fi
-if [ "$t2_count" != "2" ]; then
-    echo "ERROR: Expected 2 rows in t2 at T1, got $t2_count"
+
+if [ "$t2_count" != "4" ]; then
+    echo "ERROR: Expected 4 rows in test_db.t2 at T3, got $t2_count"
     exit 1
 fi
-echo "✓ T1 data verification passed (t1: 4 rows, t2: 2 rows)"
 
-# Step 1.7: 验证 new_db 不存在（因为 T1 时还未创建）
-new_db_exists=$(run_sql "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='new_db';" | tail -n1)
-if [ "$new_db_exists" != "0" ]; then
-    echo "ERROR: Database new_db should not exist at T1"
-    exit 1
-fi
-echo "✓ Verified: new_db does not exist at T1 (correct)"
+echo "✓ Data verification passed: t1 has 5 rows (not 3!), t2 has 4 rows (not 2!)"
+echo "✓ Comparison:"
+echo "    First PITR  (to T2): t1=3 rows, t2=2 rows"
+echo "    Second PITR (to T3): t1=5 rows, t2=4 rows"
+echo "✓✓✓ TEST 1 PASSED: Restored to different time with correct data ✓✓✓"
 
-# Step 1.8: 验证第二个 blocklist 文件生成
-blocklist_count=$(find "$blocklist_dir" -name "R*_T*.meta" 2>/dev/null | wc -l | tr -d ' ')
+# Verify second blocklist file generation
+blocklist_count=$(find "$blocklist_dir" -name "R*_S*.meta" 2>/dev/null | wc -l | tr -d ' ')
 if [ "$blocklist_count" != "2" ]; then
     echo "ERROR: Expected 2 blocklist files after second PITR, found $blocklist_count"
     exit 1
 fi
-
 echo "✓ Second blocklist file generated"
-echo "✓✓✓ TEST 1 PASSED: Time rollback works correctly ✓✓✓"
 
-# ==================== 测试 2: 失败场景 - 向前恢复被拦截 ====================
+# ==================== TEST 2: Restore to T7+5s (should be blocked) ====================
 echo ""
 echo "=========================================="
-echo "TEST 2: Forward Restore to T3 Blocked by Blocklist"
+echo "TEST 2: Restore to T7+5s (Should Be Blocked)"
 echo "=========================================="
+echo ">>> Objective: Verify blocklist blocks restore when tables don't exist in snapshot"
+echo ">>> T7 = $T7 (first PITR completion time)"
 
-# Step 2.1: 删除所有数据
-echo ">>> Step 2.1: Dropping all databases..."
-run_sql "DROP DATABASE original_db;"
-run_sql "DROP DATABASE IF EXISTS new_db;"
+# Calculate T7 + 5 seconds TSO
+# TSO format: (physical_ms << 18) | logical
+# 5 seconds = 5000 ms
+DELTA_MS=5000
+SHIFT=18
+T10=$(( T7 + (DELTA_MS << SHIFT) ))
+echo ">>> T10 = $T10 (T7 + 5 seconds)"
+
+echo ">>> Blocklist check logic:"
+echo ">>>   - restoredTs=$T10 > RestoreStartTs (≤T7=$T7)"
+echo ">>>   - startTs=T0 < RestoreCommitTs (from blocklist)"
+echo ">>>   - Snapshot (T0) doesn't contain test_db"
+echo ">>>   - Log backup contains operations on test_db"
+echo ">>>   - Expected: BLOCKED (conflict detected)"
+
+# Drop all databases before test
+echo ""
+echo ">>> Dropping all databases for test..."
+run_sql "DROP DATABASE test_db;"
+run_sql "DROP DATABASE initial_db;"
 echo "✓ Databases dropped"
 
-# Step 2.2: PITR 恢复到 T2（创建 new_db 和 t2）
-echo ">>> Step 2.2: Restoring to T2 to create new_db and t2..."
+# T10: Attempt to restore to T7+5s
+echo ""
+echo ">>> T10: Attempting restore to T7+5s (should be blocked)..."
 run_br restore point \
     --pd "$PD_ADDR" \
     -s "$LOG_DIR" \
     --full-backup-storage "$SNAPSHOT_DIR" \
-    --restored-ts "$T2" \
-    --log-file "$TEST_DIR/restore_t2_2nd.log"
+    --restored-ts "$T10" \
+    --log-file "$TEST_DIR/restore_t10_blocked.log" 2>&1 | tee "$TEST_DIR/restore_t10_output.log" || true
 
-# 验证 new_db 存在且有 2 行数据
-t3_count=$(run_sql "SELECT COUNT(*) FROM new_db.t3;" | tail -n1)
-if [ "$t3_count" != "2" ]; then
-    echo "ERROR: Expected 2 rows in new_db.t3 at T2, got $t3_count"
-    exit 1
-fi
-echo "✓ PITR to T2 successful: new_db.t3 has 2 rows"
+# Check if correctly blocked
+if grep -q "because it is log restored" "$TEST_DIR/restore_t10_output.log"; then
+    echo "✓ Restore to T10 correctly blocked by blocklist"
 
-# Step 2.3: 验证第三个 blocklist 文件生成
-blocklist_count=$(find "$blocklist_dir" -name "R*_T*.meta" 2>/dev/null | wc -l | tr -d ' ')
-if [ "$blocklist_count" != "3" ]; then
-    echo "ERROR: Expected 3 blocklist files, found $blocklist_count"
-    exit 1
-fi
-echo "✓ Third blocklist file generated (records new_db and t2 created at T2)"
-
-# Step 2.4: 删除所有数据，准备向前恢复到 T3
-echo ">>> Step 2.4: Dropping all databases to simulate data loss..."
-run_sql "DROP DATABASE original_db;"
-run_sql "DROP DATABASE new_db;"
-echo "✓ Databases dropped (new_db and t2 are now deleted locally)"
-echo ">>> Note: Log backup still contains T2~T3 operations on new_db.t3"
-
-# Step 2.5: 尝试 PITR 恢复到 T3（应该被 blocklist 拦截）
-echo ">>> Step 2.5: Attempting restore to T3 (T3 > T2, should be blocked)..."
-echo ">>> T2=$T2, T3=$T3 (T3 > T2)"
-echo ">>> Blocklist check logic:"
-echo ">>>   - startTs < restoreCommitTs (not filtered)"
-echo ">>>   - restoredTs=$T3 >= restoreTargetTs=$T2 (not filtered)"
-echo ">>>   - Tracker contains new_db and t2 IDs from blocklist"
-echo ">>>   - Expected: BLOCKED (cannot replay T2~T3 ops on deleted tables)"
-
-# 使用 restore point 恢复到 T3
-run_br restore point \
-    -s "$LOG_DIR" \
-    --full-backup-storage "$SNAPSHOT_DIR" \
-    --restored-ts "$T3" \
-    --pd "$PD_ADDR" \
-    --log-file "$TEST_DIR/restore_t3_blocked.log" 2>&1 | tee "$TEST_DIR/restore_t3_output.log" || true
-
-# 检查是否包含 blocklist 相关错误信息
-# 根据代码，错误信息格式为：
-# "cannot restore the table(Id=%d, name=%s at %d) because it is log restored(at %d) before snapshot backup(at %d)"
-# 或
-# "cannot restore the database(Id=%d, name %s at %d) because it is log restored(at %d) before snapshot backup(at %d)"
-
-if grep -q "because it is log restored" "$TEST_DIR/restore_t3_output.log"; then
-    echo "✓ Restore to T3 correctly blocked by blocklist"
-
-    # 验证错误信息包含相关数据库/表名
-    if grep -qE "new_db|t2|t3" "$TEST_DIR/restore_t3_output.log"; then
-        echo "✓ Error message contains blocked table/database names (new_db/t2/t3)"
+    # Verify error message contains table names
+    if grep -qE "test_db|t1|t2" "$TEST_DIR/restore_t10_output.log"; then
+        echo "✓ Error message contains blocked table/database names"
     else
-        echo "WARNING: Error message does not contain specific table/database names"
-        cat "$TEST_DIR/restore_t3_output.log"
+        echo "WARNING: Error message does not contain specific table names"
+        cat "$TEST_DIR/restore_t10_output.log"
     fi
 
-    echo "✓✓✓ TEST 2 PASSED: Forward restore to T3 blocked correctly ✓✓✓"
+    echo "✓✓✓ TEST 2 PASSED: Forward restore blocked correctly ✓✓✓"
 else
-    # 如果没有被拦截，检查恢复是否意外成功
-    new_db_exists=$(run_sql "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='new_db';" 2>/dev/null | tail -n1 || echo "0")
+    # Check if restore unexpectedly succeeded
+    test_db_exists=$(run_sql "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='test_db';" 2>/dev/null | tail -n1 || echo "0")
 
-    if [ "$new_db_exists" == "0" ]; then
-        echo "ERROR: Restore to T3 failed but not due to blocklist"
-        echo "Expected blocklist error message but got:"
-        cat "$TEST_DIR/restore_t3_output.log"
+    if [ "$test_db_exists" == "0" ]; then
+        echo "ERROR: Restore failed but not due to blocklist"
+        echo "Expected blocklist error but got:"
+        cat "$TEST_DIR/restore_t10_output.log"
         exit 1
     else
-        echo "ERROR: Restore to T3 succeeded when it should have been blocked by blocklist"
-        echo "This indicates a bug in blocklist enforcement"
-        echo "Database new_db exists when it shouldn't (trying to replay ops on deleted tables)"
+        echo "ERROR: Restore to T10 succeeded when it should have been blocked"
+        echo "Database test_db exists when it shouldn't"
         exit 1
     fi
 fi
 
-# ==================== 测试总结 ====================
+# ==================== Test Summary ====================
 echo ""
 echo "=========================================="
 echo "All Tests Passed!"
 echo "=========================================="
-echo "✓ TEST 1: Time rollback (T2 → T1) works correctly"
-echo "✓ TEST 2: Forward restore to T3 blocked by blocklist"
+echo "✓ TEST 1: Restore to different historical time (T3) succeeded"
+echo "           - Verified data difference: T2(3 rows) vs T3(5 rows)"
+echo "✓ TEST 2: Restore to future time (T7+5s) blocked by blocklist"
 echo ""
-echo "Blocklist files generated: $blocklist_count"
-ls -lh "$blocklist_dir"
 
-# ==================== 停止日志备份 ====================
+echo ">>> Blocklist files summary:"
+blocklist_count=$(find "$blocklist_dir" -name "R*_S*.meta" 2>/dev/null | wc -l | tr -d ' ')
+echo "Total blocklist files: $blocklist_count"
+ls -lh "$blocklist_dir" || true
+
+# ==================== Stop log backup ====================
 echo ""
-echo ">>> Stopping log backup after all tests..."
+echo ">>> Stopping log backup..."
 run_br log stop --task-name "$TASK_NAME" --pd "$PD_ADDR"
 echo "✓ Log backup stopped"
 
-# ==================== 清理 ====================
+# ==================== Cleanup ====================
 echo ""
 echo ">>> Cleaning up..."
-run_sql "DROP DATABASE IF EXISTS original_db;"
-run_sql "DROP DATABASE IF EXISTS new_db;"
+run_sql "DROP DATABASE IF EXISTS test_db;"
+run_sql "DROP DATABASE IF EXISTS initial_db;"
 
-# 清理备份目录
+# Clean up backup directory
 rm -rf "$TEST_DIR/$PREFIX"
 
 echo "✓ Test completed successfully"
