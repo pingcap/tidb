@@ -40,6 +40,11 @@ set global pd_enable_follower_handle_region = off;
 select @@pd_enable_follower_handle_region;
 set global pd_enable_follower_handle_region = on;
 select @@pd_enable_follower_handle_region;
+select @@tidb_enable_pd_router_service_handle_region;
+set global tidb_enable_pd_router_service_handle_region = off;
+select @@tidb_enable_pd_router_service_handle_region;
+set global tidb_enable_pd_router_service_handle_region = on;
+select @@tidb_enable_pd_router_service_handle_region;
 -- error 1229
 set tidb_tso_client_batch_max_wait_time = 0;
 set global tidb_enable_tso_follower_proxy = default;

@@ -87,6 +87,13 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 			return err
 		}
 		vardef.EnablePDFollowerHandleRegion.Store(val)
+	case vardef.TiDBEnablePDRouterServiceHandleRegion:
+		val := variable.TiDBOptOn(sVal)
+		err := do.updatePDClient(opt.EnableFollowerHandle, val)
+		if err != nil {
+			return err
+		}
+		vardef.EnablePDRouterServiceHandleRegion.Store(val)
 	case vardef.TiDBTSOClientRPCMode:
 		var concurrency int
 
