@@ -17,6 +17,7 @@ package model
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
@@ -87,6 +89,11 @@ var ExtraHandleName = ast.NewCIStr("_tidb_rowid")
 
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIDName = ast.NewCIStr("_tidb_tid")
+
+// VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
+// When read column by vector index, sometimes there is no need to read vector column just need distance,
+// so a distance column will be added to table_scan. this field is used in the action.
+const VirtualColVecSearchDistanceID int64 = -2000
 
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
@@ -196,6 +203,8 @@ type TableInfo struct {
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
+
+	Mode TableMode `json:"mode,omitempty"`
 }
 
 // Hash64 implement HashEquals interface.
@@ -242,7 +251,7 @@ func (t *TableInfo) Clone() *TableInfo {
 	nt := *t
 	nt.Columns = make([]*ColumnInfo, len(t.Columns))
 	nt.Indices = make([]*IndexInfo, len(t.Indices))
-	nt.ForeignKeys = make([]*FKInfo, len(t.ForeignKeys))
+	nt.ForeignKeys = nil
 
 	for i := range t.Columns {
 		nt.Columns[i] = t.Columns[i].Clone()
@@ -252,8 +261,11 @@ func (t *TableInfo) Clone() *TableInfo {
 		nt.Indices[i] = t.Indices[i].Clone()
 	}
 
-	for i := range t.ForeignKeys {
-		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+	if len(t.ForeignKeys) > 0 {
+		nt.ForeignKeys = make([]*FKInfo, len(t.ForeignKeys))
+		for i := range t.ForeignKeys {
+			nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+		}
 	}
 
 	if t.Partition != nil {
@@ -385,6 +397,8 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 	if from == to {
 		return
 	}
+
+	// Update column offsets.
 	updatedOffsets := make(map[int]int)
 	src := t.Columns[from]
 	if from < to {
@@ -402,12 +416,31 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 	}
 	t.Columns[to] = src
 	t.Columns[to].Offset = to
+
+	// Update index column offsets.
 	updatedOffsets[from] = to
 	for _, idx := range t.Indices {
 		for _, idxCol := range idx.Columns {
 			newOffset, ok := updatedOffsets[idxCol.Offset]
 			if ok {
 				idxCol.Offset = newOffset
+			}
+		}
+
+		for _, affectedCol := range idx.AffectColumn {
+			newOffset, ok := updatedOffsets[affectedCol.Offset]
+			if ok {
+				affectedCol.Offset = newOffset
+			}
+		}
+	}
+
+	// Reconstruct the dependency column offsets.
+	for _, col := range t.Columns {
+		if col.ChangeStateInfo != nil {
+			newOffset, ok := updatedOffsets[col.ChangeStateInfo.DependencyColumnOffset]
+			if ok {
+				col.ChangeStateInfo.DependencyColumnOffset = newOffset
 			}
 		}
 	}
@@ -556,6 +589,22 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 	return nil
 }
 
+// GetIdxChangingFieldType gets the field type of index column.
+// Since both old/new type may coexist in one column during modify column,
+// we need to get the correct type for index column.
+func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
+	if idxCol.UseChangingType && col.ChangingFieldType != nil {
+		return col.ChangingFieldType
+	}
+	return &col.FieldType
+}
+
+// ColumnNeedRestoredData checks whether a single index column needs restored data.
+func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
+	col := colInfos[idxCol.Offset]
+	return types.NeedRestoredData(GetIdxChangingFieldType(idxCol, col))
+}
+
 // TableNameInfo provides meta data describing a table name info.
 type TableNameInfo struct {
 	ID   int64     `json:"id"`
@@ -660,6 +709,38 @@ func (t TableLockState) String() string {
 	}
 }
 
+// TableMode is the state for table mode, it's a table level metadata for prevent
+// table read/write during importing(import into) or BR restoring.
+// when table mode isn't TableModeNormal, DMLs or DDLs that change the table will
+// return error.
+// To modify table mode, only internal DDL operations(AlterTableMode) are permitted.
+// Now allow switching between the same table modes, and not allow convert between
+// TableModeImport and TableModeRestore
+type TableMode byte
+
+const (
+	// TableModeNormal means the table is in normal mode.
+	TableModeNormal TableMode = iota
+	// TableModeImport means the table is in import mode.
+	TableModeImport
+	// TableModeRestore means the table is in restore mode.
+	TableModeRestore
+)
+
+// String implements fmt.Stringer interface.
+func (t TableMode) String() string {
+	switch t {
+	case TableModeNormal:
+		return "Normal"
+	case TableModeImport:
+		return "Import"
+	case TableModeRestore:
+		return "Restore"
+	default:
+		return ""
+	}
+}
+
 // TiFlashReplicaInfo means the flash replica info.
 type TiFlashReplicaInfo struct {
 	Count                 uint64
@@ -670,12 +751,7 @@ type TiFlashReplicaInfo struct {
 
 // IsPartitionAvailable checks whether the partition table replica was available.
 func (tr *TiFlashReplicaInfo) IsPartitionAvailable(pid int64) bool {
-	for _, id := range tr.AvailablePartitionIDs {
-		if id == pid {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tr.AvailablePartitionIDs, pid)
 }
 
 // ViewInfo provides meta data describing a DB view.
@@ -785,8 +861,7 @@ type PartitionInfo struct {
 // Clone clones itself.
 func (pi *PartitionInfo) Clone() *PartitionInfo {
 	newPi := *pi
-	newPi.Columns = make([]ast.CIStr, len(pi.Columns))
-	copy(newPi.Columns, pi.Columns)
+	newPi.Columns = slices.Clone(pi.Columns)
 
 	newPi.Definitions = make([]PartitionDefinition, len(pi.Definitions))
 	for i := range pi.Definitions {
@@ -1065,7 +1140,7 @@ func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
 			return ids
 		}
 	case ActionDropTablePartition:
-		if len(pi.DroppingDefinitions) > 0 && pi.DDLState == StateDeleteOnly {
+		if len(pi.DroppingDefinitions) > 0 {
 			ids := make([]int64, 0, len(pi.DroppingDefinitions))
 			for _, def := range pi.DroppingDefinitions {
 				ids = append(ids, def.ID)
@@ -1105,8 +1180,7 @@ type PartitionDefinition struct {
 // Clone clones PartitionDefinition.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
-	nci.LessThan = make([]string, len(ci.LessThan))
-	copy(nci.LessThan, ci.LessThan)
+	nci.LessThan = slices.Clone(ci.LessThan)
 	return nci
 }
 
@@ -1150,8 +1224,7 @@ type ConstraintInfo struct {
 func (ci *ConstraintInfo) Clone() *ConstraintInfo {
 	nci := *ci
 
-	nci.ConstraintCols = make([]ast.CIStr, len(ci.ConstraintCols))
-	copy(nci.ConstraintCols, ci.ConstraintCols)
+	nci.ConstraintCols = slices.Clone(ci.ConstraintCols)
 	return &nci
 }
 
@@ -1210,10 +1283,8 @@ func (fk *FKInfo) String(db, tb string) string {
 func (fk *FKInfo) Clone() *FKInfo {
 	nfk := *fk
 
-	nfk.RefCols = make([]ast.CIStr, len(fk.RefCols))
-	nfk.Cols = make([]ast.CIStr, len(fk.Cols))
-	copy(nfk.RefCols, fk.RefCols)
-	copy(nfk.Cols, fk.Cols)
+	nfk.RefCols = slices.Clone(fk.RefCols)
+	nfk.Cols = slices.Clone(fk.Cols)
 
 	return &nfk
 }

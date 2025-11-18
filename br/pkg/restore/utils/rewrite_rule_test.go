@@ -176,18 +176,22 @@ func TestRewriteRange(t *testing.T) {
 		// Test case 1: No rewrite rules
 		{
 			rg: &rtree.Range{
-				StartKey: []byte("startKey"),
-				EndKey:   []byte("endKey"),
+				KeyRange: rtree.KeyRange{
+					StartKey: []byte("startKey"),
+					EndKey:   []byte("endKey"),
+				},
 			},
 			rewriteRules:  nil,
-			expectedRange: &rtree.Range{StartKey: []byte("startKey"), EndKey: []byte("endKey")},
+			expectedRange: &rtree.Range{KeyRange: rtree.KeyRange{StartKey: []byte("startKey"), EndKey: []byte("endKey")}},
 			expectedError: nil,
 		},
 		// Test case 2: Rewrite rule found for both start key and end key
 		{
 			rg: &rtree.Range{
-				StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
-				EndKey:   append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
+				KeyRange: rtree.KeyRange{
+					StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
+					EndKey:   append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
+				},
 			},
 			rewriteRules: &utils.RewriteRules{
 				Data: []*import_sstpb.RewriteRule{
@@ -198,16 +202,20 @@ func TestRewriteRange(t *testing.T) {
 				},
 			},
 			expectedRange: &rtree.Range{
-				StartKey: append(tablecodec.GenTableIndexPrefix(2), []byte("startKey")...),
-				EndKey:   append(tablecodec.GenTableIndexPrefix(2), []byte("endKey")...),
+				KeyRange: rtree.KeyRange{
+					StartKey: append(tablecodec.GenTableIndexPrefix(2), []byte("startKey")...),
+					EndKey:   append(tablecodec.GenTableIndexPrefix(2), []byte("endKey")...),
+				},
 			},
 			expectedError: nil,
 		},
 		// Test case 3: Rewrite rule found for end key
 		{
 			rg: &rtree.Range{
-				StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
-				EndKey:   append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
+				KeyRange: rtree.KeyRange{
+					StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
+					EndKey:   append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
+				},
 			},
 			rewriteRules: &utils.RewriteRules{
 				Data: []*import_sstpb.RewriteRule{
@@ -218,16 +226,20 @@ func TestRewriteRange(t *testing.T) {
 				},
 			},
 			expectedRange: &rtree.Range{
-				StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
-				EndKey:   append(tablecodec.GenTableIndexPrefix(2), []byte("newEndKey")...),
+				KeyRange: rtree.KeyRange{
+					StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
+					EndKey:   append(tablecodec.GenTableIndexPrefix(2), []byte("newEndKey")...),
+				},
 			},
 			expectedError: nil,
 		},
 		// Test case 4: Table ID mismatch
 		{
 			rg: &rtree.Range{
-				StartKey: []byte("t1_startKey"),
-				EndKey:   []byte("t2_endKey"),
+				KeyRange: rtree.KeyRange{
+					StartKey: []byte("t1_startKey"),
+					EndKey:   []byte("t2_endKey"),
+				},
 			},
 			rewriteRules: &utils.RewriteRules{
 				Data: []*import_sstpb.RewriteRule{
@@ -609,7 +621,8 @@ func TestSetTimeRangeFilter(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.rules.SetTimeRangeFilter(tc.cfName)
+			rule := &import_sstpb.RewriteRule{}
+			err := utils.SetTimeRangeFilter(tc.rules, rule, tc.cfName)
 			if tc.expectError {
 				require.Error(t, err)
 				return
@@ -626,19 +639,62 @@ func TestSetTimeRangeFilter(t *testing.T) {
 			}
 
 			// Verify timestamps are set correctly
-			for _, rule := range tc.rules.Data {
-				require.Equal(t, tc.rules.RestoredTs, rule.IgnoreAfterTimestamp)
+			require.Equal(t, tc.rules.RestoredTs, rule.IgnoreAfterTimestamp)
 
-				if strings.Contains(tc.cfName, "default") {
-					if tc.rules.ShiftStartTs < tc.rules.StartTs {
-						require.Equal(t, tc.rules.ShiftStartTs, rule.IgnoreBeforeTimestamp)
-					} else {
-						require.Equal(t, tc.rules.StartTs, rule.IgnoreBeforeTimestamp)
-					}
-				} else if strings.Contains(tc.cfName, "write") {
+			if strings.Contains(tc.cfName, "default") {
+				if tc.rules.ShiftStartTs < tc.rules.StartTs {
+					require.Equal(t, tc.rules.ShiftStartTs, rule.IgnoreBeforeTimestamp)
+				} else {
 					require.Equal(t, tc.rules.StartTs, rule.IgnoreBeforeTimestamp)
 				}
+			} else if strings.Contains(tc.cfName, "write") {
+				require.Equal(t, tc.rules.StartTs, rule.IgnoreBeforeTimestamp)
 			}
 		})
 	}
+}
+
+func TestSetTimeRangeFilterRace(t *testing.T) {
+	// Create a shared rules object that will be read by multiple goroutines
+	rules := &utils.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{OldKeyPrefix: []byte("old"), NewKeyPrefix: []byte("new")},
+		},
+		ShiftStartTs: 50,
+		StartTs:      100,
+		RestoredTs:   200,
+	}
+
+	// Number of concurrent goroutines
+	numGoroutines := 100
+	// Channel to collect results
+	resultChan := make(chan *import_sstpb.RewriteRule, numGoroutines)
+
+	// Launch multiple goroutines to concurrently call SetTimeRangeFilter
+	for range numGoroutines {
+		go func() {
+			// Each goroutine creates its own rule
+			rule := &import_sstpb.RewriteRule{}
+			err := utils.SetTimeRangeFilter(rules, rule, "default")
+			if err != nil {
+				resultChan <- nil
+				return
+			}
+			resultChan <- rule
+		}()
+	}
+
+	// Wait for all goroutines to complete and check results
+	for range numGoroutines {
+		rule := <-resultChan
+		require.NotNil(t, rule)
+		// Verify the rule was correctly modified
+		require.Equal(t, uint64(50), rule.IgnoreBeforeTimestamp) // Should be ShiftStartTs for default cf
+		require.Equal(t, uint64(200), rule.IgnoreAfterTimestamp) // Should be RestoredTs
+	}
+
+	// Verify the rules were not modified
+	require.Equal(t, uint64(50), rules.ShiftStartTs)
+	require.Equal(t, uint64(100), rules.StartTs)
+	require.Equal(t, uint64(200), rules.RestoredTs)
 }

@@ -227,7 +227,7 @@ func (s *mockGCSSuite) testWriteAfterImport(importSQL string, sourceType importe
 			querySQL := "SELECT * FROM t;"
 			s.tk.MustQuery(querySQL).Check(testkit.Rows(allData...))
 
-			is := s.tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
+			is := s.tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
 			dbInfo, ok := is.SchemaByName(ast.NewCIStr("write_after_import"))
 			s.True(ok)
 			tableObj, err := is.TableByName(context.Background(), ast.NewCIStr("write_after_import"), ast.NewCIStr("t"))

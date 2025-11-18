@@ -252,7 +252,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 	nRows := func(n int) [][]types.Datum {
 		rows := make([][]types.Datum, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			rows[i] = []types.Datum{
 				types.NewIntDatum(int64(i)),
 			}
@@ -353,7 +353,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 		// check SQLs
 		expectedSQLs := make([]string, 0, len(sqls))
-		for i := 0; i < c.batchCnt; i++ {
+		for i := range c.batchCnt {
 			if c.cancelCtx && i >= c.cancelCtxBatch {
 				break
 			}
@@ -374,7 +374,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 		// check retry rows
 		var expectedRetryRows [][]types.Datum
-		for i := 0; i < c.batchCnt; i++ {
+		for i := range c.batchCnt {
 			if slices.Contains(c.retryErrBatches, i) || (c.cancelCtx && i >= c.cancelCtxBatch) {
 				expectedRetryRows = append(expectedRetryRows, task.rows[i*delBatch:(i+1)*delBatch]...)
 			}
@@ -383,7 +383,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 		// check statistics
 		var expectedErrRows uint64
-		for i := 0; i < c.batchCnt; i++ {
+		for i := range c.batchCnt {
 			if slices.Contains(c.noRetryErrBatches, i) && !(c.cancelCtx && i >= c.cancelCtxBatch) {
 				expectedErrRows += uint64(delBatch)
 			}
@@ -607,7 +607,7 @@ func TestDelRateLimiterConcurrency(t *testing.T) {
 	continue2 := make(chan struct{})
 	continue3 := make(chan struct{})
 	cnt := 4
-	for i := 0; i < cnt; i++ {
+	for range cnt {
 		go func() {
 			ctx := context.WithValue(context.Background(), beforeWaitLimiterForTest, func() {
 				if waiting.Add(1) == int64(cnt) {

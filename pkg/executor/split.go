@@ -164,7 +164,10 @@ func (e *SplitIndexRegionExec) getSplitIdxKeysFromValueList() (keys [][]byte, er
 
 func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromValueList(physicalID int64, keys [][]byte) ([][]byte, error) {
 	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
-	index := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
+	index, err := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
+	if err != nil {
+		return nil, err
+	}
 	sc := e.Ctx().GetSessionVars().StmtCtx
 	for _, v := range e.valueLists {
 		idxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), v, kv.IntHandle(math.MinInt64), nil)
@@ -226,7 +229,10 @@ func (e *SplitIndexRegionExec) getSplitIdxKeysFromBound() (keys [][]byte, err er
 
 func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromBound(physicalID int64, keys [][]byte) ([][]byte, error) {
 	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
-	index := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
+	index, err := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
+	if err != nil {
+		return nil, err
+	}
 	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
 	sc := e.Ctx().GetSessionVars().StmtCtx
 	lowerIdxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), e.lower, kv.IntHandle(math.MinInt64), nil)
@@ -437,7 +443,7 @@ func (e *SplitTableRegionExec) getSplitTableKeysFromValueList() ([][]byte, error
 func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromValueList(physicalID int64, keys [][]byte) ([][]byte, error) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
 	for _, v := range e.valueLists {
-		handle, err := e.handleCols.BuildHandleByDatums(v)
+		handle, err := e.handleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, v)
 		if err != nil {
 			return nil, err
 		}
@@ -537,11 +543,11 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID int
 		}
 		return keys, nil
 	}
-	lowerHandle, err := e.handleCols.BuildHandleByDatums(e.lower)
+	lowerHandle, err := e.handleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, e.lower)
 	if err != nil {
 		return nil, err
 	}
-	upperHandle, err := e.handleCols.BuildHandleByDatums(e.upper)
+	upperHandle, err := e.handleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, e.upper)
 	if err != nil {
 		return nil, err
 	}

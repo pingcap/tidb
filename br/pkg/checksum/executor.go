@@ -4,6 +4,7 @@ package checksum
 
 import (
 	"context"
+	"slices"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -18,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -34,8 +36,8 @@ type ExecutorBuilder struct {
 	oldKeyspace []byte
 	newKeyspace []byte
 
-	resourceGroupName         string
-	explicitRequestSourceType string
+	resourceGroupName string
+	requestSource     util.RequestSource
 }
 
 // NewExecutorBuilder returns a new executor builder.
@@ -81,8 +83,13 @@ func (builder *ExecutorBuilder) SetResourceGroupName(name string) *ExecutorBuild
 	return builder
 }
 
+func (builder *ExecutorBuilder) SetRequestSource(reqSource util.RequestSource) *ExecutorBuilder {
+	builder.requestSource = reqSource
+	return builder
+}
+
 func (builder *ExecutorBuilder) SetExplicitRequestSourceType(name string) *ExecutorBuilder {
-	builder.explicitRequestSourceType = name
+	builder.requestSource.ExplicitRequestSourceType = name
 	return builder
 }
 
@@ -96,7 +103,7 @@ func (builder *ExecutorBuilder) Build() (*Executor, error) {
 		builder.oldKeyspace,
 		builder.newKeyspace,
 		builder.resourceGroupName,
-		builder.explicitRequestSourceType,
+		builder.requestSource,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -111,7 +118,8 @@ func buildChecksumRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName, explicitRequestSourceType string,
+	resourceGroupName string,
+	requestSource util.RequestSource,
 ) ([]*kv.Request, error) {
 	var partDefs []model.PartitionDefinition
 	if part := newTable.Partition; part != nil {
@@ -124,7 +132,7 @@ func buildChecksumRequest(
 		oldTableID = oldTable.Info.ID
 	}
 	rs, err := buildRequest(newTable, newTable.ID, oldTable, oldTableID, startTS, concurrency,
-		oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
+		oldKeyspace, newKeyspace, resourceGroupName, requestSource)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -133,14 +141,13 @@ func buildChecksumRequest(
 	for _, partDef := range partDefs {
 		var oldPartID int64
 		if oldTable != nil {
-			for _, oldPartDef := range oldTable.Info.Partition.Definitions {
-				if oldPartDef.Name == partDef.Name {
-					oldPartID = oldPartDef.ID
-				}
+			oldPartID, err = utils.GetPartitionByName(oldTable.Info, partDef.Name)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 		rs, err := buildRequest(newTable, partDef.ID, oldTable, oldPartID, startTS, concurrency,
-			oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
+			oldKeyspace, newKeyspace, resourceGroupName, requestSource)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -159,11 +166,12 @@ func buildRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName, explicitRequestSourceType string,
+	resourceGroupName string,
+	requestSource util.RequestSource,
 ) ([]*kv.Request, error) {
 	reqs := make([]*kv.Request, 0)
 	req, err := buildTableRequest(tableInfo, tableID, oldTable, oldTableID, startTS, concurrency,
-		oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
+		oldKeyspace, newKeyspace, resourceGroupName, requestSource)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -193,7 +201,7 @@ func buildRequest(
 		}
 		req, err = buildIndexRequest(
 			tableID, indexInfo, oldTableID, oldIndexInfo, startTS, concurrency,
-			oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
+			oldKeyspace, newKeyspace, resourceGroupName, requestSource)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -212,13 +220,14 @@ func buildTableRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName, explicitRequestSourceType string,
+	resourceGroupName string,
+	requestSource util.RequestSource,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldTable != nil {
 		rule = &tipb.ChecksumRewriteRule{
-			OldPrefix: append(append([]byte{}, oldKeyspace...), tablecodec.GenTableRecordPrefix(oldTableID)...),
-			NewPrefix: append(append([]byte{}, newKeyspace...), tablecodec.GenTableRecordPrefix(tableID)...),
+			OldPrefix: slices.Concat(oldKeyspace, tablecodec.GenTableRecordPrefix(oldTableID)),
+			NewPrefix: slices.Concat(newKeyspace, tablecodec.GenTableRecordPrefix(tableID)),
 		}
 	}
 
@@ -243,7 +252,7 @@ func buildTableRequest(
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
 		SetResourceGroupName(resourceGroupName).
-		SetExplicitRequestSourceType(explicitRequestSourceType).
+		SetRequestSource(requestSource).
 		Build()
 }
 
@@ -256,15 +265,14 @@ func buildIndexRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName, ExplicitRequestSourceType string,
+	resourceGroupName string,
+	requestSource util.RequestSource,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldIndexInfo != nil {
 		rule = &tipb.ChecksumRewriteRule{
-			OldPrefix: append(append([]byte{}, oldKeyspace...),
-				tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)...),
-			NewPrefix: append(append([]byte{}, newKeyspace...),
-				tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)...),
+			OldPrefix: slices.Concat(oldKeyspace, tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)),
+			NewPrefix: slices.Concat(newKeyspace, tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)),
 		}
 	}
 	checksum := &tipb.ChecksumRequest{
@@ -283,7 +291,7 @@ func buildIndexRequest(
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
 		SetResourceGroupName(resourceGroupName).
-		SetExplicitRequestSourceType(ExplicitRequestSourceType).
+		SetRequestSource(requestSource).
 		Build()
 }
 

@@ -22,6 +22,9 @@ var (
 	_ StmtNode = &AnalyzeTableStmt{}
 	_ StmtNode = &DropStatsStmt{}
 	_ StmtNode = &LoadStatsStmt{}
+	_ StmtNode = &RefreshStatsStmt{}
+	_ StmtNode = &LockStatsStmt{}
+	_ StmtNode = &UnlockStatsStmt{}
 )
 
 // AnalyzeTableStmt is used to create table statistics.
@@ -347,4 +350,163 @@ func (n *UnlockStatsStmt) Accept(v Visitor) (Node, bool) {
 		n.Tables[i] = node.(*TableName)
 	}
 	return v.Leave(n)
+}
+
+// RefreshStatsStmt is the statement node for refreshing statistics.
+// It is used to refresh the statistics of a table, database, or all databases.
+// For example:
+// REFRESH STATS table1, db1.*
+// REFRESH STATS *.*
+type RefreshStatsStmt struct {
+	stmtNode
+
+	RefreshObjects []*RefreshObject
+	// RefreshMode is non-nil when a refresh strategy is explicitly specified.
+	RefreshMode *RefreshStatsMode
+	// IsClusterWide indicates whether the refresh operation is for the entire cluster.
+	IsClusterWide bool
+}
+
+// RefreshStatsMode represents the refresh strategy requested by the user.
+type RefreshStatsMode int
+
+const (
+	// RefreshStatsModeLite forces a lite statistics refresh.
+	// Same as lite-init-stats=true in the configuration file.
+	RefreshStatsModeLite RefreshStatsMode = iota
+
+	// RefreshStatsModeFull forces a full statistics refresh.
+	// Same as lite-init-stats=false in the configuration file.
+	RefreshStatsModeFull
+)
+
+func (n *RefreshStatsStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("REFRESH STATS ")
+	for index, refreshObject := range n.RefreshObjects {
+		if index != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := refreshObject.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore RefreshStatsStmt.RefreshObjects[%d]", index)
+		}
+	}
+	if n.RefreshMode != nil {
+		switch *n.RefreshMode {
+		case RefreshStatsModeLite:
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("LITE")
+		case RefreshStatsModeFull:
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("FULL")
+		default:
+			return errors.Errorf("invalid refresh stats mode: %d", *n.RefreshMode)
+		}
+	}
+	if n.IsClusterWide {
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord("CLUSTER")
+	}
+	return nil
+}
+
+func (n *RefreshStatsStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RefreshStatsStmt)
+	return v.Leave(n)
+}
+
+func (n *RefreshStatsStmt) Dedup() {
+	if len(n.RefreshObjects) == 0 {
+		return
+	}
+
+	dbSeen := make(map[string]struct{})
+	tableSeen := make(map[string]struct{})
+	result := make([]*RefreshObject, 0, len(n.RefreshObjects))
+
+	for _, obj := range n.RefreshObjects {
+		switch obj.RefreshObjectScope {
+		// Global scope supersedes everything else. Keep the first global target only.
+		case RefreshObjectScopeGlobal:
+			n.RefreshObjects = []*RefreshObject{obj}
+			return
+		case RefreshObjectScopeDatabase:
+			dbKey := obj.DBName.L
+			if _, exists := dbSeen[dbKey]; exists {
+				continue
+			}
+			dbSeen[dbKey] = struct{}{}
+
+			// Remove tables from the same database that might have been added earlier.
+			filtered := result[:0]
+			for _, existing := range result {
+				if existing.RefreshObjectScope == RefreshObjectScopeTable {
+					existingDBKey := existing.DBName.L
+					if existingDBKey != "" && existingDBKey == dbKey {
+						tblKey := existingDBKey + "." + existing.TableName.L
+						delete(tableSeen, tblKey)
+						continue
+					}
+				}
+				filtered = append(filtered, existing)
+			}
+			result = append(filtered, obj)
+
+		case RefreshObjectScopeTable:
+			dbKey := obj.DBName.L
+			if dbKey != "" {
+				if _, exists := dbSeen[dbKey]; exists {
+					continue
+				}
+			}
+			tblKey := dbKey + "." + obj.TableName.L
+			if _, exists := tableSeen[tblKey]; exists {
+				continue
+			}
+			tableSeen[tblKey] = struct{}{}
+			result = append(result, obj)
+		}
+	}
+
+	n.RefreshObjects = result
+}
+
+type RefreshObjectScopeType int
+
+const (
+	// RefreshObjectScopeTable is the scope of a table.
+	RefreshObjectScopeTable RefreshObjectScopeType = iota + 1
+	// RefreshObjectScopeDatabase is the scope of a database.
+	RefreshObjectScopeDatabase
+	// RefreshObjectScopeGlobal is the scope of all databases.
+	RefreshObjectScopeGlobal
+)
+
+type RefreshObject struct {
+	RefreshObjectScope RefreshObjectScopeType
+	DBName             CIStr
+	TableName          CIStr
+}
+
+func (o *RefreshObject) Restore(ctx *format.RestoreCtx) error {
+	switch o.RefreshObjectScope {
+	case RefreshObjectScopeTable:
+		if o.DBName.O != "" {
+			ctx.WriteName(o.DBName.O)
+			ctx.WritePlain(".")
+		}
+		ctx.WriteName(o.TableName.O)
+	case RefreshObjectScopeDatabase:
+		ctx.WriteName(o.DBName.O)
+		ctx.WritePlain(".*")
+	case RefreshObjectScopeGlobal:
+		ctx.WritePlain("*.*")
+	default:
+		// This should never happen.
+		return errors.Errorf("invalid refresh object scope: %d", o.RefreshObjectScope)
+	}
+	return nil
 }

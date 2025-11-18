@@ -301,7 +301,7 @@ func TestLatch(t *testing.T) {
 
 	fn := func() {
 		tk1.MustExec("begin")
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			tk1.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 		}
 		tk2.MustExec("begin")
@@ -342,7 +342,8 @@ func TestReplaceLog(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("b")
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)

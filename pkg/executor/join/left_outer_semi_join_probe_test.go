@@ -17,10 +17,11 @@ package join
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -60,7 +61,7 @@ func genLeftOuterSemiOrSemiJoinOrLeftOuterAntiSemiResultImpl(t *testing.T, sessC
 			filterVector, err = expression.VectorizedFilter(sessCtx.GetExprCtx().GetEvalCtx(), sessCtx.GetSessionVars().EnableVectorizedExpression, leftFilter, chunk.NewIterator4Chunk(leftChunk), filterVector)
 			require.NoError(t, err)
 		}
-		for leftIndex := 0; leftIndex < leftChunk.NumRows(); leftIndex++ {
+		for leftIndex := range leftChunk.NumRows() {
 			filterIndex := leftIndex
 			if leftChunk.Sel() != nil {
 				filterIndex = leftChunk.Sel()[leftIndex]
@@ -91,7 +92,7 @@ func genLeftOuterSemiOrSemiJoinOrLeftOuterAntiSemiResultImpl(t *testing.T, sessC
 
 			// For each row in right chunks
 			for _, rightChunk := range rightChunks {
-				for rightIndex := 0; rightIndex < rightChunk.NumRows(); rightIndex++ {
+				for rightIndex := range rightChunk.NumRows() {
 					rightRow := rightChunk.GetRow(rightIndex)
 					valid := !containsNullKey(leftRow, leftKeyIndex) && !containsNullKey(rightRow, rightKeyIndex)
 					if valid {
@@ -192,14 +193,14 @@ func testLeftOuterSemiOrSemiJoinProbeBasic(t *testing.T, isLeftOuter bool, isAnt
 		hasFilter = append(hasFilter, true)
 	}
 
-	var joinType logicalop.JoinType
+	var joinType base.JoinType
 	if isLeftOuter {
-		joinType = logicalop.LeftOuterSemiJoin
+		joinType = base.LeftOuterSemiJoin
 		if isAnti {
-			joinType = logicalop.AntiLeftOuterSemiJoin
+			joinType = base.AntiLeftOuterSemiJoin
 		}
 	} else {
-		joinType = logicalop.SemiJoin
+		joinType = base.SemiJoin
 	}
 
 	testCases := []testCase{
@@ -280,14 +281,14 @@ func testLeftOuterSemiJoinProbeAllJoinKeys(t *testing.T, isLeftOuter bool, isAnt
 	rTypes := lTypes
 	lUsed := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
 	rUsed := []int{}
-	var joinType logicalop.JoinType
+	var joinType base.JoinType
 	if isLeftOuter {
-		joinType = logicalop.LeftOuterSemiJoin
+		joinType = base.LeftOuterSemiJoin
 		if isAnti {
-			joinType = logicalop.AntiLeftOuterSemiJoin
+			joinType = base.AntiLeftOuterSemiJoin
 		}
 	} else {
-		joinType = logicalop.SemiJoin
+		joinType = base.SemiJoin
 	}
 	partitionNumber := 4
 
@@ -297,7 +298,7 @@ func testLeftOuterSemiJoinProbeAllJoinKeys(t *testing.T, isLeftOuter bool, isAnt
 	}
 
 	// single key
-	for i := 0; i < len(lTypes); i++ {
+	for i := range lTypes {
 		lKeyTypes := []*types.FieldType{lTypes[i]}
 		rKeyTypes := []*types.FieldType{rTypes[i]}
 		for _, rightAsBuild := range rightAsBuildSide {
@@ -365,14 +366,14 @@ func testLeftOuterSemiJoinProbeOtherCondition(t *testing.T, isLeftOuter bool, is
 	otherCondition2 := make(expression.CNFExprs, 0)
 	otherCondition2 = append(otherCondition2, sf2)
 
-	var joinType logicalop.JoinType
+	var joinType base.JoinType
 	if isLeftOuter {
-		joinType = logicalop.LeftOuterSemiJoin
+		joinType = base.LeftOuterSemiJoin
 		if isAnti {
-			joinType = logicalop.AntiLeftOuterSemiJoin
+			joinType = base.AntiLeftOuterSemiJoin
 		}
 	} else {
-		joinType = logicalop.SemiJoin
+		joinType = base.SemiJoin
 	}
 
 	simpleFilter := createSimpleFilter(t)
@@ -433,14 +434,14 @@ func testLeftOuterSemiJoinProbeWithSel(t *testing.T, isLeftOuter bool, isAnti bo
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
 
-	var joinType logicalop.JoinType
+	var joinType base.JoinType
 	if isLeftOuter {
-		joinType = logicalop.LeftOuterSemiJoin
+		joinType = base.LeftOuterSemiJoin
 		if isAnti {
-			joinType = logicalop.AntiLeftOuterSemiJoin
+			joinType = base.AntiLeftOuterSemiJoin
 		}
 	} else {
-		joinType = logicalop.SemiJoin
+		joinType = base.SemiJoin
 	}
 
 	rightAsBuildSide := []bool{true}
@@ -520,9 +521,9 @@ func testLeftOuterSemiJoinOrLeftOuterAntiSemiJoinBuildResultFastPath(t *testing.
 	otherCondition = append(otherCondition, sf)
 	otherCondition2 := make(expression.CNFExprs, 0)
 	otherCondition2 = append(otherCondition2, sf2)
-	joinType := logicalop.LeftOuterSemiJoin
+	joinType := base.LeftOuterSemiJoin
 	if isAnti {
-		joinType = logicalop.AntiLeftOuterSemiJoin
+		joinType = base.AntiLeftOuterSemiJoin
 	}
 	simpleFilter := createSimpleFilter(t)
 	hasFilter := []bool{false, true}
@@ -560,6 +561,8 @@ func TestLeftOuterSemiJoinSpill(t *testing.T) {
 }
 
 func testLeftOuterSemiJoinOrLeftOuterAntiSemiJoinSpill(t *testing.T, isAnti bool) {
+	testFuncName := util.GetFunctionName()
+
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -591,18 +594,17 @@ func testLeftOuterSemiJoinOrLeftOuterAntiSemiJoinSpill(t *testing.T, isAnti bool
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
 
-	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	joinType := logicalop.LeftOuterSemiJoin
+	joinType := base.LeftOuterSemiJoin
 	if isAnti {
-		joinType = logicalop.AntiLeftOuterSemiJoin
+		joinType = base.AntiLeftOuterSemiJoin
 	}
 	params := []spillTestParam{
 		// basic case
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{3000000, 1700000, 3500000, 100000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{2000000, 2000000, 3000000, 100000, 5000}, testFuncName},
 		// with other condition
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, otherCondition, []int{1}, []int{3}, []int64{3000000, 1700000, 3500000, 100000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, otherCondition, []int{1}, []int{3}, []int64{2000000, 2000000, 3300000, 100000, 5000}, testFuncName},
 	}
 
 	for _, param := range params {
@@ -611,12 +613,13 @@ func testLeftOuterSemiJoinOrLeftOuterAntiSemiJoinSpill(t *testing.T, isAnti bool
 
 	params2 := []spillTestParam{
 		// basic case with sel
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{1000000, 900000, 1700000, 100000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{700000, 1000000, 1500000, 100000, 5000}, testFuncName},
 		// with other condition with sel
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, otherCondition, []int{1}, []int{3}, []int64{1000000, 900000, 1600000, 100000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, otherCondition, []int{1}, []int{3}, []int64{1000000, 1000000, 1700000, 100000, 5000}, testFuncName},
 	}
 
 	for _, param := range params2 {
 		testSpill(t, ctx, joinType, leftDataSourceWithSel, rightDataSourceWithSel, param)
 	}
+	util.CheckNoLeakFiles(t, testFuncName)
 }

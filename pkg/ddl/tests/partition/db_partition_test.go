@@ -19,7 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -77,6 +78,7 @@ func checkGlobalIndexCleanUpDone(t *testing.T, ctx sessionctx.Context, tblInfo *
 		segs := tablecodec.SplitIndexValue(it.Value())
 		require.NotNil(t, segs.PartitionID)
 		_, pi, err := codec.DecodeInt(segs.PartitionID)
+		logutil.DDLLogger().Info("checkGlobalIndexCleanUpDone jobs", zap.String("key", it.Key().String()), zap.Int64("PartID", pi))
 		require.NoError(t, err)
 		require.NotEqual(t, pid, pi)
 		cnt++
@@ -763,7 +765,7 @@ create table log_message_1 (
 func generatePartitionTableByNum(num int) string {
 	buf := bytes.NewBuffer(make([]byte, 0, 1024*1024))
 	buf.WriteString("create table gen_t (id int) partition by list  (id) (")
-	for i := 0; i < num; i++ {
+	for i := range num {
 		if i > 0 {
 			buf.WriteString(",")
 		}
@@ -1487,14 +1489,14 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	idxInfo := tt.Meta().FindIndexByName("idx_b")
 	require.NotNil(t, idxInfo)
 	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
-	require.Equal(t, 3, cnt)
+	require.Equal(t, 4, cnt)
 
 	idxInfo = tt.Meta().FindIndexByName("idx_c")
 	require.NotNil(t, idxInfo)
 	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
-	require.Equal(t, 3, cnt)
-	tk.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
-	tk.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+	require.Equal(t, 4, cnt)
+	tk.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows("15"))
+	tk.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows("15"))
 	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
 	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
 }
@@ -2132,8 +2134,7 @@ func TestAddPartitionTooManyPartitions(t *testing.T) {
 }
 
 func waitGCDeleteRangeDone(t *testing.T, tk *testkit.TestKit, physicalID int64) bool {
-	var i int
-	for i = 0; i < waitForCleanDataRound; i++ {
+	for range waitForCleanDataRound {
 		rs, err := tk.Exec("select count(1) from mysql.gc_delete_range_done where element_id = ?", physicalID)
 		require.NoError(t, err)
 		rows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
@@ -2188,7 +2189,7 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 	// Test truncate common table.
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (id int(11));")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t1 values (?)", i)
 	}
 	result := tk.MustQuery("select count(*) from t1;")
@@ -2200,7 +2201,7 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 	// Test drop common table.
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("create table t2 (id int(11));")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t2 values (?)", i)
 	}
 	result = tk.MustQuery("select count(*) from t2;")
@@ -2326,7 +2327,7 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 	newTblInfo, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("clients"))
 	require.NoError(t, err)
 	newDefs := newTblInfo.Meta().Partition.Definitions
-	for i := 0; i < len(oldDefs); i++ {
+	for i := range oldDefs {
 		require.True(t, oldDefs[i].ID != newDefs[i].ID)
 	}
 }
@@ -2365,7 +2366,7 @@ func testPartitionDropIndex(t *testing.T, store kv.Storage, lease time.Duration,
    	);`)
 
 	num := 20
-	for i := 0; i < num; i++ {
+	for i := range num {
 		tk.MustExec("insert into partition_drop_idx values (?, ?, ?)", i, i, i)
 	}
 	tk.MustExec(addIdxSQL)
@@ -2449,7 +2450,7 @@ func testPartitionAddIndex(tk *testkit.TestKit, t *testing.T, key string) {
 
 	f := func(end int, isPK bool) string {
 		dml := "insert into partition_add_idx values"
-		for i := 0; i < end; i++ {
+		for i := range end {
 			dVal := 1988 + rand.Intn(30)
 			if isPK {
 				dVal = 1518 + i
@@ -2543,7 +2544,7 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 	}
 
 	// check records num after drop database.
-	for i := 0; i < waitForCleanDataRound; i++ {
+	for range waitForCleanDataRound {
 		recordsNum = getPartitionTableRecordsNum(t, ctx, tbl.(table.PartitionedTable))
 		if recordsNum == 0 {
 			break
@@ -2617,6 +2618,10 @@ func TestPartitionErrorCode(t *testing.T) {
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part repair partition p1;", errno.ErrUnsupportedDDLOperation)
 
+	if kerneltype.IsNextGen() {
+		// MDL is always enabled and read only in nextgen
+		return
+	}
 	// Reduce the impact on DML when executing partition DDL
 	tk1.MustExec("use test")
 	tk1.MustExec("set global tidb_enable_metadata_lock=0")
@@ -2633,6 +2638,9 @@ func TestPartitionErrorCode(t *testing.T) {
 }
 
 func TestCommitWhenSchemaChange(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
@@ -2816,9 +2824,9 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.True(t, tbl.Meta().TiFlashReplica.Available)
 	pids := p.GetAllPartitionIDs()
-	sort.Slice(pids, func(i, j int) bool { return pids[i] < pids[j] })
+	slices.Sort(pids)
 	availablePids := tbl.Meta().TiFlashReplica.AvailablePartitionIDs
-	sort.Slice(availablePids, func(i, j int) bool { return availablePids[i] < availablePids[j] })
+	slices.Sort(availablePids)
 	require.Equal(t, pids, availablePids)
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWaitTiFlashReplicaOK", `return(true)`))
 	defer func() {
@@ -3218,31 +3226,31 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	tk2.MustExec(`insert into t values (null, 26)`)
 	tk3.MustExec(`COMMIT`)
 	tk2.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11",
+		"14 2 2",
+		"15 12 12",
+		"17 16 18",
+		"19 18 4",
+		"21 20 5",
+		"23 22 6",
+		"25 24 7",
 		"27 26 8",
-		"30012 12 12",
-		"30013 18 4",
-		"30014 24 7",
-		"30015 16 18",
-		"30016 22 6",
-		"30017 28 9",
-		"30018 11 11",
-		"30019 2 2",
-		"30020 20 5",
+		"29 28 9",
 		"31 30 10",
 		"35 34 22",
 		"39 38 24",
 		"43 42 26"))
 	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11",
+		"14 2 2",
+		"15 12 12",
+		"17 16 18",
+		"19 18 4",
+		"21 20 5",
+		"23 22 6",
+		"25 24 7",
 		"27 26 8",
-		"30012 12 12",
-		"30013 18 4",
-		"30014 24 7",
-		"30015 16 18",
-		"30016 22 6",
-		"30017 28 9",
-		"30018 11 11",
-		"30019 2 2",
-		"30020 20 5",
+		"29 28 9",
 		"31 30 10",
 		"33 32 21",
 		"35 34 22",
@@ -3252,16 +3260,16 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	waitFor(4, "t", "public")
 	tk2.MustExec(`commit`)
 	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11",
+		"14 2 2",
+		"15 12 12",
+		"17 16 18",
+		"19 18 4",
+		"21 20 5",
+		"23 22 6",
+		"25 24 7",
 		"27 26 8",
-		"30012 12 12",
-		"30013 18 4",
-		"30014 24 7",
-		"30015 16 18",
-		"30016 22 6",
-		"30017 28 9",
-		"30018 11 11",
-		"30019 2 2",
-		"30020 20 5",
+		"29 28 9",
 		"31 30 10",
 		"33 32 21",
 		"35 34 22",
@@ -3758,4 +3766,48 @@ func TestTruncateNumberOfPhases(t *testing.T) {
 	tk.MustExec(`alter table t truncate partition p1`)
 	dom.Reload()
 	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
+}
+
+// Test for issue 64176.
+func TestExchangeTiDBRowID(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, primary key (a) nonclustered)`)
+	tk.MustExec(`create table tp (a int, b int, primary key (a) nonclustered) partition by hash (a) partitions 2`)
+
+	tk.MustExec(`insert into t values (2,2),(4,4),(6,6)`)
+	tk.MustExec(`insert into tp values (2,2),(4,4),(6,6)`)
+	tk.MustExec(`insert into t select a + 8, b + 8 from t`)
+
+	tk.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows(""+
+		"10 10 4",
+		"12 12 5",
+		"14 14 6",
+		"2 2 1",
+		"4 4 2",
+		"6 6 3"))
+	tk.MustQuery(`select *, _tidb_rowid from tp`).Sort().Check(testkit.Rows(""+
+		"2 2 1",
+		"4 4 2",
+		"6 6 3"))
+
+	tk.MustExec(`alter table tp exchange partition p0 with table t`)
+	tk.MustExec(`insert into t values (8,8)`)
+	// This failed before, since it will use _tidb_rowid = 4
+	tk.MustExec(`insert into tp values (8,8)`)
+
+	tk.MustQuery(`select *, _tidb_rowid from tp`).Sort().Check(testkit.Rows(""+
+		"10 10 4",
+		"12 12 5",
+		"14 14 6",
+		"2 2 1",
+		"4 4 2",
+		"6 6 3",
+		"8 8 30001"))
+	tk.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows(""+
+		"2 2 1",
+		"4 4 2",
+		"6 6 3",
+		"8 8 30001"))
 }

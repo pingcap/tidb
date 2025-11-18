@@ -117,7 +117,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d'", tableInfo.Meta().ID)).Check(testkit.Rows("0"))
 	// insert demo tuples, and there is no record either.
 	insertNums := 5
-	for i := 0; i < insertNums; i++ {
+	for range insertNums {
 		tk.MustExec("insert into test.t (a,b) values (1,1), (2,2), (3,3)")
 		err := h.DumpStatsDeltaToKV(false)
 		require.NoError(t, err)
@@ -128,7 +128,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	defer tk.MustExec("set global tidb_enable_historical_stats = 0")
 
-	for i := 0; i < insertNums; i++ {
+	for range insertNums {
 		tk.MustExec("insert into test.t (a,b) values (1,1), (2,2), (3,3)")
 		err := h.DumpStatsDeltaToKV(false)
 		require.NoError(t, err)

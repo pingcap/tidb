@@ -27,6 +27,7 @@ go_library(
         "//pkg/util/generic",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",
+        "@com_github_gogo_protobuf//proto",
         "@com_github_jellydator_ttlcache_v3//:ttlcache",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -49,6 +50,7 @@ go_test(
     ],
     embed = [":runaway"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "@com_github_stretchr_testify//assert",
         "@com_github_tikv_client_go_v2//util",

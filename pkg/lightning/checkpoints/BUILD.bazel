@@ -18,6 +18,7 @@ go_library(
         "//pkg/lightning/mydump",
         "//pkg/lightning/verification",
         "//pkg/meta/model",
+        "//pkg/util/logutil",
         "@com_github_joho_sqltocsv//:sqltocsv",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",

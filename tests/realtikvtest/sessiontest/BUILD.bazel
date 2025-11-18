@@ -4,6 +4,7 @@ go_test(
     name = "sessiontest_test",
     timeout = "moderate",
     srcs = [
+        "infoschema_test.go",
         "infoschema_v2_test.go",
         "main_test.go",
         "paging_test.go",
@@ -11,6 +12,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
+    shard_count = 16,
     deps = [
         "//pkg/config",
         "//pkg/infoschema",

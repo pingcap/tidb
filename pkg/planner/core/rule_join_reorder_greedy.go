@@ -21,10 +21,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 type joinReorderGreedySolver struct {
+	allInnerJoin bool // allInnerJoin indicates whether all joins in the current join group are inner joins.
 	*baseSingleGroupJoinOrderSolver
 }
 
@@ -44,9 +46,9 @@ type joinReorderGreedySolver struct {
 //
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
-func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer *joinReorderTrace) (base.LogicalPlan, error) {
+func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan) (base.LogicalPlan, error) {
 	var err error
-	s.curJoinGroup, err = s.generateJoinOrderNode(joinNodePlans, tracer)
+	s.curJoinGroup, err = s.generateJoinOrderNode(joinNodePlans)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +56,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer
 	if s.leadingJoinGroup != nil {
 		// We have a leading hint to let some tables join first. The result is stored in the s.leadingJoinGroup.
 		// We generate jrNode separately for it.
-		leadingJoinNodes, err = s.generateJoinOrderNode([]base.LogicalPlan{s.leadingJoinGroup}, tracer)
+		leadingJoinNodes, err = s.generateJoinOrderNode([]base.LogicalPlan{s.leadingJoinGroup})
 		if err != nil {
 			return nil, err
 		}
@@ -74,7 +76,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer
 	}
 	var cartesianGroup []base.LogicalPlan
 	for len(s.curJoinGroup) > 0 {
-		newNode, err := s.constructConnectedJoinTree(tracer)
+		newNode, err := s.constructConnectedJoinTree()
 		if err != nil {
 			return nil, err
 		}
@@ -93,17 +95,22 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer
 	return s.makeBushyJoin(cartesianGroup), nil
 }
 
-func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {
+func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) {
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
+	cartesianThreshold := s.ctx.GetSessionVars().CartesianJoinOrderThreshold
 	for {
 		bestCost := math.MaxFloat64
-		bestIdx, whateverValidOneIdx := -1, -1
+		bestIdx, whateverValidOneIdx, bestIsCartesian := -1, -1, false
 		var finalRemainOthers, remainOthersOfWhateverValidOne []expression.Expression
 		var bestJoin, whateverValidOne base.LogicalPlan
 		for i, node := range s.curJoinGroup {
-			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p)
-			if newJoin == nil {
+			newJoin, remainOthers, isCartesian := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p)
+			if isCartesian {
+				s.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptCartesianJoinOrderThreshold)
+			}
+			if newJoin == nil || // can't yield a valid join
+				(cartesianThreshold <= 0 && isCartesian) { // disable cartesian join
 				continue
 			}
 			_, _, err := newJoin.RecursiveDeriveStats(nil)
@@ -114,12 +121,25 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			whateverValidOneIdx = i
 			remainOthersOfWhateverValidOne = remainOthers
 			curCost := s.calcJoinCumCost(newJoin, curJoinTree, node)
-			tracer.appendLogicalJoinCost(newJoin, curCost)
-			if bestCost > curCost {
+
+			// Cartesian join is risky but skipping it brutally may lead to bad join orders, see #63290.
+			// To trade-off, we use a ratio as penalty to control the preference.
+			// Only select a cartesian join when cost(cartesian)*ratio < cost(non-cartesian).
+			curIsBetter := false
+			if !bestIsCartesian && isCartesian {
+				curIsBetter = curCost*cartesianThreshold < bestCost
+			} else if bestIsCartesian && !isCartesian {
+				curIsBetter = curCost < bestCost*cartesianThreshold
+			} else {
+				curIsBetter = curCost < bestCost
+			}
+
+			if curIsBetter {
 				bestCost = curCost
 				bestJoin = newJoin
 				bestIdx = i
 				finalRemainOthers = remainOthers
+				bestIsCartesian = isCartesian
 			}
 		}
 		// If we could find more join node, meaning that the sub connected graph have been totally explored.
@@ -139,16 +159,23 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			p:       bestJoin,
 			cumCost: bestCost,
 		}
-		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
+		s.curJoinGroup = slices.Delete(s.curJoinGroup, bestIdx, bestIdx+1)
 		s.otherConds = finalRemainOthers
 	}
 	return curJoinTree, nil
 }
 
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan) (base.LogicalPlan, []expression.Expression) {
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan) (base.LogicalPlan, []expression.Expression, bool) {
 	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
-	if len(usedEdges) == 0 {
-		return nil, nil
+	if len(usedEdges) == 0 && // cartesian join
+		(!s.allInnerJoin || // not all joins are inner joins
+			s.ctx.GetSessionVars().CartesianJoinOrderThreshold <= 0) { // cartesian join is disabled
+		// For outer joins like `t1 left join t2 left join t3`, we have to ensure t1 participates join before
+		// t2 and t3, and cartesian join between t2 and t3 might lead to incorrect results.
+		// For safety we don't allow cartesian outer join here.
+		// For inner joins like `t1 join t2 join t3`, we can reorder them freely, so we allow cartesian join here.
+		return nil, nil, false
 	}
-	return s.makeJoin(leftPlan, rightPlan, usedEdges, joinType)
+	join, otherConds := s.makeJoin(leftPlan, rightPlan, usedEdges, joinType)
+	return join, otherConds, len(usedEdges) == 0
 }

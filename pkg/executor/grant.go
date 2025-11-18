@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"go.uber.org/zap"
 )
 
@@ -95,7 +97,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			}
 		}
 		dbNameStr := ast.NewCIStr(dbName)
-		schema := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+		schema := e.Ctx().GetDomain().(*domain.Domain).InfoSchema()
 		tbl, err := schema.TableByName(ctx, dbNameStr, ast.NewCIStr(e.Level.TableName))
 		// Allow GRANT on non-existent table with at least create privilege, see issue #28533 #29268
 		if err != nil {
@@ -160,6 +162,10 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	// Check which user is not exist.
 	for _, user := range e.Users {
+		if user.User.CurrentUser {
+			user.User.Username = e.Ctx().GetSessionVars().User.AuthUsername
+			user.User.Hostname = e.Ctx().GetSessionVars().User.AuthHostname
+		}
 		exists, err := userExists(ctx, e.Ctx(), user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err
@@ -420,8 +426,8 @@ func tlsOption2GlobalPriv(authTokenOrTLSOptions []*ast.AuthTokenOrTLSOption) (pr
 		case ast.Cipher:
 			gp.SSLType = privileges.SslTypeSpecified
 			if len(opt.Value) > 0 {
-				if _, ok := util.SupportCipher[opt.Value]; !ok {
-					err = errors.Errorf("Unsupported cipher suit: %s", opt.Value)
+				if _, ok := tlsutil.SupportCipher[opt.Value]; !ok {
+					err = errors.Errorf("Unsupported cipher suite: %s", opt.Value)
 					return
 				}
 				gp.SSLCipher = opt.Value
@@ -525,10 +531,8 @@ func (*GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, inter
 
 // grantDBLevel manipulates mysql.db table.
 func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	for _, v := range mysql.StaticGlobalOnlyPrivs {
-		if v == priv.Priv {
-			return exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
-		}
+	if slices.Contains(mysql.StaticGlobalOnlyPrivs, priv.Priv) {
+		return exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
 	}
 
 	dbName := e.Level.DBName

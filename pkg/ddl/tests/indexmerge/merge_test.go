@@ -16,10 +16,13 @@ package indexmergetest
 
 import (
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -43,7 +46,6 @@ func TestAddIndexMergeProcess(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2, 3), (4, 5, 6);")
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
 	var checkErr error
 	var runDML, backfillDone bool
@@ -64,7 +66,6 @@ func TestAddIndexMergeProcess(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t add index idx(c1);")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	require.True(t, backfillDone)
 	require.True(t, runDML)
 	require.NoError(t, checkErr)
@@ -83,12 +84,11 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2, 3), (4, 5, 6);")
 	// Force onCreateIndex use the backfill-merge process.
 	ingest.LitInitialized = false
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
 	var checkErr error
 	var runDML, backfillDone bool
 	// only trigger reload when schema version changed
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/disableOnTickReload", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/disableOnTickReload", "return(true)")
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, _ int64) {
 		if !runDML && job.Type == model.ActionAddPrimaryKey && job.SchemaState == model.StateWriteReorganization {
 			idx := testutil.FindIdxInfo(dom, "test", "t", "primary")
@@ -125,7 +125,6 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 	tk.MustExec("insert into t values (1);")
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
 	var checkErr error
 	var runDML bool
@@ -174,7 +173,6 @@ func TestAddIndexMergeIndexUntouchedValue(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1, 'a', 'a')")
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
 	var checkErrs []error
 	var runInsert bool
@@ -300,7 +298,6 @@ func TestAddIndexMergeIndexUpdateOnDeleteOnly(t *testing.T) {
 
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 	tk.MustExec("set @@global.tidb_enable_mutation_checker = 1;")
 	tk.MustExec("set @@global.tidb_txn_assertion_level = 'STRICT';")
 
@@ -413,6 +410,9 @@ func TestAddIndexMergeDoubleDelete(t *testing.T) {
 }
 
 func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -428,7 +428,6 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 	tk.MustExec("set @@global.tidb_enable_metadata_lock = 0;")
 
 	runPessimisticTxn := false
@@ -478,6 +477,62 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
 }
 
+func TestNextGenPessimisticTxnNotFailWithTempIndex(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("only meaningful when next-gen kernel enforces temp index locking")
+	}
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_pess")
+	tk.MustExec("create table t_pess (id int primary key, b int);")
+	tk.MustExec("insert into t_pess values (1, 1);")
+
+	origLit := ingest.LitInitialized
+	ingest.LitInitialized = false
+	t.Cleanup(func() { ingest.LitInitialized = origLit })
+
+	txnReady := make(chan struct{})
+	txnDone := make(chan error, 1)
+	var startTxnOnce sync.Once
+	var txnStarted atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if t.Failed() || job.Type != model.ActionAddIndex || job.SchemaState != model.StateWriteReorganization {
+			return
+		}
+		idx := testutil.FindIdxInfo(dom, "test", "t_pess", "idx_b")
+		if idx == nil || idx.BackfillState != model.BackfillStateRunning {
+			return
+		}
+		triggered := false
+		startTxnOnce.Do(func() {
+			triggered = true
+			txnStarted.Store(true)
+			// let the user transaction acquire pessimistic lock first
+			go func() {
+				tk2 := testkit.NewTestKit(t, store)
+				tk2.MustExec("use test")
+				tk2.MustExec("begin pessimistic")
+				tk2.MustExec("update t_pess set b = b + 10 where id = 1")
+				txnReady <- struct{}{}
+				time.Sleep(200 * time.Millisecond)
+				txnDone <- tk2.ExecToErr("commit")
+			}()
+		})
+		// Wait for the txn to hold the pessimistic lock
+		if triggered {
+			<-txnReady
+		}
+	})
+
+	// Assert: both user transaction and DDL will succeed, and data are consistent
+	tk.MustExec("alter table t_pess add index idx_b(b);")
+	require.True(t, txnStarted.Load())
+	require.NoError(t, <-txnDone)
+	tk.MustExec("admin check table t_pess")
+	tk.MustQuery("select * from t_pess").Check(testkit.Rows("1 11"))
+}
+
 func TestAddIndexMergeInsertOnMerging(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -505,18 +560,20 @@ func TestAddIndexMergeInsertOnMerging(t *testing.T) {
 		}
 	})
 
-	ddl.MockDMLExecutionStateMerging = func() {
-		_, err := tk1.Exec("insert into t values (5, 8);")
-		assert.Error(t, err) // [kv:1062]Duplicate entry '5' for key 't.idx'
-		_, err = tk1.Exec("insert into t values (5, 8) on duplicate key update a = 6;")
-		assert.NoError(t, err) // The row should be normally updated to (6, 5).
-		ddl.MockDMLExecutionStateMerging = nil
-	}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateMerging", "return(true)"))
+	insertOnce := sync.Once{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunReorgJobAndHandleErr", func(allIndexInfos []*model.IndexInfo) {
+		if allIndexInfos[0].BackfillState == model.BackfillStateMerging {
+			insertOnce.Do(func() {
+				_, err := tk1.Exec("insert into t values (5, 8);")
+				assert.Error(t, err) // [kv:1062]Duplicate entry '5' for key 't.idx'
+				_, err = tk1.Exec("insert into t values (5, 8) on duplicate key update a = 6;")
+				assert.NoError(t, err) // The row should be normally updated to (6, 5).
+			})
+		}
+	})
 	tk.MustExec("alter table t add unique index idx(a);")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("6 5"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateMerging"))
 }
 
 func TestAddIndexMergeReplaceOnMerging(t *testing.T) {
@@ -535,18 +592,21 @@ func TestAddIndexMergeReplaceOnMerging(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	ddl.MockDMLExecutionStateMerging = func() {
-		_, err := tk1.Exec("replace into t values (5, 8);")
-		assert.NoError(t, err)
-		ddl.MockDMLExecutionStateMerging = nil
-	}
+	insertOnce := sync.Once{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunReorgJobAndHandleErr", func(allIndexInfos []*model.IndexInfo) {
+		if allIndexInfos[0].BackfillState == model.BackfillStateMerging {
+			insertOnce.Do(func() {
+				_, err := tk1.Exec("replace into t values (5, 8);")
+				assert.NoError(t, err)
+			})
+		}
+	})
+
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateMerging", "return(true)"))
 	tk.MustExec("alter table t add unique index idx(a);")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("5 8"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateMerging"))
 }
 
 func TestAddIndexMergeInsertToDeletedTempIndex(t *testing.T) {

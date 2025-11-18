@@ -56,10 +56,10 @@ const (
 // Datum is a data box holds different kind of data.
 // It has better performance and is easier to use than `interface{}`.
 type Datum struct {
-	k byte        // datum kind.
-	i int64       // i can hold int64 uint64 float64 values.
-	b []byte      // b can hold string or []byte values.
-	x interface{} // x hold all other types.
+	k byte   // datum kind.
+	i int64  // i can hold int64 uint64 float64 values.
+	b []byte // b can hold string or []byte values.
+	x any    // x hold all other types.
 }
 
 // Kind gets the kind of the datum.
@@ -140,12 +140,12 @@ func (d *Datum) SetBytesAsString(b []byte) {
 }
 
 // GetInterface gets interface value.
-func (d *Datum) GetInterface() interface{} {
+func (d *Datum) GetInterface() any {
 	return d.x
 }
 
 // SetInterface sets interface to datum.
-func (d *Datum) SetInterface(x interface{}) {
+func (d *Datum) SetInterface(x any) {
 	d.k = KindInterface
 	d.x = x
 }
@@ -179,7 +179,7 @@ func (d *Datum) SetMysqlDecimal(b *MyDecimal) {
 }
 
 // GetValue gets the value of the datum of any kind.
-func (d *Datum) GetValue() interface{} {
+func (d *Datum) GetValue() any {
 	switch d.k {
 	case KindInt64:
 		return d.GetInt64()
@@ -203,7 +203,7 @@ func (d *Datum) GetValue() interface{} {
 }
 
 // SetValue sets any kind of value.
-func (d *Datum) SetValue(val interface{}) {
+func (d *Datum) SetValue(val any) {
 	switch x := val.(type) {
 	case nil:
 		d.SetNull()
@@ -241,9 +241,9 @@ func (d *Datum) SetValue(val interface{}) {
 }
 
 // NewDatum creates a new Datum from an interface{}.
-func NewDatum(in interface{}) (d Datum) {
+func NewDatum(in any) (d Datum) {
 	switch x := in.(type) {
-	case []interface{}:
+	case []any:
 		d.SetValue(MakeDatums(x...))
 	default:
 		d.SetValue(in)
@@ -264,7 +264,7 @@ func NewStringDatum(s string) (d Datum) {
 }
 
 // MakeDatums creates datum slice from interfaces.
-func MakeDatums(args ...interface{}) []Datum {
+func MakeDatums(args ...any) []Datum {
 	datums := make([]Datum, len(args))
 	for i, v := range args {
 		datums[i] = NewDatum(v)
@@ -343,7 +343,7 @@ func ParseBitStr(s string) (BinaryLiteral, error) {
 	byteLength := len(s) >> 3
 	buf := make([]byte, byteLength)
 
-	for i := 0; i < byteLength; i++ {
+	for i := range byteLength {
 		strPosition := i << 3
 		val, err := strconv.ParseUint(s[strPosition:strPosition+8], 2, 8)
 		if err != nil {
@@ -429,7 +429,7 @@ func SetBinChsClnFlag(ft *types.FieldType) {
 const DefaultFsp = int8(0)
 
 // DefaultTypeForValue returns the default FieldType for the value.
-func DefaultTypeForValue(value interface{}, tp *types.FieldType, charset string, collate string) {
+func DefaultTypeForValue(value any, tp *types.FieldType, charset string, collate string) {
 	switch x := value.(type) {
 	case nil:
 		tp.SetType(mysql.TypeNull)

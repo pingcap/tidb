@@ -148,16 +148,26 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 		errVerboseLogger = logger
 	}
 
-	// init dedicated logger for slow query log
-	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
-	if err != nil {
-		return errors.Trace(err)
+	// init dedicated logger for slow query log,
+	// we should use same writeSyncer when filenames are equal.
+	if cfg.SlowQueryFile != "" && cfg.SlowQueryFile != cfg.File.Filename {
+		SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		SlowQueryLogger = newSlowQueryLoggerFromZapLogger(gl, props)
 	}
 
-	// init dedicated logger for general log
-	GeneralLogger, _, err = newGeneralLogger(cfg)
-	if err != nil {
-		return errors.Trace(err)
+	// init dedicated logger for general log,
+	// we should use same writeSyncer when filenames are equal.
+	if cfg.GeneralLogFile != "" && cfg.GeneralLogFile != cfg.File.Filename {
+		GeneralLogger, _, err = newGeneralLogger(cfg)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		GeneralLogger = gl
 	}
 
 	initGRPCLogger(gl)
@@ -376,6 +386,14 @@ func WithFields(ctx context.Context, fields ...zap.Field) context.Context {
 	return context.WithValue(ctx, CtxLogKey, logger)
 }
 
+// WithLogger attaches a logger to context.
+func WithLogger(ctx context.Context, logger *zap.Logger) context.Context {
+	if logger == nil {
+		logger = log.L()
+	}
+	return context.WithValue(ctx, CtxLogKey, logger)
+}
+
 // TraceEventKey presents the TraceEventKey in span log.
 const TraceEventKey = "event"
 
@@ -441,6 +459,25 @@ func SampleLoggerFactory(tick time.Duration, first int, fields ...zap.Field) fun
 				return zapcore.NewSamplerWithOptions(core, tick, first, 0)
 			})
 			logger = BgLogger().With(fields...).With(zap.String("sampled", "")).WithOptions(sampleCore)
+		})
+		return logger
+	}
+}
+
+// SampleErrVerboseLoggerFactory returns a factory function that creates a sample logger with error verbose logging.
+// It works similarly to SampleLoggerFactory but ensures that error details are always logged,
+// regardless of the logging configuration.
+func SampleErrVerboseLoggerFactory(tick time.Duration, first int, fields ...zap.Field) func() *zap.Logger {
+	var (
+		once   sync.Once
+		logger *zap.Logger
+	)
+	return func() *zap.Logger {
+		once.Do(func() {
+			sampleCore := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+				return zapcore.NewSamplerWithOptions(core, tick, first, 0)
+			})
+			logger = ErrVerboseLogger().With(fields...).With(zap.String("sampled", "")).WithOptions(sampleCore)
 		})
 		return logger
 	}

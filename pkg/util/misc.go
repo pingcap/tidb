@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
@@ -64,7 +65,7 @@ const (
 // RunWithRetry will run the f with backoff and retry.
 // retryCnt: Max retry count
 // backoff: When run f failed, it will sleep backoff * triedCount time.Millisecond.
-// Function f should have two return value. The first one is an bool which indicate if the err if retryable.
+// Function f should have two return value. The first one is an bool which indicate if the err is retryable.
 // The second is if the f meet any error.
 func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err error) {
 	for i := 1; i <= retryCnt; i++ {
@@ -73,6 +74,7 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 		if err == nil || !retryAble {
 			return errors.Trace(err)
 		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		sleepTime := time.Duration(backoff*uint64(i)) * time.Millisecond
 		time.Sleep(sleepTime)
 	}
@@ -119,6 +121,11 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 		zap.Any("r", r),
 		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
+	if intest.InTest {
+		if strings.Contains(fmt.Sprintf("%v", r), "assert failed") {
+			panic(r)
+		}
+	}
 
 	if recoverFn != nil {
 		recoverFn()
@@ -177,49 +184,6 @@ func SyntaxWarn(err error) error {
 	}
 
 	return parser.ErrParse.FastGenByArgs(SyntaxErrorPrefix, err.Error())
-}
-
-var (
-	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = ast.NewCIStr("INFORMATION_SCHEMA")
-	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = ast.NewCIStr("PERFORMANCE_SCHEMA")
-	// MetricSchemaName is the `METRICS_SCHEMA` database name.
-	MetricSchemaName = ast.NewCIStr("METRICS_SCHEMA")
-	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
-	ClusterTableInstanceColumnName = "INSTANCE"
-)
-
-// IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
-func IsMemOrSysDB(dbLowerName string) bool {
-	return IsMemDB(dbLowerName) || IsSysDB(dbLowerName)
-}
-
-// IsMemDB checks whether dbLowerName is memory database.
-func IsMemDB(dbLowerName string) bool {
-	switch dbLowerName {
-	case InformationSchemaName.L,
-		PerformanceSchemaName.L,
-		MetricSchemaName.L:
-		return true
-	}
-	return false
-}
-
-// IsSysDB checks whether dbLowerName is system database.
-func IsSysDB(dbLowerName string) bool {
-	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB || dbLowerName == mysql.WorkloadSchema
-}
-
-// IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
-func IsSystemView(dbLowerName string) bool {
-	switch dbLowerName {
-	case InformationSchemaName.L,
-		PerformanceSchemaName.L,
-		MetricSchemaName.L:
-		return true
-	}
-	return false
 }
 
 // X509NameOnline prints pkix.Name into old X509_NAME_oneline format.
@@ -353,48 +317,6 @@ func CheckSupportX509NameOneline(oneline string) (err error) {
 	return
 }
 
-var tlsCipherString = map[uint16]string{
-	tls.TLS_RSA_WITH_RC4_128_SHA:                "RC4-SHA",
-	tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:           "DES-CBC3-SHA",
-	tls.TLS_RSA_WITH_AES_128_CBC_SHA:            "AES128-SHA",
-	tls.TLS_RSA_WITH_AES_256_CBC_SHA:            "AES256-SHA",
-	tls.TLS_RSA_WITH_AES_128_CBC_SHA256:         "AES128-SHA256",
-	tls.TLS_RSA_WITH_AES_128_GCM_SHA256:         "AES128-GCM-SHA256",
-	tls.TLS_RSA_WITH_AES_256_GCM_SHA384:         "AES256-GCM-SHA384",
-	tls.TLS_ECDHE_ECDSA_WITH_RC4_128_SHA:        "ECDHE-ECDSA-RC4-SHA",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:    "ECDHE-ECDSA-AES128-SHA",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:    "ECDHE-ECDSA-AES256-SHA",
-	tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA:          "ECDHE-RSA-RC4-SHA",
-	tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA:     "ECDHE-RSA-DES-CBC3-SHA",
-	tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:      "ECDHE-RSA-AES128-SHA",
-	tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:      "ECDHE-RSA-AES256-SHA",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256: "ECDHE-ECDSA-AES128-SHA256",
-	tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256:   "ECDHE-RSA-AES128-SHA256",
-	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:   "ECDHE-RSA-AES128-GCM-SHA256",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: "ECDHE-ECDSA-AES128-GCM-SHA256",
-	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:   "ECDHE-RSA-AES256-GCM-SHA384",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: "ECDHE-ECDSA-AES256-GCM-SHA384",
-	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305:    "ECDHE-RSA-CHACHA20-POLY1305",
-	tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305:  "ECDHE-ECDSA-CHACHA20-POLY1305",
-	// TLS 1.3 cipher suites, compatible with mysql using '_'.
-	tls.TLS_AES_128_GCM_SHA256:       "TLS_AES_128_GCM_SHA256",
-	tls.TLS_AES_256_GCM_SHA384:       "TLS_AES_256_GCM_SHA384",
-	tls.TLS_CHACHA20_POLY1305_SHA256: "TLS_CHACHA20_POLY1305_SHA256",
-}
-
-// SupportCipher maintains cipher supported by TiDB.
-var SupportCipher = make(map[string]struct{}, len(tlsCipherString))
-
-// TLSCipher2String convert tls num to string.
-// Taken from https://testssl.sh/openssl-rfc.mapping.html .
-func TLSCipher2String(n uint16) string {
-	s, ok := tlsCipherString[n]
-	if !ok {
-		return ""
-	}
-	return s
-}
-
 // ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
 func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool, isTiFlashStore bool) []*tipb.ColumnInfo {
 	cols := make([]*tipb.ColumnInfo, 0, len(columns))
@@ -441,9 +363,6 @@ func ColumnToProto(c *model.ColumnInfo, forIndex bool, isTiFlashStore bool) *tip
 }
 
 func init() {
-	for _, value := range tlsCipherString {
-		SupportCipher[value] = struct{}{}
-	}
 	for key, value := range pkixAttributeTypeNames {
 		pkixTypeNameAttributes[value] = key
 	}
@@ -583,11 +502,14 @@ func initInternalClient() {
 	}
 	if tlsCfg == nil {
 		internalHTTPSchema = "http"
-		internalHTTPClient = http.DefaultClient
+		internalHTTPClient = &http.Client{
+			Timeout: 5 * time.Minute,
+		}
 		return
 	}
 	internalHTTPSchema = "https"
 	internalHTTPClient = &http.Client{
+		Timeout:   5 * time.Minute,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
 }

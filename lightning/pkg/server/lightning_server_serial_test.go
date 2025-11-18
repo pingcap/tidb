@@ -120,7 +120,7 @@ func TestRunServer(t *testing.T) {
 	require.Regexp(t, "^invalid task configuration:", data["error"])
 	require.NoError(t, resp.Body.Close())
 
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		resp, err = http.Post(url, "application/toml", strings.NewReader(fmt.Sprintf(`
 			[mydumper]
 			data-source-dir = 'file://demo-path-%d'

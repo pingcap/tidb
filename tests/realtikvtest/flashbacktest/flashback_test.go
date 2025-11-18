@@ -61,38 +61,36 @@ func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
 }
 
 func TestFlashback(t *testing.T) {
-	if *realtikvtest.WithRealTiKV {
-		store := realtikvtest.CreateMockStoreAndSetup(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
-		tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(t, store)
 
-		timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
-		defer resetGC()
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
 
-		tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t(a int, index i(a))")
-		tk.MustExec("insert t values (1), (2), (3)")
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index i(a))")
+	tk.MustExec("insert t values (1), (2), (3)")
 
-		time.Sleep(1 * time.Second)
+	time.Sleep(1 * time.Second)
 
-		ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
-		require.NoError(t, err)
+	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
 
-		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
+	injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
 
-		tk.MustExec("insert t values (4), (5), (6)")
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
+	tk.MustExec("insert t values (4), (5), (6)")
+	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
-		tk.MustExec("admin check table t")
-		require.Equal(t, tk.MustQuery("select max(a) from t").Rows()[0][0], "3")
-		require.Equal(t, tk.MustQuery("select max(a) from t use index(i)").Rows()[0][0], "3")
+	tk.MustExec("admin check table t")
+	require.Equal(t, tk.MustQuery("select max(a) from t").Rows()[0][0], "3")
+	require.Equal(t, tk.MustQuery("select max(a) from t use index(i)").Rows()[0][0], "3")
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
-	}
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
 }
 
 func TestPrepareFlashbackFailed(t *testing.T) {
@@ -448,7 +446,7 @@ func TestFlashbackPartitionTable(t *testing.T) {
 			"partition `a_2` values less than (75), " +
 			"partition `a_3` values less than (200))")
 
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 		}
 

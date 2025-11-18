@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -106,13 +107,7 @@ func TestRevokeTableScope(t *testing.T) {
 			row := rows[0]
 			require.Len(t, row, 1)
 			op := v.SetString()
-			found := false
-			for _, p := range executor.SetFromString(fmt.Sprintf("%s", row[0])) {
-				if op == p {
-					found = true
-					break
-				}
-			}
+			found := slices.Contains(executor.SetFromString(fmt.Sprintf("%s", row[0])), op)
 			require.False(t, found, "%s", mysql.Priv2SetStr[v])
 		} else {
 			//delete row when last prv , updated by issue #38421

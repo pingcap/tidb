@@ -19,11 +19,15 @@ import (
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // StartSubtask updates the subtask state to running.
 func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execID string) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		vars := se.GetSessionVars()
 		_, err := sqlexec.ExecSQL(ctx,
@@ -47,6 +51,9 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 
 // FinishSubtask updates the subtask meta and mark state to succeed.
 func (mgr *TaskManager) FinishSubtask(ctx context.Context, execID string, id int64, meta []byte) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
 		set meta = %?, state = %?, state_update_time = unix_timestamp(), end_time = CURRENT_TIMESTAMP()
 		where id = %? and exec_id = %?`,
@@ -81,6 +88,9 @@ func (mgr *TaskManager) FailSubtask(ctx context.Context, execID string, taskID i
 
 // CancelSubtask update the task's subtasks' state to canceled.
 func (mgr *TaskManager) CancelSubtask(ctx context.Context, execID string, taskID int64) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	_, err1 := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask
 		set state = %?,
@@ -101,6 +111,9 @@ func (mgr *TaskManager) CancelSubtask(ctx context.Context, execID string, taskID
 
 // PauseSubtasks update all running/pending subtasks to pasued state.
 func (mgr *TaskManager) PauseSubtasks(ctx context.Context, execID string, taskID int64) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask set state = "paused" where task_key = %? and state in ("running", "pending") and exec_id = %?`, taskID, execID)
 	return err
@@ -108,6 +121,9 @@ func (mgr *TaskManager) PauseSubtasks(ctx context.Context, execID string, taskID
 
 // ResumeSubtasks update all paused subtasks to pending state.
 func (mgr *TaskManager) ResumeSubtasks(ctx context.Context, taskID int64) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask set state = "pending", error = null where task_key = %? and state = "paused"`, taskID)
 	return err
@@ -118,6 +134,9 @@ func (mgr *TaskManager) RunningSubtasksBack2Pending(ctx context.Context, subtask
 	// skip the update process.
 	if len(subtasks) == 0 {
 		return nil
+	}
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
 	}
 	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		for _, subtask := range subtasks {

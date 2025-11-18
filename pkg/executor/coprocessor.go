@@ -199,7 +199,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(ctx context.Context, req *copro
 	}
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
-	b := newExecutorBuilder(h.sctx, is)
+	b := newExecutorBuilder(h.sctx, is, nil)
 	return b.build(plan), nil
 }
 
@@ -220,7 +220,7 @@ func (h *CoprocessorDAGHandler) buildUnaryResponse(chunks []tipb.Chunk) *coproce
 		Chunks:     chunks,
 		EncodeType: h.dagReq.EncodeType,
 	}
-	if h.dagReq.CollectExecutionSummaries != nil && *h.dagReq.CollectExecutionSummaries {
+	if h.dagReq.GetCollectExecutionSummaries() {
 		execSummary := make([]*tipb.ExecutorExecutionSummary, len(h.dagReq.Executors))
 		for i := range execSummary {
 			// TODO: Add real executor execution summary information.
@@ -277,7 +277,7 @@ func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.Fie
 	requestedRow := make([]byte, 0)
 	chunks := []tipb.Chunk{}
 	errCtx := stmtCtx.ErrCtx()
-	for i := 0; i < chk.NumRows(); i++ {
+	for i := range chk.NumRows() {
 		requestedRow = requestedRow[:0]
 		row := chk.GetRow(i)
 		for _, ordinal := range colOrdinal {

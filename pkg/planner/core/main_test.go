@@ -33,7 +33,7 @@ func TestMain(m *testing.M) {
 
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
-	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
+	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
 	testDataMap.LoadTestSuiteData("testdata", "plan_cache_suite")
 

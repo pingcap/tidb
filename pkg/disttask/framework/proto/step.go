@@ -14,7 +14,9 @@
 
 package proto
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // Step is the step of task.
 type Step int64
@@ -97,11 +99,11 @@ func importIntoStep2Str(s Step) string {
 	case ImportStepPostProcess:
 		return "post-process"
 	case ImportStepEncodeAndSort:
-		return "encode&sort"
+		return "encode"
 	case ImportStepMergeSort:
 		return "merge-sort"
 	case ImportStepWriteAndIngest:
-		return "write&ingest"
+		return "ingest"
 	default:
 		return fmt.Sprintf("unknown step %d", s)
 	}
@@ -124,6 +126,9 @@ const (
 
 	// BackfillStepWriteAndIngest write sorted kv into TiKV and ingest it.
 	BackfillStepWriteAndIngest Step = 3
+
+	// BackfillStepMergeTempIndex is the step to merge temp index into the original index.
+	BackfillStepMergeTempIndex Step = 4
 )
 
 // StepStr convert proto.Step to string.
@@ -134,7 +139,9 @@ func backfillStep2Str(s Step) string {
 	case BackfillStepMergeSort:
 		return "merge-sort"
 	case BackfillStepWriteAndIngest:
-		return "write&ingest"
+		return "ingest"
+	case BackfillStepMergeTempIndex:
+		return "merge-temp-index"
 	default:
 		return fmt.Sprintf("unknown step %d", s)
 	}

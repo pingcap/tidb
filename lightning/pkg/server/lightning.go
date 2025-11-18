@@ -192,10 +192,7 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 func (lrw *loggingResponseWriter) Write(d []byte) (int, error) {
 	// keep first part of the response for logging, max 1K
 	if lrw.body == "" && len(d) > 0 {
-		length := len(d)
-		if length > 1024 {
-			length = 1024
-		}
+		length := min(len(d), 1024)
 		lrw.body = string(d[:length])
 	}
 	return lrw.ResponseWriter.Write(d)
@@ -452,7 +449,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	l.metrics = metrics
 
 	ctx := metric.WithMetric(taskCtx, metrics)
-	ctx = log.NewContext(ctx, o.logger)
+	ctx = logutil.WithLogger(ctx, o.logger.Logger)
 	ctx, cancel := context.WithCancel(ctx)
 	l.cancelLock.Lock()
 	l.cancel = cancel
@@ -536,7 +533,10 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	loadTask := o.logger.Begin(zap.InfoLevel, "load data source")
 	var mdl *mydump.MDLoader
-	mdl, err = mydump.NewLoaderWithStore(ctx, mydump.NewLoaderCfg(taskCfg), s)
+	mdl, err = mydump.NewLoaderWithStore(
+		ctx, mydump.NewLoaderCfg(taskCfg), s,
+		mydump.WithScanFileConcurrency(l.curTask.App.RegionConcurrency*2),
+	)
 	loadTask.End(zap.ErrorLevel, err)
 	if err != nil {
 		return errors.Trace(err)

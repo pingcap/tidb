@@ -36,6 +36,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -540,7 +541,7 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 		serviceGCSafePoint: 0,
 	}
 	stores := make([]*fakeStore, 0, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		s := new(fakeStore)
 		s.id = c.idAlloc()
 		s.regions = map[uint64]*region{}
@@ -555,7 +556,7 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 			enabled: simEnabled,
 		},
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if i < len(stores) {
 			stores[i].regions[initialRegion.id] = initialRegion
 		}
@@ -676,7 +677,7 @@ func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}
@@ -781,14 +782,14 @@ func (t *testEnv) putTask() {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}
 	t.taskCh <- tsk
 }
 
-func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, endKey []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.maxTs != maxVersion {
@@ -898,6 +899,10 @@ func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOpt
 
 func (p *mockPDClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
+}
+
+func (p *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return p
 }
 
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {

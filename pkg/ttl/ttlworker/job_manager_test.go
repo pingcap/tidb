@@ -24,11 +24,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -146,9 +146,9 @@ var updateStatusSQL = "SELECT LOW_PRIORITY table_id,parent_table_id,table_statis
 // TTLJob exports the ttlJob for test
 type TTLJob = ttlJob
 
-// GetSessionForTest is used for test
-func GetSessionForTest(pool util.SessionPool) (session.Session, error) {
-	return getSession(pool)
+// WithSessionForTest is used for test
+func WithSessionForTest(pool syssession.Pool, fn func(session.Session) error) error {
+	return withSession(pool, fn)
 }
 
 // LockJob is an exported version of lockNewJob for test
@@ -456,7 +456,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -478,7 +478,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -514,7 +514,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -544,7 +544,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{

@@ -16,11 +16,13 @@ package ddl_test
 
 import (
 	"context"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -389,4 +391,73 @@ func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) e
 		return errors.Trace(err)
 	}
 	return txn.Commit(context.Background())
+}
+
+func TestAddIndexRowCountUpdate(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int primary key, c2 int)")
+	tk.MustExec("insert t values (1, 1), (2, 2), (3, 3);")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+
+	var jobID int64
+	rowCntUpdated := make(chan struct{})
+	backfillDone := make(chan struct{})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs", "return(50)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterHandleBackfillTask", func(id int64) {
+		jobID = id
+		backfillDone <- struct{}{}
+		<-rowCntUpdated
+	})
+	go func() {
+		defer func() {
+			rowCntUpdated <- struct{}{}
+		}()
+		<-backfillDone
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		require.Eventually(t, func() bool {
+			rs := tk2.MustQuery("admin show ddl jobs 1;").Rows()
+			idStr := rs[0][0].(string)
+			id, err := strconv.Atoi(idStr)
+			require.NoError(t, err)
+			require.Equal(t, int64(id), jobID)
+			rcStr := rs[0][7].(string)
+			rc, err := strconv.Atoi(rcStr)
+			require.NoError(t, err)
+			return rc > 0
+		}, 2*time.Minute, 60*time.Millisecond)
+	}()
+	tk.MustExec("alter table t add index idx(c2);")
+}
+
+func TestFastReOrgAlwaysEnabledOnNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("This test is only for next-gen TiDB")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_ddl_enable_fast_reorg").Equal(testkit.Rows("1"))
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_ddl_enable_fast_reorg=0"),
+		"setting tidb_ddl_enable_fast_reorg is not supported in the next generation of TiDB")
+}
+
+func TestReadOnlyVarsInNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("This test is only for next-gen TiDB")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_max_dist_task_nodes=5"),
+		"setting tidb_max_dist_task_nodes is not supported in the next generation of TiDB")
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_ddl_reorg_max_write_speed=5"),
+		"setting tidb_ddl_reorg_max_write_speed is not supported in the next generation of TiDB")
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_ddl_disk_quota=5"),
+		"setting tidb_ddl_disk_quota is not supported in the next generation of TiDB")
 }

@@ -140,6 +140,7 @@ func TestMergeChunkCheckpoint(t *testing.T) {
 		Key:      key,
 		Checksum: verification.MakeKVChecksum(700, 15, 1234567890),
 		Pos:      1055,
+		RealPos:  1053,
 		RowID:    31,
 	}
 	m.MergeInto(cpd)
@@ -150,6 +151,7 @@ func TestMergeChunkCheckpoint(t *testing.T) {
 				chunks: map[ChunkCheckpointKey]chunkCheckpointDiff{
 					key: {
 						pos:      1055,
+						realPos:  1053,
 						rowID:    31,
 						checksum: verification.MakeKVChecksum(700, 15, 1234567890),
 					},
@@ -163,6 +165,7 @@ func TestMergeChunkCheckpoint(t *testing.T) {
 		Key:      key,
 		Checksum: verification.MakeKVChecksum(800, 20, 1357924680),
 		Pos:      1080,
+		RealPos:  1070,
 		RowID:    42,
 	}
 	m.MergeInto(cpd)
@@ -173,6 +176,7 @@ func TestMergeChunkCheckpoint(t *testing.T) {
 				chunks: map[ChunkCheckpointKey]chunkCheckpointDiff{
 					key: {
 						pos:      1080,
+						realPos:  1070,
 						rowID:    42,
 						checksum: verification.MakeKVChecksum(800, 20, 1357924680),
 					},
@@ -228,6 +232,7 @@ func TestApplyDiff(t *testing.T) {
 						Key: ChunkCheckpointKey{Path: "/tmp/01.sql"},
 						Chunk: mydump.Chunk{
 							Offset:       0,
+							RealOffset:   0,
 							EndOffset:    20000,
 							PrevRowIDMax: 0,
 							RowIDMax:     1000,
@@ -237,6 +242,7 @@ func TestApplyDiff(t *testing.T) {
 						Key: ChunkCheckpointKey{Path: "/tmp/04.sql"},
 						Chunk: mydump.Chunk{
 							Offset:       0,
+							RealOffset:   0,
 							EndOffset:    15000,
 							PrevRowIDMax: 1000,
 							RowIDMax:     1300,
@@ -261,24 +267,28 @@ func TestApplyDiff(t *testing.T) {
 		Key:      ChunkCheckpointKey{Path: "/tmp/01.sql"},
 		Checksum: verification.MakeKVChecksum(3333, 4444, 5555),
 		Pos:      6666,
+		RealPos:  6565,
 		RowID:    777,
 	}).MergeInto(cpd)
 	(&ChunkCheckpointMerger{
 		EngineID: 5678,
 		Key:      ChunkCheckpointKey{Path: "/tmp/04.sql"},
 		Pos:      9999,
+		RealPos:  9888,
 		RowID:    888,
 	}).MergeInto(cpd)
 	(&ChunkCheckpointMerger{
 		EngineID: 0,
 		Key:      ChunkCheckpointKey{Path: "/tmp/03.sql"},
 		Pos:      3636,
+		RealPos:  3535,
 		RowID:    2222,
 	}).MergeInto(cpd)
 	(&ChunkCheckpointMerger{
 		EngineID: 0,
 		Key:      ChunkCheckpointKey{Path: "/tmp/10.sql"},
 		Pos:      4949,
+		RealPos:  4848,
 		RowID:    444,
 	}).MergeInto(cpd)
 
@@ -300,6 +310,7 @@ func TestApplyDiff(t *testing.T) {
 						Key: ChunkCheckpointKey{Path: "/tmp/01.sql"},
 						Chunk: mydump.Chunk{
 							Offset:       6666,
+							RealOffset:   6565,
 							EndOffset:    20000,
 							PrevRowIDMax: 777,
 							RowIDMax:     1000,
@@ -310,6 +321,7 @@ func TestApplyDiff(t *testing.T) {
 						Key: ChunkCheckpointKey{Path: "/tmp/04.sql"},
 						Chunk: mydump.Chunk{
 							Offset:       0,
+							RealOffset:   0,
 							EndOffset:    15000,
 							PrevRowIDMax: 1000,
 							RowIDMax:     1300,

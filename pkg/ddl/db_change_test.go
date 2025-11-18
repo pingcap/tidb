@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -189,9 +189,9 @@ func TestTwoStates(t *testing.T) {
 		execCases: cnt,
 		sqlInfos:  make([]*sqlInfo, 4),
 	}
-	for i := 0; i < len(testInfo.sqlInfos); i++ {
+	for i := range testInfo.sqlInfos {
 		sqlInfo := &sqlInfo{cases: make([]*stateCase, cnt)}
-		for j := 0; j < cnt; j++ {
+		for j := range cnt {
 			sqlInfo.cases[j] = new(stateCase)
 		}
 		testInfo.sqlInfos[i] = sqlInfo
@@ -280,7 +280,7 @@ func TestTwoStates(t *testing.T) {
 }
 
 type stateCase struct {
-	session            sessiontypes.Session
+	session            sessionapi.Session
 	rawStmt            ast.StmtNode
 	stmt               sqlexec.Statement
 	expectedExecErr    string
@@ -331,7 +331,7 @@ func (t *testExecInfo) parseSQLs(p *parser.Parser) error {
 	for _, sqlInfo := range t.sqlInfos {
 		seVars := sqlInfo.cases[0].session.GetSessionVars()
 		charset, collation := seVars.GetCharsetInfo()
-		for j := 0; j < t.execCases; j++ {
+		for j := range t.execCases {
 			sqlInfo.cases[j].rawStmt, err = p.ParseOneStmt(sqlInfo.sql, charset, collation)
 			if err != nil {
 				return errors.Trace(err)
@@ -347,7 +347,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		compiler := executor.Compiler{Ctx: c.session}
 		se := c.session
 		ctx := context.TODO()
-		if err = se.PrepareTxnCtx(ctx); err != nil {
+		if err = se.PrepareTxnCtx(ctx, nil); err != nil {
 			return err
 		}
 		sctx := se.(sessionctx.Context)
@@ -841,6 +841,8 @@ func TestShowIndex(t *testing.T) {
 		}
 		switch job.SchemaState {
 		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test_db_state")
 			result, err1 := tk.Exec(showIndexSQL)
 			if err1 != nil {
 				checkErr = err1
@@ -1062,7 +1064,7 @@ func TestParallelAddGeneratedColumnAndAlterModifyColumn(t *testing.T) {
 	tk.MustExec("use test_db_state")
 
 	sql1 := "ALTER TABLE t ADD COLUMN f INT GENERATED ALWAYS AS(a+1);"
-	sql2 := "ALTER TABLE t MODIFY COLUMN a tinyint;"
+	sql2 := "ALTER TABLE t MODIFY COLUMN a char(16);"
 
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
@@ -1166,10 +1168,10 @@ func TestParallelAlterAddVectorIndex(t *testing.T) {
 	tk.MustExec("use test_db_state")
 	tk.MustExec("create table tt (a int, b vector, c vector(3), d vector(4));")
 	tk.MustExec("alter table tt set tiflash replica 2 location labels 'a','b';")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/"+
-			"ddl/MockCheckVectorIndexProcess"))
+			"ddl/MockCheckColumnarIndexProcess"))
 	}()
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
@@ -1184,6 +1186,34 @@ func TestParallelAlterAddVectorIndex(t *testing.T) {
 		require.NoError(t, err1)
 		require.EqualError(t, err2,
 			"[ddl:1061]DDL job rollback, error msg: vector index vecIdx function vec_cosine_distance already exist on column c")
+	}
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
+}
+
+func TestParallelAlterAddColumnarIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec("create table tt (a int, b int, c vector(3), d vector(4));")
+	tk.MustExec("alter table tt set tiflash replica 2 location labels 'a','b';")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess"))
+	}()
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+	sql1 := "alter table tt add columnar index colIdx(b) USING INVERTED;"
+	sql2 := "alter table tt add columnar index colIdx1(b) USING INVERTED;"
+	f := func(err1, err2 error) {
+		require.NoError(t, err1)
+		require.EqualError(t, err2,
+			"[ddl:1061]DDL job rollback, error msg: inverted columnar index colIdx already exist on column b")
 	}
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }

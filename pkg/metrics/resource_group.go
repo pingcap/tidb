@@ -14,7 +14,10 @@
 
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 // Metrics
 // Query duration by query is QueryDurationHistogram in `server.go`.
@@ -24,7 +27,7 @@ var (
 
 // InitResourceGroupMetrics initializes resource group metrics.
 func InitResourceGroupMetrics() {
-	RunawayCheckerCounter = NewCounterVec(
+	RunawayCheckerCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",

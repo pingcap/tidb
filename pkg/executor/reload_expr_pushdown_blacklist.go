@@ -68,11 +68,11 @@ func LoadExprPushdownBlacklist(sctx sessionctx.Context) (err error) {
 		}
 		newBlocklist[name] = value
 	}
-	if isSameExprPushDownBlackList(newBlocklist, expression.DefaultExprPushDownBlacklist.Load().(map[string]uint32)) {
+	if isSameExprPushDownBlackList(newBlocklist, *expression.DefaultExprPushDownBlacklist.Load()) {
 		return nil
 	}
 	expression.ExprPushDownBlackListReloadTimeStamp.Store(time.Now().UnixNano())
-	expression.DefaultExprPushDownBlacklist.Store(newBlocklist)
+	expression.DefaultExprPushDownBlacklist.Store(&newBlocklist)
 	return nil
 }
 
@@ -301,7 +301,6 @@ var funcName2Alias = map[string]string{
 	"is_ipv4_mapped":             ast.IsIPv4Mapped,
 	"is_ipv6":                    ast.IsIPv6,
 	"is_used_lock":               ast.IsUsedLock,
-	"master_pos_wait":            ast.MasterPosWait,
 	"name_const":                 ast.NameConst,
 	"release_all_locks":          ast.ReleaseAllLocks,
 	"sleep":                      ast.Sleep,

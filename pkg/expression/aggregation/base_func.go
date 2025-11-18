@@ -307,7 +307,7 @@ func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext) {
 	a.RetTp.SetFlen(mysql.MaxBlobWidth)
 	a.RetTp.SetDecimal(0)
 	// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])
-	for i := 0; i < len(a.Args)-1; i++ {
+	for i := range len(a.Args) - 1 {
 		if tp := a.Args[i].GetType(ctx.GetEvalCtx()); tp.GetType() == mysql.TypeNewDecimal {
 			a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
 		}

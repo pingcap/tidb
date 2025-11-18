@@ -26,10 +26,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	util2 "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
@@ -196,7 +196,7 @@ func (m *ownerManager) ForceToBeOwner(context.Context) error {
 	//      before the restarted node force owner, another node might try to be
 	//      the new owner too, it's still possible to trigger the issue. so we
 	//      sleep a while to wait the cluster have a new owner and start watching.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		// we need to sleep in every retry, as other TiDB nodes will start campaign
 		// immediately after we delete their key.
 		time.Sleep(WaitTimeOnForceOwner)
@@ -458,24 +458,22 @@ func (m *ownerManager) GetOwnerID(ctx context.Context) (string, error) {
 	return string(ownerID), errors.Trace(err)
 }
 
-func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath string) (string, []byte, OpType, int64, int64, error) {
-	var op OpType
+func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath string) (ownerKey string, ownerID []byte, op OpType, currRevision, _ int64, err error) {
 	var resp *clientv3.GetResponse
-	var err error
 	logger := logutil.BgLogger().With(zap.String("key", ownerPath))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err = ctx.Err(); err != nil {
 			return "", nil, op, 0, 0, errors.Trace(err)
 		}
 
-		childCtx, cancel := context.WithTimeout(ctx, util.KeyOpDefaultTimeout)
+		childCtx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
 		resp, err = etcdCli.Get(childCtx, ownerPath, clientv3.WithFirstCreate()...)
 		cancel()
 		if err == nil {
 			break
 		}
 		logger.Info("etcd-cli get owner info failed", zap.Int("retryCnt", i), zap.Error(err))
-		time.Sleep(util.KeyOpRetryInterval)
+		time.Sleep(etcd.KeyOpRetryInterval)
 	}
 	if err != nil {
 		logger.Warn("etcd-cli get owner info failed", zap.Error(err))
@@ -484,11 +482,7 @@ func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath strin
 	if len(resp.Kvs) == 0 {
 		return "", nil, op, 0, 0, concurrency.ErrElectionNoLeader
 	}
-
-	var ownerID []byte
 	ownerID, op = splitOwnerValues(resp.Kvs[0].Value)
-	logger.Info("get owner", zap.ByteString("owner key", resp.Kvs[0].Key),
-		zap.ByteString("ownerID", ownerID), zap.Stringer("op", op))
 	return string(resp.Kvs[0].Key), ownerID, op, resp.Header.Revision, resp.Kvs[0].ModRevision, nil
 }
 
@@ -502,6 +496,10 @@ func GetOwnerKeyInfo(
 	if err != nil {
 		return "", 0, errors.Trace(err)
 	}
+	logutil.BgLogger().Info("get owner",
+		zap.String("key", etcdKey),
+		zap.String("owner key", ownerKey),
+		zap.ByteString("ownerID", ownerID))
 	if string(ownerID) != id {
 		logutil.BgLogger().Warn("is not the owner", zap.String("key", etcdKey),
 			zap.String("id", id), zap.String("ownerID", string(ownerID)))
@@ -570,6 +568,9 @@ func GetOwnerOpValue(ctx context.Context, etcdCli *clientv3.Client, ownerPath st
 	}
 
 	_, _, op, _, _, err := getOwnerInfo(ctx, etcdCli, ownerPath)
+	logutil.BgLogger().Info("get owner op value",
+		zap.String("key", ownerPath),
+		zap.Stringer("owner op", op))
 	return op, errors.Trace(err)
 }
 
@@ -645,9 +646,7 @@ func AcquireDistributedLock(
 		}
 		return false, nil
 	})
-	failpoint.Inject("mockAcquireDistLockFailed", func() {
-		err = errors.Errorf("requested lease not found")
-	})
+	failpoint.InjectCall("mockAcquireDistLockFailed", &err)
 	if err != nil {
 		err1 := se.Close()
 		if err1 != nil {

@@ -29,13 +29,14 @@ import (
 	brpb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/log"
 	. "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -265,7 +266,7 @@ func (m *mockStores) AssertIsNormalMode(t *testing.T) {
 
 func fakeCluster(t *testing.T, nodes int, keys ...[]byte) pd.Client {
 	tmp := t.TempDir()
-	_, pdc, cluster, err := unistore.New(tmp, nil)
+	_, pdc, cluster, err := unistore.New(tmp, nil, constants.NullKeyspaceID, nil)
 	unistore.BootstrapWithMultiStores(cluster, nodes)
 	require.NoError(t, err)
 	cluster.SplitArbitrary(keys...)
@@ -275,7 +276,7 @@ func fakeCluster(t *testing.T, nodes int, keys ...[]byte) pd.Client {
 func dummyRegions(size int) [][]byte {
 	// Generate regions like "a", "b", ..., "z", "aa", "ba", ..., "zz", "aaa"
 	res := [][]byte{}
-	for i := 0; i < size; i++ {
+	for i := range size {
 		s := make([]byte, 0, i/26)
 		for j := i; j > 0; j /= 26 {
 			s = append(s, byte('a')+byte(j%26))
@@ -347,7 +348,7 @@ func TestError(t *testing.T) {
 }
 
 func TestLeaseTimeout(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	req := require.New(t)
 	pdc := fakeCluster(t, 3, dummyRegions(100)...)
 	ms := newTestEnv(pdc)
@@ -375,7 +376,7 @@ func TestLeaseTimeout(t *testing.T) {
 }
 
 func TestLeaseTimeoutWhileTakingSnapshot(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	req := require.New(t)
 	pdc := fakeCluster(t, 3, dummyRegions(100)...)
 	ms := newTestEnv(pdc)
@@ -412,7 +413,7 @@ func TestLeaseTimeoutWhileTakingSnapshot(t *testing.T) {
 }
 
 func TestRetryEnv(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	req := require.New(t)
 	pdc := fakeCluster(t, 3, dummyRegions(100)...)
 	tms := newTestEnv(pdc)
@@ -453,7 +454,7 @@ func (c *counterClient) Recv() (*brpb.PrepareSnapshotBackupResponse, error) {
 }
 
 func TestSplitEnv(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	cc := SplitRequestClient{PrepareClient: &counterClient{}, MaxRequestSize: 1024}
 	reset := func() {
 		cc.PrepareClient.(*counterClient).send = 0
@@ -461,7 +462,7 @@ func TestSplitEnv(t *testing.T) {
 	}
 	makeHugeRequestRegions := func(n int, eachSize int) []*metapb.Region {
 		regions := []*metapb.Region{}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			regions = append(regions, &metapb.Region{
 				StartKey: append(make([]byte, eachSize-1), byte(i)),
 				EndKey:   append(make([]byte, eachSize-1), byte(i+1)),

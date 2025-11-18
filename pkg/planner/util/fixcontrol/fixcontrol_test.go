@@ -15,13 +15,14 @@
 package fixcontrol_test
 
 import (
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/maps"
 )
 
 type resultForSingleFix struct {
@@ -69,7 +70,7 @@ func TestFixControl(t *testing.T) {
 		rows := testdata.ConvertRowsToStrings(tk.MustQuery("select @@tidb_opt_fix_control").Sort().Rows())
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			keys := maps.Keys(s.GetSessionVars().OptimizerFixControl)
+			keys := slices.Collect(maps.Keys(s.GetSessionVars().OptimizerFixControl))
 			output[i].FixControl = make(map[uint64]*resultForSingleFix, len(keys))
 			for _, key := range keys {
 				output[i].FixControl[key] = getTestResultForSingleFix(s.GetSessionVars().OptimizerFixControl, key)
@@ -78,7 +79,7 @@ func TestFixControl(t *testing.T) {
 			output[i].Warnings = warning
 			output[i].Variable = rows
 		})
-		keys := maps.Keys(s.GetSessionVars().OptimizerFixControl)
+		keys := slices.Collect(maps.Keys(s.GetSessionVars().OptimizerFixControl))
 		for _, key := range keys {
 			require.Equal(t, output[i].FixControl[key], getTestResultForSingleFix(s.GetSessionVars().OptimizerFixControl, key))
 		}

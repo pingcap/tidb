@@ -15,6 +15,7 @@ import (
 
 	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	storage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	sessionctx "github.com/pingcap/tidb/pkg/sessionctx"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -368,6 +369,21 @@ func (mr *MockTaskManagerMockRecorder) GetAllNodes(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllNodes", reflect.TypeOf((*MockTaskManager)(nil).GetAllNodes), arg0)
 }
 
+// GetAllSubtaskSummaryByStep mocks base method.
+func (m *MockTaskManager) GetAllSubtaskSummaryByStep(arg0 context.Context, arg1 int64, arg2 proto.Step) ([]*execute.SubtaskSummary, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllSubtaskSummaryByStep", arg0, arg1, arg2)
+	ret0, _ := ret[0].([]*execute.SubtaskSummary)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllSubtaskSummaryByStep indicates an expected call of GetAllSubtaskSummaryByStep.
+func (mr *MockTaskManagerMockRecorder) GetAllSubtaskSummaryByStep(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllSubtaskSummaryByStep", reflect.TypeOf((*MockTaskManager)(nil).GetAllSubtaskSummaryByStep), arg0, arg1, arg2)
+}
+
 // GetAllSubtasks mocks base method.
 func (m *MockTaskManager) GetAllSubtasks(arg0 context.Context) ([]*proto.SubtaskBase, error) {
 	m.ctrl.T.Helper()
@@ -396,6 +412,21 @@ func (m *MockTaskManager) GetAllSubtasksByStepAndState(arg0 context.Context, arg
 func (mr *MockTaskManagerMockRecorder) GetAllSubtasksByStepAndState(arg0, arg1, arg2, arg3 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllSubtasksByStepAndState", reflect.TypeOf((*MockTaskManager)(nil).GetAllSubtasksByStepAndState), arg0, arg1, arg2, arg3)
+}
+
+// GetAllTasks mocks base method.
+func (m *MockTaskManager) GetAllTasks(arg0 context.Context) ([]*proto.TaskBase, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllTasks", arg0)
+	ret0, _ := ret[0].([]*proto.TaskBase)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllTasks indicates an expected call of GetAllTasks.
+func (mr *MockTaskManagerMockRecorder) GetAllTasks(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllTasks", reflect.TypeOf((*MockTaskManager)(nil).GetAllTasks), arg0)
 }
 
 // GetSubtaskCntGroupByStates mocks base method.
@@ -476,6 +507,21 @@ func (mr *MockTaskManagerMockRecorder) GetTasksInStates(arg0 any, arg1 ...any) *
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{arg0}, arg1...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTasksInStates", reflect.TypeOf((*MockTaskManager)(nil).GetTasksInStates), varargs...)
+}
+
+// GetTopNoNeedResourceTasks mocks base method.
+func (m *MockTaskManager) GetTopNoNeedResourceTasks(arg0 context.Context) ([]*proto.TaskBase, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTopNoNeedResourceTasks", arg0)
+	ret0, _ := ret[0].([]*proto.TaskBase)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTopNoNeedResourceTasks indicates an expected call of GetTopNoNeedResourceTasks.
+func (mr *MockTaskManagerMockRecorder) GetTopNoNeedResourceTasks(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTopNoNeedResourceTasks", reflect.TypeOf((*MockTaskManager)(nil).GetTopNoNeedResourceTasks), arg0)
 }
 
 // GetTopUnfinishedTasks mocks base method.

@@ -30,6 +30,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
@@ -108,7 +110,7 @@ func Str2Int64Map(str string) map[int64]struct{} {
 }
 
 // GenLogFields generate log fields.
-func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL bool) []zap.Field {
+func GenLogFields(costTime time.Duration, info *sessmgr.ProcessInfo, needTruncateSQL bool) []zap.Field {
 	if info.RefCountOfStmtCtx != nil && !info.RefCountOfStmtCtx.TryIncrease() {
 		return nil
 	}
@@ -160,6 +162,21 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	logFields = append(logFields, zap.Uint64("txn_start_ts", info.CurTxnStartTS))
 	if memTracker := info.MemTracker; memTracker != nil {
 		logFields = append(logFields, zap.String("mem_max", fmt.Sprintf("%d Bytes (%v)", memTracker.MaxConsumed(), memTracker.FormatBytes(memTracker.MaxConsumed()))))
+	}
+	if memTracker := info.StmtCtx.MemTracker; memTracker != nil {
+		s := ""
+		if dur := memTracker.MemArbitration(); dur > 0 {
+			s += fmt.Sprintf("cost_time %ss", strconv.FormatFloat(dur.Seconds(), 'f', -1, 64)) // mem quota arbitration time of current SQL
+		}
+		if ts, sz := memTracker.WaitArbitrate(); sz > 0 {
+			if s != "" {
+				s += ", "
+			}
+			s += fmt.Sprintf("wait_start %s, wait_bytes %d Bytes (%v)", ts.In(time.UTC).Format("2006-01-02 15:04:05.999 MST"), sz, memTracker.FormatBytes(sz)) // mem quota wait arbitrate time of current SQL
+		}
+		if s != "" {
+			logFields = append(logFields, zap.String("mem_arbitration", s))
+		}
 	}
 
 	const logSQLLen = 1024 * 8
@@ -306,6 +323,7 @@ func IsInCorrectIdentifierName(name string) bool {
 
 // GetRecoverError gets the error from recover.
 func GetRecoverError(r any) error {
+	traceevent.DumpFlightRecorderToLogger("GetRecoverError")
 	if err, ok := r.(error); ok {
 		// Runtime panic also implements error interface.
 		// So do not forget to add stack info for it.
@@ -335,8 +353,8 @@ func ProtoV1Clone[T protoadapt.MessageV1](p T) T {
 func CheckIfSameCluster(
 	ctx context.Context,
 	pdAddrsGetter, pdAddrsGetter2 func(context.Context) ([]string, error),
-) (bool, []string, []string, error) {
-	addrs, err := pdAddrsGetter(ctx)
+) (_ bool, addrs, addrs2 []string, err error) {
+	addrs, err = pdAddrsGetter(ctx)
 	if err != nil {
 		return false, nil, nil, errors.Trace(err)
 	}
@@ -345,7 +363,7 @@ func CheckIfSameCluster(
 		addrsMap[a] = struct{}{}
 	}
 
-	addrs2, err := pdAddrsGetter2(ctx)
+	addrs2, err = pdAddrsGetter2(ctx)
 	if err != nil {
 		return false, nil, nil, errors.Trace(err)
 	}

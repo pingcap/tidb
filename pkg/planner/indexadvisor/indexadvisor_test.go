@@ -110,7 +110,7 @@ func TestIndexAdvisorBasic2(t *testing.T) {
 	tk.MustExec(`use test`)
 
 	sqls := make([]string, 0, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf(`create table t%d (a int, b int, c int)`, i))
 		sql := fmt.Sprintf("select * from t%d", i) // useless SQLs
 		sqls = append(sqls, sql)
@@ -176,12 +176,12 @@ func TestIndexAdvisorMassive(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`recommend index set max_num_index=3`)
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		sql := fmt.Sprintf(`create table t%d(c0 int,c1 int,c2 int,c3 int,c4 int,c5 int,c6 int,c7 int)`, i)
 		tk.MustExec(sql)
 	}
 	sqls := make([]string, 0, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		sql := fmt.Sprintf("select * from t%d where c%d=1 and c%d=1 and c%d=1",
 			rand.Intn(10), rand.Intn(8), rand.Intn(8), rand.Intn(8))
 		sqls = append(sqls, sql)

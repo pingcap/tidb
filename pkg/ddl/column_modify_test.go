@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -202,7 +203,7 @@ AddLoop:
 
 	num = 100
 	// add some rows
-	for i := 0; i < num; i++ {
+	for i := range num {
 		tk.MustExec("insert into t2 values (?, ?, ?, ?)", i, i, i, i)
 	}
 
@@ -275,10 +276,10 @@ func TestDropColumn(t *testing.T) {
 	ddlDone := make(chan error, num)
 
 	testddlutil.ExecMultiSQLInGoroutine(store, "test", multiDDL, ddlDone)
-	for i := 0; i < num; i++ {
+	for range num {
 		testddlutil.ExecMultiSQLInGoroutine(store, "test", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
 	}
-	for i := 0; i < num; i++ {
+	for range num {
 		err := <-ddlDone
 		require.NoError(t, err)
 	}
@@ -545,7 +546,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	})
 
 	tk.MustExec("create table if not exists t(c1 varchar(256), c2 bigint, `_col$_c2` varchar(10), unique _idx$_idx(c1), unique idx(c2));")
-	tk.MustExec("alter table test.t change column c2 cC2 tinyint after `_col$_c2`")
+	tk.MustExec("alter table test.t change column c2 cC2 varchar(256) after `_col$_c2`")
 	require.NoError(t, checkErr)
 
 	tbl := external.GetTableByName(t, tk, "test", "t")
@@ -622,10 +623,16 @@ func TestModifyColumnReorgCheckpoint(t *testing.T) {
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
-	tk.MustExec("create table t (a int primary key, b bigint);")
+	if kerneltype.IsNextGen() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeInitReorgMeta", func(m *model.DDLReorgMeta) {
+			m.Concurrency.Store(1)
+		})
+	} else {
+		tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	}
+	tk.MustExec("create table t (a int primary key, b varchar(16));")
 	rowCnt := 10
-	for i := 0; i < rowCnt; i++ {
+	for i := range rowCnt {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i*10000, i*10000))
 	}
 	splitTableSQL := fmt.Sprintf("split table t between (0) and (%d*10000) regions %d;", rowCnt, rowCnt)

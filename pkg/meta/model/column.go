@@ -61,8 +61,10 @@ type ColumnInfo struct {
 	GeneratedStored     bool                `json:"generated_stored"`
 	Dependences         map[string]struct{} `json:"dependences"`
 	FieldType           types.FieldType     `json:"type"`
-	State               SchemaState         `json:"state"`
-	Comment             string              `json:"comment"`
+	// ChangingFieldType is used to store the new type of modify column.
+	ChangingFieldType *types.FieldType `json:"changing_type,omitempty"`
+	State             SchemaState      `json:"state"`
+	Comment           string           `json:"comment"`
 	// A hidden column is used internally(expression index) and are not accessible by users.
 	Hidden           bool `json:"hidden"`
 	*ChangeStateInfo `json:"change_state_info"`
@@ -72,11 +74,6 @@ type ColumnInfo struct {
 	// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
 	//              This will fix bug in version 0. For compatibility with version 0, we add version field in column info struct.
 	Version uint64 `json:"version"`
-}
-
-// IsVirtualGenerated checks the column if it is virtual.
-func (c *ColumnInfo) IsVirtualGenerated() bool {
-	return c.IsGenerated() && !c.GeneratedStored
 }
 
 // Clone clones ColumnInfo.
@@ -178,9 +175,14 @@ func (c *ColumnInfo) SetElems(elems []string) {
 	c.FieldType.SetElems(elems)
 }
 
-// IsGenerated returns true if the column is generated column.
+// IsGenerated checks if the column is a generated column.
 func (c *ColumnInfo) IsGenerated() bool {
 	return len(c.GeneratedExprString) != 0
+}
+
+// IsVirtualGenerated checks if the column is a virtual generated column.
+func (c *ColumnInfo) IsVirtualGenerated() bool {
+	return c.IsGenerated() && !c.GeneratedStored
 }
 
 // SetOriginDefaultValue sets the origin default value.

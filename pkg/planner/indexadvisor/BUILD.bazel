@@ -16,6 +16,7 @@ go_library(
         "//pkg/domain",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
@@ -49,7 +50,7 @@ go_test(
         "utils_test.go",
     ],
     flaky = True,
-    shard_count = 47,
+    shard_count = 48,
     deps = [
         ":indexadvisor",
         "//pkg/parser/mysql",

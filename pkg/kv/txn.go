@@ -115,7 +115,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 		globalInnerTxnTsBox.deleteInnerTxnTS(originalTxnTS)
 	}()
 
-	for i := uint(0); i < MaxRetryCnt; i++ {
+	for i := range MaxRetryCnt {
 		txn, err = store.Begin()
 		if err != nil {
 			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
@@ -226,6 +226,7 @@ func SetTxnResourceGroup(txn Transaction, name string) {
 		validateRNameInterceptor := func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 				var rgName *string
+				tikvrpc.AttachContext(req, req.Context)
 				switch r := req.Req.(type) {
 				case *kvrpcpb.PrewriteRequest:
 					rgName = &r.Context.ResourceControlContext.ResourceGroupName

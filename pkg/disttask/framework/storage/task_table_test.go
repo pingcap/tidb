@@ -17,6 +17,7 @@ package storage
 import (
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -37,11 +38,23 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
+func TestSerializeErr(t *testing.T) {
+	require.Empty(t, serializeErr(nil))
+
+	normalizedErr := errors.Normalize("named err", errors.RFCCodeText("NAMED"))
+	theErr := errors.Annotate(normalizedErr.Wrap(errors.New("inner err")), "annotated err")
+	require.Equal(t, `{"class":0,"code":0,"message":"annotated err: named err: inner err","rfccode":"NAMED"}`,
+		string(serializeErr(theErr)))
+
+	theErr = errors.Annotate(errors.New("some err"), "annotated err")
+	require.Equal(t, `{"class":0,"code":0,"message":"annotated err: some err","rfccode":""}`, string(serializeErr(theErr)))
+}
+
 func TestSplitSubtasks(t *testing.T) {
 	tm := &TaskManager{}
 	subtasks := make([]*proto.Subtask, 0, 10)
 	metaBytes := make([]byte, 100)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		subtasks = append(subtasks, &proto.Subtask{SubtaskBase: proto.SubtaskBase{ID: int64(i)}, Meta: metaBytes})
 	}
 	bak := kv.TxnTotalSizeLimit.Load()

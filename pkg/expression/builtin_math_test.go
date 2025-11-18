@@ -377,7 +377,7 @@ func TestRand(t *testing.T) {
 	f2, err := fc.getFunction(ctx, []Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}})
 	require.NoError(t, err)
 	randGen := mathutil.NewWithSeed(20160101)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		v, err = evalBuiltinFunc(f2, ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, randGen.Gen(), v.GetFloat64())

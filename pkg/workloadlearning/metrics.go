@@ -14,20 +14,26 @@
 
 package workloadlearning
 
-import "github.com/pingcap/tidb/pkg/parser/ast"
+import (
+	"time"
 
-// ReadTableCostMetrics is used to indicate the intermediate status and results analyzed through read workload
-// for function "HandleReadTableCost".
-type ReadTableCostMetrics struct {
+	"github.com/pingcap/tidb/pkg/parser/ast"
+)
+
+// TableReadCostMetrics is used to indicate the intermediate status and results analyzed through table read workload
+// for function "HandleTableReadCost".
+type TableReadCostMetrics struct {
+	// TODO(Elsa): Add the json tag for the field
 	DbName    ast.CIStr
 	TableName ast.CIStr
 	// TableScanTime[t] = sum(scan-time * readFrequency) of all records in statement_summary where table-name = t
-	TableScanTime float64
+	TableScanTime time.Duration
 	// TableMemUsage[t] = sum(mem-usage * readFrequency) of all records in statement_summary where table-name = t
-	TableMemUsage float64
+	// Unit is bytes
+	TableMemUsage int64
 	// ReadFrequency[t] = sum(read-frequency) of all records in statement_summary where table-name = t
 	ReadFrequency int64
-	// TableCost[t] = TableScanTime[t] / totalScanTime  + TableMemUsage[t] / totalMemUsage
+	// TableReadCost[t] = TableScanTime[t] / totalScanTime  + TableMemUsage[t] / totalMemUsage
 	// range between 0 ~ 2
-	TableCost float64
+	TableReadCost float64
 }

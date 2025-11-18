@@ -54,7 +54,7 @@ func preSplitIndexRegions(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	splitOnTempIdx := reorgMeta.ReorgTp == model.ReorgTypeLitMerge ||
+	splitOnTempIdx := reorgMeta.ReorgTp == model.ReorgTypeIngest ||
 		reorgMeta.ReorgTp == model.ReorgTypeTxnMerge
 	for i, idxInfo := range allIndexInfos {
 		idxArg := args.IndexArgs[i]
@@ -142,7 +142,10 @@ func getSplitIdxPhysicalKeysFromValueList(
 	destKeys [][]byte,
 ) ([][]byte, error) {
 	destKeys = getSplitIdxPhysicalStartAndOtherIdxKeys(tblInfo, idxInfo, physicalID, destKeys)
-	index := tables.NewIndex(physicalID, tblInfo, idxInfo)
+	index, err := tables.NewIndex(physicalID, tblInfo, idxInfo)
+	if err != nil {
+		return nil, err
+	}
 	sc := sctx.GetSessionVars().StmtCtx
 	for _, v := range splitDatum {
 		idxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), v, kv.IntHandle(math.MinInt64), nil)
@@ -207,7 +210,10 @@ func getSplitIdxPhysicalKeysFromBound(
 	destKeys [][]byte,
 ) ([][]byte, error) {
 	destKeys = getSplitIdxPhysicalStartAndOtherIdxKeys(tblInfo, idxInfo, physicalID, destKeys)
-	index := tables.NewIndex(physicalID, tblInfo, idxInfo)
+	index, err := tables.NewIndex(physicalID, tblInfo, idxInfo)
+	if err != nil {
+		return nil, err
+	}
 	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
 	sc := sctx.GetSessionVars().StmtCtx
 	lowerIdxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), lower, kv.IntHandle(math.MinInt64), nil)
@@ -311,7 +317,7 @@ func evalSplitDatumFromArgs(
 	if len(opt.Lower) == 0 && len(opt.Upper) == 0 && opt.Num > 0 {
 		lowerVals := make([]types.Datum, 0, len(idxInfo.Columns))
 		upperVals := make([]types.Datum, 0, len(idxInfo.Columns))
-		for i := 0; i < len(idxInfo.Columns); i++ {
+		for range idxInfo.Columns {
 			lowerVals = append(lowerVals, types.MinNotNullDatum())
 			upperVals = append(upperVals, types.MaxValueDatum())
 		}

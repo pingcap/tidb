@@ -17,6 +17,7 @@ package executor
 import (
 	"fmt"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -136,8 +137,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 
 func generateIndexRange(vals ...int64) *ranger.Range {
 	lowDatums := generateDatumSlice(vals...)
-	highDatums := make([]types.Datum, len(vals))
-	copy(highDatums, lowDatums)
+	highDatums := slices.Clone(lowDatums)
 	return &ranger.Range{LowVal: lowDatums, HighVal: highDatums, Collators: collate.GetBinaryCollatorSlice(len(lowDatums))}
 }
 
@@ -280,7 +280,7 @@ func TestAggPartialResultMapperB(t *testing.T) {
 	for _, tc := range cases {
 		aggMap := make(aggfuncs.AggPartialResultMapper)
 		tempSlice := make([]aggfuncs.PartialResult, 10)
-		for num := 0; num < tc.rowNum; num++ {
+		for num := range tc.rowNum {
 			aggMap[strconv.Itoa(num)] = tempSlice
 		}
 
@@ -332,7 +332,7 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 
 func TestErrLevelsForResetStmtContext(t *testing.T) {
 	ctx := mock.NewContext()
-	ctx.BindDomain(&domain.Domain{})
+	ctx.BindDomainAndSchValidator(&domain.Domain{}, nil)
 
 	cases := []struct {
 		name    string

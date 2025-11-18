@@ -20,8 +20,17 @@ import (
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
 )
+
+type StoreWithoutKS struct {
+	kv.Storage
+}
+
+func (*StoreWithoutKS) GetKeyspace() string {
+	return ""
+}
 
 func TestImportTaskExecutor(t *testing.T) {
 	ctx := context.Background()
@@ -30,8 +39,7 @@ func TestImportTaskExecutor(t *testing.T) {
 		&proto.Task{
 			TaskBase: proto.TaskBase{ID: 1},
 		},
-		taskexecutor.NewParamForTest(nil, nil, nil, ":4000"),
-		nil,
+		taskexecutor.NewParamForTest(nil, nil, nil, ":4000", &StoreWithoutKS{}),
 	).(*importExecutor)
 
 	require.NotNil(t, executor.BaseTaskExecutor.Extension)

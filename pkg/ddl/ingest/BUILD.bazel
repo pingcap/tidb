@@ -6,6 +6,7 @@ go_library(
         "backend.go",
         "backend_mgr.go",
         "checkpoint.go",
+        "collector.go",
         "config.go",
         "disk_root.go",
         "engine.go",
@@ -34,6 +35,7 @@ go_library(
         "//pkg/lightning/log",
         "//pkg/meta",
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/owner",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
@@ -51,6 +53,7 @@ go_library(
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_prometheus_client_golang//prometheus",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
@@ -64,7 +67,7 @@ go_library(
 
 go_test(
     name = "ingest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "checkpoint_test.go",
         "env_test.go",
@@ -74,10 +77,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 24,
+    shard_count = 28,
     deps = [
         ":ingest",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/ingest/testutil",
         "//pkg/ddl/session",
         "//pkg/ddl/testutil",
