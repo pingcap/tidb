@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -851,7 +852,7 @@ func (is *infoschemaV2) searchTableItemByID(tableID int64) (*tableItem, bool) {
 }
 
 // TableByID implements the InfoSchema interface.
-// As opposed to TableByName, TableByID will not refill cache when schema cache miss,
+// As opposed to TableByName, TableByID will not refill cache when schema cache miss and the available schema cache size is not enough,
 // unless the caller changes the behavior by passing a context use WithRefillOption.
 func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
@@ -1120,7 +1121,8 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) 
 			if t.DBName.L != schema.L {
 				return true
 			}
-			tbl, _ := is.TableByID(ctx, t.TableID)
+			tbl, ok := is.TableByID(ctx, t.TableID)
+			intest.Assert(ok, "invalid table id", t.DBName.L)
 			tables = append(tables, tbl.Meta())
 			return true
 		})
