@@ -83,9 +83,48 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	if len(histNeededItems) == 0 {
 		return plan, planChanged, nil
 	}
+
+	// For single-table queries, we can optimize by sync-loading only index stats
+	// and async-loading column stats, since index selection is more critical than
+	// column selectivity estimation for single-table queries.
+	isSingleTableQuery := visitedPhysTblIDs.Len() == 1
+
 	if syncLoadEnabled {
-		err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
-		return plan, planChanged, err
+		if isSingleTableQuery {
+			// Separate column stats from index stats
+			histNeededColumnsOnly := make([]model.StatsLoadItem, 0, len(histNeededColumns))
+			for _, item := range histNeededColumns {
+				histNeededColumnsOnly = append(histNeededColumnsOnly, item)
+			}
+
+			histNeededIndicesOnly := make([]model.StatsLoadItem, 0, len(histNeededIndices))
+			for idx := range histNeededIndices {
+				histNeededIndicesOnly = append(histNeededIndicesOnly, model.StatsLoadItem{TableItemID: idx, FullLoad: true})
+			}
+
+			// Expand for static pruning if needed
+			histNeededIndicesOnly = c.expandStatsNeededColumnsForStaticPruning(histNeededIndicesOnly, tid2pids)
+			histNeededColumnsOnly = c.expandStatsNeededColumnsForStaticPruning(histNeededColumnsOnly, tid2pids)
+
+			// Sync load only index stats (critical for index selection)
+			if len(histNeededIndicesOnly) > 0 {
+				err := RequestLoadStats(plan.SCtx(), histNeededIndicesOnly, syncWait)
+				if err != nil {
+					return plan, planChanged, err
+				}
+			}
+
+			// Async load column stats (less critical for single-table queries)
+			for _, item := range histNeededColumnsOnly {
+				asyncload.AsyncLoadHistogramNeededItems.Insert(item.TableItemID, item.FullLoad)
+			}
+
+			return plan, planChanged, nil
+		} else {
+			// Multi-table query: sync load everything as before
+			err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
+			return plan, planChanged, err
+		}
 	}
 	// We are loading some unnecessary items here since the static pruning hasn't happened yet.
 	// It's not easy to solve the problem and the static pruning is being deprecated, so we just leave it here.
