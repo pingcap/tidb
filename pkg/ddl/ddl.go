@@ -72,8 +72,7 @@ import (
 
 const (
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
-	DDLOwnerKey             = "/tidb/ddl/fg/owner"
-	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
+	DDLOwnerKey = "/tidb/ddl/fg/owner"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
 	// Prompt is the prompt for ddl owner manager.

@@ -345,6 +345,7 @@ func (w *worker) runReorgJob(
 	reorgFn func() error,
 ) error {
 	job := reorgInfo.Job
+	d := reorgInfo.jobCtx.oldDDLCtx
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
 	// without reorg meta info, which will cause nil pointer in here.
 	if job.ReorgMeta == nil {
@@ -394,6 +395,7 @@ func (w *worker) runReorgJob(
 			err := res.err
 			curTS := w.ddlCtx.reorgCtx.getOwnerTS()
 			if res.ownerTS != curTS {
+				d.removeReorgCtx(job.ID)
 				logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
 					zap.Int64("prevTS", res.ownerTS),
 					zap.Int64("curTS", curTS))
@@ -402,6 +404,7 @@ func (w *worker) runReorgJob(
 			// Since job is cancelled，we don't care about its partial counts.
 			// TODO(lance6716): should we also do for paused job?
 			if terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
+				d.removeReorgCtx(job.ID)
 				return err
 			}
 			rowCount := rc.getRowCount()
@@ -418,6 +421,8 @@ func (w *worker) runReorgJob(
 
 			// Update a job's warnings.
 			w.mergeWarningsIntoJob(job)
+
+			d.removeReorgCtx(job.ID)
 
 			updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 

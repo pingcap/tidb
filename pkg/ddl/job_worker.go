@@ -431,7 +431,7 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 	}
 	job.SeqNum = w.seqAllocator.Add(1)
 	w.removeJobCtx(job)
-	w.removeReorgCtx(job.ID)
+	metrics.CleanupAllMetricsForJob(job.ID)
 	failpoint.InjectCall("afterFinishDDLJob", job)
 	err = AddHistoryDDLJob(w.workCtx, w.sess, metaMut, job, updateRawArgs)
 	return errors.Trace(err)
