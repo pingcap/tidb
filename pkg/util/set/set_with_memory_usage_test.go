@@ -39,9 +39,9 @@ func BenchmarkFloat64SetMemoryUsage(b *testing.B) {
 	for _, c := range cases {
 		b.Run(fmt.Sprintf("MapRows %v", c.rowNum), func(b *testing.B) {
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				float64Set, _ := NewFloat64SetWithMemoryUsage()
-				for num := 0; num < c.rowNum; num++ {
+				for num := range c.rowNum {
 					float64Set.Insert(float64(num))
 				}
 			}
@@ -68,9 +68,9 @@ func BenchmarkInt64SetMemoryUsage(b *testing.B) {
 	for _, c := range cases {
 		b.Run(fmt.Sprintf("MapRows %v", c.rowNum), func(b *testing.B) {
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				int64Set, _ := NewInt64SetWithMemoryUsage()
-				for num := 0; num < c.rowNum; num++ {
+				for num := range c.rowNum {
 					int64Set.Insert(int64(num))
 				}
 			}
@@ -97,9 +97,9 @@ func BenchmarkStringSetMemoryUsage(b *testing.B) {
 	for _, c := range cases {
 		b.Run(fmt.Sprintf("MapRows %v", c.rowNum), func(b *testing.B) {
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				stringSet, _ := NewStringSetWithMemoryUsage()
-				for num := 0; num < c.rowNum; num++ {
+				for num := range c.rowNum {
 					stringSet.Insert(strconv.Itoa(num))
 				}
 			}

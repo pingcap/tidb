@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
 )
 
@@ -47,6 +48,10 @@ type topNSpillHelper struct {
 
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
+
+	sqlKiller *sqlkiller.SQLKiller
+
+	fileNamePrefixForTest string
 }
 
 func newTopNSpillerHelper(
@@ -58,26 +63,29 @@ func newTopNSpillerHelper(
 	fieldTypes []*types.FieldType,
 	workers []*topNWorker,
 	concurrencyNum int,
+	sqlKiller *sqlkiller.SQLKiller,
 ) *topNSpillHelper {
 	lock := sync.Mutex{}
 	tmpSpillChunksChan := make(chan *chunk.Chunk, concurrencyNum)
-	for i := 0; i < len(workers); i++ {
+	for range workers {
 		tmpSpillChunksChan <- exec.TryNewCacheChunk(topn.Children(0))
 	}
 
 	return &topNSpillHelper{
-		cond:               sync.NewCond(&lock),
-		spillStatus:        notSpilled,
-		sortedRowsInDisk:   make([]*chunk.DataInDiskByChunks, 0),
-		finishCh:           finishCh,
-		errOutputChan:      errOutputChan,
-		memTracker:         memTracker,
-		diskTracker:        diskTracker,
-		fieldTypes:         fieldTypes,
-		tmpSpillChunksChan: tmpSpillChunksChan,
-		workers:            workers,
-		bytesConsumed:      atomic.Int64{},
-		bytesLimit:         atomic.Int64{},
+		cond:                  sync.NewCond(&lock),
+		spillStatus:           notSpilled,
+		sortedRowsInDisk:      make([]*chunk.DataInDiskByChunks, 0),
+		finishCh:              finishCh,
+		errOutputChan:         errOutputChan,
+		memTracker:            memTracker,
+		diskTracker:           diskTracker,
+		fieldTypes:            fieldTypes,
+		tmpSpillChunksChan:    tmpSpillChunksChan,
+		workers:               workers,
+		bytesConsumed:         atomic.Int64{},
+		bytesLimit:            atomic.Int64{},
+		sqlKiller:             sqlKiller,
+		fileNamePrefixForTest: topn.FileNamePrefixForTest,
 	}
 }
 
@@ -160,7 +168,7 @@ func (t *topNSpillHelper) spill() (err error) {
 	errChan := make(chan error, workerNum)
 	workerWaiter := &sync.WaitGroup{}
 	workerWaiter.Add(workerNum)
-	for i := 0; i < workerNum; i++ {
+	for i := range workerNum {
 		go func(idx int) {
 			defer func() {
 				if r := recover(); r != nil {
@@ -204,11 +212,25 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 		t.tmpSpillChunksChan <- tmpSpillChunk
 	}()
 
-	inDisk := chunk.NewDataInDiskByChunks(t.fieldTypes)
+	inDisk := chunk.NewDataInDiskByChunks(t.fieldTypes, t.fileNamePrefixForTest)
 	inDisk.GetDiskTracker().AttachTo(t.diskTracker)
+
+	isInDiskCollected := false
+	defer func() {
+		if !isInDiskCollected {
+			inDisk.Close()
+		}
+	}()
 
 	rowPtrNum := chkHeap.Len()
 	for ; chkHeap.idx < rowPtrNum; chkHeap.idx++ {
+		if chkHeap.idx%100 == 0 && t.sqlKiller != nil {
+			err := t.sqlKiller.HandleSignal()
+			if err != nil {
+				return err
+			}
+		}
+
 		if tmpSpillChunk.IsFull() {
 			err := t.spillTmpSpillChunk(inDisk, tmpSpillChunk)
 			if err != nil {
@@ -226,8 +248,10 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 		}
 	}
 
-	t.addInDisk(inDisk)
 	injectTopNRandomFail(200)
+
+	t.addInDisk(inDisk)
+	isInDiskCollected = true
 
 	chkHeap.clear()
 	return nil

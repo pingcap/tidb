@@ -24,14 +24,6 @@ type RetryableFunc func() error
 
 type RetryableFuncV2[T any] func(context.Context) (T, error)
 
-// Backoffer implements a backoff policy for retrying operations.
-type Backoffer interface {
-	// NextBackoff returns a duration to wait before retrying again
-	NextBackoff(err error) time.Duration
-	// Attempt returns the remain attempt times
-	Attempt() int
-}
-
 // WithRetry retries a given operation with a backoff policy.
 //
 // Returns nil if `retryableFunc` succeeded at least once. Otherwise, returns a
@@ -39,9 +31,9 @@ type Backoffer interface {
 func WithRetry(
 	ctx context.Context,
 	retryableFunc RetryableFunc,
-	backoffer Backoffer,
+	backoffStrategy BackoffStrategy,
 ) error {
-	_, err := WithRetryV2[struct{}](ctx, backoffer, func(ctx context.Context) (struct{}, error) {
+	_, err := WithRetryV2[struct{}](ctx, backoffStrategy, func(ctx context.Context) (struct{}, error) {
 		innerErr := retryableFunc()
 		return struct{}{}, innerErr
 	})
@@ -55,11 +47,11 @@ func WithRetry(
 // Comparing with `WithRetry`, this function reordered the argument order and supports catching the return value.
 func WithRetryV2[T any](
 	ctx context.Context,
-	backoffer Backoffer,
+	backoffStrategy BackoffStrategy,
 	fn RetryableFuncV2[T],
 ) (T, error) {
 	var allErrors error
-	for backoffer.Attempt() > 0 {
+	for backoffStrategy.RemainingAttempts() > 0 {
 		res, err := fn(ctx)
 		if err == nil {
 			return res, nil
@@ -69,7 +61,7 @@ func WithRetryV2[T any](
 		case <-ctx.Done():
 			// allErrors must not be `nil` here, so ignore the context error.
 			return *new(T), allErrors
-		case <-time.After(backoffer.NextBackoff(err)):
+		case <-time.After(backoffStrategy.NextBackoff(err)):
 		}
 	}
 	return *new(T), allErrors // nolint:wrapcheck
@@ -84,18 +76,18 @@ var sampleLoggerFactory = logutil.SampleLoggerFactory(
 func WithRetryReturnLastErr(
 	ctx context.Context,
 	retryableFunc RetryableFunc,
-	backoffer Backoffer,
+	backoffStrategy BackoffStrategy,
 ) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	var lastErr error
-	for backoffer.Attempt() > 0 {
+	for backoffStrategy.RemainingAttempts() > 0 {
 		lastErr = retryableFunc()
 		if lastErr == nil {
 			return nil
 		}
-		backoff := backoffer.NextBackoff(lastErr)
+		backoff := backoffStrategy.NextBackoff(lastErr)
 		sampleLoggerFactory().Info(
 			"retryable operation failed",
 			zap.Error(lastErr), zap.Duration("backoff", backoff))
@@ -117,12 +109,12 @@ func FallBack2CreateTable(err error) bool {
 	return false
 }
 
-// RetryWithBackoffer is a simple context for a "mixed" retry.
+// RetryWithBackoff is a simple context for a "mixed" retry.
 // Some of TiDB APIs, say, `ResolveLock` requires a `tikv.Backoffer` as argument.
 // But the `tikv.Backoffer` isn't pretty customizable, it has some sorts of predefined configuration but
 // we cannot create new one. So we are going to mix up the flavour of `tikv.Backoffer` and our homemade
-// back off strategy. That is what the `RetryWithBackoffer` did.
-type RetryWithBackoffer struct {
+// back off strategy. That is what the `RetryWithBackoff` did.
+type RetryWithBackoff struct {
 	bo *tikv.Backoffer
 
 	totalBackoff int
@@ -133,11 +125,11 @@ type RetryWithBackoffer struct {
 	nextBackoff int
 }
 
-// AdaptTiKVBackoffer creates an "ad-hoc" backoffer, which wraps a backoffer and provides some new functions:
+// AdaptTiKVBackoffer creates an "ad-hoc" backoffStrategy, which wraps a backoffer and provides some new functions:
 // When backing off, we can manually provide it a specified sleep duration instead of directly provide a retry.Config
 // Which is sealed in the "client-go/internal".
-func AdaptTiKVBackoffer(ctx context.Context, maxSleepMs int, baseErr error) *RetryWithBackoffer {
-	return &RetryWithBackoffer{
+func AdaptTiKVBackoffer(ctx context.Context, maxSleepMs int, baseErr error) *RetryWithBackoff {
+	return &RetryWithBackoff{
 		bo:         tikv.NewBackoffer(ctx, maxSleepMs),
 		maxBackoff: maxSleepMs,
 		baseErr:    baseErr,
@@ -145,25 +137,25 @@ func AdaptTiKVBackoffer(ctx context.Context, maxSleepMs int, baseErr error) *Ret
 }
 
 // NextSleepInMS returns the time `BackOff` will sleep in ms of the state.
-func (r *RetryWithBackoffer) NextSleepInMS() int {
+func (r *RetryWithBackoff) NextSleepInMS() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.nextBackoff
 }
 
-// TotalSleepInMS returns the total sleeped time in ms.
-func (r *RetryWithBackoffer) TotalSleepInMS() int {
+// TotalSleepInMS returns the total slept time in ms.
+func (r *RetryWithBackoff) TotalSleepInMS() int {
 	return r.totalBackoff + r.bo.GetTotalSleep()
 }
 
 // MaxSleepInMS returns the max sleep time for the retry context in ms.
-func (r *RetryWithBackoffer) MaxSleepInMS() int {
+func (r *RetryWithBackoff) MaxSleepInMS() int {
 	return r.maxBackoff
 }
 
 // BackOff executes the back off: sleep for a precalculated backoff time.
 // See `RequestBackOff` for more details.
-func (r *RetryWithBackoffer) BackOff() error {
+func (r *RetryWithBackoff) BackOff() error {
 	r.mu.Lock()
 	nextBo := r.nextBackoff
 	r.nextBackoff = 0
@@ -179,24 +171,24 @@ func (r *RetryWithBackoffer) BackOff() error {
 
 // RequestBackOff register the intent of backing off at least n milliseconds.
 // That intent will be fulfilled when calling `BackOff`.
-func (r *RetryWithBackoffer) RequestBackOff(ms int) {
+func (r *RetryWithBackoff) RequestBackOff(ms int) {
 	r.mu.Lock()
 	r.nextBackoff = max(r.nextBackoff, ms)
 	r.mu.Unlock()
 }
 
 // Inner returns the reference to the inner `backoffer`.
-func (r *RetryWithBackoffer) Inner() *tikv.Backoffer {
+func (r *RetryWithBackoff) Inner() *tikv.Backoffer {
 	return r.bo
 }
 
-type verboseBackoffer struct {
-	inner   Backoffer
+type verboseBackoffStrategy struct {
+	inner   BackoffStrategy
 	logger  *zap.Logger
 	groupID uuid.UUID
 }
 
-func (v *verboseBackoffer) NextBackoff(err error) time.Duration {
+func (v *verboseBackoffStrategy) NextBackoff(err error) time.Duration {
 	nextBackoff := v.inner.NextBackoff(err)
 	v.logger.Warn("Encountered err, retrying.",
 		zap.Stringer("nextBackoff", nextBackoff),
@@ -205,9 +197,9 @@ func (v *verboseBackoffer) NextBackoff(err error) time.Duration {
 	return nextBackoff
 }
 
-// Attempt returns the remain attempt times
-func (v *verboseBackoffer) Attempt() int {
-	attempt := v.inner.Attempt()
+// RemainingAttempts returns the remain attempt times
+func (v *verboseBackoffStrategy) RemainingAttempts() int {
+	attempt := v.inner.RemainingAttempts()
 	if attempt > 0 {
 		v.logger.Debug("Retry attempt hint.", zap.Int("attempt", attempt), zap.Stringer("gid", v.groupID))
 	} else {
@@ -216,11 +208,11 @@ func (v *verboseBackoffer) Attempt() int {
 	return attempt
 }
 
-func VerboseRetry(bo Backoffer, logger *zap.Logger) Backoffer {
+func VerboseRetry(bo BackoffStrategy, logger *zap.Logger) BackoffStrategy {
 	if logger == nil {
 		logger = log.L()
 	}
-	vlog := &verboseBackoffer{
+	vlog := &verboseBackoffStrategy{
 		inner:   bo,
 		logger:  logger,
 		groupID: uuid.New(),
@@ -229,7 +221,7 @@ func VerboseRetry(bo Backoffer, logger *zap.Logger) Backoffer {
 }
 
 type failedOnErr struct {
-	inner    Backoffer
+	inner    BackoffStrategy
 	failed   bool
 	failedOn []error
 }
@@ -248,15 +240,15 @@ func (f *failedOnErr) NextBackoff(err error) time.Duration {
 	return 0
 }
 
-// Attempt returns the remain attempt times
-func (f *failedOnErr) Attempt() int {
+// RemainingAttempts returns the remain attempt times
+func (f *failedOnErr) RemainingAttempts() int {
 	if f.failed {
 		return 0
 	}
-	return f.inner.Attempt()
+	return f.inner.RemainingAttempts()
 }
 
-func GiveUpRetryOn(bo Backoffer, errs ...error) Backoffer {
+func GiveUpRetryOn(bo BackoffStrategy, errs ...error) BackoffStrategy {
 	return &failedOnErr{
 		inner:    bo,
 		failed:   false,

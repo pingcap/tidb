@@ -58,7 +58,8 @@ func TestOptionalPropKeySet(t *testing.T) {
 		Add(OptPropKVStore).
 		Add(OptPropSQLExecutor).
 		Add(OptPropSequenceOperator).
-		Add(OptPropAdvisoryLock)
+		Add(OptPropAdvisoryLock).
+		Add(OptPropPrivilegeChecker)
 	require.True(t, keySet4.IsFull())
 	require.False(t, keySet4.IsEmpty())
 }
@@ -83,7 +84,7 @@ func TestOptionalPropKeySetWithUnusedBits(t *testing.T) {
 }
 
 func TestOptionalPropKey(t *testing.T) {
-	for i := 0; i < OptPropsCnt; i++ {
+	for i := range OptPropsCnt {
 		key := OptionalEvalPropKey(i)
 		keySet := key.AsPropKeySet()
 		// keySet should contain the specified key
@@ -92,7 +93,7 @@ func TestOptionalPropKey(t *testing.T) {
 		require.Equal(t, key, optionalPropertyDescList[i].Key())
 		require.Same(t, &optionalPropertyDescList[i], key.Desc())
 		// keySet should not contain other keys
-		for j := 0; j < OptPropsCnt; j++ {
+		for j := range OptPropsCnt {
 			if i != j {
 				key2 := OptionalEvalPropKey(j)
 				require.False(t, keySet.Contains(key2))

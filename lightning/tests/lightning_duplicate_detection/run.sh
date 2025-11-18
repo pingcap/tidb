@@ -53,7 +53,7 @@ verify_detected_rows() {
     done
   done
   mapfile -t expect_rows < <(for row in "${expect_rows[@]}"; do echo "$row"; done | sort | uniq)
-  mapfile -t actual_rows < <(run_sql "SELECT row_data FROM lightning_task_info.conflict_error_v3 WHERE table_name = \"\`dup_detect\`.\`${table}\`\"" |
+  mapfile -t actual_rows < <(run_sql "SELECT row_data FROM lightning_task_info.conflict_error_v4 WHERE table_name = \"\`dup_detect\`.\`${table}\`\"" |
     grep "row_data:" | sed 's/^.*(//' | sed 's/).*$//' | sed 's/"//g' | sed 's/, */,/g' | sort | uniq)
   equal=0
   if [ "${#actual_rows[@]}" = "${#expect_rows[@]}" ]; then

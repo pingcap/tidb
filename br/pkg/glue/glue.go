@@ -9,7 +9,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	pd "github.com/tikv/pd/client"
 )
@@ -54,12 +54,15 @@ type Session interface {
 	Execute(ctx context.Context, sql string) error
 	ExecuteInternal(ctx context.Context, sql string, args ...any) error
 	CreateDatabase(ctx context.Context, schema *model.DBInfo) error
-	CreateTable(ctx context.Context, dbName pmodel.CIStr, table *model.TableInfo,
+	CreateTable(ctx context.Context, dbName ast.CIStr, table *model.TableInfo,
 		cs ...ddl.CreateTableOption) error
 	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error
 	Close()
 	GetGlobalVariable(name string) (string, error)
+	GetGlobalSysVar(name string) (string, error)
 	GetSessionCtx() sessionctx.Context
+	AlterTableMode(ctx context.Context, schemaID int64, tableID int64, tableMode model.TableMode) error
+	RefreshMeta(ctx context.Context, args *model.RefreshMetaArgs) error
 }
 
 // BatchCreateTableSession is an interface to batch create table parallelly
@@ -81,4 +84,18 @@ type Progress interface {
 	// Close marks the progress as 100% complete and that Inc() can no longer be
 	// called.
 	Close()
+}
+
+// WithProgress execute some logic with the progress, and close it once the execution done.
+func WithProgress(
+	ctx context.Context,
+	g Glue,
+	cmdName string,
+	total int64,
+	redirectLog bool,
+	cc func(p Progress) error,
+) error {
+	p := g.StartProgress(ctx, cmdName, total, redirectLog)
+	defer p.Close()
+	return cc(p)
 }

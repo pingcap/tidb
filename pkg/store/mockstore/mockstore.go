@@ -15,20 +15,25 @@
 package mockstore
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
-	cp "github.com/otiai10/copy"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 )
 
 // MockTiKVDriver is in memory mock TiKV driver.
@@ -40,7 +45,7 @@ func (d MockTiKVDriver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !strings.EqualFold(u.Scheme, "mocktikv") {
+	if config.StoreType(strings.ToLower(u.Scheme)) != config.StoreTypeMockTiKV {
 		return nil, errors.Errorf("Uri scheme expected(mocktikv) but found (%s)", u.Scheme)
 	}
 
@@ -62,7 +67,7 @@ func (d EmbedUnistoreDriver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !strings.EqualFold(u.Scheme, "unistore") {
+	if config.StoreType(strings.ToLower(u.Scheme)) != config.StoreTypeUniStore {
 		return nil, errors.Errorf("Uri scheme expected(unistore) but found (%s)", u.Scheme)
 	}
 
@@ -88,15 +93,18 @@ const (
 )
 
 type mockOptions struct {
-	clusterInspector func(testutils.Cluster)
-	clientHijacker   func(tikv.Client) tikv.Client
-	pdClientHijacker func(pd.Client) pd.Client
-	path             string
-	txnLocalLatches  uint
-	storeType        StoreType
-	ddlCheckerHijack bool
-	tikvOptions      []tikv.Option
-	pdAddrs          []string
+	clusterInspector  func(testutils.Cluster)
+	clientHijacker    func(tikv.Client) tikv.Client
+	pdClientHijacker  func(pd.Client) pd.Client
+	path              string
+	txnLocalLatches   uint
+	storeType         StoreType
+	ddlCheckerHijack  bool
+	tikvOptions       []tikv.Option
+	pdAddrs           []string
+	keyspaceSpecified bool
+	currentKeyspaceID uint32
+	clusterKeyspaces  []*keyspacepb.KeyspaceMeta
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
@@ -177,6 +185,81 @@ func WithDDLChecker() MockTiKVStoreOption {
 	}
 }
 
+// WithMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
+func WithMockTiFlash(nodes int) MockTiKVStoreOption {
+	return WithMultipleOptions(
+		WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := BootstrapWithSingleStore(c)
+			tiflashIdx := 0
+			for tiflashIdx < nodes {
+				store2 := c.AllocID()
+				peer2 := c.AllocID()
+				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				mockCluster.AddPeer(region1, store2, peer2)
+				tiflashIdx++
+			}
+		}),
+		WithStoreType(EmbedUnistore),
+	)
+}
+
+func enableKeyspaceLevelGCIfNotSet(meta *keyspacepb.KeyspaceMeta) {
+	if meta.Config == nil {
+		meta.Config = make(map[string]string, 1)
+	}
+	if _, ok := meta.Config[pd.KeyspaceConfigGCManagementType]; !ok {
+		meta.Config[pd.KeyspaceConfigGCManagementType] = pd.KeyspaceConfigGCManagementTypeKeyspaceLevel
+	}
+}
+
+// WithCurrentKeyspaceMeta lets user set the keyspace meta.
+// Note that keyspaces created in the mock store will all have keyspace level GC enabled by default, as it's the only
+// allowed mode for keyspaces in next gen. To specify unified GC mode for special test purposes, explicitly set it
+// in the `Config` field of the keyspace meta.
+func WithCurrentKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta) MockTiKVStoreOption {
+	return func(c *mockOptions) {
+		c.keyspaceSpecified = true
+		if keyspaceMeta != nil {
+			enableKeyspaceLevelGCIfNotSet(keyspaceMeta)
+			c.clusterKeyspaces = []*keyspacepb.KeyspaceMeta{keyspaceMeta}
+			c.currentKeyspaceID = keyspaceMeta.Id
+		} else {
+			c.clusterKeyspaces = nil
+			c.currentKeyspaceID = constants.NullKeyspaceID
+		}
+	}
+}
+
+// WithKeyspacesAndCurrentKeyspaceID specifies a list of keyspaces in the cluster, and ID of the keyspace that
+// the user will be in. It's useful when the test needs to operate other keyspaces.
+// Note that keyspaces created in the mock store will all have keyspace level GC enabled by default, as it's the only
+// allowed mode for keyspaces in next gen. To specify unified GC mode for special test purposes, explicitly set it
+// in the `Config` field of the keyspace meta.
+func WithKeyspacesAndCurrentKeyspaceID(clusterKeyspaces []*keyspacepb.KeyspaceMeta, currentKeyspaceID uint32) MockTiKVStoreOption {
+	return func(c *mockOptions) {
+		c.keyspaceSpecified = true
+		c.clusterKeyspaces = clusterKeyspaces
+		c.currentKeyspaceID = currentKeyspaceID
+		for _, meta := range c.clusterKeyspaces {
+			enableKeyspaceLevelGCIfNotSet(meta)
+		}
+	}
+}
+
+func (o *mockOptions) currentKeyspaceMeta() *keyspacepb.KeyspaceMeta {
+	if o.currentKeyspaceID != constants.NullKeyspaceID {
+		for _, meta := range o.clusterKeyspaces {
+			if meta.Id == o.currentKeyspaceID {
+				return meta
+			}
+		}
+		panic("currentKeyspaceID and clusterKeyspaces mismatches")
+	}
+	return nil
+}
+
 // DDLCheckerInjector is used to break import cycle.
 var DDLCheckerInjector func(kv.Storage) kv.Storage
 
@@ -188,10 +271,23 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		clusterInspector: func(c testutils.Cluster) {
 			BootstrapWithSingleStore(c)
 		},
-		storeType: defaultStoreType,
+		storeType:         defaultStoreType,
+		currentKeyspaceID: constants.NullKeyspaceID,
 	}
 	for _, f := range options {
 		f(&opt)
+	}
+	if kerneltype.IsNextGen() {
+		// in nextgen, all stores must have a keyspace meta set. to simplify the
+		// test, we set the default keyspace meta to system keyspace, unless
+		// manually specified for special test purposes.
+		if !opt.keyspaceSpecified {
+			meta := &keyspacepb.KeyspaceMeta{
+				Id:   constants.MaxKeyspaceID - 1,
+				Name: keyspace.System,
+			}
+			WithCurrentKeyspaceMeta(meta)(&opt)
+		}
 	}
 
 	var (
@@ -236,18 +332,6 @@ func ImageAvailable() bool {
 	}
 	_, err = os.ReadDir(filepath.Join(ImageFilePath, "kv"))
 	return err == nil
-}
-
-func copyImage() (string, error) {
-	path, err := os.MkdirTemp("", "tidb-unistore-temp")
-	if err != nil {
-		return "", err
-	}
-	err = cp.Copy(ImageFilePath, path)
-	if err != nil {
-		return "", err
-	}
-	return path, nil
 }
 
 // BootstrapWithSingleStore initializes a Cluster with 1 Region and 1 Store.

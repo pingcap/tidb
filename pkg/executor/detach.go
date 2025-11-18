@@ -107,6 +107,7 @@ func (sCtx selectionExecutorContext) Detach() selectionExecutorContext {
 
 // Detach detaches the current executor from the session context.
 func (e *TableReaderExecutor) Detach() (exec.Executor, bool) {
+	//nolint:constructor
 	newExec := new(TableReaderExecutor)
 	*newExec = *e
 
@@ -117,6 +118,7 @@ func (e *TableReaderExecutor) Detach() (exec.Executor, bool) {
 
 // Detach detaches the current executor from the session context.
 func (e *IndexReaderExecutor) Detach() (exec.Executor, bool) {
+	//nolint:constructor
 	newExec := new(IndexReaderExecutor)
 	*newExec = *e
 
@@ -127,6 +129,7 @@ func (e *IndexReaderExecutor) Detach() (exec.Executor, bool) {
 
 // Detach detaches the current executor from the session context.
 func (e *IndexLookUpExecutor) Detach() (exec.Executor, bool) {
+	//nolint:constructor
 	newExec := new(IndexLookUpExecutor)
 	*newExec = *e
 
@@ -144,6 +147,7 @@ func (e *ProjectionExec) Detach() (exec.Executor, bool) {
 		return nil, false
 	}
 
+	//nolint:constructor
 	newExec := new(ProjectionExec)
 	*newExec = *e
 
@@ -163,6 +167,7 @@ func (e *SelectionExec) Detach() (exec.Executor, bool) {
 		}
 	}
 
+	//nolint:constructor
 	newExec := new(SelectionExec)
 	*newExec = *e
 

@@ -36,7 +36,7 @@ func TestCodec(t *testing.T) {
 	colTypes = append(colTypes, types.NewFieldType(mysql.TypeJSON))
 
 	oldChk := NewChunkWithCapacity(colTypes, numRows)
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		str := fmt.Sprintf("%d.12345", i)
 		oldChk.AppendNull(0)
 		oldChk.AppendInt64(1, int64(i))
@@ -55,7 +55,7 @@ func TestCodec(t *testing.T) {
 	require.Empty(t, remained)
 	require.Equal(t, numCols, newChk.NumCols())
 	require.Equal(t, numRows, newChk.NumRows())
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		row := newChk.GetRow(i)
 		str := fmt.Sprintf("%d.12345", i)
 		require.True(t, row.IsNull(0))
@@ -100,7 +100,7 @@ func BenchmarkEncodeChunk(b *testing.B) {
 	numRows := 1024
 
 	colTypes := make([]*types.FieldType, numCols)
-	for i := 0; i < numCols; i++ {
+	for i := range numCols {
 		colTypes[i] = types.NewFieldType(mysql.TypeLonglong)
 	}
 	chk := NewChunkWithCapacity(colTypes, numRows)
@@ -108,7 +108,7 @@ func BenchmarkEncodeChunk(b *testing.B) {
 	codec := &Codec{}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		codec.Encode(chk)
 	}
 }
@@ -118,7 +118,7 @@ func BenchmarkDecode(b *testing.B) {
 	numRows := 1024
 
 	colTypes := make([]*types.FieldType, numCols)
-	for i := 0; i < numCols; i++ {
+	for i := range numCols {
 		colTypes[i] = types.NewFieldType(mysql.TypeLonglong)
 	}
 	chk := NewChunkWithCapacity(colTypes, numRows)
@@ -126,7 +126,7 @@ func BenchmarkDecode(b *testing.B) {
 	buffer := codec.Encode(chk)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		codec.Decode(buffer)
 	}
 }
@@ -139,7 +139,7 @@ func BenchmarkDecodeToChunk(b *testing.B) {
 	chk := &Chunk{
 		columns: make([]*Column, numCols),
 	}
-	for i := 0; i < numCols; i++ {
+	for i := range numCols {
 		chk.columns[i] = &Column{
 			length:     numRows,
 			nullBitmap: make([]byte, numRows/8+1),
@@ -152,7 +152,7 @@ func BenchmarkDecodeToChunk(b *testing.B) {
 	buffer := codec.Encode(chk)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		codec.DecodeToChunk(buffer, chk)
 	}
 }
@@ -170,7 +170,7 @@ func BenchmarkDecodeToChunkWithVariableType(b *testing.B) {
 	colTypes = append(colTypes, types.NewFieldType(mysql.TypeJSON))
 
 	chk := NewChunkWithCapacity(colTypes, numRows)
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		str := fmt.Sprintf("%d.12345", i)
 		chk.AppendNull(0)
 		chk.AppendInt64(1, int64(i))
@@ -185,7 +185,7 @@ func BenchmarkDecodeToChunkWithVariableType(b *testing.B) {
 	chk.Reset()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		codec.DecodeToChunk(buffer, chk)
 	}
 }

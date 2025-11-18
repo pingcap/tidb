@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/distsql"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -51,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -307,7 +309,7 @@ func getDupDetectClient(
 	ctx context.Context,
 	region *split.RegionInfo,
 	keyRange tidbkv.KeyRange,
-	importClientFactory ImportClientFactory,
+	importClientFactory importClientFactory,
 	resourceGroupName string,
 	taskType string,
 	minCommitTS uint64,
@@ -317,7 +319,7 @@ func getDupDetectClient(
 		return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound,
 			"region id %d has no leader", region.Region.Id)
 	}
-	importClient, err := importClientFactory.Create(ctx, leader.GetStoreId())
+	importClient, err := importClientFactory.create(ctx, leader.GetStoreId())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -348,7 +350,7 @@ func NewRemoteDupKVStream(
 	ctx context.Context,
 	region *split.RegionInfo,
 	keyRange tidbkv.KeyRange,
-	importClientFactory ImportClientFactory,
+	importClientFactory importClientFactory,
 	resourceGroupName string,
 	taskType string,
 	minCommitTS uint64,
@@ -600,7 +602,7 @@ func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 
 // RetrieveKeyAndValueFromErrFoundDuplicateKeys retrieves the key and value
 // from ErrFoundDuplicateKeys error.
-func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, error) {
+func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) (key, value []byte, _ error) {
 	if !common.ErrFoundDuplicateKeys.Equal(err) {
 		return nil, nil, err
 	}
@@ -728,7 +730,7 @@ func (m *dupeDetector) buildDupTasks() ([]dupTask, error) {
 		putToTaskFunc(ranges, nil)
 	})
 	for _, indexInfo := range m.tbl.Meta().Indices {
-		if indexInfo.State != model.StatePublic {
+		if indexInfo.State != model.StatePublic || !indexInfo.Unique {
 			continue
 		}
 		keyRanges, err = tableIndexKeyRanges(m.tbl.Meta(), indexInfo)
@@ -786,7 +788,7 @@ func (m *dupeDetector) splitLocalDupTaskByKeys(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ranges := splitRangeBySizeProps(common.Range{Start: task.StartKey, End: task.EndKey}, sizeProps, sizeLimit, keysLimit)
+	ranges := splitRangeBySizeProps(engineapi.Range{Start: task.StartKey, End: task.EndKey}, sizeProps, sizeLimit, keysLimit)
 	newDupTasks := make([]dupTask, 0, len(ranges))
 	for _, r := range ranges {
 		newDupTasks = append(newDupTasks, dupTask{
@@ -831,7 +833,6 @@ func (m *dupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 	pool := util.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from duplicate db")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
-		task := task
 		pool.ApplyOnErrorGroup(g, func() error {
 			if err := common.Retry("collect local duplicate rows", logger, func() error {
 				stream := NewLocalDupKVStream(dupDB, keyAdapter, task.KeyRange)
@@ -903,7 +904,7 @@ func (m *dupeDetector) processRemoteDupTaskOnce(
 	ctx context.Context,
 	task dupTask,
 	logger log.Logger,
-	importClientFactory ImportClientFactory,
+	importClientFactory importClientFactory,
 	regionPool *util.WorkerPool,
 	remainKeyRanges *pendingKeyRanges,
 	algorithm config.DuplicateResolutionAlgorithm,
@@ -925,7 +926,7 @@ func (m *dupeDetector) processRemoteDupTaskOnce(
 	var metErr common.OnceError
 	wg := &sync.WaitGroup{}
 	atomicMadeProgress := atomic.NewBool(false)
-	for i := 0; i < len(regions); i++ {
+	for i := range regions {
 		if ctx.Err() != nil {
 			metErr.Set(ctx.Err())
 			break
@@ -981,7 +982,7 @@ func (m *dupeDetector) processRemoteDupTask(
 	ctx context.Context,
 	task dupTask,
 	logger log.Logger,
-	importClientFactory ImportClientFactory,
+	importClientFactory importClientFactory,
 	regionPool *util.WorkerPool,
 	algorithm config.DuplicateResolutionAlgorithm,
 ) error {
@@ -998,8 +999,9 @@ func (m *dupeDetector) processRemoteDupTask(
 			}
 			return nil
 		}
-		if log.IsContextCanceledError(err) {
-			return errors.Trace(err)
+		if err2 := ctx.Err(); err2 != nil {
+			// stop retry when user cancel the context
+			return errors.Trace(err2)
 		}
 		if !madeProgress {
 			_, isRegionErr := errors.Cause(err).(regionError)
@@ -1027,7 +1029,7 @@ func (m *dupeDetector) processRemoteDupTask(
 // records all duplicate row info into errorMgr.
 func (m *dupeDetector) collectDuplicateRowsFromTiKV(
 	ctx context.Context,
-	importClientFactory ImportClientFactory,
+	importClientFactory importClientFactory,
 	algorithm config.DuplicateResolutionAlgorithm,
 ) error {
 	tasks, err := m.buildDupTasks()
@@ -1041,7 +1043,6 @@ func (m *dupeDetector) collectDuplicateRowsFromTiKV(
 	regionPool := util.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv by region")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
-		task := task
 		taskPool.ApplyOnErrorGroup(g, func() error {
 			taskLogger := logger.With(
 				logutil.Key("startKey", task.StartKey),
@@ -1072,7 +1073,7 @@ type DupeController struct {
 	dupeConcurrency     int
 	duplicateDB         *pebble.DB
 	keyAdapter          common.KeyAdapter
-	importClientFactory ImportClientFactory
+	importClientFactory importClientFactory
 	resourceGroupName   string
 	taskType            string
 }
@@ -1080,13 +1081,13 @@ type DupeController struct {
 // CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
 // may be repeated with other keys in local data source.
 func (local *DupeController) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions, algorithm config.DuplicateResolutionAlgorithm) (hasDupe bool, err error) {
-	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
+	logger := log.Wrap(tidblogutil.Logger(ctx)).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
 	}()
 
 	duplicateManager, err := NewDupeDetector(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
-		local.errorMgr, opts, local.dupeConcurrency, log.FromContext(ctx), local.resourceGroupName, local.taskType)
+		local.errorMgr, opts, local.dupeConcurrency, log.Wrap(tidblogutil.Logger(ctx)), local.resourceGroupName, local.taskType)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1106,13 +1107,13 @@ func (local *DupeController) CollectRemoteDuplicateRows(
 	opts *encode.SessionOptions,
 	algorithm config.DuplicateResolutionAlgorithm,
 ) (hasDupe bool, err error) {
-	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
+	logger := log.Wrap(tidblogutil.Logger(ctx)).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
 	}()
 
 	duplicateManager, err := NewDupeDetector(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
-		local.errorMgr, opts, local.dupeConcurrency, log.FromContext(ctx), local.resourceGroupName, local.taskType)
+		local.errorMgr, opts, local.dupeConcurrency, log.Wrap(tidblogutil.Logger(ctx)), local.resourceGroupName, local.taskType)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1126,7 +1127,7 @@ func (local *DupeController) CollectRemoteDuplicateRows(
 // ResolveDuplicateRows resolves duplicated rows by deleting/inserting data
 // according to the required algorithm.
 func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
-	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
+	logger := log.Wrap(tidblogutil.Logger(ctx)).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
 	}()

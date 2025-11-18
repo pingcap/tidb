@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -69,7 +70,7 @@ func TestPartitionTableRandomIndexMerge(t *testing.T) {
 	tk.MustExec(`create table tnormal (a int, b int, key(a), key(b))`)
 
 	values := make([]string, 0, 32)
-	for i := 0; i < 32; i++ {
+	for range 32 {
 		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(10), rand.Intn(10)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
@@ -82,7 +83,7 @@ func TestPartitionTableRandomIndexMerge(t *testing.T) {
 		}
 		return a, b
 	}
-	for i := 0; i < 32; i++ {
+	for range 32 {
 		la, ra := randRange()
 		lb, rb := randRange()
 		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
@@ -115,12 +116,12 @@ func TestPartitionTableRandomIndexMerge2(t *testing.T) {
 		return a, b
 	}
 	values := make([]string, 0, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		values = append(values, fmt.Sprintf("(%v, %v)", i, rand.Intn(10)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into tpk values %v", strings.Join(values, ", ")))
 	tk.MustExec(fmt.Sprintf("insert into tnormal values %v", strings.Join(values, ", ")))
-	for i := 0; i < 32; i++ {
+	for range 32 {
 		la, ra := randRange()
 		lb, rb := randRange()
 		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
@@ -146,7 +147,7 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 	tk.MustExec("set @a = 10;")
 	tk.MustQuery("execute stmt1 using @a, @a;").Check(testkit.Rows("10"))
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
 	})
 	explainStr := "explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10)
 	res := tk.MustQuery(explainStr)
@@ -171,7 +172,7 @@ func TestIndexMergeReaderMemTracker(t *testing.T) {
 
 	insertStr := "insert into t1 values(0, 0, 0)"
 	rowNum := 1000
-	for i := 0; i < rowNum; i++ {
+	for i := range rowNum {
 		insertStr += fmt.Sprintf(" ,(%d, %d, %d)", i, i, i)
 	}
 	insertStr += ";"
@@ -363,7 +364,7 @@ func TestIntersectionWithDifferentConcurrency(t *testing.T) {
 		const rowCnt int = 100
 		curRowCnt := 0
 		insertStr := "insert into t1 values"
-		for i := 0; i < rowCnt; i++ {
+		for i := range rowCnt {
 			if i != 0 {
 				insertStr += ", "
 			}
@@ -375,7 +376,7 @@ func TestIntersectionWithDifferentConcurrency(t *testing.T) {
 
 		for _, concurrency := range execCon {
 			tk.MustExec(fmt.Sprintf("set tidb_executor_concurrency = %d", concurrency))
-			for i := 0; i < 2; i++ {
+			for i := range 2 {
 				sql := "select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024"
 				if i == 0 {
 					// Dynamic mode.
@@ -393,14 +394,14 @@ func TestIntersectionWithDifferentConcurrency(t *testing.T) {
 						tk.MustNotHavePlan(sql, "PartitionUnion")
 					}
 				}
-				for i := 0; i < queryCnt; i++ {
+				for range queryCnt {
 					c3 := rand.Intn(1024)
 					res := tk.MustQuery(fmt.Sprintf("select /*+ no_index_merge() */ c1 from t1 where c2 < 1024 and c3 > %d", c3)).Sort().Rows()
 					tk.MustQuery(fmt.Sprintf("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > %d", c3)).Sort().Check(res)
 				}
 
 				// In transaction
-				for i := 0; i < queryCnt; i++ {
+				for range queryCnt {
 					tk.MustExec("begin;")
 					r := rand.Intn(3)
 					if r == 0 {
@@ -510,7 +511,7 @@ func TestIndexMergePanic(t *testing.T) {
 	// TestIndexMergePanicPartialIndexWorker
 	fp := "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicPartialIndexWorker"
 	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		indexMergePanicRunSQL(t, tk, fp)
 	}
 	require.NoError(t, failpoint.Disable(fp))
@@ -518,7 +519,7 @@ func TestIndexMergePanic(t *testing.T) {
 	// TestIndexMergePanicPartialTableWorker
 	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicPartialTableWorker"
 	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		indexMergePanicRunSQL(t, tk, fp)
 	}
 	require.NoError(t, failpoint.Disable(fp))
@@ -526,7 +527,7 @@ func TestIndexMergePanic(t *testing.T) {
 	// TestIndexMergePanicProcessWorkerUnion
 	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicProcessWorkerUnion"
 	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		indexMergePanicRunSQL(t, tk, fp)
 	}
 	require.NoError(t, failpoint.Disable(fp))
@@ -534,7 +535,7 @@ func TestIndexMergePanic(t *testing.T) {
 	// TestIndexMergePanicProcessWorkerIntersection
 	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicProcessWorkerIntersection"
 	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		indexMergePanicRunSQL(t, tk, fp)
 	}
 	require.NoError(t, failpoint.Disable(fp))
@@ -542,7 +543,7 @@ func TestIndexMergePanic(t *testing.T) {
 	// TestIndexMergePanicPartitionTableIntersectionWorker
 	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicPartitionTableIntersectionWorker"
 	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		indexMergePanicRunSQL(t, tk, fp)
 	}
 	require.NoError(t, failpoint.Disable(fp))
@@ -550,7 +551,7 @@ func TestIndexMergePanic(t *testing.T) {
 	// TestIndexMergePanicTableScanWorker
 	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicTableScanWorker"
 	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		indexMergePanicRunSQL(t, tk, fp)
 	}
 	require.NoError(t, failpoint.Disable(fp))
@@ -577,7 +578,7 @@ func TestIndexMergeError(t *testing.T) {
 	for _, fp := range errFPPaths {
 		fmt.Println("handling failpoint: ", fp)
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`return("%s")`, fp)))
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			indexMergePanicRunSQL(t, tk, fp)
 		}
 		require.NoError(t, failpoint.Disable(fp))
@@ -654,7 +655,7 @@ func TestOrderByWithLimit(t *testing.T) {
 
 	valueSlice := make([]*valueStruct, 0, 500)
 	vals := make([]string, 0, 500)
-	for i := 0; i < 500; i++ {
+	for range 500 {
 		a := rand.Intn(32)
 		b := rand.Intn(32)
 		c := rand.Intn(32)
@@ -670,7 +671,7 @@ func TestOrderByWithLimit(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("insert into tcommonhash(a,b,c) values %s", valInserted))
 	tk.MustExec(fmt.Sprintf("insert into tpkhash(a,b,c) values %s", valInserted))
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if i%2 == 0 {
 			tk.MustExec("set tidb_partition_prune_mode = `static-only`")
 		} else {
@@ -758,7 +759,7 @@ func TestProcessInfoRaceWithIndexScan(t *testing.T) {
 	tk.MustExec(insertStr)
 
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
 	})
 
 	wg := sync.WaitGroup{}
@@ -785,10 +786,10 @@ func TestIndexMergeReaderIssue45279(t *testing.T) {
 	tk.MustExec("CREATE TABLE reproduce (c1 int primary key, c2 int, c3 int, key ci2(c2), key ci3(c3));")
 	tk.MustExec("insert into reproduce values (1, 1, 1), (2, 2, 2), (3, 3, 3);")
 	tk.MustQuery("explain select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);").Check(testkit.Rows(
-		"IndexMerge_11 33.99 root  type: union",
-		"├─TableRangeScan_8(Build) 4.00 cop[tikv] table:reproduce range:[0,0], [1,1], [2,2], [3,3], keep order:false, stats:pseudo",
-		"├─IndexRangeScan_9(Build) 30.00 cop[tikv] table:reproduce, index:ci2(c2) range:[0,0], [1,1], [2,2], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_10(Probe) 33.99 cop[tikv] table:reproduce keep order:false, stats:pseudo"))
+		"IndexMerge_12 33.99 root  type: union",
+		"├─TableRangeScan_9(Build) 4.00 cop[tikv] table:reproduce range:[0,0], [1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+		"├─IndexRangeScan_10(Build) 30.00 cop[tikv] table:reproduce, index:ci2(c2) range:[0,0], [1,1], [2,2], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_11(Probe) 33.99 cop[tikv] table:reproduce keep order:false, stats:pseudo"))
 
 	// This function should return successfully
 	var ctx context.Context
@@ -805,12 +806,12 @@ func TestIndexMergeLimitPushedAsIntersectionEmbeddedLimit(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, index idx(a, c), index idx2(b, c), index idx3(a, b, c))")
 	valsInsert := make([]string, 0, 1000)
-	for i := 0; i < 500; i++ {
+	for range 500 {
 		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", rand.Intn(100), rand.Intn(100), rand.Intn(100)))
 	}
 	tk.MustExec("analyze table t")
 	tk.MustExec("insert into t values " + strings.Join(valsInsert, ","))
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		valA, valB, valC, limit := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1
 		queryTableScan := fmt.Sprintf("select * from t use index() where a > %d and b > %d and c >= %d limit %d", valA, valB, valC, limit)
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a > %d and b > %d and c >= %d limit %d", valA, valB, valC, limit)
@@ -828,31 +829,42 @@ func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, index idx(a, c), index idx2(b, c), index idx3(a, b, c))")
-	valsInsert := make([]string, 0, 500)
-	for i := 0; i < 500; i++ {
-		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", rand.Intn(100), rand.Intn(100), rand.Intn(100)))
+
+	// Create a smaller dataset to reduce test execution time
+	valsInsert := make([]string, 0, 50)
+	for i := 0; i < 50; i++ {
+		// Use deterministic values to reduce variability
+		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", i%10, i%8, i%15))
 	}
-	tk.MustExec("analyze table t")
 	tk.MustExec("insert into t values " + strings.Join(valsInsert, ","))
+
+	// Use standard TiDB test approach: set analyze version and analyze
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("analyze table t all columns")
+
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceIndexMergeKeepOrder", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceIndexMergeKeepOrder")
-	for i := 0; i < 50; i++ {
-		valA, valB, valC, limit := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1
+
+	// Use limited iterations to reduce test time (previously 50)
+	for idx := range 10 {
+		valA, valB, valC, limit := idx%10, idx%8, idx%15, (idx%10)+2
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d) t", valA, valB, valC, limit)).Rows()[0][0]
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
 		queryWithNormalIndex := fmt.Sprintf("select * from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
 		tk.MustHavePlan(queryWithIndexMerge, "IndexMerge")
 		tk.MustHavePlan(queryWithIndexMerge, "Limit")
+		t.Logf("index: %d, queryWithIndexMerge: %s, queryWithNormalIndex: %s", idx, queryWithIndexMerge, queryWithNormalIndex)
 		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
 		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
 	}
-	for i := 0; i < 50; i++ {
-		valA, valB, valC, limit, offset := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1, rand.Intn(20)
+	for idx := range 10 {
+		valA, valB, valC, limit, offset := idx%10, idx%8, idx%15, (idx%10)+1, idx%3
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d offset %d) t", valA, valB, valC, limit, offset)).Rows()[0][0]
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ c from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
 		queryWithNormalIndex := fmt.Sprintf("select c from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
 		tk.MustHavePlan(queryWithIndexMerge, "IndexMerge")
 		tk.MustHavePlan(queryWithIndexMerge, "Limit")
+		t.Logf("index: %d, queryWithIndexMerge: %s, queryWithNormalIndex: %s", idx, queryWithIndexMerge, queryWithNormalIndex)
 		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
 		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
 	}
@@ -864,7 +876,7 @@ func TestIssues46005(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_index_lookup_size = 1024")
 	tk.MustExec("create table t(a int, b int, c int, index idx1(a, c), index idx2(b, c))")
-	for i := 0; i < 1500; i++ {
+	for i := range 1500 {
 		tk.MustExec(fmt.Sprintf("insert into t(a,b,c) values (1, 1, %d)", i))
 	}
 

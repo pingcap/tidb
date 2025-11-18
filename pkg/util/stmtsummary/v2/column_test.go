@@ -20,25 +20,25 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
 func TestColumn(t *testing.T) {
 	columns := []*model.ColumnInfo{
-		{Name: pmodel.NewCIStr(ClusterTableInstanceColumnNameStr)},
-		{Name: pmodel.NewCIStr(StmtTypeStr)},
-		{Name: pmodel.NewCIStr(SchemaNameStr)},
-		{Name: pmodel.NewCIStr(DigestStr)},
-		{Name: pmodel.NewCIStr(DigestTextStr)},
-		{Name: pmodel.NewCIStr(TableNamesStr)},
-		{Name: pmodel.NewCIStr(IndexNamesStr)},
-		{Name: pmodel.NewCIStr(SampleUserStr)},
-		{Name: pmodel.NewCIStr(ExecCountStr)},
-		{Name: pmodel.NewCIStr(SumLatencyStr)},
-		{Name: pmodel.NewCIStr(MaxLatencyStr)},
-		{Name: pmodel.NewCIStr(AvgTidbCPUTimeStr)},
-		{Name: pmodel.NewCIStr(AvgTikvCPUTimeStr)},
+		{Name: ast.NewCIStr(ClusterTableInstanceColumnNameStr)},
+		{Name: ast.NewCIStr(StmtTypeStr)},
+		{Name: ast.NewCIStr(SchemaNameStr)},
+		{Name: ast.NewCIStr(DigestStr)},
+		{Name: ast.NewCIStr(DigestTextStr)},
+		{Name: ast.NewCIStr(TableNamesStr)},
+		{Name: ast.NewCIStr(IndexNamesStr)},
+		{Name: ast.NewCIStr(SampleUserStr)},
+		{Name: ast.NewCIStr(ExecCountStr)},
+		{Name: ast.NewCIStr(SumLatencyStr)},
+		{Name: ast.NewCIStr(MaxLatencyStr)},
+		{Name: ast.NewCIStr(AvgTidbCPUTimeStr)},
+		{Name: ast.NewCIStr(AvgTikvCPUTimeStr)},
 	}
 	factories := makeColumnFactories(columns)
 	info := GenerateStmtExecInfo4Test("digest")

@@ -16,10 +16,13 @@ package kv
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -113,10 +116,45 @@ func (s *mockMap) Set(k Key, v []byte) error {
 func (s *mockMap) Delete(k Key) error {
 	for i, key := range s.index {
 		if key.Cmp(k) == 0 {
-			s.index = append(s.index[:i], s.index[i+1:]...)
-			s.value = append(s.value[:i], s.value[i+1:]...)
+			s.index = slices.Delete(s.index, i, i+1)
+			s.value = slices.Delete(s.value, i, i+1)
 			return nil
 		}
 	}
 	return nil
+}
+
+type keyspaceGetterStore struct {
+	Storage
+	ks string
+}
+
+func (s *keyspaceGetterStore) GetKeyspace() string {
+	return s.ks
+}
+
+func TestIsUserKS(t *testing.T) {
+	if kerneltype.IsClassic() {
+		store := &keyspaceGetterStore{}
+		assert.False(t, IsUserKS(store))
+	} else {
+		store := &keyspaceGetterStore{ks: "user"}
+		assert.True(t, IsUserKS(store))
+
+		store.ks = keyspace.System
+		assert.False(t, IsUserKS(store))
+	}
+}
+
+func TestIsSystemKS(t *testing.T) {
+	if kerneltype.IsClassic() {
+		store := &keyspaceGetterStore{}
+		assert.False(t, IsSystemKS(store))
+	} else {
+		store := &keyspaceGetterStore{ks: "user"}
+		assert.False(t, IsSystemKS(store))
+
+		store.ks = keyspace.System
+		assert.True(t, IsSystemKS(store))
+	}
 }

@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,11 @@ import (
 
 // use shared key to access azurite
 type sharedKeyAzuriteClientBuilder struct {
+}
+
+// GetServiceURL implements ClientBuilder.
+func (b *sharedKeyAzuriteClientBuilder) GetServiceURL() string {
+	return "http://127.0.0.1:10000/devstoreaccount1"
 }
 
 func (b *sharedKeyAzuriteClientBuilder) GetServiceClient() (*azblob.Client, error) {
@@ -62,7 +68,7 @@ func TestAzblob(t *testing.T) {
 	builder := &sharedKeyAzuriteClientBuilder{}
 	skip, err := createContainer(ctx, builder, options.Bucket)
 	if skip || err != nil {
-		t.Log("azurite is not running, skip test")
+		t.Skip("azurite is not running, skip test")
 		return
 	}
 	require.NoError(t, err)
@@ -123,23 +129,34 @@ func TestAzblob(t *testing.T) {
 
 	efr, err := azblobStorage.Open(ctx, "key2", nil)
 	require.NoError(t, err)
+	size, err := efr.GetFileSize()
+	require.NoError(t, err)
+	require.EqualValues(t, 33, size)
+
+	realReader := efr.(*azblobObjectReader)
+	require.Nil(t, realReader.reader)
 
 	p := make([]byte, 10)
 	n, err := efr.Read(p)
 	require.NoError(t, err)
 	require.Equal(t, 10, n)
 	require.Equal(t, "data222233", string(p))
+	require.NotNil(t, realReader.reader)
+	oldInnerReader := realReader.reader
 
 	p = make([]byte, 40)
 	n, err = efr.Read(p)
 	require.NoError(t, err)
 	require.Equal(t, 23, n)
 	require.Equal(t, "46757222222222289722222", string(p[:23]))
+	require.Same(t, oldInnerReader, realReader.reader)
 
 	p = make([]byte, 5)
 	offs, err := efr.Seek(3, io.SeekStart)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), offs)
+	// reader reopened
+	require.NotSame(t, oldInnerReader, realReader.reader)
 
 	n, err = efr.Read(p)
 	require.NoError(t, err)
@@ -230,8 +247,10 @@ func TestNewAzblobStorage(t *testing.T) {
 			Prefix:    "a/b",
 			SharedKey: "cGFzc3dk",
 		}
-		_, err := getAzureServiceClientBuilder(options, nil)
-		require.Error(t, err)
+		builder, err := getAzureServiceClientBuilder(options, nil)
+		require.NoError(t, err)
+		_, ok := builder.(*defaultClientBuilder)
+		require.True(t, ok, "it is %T", builder)
 	}
 
 	err = os.Setenv("AZURE_STORAGE_KEY", "cGFzc3dk")
@@ -330,6 +349,11 @@ type fakeClientBuilder struct {
 	Endpoint string
 }
 
+// GetServiceURL implements ClientBuilder.
+func (b *fakeClientBuilder) GetServiceURL() string {
+	return b.Endpoint
+}
+
 func (b *fakeClientBuilder) GetServiceClient() (*azblob.Client, error) {
 	connStr := fmt.Sprintf("DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=%s/devstoreaccount1;", b.Endpoint)
 	return azblob.NewClientFromConnectionString(connStr, getDefaultClientOptions())
@@ -374,4 +398,53 @@ func TestDownloadRetry(t *testing.T) {
 	_, err = s.ReadFile(ctx, "c")
 	require.Error(t, err)
 	require.Less(t, azblobRetryTimes, count)
+}
+
+type wr struct {
+	w   ExternalFileWriter
+	ctx context.Context
+}
+
+func (w wr) Write(bs []byte) (int, error) {
+	return w.w.Write(w.ctx, bs)
+}
+
+func TestCopyObject(t *testing.T) {
+	mkTestStrg := func(bucket, prefix string) *AzureBlobStorage {
+		ctx := context.Background()
+		options := &backuppb.AzureBlobStorage{
+			Bucket: bucket,
+			Prefix: prefix,
+		}
+		builder := &sharedKeyAzuriteClientBuilder{}
+		skip, err := createContainer(ctx, builder, options.Bucket)
+		if skip || err != nil {
+			t.Skipf("azurite is not running, skip test (err = %s)", err)
+			panic("just a note, should never reach here")
+		}
+		require.NoError(t, err)
+
+		azblobStorage, err := newAzureBlobStorageWithClientBuilder(ctx, options, builder)
+		require.NoError(t, err)
+		return azblobStorage
+	}
+
+	strg1 := mkTestStrg("alice", "somewhat/")
+	strg2 := mkTestStrg("bob", "complex/prefix/")
+
+	ctx := context.Background()
+
+	w, err := strg1.Create(ctx, "test.bin", &WriterOption{})
+	require.NoError(t, err)
+	_, err = io.CopyN(wr{w, ctx}, rand.Reader, 300*1024*1024)
+	require.NoError(t, err)
+	require.NoError(t, strg2.CopyFrom(ctx, strg1, CopySpec{
+		From: "test.bin",
+		To:   "somewhere/test.bin",
+	}))
+	srcReader, err := strg1.ReadFile(ctx, "test.bin")
+	require.NoError(t, err)
+	reader, err := strg2.ReadFile(ctx, "somewhere/test.bin")
+	require.NoError(t, err)
+	require.Equal(t, srcReader, reader)
 }

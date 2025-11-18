@@ -17,8 +17,10 @@ package chunk
 import (
 	"math/rand"
 	"reflect"
+	"slices"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +31,7 @@ func getChk(isLast3ColTheSame bool) (*Chunk, *Chunk, []bool) {
 	srcChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
 	selected := make([]bool, numRows)
 	var row Row
-	for j := 0; j < numRows; j++ {
+	for j := range numRows {
 		if isLast3ColTheSame {
 			if j%7 == 0 {
 				row = MutRowFromValues("abc", "abcdefg", nil, 123, types.ZeroDatetime, "abcdefg").ToRow()
@@ -55,7 +57,7 @@ func getChk(isLast3ColTheSame bool) (*Chunk, *Chunk, []bool) {
 func TestCopySelectedJoinRows(t *testing.T) {
 	srcChk, dstChk, selected := getChk(true)
 	numRows := srcChk.NumRows()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		if !selected[i] {
 			continue
 		}
@@ -80,7 +82,7 @@ func TestCopySelectedJoinRows(t *testing.T) {
 func TestCopySelectedJoinRowsWithoutSameOuters(t *testing.T) {
 	srcChk, dstChk, selected := getChk(false)
 	numRows := srcChk.NumRows()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		if !selected[i] {
 			continue
 		}
@@ -105,7 +107,7 @@ func TestCopySelectedJoinRowsWithoutSameOuters(t *testing.T) {
 func TestCopySelectedJoinRowsDirect(t *testing.T) {
 	srcChk, dstChk, selected := getChk(false)
 	numRows := srcChk.NumRows()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		if !selected[i] {
 			continue
 		}
@@ -184,7 +186,7 @@ func BenchmarkCopySelectedJoinRows(b *testing.B) {
 	b.ReportAllocs()
 	srcChk, dstChk, selected := getChk(true)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		dstChk.Reset()
 		_, err := CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, 3, 3, selected, dstChk)
 		if err != nil {
@@ -196,7 +198,7 @@ func BenchmarkCopySelectedJoinRowsDirect(b *testing.B) {
 	b.ReportAllocs()
 	srcChk, dstChk, selected := getChk(false)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		dstChk.Reset()
 		_, err := CopySelectedJoinRowsDirect(srcChk, selected, dstChk)
 		if err != nil {
@@ -209,13 +211,51 @@ func BenchmarkAppendSelectedRow(b *testing.B) {
 	srcChk, dstChk, selected := getChk(true)
 	numRows := srcChk.NumRows()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		dstChk.Reset()
-		for j := 0; j < numRows; j++ {
+		for j := range numRows {
 			if !selected[j] {
 				continue
 			}
 			dstChk.AppendRow(srcChk.GetRow(j))
 		}
 	}
+}
+
+func TestMergeInputIdxToOutputIdxes(t *testing.T) {
+	inputIdxToOutputIdxes := make(map[int][]int)
+	// input 0th should be column referred as 0th and 1st in output columns.
+	inputIdxToOutputIdxes[0] = []int{0, 1}
+	// input 1th should be column referred as 2nd and 3rd in output columns.
+	inputIdxToOutputIdxes[1] = []int{2, 3}
+	columnEval := ColumnSwapHelper{InputIdxToOutputIdxes: inputIdxToOutputIdxes}
+
+	input := NewEmptyChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong)})
+	input.AppendInt64(0, 99)
+	// input chunk's 0th and 1st are column referred itself.
+	input.MakeRef(0, 1)
+
+	// chunk:     col1 <---(ref) col2
+	// ____________/ \___________/  \___
+	// proj:  col1   col2     col3   col4
+	//
+	// original case after inputIdxToOutputIdxes[0], the original col2 will be nil pointer
+	// cause consecutive col3,col4 ref projection are invalid.
+	//
+	// after fix, the new inputIdxToOutputIdxes should be: inputIdxToOutputIdxes[0]: {0, 1, 2, 3}
+
+	output := NewEmptyChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong)})
+
+	err := columnEval.SwapColumns(input, output)
+	require.NoError(t, err)
+	// all four columns are column-referred, pointing to the first one.
+	require.Equal(t, output.Column(0), output.Column(1))
+	require.Equal(t, output.Column(1), output.Column(2))
+	require.Equal(t, output.Column(2), output.Column(3))
+	require.Equal(t, output.GetRow(0).GetInt64(0), int64(99))
+
+	require.Equal(t, len(*columnEval.mergedInputIdxToOutputIdxes.Load()), 1)
+	slices.Sort((*columnEval.mergedInputIdxToOutputIdxes.Load())[0])
+	require.Equal(t, (*columnEval.mergedInputIdxToOutputIdxes.Load())[0], []int{0, 1, 2, 3})
 }

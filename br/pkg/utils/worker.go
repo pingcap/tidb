@@ -67,7 +67,7 @@ func AsyncStreamBy[T any](generator func() (T, error)) <-chan Result[T] {
 
 func BuildWorkerTokenChannel(size uint) chan struct{} {
 	ch := make(chan struct{}, size)
-	for i := 0; i < int(size); i += 1 {
+	for range size {
 		ch <- struct{}{}
 	}
 	return ch

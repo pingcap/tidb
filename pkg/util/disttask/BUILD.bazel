@@ -5,7 +5,10 @@ go_library(
     srcs = ["idservice.go"],
     importpath = "github.com/pingcap/tidb/pkg/util/disttask",
     visibility = ["//visibility:public"],
-    deps = ["//pkg/domain/infosync"],
+    deps = [
+        "//pkg/domain/infosync",
+        "//pkg/domain/serverinfo",
+    ],
 )
 
 go_test(
@@ -15,7 +18,7 @@ go_test(
     embed = [":disttask"],
     flaky = True,
     deps = [
-        "//pkg/domain/infosync",
+        "//pkg/domain/serverinfo",
         "@com_github_stretchr_testify//require",
     ],
 )

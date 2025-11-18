@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -40,7 +39,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
 
 func getTableKeyColumns(tbl *model.TableInfo) ([]*model.ColumnInfo, []*types.FieldType, error) {
@@ -99,10 +100,10 @@ type PhysicalTable struct {
 	// ID is the physical ID of the table
 	ID int64
 	// Schema is the database name of the table
-	Schema pmodel.CIStr
+	Schema ast.CIStr
 	*model.TableInfo
 	// Partition is the partition name
-	Partition pmodel.CIStr
+	Partition ast.CIStr
 	// PartitionDef is the partition definition
 	PartitionDef *model.PartitionDefinition
 	// KeyColumns is the cluster index key columns for the table
@@ -114,9 +115,9 @@ type PhysicalTable struct {
 }
 
 // NewBasePhysicalTable create a new PhysicalTable with specific timeColumn.
-func NewBasePhysicalTable(schema pmodel.CIStr,
+func NewBasePhysicalTable(schema ast.CIStr,
 	tbl *model.TableInfo,
-	partition pmodel.CIStr,
+	partition ast.CIStr,
 	timeColumn *model.ColumnInfo,
 ) (*PhysicalTable, error) {
 	if tbl.State != model.StatePublic {
@@ -167,7 +168,7 @@ func NewBasePhysicalTable(schema pmodel.CIStr,
 }
 
 // NewPhysicalTable create a new PhysicalTable
-func NewPhysicalTable(schema pmodel.CIStr, tbl *model.TableInfo, partition pmodel.CIStr) (*PhysicalTable, error) {
+func NewPhysicalTable(schema ast.CIStr, tbl *model.TableInfo, partition ast.CIStr) (*PhysicalTable, error) {
 	ttlInfo := tbl.TTLInfo
 	if ttlInfo == nil {
 		return nil, errors.Errorf("table '%s.%s' is not a ttl table", schema, tbl.Name)
@@ -189,11 +190,11 @@ func (t *PhysicalTable) ValidateKeyPrefix(key []types.Datum) error {
 	return nil
 }
 
-var mockExpireTimeKey struct{}
+type mockExpireTimeKey struct{}
 
 // SetMockExpireTime can only used in test
 func SetMockExpireTime(ctx context.Context, tm time.Time) context.Context {
-	return context.WithValue(ctx, mockExpireTimeKey, tm)
+	return context.WithValue(ctx, mockExpireTimeKey{}, tm)
 }
 
 // EvalExpireTime returns the expired time.
@@ -242,13 +243,21 @@ func EvalExpireTime(now time.Time, interval string, unit ast.TimeUnitType) (time
 	return expiredTime, nil
 }
 
+// FullName returns the full name of the table
+func (t *PhysicalTable) FullName() string {
+	if t.Partition.L != "" {
+		return fmt.Sprintf("%s.%s.%s", t.Schema.O, t.Name.O, t.Partition.O)
+	}
+	return fmt.Sprintf("%s.%s", t.Schema.O, t.Name.O)
+}
+
 // EvalExpireTime returns the expired time for the current time.
 // It uses the global timezone in session to evaluation the context
 // and the return time is in the same timezone of now argument.
 func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
 	now time.Time) (time.Time, error) {
 	if intest.InTest {
-		if tm, ok := ctx.Value(mockExpireTimeKey).(time.Time); ok {
+		if tm, ok := ctx.Value(mockExpireTimeKey{}).(time.Time); ok {
 			return tm, nil
 		}
 	}
@@ -441,33 +450,31 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 
 func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storage,
 	startKey, endKey kv.Key, splitCnt int) ([]kv.KeyRange, error) {
+	maxSleep := 20000
+	if intest.InTest {
+		maxSleep = 500 // reduce the max sleep time in test
+	}
+
 	regionCache := store.GetRegionCache()
-	regionIDs, err := regionCache.ListRegionIDsInKeyRange(
-		tikv.NewBackofferWithVars(ctx, 20000, nil), startKey, endKey)
+	regions, err := regionCache.LocateKeyRange(
+		tikv.NewBackofferWithVars(ctx, maxSleep, nil), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
 
-	regionsPerRange := len(regionIDs) / splitCnt
-	oversizeCnt := len(regionIDs) % splitCnt
-	ranges := make([]kv.KeyRange, 0, min(len(regionIDs), splitCnt))
-	for len(regionIDs) > 0 {
-		startRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil),
-			regionIDs[0])
-		if err != nil {
-			return nil, err
-		}
+	regionsCnt := len(regions)
+	regionsPerRange := regionsCnt / splitCnt
+	oversizeCnt := regionsCnt % splitCnt
+	ranges := make([]kv.KeyRange, 0, min(regionsCnt, splitCnt))
+	for len(regions) > 0 {
+		startRegion := regions[0]
 
 		endRegionIdx := regionsPerRange - 1
 		if oversizeCnt > 0 {
 			endRegionIdx++
 		}
 
-		endRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil),
-			regionIDs[endRegionIdx])
-		if err != nil {
-			return nil, err
-		}
+		endRegion := regions[endRegionIdx]
 
 		rangeStartKey := kv.Key(startRegion.StartKey)
 		if rangeStartKey.Cmp(startKey) < 0 {
@@ -481,8 +488,17 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 
 		ranges = append(ranges, kv.KeyRange{StartKey: rangeStartKey, EndKey: rangeEndKey})
 		oversizeCnt--
-		regionIDs = regionIDs[endRegionIdx+1:]
+		regions = regions[endRegionIdx+1:]
 	}
+	logutil.BgLogger().Info("TTL table raw key ranges split",
+		zap.Int("regionsCnt", regionsCnt),
+		zap.Int("shouldSplitCnt", splitCnt),
+		zap.Int("actualSplitCnt", len(ranges)),
+		zap.Int64("tableID", t.ID),
+		zap.String("db", t.Schema.O),
+		zap.String("table", t.Name.O),
+		zap.String("partition", t.Partition.O),
+	)
 	return ranges, nil
 }
 
@@ -653,7 +669,7 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 		}
 	}
 
-	for i := 0; i < brokenGroupEmptyBytes; i++ {
+	for range brokenGroupEmptyBytes {
 		if encodedVal[brokenGroupEndIdx] > 0 {
 			break
 		}

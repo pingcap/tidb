@@ -17,22 +17,77 @@ package util
 import (
 	"encoding/binary"
 	"fmt"
-	"math"
+	"iter"
+	"reflect"
+	"slices"
 	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
+
+// SliceRecursiveFlattenIter returns an iterator (iter.Seq2) that recursively iterates over all elements of an
+// any-dimensional slice of any type.
+// Performance note:
+// For each slice, this function need to check the dynamic type before iterating over it. For each non-leaf slice, this
+// function uses reflect to iterate over it. Be careful when trying to use this function in performance-critical code.
+/*
+Example:
+	paths := [][][]*AccessPath{...}
+	for idx, path := range SliceRecursiveFlattenIter[*AccessPath](paths) {
+		// path is a *AccessPath here
+	}
+*/
+func SliceRecursiveFlattenIter[E any, T any, Slice ~[]T](s Slice) iter.Seq2[int, E] {
+	return func(yield func(int, E) bool) {
+		sliceRecursiveFlattenIterHelper(s, yield, 0)
+	}
+}
+
+func sliceRecursiveFlattenIterHelper[E any, Slice any](
+	s Slice,
+	yield func(int, E) bool,
+	startIdx int,
+) (nextIdx int, stop bool) {
+	intest.AssertFunc(func() bool {
+		return reflect.TypeOf(s).Kind() == reflect.Slice
+	})
+	// Case 1: Input slice is []E, which means it's already the lowest level.
+	if leafSlice, isLeafSlice := any(s).([]E); isLeafSlice {
+		idx := startIdx
+		for _, v := range leafSlice {
+			if !yield(idx, v) {
+				return idx + 1, true
+			}
+			idx++
+		}
+		return idx, false
+	}
+	// Case 2: Otherwise, element of Slice is still a slice, we need to flatten it recursively.
+	idx := startIdx
+	// We have to use reflect to iterate over the slice here.
+	v := reflect.ValueOf(s)
+	for i := range v.Len() {
+		val := v.Index(i).Interface()
+		intest.AssertFunc(func() bool {
+			return reflect.TypeOf(val).Kind() == reflect.Slice
+		})
+		idx, stop = sliceRecursiveFlattenIterHelper[E](val, yield, idx)
+		if stop {
+			return idx, true
+		}
+	}
+	return idx, false
+}
 
 // CloneFieldNames uses types.FieldName.Clone to clone a slice of types.FieldName.
 func CloneFieldNames(names []*types.FieldName) []*types.FieldName {
@@ -47,16 +102,6 @@ func CloneFieldNames(names []*types.FieldName) []*types.FieldName {
 	return cloned
 }
 
-// CloneCIStrs uses ast.CIStr.Clone to clone a slice of ast.CIStr.
-func CloneCIStrs(strs []pmodel.CIStr) []pmodel.CIStr {
-	if strs == nil {
-		return nil
-	}
-	cloned := make([]pmodel.CIStr, 0, len(strs))
-	cloned = append(cloned, strs...)
-	return cloned
-}
-
 // CloneExprs uses Expression.Clone to clone a slice of Expression.
 func CloneExprs(exprs []expression.Expression) []expression.Expression {
 	if exprs == nil {
@@ -65,35 +110,6 @@ func CloneExprs(exprs []expression.Expression) []expression.Expression {
 	cloned := make([]expression.Expression, 0, len(exprs))
 	for _, e := range exprs {
 		cloned = append(cloned, e.Clone())
-	}
-	return cloned
-}
-
-// CloneExpressions uses CloneExprs to clone a slice of expression.Expression.
-func CloneExpressions(exprs []expression.Expression) []expression.Expression {
-	return CloneExprs(exprs)
-}
-
-// CloneExpression2D uses CloneExprs to clone a 2D slice of expression.Expression.
-func CloneExpression2D(exprs [][]expression.Expression) [][]expression.Expression {
-	if exprs == nil {
-		return nil
-	}
-	cloned := make([][]expression.Expression, 0, len(exprs))
-	for _, e := range exprs {
-		cloned = append(cloned, CloneExprs(e))
-	}
-	return cloned
-}
-
-// CloneScalarFunctions uses (*ScalarFunction).Clone to clone a slice of *ScalarFunction.
-func CloneScalarFunctions(scalarFuncs []*expression.ScalarFunction) []*expression.ScalarFunction {
-	if scalarFuncs == nil {
-		return nil
-	}
-	cloned := make([]*expression.ScalarFunction, 0, len(scalarFuncs))
-	for _, f := range scalarFuncs {
-		cloned = append(cloned, f.Clone().(*expression.ScalarFunction))
 	}
 	return cloned
 }
@@ -111,13 +127,13 @@ func CloneAssignments(assignments []*expression.Assignment) []*expression.Assign
 }
 
 // CloneHandleCols uses HandleCols.Clone to clone a slice of HandleCols.
-func CloneHandleCols(newCtx *stmtctx.StatementContext, handles []HandleCols) []HandleCols {
+func CloneHandleCols(handles []HandleCols) []HandleCols {
 	if handles == nil {
 		return nil
 	}
 	cloned := make([]HandleCols, 0, len(handles))
 	for _, h := range handles {
-		cloned = append(cloned, h.Clone(newCtx))
+		cloned = append(cloned, h.Clone())
 	}
 	return cloned
 }
@@ -134,35 +150,6 @@ func CloneCols(cols []*expression.Column) []*expression.Column {
 			continue
 		}
 		cloned = append(cloned, c.Clone().(*expression.Column))
-	}
-	return cloned
-}
-
-// CloneColumns uses CloneCols to clone a slice of expression.Column.
-func CloneColumns(cols []*expression.Column) []*expression.Column {
-	return CloneCols(cols)
-}
-
-// CloneConstants uses (*Constant).Clone to clone a slice of *Constant.
-func CloneConstants(constants []*expression.Constant) []*expression.Constant {
-	if constants == nil {
-		return nil
-	}
-	cloned := make([]*expression.Constant, 0, len(constants))
-	for _, c := range constants {
-		cloned = append(cloned, c.Clone().(*expression.Constant))
-	}
-	return cloned
-}
-
-// CloneConstant2D uses CloneConstants to clone a 2D slice of *Constant.
-func CloneConstant2D(constants [][]*expression.Constant) [][]*expression.Constant {
-	if constants == nil {
-		return nil
-	}
-	cloned := make([][]*expression.Constant, 0, len(constants))
-	for _, c := range constants {
-		cloned = append(cloned, CloneConstants(c))
 	}
 	return cloned
 }
@@ -187,54 +174,6 @@ func CloneDatum2D(datums [][]types.Datum) [][]types.Datum {
 	cloned := make([][]types.Datum, 0, len(datums))
 	for _, d := range datums {
 		cloned = append(cloned, CloneDatums(d))
-	}
-	return cloned
-}
-
-// CloneColInfos uses (*ColumnInfo).Clone to clone a slice of *ColumnInfo.
-func CloneColInfos(cols []*model.ColumnInfo) []*model.ColumnInfo {
-	if cols == nil {
-		return nil
-	}
-	cloned := make([]*model.ColumnInfo, 0, len(cols))
-	for _, c := range cols {
-		cloned = append(cloned, c.Clone())
-	}
-	return cloned
-}
-
-// CloneRanges uses (*Range).Clone to clone a slice of *Range.
-func CloneRanges(ranges []*ranger.Range) []*ranger.Range {
-	if ranges == nil {
-		return nil
-	}
-	cloned := make([]*ranger.Range, 0, len(ranges))
-	for _, r := range ranges {
-		cloned = append(cloned, r.Clone())
-	}
-	return cloned
-}
-
-// CloneByItemss uses (*ByItems).Clone to clone a slice of *ByItems.
-func CloneByItemss(byItems []*ByItems) []*ByItems {
-	if byItems == nil {
-		return nil
-	}
-	cloned := make([]*ByItems, 0, len(byItems))
-	for _, item := range byItems {
-		cloned = append(cloned, item.Clone())
-	}
-	return cloned
-}
-
-// CloneSortItems uses SortItem.Clone to clone a slice of SortItem.
-func CloneSortItems(items []property.SortItem) []property.SortItem {
-	if items == nil {
-		return nil
-	}
-	cloned := make([]property.SortItem, 0, len(items))
-	for _, item := range items {
-		cloned = append(cloned, item.Clone())
 	}
 	return cloned
 }
@@ -297,18 +236,6 @@ func GetMaxSortPrefix(sortCols, allCols []*expression.Column) []int {
 	return sortColOffsets
 }
 
-// DeriveLimitStats derives the stats of the top-n plan.
-func DeriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *property.StatsInfo {
-	stats := &property.StatsInfo{
-		RowCount: math.Min(limitCount, childProfile.RowCount),
-		ColNDVs:  make(map[int64]float64, len(childProfile.ColNDVs)),
-	}
-	for id, c := range childProfile.ColNDVs {
-		stats.ColNDVs[id] = math.Min(c, stats.RowCount)
-	}
-	return stats
-}
-
 // ExtractTableAlias returns table alias of the base.LogicalPlan's columns.
 // It will return nil when there are multiple table alias, because the alias is only used to check if
 // the base.LogicalPlan Match some optimizer hints, and hints are not expected to take effect in this case.
@@ -333,7 +260,7 @@ func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
 		}
 		dbName := firstName.DBName
 		if dbName.L == "" {
-			dbName = pmodel.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+			dbName = ast.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
 		}
 		return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 	}
@@ -349,4 +276,54 @@ func GetPushDownCtx(pctx base.PlanContext) expression.PushDownContext {
 func GetPushDownCtxFromBuildPBContext(bctx *base.BuildPBContext) expression.PushDownContext {
 	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(),
 		bctx.InExplainStmt, bctx.WarnHandler, bctx.ExtraWarnghandler, bctx.GroupConcatMaxLen)
+}
+
+// FilterPathByIsolationRead filter out AccessPath by isolation read engine requirement.
+func FilterPathByIsolationRead(ctx base.PlanContext, paths []*AccessPath, tblName ast.CIStr,
+	dbName ast.CIStr) ([]*AccessPath, error) {
+	// TODO: filter paths with isolation read locations.
+	if metadef.IsSystemRelatedDB(dbName.L) {
+		return paths, nil
+	}
+	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
+	availableEngine := map[kv.StoreType]struct{}{}
+	var availableEngineStr string
+	for i := len(paths) - 1; i >= 0; i-- {
+		// availableEngineStr is for warning message.
+		if _, ok := availableEngine[paths[i].StoreType]; !ok {
+			availableEngine[paths[i].StoreType] = struct{}{}
+			if availableEngineStr != "" {
+				availableEngineStr += ", "
+			}
+			availableEngineStr += paths[i].StoreType.Name()
+		}
+		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok && paths[i].StoreType != kv.TiDB {
+			paths = slices.Delete(paths, i, i+1)
+		}
+	}
+	var err error
+	engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
+	if len(paths) == 0 {
+		helpMsg := ""
+		if engineVals == "tiflash" {
+			helpMsg = ". Please check tiflash replica"
+			if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+				helpMsg += " or check if the query is not readonly and sql mode is strict"
+			}
+		}
+		err = plannererrors.ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is"+
+			" found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
+			vardef.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
+	}
+	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
+		if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
+				"MPP mode may be blocked because the query is not readonly and sql mode is strict.")
+		} else {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
+				fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.",
+					vardef.TiDBIsolationReadEngines, engineVals))
+		}
+	}
+	return paths, err
 }

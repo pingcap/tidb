@@ -16,6 +16,7 @@ package table
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -326,10 +326,10 @@ func TestCastValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "utf8mb4_general_ci", val.Collation())
 	val, err = CastValue(ctx, types.NewBinaryLiteralDatum([]byte{0xE5, 0xA5, 0xBD, 0x81}), &colInfoS, false, false)
-	require.Error(t, err, "[table:1366]Incorrect string value '\\x81' for column ''")
+	require.ErrorContains(t, err, "[table:1366]Incorrect string value '\\x81' for column ''")
 	require.Equal(t, "utf8mb4_general_ci", val.Collation())
 	val, err = CastValue(ctx, types.NewDatum([]byte{0xE5, 0xA5, 0xBD, 0x81}), &colInfoS, false, false)
-	require.Error(t, err, "[table:1366]Incorrect string value '\\x81' for column ''")
+	require.ErrorContains(t, err, "[table:1366]Incorrect string value '\\x81' for column ''")
 	require.Equal(t, "utf8mb4_general_ci", val.Collation())
 }
 
@@ -485,7 +485,7 @@ func TestGetDefaultValue(t *testing.T) {
 			ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(defaultMode, mysql.ModeStrictAllTables|mysql.ModeStrictTransTables)
 		}
 		levels := sc.ErrLevels()
-		levels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !tt.strict)
+		levels[errctx.ErrGroupNoDefault] = errctx.ResolveErrLevel(false, !tt.strict)
 		sc.SetErrLevels(levels)
 		val, err := GetColDefaultValue(ctx, tt.colInfo)
 		if err != nil {
@@ -507,7 +507,7 @@ func TestGetDefaultValue(t *testing.T) {
 			ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(defaultMode, mysql.ModeStrictAllTables|mysql.ModeStrictTransTables)
 		}
 		levels := sc.ErrLevels()
-		levels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !tt.strict)
+		levels[errctx.ErrGroupNoDefault] = errctx.ResolveErrLevel(false, !tt.strict)
 		sc.SetErrLevels(levels)
 		val, err := GetColOriginDefaultValue(ctx, tt.colInfo)
 		if err != nil {
@@ -522,7 +522,54 @@ func TestGetDefaultValue(t *testing.T) {
 
 func newCol(name string) *Column {
 	return ToColumn(&model.ColumnInfo{
-		Name:  pmodel.NewCIStr(name),
+		Name:  ast.NewCIStr(name),
 		State: model.StatePublic,
 	})
+}
+
+func TestCastValueStrict(t *testing.T) {
+	// signed -> unsigned, fail
+	input := types.NewIntDatum(-1)
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	ft.AddFlag(mysql.UnsignedFlag)
+	v, err := CastColumnValueWithStrictMode(input, ft)
+	require.Error(t, err)
+	require.EqualValues(t, 0, v.GetUint64()) // we get truncated value
+
+	// signed -> signed, succeed
+	input = types.NewIntDatum(1)
+	ft = types.NewFieldType(mysql.TypeLonglong)
+	v, err = CastColumnValueWithStrictMode(input, ft)
+	require.NoError(t, err)
+	require.EqualValues(t, input.GetInt64(), v.GetInt64())
+
+	// bigint -> int, fail
+	input = types.NewIntDatum(1 << 40)
+	ft = types.NewFieldType(mysql.TypeLong)
+	v, err = CastColumnValueWithStrictMode(input, ft)
+	require.Error(t, err)
+	require.EqualValues(t, math.MaxInt32, v.GetInt64()) // we get truncated value
+
+	// int -> bigint, succeed
+	input = types.NewIntDatum(1 << 16)
+	ft = types.NewFieldType(mysql.TypeLonglong)
+	v, err = CastColumnValueWithStrictMode(input, ft)
+	require.NoError(t, err)
+	require.EqualValues(t, input.GetInt64(), v.GetInt64())
+
+	// char(4) -> char(2), fail
+	input = types.NewStringDatum("abcd")
+	ft = types.NewFieldType(mysql.TypeString)
+	ft.SetFlen(2)
+	v, err = CastColumnValueWithStrictMode(input, ft)
+	require.Error(t, err)
+	require.Equal(t, "ab", v.GetString()) // we get truncated value
+
+	// varchar(4) -> char(2), succeed
+	input = types.NewStringDatum("a   ")
+	ft = types.NewFieldType(mysql.TypeString)
+	ft.SetFlen(2)
+	v, err = CastColumnValueWithStrictMode(input, ft)
+	require.NoError(t, err)
+	require.Equal(t, "a", v.GetString())
 }

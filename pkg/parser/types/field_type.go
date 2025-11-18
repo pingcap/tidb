@@ -21,10 +21,10 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/util"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -39,21 +39,6 @@ const (
 var (
 	TiDBStrictIntegerDisplayWidth bool
 )
-
-// IHasher is internal usage represent cascades/base.Hasher
-type IHasher interface {
-	HashBool(val bool)
-	HashInt(val int)
-	HashInt64(val int64)
-	HashUint64(val uint64)
-	HashFloat64(val float64)
-	HashRune(val rune)
-	HashString(val string)
-	HashByte(val byte)
-	HashBytes(val []byte)
-	Reset()
-	Sum64() uint64
-}
 
 // FieldType records field type information.
 type FieldType struct {
@@ -76,8 +61,33 @@ type FieldType struct {
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
+// DeepCopy returns a deep copy of the FieldType.
+func (ft *FieldType) DeepCopy() *FieldType {
+	if ft == nil {
+		return nil
+	}
+	ret := &FieldType{
+		tp:      ft.tp,
+		flag:    ft.flag,
+		flen:    ft.flen,
+		decimal: ft.decimal,
+		charset: ft.charset,
+		collate: ft.collate,
+		array:   ft.array,
+	}
+	if len(ft.elems) > 0 {
+		ret.elems = make([]string, len(ft.elems))
+		copy(ret.elems, ft.elems)
+	}
+	if len(ft.elemsIsBinaryLit) > 0 {
+		ret.elemsIsBinaryLit = make([]bool, len(ft.elemsIsBinaryLit))
+		copy(ret.elemsIsBinaryLit, ft.elemsIsBinaryLit)
+	}
+	return ret
+}
+
 // Hash64 implements the cascades/base.Hasher.<0th> interface.
-func (ft *FieldType) Hash64(h IHasher) {
+func (ft *FieldType) Hash64(h util.IHasher) {
 	h.HashByte(ft.tp)
 	h.HashUint64(uint64(ft.flag))
 	h.HashInt(ft.flen)
@@ -97,19 +107,17 @@ func (ft *FieldType) Hash64(h IHasher) {
 
 // Equals implements the cascades/base.Hasher.<1th> interface.
 func (ft *FieldType) Equals(other any) bool {
+	ft2, ok := other.(*FieldType)
+	if !ok {
+		return false
+	}
+	if ft == nil {
+		return ft2 == nil
+	}
 	if other == nil {
 		return false
 	}
-	var ft2 *FieldType
-	switch x := other.(type) {
-	case *FieldType:
-		ft2 = x
-	case FieldType:
-		ft2 = &x
-	default:
-		return false
-	}
-	ok := ft.tp == ft2.tp &&
+	ok = ft.tp == ft2.tp &&
 		ft.flag == ft2.flag &&
 		ft.flen == ft2.flen &&
 		ft.decimal == ft2.decimal &&
@@ -243,7 +251,7 @@ func (ft *FieldType) SetFlen(flen int) {
 // SetFlenUnderLimit sets the length of the field to the value of the argument
 func (ft *FieldType) SetFlenUnderLimit(flen int) {
 	if ft.GetType() == mysql.TypeNewDecimal {
-		ft.flen = mathutil.Min(flen, mysql.MaxDecimalWidth)
+		ft.flen = min(flen, mysql.MaxDecimalWidth)
 	} else {
 		ft.flen = flen
 	}
@@ -257,7 +265,7 @@ func (ft *FieldType) SetDecimal(decimal int) {
 // SetDecimalUnderLimit sets the decimal of the field to the value of the argument
 func (ft *FieldType) SetDecimalUnderLimit(decimal int) {
 	if ft.GetType() == mysql.TypeNewDecimal {
-		ft.decimal = mathutil.Min(decimal, mysql.MaxDecimalScale)
+		ft.decimal = min(decimal, mysql.MaxDecimalScale)
 	} else {
 		ft.decimal = decimal
 	}
@@ -381,10 +389,14 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	return slices.Equal(ft.elems, other.elems)
 }
 
-// PartialEqual checks whether two FieldType objects are equal.
+// PartialEqual checks whether two FieldType objects are equal. Please use this function with caution.
 // If unsafe is true and the objects is string type, PartialEqual will ignore flen.
 // See https://github.com/pingcap/tidb/issues/35490#issuecomment-1211658886 for more detail.
 func (ft *FieldType) PartialEqual(other *FieldType, unsafe bool) bool {
+	// Special case for NotNUll flag. See https://github.com/pingcap/tidb/issues/61290.
+	if mysql.HasNotNullFlag(ft.flag) != mysql.HasNotNullFlag(other.flag) {
+		return false
+	}
 	if !unsafe || ft.EvalType() != ETString || other.EvalType() != ETString {
 		return ft.Equal(other)
 	}

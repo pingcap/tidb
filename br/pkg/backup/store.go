@@ -13,11 +13,9 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/storewatch"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -38,6 +36,7 @@ type BackupSender interface {
 		ctx context.Context,
 		round uint64,
 		storeID uint64,
+		limiter *ResourceConcurrentLimiter,
 		request backuppb.BackupRequest,
 		concurrency uint,
 		cli backuppb.BackupClient,
@@ -60,6 +59,7 @@ func (r ResponseAndStore) GetStoreID() uint64 {
 
 // timeoutRecv cancel the context if `Refresh()` is not called within the specified time `timeout`.
 type timeoutRecv struct {
+	storeID   uint64
 	wg        sync.WaitGroup
 	parentCtx context.Context
 	cancel    context.CancelCauseFunc
@@ -79,6 +79,7 @@ func (trecv *timeoutRecv) Refresh() {
 func (trecv *timeoutRecv) Stop() {
 	close(trecv.refresh)
 	trecv.wg.Wait()
+	trecv.cancel(nil)
 }
 
 var TimeoutOneResponse = time.Hour
@@ -97,15 +98,17 @@ func (trecv *timeoutRecv) loop(timeout time.Duration) {
 				return
 			}
 		case <-ticker.C:
-			log.Warn("receive a backup response timeout")
+			log.Warn("wait backup response timeout, cancel the backup",
+				zap.Duration("timeout", timeout), zap.Uint64("storeID", trecv.storeID))
 			trecv.cancel(errors.Errorf("receive a backup response timeout"))
 		}
 	}
 }
 
-func StartTimeoutRecv(ctx context.Context, timeout time.Duration) (context.Context, *timeoutRecv) {
+func StartTimeoutRecv(ctx context.Context, timeout time.Duration, storeID uint64) (context.Context, *timeoutRecv) {
 	cctx, cancel := context.WithCancelCause(ctx)
 	trecv := &timeoutRecv{
+		storeID:   storeID,
 		parentCtx: ctx,
 		cancel:    cancel,
 		refresh:   make(chan struct{}),
@@ -116,15 +119,12 @@ func StartTimeoutRecv(ctx context.Context, timeout time.Duration) (context.Conte
 }
 
 func doSendBackup(
-	pctx context.Context,
+	ctx context.Context,
 	client backuppb.BackupClient,
+	limiter *ResourceConcurrentLimiter,
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
-	// Backup might be stuck on GRPC `waitonHeader`, so start a timeout ticker to
-	// terminate the backup if it does not receive any new response for a long time.
-	ctx, timerecv := StartTimeoutRecv(pctx, TimeoutOneResponse)
-	defer timerecv.Stop()
 	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
 		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
 			"process will notify the shell.")
@@ -139,7 +139,16 @@ func doSendBackup(
 		}
 		time.Sleep(3 * time.Second)
 	})
+	reqStartKey, reqEndKey := req.StartKey, req.EndKey
+	// Note: BR can set ranges into req.StartKey/req.EndKey, req.SubRanges or req.SortedSubRangesGroups.
+	// TODO: reqRangeSize += len(req.SortedSubRangesGroups) if the feature merged SST files is implemented.
+	reqRangeSize := len(req.SubRanges) + 1
+	limiter.Acquire(reqRangeSize)
 	bCli, err := client.Backup(ctx, &req)
+	limiter.Release(reqRangeSize)
+	// Note: derefer req here to let req.SubRanges be released as soon as possible.
+	// That's because in the backup main loop, the sub ranges is generated every about 15 seconds,
+	// which may accumulate a large number of incomplete ranges.
 	failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
 		switch val.(string) {
 		case "Unavailable":
@@ -169,12 +178,11 @@ func doSendBackup(
 
 	for {
 		resp, err := bCli.Recv()
-		timerecv.Refresh()
 		if err != nil {
 			if errors.Cause(err) == io.EOF { // nolint:errorlint
 				logutil.CL(ctx).Debug("backup streaming finish",
-					logutil.Key("backup-start-key", req.GetStartKey()),
-					logutil.Key("backup-end-key", req.GetEndKey()))
+					logutil.Key("backup-start-key", reqStartKey),
+					logutil.Key("backup-end-key", reqEndKey))
 				return nil
 			}
 			return err
@@ -192,8 +200,9 @@ func doSendBackup(
 }
 
 func startBackup(
-	ctx context.Context,
+	pctx context.Context,
 	storeID uint64,
+	limiter *ResourceConcurrentLimiter,
 	backupReq backuppb.BackupRequest,
 	backupCli backuppb.BackupClient,
 	concurrency uint,
@@ -201,14 +210,21 @@ func startBackup(
 ) error {
 	// this goroutine handle the response from a single store
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-pctx.Done():
+		return pctx.Err()
 	default:
-		logutil.CL(ctx).Info("try backup", zap.Uint64("storeID", storeID))
 		// Send backup request to the store.
 		// handle the backup response or internal error here.
 		// handle the store error(reboot or network partition) outside.
-		reqs := SplitBackupReqRanges(backupReq, concurrency)
+		reqs := SplitBackupReqRanges(backupReq, int(concurrency))
+		logutil.CL(pctx).Info("starting backup to the corresponding store", zap.Uint64("storeID", storeID),
+			zap.Int("requestCount", len(reqs)), zap.Uint("concurrency", concurrency))
+
+		// Backup might be stuck on GRPC `waitonHeader`, so start a timeout ticker to
+		// terminate the backup if it does not receive any new response for a long time.
+		ctx, timerecv := StartTimeoutRecv(pctx, TimeoutOneResponse, storeID)
+		defer timerecv.Stop()
+
 		pool := tidbutil.NewWorkerPool(concurrency, "store_backup")
 		eg, ectx := errgroup.WithContext(ctx)
 		for i, req := range reqs {
@@ -218,9 +234,11 @@ func startBackup(
 				retry := -1
 				return utils.WithRetry(ectx, func() error {
 					retry += 1
-					logutil.CL(ectx).Info("backup to store", zap.Uint64("storeID", storeID),
-						zap.Int("retry", retry), zap.Int("reqIndex", reqIndex))
-					return doSendBackup(ectx, backupCli, bkReq, func(resp *backuppb.BackupResponse) error {
+					if retry > 1 {
+						logutil.CL(ectx).Info("retry backup to store", zap.Uint64("storeID", storeID),
+							zap.Int("retry", retry), zap.Int("reqIndex", reqIndex))
+					}
+					return doSendBackup(ectx, backupCli, limiter, bkReq, func(resp *backuppb.BackupResponse) error {
 						// Forward all responses (including error).
 						failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
 							msg := val.(string)
@@ -262,25 +280,16 @@ func startBackup(
 							Resp:    resp,
 							StoreID: storeID,
 						}:
+							// reset timeout when receive a response
+							timerecv.Refresh()
 						}
 						return nil
 					})
-				}, utils.NewBackupSSTBackoffer())
+				}, utils.NewBackupSSTBackoffStrategy())
 			})
 		}
 		return eg.Wait()
 	}
-}
-
-func getBackupRanges(ranges []rtree.Range) []*kvrpcpb.KeyRange {
-	requestRanges := make([]*kvrpcpb.KeyRange, 0, len(ranges))
-	for _, r := range ranges {
-		requestRanges = append(requestRanges, &kvrpcpb.KeyRange{
-			StartKey: r.StartKey,
-			EndKey:   r.EndKey,
-		})
-	}
-	return requestRanges
 }
 
 func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetryPolicy, pdCli pd.Client) {
@@ -325,7 +334,7 @@ func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetr
 				// reset the state
 				sendAll = false
 				clear(newJoinStoresMap)
-				logutil.CL(ctx).Info("check store changes every tick")
+				logutil.CL(ctx).Info("check store changes every 30s")
 				err := watcher.Step(ctx)
 				if err != nil {
 					logutil.CL(ctx).Warn("failed to watch store changes, ignore it", zap.Error(err))
@@ -344,7 +353,7 @@ func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetr
 	}()
 }
 
-func SplitBackupReqRanges(req backuppb.BackupRequest, count uint) []backuppb.BackupRequest {
+func SplitBackupReqRanges(req backuppb.BackupRequest, count int) []backuppb.BackupRequest {
 	rangeCount := len(req.SubRanges)
 	if rangeCount == 0 {
 		return []backuppb.BackupRequest{req}
@@ -354,17 +363,20 @@ func SplitBackupReqRanges(req backuppb.BackupRequest, count uint) []backuppb.Bac
 		// 0/1 means no need to split, just send one batch request
 		return []backuppb.BackupRequest{req}
 	}
-	splitStep := rangeCount / int(count)
-	if splitStep == 0 {
-		// splitStep should be at least 1
-		// if count >= rangeCount, means no batch, split them all
-		splitStep = 1
-	}
-	subRanges := req.SubRanges
-	for i := 0; i < rangeCount; i += splitStep {
+	splitStep := rangeCount / count
+	overCount := rangeCount - count*splitStep
+	start := 0
+	for i := range count {
+		nextStart := start + splitStep
+		if i < overCount {
+			nextStart += 1
+		} else if nextStart == start {
+			break
+		}
 		splitReq := req
-		splitReq.SubRanges = subRanges[i:min(i+splitStep, rangeCount)]
+		splitReq.SubRanges = req.SubRanges[start:nextStart]
 		splitRequests = append(splitRequests, splitReq)
+		start = nextStart
 	}
 	return splitRequests
 }

@@ -37,7 +37,7 @@ func (tl *TokenLimiter) Get() *Token {
 // NewTokenLimiter creates a TokenLimiter with count tokens.
 func NewTokenLimiter(count uint) *TokenLimiter {
 	tl := &TokenLimiter{count: count, ch: make(chan *Token, count)}
-	for i := uint(0); i < count; i++ {
+	for range count {
 		tl.ch <- &Token{}
 	}
 

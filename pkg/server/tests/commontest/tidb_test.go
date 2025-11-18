@@ -25,22 +25,27 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/plugin"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -746,6 +751,9 @@ func TestSystemTimeZone(t *testing.T) {
 }
 
 func TestInternalSessionTxnStartTS(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ts := servertestkit.CreateTidbTestSuite(t)
 
 	se, err := session.CreateSession4Test(ts.Store)
@@ -756,7 +764,7 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 
 	count := 10
 	stmts := make([]ast.StmtNode, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		stmt, err := session.ParseWithParams4Test(context.Background(), se, "select * from mysql.user limit 1")
 		require.NoError(t, err)
 		stmts[i] = stmt
@@ -764,7 +772,7 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 	// Test an issue that sysSessionPool doesn't call session's Close, cause
 	// asyncGetTSWorker goroutine leak.
 	var wg util.WaitGroupWrapper
-	for i := 0; i < count; i++ {
+	for i := range count {
 		s := stmts[i]
 		wg.Run(func() {
 			_, _, err := session.ExecRestrictedStmt4Test(context.Background(), se, s)
@@ -1158,7 +1166,7 @@ func TestTopSQLCatchRunningSQL(t *testing.T) {
 	dbt.MustExec("use topsql;")
 	dbt.MustExec("create table t (a int, b int);")
 
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		dbt.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
 	}
 
@@ -1611,7 +1619,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 			require.NoError(t, err)
 			dbt := testkit.NewDBTestKit(t, db)
 			dbt.MustExec("use stmtstats;")
-			for n := 0; n < ExecCountPerSQL; n++ {
+			for n := range ExecCountPerSQL {
 				sqlStr := fmt.Sprintf(ca, n)
 				if strings.HasPrefix(strings.ToLower(sqlStr), "select") {
 					mustQuery(t, dbt, sqlStr)
@@ -1703,7 +1711,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 			dbt.MustExec("use stmtstats;")
 			// prepare stmt
 			dbt.MustExec(ca.prepare)
-			for n := 0; n < ExecCountPerSQL; n++ {
+			for n := range ExecCountPerSQL {
 				setSQLs := ca.setSQLsGen(n)
 				for _, setSQL := range setSQLs {
 					dbt.MustExec(setSQL)
@@ -1784,7 +1792,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 			// prepare stmt
 			stmt, err := db.Prepare(ca.prepare)
 			require.NoError(t, err)
-			for n := 0; n < ExecCountPerSQL; n++ {
+			for n := range ExecCountPerSQL {
 				args := ca.argsGen(n)
 				if strings.HasPrefix(strings.ToLower(ca.prepare), "select") {
 					row, err := stmt.Query(args...)
@@ -1973,7 +1981,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 		dbt.MustExec("use stmtstats;")
 		require.NoError(t, err)
 
-		for n := 0; n < ExecCountPerSQL; n++ {
+		for range ExecCountPerSQL {
 			execFn(db)
 		}
 		err = db.Close()
@@ -2038,7 +2046,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 		}
 	}
 	executeCaseFn(execFn)
-	sqlStrs := append([]string{}, cases5...)
+	sqlStrs := slices.Clone(cases5)
 	sqlStrs = append(sqlStrs, cases7[0])
 	sqlStrs = append(sqlStrs, cases8...)
 	for _, sqlStr := range sqlStrs {
@@ -2210,6 +2218,10 @@ func TestTopSQLStatementStats4(t *testing.T) {
 }
 
 func TestTopSQLResourceTag(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(false)
+	})
 	ts, _, tagChecker, _ := setupForTestTopSQLStatementStats(t)
 	defer func() {
 		topsqlstate.DisableTopSQL()
@@ -2230,7 +2242,6 @@ func TestTopSQLResourceTag(t *testing.T) {
 			"33	33\n")
 	require.NoError(t, err)
 
-	// Test case for other statements
 	cases := []struct {
 		sql     string
 		isQuery bool
@@ -2280,10 +2291,10 @@ func TestTopSQLResourceTag(t *testing.T) {
 		reqs []tikvrpc.CmdType
 	}{
 		{"replace into mysql.global_variables (variable_name,variable_value) values ('tidb_enable_1pc', '1')", []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
-		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]), AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where  (0 = 0) group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where  (0 = 0)  group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]), AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where  (0 = 0) group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where  (0 = 0) group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
 	}
 	executeCaseFn := func(execFn func(db *sql.DB)) {
 		dsn := ts.GetDSN(func(config *mysql.Config) {
@@ -2663,7 +2674,7 @@ func TestSandBoxMode(t *testing.T) {
 	require.NoError(t, err)
 	_, err = Execute(context.Background(), qctx, "create user testuser;")
 	require.NoError(t, err)
-	qctx.Session.GetSessionVars().User = &auth.UserIdentity{Username: "testuser", AuthUsername: "testuser", AuthHostname: "%"}
+	qctx.Session.Auth(&auth.UserIdentity{Username: "testuser", AuthUsername: "testuser", AuthHostname: "%"}, nil, nil, nil)
 
 	alterPwdStmts := []string{
 		"set password = '1234';",
@@ -3214,7 +3225,6 @@ func TestConnectionWillNotLeak(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, conn := range conns {
 		wg.Add(1)
-		conn := conn
 		go func() {
 			rows, err := conn.QueryContext(context.Background(), "SELECT 2023")
 			require.NoError(t, err)
@@ -3352,5 +3362,295 @@ func TestAuthSocket(t *testing.T) {
 	ts.RunTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
 		rows := dbt.MustQuery("select current_user();")
 		ts.CheckRows(t, rows, "u2@%")
+	})
+}
+
+func TestWarningForParseError(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+
+		assertWarningCount := func() {
+			rows, err := conn.QueryContext(context.Background(), "show warnings")
+			require.NoError(t, err)
+			defer rows.Close()
+
+			count := 0
+			for rows.Next() {
+				count++
+			}
+			require.Equal(t, 1, count)
+		}
+
+		for i := 0; i < 5; i++ {
+			stmt, err := conn.PrepareContext(context.Background(), "VALUES ( ('foo'), ROW('bar') )")
+			require.Error(t, err)
+			require.Nil(t, stmt)
+
+			assertWarningCount()
+		}
+	})
+}
+
+func TestBatchGetTypeForRowExpr(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	// single columns
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t1 (id varchar(255) collate utf8mb4_general_ci, primary key (id));")
+		dbt.MustExec("insert into t1 values ('a'), ('c');")
+
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, conn.Close())
+		}()
+		_, err = conn.ExecContext(context.Background(), "set @@session.collation_connection = 'utf8mb4_general_ci'")
+		require.NoError(t, err)
+		stmt, err := conn.PrepareContext(context.Background(), "select * from t1 where id in (?, ?)")
+		require.NoError(t, err)
+		rows, err := stmt.Query("A", "C")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "a\nc")
+	})
+
+	// multiple columns
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t2 (id1 varchar(255) collate utf8mb4_general_ci, id2 varchar(255) collate utf8mb4_general_ci, primary key (id1, id2));")
+		dbt.MustExec("insert into t2 values ('a', 'b'), ('c', 'd');")
+
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, conn.Close())
+		}()
+		conn.ExecContext(context.Background(), "set @@session.collation_connection = 'utf8mb4_general_ci'")
+		stmt, err := conn.PrepareContext(context.Background(), "select * from t2 where (id1, id2) in ((?, ?), (?, ?))")
+		require.NoError(t, err)
+		rows, err := stmt.Query("A", "B", "C", "D")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "a b\nc d")
+	})
+}
+
+func TestIssue57531(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	var rsCnt int
+	for i := range 2 {
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			var conn *sql.Conn
+			var netConn net.Conn
+			conn, _ = dbt.GetDB().Conn(context.Background())
+
+			// get the TCP connection
+			conn.Raw(func(driverConn any) error {
+				v := reflect.ValueOf(driverConn)
+				if v.Kind() == reflect.Ptr {
+					v = v.Elem()
+				}
+				f := v.FieldByName("netConn")
+				if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
+					netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
+				}
+				return nil
+			})
+
+			// execute `select sleep(300)`
+			go func() {
+				if i == 0 {
+					conn.QueryContext(context.Background(), "select sleep(300)")
+				} else {
+					stmt, err := conn.PrepareContext(context.Background(), "select sleep(?)")
+					require.NoError(t, err)
+					stmt.Exec(300)
+				}
+			}()
+			time.Sleep(200 * time.Millisecond)
+
+			// have two sessions
+			rsCnt = 0
+			rs := dbt.MustQuery("show processlist")
+			for rs.Next() {
+				rsCnt++
+			}
+			require.Equal(t, rsCnt, 2)
+
+			// close tcp connection
+			netConn.Close()
+		})
+
+		time.Sleep(10 * time.Millisecond)
+
+		// the `select sleep(300)` is killed
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			rsCnt = 0
+			rs := dbt.MustQuery("show processlist")
+			for rs.Next() {
+				rsCnt++
+			}
+			require.Equal(t, rsCnt, 1)
+		})
+	}
+}
+
+func TestCloseConnForUndeterminedError(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.Host = "127.0.0.1" // No network interface listening for mysql traffic
+	cfg.Port = 2333
+	cfg.Status.ReportStatus = false
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	defer server.Close()
+
+	db, err := sql.Open("mysql", "root@tcp(127.0.0.1:2333)/test")
+	require.NoError(t, err)
+	defer terror.Call(db.Close)
+
+	tk := testkit.NewDBTestKit(t, db)
+	tk.MustExec("create table t(a int)")
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer terror.Call(conn.Close)
+
+	_, err = conn.ExecContext(context.Background(), "begin")
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(context.Background(), "insert into t values(1)")
+	require.NoError(t, err)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcCommitResult", `return("undeterminedResult")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcCommitResult"))
+	}()
+
+	_, err = conn.ExecContext(context.Background(), "commit")
+	// because TiKV responses UndeterminedResult, the connection should be disconnected without reporting mysql error.
+	require.EqualError(t, err, "invalid connection")
+}
+
+func TestAuditPluginInfoForStarting(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	type normalTest struct {
+		sql         string
+		rows        uint64
+		stmtType    string
+		dbs         string
+		tables      string
+		cmd         string
+		event       plugin.GeneralEvent
+		params      string
+		redactedSQL string
+		stmtID      uint32
+		currentDB   string
+	}
+
+	var dbNames, tableNames []string
+	var testResults []normalTest
+
+	onGeneralEvent := func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
+		dbNames = dbNames[:0]
+		tableNames = tableNames[:0]
+		for _, value := range sctx.StmtCtx.Tables {
+			dbNames = append(dbNames, value.DB)
+			tableNames = append(tableNames, value.Table)
+		}
+		redactedSQL, _ := sctx.StmtCtx.SQLDigest()
+		audit := normalTest{
+			sql:         sctx.StmtCtx.OriginalSQL,
+			rows:        sctx.StmtCtx.AffectedRows(),
+			stmtType:    sctx.StmtCtx.StmtType,
+			dbs:         strings.Join(dbNames, ","),
+			tables:      strings.Join(tableNames, ","),
+			cmd:         cmd,
+			event:       event,
+			params:      sctx.PlanCacheParams.String(),
+			redactedSQL: redactedSQL,
+			currentDB:   sctx.CurrentDB,
+		}
+		if stmtID := ctx.Value(plugin.PrepareStmtIDCtxKey); stmtID != nil {
+			audit.stmtID = stmtID.(uint32)
+		}
+		testResults = append(testResults, audit)
+	}
+	plugin.LoadPluginForTest(t, onGeneralEvent)
+	defer plugin.Shutdown(context.Background())
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+
+		_, err = conn.ExecContext(context.Background(), "use test")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(context.Background(), "drop table if exists t")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(context.Background(), "create table t(a int)")
+		require.NoError(t, err)
+
+		testResults = testResults[:0]
+		stmt, err := conn.PrepareContext(context.Background(), "insert into t values (?)")
+		require.NoError(t, err)
+
+		// Test execute audit log
+		testResults = testResults[:0]
+		for i := range 1000 {
+			_, err = stmt.ExecContext(context.Background(), i)
+			require.NoError(t, err)
+		}
+		require.Eventually(t, func() bool {
+			// EXECUTE statement doesn't have STARTING info
+			return len(testResults) == 1000
+		}, time.Second, time.Millisecond*10)
+		require.Equal(t, testResults[len(testResults)-1], normalTest{
+			sql:         "insert into t values (?)",
+			rows:        1,
+			stmtType:    "Insert",
+			dbs:         "test",
+			tables:      "t",
+			cmd:         "Execute",
+			event:       plugin.Completed,
+			params:      " [arguments: 999]",
+			redactedSQL: "insert into `t` values ( ? )",
+			stmtID:      1,
+			currentDB:   "test",
+		})
+
+		// Test close audit log
+		testResults = testResults[:0]
+		err = stmt.Close()
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			return len(testResults) == 1
+		}, time.Second, time.Millisecond*10)
+		require.Equal(t, testResults[0], normalTest{
+			sql:         "insert into t values (?)",
+			rows:        1,
+			stmtType:    "Insert",
+			dbs:         "test",
+			tables:      "t",
+			cmd:         "Close stmt",
+			event:       plugin.Completed,
+			params:      " [arguments: 999]",
+			redactedSQL: "insert into `t` values ( ? )",
+			stmtID:      1,
+			currentDB:   "test",
+		})
+
+		testResults = testResults[:0]
 	})
 }

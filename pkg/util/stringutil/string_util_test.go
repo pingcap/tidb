@@ -113,21 +113,21 @@ func TestCompileLike2Regexp(t *testing.T) {
 		pattern string
 		regexp  string
 	}{
-		{``, ``},
-		{`a`, `a`},
-		{`aA`, `aA`},
-		{`_`, `.`},
-		{`__`, `..`},
-		{`%`, `.*`},
-		{`%b`, `.*b`},
-		{`%a%`, `.*a.*`},
-		{`a%`, `a.*`},
-		{`\%a`, `%a`},
-		{`\_a`, `_a`},
-		{`\\_a`, `\.a`},
-		{`\a\b`, `ab`},
-		{`%%_`, `..*`},
-		{`%_%_aA`, "...*aA"},
+		{``, `^$`},
+		{`a`, `^a$`},
+		{`aA`, `^aA$`},
+		{`_`, `^.$`},
+		{`__`, `^..$`},
+		{`%`, `^.*$`},
+		{`%b`, `^.*b$`},
+		{`%a%`, `^.*a.*$`},
+		{`a%`, `^a.*$`},
+		{`\%a`, `^%a$`},
+		{`\_a`, `^_a$`},
+		{`\\_a`, `^\.a$`},
+		{`\a\b`, `^ab$`},
+		{`%%_`, `^..*$`},
+		{`%_%_aA`, "^...*aA$"},
 	}
 	for _, v := range tbl {
 		result := CompileLike2Regexp(v.pattern)
@@ -233,7 +233,7 @@ func BenchmarkDoMatch(b *testing.B) {
 		b.Run(v.pattern, func(b *testing.B) {
 			patChars, patTypes := CompilePattern(v.pattern, escape)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				match := DoMatch(v.target, patChars, patTypes)
 				if !match {
 					b.Fatal("Match expected.")
@@ -256,7 +256,7 @@ func BenchmarkDoMatchNegative(b *testing.B) {
 		b.Run(v.pattern, func(b *testing.B) {
 			patChars, patTypes := CompilePattern(v.pattern, escape)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				match := DoMatch(v.target, patChars, patTypes)
 				if match {
 					b.Fatal("Unmatch expected.")

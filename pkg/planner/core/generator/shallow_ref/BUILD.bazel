@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "shallow_ref_lib",
+    srcs = ["shallow_ref_generator.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/generator/shallow_ref",
+    visibility = ["//visibility:private"],
+    deps = ["//pkg/planner/core/operator/logicalop"],
+)
+
+go_binary(
+    name = "shallow_ref",
+    embed = [":shallow_ref_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "shallow_ref_test",
+    timeout = "short",
+    srcs = ["shallow_ref_test.go"],
+    data = [
+        "//pkg/planner/core/operator/logicalop:generator_files",
+    ],
+    embed = [":shallow_ref_lib"],
+    flaky = True,
+    deps = ["//pkg/util"],
+)

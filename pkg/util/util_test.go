@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	pb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/assert"
@@ -29,12 +31,21 @@ import (
 )
 
 func TestLogFormat(t *testing.T) {
+	memory.SetupGlobalMemArbitratorForTest(t.TempDir())
+	require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeStandardName))
+	defer memory.CleanupGlobalMemArbitratorForTest()
+
 	mem := memory.NewTracker(-1, -1)
 	mem.Consume(1<<30 + 1<<29 + 1<<28 + 1<<27)
+	require.True(t,
+		mem.InitMemArbitrator(memory.GlobalMemArbitrator(), 0, nil, "", memory.ArbitrationPriorityMedium, false, 0))
+	mem.MemArbitrator.AwaitAlloc.TotalDur.Add(2e9 + 1e8)
+	mem.MemArbitrator.AwaitAlloc.Size = 123456789123
+	mem.MemArbitrator.AwaitAlloc.StartUtime = 123456789123456
 	mockTooLongQuery := make([]byte, 1024*9)
 
 	var refCount stmtctx.ReferenceCount = 0
-	info := &ProcessInfo{
+	info := &sessmgr.ProcessInfo{
 		ID:            233,
 		User:          "PingCAP",
 		Host:          "127.0.0.1",
@@ -50,11 +61,12 @@ func TestLogFormat(t *testing.T) {
 		RedactSQL:         "",
 		SessionAlias:      "alias123",
 	}
+	info.StmtCtx.MemTracker = mem
 	costTime := time.Second * 233
 	logSQLTruncateLen := 1024 * 8
 	logFields := GenLogFields(costTime, info, true)
 
-	assert.Len(t, logFields, 9)
+	assert.Len(t, logFields, 10)
 	assert.Equal(t, "cost_time", logFields[0].Key)
 	assert.Equal(t, "233s", logFields[0].String)
 	assert.Equal(t, "conn", logFields[1].Key)
@@ -67,22 +79,24 @@ func TestLogFormat(t *testing.T) {
 	assert.Equal(t, int64(23333), logFields[4].Integer)
 	assert.Equal(t, "mem_max", logFields[5].Key)
 	assert.Equal(t, "2013265920 Bytes (1.88 GB)", logFields[5].String)
-	assert.Equal(t, "sql", logFields[6].Key)
-	assert.Equal(t, "select * from table where a > 1", logFields[6].String)
+	assert.Equal(t, "mem_arbitration", logFields[6].Key)
+	assert.Equal(t, "cost_time 2.1s, wait_start 1970-01-02 10:17:36.789 UTC, wait_bytes 123456789123 Bytes (115.0 GB)", logFields[6].String)
+	assert.Equal(t, "sql", logFields[7].Key)
+	assert.Equal(t, "select * from table where a > 1", logFields[7].String)
 
 	info.RedactSQL = errors.RedactLogMarker
 	logFields = GenLogFields(costTime, info, true)
-	assert.Equal(t, "select * from table where `a` > ‹1›", logFields[6].String)
+	assert.Equal(t, "select * from table where `a` > ‹1›", logFields[7].String)
 	info.RedactSQL = ""
 
 	logFields = GenLogFields(costTime, info, true)
-	assert.Equal(t, "select * from table where a > 1", logFields[6].String)
+	assert.Equal(t, "select * from table where a > 1", logFields[7].String)
 	info.Info = string(mockTooLongQuery)
 	logFields = GenLogFields(costTime, info, true)
-	assert.Equal(t, len(logFields[6].String), logSQLTruncateLen+10)
+	assert.Equal(t, len(logFields[7].String), logSQLTruncateLen+10)
 	logFields = GenLogFields(costTime, info, false)
-	assert.Equal(t, len(logFields[6].String), len(mockTooLongQuery))
-	assert.Equal(t, logFields[7].String, "alias123")
+	assert.Equal(t, len(logFields[7].String), len(mockTooLongQuery))
+	assert.Equal(t, logFields[8].String, "alias123")
 }
 
 func TestReadLine(t *testing.T) {
@@ -119,4 +133,19 @@ func TestIsInCorrectIdentifierName(t *testing.T) {
 		got := IsInCorrectIdentifierName(tc.input)
 		require.Equalf(t, tc.correct, got, "IsInCorrectIdentifierName(%v) != %v", tc.name, tc.correct)
 	}
+}
+
+func TestDupProto(t *testing.T) {
+	p := &pb.StorageBackend{
+		Backend: &pb.StorageBackend_S3{
+			S3: &pb.S3{
+				Endpoint: "127.0.0.1",
+			},
+		},
+	}
+
+	p2 := ProtoV1Clone(p)
+	require.Equal(t, p2.Backend.(*pb.StorageBackend_S3).S3.Endpoint, "127.0.0.1")
+	p2.Backend.(*pb.StorageBackend_S3).S3.Endpoint = "127.0.0.2"
+	require.Equal(t, p.Backend.(*pb.StorageBackend_S3).S3.Endpoint, "127.0.0.1")
 }

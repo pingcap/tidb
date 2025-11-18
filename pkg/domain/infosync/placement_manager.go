@@ -16,6 +16,8 @@ package infosync
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -99,6 +101,60 @@ func (m *mockPlacementManager) GetAllRuleBundles(_ context.Context) ([]*placemen
 	return bundles, nil
 }
 
+type keyRange struct {
+	start string
+	end   string
+}
+
+// CheckBundle check that the rules don't overlap without explicit Override
+// Exported for testing reasons.
+// Tries to be a simpler version of PDs
+// prepareRulesForApply + checkApplyRules.
+// And additionally checks for key overlaps.
+func CheckBundle(bundle *placement.Bundle) error {
+	keys := make([]keyRange, 0, len(bundle.Rules))
+	for _, rule := range bundle.Rules {
+		if rule.Role == pd.Leader {
+			if rule.Override {
+				// PD would override the previous rules,
+				// not only the overlapping key ranges.
+				keys = keys[:0]
+			}
+			keys = append(keys, keyRange{
+				start: rule.StartKeyHex,
+				end:   rule.EndKeyHex,
+			})
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	// Could use pd's placement.sortRules() instead.
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].start == keys[j].start {
+			return keys[i].end < keys[j].end
+		}
+		return keys[i].start < keys[j].start
+	})
+
+	for i := 1; i < len(keys); i++ {
+		if keys[i].start < keys[i-1].end {
+			return fmt.Errorf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, multiple leader replicas for range {%s, %s}`, keys[i-1].start, keys[i].end)
+		}
+	}
+	return nil
+}
+
+func checkBundles(bundles map[string]*placement.Bundle) error {
+	// Check that no bundles have leaders overlapping ranges
+	for k := range bundles {
+		if err := CheckBundle(bundles[k]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *mockPlacementManager) PutRuleBundles(_ context.Context, bundles []*placement.Bundle) error {
 	m.Lock()
 	defer m.Unlock()
@@ -115,5 +171,5 @@ func (m *mockPlacementManager) PutRuleBundles(_ context.Context, bundles []*plac
 		}
 	}
 
-	return nil
+	return checkBundles(m.bundles)
 }

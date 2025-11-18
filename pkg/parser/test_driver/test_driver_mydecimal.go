@@ -185,7 +185,7 @@ func (d *MyDecimal) ToString() (str []byte) {
 
 // FromString parses decimal from string.
 func (d *MyDecimal) FromString(str []byte) error {
-	for i := 0; i < len(str); i++ {
+	for i := range str {
 		if !isSpace(str[i]) {
 			str = str[i:]
 			break
@@ -273,7 +273,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 		panic(panicInfo)
 	}
 	allZero := true
-	for i := 0; i < wordBufLen; i++ {
+	for i := range wordBufLen {
 		if d.wordBuf[i] != 0 {
 			allZero = false
 			break

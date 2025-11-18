@@ -114,7 +114,8 @@ CREATE TABLE `tpk2` (
   `c` int(11) NOT NULL,
   `d` int(11) NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`b`),
-  UNIQUE KEY `uidx_a` (`a`) GLOBAL
+  UNIQUE KEY `uidx_a`(`a`) GLOBAL,
+  UNIQUE KEY `uidx_b`(`b`) GLOBAL
 ) PARTITION BY HASH (`b`) PARTITIONS 5;
 
 insert into tpk2 values (1, 2, 1, 1), (3, 6, 3, 3);
@@ -128,6 +129,13 @@ explain select /*+ use_index_merge(tpk2, uidx_a, primary) */ * from tpk2 where a
 select /*+ use_index_merge(tpk2, uidx_a, primary) */ * from tpk2 where a=1 or b=4;
 --sorted_result
 select /*+ use_index_merge(tpk2, uidx_a, primary) */ * from tpk2 where a=2 or b=4;
+
+--echo ## for two global indexes
+explain select /*+ use_index_merge(tpk2, uidx_a, uidx_b) */ * from tpk2 where a=1 or b=4;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, uidx_b) */ * from tpk2 where a=1 or b=4;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, uidx_b) */ * from tpk2 where a=2 or b=4;
 
 rollback;
 

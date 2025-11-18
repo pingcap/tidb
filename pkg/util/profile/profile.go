@@ -131,7 +131,7 @@ func (*Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
 		}
 		state := strings.Trim(headers[1], "[]")
 		stack := strings.Split(strings.TrimSpace(goroutine[colIndex+1:]), "\n")
-		for i := 0; i < len(stack)/2; i++ {
+		for i := range len(stack) / 2 {
 			fn := stack[i*2]
 			loc := stack[i*2+1]
 			var identifier string

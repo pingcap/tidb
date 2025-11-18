@@ -72,7 +72,7 @@ show warnings;
 drop table if exists t1, t2;
 create table t1 (a int, key(a));
 create table t2 (a int, key(a));
-explain select /*+ tidb_inlj(bb) */ aa.* from (select * from t1) as aa left join
+explain format='plan_tree' select /*+ tidb_inlj(bb) */ aa.* from (select * from t1) as aa left join
     (select t2.a, t2.a*2 as a2 from t2) as bb on aa.a=bb.a;
 
 # TestIndexJoinOverflow
@@ -185,7 +185,7 @@ CREATE TABLE t2 (
 insert into t2 values ( pow(2,32), 1, 1), ( pow(2,32)+1, 2, 0);
 analyze table t1 all columns;
 analyze table t2 all columns;
-explain format='brief' select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 );
+explain format='plan_tree' select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 );
 show warnings;
 select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 );
 drop table t1, t2;

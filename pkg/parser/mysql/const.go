@@ -196,7 +196,7 @@ const (
 	AuthLDAPSASL            = "authentication_ldap_sasl"
 )
 
-// MySQL database and tables.
+// System database and tables that mostly inherited from MySQL.
 const (
 	// SystemDB is the name of system database.
 	SystemDB = "mysql"
@@ -225,6 +225,8 @@ const (
 	DefaultRoleTable = "default_roles"
 	// PasswordHistoryTable is the table in system db contains password history.
 	PasswordHistoryTable = "password_history"
+	// WorkloadSchema is the name of workload repository database.
+	WorkloadSchema = "workload_schema"
 )
 
 // MySQL type maximum length.
@@ -576,24 +578,6 @@ var CombinationSQLMode = map[string][]string{
 	"ORACLE":      {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS", "NO_AUTO_CREATE_USER"},
 	"POSTGRESQL":  {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS"},
 	"TRADITIONAL": {"STRICT_TRANS_TABLES", "STRICT_ALL_TABLES", "NO_ZERO_IN_DATE", "NO_ZERO_DATE", "ERROR_FOR_DIVISION_BY_ZERO", "NO_AUTO_CREATE_USER", "NO_ENGINE_SUBSTITUTION"},
-}
-
-// FormatFunc is the locale format function signature.
-type FormatFunc func(string, string) (string, error)
-
-// GetLocaleFormatFunction get the format function for sepcific locale.
-func GetLocaleFormatFunction(loc string) FormatFunc {
-	locale, exist := locale2FormatFunction[loc]
-	if !exist {
-		return formatNotSupport
-	}
-	return locale
-}
-
-// locale2FormatFunction is the string represent of locale format function.
-var locale2FormatFunction = map[string]FormatFunc{
-	"en_US": formatENUS,
-	"zh_CN": formatZHCN,
 }
 
 // PriorityEnum is defined for Priority const values.

@@ -21,14 +21,15 @@ import (
 )
 
 const sizeOfNextPtr = int(unsafe.Sizeof(uintptr(0)))
-const sizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
+const sizeOfElementSize = int(unsafe.Sizeof(uint32(1)))
 const sizeOfUnsafePointer = int(unsafe.Sizeof(unsafe.Pointer(nil)))
 const sizeOfUintptr = int(unsafe.Sizeof(uintptr(0)))
 
 var (
-	fakeAddrPlaceHolder = []byte{0, 0, 0, 0, 0, 0, 0, 0}
-	usedFlagMask        uint32
-	bitMaskInUint32     [32]uint32
+	fakeAddrPlaceHolder    = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+	fakeAddrPlaceHolderLen = len(fakeAddrPlaceHolder)
+	usedFlagMask           uint32
+	bitMaskInUint32        [32]uint32
 )
 
 func init() {
@@ -63,7 +64,7 @@ func init() {
 //   - If the system is big-endian, the bit masks are set sequentially from the highest bit (bit 31) to the lowest bit (bit 0),
 //     ensuring that atomic operations can be performed correctly on different endian systems
 func initializeBitMasks(isLittleEndian bool) {
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		if isLittleEndian {
 			// On little-endian systems, bit masks are arranged in order from high to low within each byte
 			bitMaskInUint32[i] = uint32(1) << (7 - (i % 8) + (i/8)*8)
@@ -106,7 +107,6 @@ type rowTableSegment struct {
 	hashValues      []uint64 // the hash value of each rows
 	rowStartOffset  []uint64 // the start address of each row
 	validJoinKeyPos []int    // the pos of rows that need to be inserted into hash table, used in hash table build
-	finalized       bool     // after finalized is set to true, no further modification is allowed
 	// taggedBits is the bit that can be used to tag for all pointer in rawData, it use the MSB to tag, so if the n MSB is all 0, the taggedBits is n
 	taggedBits uint8
 }
@@ -131,18 +131,8 @@ func (rts *rowTableSegment) initTaggedBits() {
 	rts.taggedBits = getTaggedBitsFromUintptr(endPtr | startPtr)
 }
 
-const maxRowTableSegmentSize = 1024
-
-// 64 MB
-const maxRowTableSegmentByteSize = 64 * 1024 * 1024
-
-func newRowTableSegment(rowSizeHint uint) *rowTableSegment {
-	return &rowTableSegment{
-		rawData:         make([]byte, 0),
-		hashValues:      make([]uint64, 0, rowSizeHint),
-		rowStartOffset:  make([]uint64, 0, rowSizeHint),
-		validJoinKeyPos: make([]int, 0, rowSizeHint),
-	}
+func newRowTableSegment() *rowTableSegment {
+	return &rowTableSegment{}
 }
 
 func (rts *rowTableSegment) rowCount() int64 {
@@ -151,6 +141,18 @@ func (rts *rowTableSegment) rowCount() int64 {
 
 func (rts *rowTableSegment) validKeyCount() uint64 {
 	return uint64(len(rts.validJoinKeyPos))
+}
+
+func (rts *rowTableSegment) getRowNum() int {
+	return len(rts.hashValues)
+}
+
+func (rts *rowTableSegment) getRowBytes(idx int) []byte {
+	rowNum := rts.getRowNum()
+	if idx == rowNum-1 {
+		return rts.rawData[rts.rowStartOffset[idx]:]
+	}
+	return rts.rawData[rts.rowStartOffset[idx]:rts.rowStartOffset[idx+1]]
 }
 
 func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress taggedPtr) {
@@ -167,13 +169,28 @@ func getNextRowAddress(rowStart unsafe.Pointer, tagHelper *tagPtrHelper, hashVal
 }
 
 type rowTable struct {
-	meta     *joinTableMeta
 	segments []*rowTableSegment
+}
+
+func (rt *rowTable) getTotalMemoryUsage() int64 {
+	totalMemoryUsage := int64(0)
+	for _, seg := range rt.segments {
+		totalMemoryUsage += seg.totalUsedBytes()
+	}
+	return totalMemoryUsage
+}
+
+func (rt *rowTable) getSegments() []*rowTableSegment {
+	return rt.segments
+}
+
+func (rt *rowTable) clearSegments() {
+	rt.segments = nil
 }
 
 // used for test
 func (rt *rowTable) getRowPointer(rowIndex int) unsafe.Pointer {
-	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
+	for segIndex := range rt.segments {
 		if rowIndex < len(rt.segments[segIndex].rowStartOffset) {
 			return rt.segments[segIndex].getRowPointer(rowIndex)
 		}
@@ -184,7 +201,7 @@ func (rt *rowTable) getRowPointer(rowIndex int) unsafe.Pointer {
 
 func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 	startOffset := 0
-	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
+	for segIndex := range rt.segments {
 		if rowIndex < len(rt.segments[segIndex].validJoinKeyPos) {
 			return startOffset + rt.segments[segIndex].validJoinKeyPos[rowIndex]
 		}
@@ -194,9 +211,8 @@ func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 	return -1
 }
 
-func newRowTable(meta *joinTableMeta) *rowTable {
+func newRowTable() *rowTable {
 	return &rowTable{
-		meta:     meta,
 		segments: make([]*rowTableSegment, 0),
 	}
 }

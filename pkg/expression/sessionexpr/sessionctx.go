@@ -24,11 +24,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -74,7 +75,7 @@ func (ctx *ExprContext) GetDefaultCollationForUTF8MB4() string {
 
 // GetBlockEncryptionMode returns the variable block_encryption_mode
 func (ctx *ExprContext) GetBlockEncryptionMode() string {
-	blockMode, _ := ctx.sctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	blockMode, _ := ctx.sctx.GetSessionVars().GetSystemVar(vardef.BlockEncryptionMode)
 	return blockMode
 }
 
@@ -137,6 +138,13 @@ func (ctx *ExprContext) ConnectionID() uint64 {
 	return ctx.sctx.GetSessionVars().ConnectionID
 }
 
+// IsReadonlyUserVar checks whether the user variable is readonly.
+func (ctx *ExprContext) IsReadonlyUserVar(name string) bool {
+	m := ctx.sctx.GetPlanCtx().GetReadonlyUserVarMap()
+	_, ok := m[name]
+	return ok
+}
+
 // IntoStatic turns the ExprContext into a ExprContext.
 func (ctx *ExprContext) IntoStatic() *exprstatic.ExprContext {
 	return exprstatic.MakeExprContextStatic(ctx)
@@ -160,6 +168,7 @@ func NewEvalContext(sctx sessionctx.Context) *EvalContext {
 	ctx.setOptionalProp(sequenceOperatorProp(sctx))
 	ctx.setOptionalProp(expropt.NewAdvisoryLockPropProvider(sctx))
 	ctx.setOptionalProp(expropt.DDLOwnerInfoProvider(sctx.IsDDLOwner))
+	ctx.setOptionalProp(expropt.PrivilegeCheckerProvider(func() expropt.PrivilegeChecker { return ctx }))
 	// When EvalContext is created from a session, it should contain all the optional properties.
 	intest.Assert(ctx.props.PropKeySet().IsFull())
 	return ctx
@@ -190,7 +199,7 @@ func (ctx *EvalContext) SQLMode() mysql.SQLMode {
 // TypeCtx returns the types.Context
 func (ctx *EvalContext) TypeCtx() (tc types.Context) {
 	tc = ctx.sctx.GetSessionVars().StmtCtx.TypeCtx()
-	if intest.InTest {
+	if intest.EnableAssert {
 		exprctx.AssertLocationWithSessionVars(tc.Location(), ctx.sctx.GetSessionVars())
 	}
 	return
@@ -254,7 +263,7 @@ func (ctx *EvalContext) GetTiDBRedactLog() string {
 
 // GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
 func (ctx *EvalContext) GetDefaultWeekFormatMode() string {
-	mode, ok := ctx.sctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
+	mode, ok := ctx.sctx.GetSessionVars().GetSystemVar(vardef.DefaultWeekFormat)
 	if !ok || mode == "" {
 		return "0"
 	}
@@ -353,7 +362,7 @@ func currentUserProp(sctx sessionctx.Context) exprctx.OptionalEvalPropProvider {
 func infoSchemaProp(sctx sessionctx.Context) expropt.InfoSchemaPropProvider {
 	return func(isDomain bool) infoschema.MetaOnlyInfoSchema {
 		if isDomain {
-			return sctx.GetDomainInfoSchema()
+			return sctx.GetLatestInfoSchema()
 		}
 		return sctx.GetInfoSchema()
 	}
@@ -386,7 +395,7 @@ func (s *sequenceOperator) SetSequenceVal(newVal int64) (int64, bool, error) {
 
 func sequenceOperatorProp(sctx sessionctx.Context) expropt.SequenceOperatorProvider {
 	return func(db, name string) (expropt.SequenceOperator, error) {
-		sequence, err := util.GetSequenceByName(sctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(name))
+		sequence, err := util.GetSequenceByName(sctx.GetInfoSchema(), ast.NewCIStr(db), ast.NewCIStr(name))
 		if err != nil {
 			return nil, err
 		}
@@ -416,36 +425,6 @@ var _ exprctx.StaticConvertibleEvalContext = &EvalContext{}
 // AllParamValues implements context.StaticConvertibleEvalContext.
 func (ctx *EvalContext) AllParamValues() []types.Datum {
 	return ctx.sctx.GetSessionVars().PlanCacheParams.AllParamValues()
-}
-
-// GetDynamicPrivCheckFn implements context.StaticConvertibleEvalContext.
-func (ctx *EvalContext) GetDynamicPrivCheckFn() func(privName string, grantable bool) bool {
-	checker := privilege.GetPrivilegeManager(ctx.sctx)
-	activeRoles := make([]*auth.RoleIdentity, len(ctx.sctx.GetSessionVars().ActiveRoles))
-	copy(activeRoles, ctx.sctx.GetSessionVars().ActiveRoles)
-
-	return func(privName string, grantable bool) bool {
-		if checker == nil {
-			return true
-		}
-
-		return checker.RequestDynamicVerification(activeRoles, privName, grantable)
-	}
-}
-
-// GetRequestVerificationFn implements context.StaticConvertibleEvalContext.
-func (ctx *EvalContext) GetRequestVerificationFn() func(db string, table string, column string, priv mysql.PrivilegeType) bool {
-	checker := privilege.GetPrivilegeManager(ctx.sctx)
-	activeRoles := make([]*auth.RoleIdentity, len(ctx.sctx.GetSessionVars().ActiveRoles))
-	copy(activeRoles, ctx.sctx.GetSessionVars().ActiveRoles)
-
-	return func(db string, table string, column string, priv mysql.PrivilegeType) bool {
-		if checker == nil {
-			return true
-		}
-
-		return checker.RequestVerification(activeRoles, db, table, column, priv)
-	}
 }
 
 // GetWarnHandler implements context.StaticConvertibleEvalContext.

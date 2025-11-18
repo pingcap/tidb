@@ -58,7 +58,7 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 	require.NotNil(t, external.GetModifyColumn(t, tk, "test", "t", "c2", false))
 
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -123,7 +123,7 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	// Mock roll back at model.StateNone.
 	customizeHookRollbackAtState(t, tbl, model.StateNone)
 	// Alter sql will modify column c2 to bigint not null.
-	SQL := "alter table t modify column c2 int not null"
+	SQL := "alter table t modify column c2 varchar(16) not null"
 	err := tk.ExecToErr(SQL)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-none")
 	assertRollBackedColUnchanged(t, tk)
@@ -148,7 +148,7 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 }
 
 func customizeHookRollbackAtState(t *testing.T, tbl table.Table, state model.SchemaState) {
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
@@ -192,7 +192,7 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 	assertHasAlterWriteReorg := func(tbl table.Table) {
 		// Restore assertResult to false.
 		assertResult = false
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 			if tbl.Meta().ID != job.TableID {
 				return
 			}
@@ -202,20 +202,11 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 		})
 	}
 
-	// Change int to tinyint.
-	// Although display length is increased, the default flen is decreased, reorg is needed.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int(1))")
-	tbl := external.GetTableByName(t, tk, "test", "t")
-	assertHasAlterWriteReorg(tbl)
-	tk.MustExec("alter table t modify column a tinyint(3)")
-	require.True(t, assertResult)
-
 	// Change tinyint to tinyint
 	// Although display length is decreased, default flen is the same, reorg is not needed.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a tinyint(3))")
-	tbl = external.GetTableByName(t, tk, "test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	assertHasAlterWriteReorg(tbl)
 	tk.MustExec("alter table t modify column a tinyint(1)")
 	require.False(t, assertResult)
@@ -224,6 +215,8 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 
 // TestRowFormat is used to close issue #21391, the encoded row in column type change should be aware of the new row format.
 func TestRowFormat(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -244,6 +237,8 @@ func TestRowFormat(t *testing.T) {
 }
 
 func TestRowFormatWithChecksums(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
@@ -260,12 +255,14 @@ func TestRowFormatWithChecksums(t *testing.T) {
 	data, err := h.GetMvccByEncodedKey(encodedKey)
 	require.NoError(t, err)
 	// row value with checksums
-	expected := []byte{0x80, 0x2, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33, 0x1, 0xa9, 0x7a, 0xf4, 0xc8}
+	expected := []byte{0x80, 0x2, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33, 0x2, 0x9e, 0x56, 0xf5, 0x45}
 	require.Equal(t, expected, data.Info.Writes[0].ShortValue)
 	tk.MustExec("drop table if exists t")
 }
 
 func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -284,7 +281,7 @@ func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
 	data, err := h.GetMvccByEncodedKey(encodedKey)
 	require.NoError(t, err)
 	// checksum skipped and with a null col vv
-	expected := []byte{0x80, 0x2, 0x3, 0x0, 0x1, 0x0, 0x1, 0x2, 0x4, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33, 0x1, 0xeb, 0x42, 0xda, 0x20}
+	expected := []byte{0x80, 0x2, 0x3, 0x0, 0x1, 0x0, 0x1, 0x2, 0x4, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33, 0x2, 0x0, 0x4f, 0xd2, 0x26}
 	require.Equal(t, expected, data.Info.Writes[0].ShortValue)
 	tk.MustExec("drop table if exists t")
 }
@@ -315,7 +312,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 		checkErr error
 	)
 	i := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -330,7 +327,8 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 					checkErr = errors.New("assert the writable column number error")
 					return
 				}
-				if tbl.WritableCols()[2].OriginDefaultValue.(string) != "0" {
+				targetCol := tbl.WritableCols()[2]
+				if targetCol.OriginDefaultValue != "0" {
 					checkErr = errors.New("assert the write only column origin default value error")
 					return
 				}
@@ -361,8 +359,8 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 			i++
 		}
 	})
-	tk.MustExec("alter table t modify column b tinyint NOT NULL")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	tk.MustExec("alter table t modify column b varchar(16) DEFAULT '0' NOT NULL")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	require.NoError(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "4 4", "5 5"))
@@ -392,7 +390,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 		checkErr error
 	)
 	i, stableTimes := 0, 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -408,7 +406,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 					return
 				}
 				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-				expectVal := "1971-06-09"
+				expectVal := "0000-00-00"
 				if originalDV != expectVal {
 					errMsg := fmt.Sprintf("expect: %v, got: %v", expectVal, originalDV)
 					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
@@ -446,7 +444,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 	})
 
 	tk.MustExec("alter table t modify column c date NOT NULL")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	require.NoError(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(
@@ -472,7 +470,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, "test", "t")
 	var checkErr error
 	var firstJobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -493,12 +491,8 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 			// modify column x
 			if job.ID == firstJobID {
 				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-				expectVal := "0000-00-00 00:00:00"
-				if originalDV != expectVal {
-					errMsg := fmt.Sprintf("job ID:%d, expect: %v, got: %v", job.ID, expectVal, originalDV)
-					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
-					return
-				}
+				expectVal := "3771-02-28 13:00:11"
+				require.Equal(t, expectVal, originalDV)
 				// The cast value will be inserted into changing column too.
 				_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE x = '' AND a = 'mul'")
 				if err != nil {
@@ -509,12 +503,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 			// modify column b
 			if job.ID == firstJobID+1 {
 				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-				expectVal := ""
-				if originalDV != expectVal {
-					errMsg := fmt.Sprintf("job ID:%d, expect: %v, got: %v", job.ID, expectVal, originalDV)
-					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
-					return
-				}
+				require.Len(t, originalDV, 32)
 				// The cast value will be inserted into changing column too.
 				_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE a = '1'")
 				if err != nil {
@@ -528,7 +517,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 	tk.MustExec("alter table t modify column x DATETIME NULL DEFAULT '3771-02-28 13:00:11' AFTER b;")
 	tk.MustExec("insert into t(a) value('1')")
 	tk.MustExec("alter table t modify column b varchar(256) default (REPLACE(UPPER(UUID()), '-', ''));")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	require.NoError(t, checkErr)
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("18apf -729850476163 3771-02-28 13:00:11"))
 	tk.MustExec("drop table if exists t")
@@ -553,7 +542,7 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 	}()
 
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if jobID != 0 {
 			return
 		}
@@ -582,10 +571,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockInfiniteReorgLogic", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockInfiniteReorgLogic"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockInfiniteReorgLogic", `return()`)
 
 	tk.MustExec("drop table if exists ctc_goroutine_leak")
 	tk.MustExec("create table ctc_goroutine_leak (a int)")
@@ -593,14 +579,14 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, "test", "ctc_goroutine_leak")
 
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if jobID != 0 {
 			return
 		}
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		if job.Query == "alter table ctc_goroutine_leak modify column a tinyint" {
+		if job.Query == "alter table ctc_goroutine_leak modify column a varchar(16)" {
 			jobID = job.ID
 		}
 	})
@@ -613,7 +599,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 	)
 	wg.Run(func() {
 		// This ddl will be hang over in the failpoint loop, waiting for outside cancel.
-		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a tinyint")
+		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a varchar(16)")
 	})
 
 	<-ddl.TestReorgGoroutineRunning
@@ -641,7 +627,7 @@ func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
 	var checkErr1 error
 	var checkErr2 error
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if checkErr1 != nil || checkErr2 != nil || tbl.Meta().ID != job.TableID {
 			return
 		}

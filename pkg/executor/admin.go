@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/table"
@@ -378,7 +377,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			if result.scanRowCount >= int64(e.batchSize) {
 				return e.recoverRows, nil
 			}
-			handle, err := e.handleCols.BuildHandle(row)
+			handle, err := e.handleCols.BuildHandle(e.Ctx().GetSessionVars().StmtCtx, row)
 			if err != nil {
 				return nil, err
 			}
@@ -406,7 +405,7 @@ func (e *RecoverIndexExec) buildIndexedValues(row chunk.Row, idxVals []types.Dat
 	}
 
 	if e.cols == nil {
-		columns, _, err := expression.ColumnInfos2ColumnsAndNames(e.Ctx().GetExprCtx(), pmodel.NewCIStr("mock"), e.table.Meta().Name, e.table.Meta().Columns, e.table.Meta())
+		columns, _, err := expression.ColumnInfos2ColumnsAndNames(e.Ctx().GetExprCtx(), ast.NewCIStr("mock"), e.table.Meta().Name, e.table.Meta().Columns, e.table.Meta())
 		if err != nil {
 			return nil, err
 		}
@@ -666,7 +665,7 @@ func extractIdxVals(row chunk.Row, idxVals []types.Datum,
 		idxVals = idxVals[:idxValLen]
 	}
 
-	for i := 0; i < idxValLen; i++ {
+	for i := range idxValLen {
 		colVal := row.GetDatum(i, fieldTypes[i])
 		colVal.Copy(&idxVals[i])
 	}
@@ -692,7 +691,7 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 		}
 		iter := chunk.NewIterator4Chunk(e.idxChunk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle, err := e.handleCols.BuildHandle(row)
+			handle, err := e.handleCols.BuildHandle(sc, row)
 			if err != nil {
 				return err
 			}

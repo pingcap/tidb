@@ -60,7 +60,8 @@ function run_with() {
   run_sql 'SELECT id FROM csv.empty_strings WHERE b <> ""'
   check_not_contains 'id:'
 
-  for table in clustered nonclustered clustered_cache1 nonclustered_cache1 nonclustered_cache1_shard_autorowid; do
+  for table in clustered nonclustered clustered_cache1 nonclustered_cache1 nonclustered_cache1_shard_autorowid nonclustered_cache1_initial_autoid; do
+    echo "check for table $table"
     run_sql "select count(*) from auto_incr_id.$table"
     check_contains 'count(*): 3'
     # insert should work
@@ -70,6 +71,7 @@ function run_with() {
   done
 
   for table in clustered nonclustered clustered_cache1 nonclustered_cache1 no_pk no_pk_cache1; do
+    echo "check for table $table"
     run_sql "select count(*) from no_auto_incr_id.$table"
     check_contains 'count(*): 3'
     # insert should work
@@ -90,6 +92,9 @@ check_contains 'pause pd scheduler of table scope' $TEST_DIR/lightning.log
 check_not_contains 'pause pd scheduler of global scope' $TEST_DIR/lightning.log
 check_contains 'switch tikv mode"] [mode=Import' $TEST_DIR/lightning.log
 check_contains 'switch tikv mode"] [mode=Normal' $TEST_DIR/lightning.log
+
+rm -rf $TEST_DIR/lightning.log
+run_with "local" "$CUR/config-checksum-off.toml"
 
 rm -rf $TEST_DIR/lightning.log
 run_with "tidb" "$CUR/config.toml"

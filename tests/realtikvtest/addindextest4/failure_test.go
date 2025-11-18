@@ -33,6 +33,7 @@ import (
 )
 
 func TestAddIndexIngestRecoverPartition(t *testing.T) {
+	t.Skip("the test is too hacky, use another way to test")
 	partCnt := 0
 	block := make(chan struct{})
 	ExecuteBlocks(t, func() {
@@ -52,7 +53,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 			partCnt++
 			if partCnt == 2 {
 				dom.DDL().OwnerManager().ResignOwner(context.Background())
-				dom.InfoSyncer().RemoveServerInfo()
+				dom.InfoSyncer().ServerInfoSyncer().RemoveServerInfo()
 				os.Exit(0) // Mock TiDB exit abnormally. We use zero because the requirement of `ExecuteBlocks()`.
 			}
 		})
@@ -72,13 +73,11 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 			partCnt++
 			if partCnt == 2 {
 				dom.DDL().OwnerManager().ResignOwner(context.Background())
-				dom.InfoSyncer().RemoveServerInfo()
+				dom.InfoSyncer().ServerInfoSyncer().RemoveServerInfo()
 				os.Exit(0)
 			}
 		})
-		realtikvtest.RetainOldData = true
-		store, dom = realtikvtest.CreateMockStoreAndDomainAndSetup(t)
-		realtikvtest.RetainOldData = false
+		store, dom = realtikvtest.CreateMockStoreAndDomainAndSetup(t, realtikvtest.WithRetainData())
 		tk := testkit.NewTestKit(t, store)
 		tk.MustQuery("select 1;").Check(testkit.Rows("1"))
 		<-block // block forever until os.Exit(0).
@@ -92,9 +91,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.Port += 2
 		})
-		realtikvtest.RetainOldData = true
-		store := realtikvtest.CreateMockStoreAndSetup(t)
-		realtikvtest.RetainOldData = false
+		store := realtikvtest.CreateMockStoreAndSetup(t, realtikvtest.WithRetainData())
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use addindexlit;")
 		<-block

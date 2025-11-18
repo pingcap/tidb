@@ -24,6 +24,10 @@ const (
 	SelectionFactor = 0.8
 
 	DistinctFactor = 0.8
+
+	// ToleranceFactor is an arbitrary value used in (some) floating point
+	// comparisons to account for precision errors
+	ToleranceFactor = 0.00001
 )
 
 // AggFuncFactor is the basic factor for aggregation.

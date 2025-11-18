@@ -9,6 +9,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//oracle",

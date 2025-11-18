@@ -28,14 +28,16 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"go.uber.org/zap"
 )
 
 // HashAggInput indicates the input of hash agg exec.
@@ -154,6 +156,10 @@ type HashAggExec struct {
 	spillHelper *parallelHashAggSpillHelper
 	// isChildDrained indicates whether the all data from child has been taken out.
 	isChildDrained bool
+
+	invalidMemoryUsageForTrackingTest bool
+
+	FileNamePrefixForTest string
 }
 
 // Close implements the Executor Close interface.
@@ -204,6 +210,10 @@ func (e *HashAggExec) Close() error {
 		channel.Clear(e.finalOutputCh)
 		e.executed.Store(false)
 		if e.memTracker != nil {
+			if e.memTracker.BytesConsumed() < 0 {
+				logutil.BgLogger().Warn("Memory tracker's counter is invalid", zap.Int64("counter", e.memTracker.BytesConsumed()))
+				e.invalidMemoryUsageForTrackingTest = true
+			}
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 		e.parallelExecValid = false
@@ -273,10 +283,10 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.offsetOfSpilledChks, e.numOfSpilledChks = 0, 0
 	e.executed.Store(false)
 	e.isChildDrained = false
-	e.dataInDisk = chunk.NewDataInDiskByChunks(exec.RetTypes(e.Children(0)))
+	e.dataInDisk = chunk.NewDataInDiskByChunks(exec.RetTypes(e.Children(0)), e.FileNamePrefixForTest)
 
 	e.tmpChkForSpill = exec.TryNewCacheChunk(e.Children(0))
-	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
+	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && vardef.EnableTmpStorageOnOOM.Load() {
 		if e.diskTracker != nil {
 			e.diskTracker.Reset()
 		} else {
@@ -289,35 +299,40 @@ func (e *HashAggExec) initForUnparallelExec() {
 }
 
 func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrency int, ctx sessionctx.Context) {
-	for i := 0; i < partialConcurrency; i++ {
+	memUsage := int64(0)
+
+	for i := range partialConcurrency {
 		partialResultsMap := make([]aggfuncs.AggPartialResultMapper, finalConcurrency)
-		for i := 0; i < finalConcurrency; i++ {
+		for i := range finalConcurrency {
 			partialResultsMap[i] = make(aggfuncs.AggPartialResultMapper)
 		}
 
 		partialResultsBuffer, groupKeyBuf := getBuffer()
 		e.partialWorkers[i] = HashAggPartialWorker{
-			baseHashAggWorker:    newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
-			idForTest:            i,
-			ctx:                  ctx,
-			inputCh:              e.partialInputChs[i],
-			outputChs:            e.partialOutputChs,
-			giveBackCh:           e.inputCh,
-			BInMaps:              make([]int, finalConcurrency),
-			partialResultsBuffer: *partialResultsBuffer,
-			globalOutputCh:       e.finalOutputCh,
-			partialResultsMap:    partialResultsMap,
-			groupByItems:         e.GroupByItems,
-			chk:                  exec.TryNewCacheChunk(e.Children(0)),
-			groupKeyBuf:          *groupKeyBuf,
-			serializeHelpers:     aggfuncs.NewSerializeHelper(),
-			isSpillPrepared:      false,
-			spillHelper:          e.spillHelper,
-			inflightChunkSync:    e.inflightChunkSync,
+			baseHashAggWorker:     newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
+			idForTest:             i,
+			ctx:                   ctx,
+			inputCh:               e.partialInputChs[i],
+			outputChs:             e.partialOutputChs,
+			giveBackCh:            e.inputCh,
+			BInMaps:               make([]int, finalConcurrency),
+			partialResultsBuffer:  *partialResultsBuffer,
+			globalOutputCh:        e.finalOutputCh,
+			partialResultsMap:     partialResultsMap,
+			groupByItems:          e.GroupByItems,
+			chk:                   e.NewChunkWithCapacity(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()),
+			groupKeyBuf:           *groupKeyBuf,
+			serializeHelpers:      aggfuncs.NewSerializeHelper(),
+			isSpillPrepared:       false,
+			spillHelper:           e.spillHelper,
+			inflightChunkSync:     e.inflightChunkSync,
+			fileNamePrefixForTest: e.FileNamePrefixForTest,
 		}
 
+		memUsage += e.partialWorkers[i].chk.MemoryUsage()
+
 		e.partialWorkers[i].partialResultNumInRow = e.partialWorkers[i].getPartialResultSliceLenConsiderByteAlign()
-		for j := 0; j < finalConcurrency; j++ {
+		for j := range finalConcurrency {
 			e.partialWorkers[i].BInMaps[j] = 0
 		}
 
@@ -328,18 +343,19 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			e.partialWorkers[i].stats = &AggWorkerStat{}
 			e.stats.PartialStats = append(e.stats.PartialStats, e.partialWorkers[i].stats)
 		}
-		e.memTracker.Consume(e.partialWorkers[i].chk.MemoryUsage())
 		input := &HashAggInput{
-			chk:        exec.NewFirstChunk(e.Children(0)),
+			chk:        chunk.New(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()),
 			giveBackCh: e.partialWorkers[i].inputCh,
 		}
-		e.memTracker.Consume(input.chk.MemoryUsage())
+		memUsage += input.chk.MemoryUsage()
 		e.inputCh <- input
 	}
+
+	e.memTracker.Consume(memUsage)
 }
 
 func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
-	for i := 0; i < finalConcurrency; i++ {
+	for i := range finalConcurrency {
 		e.finalWorkers[i] = HashAggFinalWorker{
 			baseHashAggWorker:          newBaseHashAggWorker(e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
 			partialResultMap:           make(aggfuncs.AggPartialResultMapper),
@@ -347,7 +363,6 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			inputCh:                    e.partialOutputChs[i],
 			outputCh:                   e.finalOutputCh,
 			finalResultHolderCh:        make(chan *chunk.Chunk, 1),
-			mutableRow:                 chunk.MutRowFromTypes(exec.RetTypes(e)),
 			spillHelper:                e.spillHelper,
 			restoredAggResultMapperMem: 0,
 		}
@@ -357,7 +372,7 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			e.finalWorkers[i].stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, e.finalWorkers[i].stats)
 		}
-		e.finalWorkers[i].finalResultHolderCh <- exec.NewFirstChunk(e)
+		e.finalWorkers[i].finalResultHolderCh <- chunk.New(e.RetFieldTypes(), 0, e.MaxChunkSize())
 	}
 }
 
@@ -386,7 +401,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 
 	e.inflightChunkSync = &sync.WaitGroup{}
 
-	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
+	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && vardef.EnableTmpStorageOnOOM.Load()
 	isParallelHashAggSpillEnabled := e.Ctx().GetSessionVars().EnableParallelHashaggSpill
 
 	baseRetTypeNum := len(e.RetFieldTypes())
@@ -394,7 +409,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 	// Intermediate result for aggregate function also need to be spilled,
 	// so the number of spillChunkFieldTypes should be added 1.
 	spillChunkFieldTypes := make([]*types.FieldType, baseRetTypeNum+1)
-	for i := 0; i < baseRetTypeNum; i++ {
+	for i := range baseRetTypeNum {
 		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeVarString)
 	}
 
@@ -445,6 +460,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		ok    bool
 		err   error
 	)
+
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(e.finalOutputCh, r)
@@ -459,6 +475,17 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 
 			for i := range e.partialWorkers {
 				e.spillHelper.addListInDisks(e.partialWorkers[i].spilledChunksIO)
+				e.partialWorkers[i].spilledChunksIO = e.partialWorkers[i].spilledChunksIO[:0]
+			}
+		}
+
+		// When error happens, some disk files may not be closed.
+		// We need to manually check and close them.
+		for i := range e.partialWorkers {
+			if len(e.partialWorkers[i].spilledChunksIO) > 0 {
+				for _, disk := range e.partialWorkers[i].spilledChunksIO {
+					disk.Close()
+				}
 			}
 		}
 
@@ -467,6 +494,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		}
 		waitGroup.Done()
 	}()
+
 	for {
 		select {
 		case <-e.finishCh:
@@ -497,6 +525,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		input.giveBackCh <- chk
 
 		if hasError := e.spillIfNeed(); hasError {
+			e.memTracker.Consume(-mSize)
 			return
 		}
 	}
@@ -743,7 +772,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		allMemDelta := int64(0)
 		sel := make([]int, 0, e.childResult.NumRows())
 		var tmpBuf [1]chunk.Row
-		for j := 0; j < e.childResult.NumRows(); j++ {
+		for j := range e.childResult.NumRows() {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
 				if atomic.LoadUint32(&e.inSpillMode) == 1 && e.groupSet.Count() > 0 {
@@ -782,7 +811,7 @@ func (e *HashAggExec) spillUnprocessedData(isFullChk bool) (err error) {
 	if isFullChk {
 		return e.dataInDisk.Add(e.childResult)
 	}
-	for i := 0; i < e.childResult.NumRows(); i++ {
+	for i := range e.childResult.NumRows() {
 		e.tmpChkForSpill.AppendRow(e.childResult.GetRow(i))
 		if e.tmpChkForSpill.IsFull() {
 			err = e.dataInDisk.Add(e.tmpChkForSpill)
@@ -859,4 +888,9 @@ func (e *HashAggExec) IsSpillTriggeredForTest() bool {
 		}
 	}
 	return false
+}
+
+// IsInvalidMemoryUsageTrackingForTest is for test
+func (e *HashAggExec) IsInvalidMemoryUsageTrackingForTest() bool {
+	return e.invalidMemoryUsageForTrackingTest
 }

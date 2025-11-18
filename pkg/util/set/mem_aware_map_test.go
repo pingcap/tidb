@@ -33,10 +33,10 @@ var inputs = []struct {
 func memAwareIntMap(size int) int {
 	var x int
 	m := NewMemAwareMap[int, int]()
-	for j := 0; j < size; j++ {
+	for j := range size {
 		m.Set(j, j)
 	}
-	for j := 0; j < size; j++ {
+	for j := range size {
 		x, _ = m.Get(j)
 	}
 	return x
@@ -45,11 +45,11 @@ func memAwareIntMap(size int) int {
 func nativeIntMap(size int) int {
 	var x int
 	m := make(map[int]int)
-	for j := 0; j < size; j++ {
+	for j := range size {
 		m[j] = j
 	}
 
-	for j := 0; j < size; j++ {
+	for j := range size {
 		x = m[j]
 	}
 	return x
@@ -59,7 +59,7 @@ func BenchmarkMemAwareIntMap(b *testing.B) {
 	for _, s := range inputs {
 		b.Run("MemAwareIntMap_"+strconv.Itoa(s.input), func(b *testing.B) {
 			var x int
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				x = memAwareIntMap(s.input)
 			}
 			result = x
@@ -71,7 +71,7 @@ func BenchmarkNativeIntMap(b *testing.B) {
 	for _, s := range inputs {
 		b.Run("NativeIntMap_"+strconv.Itoa(s.input), func(b *testing.B) {
 			var x int
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				x = nativeIntMap(s.input)
 			}
 			result = x

@@ -41,6 +41,7 @@ type Writer interface {
 	// To enable uniqueness check, the handle should be non-empty.
 	WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error
 	LockForWrite() (unlock func())
+	WrittenBytes() int64
 }
 
 // engineInfo is the engine for one index reorg task, each task will create several new writers under the
@@ -53,7 +54,7 @@ type engineInfo struct {
 	openedEngine *backend.OpenedEngine
 
 	uuid        uuid.UUID
-	cfg         *backend.EngineConfig
+	backend     backend.Backend
 	writerCache generic.SyncMap[int, backend.EngineWriter]
 	memRoot     MemRoot
 	flushLock   *sync.RWMutex
@@ -64,9 +65,9 @@ func newEngineInfo(
 	ctx context.Context,
 	jobID, indexID int64,
 	unique bool,
-	cfg *backend.EngineConfig,
 	en *backend.OpenedEngine,
 	uuid uuid.UUID,
+	bk backend.Backend,
 	memRoot MemRoot,
 ) *engineInfo {
 	return &engineInfo{
@@ -74,9 +75,9 @@ func newEngineInfo(
 		jobID:        jobID,
 		indexID:      indexID,
 		unique:       unique,
-		cfg:          cfg,
 		openedEngine: en,
 		uuid:         uuid,
+		backend:      bk,
 		writerCache:  generic.NewSyncMap[int, backend.EngineWriter](4),
 		memRoot:      memRoot,
 		flushLock:    &sync.RWMutex{},
@@ -106,33 +107,33 @@ func (ei *engineInfo) Close(cleanup bool) {
 	}
 	err := ei.closeWriters()
 	if err != nil {
-		logutil.Logger(ei.ctx).Error(LitErrCloseWriterErr, zap.Error(err),
+		logutil.Logger(ei.ctx).Warn(LitErrCloseWriterErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
-
-	indexEngine := ei.openedEngine
-	closedEngine, err := indexEngine.Close(ei.ctx)
+	if cleanup {
+		defer func() {
+			err = ei.backend.CleanupEngine(ei.ctx, ei.uuid)
+			if err != nil {
+				logutil.Logger(ei.ctx).Warn(LitErrCleanEngineErr, zap.Error(err),
+					zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+			}
+		}()
+	}
+	_, err = ei.openedEngine.Close(ei.ctx)
 	if err != nil {
-		logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
+		logutil.Logger(ei.ctx).Warn(LitErrCloseEngineErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return
 	}
 	ei.openedEngine = nil
-	if cleanup {
-		// local intermediate files will be removed.
-		err = closedEngine.Cleanup(ei.ctx)
-		if err != nil {
-			logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err),
-				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-		}
-	}
 }
 
 // writerContext is used to keep a lightning local writer for each backfill worker.
 type writerContext struct {
-	ctx    context.Context
-	lWrite backend.EngineWriter
-	fLock  *sync.RWMutex
+	ctx          context.Context
+	lWrite       backend.EngineWriter
+	fLock        *sync.RWMutex
+	writtenBytes int64
 }
 
 // CreateWriter creates a new writerContext.
@@ -151,7 +152,6 @@ func (ei *engineInfo) CreateWriter(id int, writerCfg *backend.LocalWriterConfig)
 		return nil, err
 	}
 
-	ei.memRoot.Consume(structSizeWriterCtx)
 	logutil.Logger(ei.ctx).Info(LitInfoCreateWrite, zap.Int64("job ID", ei.jobID),
 		zap.Int64("index ID", ei.indexID), zap.Int("worker ID", id),
 		zap.Int64("allocate memory", structSizeWriterCtx+writerCfg.Local.MemCacheSize),
@@ -178,7 +178,6 @@ func (ei *engineInfo) newWriterContext(workerID int, writerCfg *backend.LocalWri
 		}
 		// Cache the local writer.
 		ei.writerCache.Store(workerID, lWrite)
-		ei.memRoot.ConsumeWithTag(encodeBackendTag(ei.jobID), writerCfg.Local.MemCacheSize)
 	}
 	wc := &writerContext{
 		ctx:    ei.ctx,
@@ -200,7 +199,6 @@ func (ei *engineInfo) closeWriters() error {
 			}
 		}
 		ei.writerCache.Delete(wid)
-		ei.memRoot.Release(structSizeWriterCtx)
 	}
 	return firstErr
 }
@@ -213,6 +211,7 @@ func (wCtx *writerContext) WriteRow(ctx context.Context, key, idxVal []byte, han
 	if handle != nil {
 		kvs[0].RowID = handle.Encoded()
 	}
+	wCtx.writtenBytes += int64(len(key) + len(idxVal))
 	row := kv.MakeRowsFromKvPairs(kvs)
 	return wCtx.lWrite.AppendRows(ctx, nil, row)
 }
@@ -223,4 +222,9 @@ func (wCtx *writerContext) LockForWrite() (unlock func()) {
 	return func() {
 		wCtx.fLock.RUnlock()
 	}
+}
+
+// WrittenBytes returns the number of bytes written by this writer.
+func (wCtx *writerContext) WrittenBytes() int64 {
+	return wCtx.writtenBytes
 }

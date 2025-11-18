@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -38,7 +39,8 @@ type checkpointStorage interface {
 
 	initialLock(ctx context.Context) error
 	updateLock(ctx context.Context) error
-	deleteLock(ctx context.Context)
+
+	close()
 }
 
 // Notice that:
@@ -46,8 +48,9 @@ type checkpointStorage interface {
 // 2. BR regards the metadata table as a file so that it is not empty if the table exists.
 // 3. BR regards the checkpoint table as a directory which is managed by metadata table.
 const (
-	LogRestoreCheckpointDatabaseName      string = "__TiDB_BR_Temporary_Log_Restore_Checkpoint"
-	SnapshotRestoreCheckpointDatabaseName string = "__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint"
+	LogRestoreCheckpointDatabaseName       string = "__TiDB_BR_Temporary_Log_Restore_Checkpoint"
+	SnapshotRestoreCheckpointDatabaseName  string = "__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint"
+	CustomSSTRestoreCheckpointDatabaseName string = "__TiDB_BR_Temporary_Custom_SST_Restore_Checkpoint"
 
 	// directory level table
 	checkpointDataTableName     string = "cpt_data"
@@ -87,18 +90,18 @@ const (
 )
 
 // IsCheckpointDB checks whether the dbname is checkpoint database.
-func IsCheckpointDB(dbname pmodel.CIStr) bool {
-	return dbname.O == LogRestoreCheckpointDatabaseName || dbname.O == SnapshotRestoreCheckpointDatabaseName
+func IsCheckpointDB(dbname string) bool {
+	// Check if the database name starts with any of the checkpoint database name prefixes
+	return strings.HasPrefix(dbname, LogRestoreCheckpointDatabaseName) ||
+		strings.HasPrefix(dbname, SnapshotRestoreCheckpointDatabaseName) ||
+		strings.HasPrefix(dbname, CustomSSTRestoreCheckpointDatabaseName)
 }
 
 const CheckpointIdMapBlockSize int = 524288
 
 func chunkInsertCheckpointData(data []byte, fn func(segmentId uint64, chunk []byte) error) error {
 	for startIdx, segmentId := 0, uint64(0); startIdx < len(data); segmentId += 1 {
-		endIdx := startIdx + CheckpointIdMapBlockSize
-		if endIdx > len(data) {
-			endIdx = len(data)
-		}
+		endIdx := min(startIdx+CheckpointIdMapBlockSize, len(data))
 		if err := fn(segmentId, data[startIdx:endIdx]); err != nil {
 			return errors.Trace(err)
 		}
@@ -124,6 +127,12 @@ type tableCheckpointStorage struct {
 	checkpointDBName string
 }
 
+func (s *tableCheckpointStorage) close() {
+	if s.se != nil {
+		s.se.Close()
+	}
+}
+
 func (s *tableCheckpointStorage) initialLock(ctx context.Context) error {
 	log.Fatal("unimplement!")
 	return nil
@@ -133,8 +142,6 @@ func (s *tableCheckpointStorage) updateLock(ctx context.Context) error {
 	log.Fatal("unimplement!")
 	return nil
 }
-
-func (s *tableCheckpointStorage) deleteLock(ctx context.Context) {}
 
 func (s *tableCheckpointStorage) flushCheckpointData(ctx context.Context, data []byte) error {
 	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointDataTableName, data)
@@ -218,7 +225,7 @@ func selectCheckpointData[K KeyType, V ValueType](
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
 	dbName string,
-	fn func(groupKey K, value V),
+	fn func(groupKey K, value V) error,
 ) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0
@@ -325,7 +332,7 @@ func dropCheckpointTables(
 		}
 	}
 	// check if any user table is created in the checkpoint database
-	tables, err := dom.InfoSchema().SchemaTableInfos(ctx, pmodel.NewCIStr(dbName))
+	tables, err := dom.InfoSchema().SchemaTableInfos(ctx, ast.NewCIStr(dbName))
 	if err != nil {
 		return errors.Trace(err)
 	}

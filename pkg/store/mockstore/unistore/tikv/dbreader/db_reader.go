@@ -30,15 +30,44 @@ package dbreader
 
 import (
 	"bytes"
+	"context"
 	"math"
+	"slices"
 
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
 )
+
+// LocateExtraRegionResult is the result of LocateExtraRegion.
+type LocateExtraRegionResult struct {
+	Found    bool
+	Region   *metapb.Region
+	Peer     *metapb.Peer
+	IsLeader bool
+}
+
+// GetExtraDBReaderContext is the context for GetExtraDBReaderByRegion.
+type GetExtraDBReaderContext struct {
+	Region *metapb.Region
+	Peer   *metapb.Peer
+	Ranges []kv.KeyRange
+}
+
+// ExtraDbReaderProvider is used to provide extra DBReader.
+// It is used by the IndexLookUp
+type ExtraDbReaderProvider interface {
+	// LocateExtraRegion locates the region for the key in local.
+	LocateExtraRegion(ctx context.Context, key []byte) (LocateExtraRegionResult, error)
+	// GetExtraDBReaderByRegion returns a DBReader for the region.
+	GetExtraDBReaderByRegion(ctx GetExtraDBReaderContext) (*DBReader, *errorpb.Error)
+}
 
 // NewDBReader returns a new *DBReader.
 func NewDBReader(startKey, endKey []byte, txn *badger.Txn) *DBReader {
@@ -64,13 +93,14 @@ func NewIterator(txn *badger.Txn, reverse bool, startKey, endKey []byte) *badger
 
 // DBReader reads data from DB, for read-only requests, the locks must already be checked before DBReader is created.
 type DBReader struct {
-	StartKey  []byte
-	EndKey    []byte
-	txn       *badger.Txn
-	iter      *badger.Iterator
-	extraIter *badger.Iterator
-	revIter   *badger.Iterator
-	RcCheckTS bool
+	StartKey              []byte
+	EndKey                []byte
+	txn                   *badger.Txn
+	iter                  *badger.Iterator
+	extraIter             *badger.Iterator
+	revIter               *badger.Iterator
+	RcCheckTS             bool
+	ExtraDbReaderProvider ExtraDbReaderProvider
 }
 
 // GetMvccInfoByKey fills MvccInfo reading committed keys from db
@@ -135,11 +165,11 @@ func (r *DBReader) GetIter() *badger.Iterator {
 // GetExtraIter returns the extra *badger.Iterator of a *DBReader.
 func (r *DBReader) GetExtraIter() *badger.Iterator {
 	if r.extraIter == nil {
-		rbStartKey := append([]byte{}, r.StartKey...)
+		rbStartKey := slices.Clone(r.StartKey)
 		if len(rbStartKey) != 0 {
 			rbStartKey[0]++
 		}
-		rbEndKey := append([]byte{}, r.EndKey...)
+		rbEndKey := slices.Clone(r.EndKey)
 		if len(rbEndKey) != 0 {
 			rbEndKey[0]++
 		}

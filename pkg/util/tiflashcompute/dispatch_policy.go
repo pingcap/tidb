@@ -16,6 +16,7 @@ package tiflashcompute
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 )
 
 // DispatchPolicy means different policy to dispatching task to tiflash_compute nods.
@@ -30,26 +31,17 @@ const (
 	DispatchPolicyInvalid
 )
 
-const (
-	// DispatchPolicyRRStr is string value for DispatchPolicyRR.
-	DispatchPolicyRRStr = "round_robin"
-	// DispatchPolicyConsistentHashStr is string value for DispatchPolicyConsistentHash.
-	DispatchPolicyConsistentHashStr = "consistent_hash"
-	// DispatchPolicyInvalidStr is string value for DispatchPolicyInvalid.
-	DispatchPolicyInvalidStr = "invalid"
-)
-
 // GetValidDispatchPolicy return all valid policy string.
 func GetValidDispatchPolicy() []string {
-	return []string{DispatchPolicyConsistentHashStr, DispatchPolicyRRStr}
+	return []string{vardef.DispatchPolicyConsistentHashStr, vardef.DispatchPolicyRRStr}
 }
 
 // GetDispatchPolicyByStr return corresponding policy.
 func GetDispatchPolicyByStr(str string) (DispatchPolicy, error) {
 	switch str {
-	case DispatchPolicyConsistentHashStr:
+	case vardef.DispatchPolicyConsistentHashStr:
 		return DispatchPolicyConsistentHash, nil
-	case DispatchPolicyRRStr:
+	case vardef.DispatchPolicyRRStr:
 		return DispatchPolicyRR, nil
 	default:
 		return DispatchPolicyInvalid,
@@ -61,10 +53,10 @@ func GetDispatchPolicyByStr(str string) (DispatchPolicy, error) {
 func GetDispatchPolicy(p DispatchPolicy) string {
 	switch p {
 	case DispatchPolicyConsistentHash:
-		return DispatchPolicyConsistentHashStr
+		return vardef.DispatchPolicyConsistentHashStr
 	case DispatchPolicyRR:
-		return DispatchPolicyRRStr
+		return vardef.DispatchPolicyRRStr
 	default:
-		return DispatchPolicyInvalidStr
+		return vardef.DispatchPolicyInvalidStr
 	}
 }

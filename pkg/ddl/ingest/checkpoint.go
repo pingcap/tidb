@@ -32,10 +32,131 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
+
+// CheckpointStorage defines the interface for checkpoint storage operations
+type CheckpointStorage interface {
+	// LoadCheckpoint loads checkpoint from storage
+	LoadCheckpoint(ctx context.Context) (*ReorgCheckpoint, error)
+	// SaveCheckpoint saves checkpoint to storage
+	SaveCheckpoint(ctx context.Context, checkpoint *ReorgCheckpoint) error
+}
+
+// NormalCheckpointStorage implements CheckpointStorage for the Non-DXF reorg table storage
+type NormalCheckpointStorage struct {
+	sessPool   *sess.Pool
+	jobID      int64
+	physicalID int64
+}
+
+// DistTaskCheckpointStorage implements CheckpointStorage for distributed task storage
+type DistTaskCheckpointStorage struct {
+	updateFunc func(context.Context, int64, any) error
+	getFunc    func(context.Context, int64) (string, error)
+	subtaskID  int64
+}
+
+// LoadCheckpoint loads the checkpoint from the normal storage strategy.
+func (s *NormalCheckpointStorage) LoadCheckpoint(ctx context.Context) (*ReorgCheckpoint, error) {
+	sessCtx, err := s.sessPool.Get()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer s.sessPool.Put(sessCtx)
+
+	ddlSess := sess.NewSession(sessCtx)
+	var checkpoint *ReorgCheckpoint
+
+	err = ddlSess.RunInTxn(func(se *sess.Session) error {
+		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_type = %s;"
+		sql := fmt.Sprintf(template, s.jobID, util.WrapKey2String(meta.IndexElementKey))
+		ctx := kv.WithInternalSourceType(ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
+		rows, err := se.Execute(ctx, sql, "get_checkpoint")
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if len(rows) == 0 || rows[0].IsNull(0) {
+			return nil
+		}
+
+		rawReorgMeta := rows[0].GetBytes(0)
+		var reorgMeta JobReorgMeta
+		err = json.Unmarshal(rawReorgMeta, &reorgMeta)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if cp := reorgMeta.Checkpoint; cp != nil {
+			if cp.PhysicalID != s.physicalID {
+				return nil // Skip mismatched physical ID
+			}
+			checkpoint = cp
+		}
+		return nil
+	})
+
+	return checkpoint, err
+}
+
+// SaveCheckpoint saves the checkpoint to the normal storage strategy.
+func (s *NormalCheckpointStorage) SaveCheckpoint(ctx context.Context, checkpoint *ReorgCheckpoint) error {
+	sessCtx, err := s.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer s.sessPool.Put(sessCtx)
+
+	ddlSess := sess.NewSession(sessCtx)
+	return ddlSess.RunInTxn(func(se *sess.Session) error {
+		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_type = %s;"
+		rawReorgMeta, err := json.Marshal(JobReorgMeta{Checkpoint: checkpoint})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		sql := fmt.Sprintf(template, util.WrapKey2String(rawReorgMeta), s.jobID, util.WrapKey2String(meta.IndexElementKey))
+		ctx := kv.WithInternalSourceType(ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
+		_, err = se.Execute(ctx, sql, "update_checkpoint")
+		return err
+	})
+}
+
+// LoadCheckpoint loads the checkpoint from the distributed task storage strategy.
+func (s *DistTaskCheckpointStorage) LoadCheckpoint(ctx context.Context) (*ReorgCheckpoint, error) {
+	if s.getFunc == nil {
+		return nil, nil
+	}
+
+	checkpointJSON, err := s.getFunc(ctx, s.subtaskID)
+	if err != nil {
+		return nil, err
+	}
+
+	if checkpointJSON == "" || checkpointJSON == "{}" {
+		return nil, nil
+	}
+
+	var checkpoint ReorgCheckpoint
+	err = json.Unmarshal([]byte(checkpointJSON), &checkpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	return &checkpoint, nil
+}
+
+// SaveCheckpoint saves the checkpoint to the distributed task storage strategy.
+func (s *DistTaskCheckpointStorage) SaveCheckpoint(ctx context.Context, checkpoint *ReorgCheckpoint) error {
+	if s.updateFunc == nil {
+		return nil
+	}
+
+	return s.updateFunc(ctx, s.subtaskID, checkpoint)
+}
 
 // CheckpointManager is a checkpoint manager implementation that used by
 // non-distributed reorganization. It manages the data as two-level checkpoints:
@@ -44,13 +165,13 @@ import (
 type CheckpointManager struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	sessPool      *sess.Pool
-	jobID         int64
-	indexIDs      []int64
-	localStoreDir string
-	pdCli         pd.Client
 	logger        *zap.Logger
 	physicalID    int64
+	localStoreDir string
+	pdCli         pd.Client
+
+	// Strategy for checkpoint storage
+	storage CheckpointStorage
 
 	// Derived and unchanged after the initialization.
 	instanceAddr     string
@@ -59,7 +180,7 @@ type CheckpointManager struct {
 	// Live in memory.
 	mu          sync.Mutex
 	checkpoints map[int]*taskCheckpoint // task ID -> checkpoint
-	// we require each task ID to be continuous and start from 1.
+	// we require each task ID to be continuous and start from 0.
 	minTaskIDFinished int
 	dirty             bool
 
@@ -80,40 +201,26 @@ type CheckpointManager struct {
 type taskCheckpoint struct {
 	totalKeys     int
 	writtenKeys   int
-	checksum      int64
 	endKey        kv.Key
 	lastBatchRead bool
 }
 
-// FlushController is an interface to control the flush of data so after it
-// returns caller can save checkpoint.
-type FlushController interface {
-	// Flush checks if al engines need to be flushed and imported based on given
-	// FlushMode. It's concurrent safe.
-	Flush(ctx context.Context, mode FlushMode) (flushed, imported bool, err error)
-}
-
-// NewCheckpointManager creates a new checkpoint manager.
-func NewCheckpointManager(
+// newCheckpointManagerWithStorage is the common constructor
+func newCheckpointManagerWithStorage(
 	ctx context.Context,
-	sessPool *sess.Pool,
+	storage CheckpointStorage,
 	physicalID int64,
-	jobID int64,
-	indexIDs []int64,
 	localStoreDir string,
 	pdCli pd.Client,
 ) (*CheckpointManager, error) {
 	instanceAddr := InstanceAddr()
 	ctx2, cancel := context.WithCancel(ctx)
-	logger := logutil.DDLIngestLogger().With(
-		zap.Int64("jobID", jobID), zap.Int64s("indexIDs", indexIDs))
+	logger := logutil.DDLIngestLogger().With(zap.Int64("physicalID", physicalID))
 
 	cm := &CheckpointManager{
 		ctx:           ctx2,
 		cancel:        cancel,
-		sessPool:      sessPool,
-		jobID:         jobID,
-		indexIDs:      indexIDs,
+		storage:       storage,
 		localStoreDir: localStoreDir,
 		pdCli:         pdCli,
 		logger:        logger,
@@ -137,6 +244,43 @@ func NewCheckpointManager(
 	return cm, nil
 }
 
+// NewCheckpointManager creates a new checkpoint manager with reorg storage
+func NewCheckpointManager(
+	ctx context.Context,
+	sessPool *sess.Pool,
+	physicalID int64,
+	jobID int64,
+	localStoreDir string,
+	pdCli pd.Client,
+) (*CheckpointManager, error) {
+	storage := &NormalCheckpointStorage{
+		sessPool:   sessPool,
+		jobID:      jobID,
+		physicalID: physicalID,
+	}
+
+	return newCheckpointManagerWithStorage(ctx, storage, physicalID, localStoreDir, pdCli)
+}
+
+// NewCheckpointManagerForDistTask creates a new checkpoint manager with distributed task storage
+func NewCheckpointManagerForDistTask(
+	ctx context.Context,
+	subtaskID int64,
+	physicalID int64,
+	localStoreDir string,
+	pdCli pd.Client,
+	updateFunc func(context.Context, int64, any) error,
+	getFunc func(context.Context, int64) (string, error),
+) (*CheckpointManager, error) {
+	storage := &DistTaskCheckpointStorage{
+		updateFunc: updateFunc,
+		getFunc:    getFunc,
+		subtaskID:  subtaskID,
+	}
+
+	return newCheckpointManagerWithStorage(ctx, storage, physicalID, localStoreDir, pdCli)
+}
+
 // InstanceAddr returns the string concat with instance address and temp-dir.
 func InstanceAddr() string {
 	cfg := config.GetGlobalConfig()
@@ -156,9 +300,9 @@ func (s *CheckpointManager) IsKeyProcessed(end kv.Key) bool {
 	return s.localDataIsValid && len(s.flushedKeyLowWatermark) > 0 && end.Cmp(s.flushedKeyLowWatermark) <= 0
 }
 
-// NextKeyToProcess finds the next unprocessed key in checkpoint.
+// NextStartKey finds the next unprocessed key in checkpoint.
 // If there is no such key, it returns nil.
-func (s *CheckpointManager) NextKeyToProcess() kv.Key {
+func (s *CheckpointManager) NextStartKey() kv.Key {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -171,24 +315,24 @@ func (s *CheckpointManager) NextKeyToProcess() kv.Key {
 	return nil
 }
 
-// Status returns the status of the checkpoint.
-func (s *CheckpointManager) Status() (keyCnt int, minKeyImported kv.Key) {
+// TotalKeyCount returns the key counts that have processed.
+// It contains the keys that is not sync to checkpoint.
+func (s *CheckpointManager) TotalKeyCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	total := 0
 	for _, cp := range s.checkpoints {
 		total += cp.writtenKeys
 	}
-	// TODO(lance6716): ???
-	return s.flushedKeyCnt + total, s.importedKeyLowWatermark
+	return s.flushedKeyCnt + total
 }
 
-// Register registers a new task. taskID MUST be continuous ascending and start
-// from 1.
+// AddChunk registers a new task. taskID MUST be continuous ascending and start
+// from 0.
 //
 // TODO(lance6716): remove this constraint, use endKey as taskID and use
 // ordered map type for checkpoints.
-func (s *CheckpointManager) Register(taskID int, end kv.Key) {
+func (s *CheckpointManager) AddChunk(taskID int, end kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.checkpoints[taskID] = &taskCheckpoint{
@@ -196,9 +340,9 @@ func (s *CheckpointManager) Register(taskID int, end kv.Key) {
 	}
 }
 
-// UpdateTotalKeys updates the total keys of the task.
+// UpdateChunk updates the total keys of the task.
 // This is called by the reader after reading the data to update the number of rows contained in the current chunk.
-func (s *CheckpointManager) UpdateTotalKeys(taskID int, delta int, last bool) {
+func (s *CheckpointManager) UpdateChunk(taskID int, delta int, last bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := s.checkpoints[taskID]
@@ -206,9 +350,9 @@ func (s *CheckpointManager) UpdateTotalKeys(taskID int, delta int, last bool) {
 	cp.lastBatchRead = last
 }
 
-// UpdateWrittenKeys updates the written keys of the task.
+// FinishChunk updates the written keys of the task.
 // This is called by the writer after writing the local engine to update the current number of rows written.
-func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) {
+func (s *CheckpointManager) FinishChunk(taskID int, delta int) {
 	s.mu.Lock()
 	cp := s.checkpoints[taskID]
 	cp.writtenKeys += delta
@@ -216,9 +360,9 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) {
 }
 
 // AdvanceWatermark advances the watermark according to flushed or imported status.
-func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) {
-	if !flushed {
-		return
+func (s *CheckpointManager) AdvanceWatermark(imported bool) error {
+	if s.noUpdate() {
+		return nil
 	}
 
 	failpoint.Inject("resignAfterFlush", func() {
@@ -230,41 +374,74 @@ func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) {
 		}
 	})
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.afterFlush()
 
 	if imported {
-		s.afterImport()
+		err := s.afterImport()
+		if err != nil {
+			return err
+		}
+		err = s.updateCheckpoint()
+		if err != nil {
+			return err
+		}
+		return nil
 	}
+	return nil
 }
 
 // afterFlush should be called after all engine is flushed.
 func (s *CheckpointManager) afterFlush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for {
-		cp := s.checkpoints[s.minTaskIDFinished+1]
+		cp := s.checkpoints[s.minTaskIDFinished]
 		if cp == nil || !cp.lastBatchRead || cp.writtenKeys < cp.totalKeys {
 			break
 		}
+		delete(s.checkpoints, s.minTaskIDFinished)
 		s.minTaskIDFinished++
 		s.flushedKeyLowWatermark = cp.endKey
 		s.flushedKeyCnt += cp.totalKeys
-		delete(s.checkpoints, s.minTaskIDFinished)
 		s.dirty = true
 	}
 }
 
-func (s *CheckpointManager) afterImport() {
+func (s *CheckpointManager) afterImport() error {
+	p, l, err := s.pdCli.GetTS(s.ctx)
+	failpoint.Inject("mockAfterImportAllocTSFailed", func(_ failpoint.Value) {
+		err = errors.Errorf("mock err")
+	})
+	if err != nil {
+		s.logger.Warn("advance watermark get ts failed", zap.Error(err))
+		return err
+	}
+	newTS := oracle.ComposeTS(p, l)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.importedKeyLowWatermark.Cmp(s.flushedKeyLowWatermark) > 0 {
 		s.logger.Warn("lower watermark of flushed key is less than imported key",
 			zap.String("flushed", hex.EncodeToString(s.flushedKeyLowWatermark)),
 			zap.String("imported", hex.EncodeToString(s.importedKeyLowWatermark)),
 		)
-		return
+		return errors.Errorf("flushed key is less than imported key")
 	}
 	s.importedKeyLowWatermark = s.flushedKeyLowWatermark
 	s.importedKeyCnt = s.flushedKeyCnt
+	intest.Assert(s.ts < newTS)
+	if s.ts < newTS {
+		s.ts = newTS
+	}
 	s.dirty = true
+	return nil
+}
+
+func (s *CheckpointManager) noUpdate() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.checkpoints) == 0 && s.minTaskIDFinished == 0
 }
 
 // Close closes the checkpoint manager.
@@ -279,8 +456,8 @@ func (s *CheckpointManager) Close() {
 	s.logger.Info("checkpoint manager closed")
 }
 
-// GetTS returns the TS saved in checkpoint.
-func (s *CheckpointManager) GetTS() uint64 {
+// GetImportTS returns the TS saved in checkpoint.
+func (s *CheckpointManager) GetImportTS() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.ts
@@ -313,62 +490,39 @@ const (
 )
 
 func (s *CheckpointManager) resumeOrInitCheckpoint() error {
-	sessCtx, err := s.sessPool.Get()
+	cp, err := s.storage.LoadCheckpoint(s.ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	defer s.sessPool.Put(sessCtx)
-	ddlSess := sess.NewSession(sessCtx)
-	err = ddlSess.RunInTxn(func(se *sess.Session) error {
-		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_type = %s;"
-		sql := fmt.Sprintf(template, s.jobID, util.WrapKey2String(meta.IndexElementKey))
-		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
-		rows, err := se.Execute(ctx, sql, "get_checkpoint")
-		if err != nil {
-			return errors.Trace(err)
+
+	if cp != nil {
+		if cp.PhysicalID != s.physicalID {
+			s.logger.Info("checkpoint physical table ID mismatch",
+				zap.Int64("current", s.physicalID),
+				zap.Int64("get", cp.PhysicalID))
+			return nil
 		}
 
-		if len(rows) == 0 || rows[0].IsNull(0) {
-			return nil
+		s.importedKeyLowWatermark = cp.GlobalSyncKey
+		s.importedKeyCnt = cp.GlobalKeyCount
+		s.ts = cp.TS
+		folderNotEmpty := util.FolderNotEmpty(s.localStoreDir)
+		if folderNotEmpty &&
+			(s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */) {
+			s.localDataIsValid = true
+			s.flushedKeyLowWatermark = cp.LocalSyncKey
+			s.flushedKeyCnt = cp.LocalKeyCount
 		}
-		rawReorgMeta := rows[0].GetBytes(0)
-		var reorgMeta JobReorgMeta
-		err = json.Unmarshal(rawReorgMeta, &reorgMeta)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if cp := reorgMeta.Checkpoint; cp != nil {
-			if cp.PhysicalID != s.physicalID {
-				s.logger.Info("checkpoint physical table ID mismatch",
-					zap.Int64("current", s.physicalID),
-					zap.Int64("get", cp.PhysicalID))
-				return nil
-			}
-			s.importedKeyLowWatermark = cp.GlobalSyncKey
-			s.importedKeyCnt = cp.GlobalKeyCount
-			s.ts = cp.TS
-			folderNotEmpty := util.FolderNotEmpty(s.localStoreDir)
-			if folderNotEmpty &&
-				(s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */) {
-				s.localDataIsValid = true
-				s.flushedKeyLowWatermark = cp.LocalSyncKey
-				s.flushedKeyCnt = cp.LocalKeyCount
-			}
-			s.logger.Info("resume checkpoint",
-				zap.String("flushed key low watermark", hex.EncodeToString(s.flushedKeyLowWatermark)),
-				zap.String("imported key low watermark", hex.EncodeToString(s.importedKeyLowWatermark)),
-				zap.Int64("physical table ID", cp.PhysicalID),
-				zap.String("previous instance", cp.InstanceAddr),
-				zap.String("current instance", s.instanceAddr),
-				zap.Bool("folder is empty", !folderNotEmpty))
-			return nil
-		}
-		s.logger.Info("checkpoint not found")
+		s.logger.Info("resume checkpoint",
+			zap.String("flushed key low watermark", hex.EncodeToString(s.flushedKeyLowWatermark)),
+			zap.String("imported key low watermark", hex.EncodeToString(s.importedKeyLowWatermark)),
+			zap.Int64("physical table ID", cp.PhysicalID),
+			zap.String("previous instance", cp.InstanceAddr),
+			zap.String("current instance", s.instanceAddr),
+			zap.Bool("folder is empty", !folderNotEmpty))
 		return nil
-	})
-	if err != nil {
-		return errors.Trace(err)
 	}
+	s.logger.Info("checkpoint not found")
 
 	if s.ts > 0 {
 		return nil
@@ -388,59 +542,37 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 // NewCheckpointManager. In other cases, use updateCheckpoint instead.
 func (s *CheckpointManager) updateCheckpointImpl() error {
 	s.mu.Lock()
-	flushedKeyLowWatermark := s.flushedKeyLowWatermark
-	importedKeyLowWatermark := s.importedKeyLowWatermark
-	flushedKeyCnt := s.flushedKeyCnt
-	importedKeyCnt := s.importedKeyCnt
-	physicalID := s.physicalID
-	ts := s.ts
+	checkpoint := &ReorgCheckpoint{
+		LocalSyncKey:   s.flushedKeyLowWatermark,
+		GlobalSyncKey:  s.importedKeyLowWatermark,
+		LocalKeyCount:  s.flushedKeyCnt,
+		GlobalKeyCount: s.importedKeyCnt,
+		InstanceAddr:   s.instanceAddr,
+		PhysicalID:     s.physicalID,
+		TS:             s.ts,
+		Version:        JobCheckpointVersionCurrent,
+	}
 	s.mu.Unlock()
 
-	sessCtx, err := s.sessPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer s.sessPool.Put(sessCtx)
-	ddlSess := sess.NewSession(sessCtx)
-	err = ddlSess.RunInTxn(func(se *sess.Session) error {
-		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_type = %s;"
-		cp := &ReorgCheckpoint{
-			LocalSyncKey:   flushedKeyLowWatermark,
-			GlobalSyncKey:  importedKeyLowWatermark,
-			LocalKeyCount:  flushedKeyCnt,
-			GlobalKeyCount: importedKeyCnt,
-			InstanceAddr:   s.instanceAddr,
-			PhysicalID:     physicalID,
-			TS:             ts,
-			Version:        JobCheckpointVersionCurrent,
-		}
-		rawReorgMeta, err := json.Marshal(JobReorgMeta{Checkpoint: cp})
-		if err != nil {
-			return errors.Trace(err)
-		}
-		sql := fmt.Sprintf(template, util.WrapKey2String(rawReorgMeta), s.jobID, util.WrapKey2String(meta.IndexElementKey))
-		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
-		_, err = se.Execute(ctx, sql, "update_checkpoint")
-		if err != nil {
-			return errors.Trace(err)
-		}
-		s.mu.Lock()
-		s.dirty = false
-		s.mu.Unlock()
-		return nil
-	})
-
+	err := s.storage.SaveCheckpoint(s.ctx, checkpoint)
 	logFunc := s.logger.Info
 	if err != nil {
 		logFunc = s.logger.With(zap.Error(err)).Error
 	}
 	logFunc("update checkpoint",
-		zap.String("local checkpoint", hex.EncodeToString(flushedKeyLowWatermark)),
-		zap.String("global checkpoint", hex.EncodeToString(importedKeyLowWatermark)),
-		zap.Int("flushed keys", flushedKeyCnt),
-		zap.Int("imported keys", importedKeyCnt),
-		zap.Int64("global physical ID", physicalID),
-		zap.Uint64("ts", ts))
+		zap.String("local checkpoint", hex.EncodeToString(checkpoint.LocalSyncKey)),
+		zap.String("global checkpoint", hex.EncodeToString(checkpoint.GlobalSyncKey)),
+		zap.Int("flushed keys", checkpoint.LocalKeyCount),
+		zap.Int("imported keys", checkpoint.GlobalKeyCount),
+		zap.Int64("global physical ID", checkpoint.PhysicalID),
+		zap.Uint64("ts", checkpoint.TS))
+
+	if err == nil {
+		s.mu.Lock()
+		s.dirty = false
+		s.mu.Unlock()
+	}
+
 	return err
 }
 
@@ -496,14 +628,4 @@ func (s *CheckpointManager) updateCheckpoint() error {
 	return nil
 }
 
-func (s *CheckpointManager) refreshTSAndUpdateCP() (uint64, error) {
-	p, l, err := s.pdCli.GetTS(s.ctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	newTS := oracle.ComposeTS(p, l)
-	s.mu.Lock()
-	s.ts = newTS
-	s.mu.Unlock()
-	return newTS, s.updateCheckpoint()
-}
+var _ CheckpointOperator = (*CheckpointManager)(nil)

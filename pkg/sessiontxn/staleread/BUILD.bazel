@@ -23,6 +23,7 @@ go_library(
         "//pkg/planner/util",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/sessiontxn/internal",

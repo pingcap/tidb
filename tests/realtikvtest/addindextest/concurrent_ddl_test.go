@@ -17,49 +17,55 @@ package addindextest
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 )
 
 func TestConcurrentDDLCreateNonUniqueIndex(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	var colIDs = [][]int{
 		{1, 4, 7, 10, 13},
 		{14, 17, 20, 23, 26},
 		{3, 6, 9, 21, 24},
 	}
-	ctx := addindextestutil.InitConcurrentDDLTest(t, colIDs, nil, addindextestutil.TestNonUnique)
+	ctx := testutils.InitConcurrentDDLTest(t, colIDs, nil, testutils.TestNonUnique)
 	ctx.CompCtx.Start(ctx)
 	err := ctx.CompCtx.Stop(ctx)
 	require.NoError(t, err)
 }
 
 func TestConcurrentDDLCreateUniqueIndex(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	var colIDs = [][]int{
 		{1, 6, 11, 13},
 		{2, 11, 17},
 		{3, 19, 25},
 	}
-	ctx := addindextestutil.InitConcurrentDDLTest(t, colIDs, nil, addindextestutil.TestUnique)
+	ctx := testutils.InitConcurrentDDLTest(t, colIDs, nil, testutils.TestUnique)
 	ctx.CompCtx.Start(ctx)
 	err := ctx.CompCtx.Stop(ctx)
 	require.NoError(t, err)
 }
 
 func TestConcurrentDDLCreatePrimaryKey(t *testing.T) {
-	ctx := addindextestutil.InitConcurrentDDLTest(t, nil, nil, addindextestutil.TestPK)
+	testutil.ReduceCheckInterval(t)
+	ctx := testutils.InitConcurrentDDLTest(t, nil, nil, testutils.TestPK)
 	ctx.CompCtx.Start(ctx)
 	err := ctx.CompCtx.Stop(ctx)
 	require.NoError(t, err)
 }
 
 func TestConcurrentDDLCreateGenColIndex(t *testing.T) {
-	ctx := addindextestutil.InitConcurrentDDLTest(t, nil, nil, addindextestutil.TestGenIndex)
+	testutil.ReduceCheckInterval(t)
+	ctx := testutils.InitConcurrentDDLTest(t, nil, nil, testutils.TestGenIndex)
 	ctx.CompCtx.Start(ctx)
 	err := ctx.CompCtx.Stop(ctx)
 	require.NoError(t, err)
 }
 
 func TestConcurrentDDLCreateMultiColsIndex(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	var coliIDs = [][]int{
 		{7},
 		{11},
@@ -70,7 +76,7 @@ func TestConcurrentDDLCreateMultiColsIndex(t *testing.T) {
 		{23},
 		{19},
 	}
-	ctx := addindextestutil.InitConcurrentDDLTest(t, coliIDs, coljIDs, addindextestutil.TestMultiCols)
+	ctx := testutils.InitConcurrentDDLTest(t, coliIDs, coljIDs, testutils.TestMultiCols)
 	ctx.CompCtx.Start(ctx)
 	err := ctx.CompCtx.Stop(ctx)
 	require.NoError(t, err)

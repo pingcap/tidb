@@ -11,7 +11,7 @@ create table t4 (c int,d int,foreign key (d) references t1 (b));
 alter table t4 drop column d;
 Error 1828 (HY000): Cannot drop column 'd': needed in a foreign key constraint 'fk_1'
 alter table t4 change column d e bigint;
-Error 3780 (HY000): Referencing column 'd' and referenced column 'b' in foreign key constraint 'fk_1' are incompatible.
+Error 3780 (HY000): Referencing column 'e' and referenced column 'b' in foreign key constraint 'fk_1' are incompatible.
 alter table t4 modify column d bigint;
 Error 3780 (HY000): Referencing column 'd' and referenced column 'b' in foreign key constraint 'fk_1' are incompatible.
 select count(*) from information_schema.KEY_COLUMN_USAGE;
@@ -68,12 +68,19 @@ c1 int(11),
 c2 decimal(16,4) GENERATED ALWAYS AS ((case when (c0 = 0) then 0when (c0 > 0) then (c1 / c0) end))
 );
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 4 column 83 near "then (c1 / c0) end))
-);" 
+)" 
 create table t (a bigint, b int, c int generated always as (b+1)) partition by hash(a) partitions 4;
 alter table t drop column a;
 Error 3855 (HY000): Column 'a' has a partitioning function dependency and cannot be dropped or renamed
 alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 97 near "then (b / a) end));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 97 near "then (b / a) end))" 
 alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near "then (b / a) end));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near "then (b / a) end))" 
+drop table if exists t;
+drop table if exists t;
+create table t (a int) ENGINE_ATTRIBUTE = '{"key": "value"}';
+Error 3981 (HY000): Storage engine does not support ENGINE_ATTRIBUTE.
+create table t (a int);
+alter table t ENGINE_ATTRIBUTE = '{"key": "value"}';
+Error 3981 (HY000): Storage engine does not support ENGINE_ATTRIBUTE.
 drop table if exists t;

@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -25,6 +26,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	. "github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -38,6 +40,10 @@ type s3Suite struct {
 }
 
 func createS3Suite(t *testing.T) *s3Suite {
+	return createS3SuiteWithRec(t, nil)
+}
+
+func createS3SuiteWithRec(t *testing.T, accessRec *recording.AccessStats) *s3Suite {
 	s := new(s3Suite)
 	s.controller = gomock.NewController(t)
 	s.s3 = mock.NewMockS3API(s.controller)
@@ -51,6 +57,7 @@ func createS3Suite(t *testing.T) *s3Suite {
 			Sse:          "sse",
 			StorageClass: "sc",
 		},
+		accessRec,
 	)
 
 	t.Cleanup(func() {
@@ -245,6 +252,21 @@ func TestApplyUpdate(t *testing.T) {
 				Bucket:         "bucket",
 				Prefix:         "prefix",
 				Provider:       "netease",
+			},
+		},
+		{
+			name: "tencent provider",
+			options: S3BackendOptions{
+				Region:         "us-west-2",
+				ForcePathStyle: true,
+				Provider:       "tencent",
+			},
+			s3: &backuppb.S3{
+				Region:         "us-west-2",
+				ForcePathStyle: false,
+				Bucket:         "bucket",
+				Prefix:         "prefix",
+				Provider:       "tencent",
 			},
 		},
 		{
@@ -456,7 +478,8 @@ func TestS3Range(t *testing.T) {
 // TestWriteNoError ensures the WriteFile API issues a PutObject request and wait
 // until the object is available in the S3 bucket.
 func TestWriteNoError(t *testing.T) {
-	s := createS3Suite(t)
+	accessRec := &recording.AccessStats{}
+	s := createS3SuiteWithRec(t, accessRec)
 	ctx := aws.BackgroundContext()
 
 	putCall := s.s3.EXPECT().
@@ -483,10 +506,13 @@ func TestWriteNoError(t *testing.T) {
 
 	err := s.storage.WriteFile(ctx, "file", []byte("test"))
 	require.NoError(t, err)
+	// since we are using mock, requests are not recorded.
+	CheckAccessStats(t, accessRec, 0, 0, 0, 4)
 }
 
 func TestMultiUploadErrorNotOverwritten(t *testing.T) {
-	s := createS3Suite(t)
+	accessRec := &recording.AccessStats{}
+	s := createS3SuiteWithRec(t, accessRec)
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
@@ -501,12 +527,14 @@ func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 5*1024*1024+6716, n)
 	require.ErrorContains(t, w.Close(ctx), "mock error")
+	CheckAccessStats(t, accessRec, 0, 0, 0, 5*1024*1024+6716)
 }
 
 // TestReadNoError ensures the ReadFile API issues a GetObject request and correctly
 // read the entire body.
 func TestReadNoError(t *testing.T) {
-	s := createS3Suite(t)
+	accessRec := &recording.AccessStats{}
+	s := createS3SuiteWithRec(t, accessRec)
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
@@ -522,6 +550,8 @@ func TestReadNoError(t *testing.T) {
 	content, err := s.storage.ReadFile(ctx, "file")
 	require.NoError(t, err)
 	require.Equal(t, []byte("test"), content)
+	// since we are using mock, requests are not recorded.
+	CheckAccessStats(t, accessRec, 0, 0, 4, 0)
 }
 
 // TestFileExistsNoError ensures the FileExists API issues a HeadObject request
@@ -647,7 +677,8 @@ func TestFileExistsError(t *testing.T) {
 
 // TestOpenAsBufio checks that we can open a file for reading via bufio.
 func TestOpenAsBufio(t *testing.T) {
-	s := createS3Suite(t)
+	accessRec := &recording.AccessStats{}
+	s := createS3SuiteWithRec(t, accessRec)
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
@@ -670,6 +701,8 @@ func TestOpenAsBufio(t *testing.T) {
 	content, err = bufReader.ReadString('\n')
 	require.EqualError(t, err, "EOF")
 	require.Equal(t, "content", content)
+	// since we are using mock, requests are not recorded.
+	CheckAccessStats(t, accessRec, 0, 0, 18, 0)
 }
 
 // alphabetReader is used in TestOpenReadSlowly. This Reader produces a single
@@ -856,6 +889,85 @@ func (s *s3Suite) expectedCalls(ctx context.Context, t *testing.T, data []byte, 
 	}
 }
 
+type mockFailReader struct {
+	r         io.Reader
+	failCount *atomic.Int32
+}
+
+func (f *mockFailReader) Read(p []byte) (n int, err error) {
+	if f.failCount.Load() > 0 {
+		f.failCount.Add(-1)
+		return 0, errors.New("mock read error")
+	}
+	return f.r.Read(p)
+}
+
+func TestS3RangeReaderRetryRead(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+	content := []byte("0123456789")
+	var failCount atomic.Int32
+	s.s3.EXPECT().GetObjectWithContext(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
+			var start int
+			_, err := fmt.Sscanf(*input.Range, "bytes=%d-", &start)
+			require.NoError(t, err)
+			requestedBytes := content[start:]
+			return &s3.GetObjectOutput{
+				Body:         io.NopCloser(&mockFailReader{r: bytes.NewReader(requestedBytes), failCount: &failCount}),
+				ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d", start, len(content)-1, len(content))),
+			}, nil
+		}).Times(2)
+	reader, err := s.storage.Open(ctx, "random", &ReaderOption{StartOffset: aws.Int64(3)})
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, reader.Close())
+	}()
+	slice := make([]byte, 2)
+	n, err := reader.Read(slice)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	require.Equal(t, []byte("34"), slice)
+	failCount.Store(1)
+	n, err = reader.Read(slice)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	require.Equal(t, []byte("56"), slice)
+}
+
+func TestS3RangeReaderShouldNotRetryWhenContextCancelled(t *testing.T) {
+	s := createS3Suite(t)
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	content := []byte("0123456789")
+	var failCount atomic.Int32
+	s.s3.EXPECT().GetObjectWithContext(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
+			var start int
+			_, err := fmt.Sscanf(*input.Range, "bytes=%d-", &start)
+			require.NoError(t, err)
+			requestedBytes := content[start:]
+			return &s3.GetObjectOutput{
+				Body:         io.NopCloser(&mockFailReader{r: bytes.NewReader(requestedBytes), failCount: &failCount}),
+				ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d", start, len(content)-1, len(content))),
+			}, nil
+		})
+	reader, err := s.storage.Open(ctx, "random", &ReaderOption{StartOffset: aws.Int64(3)})
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, reader.Close())
+	}()
+	slice := make([]byte, 2)
+	n, err := reader.Read(slice)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	require.Equal(t, []byte("34"), slice)
+	failCount.Store(1)
+	cancelFunc()
+	n, err = reader.Read(slice)
+	require.ErrorContains(t, err, "mock read error")
+	require.Zero(t, n)
+}
+
 // TestS3ReaderWithRetryEOF check the Read with retry and end with io.EOF.
 func TestS3ReaderWithRetryEOF(t *testing.T) {
 	s := createS3Suite(t)
@@ -982,7 +1094,7 @@ func TestS3ReaderResetRetry(t *testing.T) {
 		require.Equal(t, someRandomBytes[offset:offset+cnt], slice[:cnt])
 	}
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		readAndCheck(20, i*20)
 	}
 
@@ -1153,6 +1265,7 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 			Sse:          "sse",
 			StorageClass: "sc",
 		},
+		nil,
 	)
 	defer controller.Finish()
 	ctx := aws.BackgroundContext()
@@ -1471,4 +1584,31 @@ func TestS3ReadFileRetryable(t *testing.T) {
 	_, err := s.storage.ReadFile(ctx, "file")
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), errMsg))
+}
+
+func TestOpenRangeMismatchErrorMsg(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+	start, end := int64(10), int64(30)
+
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(context.Context, *s3.GetObjectInput, ...request.Option) (*s3.GetObjectOutput, error) {
+			return &s3.GetObjectOutput{
+				ContentRange: aws.String("bytes 10-20/20"),
+			}, nil
+		})
+	reader, err := s.storage.Open(ctx, "test", &ReaderOption{StartOffset: &start, EndOffset: &end})
+	require.ErrorContains(t, err, "expected range: bytes=10-29, got: bytes 10-20/20")
+	require.Nil(t, reader)
+
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(context.Context, *s3.GetObjectInput, ...request.Option) (*s3.GetObjectOutput, error) {
+			return &s3.GetObjectOutput{}, nil
+		})
+	reader, err = s.storage.Open(ctx, "test", &ReaderOption{StartOffset: &start, EndOffset: &end})
+	// other function will throw error
+	require.ErrorContains(t, err, "ContentRange is empty")
+	require.Nil(t, reader)
 }

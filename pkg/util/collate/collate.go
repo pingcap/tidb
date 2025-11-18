@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"slices"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -51,14 +52,6 @@ var (
 const (
 	// DefaultLen is set for datum if the string datum don't know its length.
 	DefaultLen = 0
-	// first byte of a 2-byte encoding starts 110 and carries 5 bits of data
-	b2Mask = 0x1F // 0001 1111
-	// first byte of a 3-byte encoding starts 1110 and carries 4 bits of data
-	b3Mask = 0x0F // 0000 1111
-	// first byte of a 4-byte encoding starts 11110 and carries 3 bits of data
-	b4Mask = 0x07 // 0000 0111
-	// non-first bytes start 10 and carry 6 bits of data
-	mbMask = 0x3F // 0011 1111
 )
 
 // Collator provides functionality for comparing strings for a given
@@ -68,6 +61,9 @@ type Collator interface {
 	Compare(a, b string) int
 	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
 	Key(str string) []byte
+	// ImmutableKey is the same as Key except that the returned key should not be changed by future calls.
+	// It can avoid memory allocation and copy in some collations. The caller should not modify the returned value.
+	ImmutableKey(str string) []byte
 	// KeyWithoutTrimRightSpace returns the collate key for str. The difference with Key is str will not be trimed.
 	KeyWithoutTrimRightSpace(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.
@@ -104,7 +100,7 @@ func NewCollationEnabled() bool {
 func CompatibleCollate(collate1, collate2 string) bool {
 	if (collate1 == "utf8mb4_general_ci" || collate1 == "utf8_general_ci") && (collate2 == "utf8mb4_general_ci" || collate2 == "utf8_general_ci") {
 		return true
-	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin" || collate1 == "latin1_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin") {
+	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin" || collate1 == "latin1_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin" || collate2 == "latin1_bin") {
 		return true
 	} else if (collate1 == "utf8mb4_unicode_ci" || collate1 == "utf8_unicode_ci") && (collate2 == "utf8mb4_unicode_ci" || collate2 == "utf8_unicode_ci") {
 		return true
@@ -167,7 +163,7 @@ func GetBinaryCollatorSlice(n int) []Collator {
 		return binCollatorInstanceSliceWithLen1
 	}
 	collators := make([]Collator, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		collators[i] = binCollatorInstance
 	}
 	return collators
@@ -286,32 +282,6 @@ func sign(i int) int {
 	return 0
 }
 
-// decode rune by hand
-func decodeRune(s string, si int) (r rune, newIndex int) {
-	b := s[si]
-	switch runeLen(b) {
-	case 1:
-		r = rune(b)
-		newIndex = si + 1
-	case 2:
-		r = rune(b&b2Mask)<<6 |
-			rune(s[1+si]&mbMask)
-		newIndex = si + 2
-	case 3:
-		r = rune(b&b3Mask)<<12 |
-			rune(s[si+1]&mbMask)<<6 |
-			rune(s[si+2]&mbMask)
-		newIndex = si + 3
-	default:
-		r = rune(b&b4Mask)<<18 |
-			rune(s[si+1]&mbMask)<<12 |
-			rune(s[si+2]&mbMask)<<6 |
-			rune(s[si+3]&mbMask)
-		newIndex = si + 4
-	}
-	return
-}
-
 func runeLen(b byte) int {
 	if b < 0x80 {
 		return 1
@@ -333,7 +303,7 @@ func IsDefaultCollationForUTF8MB4(collate string) bool {
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" || collate == "gbk_chinese_ci" ||
-		collate == "utf8mb4_0900_ai_ci"
+		collate == "utf8mb4_0900_ai_ci" || collate == "gb18030_chinese_ci"
 }
 
 // ConvertAndGetBinCollation converts collation to binary collation
@@ -351,6 +321,8 @@ func ConvertAndGetBinCollation(collate string) string {
 		return "utf8mb4_bin"
 	case "gbk_chinese_ci":
 		return "gbk_bin"
+	case "gb18030_chinese_ci":
+		return "gb18030_bin"
 	}
 
 	return collate
@@ -371,6 +343,11 @@ func IsBinCollation(collate string) bool {
 	// TODO: define a constant to reference collations
 }
 
+// IsPadSpaceCollation returns whether the collation is a PAD SPACE collation.
+func IsPadSpaceCollation(collation string) bool {
+	return collation != charset.CollationBin && collation != "utf8mb4_0900_ai_ci" && collation != "utf8mb4_0900_bin"
+}
+
 // CollationToProto converts collation from string to int32(used by protocol).
 func CollationToProto(c string) int32 {
 	if coll, err := charset.GetCollationByName(c); err == nil {
@@ -384,6 +361,36 @@ func CollationToProto(c string) int32 {
 		zap.String("default collation", mysql.DefaultCollationName),
 	)
 	return v
+}
+
+func compareCommon(a, b string, keyFunc func(rune) uint32) int {
+	a = truncateTailingSpace(a)
+	b = truncateTailingSpace(b)
+
+	r1, r2 := rune(0), rune(0)
+	ai, bi := 0, 0
+	r1Len, r2Len := 0, 0
+	for ai < len(a) && bi < len(b) {
+		r1, r1Len = utf8.DecodeRuneInString(a[ai:])
+		r2, r2Len = utf8.DecodeRuneInString(b[bi:])
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+		invalid1 := r1 == utf8.RuneError && r1Len == 1
+		invalid2 := r2 == utf8.RuneError && r2Len == 1
+		if invalid1 || invalid2 {
+			return 0
+		}
+
+		ai += r1Len
+		bi += r2Len
+
+		cmp := cmp.Compare(keyFunc(r1), keyFunc(r2))
+		if cmp != 0 {
+			return cmp
+		}
+	}
+	return cmp.Compare(len(a)-ai, len(b)-bi)
 }
 
 // CanUseRawMemAsKey returns true if current collator can use the original raw memory as the key
@@ -448,4 +455,8 @@ func init() {
 	newCollatorIDMap[CollationName2ID(charset.CollationGBKBin)] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
 	newCollatorMap[charset.CollationGBKChineseCI] = &gbkChineseCICollator{}
 	newCollatorIDMap[CollationName2ID(charset.CollationGBKChineseCI)] = &gbkChineseCICollator{}
+	newCollatorMap[charset.CollationGB18030Bin] = &gb18030BinCollator{charset.NewCustomGB18030Encoder()}
+	newCollatorIDMap[CollationName2ID(charset.CollationGB18030Bin)] = &gb18030BinCollator{charset.NewCustomGB18030Encoder()}
+	newCollatorMap[charset.CollationGB18030ChineseCI] = &gb18030ChineseCICollator{}
+	newCollatorIDMap[CollationName2ID(charset.CollationGB18030ChineseCI)] = &gb18030ChineseCICollator{}
 }

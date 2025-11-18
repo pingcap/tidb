@@ -22,7 +22,7 @@ import (
 )
 
 func TestAllocator(t *testing.T) {
-	alloc := NewPanickingAllocators(true, 0)
+	alloc := NewPanickingAllocators(true)
 	require.NoError(t, alloc.Get(autoid.RowIDAllocType).Rebase(nil, 123, false))
 	// cannot revert back
 	require.NoError(t, alloc.Get(autoid.RowIDAllocType).Rebase(nil, 100, false))

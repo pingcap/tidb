@@ -17,14 +17,17 @@ package mockstorage
 import (
 	"context"
 	"crypto/tls"
+	"sync"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 )
 
 var _ helper.Storage = &mockStorage{}
@@ -33,22 +36,38 @@ var _ helper.Storage = &mockStorage{}
 type mockStorage struct {
 	*tikv.KVStore
 	*copr.Store
+	opts      sync.Map
 	memCache  kv.MemManager
 	LockWaits []*deadlockpb.WaitForEntry
+
+	keyspaceMeta *keyspacepb.KeyspaceMeta
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
-func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
+func NewMockStorage(tikvStore *tikv.KVStore, keyspaceMeta *keyspacepb.KeyspaceMeta) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
 	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
 	if err != nil {
 		return nil, err
 	}
 	return &mockStorage{
-		KVStore:  tikvStore,
-		Store:    coprStore,
-		memCache: kv.NewCacheDB(),
+		KVStore:      tikvStore,
+		Store:        coprStore,
+		memCache:     kv.NewCacheDB(),
+		keyspaceMeta: keyspaceMeta,
 	}, nil
+}
+
+func (s *mockStorage) GetOption(k any) (any, bool) {
+	return s.opts.Load(k)
+}
+
+func (s *mockStorage) SetOption(k, v any) {
+	if v == nil {
+		s.opts.Delete(k)
+	} else {
+		s.opts.Store(k, v)
+	}
 }
 
 func (s *mockStorage) EtcdAddrs() ([]string, error) {
@@ -126,9 +145,36 @@ func (s *mockStorage) Close() error {
 }
 
 func (s *mockStorage) GetCodec() tikv.Codec {
+	if s.keyspaceMeta == nil {
+		pdClient := s.KVStore.GetPDClient()
+		pdCodecCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+		return pdCodecCli.GetCodec()
+	}
+
+	// Get API V2 codec.
 	pdClient := s.KVStore.GetPDClient()
-	pdCodecCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	ksMeta, err := pdClient.LoadKeyspace(context.Background(), s.keyspaceMeta.Name)
+	if err != nil {
+		panic(err)
+	}
+	// the mock PD client return nil keyspace meta.
+	if ksMeta == nil {
+		pdClient = &pdCliWithCodec{Client: pdClient, ksMeta: s.keyspaceMeta}
+	}
+	pdCodecCli, err := tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, pdClient, s.keyspaceMeta.Name)
+	if err != nil {
+		panic(err)
+	}
 	return pdCodecCli.GetCodec()
+}
+
+type pdCliWithCodec struct {
+	pd.Client
+	ksMeta *keyspacepb.KeyspaceMeta
+}
+
+func (p *pdCliWithCodec) LoadKeyspace(context.Context, string) (*keyspacepb.KeyspaceMeta, error) {
+	return p.ksMeta, nil
 }
 
 // MockLockWaitSetter is used to set the mocked lock wait information, which helps implementing tests that uses the
@@ -139,4 +185,15 @@ type MockLockWaitSetter interface {
 
 func (s *mockStorage) SetMockLockWaits(lockWaits []*deadlockpb.WaitForEntry) {
 	s.LockWaits = lockWaits
+}
+
+func (s *mockStorage) GetClusterID() uint64 {
+	return 1
+}
+
+func (s *mockStorage) GetKeyspace() string {
+	if s.keyspaceMeta == nil {
+		return ""
+	}
+	return s.keyspaceMeta.Name
 }

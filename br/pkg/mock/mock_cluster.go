@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -61,7 +62,7 @@ func NewCluster() (*Cluster, error) {
 		}()
 	})
 
-	storage, err := mockstore.NewMockStore(
+	storage, err := teststore.NewMockStoreWithoutBootstrap(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cluster.Cluster = c
@@ -92,7 +93,7 @@ func (mock *Cluster) Start() error {
 	cfg := config.NewConfig()
 	// let tidb random select a port
 	cfg.Port = 0
-	cfg.Store = "tikv"
+	cfg.Store = config.StoreTypeTiKV
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
@@ -169,7 +170,7 @@ func waitUntilServerOnline(addr string, statusPort uint) string {
 	}
 	// connect http status
 	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
-	for retry = 0; retry < retryTime; retry++ {
+	for retry = range retryTime {
 		// #nosec G107
 		resp, err := http.Get(statusURL) // nolint:noctx,gosec
 		if err == nil {

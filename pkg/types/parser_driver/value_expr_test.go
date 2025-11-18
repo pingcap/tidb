@@ -44,8 +44,6 @@ func TestValueExprRestore(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		// copy iterator variable into a new variable, see issue #27779
-		test := test
 		t.Run(test.expect, func(t *testing.T) {
 			var sb strings.Builder
 			expr := &ValueExpr{Datum: test.datum}
@@ -77,7 +75,6 @@ func TestValueExprFormat(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.expect, func(t *testing.T) {
 			var sb strings.Builder
 			expr := &ValueExpr{Datum: test.datum}

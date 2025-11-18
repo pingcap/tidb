@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -634,7 +635,7 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	}
 
 	// only parse -T when -f is default value. otherwise bail out.
-	if !sameStringArray(filters, []string{"*.*", DefaultTableFilter}) {
+	if !slices.Equal(filters, []string{"*.*", DefaultTableFilter}) {
 		return nil, errors.New("cannot pass --tables-list and --filter together")
 	}
 
@@ -738,9 +739,10 @@ const (
 )
 
 var (
-	decodeRegionVersion = semver.New("3.0.0")
-	gcSafePointVersion  = semver.New("4.0.0")
-	tableSampleVersion  = semver.New("5.0.0-nightly")
+	decodeRegionVersion    = semver.New("3.0.0")
+	gcSafePointVersion     = semver.New("4.0.0")
+	tableSampleVersion     = semver.New("5.0.0-nightly")
+	minNewTerminologyMySQL = semver.New("8.4.0") // first MySQL version to no longer support MASTER/SLAVE/etc
 )
 
 func adjustConfig(conf *Config, fns ...func(*Config) error) error {

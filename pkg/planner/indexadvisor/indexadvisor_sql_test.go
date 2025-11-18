@@ -83,3 +83,12 @@ func TestIndexAdvisorForVariousTypes(t *testing.T) {
 	checkResult(t, tk, `select * from t where b="1" and c=1.0`, "test.t.c,b")
 	checkResult(t, tk, `select * from t where d=now() and b="1"`, "test.t.d,b")
 }
+
+func TestIndexAdvisorEmptyResult(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int, key(a, b, c))`)
+	tk.MustQuery(`recommend index run for 'select * from t where a=1 and b=1 and c=1'`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105  Considered 3 indexable columns(test.t.a, test.t.b, test.t.c), 3 or more index candidates(test.t(a), test.t(b), test.t(c)), no sufficiently beneficial indexes were found."))
+}

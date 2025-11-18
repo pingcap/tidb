@@ -22,14 +22,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/bits-and-blooms/bitset"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -147,6 +146,7 @@ func (opt *commonMutateOpt) PessimisticLazyDupKeyCheck() PessimisticLazyDupKeyCh
 type AddRecordOpt struct {
 	commonMutateOpt
 	isUpdate      bool
+	genRecordID   bool
 	reserveAutoID int
 }
 
@@ -162,6 +162,12 @@ func NewAddRecordOpt(opts ...AddRecordOption) *AddRecordOpt {
 // IsUpdate indicates whether the `AddRecord` operation is in an update statement.
 func (opt *AddRecordOpt) IsUpdate() bool {
 	return opt.isUpdate
+}
+
+// GenerateRecordID indicates whether the `AddRecord` operation should generate new _tidb_rowid.
+// Used in normal Update.
+func (opt *AddRecordOpt) GenerateRecordID() bool {
+	return opt.genRecordID
 }
 
 // ReserveAutoID indicates the auto id count that should be reserved.
@@ -202,7 +208,12 @@ func (opt *UpdateRecordOpt) SkipWriteUntouchedIndices() bool {
 
 // GetAddRecordOpt creates a AddRecordOpt.
 func (opt *UpdateRecordOpt) GetAddRecordOpt() *AddRecordOpt {
-	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt}
+	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt, isUpdate: true, genRecordID: true}
+}
+
+// GetAddRecordOptKeepRecordID creates a AddRecordOpt.
+func (opt *UpdateRecordOpt) GetAddRecordOptKeepRecordID() *AddRecordOpt {
+	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt, isUpdate: true}
 }
 
 // GetCreateIdxOpt creates a CreateIdxOpt.
@@ -218,7 +229,6 @@ type UpdateRecordOption interface {
 // RemoveRecordOpt contains the options will be used when removing a record.
 type RemoveRecordOpt struct {
 	indexesLayoutOffset IndexesLayout
-	columnSize          *ColumnsSizeHelper
 }
 
 // HasIndexesLayout returns whether the RemoveRecordOpt has indexes layout.
@@ -236,11 +246,6 @@ func (opt *RemoveRecordOpt) GetIndexLayout(indexID int64) IndexRowLayoutOption {
 	return opt.indexesLayoutOffset[indexID]
 }
 
-// GetColumnSizeOpt returns the ColumnSizeOption of the RemoveRecordOpt.
-func (opt *RemoveRecordOpt) GetColumnSizeOpt() *ColumnsSizeHelper {
-	return opt.columnSize
-}
-
 // NewRemoveRecordOpt creates a new RemoveRecordOpt with options.
 func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
 	opt := &RemoveRecordOpt{}
@@ -253,17 +258,6 @@ func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
 // RemoveRecordOption is defined for the RemoveRecord() method of the Table interface.
 type RemoveRecordOption interface {
 	applyRemoveRecordOpt(*RemoveRecordOpt)
-}
-
-// ExtraPartialRowOption is the combined one of IndexesLayout and ColumnSizeOption.
-type ExtraPartialRowOption struct {
-	IndexesRowLayout  IndexesLayout
-	ColumnsSizeHelper *ColumnsSizeHelper
-}
-
-func (e *ExtraPartialRowOption) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
-	opt.indexesLayoutOffset = e.IndexesRowLayout
-	opt.columnSize = e.ColumnsSizeHelper
 }
 
 // IndexRowLayoutOption is the option for index row layout.
@@ -282,21 +276,8 @@ func (idx IndexesLayout) GetIndexLayout(idxID int64) IndexRowLayoutOption {
 	return idx[idxID]
 }
 
-// ColumnsSizeHelper records the column size information.
-// We're updating the total column size and total row size used in table statistics when doing DML.
-// If the column is pruned when doing DML, we can't get the accurate size of the column. So we need the estimated avg size.
-//   - If the column is not pruned, we can calculate its acurate size by the real data.
-//   - Otherwise, we use the estimated avg size given by table statistics and field type information.
-type ColumnsSizeHelper struct {
-	// NotPruned is a bitset to record the columns that are not pruned.
-	// The ith bit is 1 means the ith public column is not pruned.
-	NotPruned *bitset.BitSet
-	// If the column is pruned, we use the estimated avg size. They are stored by their ordinal in the table.
-	// The ith element is the estimated size of the ith pruned public column.
-	AvgSizes []float64
-	// If the column is not pruned, we use the accurate size. They are stored by their ordinal in the pruned row.
-	// The ith element is the position of the ith public column in the pruned row.
-	PublicColsLayout []int
+func (idx IndexesLayout) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
+	opt.indexesLayoutOffset = idx
 }
 
 // CommonMutateOptFunc is a function to provide common options for mutating a table.
@@ -340,6 +321,7 @@ type isUpdate struct{}
 
 func (i isUpdate) applyAddRecordOpt(opt *AddRecordOpt) {
 	opt.isUpdate = true
+	opt.genRecordID = true
 }
 
 // skipWriteUntouchedIndices implements UpdateRecordOption.
@@ -502,11 +484,11 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 	defer r.End()
 	increment, offset := getIncrementAndOffset(sctx.GetSessionVars())
 	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
-	_, max, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
+	_, maxv, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
-	return max, err
+	return maxv, err
 }
 
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
@@ -514,13 +496,13 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) ( /* firstID */ int64 /* increment */, int64 /* err */, error) {
 	increment1, offset := getIncrementAndOffset(sctx.GetSessionVars())
 	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
-	min, max, err := alloc.Alloc(ctx, uint64(N), int64(increment1), int64(offset))
+	minv, maxv, err := alloc.Alloc(ctx, uint64(N), int64(increment1), int64(offset))
 	if err != nil {
-		return min, max, err
+		return minv, maxv, err
 	}
 	// SeekToFirstAutoIDUnSigned seeks to first autoID. Because AutoIncrement always allocate from 1,
 	// signed and unsigned value can be unified as the unsigned handle.
-	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment1), uint64(offset)))
+	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(minv), uint64(increment1), uint64(offset)))
 	return nr, int64(increment1), nil
 }
 
@@ -541,7 +523,7 @@ type PartitionedTable interface {
 	GetPartitionIdxByRow(expression.EvalContext, []types.Datum) (int, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
-	GetPartitionColumnNames() []pmodel.CIStr
+	GetPartitionColumnNames() []ast.CIStr
 	CheckForExchangePartition(ctx expression.EvalContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 
@@ -574,9 +556,15 @@ type CachedTable interface {
 }
 
 // CheckRowConstraint verify row check constraints.
-func CheckRowConstraint(ctx exprctx.EvalContext, constraints []*Constraint, rowToCheck chunk.Row) error {
+func CheckRowConstraint(expCtx exprctx.BuildContext, constraints []*Constraint,
+	rowToCheck chunk.Row, tbl *model.TableInfo) error {
+	evalCtx := expCtx.GetEvalCtx()
 	for _, constraint := range constraints {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, rowToCheck)
+		c, err := BuildConstraintExprWithCtx(expCtx, constraint.ConstraintInfo, tbl, evalCtx.CurrentDB())
+		if err != nil {
+			return err
+		}
+		ok, isNull, err := c.EvalInt(evalCtx, rowToCheck)
 		if err != nil {
 			return err
 		}
@@ -589,9 +577,10 @@ func CheckRowConstraint(ctx exprctx.EvalContext, constraints []*Constraint, rowT
 
 // CheckRowConstraintWithDatum verify row check constraints.
 // It is the same with `CheckRowConstraint` but receives a slice of `types.Datum` instead of `chunk.Row`.
-func CheckRowConstraintWithDatum(ctx exprctx.EvalContext, constraints []*Constraint, row []types.Datum) error {
+func CheckRowConstraintWithDatum(exprCtx exprctx.BuildContext, constraints []*Constraint,
+	row []types.Datum, tbl *model.TableInfo) error {
 	if len(constraints) == 0 {
 		return nil
 	}
-	return CheckRowConstraint(ctx, constraints, chunk.MutRowFromDatums(row).ToRow())
+	return CheckRowConstraint(exprCtx, constraints, chunk.MutRowFromDatums(row).ToRow(), tbl)
 }

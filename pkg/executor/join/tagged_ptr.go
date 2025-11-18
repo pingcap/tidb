@@ -22,6 +22,8 @@ import (
 const maxTaggedBits = int8(24)
 const maxTaggedMask = uint64(0xffffffffff)
 
+const taggedPointerLen = int64(unsafe.Sizeof(taggedPtr(0)))
+
 // taggedPtr is a struct to save unsafe.Pointer with tagged value
 // the value of unsafe.Pointer is actually an uint64 and in most
 // cases, the n MSB in unsafe.Pointer is all zeros, which means we

@@ -42,10 +42,10 @@ run_sql 'admin check table dup_resolve.a'
 run_sql 'select count(*) from dup_resolve.a'
 check_contains 'count(*): 10'
 
-run_sql 'select count(*) from lightning_task_info.conflict_records'
+run_sql 'select count(*) from lightning_task_info.conflict_records_v2'
 check_contains 'count(*): 16'
 
-run_sql 'select count(*) from lightning_task_info.conflict_error_v3'
+run_sql 'select count(*) from lightning_task_info.conflict_error_v4'
 check_contains 'count(*): 4'
 
 run_sql 'select count(*) from lightning_task_info.conflict_view'

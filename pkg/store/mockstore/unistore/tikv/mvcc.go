@@ -293,7 +293,8 @@ func (store *MVCCStore) pessimisticLockInner(reqCtx *requestCtx, req *kvrpcpb.Pe
 	}
 	if !dup {
 		for i, m := range mutations {
-			lock, lockedWithConflictTS, err1 := store.buildPessimisticLock(m, items[i], req)
+			latestExtraMeta := store.getLatestExtraMetaForKey(reqCtx, m)
+			lock, lockedWithConflictTS, err1 := store.buildPessimisticLock(m, items[i], latestExtraMeta, req)
 			lockedWithConflictTSList = append(lockedWithConflictTSList, lockedWithConflictTS)
 			if err1 != nil {
 				return nil, err1
@@ -535,14 +536,7 @@ func (store *MVCCStore) CheckTxnStatus(reqCtx *requestCtx,
 			action = kvrpcpb.Action_MinCommitTSPushed
 			// We *must* guarantee the invariance lock.minCommitTS >= callerStartTS + 1
 			if lock.MinCommitTS < req.CallerStartTs+1 {
-				lock.MinCommitTS = req.CallerStartTs + 1
-
-				// Remove this condition should not affect correctness.
-				// We do it because pushing forward minCommitTS as far as possible could avoid
-				// the lock been pushed again several times, and thus reduce write operations.
-				if lock.MinCommitTS < req.CurrentTs {
-					lock.MinCommitTS = req.CurrentTs
-				}
+				lock.MinCommitTS = max(req.CallerStartTs+1, req.CurrentTs)
 				batch.PessimisticLock(req.PrimaryKey, lock)
 				if err = store.dbWriter.Write(batch); err != nil {
 					return TxnStatus{0, action, nil}, err
@@ -666,15 +660,19 @@ func (store *MVCCStore) handleCheckPessimisticErr(startTS uint64, err error, isF
 
 // buildPessimisticLock builds the lock according to the request and the current state of the key.
 // Returns the built lock, and the LockedWithConflictTS (if any, otherwise 0).
-func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.Item,
+func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.Item, latestExtraMeta mvcc.DBUserMeta,
 	req *kvrpcpb.PessimisticLockRequest) (*mvcc.Lock, uint64, error) {
 	var lockedWithConflictTS uint64 = 0
 
 	var writeConflictError error
 
 	if item != nil {
-		userMeta := mvcc.DBUserMeta(item.UserMeta())
 		if !req.Force {
+			userMeta := mvcc.DBUserMeta(item.UserMeta())
+			if latestExtraMeta != nil && latestExtraMeta.CommitTS() > userMeta.CommitTS() {
+				userMeta = latestExtraMeta
+			}
+
 			if userMeta.CommitTS() > req.ForUpdateTs {
 				writeConflictError = &kverrors.ErrConflict{
 					StartTS:          req.StartVersion,
@@ -732,6 +730,31 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 		Primary: req.PrimaryLock,
 	}
 	return lock, lockedWithConflictTS, nil
+}
+
+// getLatestExtraMetaForKey returns the userMeta of the extra txn status key with the biggest commit ts.
+// It's used to assert whether a key has been written / locked by another transaction in the fair locking mechanism.
+// Theoretically, the rollback record should be ignored. But we have no way to check the rollback record in the
+// unistore. Returning record with a bigger commit ts may cause extra retry, but it's safe.
+func (store *MVCCStore) getLatestExtraMetaForKey(reqCtx *requestCtx, m *kvrpcpb.Mutation) mvcc.DBUserMeta {
+	it := reqCtx.getDBReader().GetExtraIter()
+	rbStartKey := mvcc.EncodeExtraTxnStatusKey(m.Key, math.MaxUint64)
+	rbEndKey := mvcc.EncodeExtraTxnStatusKey(m.Key, 0)
+
+	for it.Seek(rbStartKey); it.Valid(); it.Next() {
+		item := it.Item()
+		if len(rbEndKey) != 0 && bytes.Compare(item.Key(), rbEndKey) > 0 {
+			break
+		}
+		key := item.Key()
+		if len(key) == 0 || (key[0] != tableExtraPrefix && key[0] != metaExtraPrefix) {
+			continue
+		}
+
+		meta := mvcc.DBUserMeta(item.UserMeta())
+		return meta
+	}
+	return nil
 }
 
 // Prewrite implements the MVCCStore interface.
@@ -1161,7 +1184,10 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 		}
 		lock.Op = uint8(kvrpcpb.Op_Put)
 	}
-	if rowcodec.IsRowKey(m.Key) && lock.Op == uint8(kvrpcpb.Op_Put) {
+	// In the write path, remove the keyspace prefix
+	// to ensure compatibility with the key parsing implemented in the mock.
+	tempKey := rowcodec.RemoveKeyspacePrefix(m.Key)
+	if rowcodec.IsRowKey(tempKey) && lock.Op == uint8(kvrpcpb.Op_Put) {
 		if !rowcodec.IsNewFormat(m.Value) {
 			reqCtx.buf, err = encodeFromOldRow(m.Value, reqCtx.buf)
 			if err != nil {
@@ -1169,8 +1195,7 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 				return nil, err
 			}
 
-			lock.Value = make([]byte, len(reqCtx.buf))
-			copy(lock.Value, reqCtx.buf)
+			lock.Value = slices.Clone(reqCtx.buf)
 		}
 	}
 
@@ -1566,7 +1591,7 @@ func (store *MVCCStore) Cleanup(reqCtx *requestCtx, key []byte, startTS, current
 func (store *MVCCStore) appendScannedLock(locks []*kvrpcpb.LockInfo, it *lockstore.Iterator, maxTS uint64) []*kvrpcpb.LockInfo {
 	lock := mvcc.DecodeLock(it.Value())
 	if lock.StartTS < maxTS {
-		locks = append(locks, lock.ToLockInfo(append([]byte{}, it.Key()...)))
+		locks = append(locks, lock.ToLockInfo(slices.Clone(it.Key())))
 	}
 	return locks
 }
@@ -1581,7 +1606,7 @@ func (store *MVCCStore) scanPessimisticLocks(reqCtx *requestCtx, startTS uint64,
 		}
 		lock := mvcc.DecodeLock(it.Value())
 		if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) && lock.StartTS == startTS && lock.ForUpdateTS <= forUpdateTS {
-			locks = append(locks, lock.ToLockInfo(append([]byte{}, it.Key()...)))
+			locks = append(locks, lock.ToLockInfo(slices.Clone(it.Key())))
 		}
 	}
 	return locks, nil
@@ -1726,7 +1751,7 @@ func (store *MVCCStore) MvccGetByKey(reqCtx *requestCtx, key []byte) (*kvrpcpb.M
 		return cmp.Compare(j.CommitTs, i.CommitTs)
 	})
 	mvccInfo.Values = make([]*kvrpcpb.MvccValue, len(mvccInfo.Writes))
-	for i := 0; i < len(mvccInfo.Writes); i++ {
+	for i := range mvccInfo.Writes {
 		write := mvccInfo.Writes[i]
 		mvccInfo.Values[i] = &kvrpcpb.MvccValue{
 			StartTs: write.StartTs,
@@ -1893,12 +1918,7 @@ func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte
 }
 
 func inTSSet(startTS uint64, tsSet []uint64) bool {
-	for _, v := range tsSet {
-		if startTS == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tsSet, startTS)
 }
 
 type kvScanProcessor struct {

@@ -1,0 +1,14 @@
+[
+    {
+    "name": "TestQ2",
+    "cases": [
+      "SELECT s_suppkey, s_name, n_name, i_id, i_name, s_address, s_phone, s_comment FROM item, supplier, stock, nation, region, (SELECT s_i_id AS m_i_id, MIN(s_quantity) AS m_s_quantity FROM stock, supplier, nation, region WHERE MOD((s_w_id * s_i_id), 10000) = s_suppkey AND s_nationkey = n_nationkey AND n_regionkey = r_regionkey AND r_name LIKE 'EUROP%' GROUP BY s_i_id) m WHERE i_id = s_i_id AND MOD((s_w_id * s_i_id), 10000) = s_suppkey AND s_nationkey = n_nationkey AND n_regionkey = r_regionkey AND i_data LIKE '%b' AND r_name LIKE 'EUROP%' AND i_id = m_i_id AND s_quantity = m_s_quantity ORDER BY n_name, s_name, i_id;"
+    ]
+  },
+  {
+    "name": "TestQ5",
+    "cases": [
+      "SELECT n_name, SUM(ol_amount) AS revenue FROM customer, orders, order_line, stock, supplier, nation, region WHERE c_id = o_c_id AND c_w_id = o_w_id AND c_d_id = o_d_id AND ol_o_id = o_id AND ol_w_id = o_w_id AND ol_d_id = o_d_id AND ol_w_id = s_w_id AND ol_i_id = s_i_id AND MOD((s_w_id * s_i_id), 10000) = s_suppkey AND ASCII(SUBSTR(c_state, 1, 1)) - 65 = s_nationkey AND s_nationkey = n_nationkey AND n_regionkey = r_regionkey AND r_name = 'EUROPE' AND o_entry_d >= '2007-01-02 00:00:00.000000' GROUP BY n_name;"
+    ]
+  }
+]

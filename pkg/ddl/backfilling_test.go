@@ -16,9 +16,12 @@ package ddl
 
 import (
 	"bytes"
+	"context"
+	"math"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -26,8 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -61,17 +65,8 @@ func TestDoneTaskKeeper(t *testing.T) {
 }
 
 func TestPickBackfillType(t *testing.T) {
-	originMgr := ingest.LitBackCtxMgr
-	originInit := ingest.LitInitialized
-	defer func() {
-		ingest.LitBackCtxMgr = originMgr
-		ingest.LitInitialized = originInit
-	}()
-	mockMgr := ingest.NewMockBackendCtxMgr(
-		func() sessionctx.Context {
-			return nil
-		})
-	ingest.LitBackCtxMgr = mockMgr
+	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
+	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
 	mockJob := &model.Job{
 		ID: 1,
 		ReorgMeta: &model.DDLReorgMeta{
@@ -93,7 +88,8 @@ func TestPickBackfillType(t *testing.T) {
 	ingest.LitInitialized = true
 	tp, err = pickBackfillType(mockJob)
 	require.NoError(t, err)
-	require.Equal(t, tp, model.ReorgTypeLitMerge)
+	require.Equal(t, tp, model.ReorgTypeIngest)
+	ingest.LitInitialized = false
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {
@@ -182,26 +178,6 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 				require.NoError(t, err)
 			},
 		},
-		{
-			field: "requestVerificationFn",
-			check: func(ctx *exprstatic.EvalContext) {
-				// RequestVerification should allow all privileges
-				// that is the same with input session context (GetPrivilegeManager returns nil).
-				require.Nil(t, privilege.GetPrivilegeManager(sctx))
-				require.True(t, sctx.GetExprCtx().GetEvalCtx().RequestVerification("any", "any", "any", mysql.CreatePriv))
-				require.True(t, ctx.RequestVerification("any", "any", "any", mysql.CreatePriv))
-			},
-		},
-		{
-			field: "requestDynamicVerificationFn",
-			check: func(ctx *exprstatic.EvalContext) {
-				// RequestDynamicVerification should allow all privileges
-				// that is the same with input session context (GetPrivilegeManager returns nil).
-				require.Nil(t, privilege.GetPrivilegeManager(sctx))
-				require.True(t, sctx.GetExprCtx().GetEvalCtx().RequestDynamicVerification("RESTRICTED_USER_ADMIN", true))
-				require.True(t, ctx.RequestDynamicVerification("RESTRICTED_USER_ADMIN", true))
-			},
-		},
 	}
 
 	// check ExprContext except EvalContext
@@ -260,7 +236,7 @@ func TestReorgExprContext(t *testing.T) {
 		{
 			SQLMode:           mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
 			Location:          &model.TimeZoneLocation{Name: "Asia/Tokyo"},
-			ReorgTp:           model.ReorgTypeLitMerge,
+			ReorgTp:           model.ReorgTypeIngest,
 			ResourceGroupName: "rg1",
 		},
 		{
@@ -295,8 +271,8 @@ func TestReorgExprContext(t *testing.T) {
 }
 
 func TestReorgTableMutateContext(t *testing.T) {
-	originalRowFmt := variable.GetDDLReorgRowFormat()
-	defer variable.SetDDLReorgRowFormat(originalRowFmt)
+	originalRowFmt := vardef.GetDDLReorgRowFormat()
+	defer vardef.SetDDLReorgRowFormat(originalRowFmt)
 
 	exprCtx := exprstatic.NewExprContext()
 
@@ -311,14 +287,14 @@ func TestReorgTableMutateContext(t *testing.T) {
 		require.Equal(t, variable.AssertionLevelOff, ctx.TxnAssertionLevel())
 		require.Equal(t, sctxTblCtx.TxnAssertionLevel(), ctx.TxnAssertionLevel())
 
-		require.Equal(t, variable.GetDDLReorgRowFormat() != variable.DefTiDBRowFormatV1, ctx.GetRowEncodingConfig().IsRowLevelChecksumEnabled)
-		require.Equal(t, variable.GetDDLReorgRowFormat() != variable.DefTiDBRowFormatV1, ctx.GetRowEncodingConfig().RowEncoder.Enable)
+		require.Equal(t, vardef.GetDDLReorgRowFormat() != vardef.DefTiDBRowFormatV1, ctx.GetRowEncodingConfig().IsRowLevelChecksumEnabled)
+		require.Equal(t, vardef.GetDDLReorgRowFormat() != vardef.DefTiDBRowFormatV1, ctx.GetRowEncodingConfig().RowEncoder.Enable)
 		require.Equal(t, sctxTblCtx.GetRowEncodingConfig(), ctx.GetRowEncodingConfig())
 
 		require.NotNil(t, ctx.GetMutateBuffers())
 		require.Equal(t, sctxTblCtx.GetMutateBuffers(), ctx.GetMutateBuffers())
 
-		require.Equal(t, variable.DefTiDBShardAllocateStep, ctx.GetRowIDShardGenerator().GetShardStep())
+		require.Equal(t, vardef.DefTiDBShardAllocateStep, ctx.GetRowIDShardGenerator().GetShardStep())
 		sctx.GetSessionVars().TxnCtx.StartTS = 123 // make sure GetRowIDShardGenerator() pass assert
 		require.Equal(t, sctxTblCtx.GetRowIDShardGenerator().GetShardStep(), ctx.GetRowIDShardGenerator().GetShardStep())
 		require.GreaterOrEqual(t, ctx.GetRowIDShardGenerator().GetCurrentShard(1), int64(0))
@@ -345,7 +321,7 @@ func TestReorgTableMutateContext(t *testing.T) {
 	}
 
 	// test when the row format is v1
-	variable.SetDDLReorgRowFormat(variable.DefTiDBRowFormatV1)
+	vardef.SetDDLReorgRowFormat(vardef.DefTiDBRowFormatV1)
 	sctx := newMockReorgSessCtx(&mockStorage{client: &mock.Client{}})
 	require.NoError(t, initSessCtx(sctx, &model.DDLReorgMeta{}))
 	ctx := newReorgTableMutateContext(exprCtx)
@@ -387,53 +363,6 @@ func assertDistSQLCtxEqual(t *testing.T, expected *distsqlctx.DistSQLContext, ac
 	require.Equal(t, errctx.NewContextWithLevels(expected.ErrCtx.LevelMap(), expected.WarnHandler), actual.ErrCtx)
 }
 
-// TestReorgExprContext is used in refactor stage to make sure the newDefaultReorgDistSQLCtx() is
-// compatible with newMockReorgSessCtx(nil).GetDistSQLCtx() to make it safe to replace `mock.Context` usage.
-// After refactor, the TestReorgExprContext can be removed.
-func TestReorgDistSQLCtx(t *testing.T) {
-	store := &mockStorage{client: &mock.Client{}}
-
-	// test default dist sql context
-	expected := newMockReorgSessCtx(store).GetDistSQLCtx()
-	defaultCtx := newDefaultReorgDistSQLCtx(store.client, expected.WarnHandler)
-	assertDistSQLCtxEqual(t, expected, defaultCtx)
-
-	// test dist sql context from DDLReorgMeta
-	for _, reorg := range []model.DDLReorgMeta{
-		{
-			SQLMode:           mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
-			Location:          &model.TimeZoneLocation{Name: "Asia/Tokyo"},
-			ReorgTp:           model.ReorgTypeLitMerge,
-			ResourceGroupName: "rg1",
-		},
-		{
-			SQLMode: mysql.ModeAllowInvalidDates,
-			// should load location from system value when reorg.Location is nil
-			Location:          nil,
-			ReorgTp:           model.ReorgTypeTxnMerge,
-			ResourceGroupName: "rg2",
-		},
-	} {
-		sctx := newMockReorgSessCtx(store)
-		require.NoError(t, initSessCtx(sctx, &reorg))
-		expected = sctx.GetDistSQLCtx()
-		ctx, err := newReorgDistSQLCtxWithReorgMeta(store.client, &reorg, expected.WarnHandler)
-		require.NoError(t, err)
-		assertDistSQLCtxEqual(t, expected, ctx)
-		// Location should match DDLReorgMeta
-		if reorg.Location != nil {
-			require.Equal(t, reorg.Location.Name, ctx.Location.String())
-		} else {
-			loc := timeutil.SystemLocation()
-			require.Same(t, loc, ctx.Location)
-		}
-		// ResourceGroupName should match DDLReorgMeta
-		require.Equal(t, reorg.ResourceGroupName, ctx.ResourceGroupName)
-		// Some fields should be different from the default context to make the test robust.
-		require.NotEqual(t, defaultCtx.ErrCtx.LevelMap(), ctx.ErrCtx.LevelMap())
-	}
-}
-
 func TestValidateAndFillRanges(t *testing.T) {
 	mkRange := func(start, end string) kv.KeyRange {
 		return kv.KeyRange{StartKey: []byte(start), EndKey: []byte(end)}
@@ -443,7 +372,7 @@ func TestValidateAndFillRanges(t *testing.T) {
 		mkRange("c", "d"),
 		mkRange("d", "e"),
 	}
-	err := validateAndFillRanges(ranges, []byte("a"), []byte("e"))
+	err := validateAndFillRanges(ranges, []byte("b"), []byte("e"))
 	require.NoError(t, err)
 	require.EqualValues(t, []kv.KeyRange{
 		mkRange("b", "c"),
@@ -505,4 +434,167 @@ func TestValidateAndFillRanges(t *testing.T) {
 	}
 	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
 	require.Error(t, err)
+
+	ranges = []kv.KeyRange{
+		mkRange("b", "c"),
+		mkRange("c", "d"),
+		mkRange("d", "e"),
+	}
+	err = validateAndFillRanges(ranges, []byte("a"), []byte("e"))
+	require.Error(t, err)
+
+	ranges = []kv.KeyRange{
+		mkRange("b", "c"),
+		mkRange("c", "d"),
+		mkRange("d", "e"),
+	}
+	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
+	require.NoError(t, err)
+}
+
+func TestTuneTableScanWorkerBatchSize(t *testing.T) {
+	reorgMeta := &model.DDLReorgMeta{}
+	reorgMeta.Concurrency.Store(4)
+	reorgMeta.BatchSize.Store(32)
+	copCtx := &copr.CopContextSingleIndex{
+		CopContextBase: &copr.CopContextBase{
+			FieldTypes: []*types.FieldType{},
+		},
+	}
+	wctx := workerpool.NewContext(context.Background())
+	w := tableScanWorker{
+		copCtx:        copCtx,
+		ctx:           wctx,
+		srcChkPool:    createChunkPool(copCtx, reorgMeta),
+		hintBatchSize: 32,
+		reorgMeta:     reorgMeta,
+	}
+	for range 10 {
+		chk := w.getChunk()
+		require.Equal(t, 32, chk.Capacity())
+		w.srcChkPool.Put(chk)
+	}
+	reorgMeta.SetBatchSize(64)
+	for range 10 {
+		chk := w.getChunk()
+		require.Equal(t, 64, chk.Capacity())
+		w.srcChkPool.Put(chk)
+	}
+	wctx.Cancel()
+}
+
+func TestSplitRangesByKeys(t *testing.T) {
+	k := func(ord int) kv.Key {
+		return kv.Key([]byte{byte(ord)})
+	}
+	tests := []struct {
+		name      string
+		ranges    []kv.KeyRange
+		splitKeys []kv.Key
+		expected  []kv.KeyRange
+	}{
+		{
+			name: "empty split keys",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+		},
+		{
+			name: "single split key in middle",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{k(5)},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(5)},
+				{StartKey: k(5), EndKey: k(10)},
+			},
+		},
+		{
+			name: "multiple split keys in one range",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(20)},
+			},
+			splitKeys: []kv.Key{k(5), k(10), k(15)},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(5)},
+				{StartKey: k(5), EndKey: k(10)},
+				{StartKey: k(10), EndKey: k(15)},
+				{StartKey: k(15), EndKey: k(20)},
+			},
+		},
+		{
+			name: "split keys across multiple ranges",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+				{StartKey: k(10), EndKey: k(20)},
+			},
+			splitKeys: []kv.Key{k(5), k(15)},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(5)},
+				{StartKey: k(5), EndKey: k(10)},
+				{StartKey: k(10), EndKey: k(15)},
+				{StartKey: k(15), EndKey: k(20)},
+			},
+		},
+		{
+			name: "split key less than range start",
+			ranges: []kv.KeyRange{
+				{StartKey: k(5), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{k(3)},
+			expected: []kv.KeyRange{
+				{StartKey: k(5), EndKey: k(10)},
+			},
+		},
+		{
+			name: "split key greater than range end",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{k(15)},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+		},
+		{
+			name: "split key equals range start",
+			ranges: []kv.KeyRange{
+				{StartKey: k(5), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{k(5)},
+			expected: []kv.KeyRange{
+				{StartKey: k(5), EndKey: k(10)},
+			},
+		},
+		{
+			name: "split key equals range end",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{k(10)},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+		},
+		{
+			name: "split keys overlaps with range start and end",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{k(0), k(5), k(10)},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(5)},
+				{StartKey: k(5), EndKey: k(10)},
+			},
+		},
+	}
+	for _, tt := range tests {
+		result := splitRangesByKeys(tt.ranges, tt.splitKeys)
+		require.EqualValues(t, len(tt.expected), len(result), "keys mismatch", tt.name)
+	}
 }

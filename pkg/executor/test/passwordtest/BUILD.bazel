@@ -16,7 +16,7 @@ go_test(
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/privilege/privileges",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/util/sqlescape",
         "@com_github_stretchr_testify//require",

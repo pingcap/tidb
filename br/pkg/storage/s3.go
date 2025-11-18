@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
+	"github.com/aws/aws-sdk-go/aws/defaults"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -34,6 +35,9 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -42,6 +46,9 @@ import (
 var hardcodedS3ChunkSize = 5 * 1024 * 1024
 
 const (
+	// S3ExternalID is the key for the external ID used in S3 operations.
+	S3ExternalID = "external-id"
+
 	s3EndpointOption     = "s3.endpoint"
 	s3RegionOption       = "s3.region"
 	s3StorageClassOption = "s3.storage-class"
@@ -50,7 +57,8 @@ const (
 	s3ACLOption          = "s3.acl"
 	s3ProviderOption     = "s3.provider"
 	s3RoleARNOption      = "s3.role-arn"
-	s3ExternalIDOption   = "s3.external-id"
+	s3ExternalIDOption   = "s3." + S3ExternalID
+	s3ProfileOption      = "s3.profile"
 	notFound             = "NotFound"
 	// number of retries to make of operations.
 	maxRetries = 7
@@ -64,6 +72,7 @@ const (
 	defaultRegion = "us-east-1"
 	// to check the cloud type by endpoint tag.
 	domainAliyun = "aliyuncs.com"
+	domainAWS    = "amazonaws.com"
 )
 
 var permissionCheckFn = map[Permission]func(context.Context, s3iface.S3API, *backuppb.S3) error{
@@ -79,8 +88,13 @@ var WriteBufferSize = 5 * 1024 * 1024
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `ExternalStorage` interface.
 type S3Storage struct {
-	svc     s3iface.S3API
-	options *backuppb.S3
+	svc       s3iface.S3API
+	options   *backuppb.S3
+	accessRec *recording.AccessStats
+}
+
+func (*S3Storage) MarkStrongConsistency() {
+	// See https://aws.amazon.com/cn/s3/consistency/
 }
 
 // GetS3APIHandle gets the handle to the S3 API.
@@ -91,6 +105,24 @@ func (rs *S3Storage) GetS3APIHandle() s3iface.S3API {
 // GetOptions gets the external storage operations for the S3.
 func (rs *S3Storage) GetOptions() *backuppb.S3 {
 	return rs.options
+}
+
+func (rs *S3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	s, ok := e.(*S3Storage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", e)
+	}
+
+	copyInput := &s3.CopyObjectInput{
+		Bucket: aws.String(rs.options.Bucket),
+		// NOTE: Perhaps we need to allow copy cross regions / accounts.
+		CopySource: aws.String(path.Join(s.options.Bucket, s.options.Prefix, spec.From)),
+		Key:        aws.String(rs.options.Prefix + spec.To),
+	}
+
+	// We must use the client of the target region.
+	_, err := rs.svc.CopyObjectWithContext(ctx, copyInput)
+	return err
 }
 
 // S3Uploader does multi-part upload to s3.
@@ -153,6 +185,7 @@ type S3BackendOptions struct {
 	UseAccelerateEndpoint bool   `json:"use-accelerate-endpoint" toml:"use-accelerate-endpoint"`
 	RoleARN               string `json:"role-arn" toml:"role-arn"`
 	ExternalID            string `json:"external-id" toml:"external-id"`
+	Profile               string `json:"profile" toml:"profile"`
 	ObjectLockEnabled     bool   `json:"object-lock-enabled" toml:"object-lock-enabled"`
 }
 
@@ -170,17 +203,15 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 			return errors.Errorf("host not found in endpoint")
 		}
 	}
-	// In some cases, we need to set ForcePathStyle to false.
-	// Refer to: https://rclone.org/s3/#s3-force-path-style
-	if options.Provider == "alibaba" || options.Provider == "netease" ||
-		options.UseAccelerateEndpoint {
-		options.ForcePathStyle = false
-	}
-	if options.AccessKey == "" && options.SecretAccessKey != "" {
-		return errors.Annotate(berrors.ErrStorageInvalidConfig, "access_key not found")
-	}
-	if options.AccessKey != "" && options.SecretAccessKey == "" {
-		return errors.Annotate(berrors.ErrStorageInvalidConfig, "secret_access_key not found")
+
+	// When not using a profile, if either key is provided, both must be provided
+	if options.Profile == "" {
+		if options.AccessKey == "" && options.SecretAccessKey != "" {
+			return errors.Annotate(berrors.ErrStorageInvalidConfig, "access_key not found")
+		}
+		if options.AccessKey != "" && options.SecretAccessKey == "" {
+			return errors.Annotate(berrors.ErrStorageInvalidConfig, "secret_access_key not found")
+		}
 	}
 
 	s3.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
@@ -197,7 +228,30 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	s3.RoleArn = options.RoleARN
 	s3.ExternalId = options.ExternalID
 	s3.Provider = options.Provider
+	s3.Profile = options.Profile
+
 	return nil
+}
+
+// setForcePathStyle only set ForcePathStyle to False, which means use virtual-hosted-style path.
+func (options *S3BackendOptions) setForcePathStyle(rawURL string) {
+	// In some cases, we need to set ForcePathStyle to false.
+	// Refer to: https://rclone.org/s3/#s3-force-path-style
+	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" ||
+		options.UseAccelerateEndpoint || useVirtualHostStyleForAWSS3(options, rawURL) {
+		options.ForcePathStyle = false
+	}
+}
+
+func useVirtualHostStyleForAWSS3(opts *S3BackendOptions, rawURL string) bool {
+	// If user has explicitly specified ForcePathStyle, use the specified value
+	if rawURL == "" ||
+		strings.Contains(rawURL, "force-path-style") ||
+		strings.Contains(rawURL, "force_path_style") {
+		return false
+	}
+
+	return opts.Provider == "aws" || strings.Contains(opts.Endpoint, domainAWS) || opts.RoleARN != ""
 }
 
 // defineS3Flags defines the command line flags for S3BackendOptions.
@@ -214,6 +268,8 @@ func defineS3Flags(flags *pflag.FlagSet) {
 	flags.String(s3ProviderOption, "", "(experimental) Set the S3 provider, e.g. aws, alibaba, ceph")
 	flags.String(s3RoleARNOption, "", "(experimental) Set the ARN of the IAM role to assume when accessing AWS S3")
 	flags.String(s3ExternalIDOption, "", "(experimental) Set the external ID when assuming the role to access AWS S3")
+	flags.String(s3ProfileOption, "", "(experimental) Set the AWS profile to use for AWS S3 authentication. "+
+		"Command line options take precedence over profile settings")
 }
 
 // parseFromFlags parse S3BackendOptions from command line flags.
@@ -257,14 +313,20 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	options.Profile, err = flags.GetString(s3ProfileOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
 // NewS3StorageForTest creates a new S3Storage for testing only.
-func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3) *S3Storage {
+func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3, accessRec *recording.AccessStats) *S3Storage {
 	return &S3Storage{
-		svc:     svc,
-		options: options,
+		svc:       svc,
+		options:   options,
+		accessRec: accessRec,
 	}
 }
 
@@ -325,22 +387,41 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		request.WithRetryer(awsConfig, defaultS3Retryer())
 	}
 
-	if qs.Endpoint != "" {
+	// ⚠️ Do NOT set a global endpoint in the AWS config.
+	// Setting a global endpoint will break AssumeRoleWithWebIdentity,
+	// as it overrides the STS endpoint and causes authentication to fail.
+	// See: https://github.com/aws/aws-sdk-go/issues/3972
+	if len(qs.Endpoint) != 0 && qs.Provider != "aws" {
 		awsConfig.WithEndpoint(qs.Endpoint)
 	}
 	if opts.HTTPClient != nil {
 		awsConfig.WithHTTPClient(opts.HTTPClient)
 	}
-	cred, err := autoNewCred(&qs)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if cred != nil {
-		awsConfig.WithCredentials(cred)
+	// When using a profile, let AWS SDK handle credentials through the profile
+	// Don't call autoNewCred as it interferes with profile-based authentication
+	if qs.Profile == "" {
+		cred, err := autoNewCred(&qs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if cred != nil {
+			awsConfig.WithCredentials(cred)
+		}
 	}
 	// awsConfig.WithLogLevel(aws.LogDebugWithSigning)
 	awsSessionOpts := session.Options{
 		Config: *awsConfig,
+	}
+	if qs.Profile != "" {
+		awsSessionOpts.Profile = qs.Profile
+		// Use default credential chain when profile is specified
+		awsSessionOpts.SharedConfigState = session.SharedConfigEnable
+	}
+	if opts.AccessRecording != nil {
+		awsSessionOpts.Handlers = defaults.Handlers()
+		awsSessionOpts.Handlers.Send.PushBack(func(r *request.Request) {
+			opts.AccessRecording.RecRequest(r.HTTPRequest)
+		})
 	}
 	ses, err := session.NewSessionWithOptions(awsSessionOpts)
 	if err != nil {
@@ -375,6 +456,9 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		s3CliConfigs = append(s3CliConfigs,
 			aws.NewConfig().WithCredentials(creds),
 		)
+	}
+	if len(qs.Endpoint) != 0 && qs.Provider == "aws" {
+		s3CliConfigs = append(s3CliConfigs, aws.NewConfig().WithEndpoint(qs.Endpoint))
 	}
 	c := s3.New(ses, s3CliConfigs...)
 
@@ -430,8 +514,9 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 
 	s3Storage := &S3Storage{
-		svc:     c,
-		options: &qs,
+		svc:       c,
+		options:   &qs,
+		accessRec: opts.AccessRecording,
 	}
 	if opts.CheckS3ObjectLockOptions {
 		backend.ObjectLockEnabled = s3Storage.IsObjectLockEnabled()
@@ -470,7 +555,7 @@ func getObjectCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error
 	}
 	_, err := svc.GetObject(input)
 	if aerr, ok := err.(awserr.Error); ok {
-		if aerr.Code() == "NoSuchKey" {
+		if aerr.Code() == s3.ErrCodeNoSuchKey {
 			// if key not exists and we reach this error, that
 			// means we have the correct permission to GetObject
 			// other we will get another error
@@ -497,7 +582,7 @@ func PutAndDeleteObjectCheck(ctx context.Context, svc s3iface.S3API, options *ba
 		}
 		_, err2 := svc.DeleteObjectWithContext(ctx, input)
 		if aerr, ok := err2.(awserr.Error); ok {
-			if aerr.Code() != "NoSuchKey" {
+			if aerr.Code() != s3.ErrCodeNoSuchKey {
 				log.Warn("failed to delete object used for permission check",
 					zap.String("bucket", options.Bucket),
 					zap.String("key", *input.Key), zap.Error(err2))
@@ -561,6 +646,7 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rs.accessRec.RecWrite(len(data))
 	hinput := &s3.HeadObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
@@ -569,13 +655,44 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	return errors.Trace(err)
 }
 
-// ReadFile reads the file from the storage and returns the contents.
 func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) {
+	backoff := 10 * time.Millisecond
+	remainRetry := 5
+	contRetry := func() bool {
+		if remainRetry <= 0 {
+			return false
+		}
+		time.Sleep(backoff)
+		remainRetry -= 1
+		return true
+	}
+
+	// The errors cannot be handled by the SDK because they happens during reading the HTTP response body.
+	// We cannot use `utils.WithRetry[V2]` here because cyclinic deps.
+	for {
+		data, err := rs.doReadFile(ctx, file)
+		if err != nil {
+			log.Warn("ReadFile: failed to read file.",
+				zap.String("file", file), logutil.ShortError(err), zap.Int("remained", remainRetry))
+			if !isHTTP2ConnAborted(err) {
+				return nil, err
+			}
+			if !contRetry() {
+				return nil, err
+			}
+			continue
+		}
+		rs.accessRec.RecRead(len(data))
+		return data, nil
+	}
+}
+
+func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error) {
 	var (
 		data    []byte
 		readErr error
 	)
-	for retryCnt := 0; retryCnt < maxErrorRetries; retryCnt += 1 {
+	for retryCnt := range maxErrorRetries {
 		input := &s3.GetObjectInput{
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + file),
@@ -589,6 +706,7 @@ func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) 
 		data, readErr = io.ReadAll(result.Body)
 		// close the body of response since data has been already read out
 		result.Body.Close()
+		readErr = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(readErr)
 		// for unit test
 		failpoint.Inject("read-s3-body-failed", func(_ failpoint.Value) {
 			log.Info("original error", zap.Error(readErr))
@@ -599,6 +717,7 @@ func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) 
 				return nil, errors.Annotatef(readErr, "failed to read body from get object result, file info: input.bucket='%s', input.key='%s', retryCnt='%d'",
 					*input.Bucket, *input.Key, retryCnt)
 			}
+			metrics.RetryableErrorCount.WithLabelValues(readErr.Error()).Inc()
 			continue
 		}
 		return data, nil
@@ -770,20 +889,22 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 		return nil, errors.Trace(err)
 	}
 	if prefetchSize > 0 {
-		reader = prefetch.NewReader(reader, o.PrefetchSize)
+		reader = prefetch.NewReader(reader, r.RangeSize(), o.PrefetchSize)
 	}
 	return &s3ObjectReader{
 		storage:      rs,
 		name:         path,
 		reader:       reader,
+		pos:          r.Start,
 		ctx:          ctx,
 		rangeInfo:    r,
 		prefetchSize: prefetchSize,
 	}, nil
 }
 
-// RangeInfo represents the an HTTP Content-Range header value
+// RangeInfo represents the HTTP Content-Range header value
 // of the form `bytes [Start]-[End]/[Size]`.
+// see https://www.rfc-editor.org/rfc/rfc9110.html#section-14.4.
 type RangeInfo struct {
 	// Start is the absolute position of the first byte of the byte range,
 	// starting from 0.
@@ -794,6 +915,11 @@ type RangeInfo struct {
 	End int64
 	// Size is the total size of the original file.
 	Size int64
+}
+
+// RangeSize returns the size of the range.
+func (r *RangeInfo) RangeSize() int64 {
+	return r.End + 1 - r.Start
 }
 
 // if endOffset > startOffset, should return reader for bytes in [startOffset, endOffset).
@@ -853,8 +979,13 @@ func (rs *S3Storage) open(
 	}
 
 	if startOffset != r.Start || (endOffset != 0 && endOffset != r.End+1) {
-		return nil, r, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed, expected range: %s, got: %v",
-			path, *rangeOffset, result.ContentRange)
+		rangeStr := "<empty>"
+		if result.ContentRange != nil {
+			rangeStr = *result.ContentRange
+		}
+		return nil, r, errors.Annotatef(berrors.ErrStorageUnknown,
+			"open file '%s' failed, expected range: %s, got: %s",
+			path, *rangeOffset, rangeStr)
 	}
 
 	return result.Body, r, nil
@@ -900,8 +1031,6 @@ type s3ObjectReader struct {
 	pos       int64
 	rangeInfo RangeInfo
 	// reader context used for implement `io.Seek`
-	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
-	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
 	ctx          context.Context
 	prefetchSize int
 }
@@ -917,9 +1046,11 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		maxCnt = int64(len(p))
 	}
 	n, err = r.reader.Read(p[:maxCnt])
+	n, err = injectfailpoint.RandomErrorForReadWithOnePerPercent(n, err)
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
-	for err != nil && errors.Cause(err) != io.EOF && retryCnt < maxErrorRetries { //nolint:errorlint
+	for err != nil && errors.Cause(err) != io.EOF && r.ctx.Err() == nil && retryCnt < maxErrorRetries { //nolint:errorlint
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		log.L().Warn(
 			"read s3 object failed, will retry",
 			zap.String("file", r.name),
@@ -933,19 +1064,20 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		}
 		_ = r.reader.Close()
 
-		newReader, _, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
+		newReader, rangeInfo, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
 		if err1 != nil {
 			log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err1))
 			return
 		}
 		r.reader = newReader
 		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+			r.reader = prefetch.NewReader(r.reader, rangeInfo.RangeSize(), r.prefetchSize)
 		}
 		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
 	}
 
+	r.storage.accessRec.RecRead(n)
 	r.pos += int64(n)
 	return
 }
@@ -1012,7 +1144,7 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.reader = newReader
 	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		r.reader = prefetch.NewReader(r.reader, info.RangeSize(), r.prefetchSize)
 	}
 	r.rangeInfo = info
 	r.pos = realOffset
@@ -1113,7 +1245,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, rs.accessRec)
 	return uploaderWriter, nil
 }
 
@@ -1167,7 +1299,30 @@ func isConnectionRefusedError(err error) bool {
 	return strings.Contains(err.Error(), "connection refused")
 }
 
-func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
+func isHTTP2ConnAborted(err error) bool {
+	patterns := []string{
+		"http2: client connection force closed via ClientConn.Close",
+		"http2: server sent GOAWAY and closed the connection",
+		"unexpected EOF",
+	}
+	errMsg := err.Error()
+
+	for _, p := range patterns {
+		if strings.Contains(errMsg, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func (rl retryerWithLog) ShouldRetry(r *request.Request) (retry bool) {
+	defer func() {
+		log.Warn("failed to request s3, checking whether we can retry", zap.Error(r.Error), zap.Bool("retry", retry))
+		if retry {
+			metrics.RetryableErrorCount.WithLabelValues(r.Error.Error()).Inc()
+		}
+	}()
+
 	// for unit test
 	failpoint.Inject("replace-error-to-connection-reset-by-peer", func(_ failpoint.Value) {
 		log.Info("original error", zap.Error(r.Error))
@@ -1186,14 +1341,15 @@ func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
 	if isConnectionRefusedError(r.Error) {
 		return false
 	}
+	if isHTTP2ConnAborted(r.Error) {
+		return true
+	}
 	return rl.DefaultRetryer.ShouldRetry(r)
 }
 
 func (rl retryerWithLog) RetryRules(r *request.Request) time.Duration {
 	backoffTime := rl.DefaultRetryer.RetryRules(r)
-	if backoffTime > 0 {
-		log.Warn("failed to request s3, retrying", zap.Error(r.Error), zap.Duration("backoff", backoffTime))
-	}
+	log.Warn("failed to request s3, retrying", zap.Error(r.Error), zap.Duration("backoff", backoffTime))
 	return backoffTime
 }
 

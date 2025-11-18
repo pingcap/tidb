@@ -33,7 +33,7 @@ func TestPrecheckBuilderBasic(t *testing.T) {
 
 	preInfoGetter, err := NewPreImportInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
 	require.NoError(t, err)
-	theCheckBuilder := NewPrecheckItemBuilder(cfg, mockSrc.GetAllDBFileMetas(), preInfoGetter, nil, nil)
+	theCheckBuilder := NewPrecheckItemBuilder(cfg, mockSrc.GetAllDBFileMetas(), preInfoGetter, nil, nil, nil)
 	for _, checkItemID := range []precheck.CheckItemID{
 		precheck.CheckLargeDataFile,
 		precheck.CheckSourcePermission,

@@ -30,7 +30,11 @@ func TestSessionPool(t *testing.T) {
 		1, f,
 		func(r pools.Resource) {
 			r.(*testResource).refCount++
-		}, func(r pools.Resource) {
+		},
+		func(r pools.Resource) {
+			r.(*testResource).refCount--
+		},
+		func(r pools.Resource) {
 			r.(*testResource).refCount--
 		},
 	)

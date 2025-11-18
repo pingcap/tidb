@@ -34,8 +34,15 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"go.uber.org/zap"
+)
+
+var (
+	_ Copier = &KS3Storage{}
 )
 
 const (
@@ -45,8 +52,9 @@ const (
 
 // KS3Storage acts almost same as S3Storage except it's used for kingsoft s3.
 type KS3Storage struct {
-	svc     *s3.S3 // https://github.com/ks3sdklib/aws-sdk-go/issues/28
-	options *backuppb.S3
+	svc       *s3.S3 // https://github.com/ks3sdklib/aws-sdk-go/issues/28
+	options   *backuppb.S3
+	accessRec *recording.AccessStats
 }
 
 // NewKS3Storage initialize a new s3 storage for metadata.
@@ -99,6 +107,14 @@ func NewKS3Storage(
 	}
 	c := s3.New(awsConfig)
 
+	if opts.AccessRecording != nil {
+		// unlike AWS SDK, ks3 only support change handlers after we initialize
+		// the client, so no need to call defaults.Handlers().
+		c.Handlers.Send.PushBack(func(r *aws.Request) {
+			opts.AccessRecording.RecRequest(r.HTTPRequest)
+		})
+	}
+
 	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
 		qs.Prefix += "/"
 	}
@@ -111,8 +127,9 @@ func NewKS3Storage(
 	}
 
 	return &KS3Storage{
-		svc:     c,
-		options: &qs,
+		svc:       c,
+		options:   &qs,
+		accessRec: opts.AccessRecording,
 	}, nil
 }
 
@@ -266,6 +283,7 @@ func (rs *KS3Storage) WriteFile(ctx context.Context, file string, data []byte) e
 	// since aws-go-sdk already did it in #computeBodyHashes
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
 	_, err := rs.svc.PutObjectWithContext(ctx, input)
+	rs.accessRec.RecWrite(len(data))
 	return errors.Trace(err)
 }
 
@@ -286,6 +304,7 @@ func (rs *KS3Storage) ReadFile(ctx context.Context, file string) ([]byte, error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	rs.accessRec.RecRead(len(data))
 	return data, nil
 }
 
@@ -439,13 +458,14 @@ func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (E
 		return nil, errors.Trace(err)
 	}
 	if prefetchSize > 0 {
-		reader = prefetch.NewReader(reader, prefetchSize)
+		reader = prefetch.NewReader(reader, r.RangeSize(), prefetchSize)
 	}
 	return &ks3ObjectReader{
 		ctx:          ctx,
 		storage:      rs,
 		name:         path,
 		reader:       reader,
+		pos:          r.Start,
 		rangeInfo:    r,
 		prefetchSize: prefetchSize,
 	}, nil
@@ -508,8 +528,14 @@ func (rs *KS3Storage) open(
 	}
 
 	if startOffset != r.Start || (endOffset != 0 && endOffset != r.End+1) {
-		return nil, r, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed, expected range: %s, got: %v",
-			path, *rangeOffset, result.ContentRange)
+		rangeStr := "<empty>"
+		if result.ContentRange != nil {
+			rangeStr = *result.ContentRange
+		}
+		return nil, r, errors.Annotatef(
+			berrors.ErrStorageUnknown,
+			"open file '%s' failed, expected range: %s, got: %s",
+			path, *rangeOffset, rangeStr)
 	}
 
 	return result.Body, r, nil
@@ -537,9 +563,11 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 		maxCnt = int64(len(p))
 	}
 	n, err = r.reader.Read(p[:maxCnt])
+	n, err = injectfailpoint.RandomErrorForReadWithOnePerPercent(n, err)
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
 	for err != nil && errors.Cause(err) != io.EOF && retryCnt < maxErrorRetries { //nolint:errorlint
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		log.L().Warn(
 			"read s3 object failed, will retry",
 			zap.String("file", r.name),
@@ -553,19 +581,20 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 		}
 		_ = r.reader.Close()
 
-		newReader, _, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
+		newReader, rangeInfo, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
 		if err1 != nil {
 			log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err1))
 			return
 		}
 		r.reader = newReader
 		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+			r.reader = prefetch.NewReader(r.reader, rangeInfo.RangeSize(), r.prefetchSize)
 		}
 		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
 	}
 
+	r.storage.accessRec.RecRead(n)
 	r.pos += int64(n)
 	return
 }
@@ -632,7 +661,7 @@ func (r *ks3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.reader = newReader
 	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		r.reader = prefetch.NewReader(r.reader, info.RangeSize(), r.prefetchSize)
 	}
 	r.rangeInfo = info
 	r.pos = realOffset
@@ -684,6 +713,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 		}
 	} else {
 		up := s3manager.NewUploader(&s3manager.UploadOptions{
+			PartSize: option.PartSize,
 			Parallel: option.Concurrency,
 			S3:       rs.svc,
 		})
@@ -712,7 +742,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, rs.accessRec)
 	return uploaderWriter, nil
 }
 
@@ -734,3 +764,45 @@ func (rs *KS3Storage) Rename(ctx context.Context, oldFileName, newFileName strin
 
 // Close implements ExternalStorage interface.
 func (*KS3Storage) Close() {}
+
+func maybeObjectAlreadyExists(err awserr.Error) bool {
+	// Some versions of server did return the error code "ObjectAlreayExists"...
+	return err.Code() == "ObjectAlreayExists" || err.Code() == "ObjectAlreadyExists"
+}
+
+// CopyFrom implements Copier.
+func (rs *KS3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	s, ok := e.(*KS3Storage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", e)
+	}
+
+	copyInput := &s3.CopyObjectInput{
+		Bucket: aws.String(rs.options.Bucket),
+		// NOTE: Perhaps we need to allow copy cross regions / accounts.
+		CopySource: aws.String(path.Join(s.options.Bucket, s.options.Prefix, spec.From)),
+		Key:        aws.String(rs.options.Prefix + spec.To),
+	}
+
+	// NOTE: Maybe check whether the Go SDK will handle 200 OK errors.
+	// https://repost.aws/knowledge-center/s3-resolve-200-internalerror
+	_, err := s.svc.CopyObjectWithContext(ctx, copyInput)
+	if err != nil {
+		aErr, ok := err.(awserr.Error)
+		if !ok {
+			return err
+		}
+		// KS3 reports an error when copying an object to an existing path.
+		// AWS S3 will directly override the target. Simulating its behavior.
+		// Glitch: this isn't an atomic operation. So it is possible left nothing to `spec.To`...
+		if maybeObjectAlreadyExists(aErr) {
+			log.Warn("The object of `spec.To` already exists, will delete it and retry", zap.String("object", spec.To), logutil.ShortError(err))
+			if err := rs.DeleteFile(ctx, spec.To); err != nil {
+				return errors.Annotate(err, "during deleting an exist object for making place for copy")
+			}
+
+			return rs.CopyFrom(ctx, e, spec)
+		}
+	}
+	return nil
+}

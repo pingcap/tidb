@@ -20,9 +20,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -33,17 +33,17 @@ import (
 
 func defaultCtx() sessionctx.Context {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, ctx.GetSessionVars().MemQuotaQuery)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().SnapshotTS = uint64(1)
-	domain.BindDomain(ctx, domain.NewMockDomain())
+	ctx.BindDomainAndSchValidator(domain.NewMockDomain(), nil)
 	return ctx
 }
 
 func TestRequiredRows(t *testing.T) {
-	joinTypes := []logicalop.JoinType{logicalop.InnerJoin, logicalop.LeftOuterJoin, logicalop.RightOuterJoin}
+	joinTypes := []base.JoinType{base.InnerJoin, base.LeftOuterJoin, base.RightOuterJoin}
 	lTypes := [][]byte{
 		{mysql.TypeLong},
 		{mysql.TypeFloat},
@@ -78,7 +78,7 @@ func TestRequiredRows(t *testing.T) {
 				fields = append(fields, lfields...)
 				result := chunk.New(fields, maxChunkSize, maxChunkSize)
 
-				for i := 0; i < 10; i++ {
+				for range 10 {
 					required := rand.Int()%maxChunkSize + 1
 					result.SetRequiredRows(required, maxChunkSize)
 					result.Reset()

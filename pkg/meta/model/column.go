@@ -18,8 +18,8 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
@@ -48,21 +48,23 @@ type ChangeStateInfo struct {
 
 // ColumnInfo provides meta data describing of a table column.
 type ColumnInfo struct {
-	ID                    int64       `json:"id"`
-	Name                  model.CIStr `json:"name"`
-	Offset                int         `json:"offset"`
-	OriginDefaultValue    any         `json:"origin_default"`
-	OriginDefaultValueBit []byte      `json:"origin_default_bit"`
-	DefaultValue          any         `json:"default"`
-	DefaultValueBit       []byte      `json:"default_bit"`
+	ID                    int64     `json:"id"`
+	Name                  ast.CIStr `json:"name"`
+	Offset                int       `json:"offset"`
+	OriginDefaultValue    any       `json:"origin_default"`
+	OriginDefaultValueBit []byte    `json:"origin_default_bit"`
+	DefaultValue          any       `json:"default"`
+	DefaultValueBit       []byte    `json:"default_bit"`
 	// DefaultIsExpr is indicates the default value string is expr.
 	DefaultIsExpr       bool                `json:"default_is_expr"`
 	GeneratedExprString string              `json:"generated_expr_string"`
 	GeneratedStored     bool                `json:"generated_stored"`
 	Dependences         map[string]struct{} `json:"dependences"`
 	FieldType           types.FieldType     `json:"type"`
-	State               SchemaState         `json:"state"`
-	Comment             string              `json:"comment"`
+	// ChangingFieldType is used to store the new type of modify column.
+	ChangingFieldType *types.FieldType `json:"changing_type,omitempty"`
+	State             SchemaState      `json:"state"`
+	Comment           string           `json:"comment"`
 	// A hidden column is used internally(expression index) and are not accessible by users.
 	Hidden           bool `json:"hidden"`
 	*ChangeStateInfo `json:"change_state_info"`
@@ -72,11 +74,6 @@ type ColumnInfo struct {
 	// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
 	//              This will fix bug in version 0. For compatibility with version 0, we add version field in column info struct.
 	Version uint64 `json:"version"`
-}
-
-// IsVirtualGenerated checks the column if it is virtual.
-func (c *ColumnInfo) IsVirtualGenerated() bool {
-	return c.IsGenerated() && !c.GeneratedStored
 }
 
 // Clone clones ColumnInfo.
@@ -178,9 +175,14 @@ func (c *ColumnInfo) SetElems(elems []string) {
 	c.FieldType.SetElems(elems)
 }
 
-// IsGenerated returns true if the column is generated column.
+// IsGenerated checks if the column is a generated column.
 func (c *ColumnInfo) IsGenerated() bool {
 	return len(c.GeneratedExprString) != 0
+}
+
+// IsVirtualGenerated checks if the column is a virtual generated column.
+func (c *ColumnInfo) IsVirtualGenerated() bool {
+	return c.IsGenerated() && !c.GeneratedStored
 }
 
 // SetOriginDefaultValue sets the origin default value.
@@ -303,6 +305,7 @@ func NewExtraPhysTblIDColInfo() *ColumnInfo {
 		Name: ExtraPhysTblIDName,
 	}
 	colInfo.SetType(mysql.TypeLonglong)
+	colInfo.SetFlag(mysql.NotNullFlag)
 	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	colInfo.SetFlen(flen)
 	colInfo.SetDecimal(decimal)

@@ -1,0 +1,15 @@
+[lightning]
+index-concurrency = 1
+table-concurrency = 1
+
+[tikv-importer]
+backend = "local"
+parallel-import = true
+
+[checkpoint]
+enable = true
+driver = "file"
+
+[mydumper]
+read-block-size = 1
+filter = ['cppk_tsr.tbl1', 'cppk_tsr.tbl2', 'cppk_tsr.tbl7', 'cppk_tsr.tbl8', 'cppk_tsr.tbl9']
