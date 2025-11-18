@@ -1419,8 +1419,16 @@ func RunStreamRestore(
 	}
 
 	// Save PITR-related info to cfg for blocklist creation in defer function
-	cfg.piTRTaskInfo = taskInfo
 	cfg.tableMappingManager = metaInfoProcessor.GetTableMappingManager()
+
+	// Capture restore start timestamp before any table creation (for blocklist)
+	restoreStartTS, err := restore.GetTSWithRetry(ctx, mgr.GetPDClient())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.RestoreStartTS = restoreStartTS
+	log.Info("captured restore start timestamp for blocklist",
+		zap.Uint64("restoreStartTS", restoreStartTS))
 
 	// restore full snapshot.
 	if taskInfo.NeedFullRestore {
