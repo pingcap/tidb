@@ -89,6 +89,7 @@ import (
 	hintMpp1PhaseAgg          "MPP_1PHASE_AGG"
 	hintMpp2PhaseAgg          "MPP_2PHASE_AGG"
 	hintIgnoreIndex           "IGNORE_INDEX"
+	hintNoIndex               "NO_INDEX"
 	hintIndexJoin             "INDEX_JOIN"
 	hintNoIndexJoin           "NO_INDEX_JOIN"
 	hintInlHashJoin           "INL_HASH_JOIN"
@@ -111,6 +112,7 @@ import (
 	hintSwapJoinInputs        "SWAP_JOIN_INPUTS"
 	hintUseIndexMerge         "USE_INDEX_MERGE"
 	hintUseIndex              "USE_INDEX"
+	hintIndex                 "INDEX"
 	hintOrderIndex            "ORDER_INDEX"
 	hintNoOrderIndex          "NO_ORDER_INDEX"
 	hintUsePlanCache          "USE_PLAN_CACHE"
@@ -548,7 +550,7 @@ IndexNameList:
 			Indexes: []model.CIStr{model.NewCIStr($1)},
 		}
 	}
-|	IndexNameList ',' Identifier
+|	IndexNameList CommaOpt Identifier
 	{
 		h := $1
 		h.Indexes = append(h.Indexes, model.NewCIStr($3))
@@ -661,7 +663,9 @@ UnsupportedIndexLevelOptimizerHintName:
 
 SupportedIndexLevelOptimizerHintName:
 	"USE_INDEX"
+|   "INDEX"
 |	"IGNORE_INDEX"
+|   "NO_INDEX"
 |	"USE_INDEX_MERGE"
 |	"FORCE_INDEX"
 |	"ORDER_INDEX"
@@ -791,4 +795,7 @@ Identifier:
 |	"FIRSTMATCH"
 |	"LOOSESCAN"
 |	"MATERIALIZATION"
+/* Oracle hint names */
+|	"INDEX"
+|	"NO_INDEX"
 %%

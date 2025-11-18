@@ -365,6 +365,8 @@ const (
 	HintForce
 	HintOrderIndex
 	HintNoOrderIndex
+	HintIndex
+	HintNoIndex
 )
 
 // IndexHintScope is the type for index hint for join, order by or group by.

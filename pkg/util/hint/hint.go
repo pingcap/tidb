@@ -85,8 +85,12 @@ const (
 	HintMPP2PhaseAgg = "mpp_2phase_agg"
 	// HintUseIndex is hint enforce using some indexes.
 	HintUseIndex = "use_index"
+	// HintIndex is hint enforce using some indexes. if no index provided, all indexes will be considered.
+	HintIndex = "index"
 	// HintIgnoreIndex is hint enforce ignoring some indexes.
 	HintIgnoreIndex = "ignore_index"
+	// HintNoIndex is hint enforce not using some indexes. if no index provided, all indexes won't be considered.
+	HintNoIndex = "no_index"
 	// HintForceIndex make optimizer to use this index even if it thinks a table scan is more efficient.
 	HintForceIndex = "force_index"
 	// HintOrderIndex is hint enforce using some indexes and keep the index's order.
@@ -751,7 +755,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
-			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
+			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIndex, HintIgnoreIndex, HintNoIndex,
 			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
@@ -807,7 +811,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			preferAggType |= PreferStreamAgg
 		case HintAggToCop:
 			preferAggToCop = true
-		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex:
+		case HintUseIndex, HintIndex, HintIgnoreIndex, HintNoIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
 				dbName = pmodel.NewCIStr(currentDB)
@@ -816,8 +820,12 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			switch hint.HintName.L {
 			case HintUseIndex:
 				hintType = ast.HintUse
+			case HintIndex:
+				hintType = ast.HintIndex
 			case HintIgnoreIndex:
 				hintType = ast.HintIgnore
+			case HintNoIndex:
+				hintType = ast.HintNoIndex
 			case HintForceIndex:
 				hintType = ast.HintForce
 			case HintOrderIndex:

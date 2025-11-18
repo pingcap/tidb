@@ -241,3 +241,36 @@ explain format = 'brief' select /*+ use_index_merge(tt) */ * from tt where a=10 
 explain format = 'brief' select /*+ use_index_merge(tt) */ * from tt where a=15 or (a < 10 or a > 20);
 --disable_warnings
 
+# TestIndexHint
+use test;
+drop table if exists t;
+create table t (a int, b int, c int, key(b), key(c));
+insert into t values (1,1,1),(2,2,2),(3,3,3);
+explain select /*+ index(t b c) */ * from t where a = 1;
+--enable_warnings
+explain select /*+ index(t b xxxx) */ * from t where a = 1;
+--disable_warnings
+--enable_warnings
+explain select /*+ index(t xxx) */ * from t where a = 1;
+--disable_warnings
+drop table if exists t;
+
+# TestIndexHintNoSpecificIndex
+use test;
+drop table if exists t;
+create table t (a int, b int, c int, key(b), key(c));
+insert into t values (1,1,1),(2,2,2),(3,3,3);
+explain select /*+ index(t) */ * from t where a = 1;
+drop table if exists t;
+
+# TestNoIndexHint
+use test;
+drop table if exists t;
+create table t (a int primary key, b int, c int, key idx_b(b), key idx_c(c));
+insert into t values (1,1,1),(2,2,2),(3,3,3);
+explain select /*+ no_index(t) */ * from t where b = 2;
+explain select /*+ no_index(t idx_b) */ * from t where b = 2 and c = 2;
+explain select /*+ no_index(t idx_c) */ * from t where c = 2;
+explain select /*+ no_index(t idx_b, idx_c) */ * from t where b = 2 and c = 2;
+explain select /*+ no_index(t idx_b idx_c) */ * from t where b = 2 and c = 2;
+drop table if exists t;
