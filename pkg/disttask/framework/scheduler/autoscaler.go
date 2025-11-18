@@ -17,12 +17,15 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -36,31 +39,82 @@ const (
 	// Each node should handle at least 2 subtasks, each 100GiB data.
 	// For every additional 200 GiB of data, add 1 node.
 	baseDataSize = 200 * units.GiB
-	// To improve performance for small tasks, we assume that on an 8c machine,
+	// To improve performance for small tasks, we assume that on a 8c machine,
 	// importing 200 GiB of data requires full utilization of a single node’s resources.
 	// Therefore, for every additional 25 GiB, add 1 concurrency unit as an estimate for task concurrency.
 	baseSizePerConc = 25 * units.GiB
+	// The maximum number of nodes that can be used for add-index.
+	maxNodeCountLimitForAddIndex = 30
+	// The maximum number of nodes that can be used for import-into.
+	// this value is based on previous performance test, for a quite common scenario,
+	// to import 100TiB data within 24 hours, we need about 32 8c nodes.
+	// Note: import speed is affected by many factors, such as row length, index
+	// count, table schema complexity, etc.
+	maxNodeCountLimitForImportInto = 32
+	// this value is calculated by 256/8, we have test on a 8c machine with 256
+	// concurrency, it's fast enough for checksum. we can tune this later if needed.
+	maxDistSQLConcurrencyPerCore = 32
 )
 
-// CalcMaxNodeCountByTableSize calculates the maximum number of nodes to execute DXF based on the table size.
-func CalcMaxNodeCountByTableSize(size int64, coresPerNode int) int {
-	return calcMaxNodeCountBySize(size, coresPerNode, 30)
+// ResourceCalc is used to calculate the resource required for a DXF task
+// in nextgen.
+type ResourceCalc struct {
+	// dataSize is the input data size in bytes.
+	// for import-into, it's the size of the source data.
+	// for add-index, it's the size of the table to be indexed.
+	dataSize int64
+	// nodeCPU is the number of CPU cores of each execution node.
+	nodeCPU int
+	// indexSizeRatio is the ratio of index KV size to data KV size, we get it
+	// through sampling and estimation.
+	// it's used by import-into, for add-index, it's always 0.
+	indexSizeRatio float64
+	// TuneFactors is the tuning factors for resource calculation.
+	factors schstatus.TuneFactors
 }
 
-// CalcMaxNodeCountByDataSize calculates the maximum number of nodes to execute DXF based on the data size.
-func CalcMaxNodeCountByDataSize(size int64, coresPerNode int) int {
-	return calcMaxNodeCountBySize(size, coresPerNode, 32)
+// NewRCCalcForAddIndex creates a new ResourceCalc for add-index task.
+func NewRCCalcForAddIndex(dataSize int64, nodeCPU int, factors *schstatus.TuneFactors) *ResourceCalc {
+	return NewRCCalc(dataSize, nodeCPU, 0, factors)
 }
 
-func calcMaxNodeCountBySize(size int64, coresPerNode int, factor float64) int {
-	if coresPerNode <= 0 {
+// NewRCCalc creates a new ResourceCalc.
+func NewRCCalc(dataSize int64, nodeCPU int, indexSizeRatio float64, factors *schstatus.TuneFactors) *ResourceCalc {
+	return &ResourceCalc{
+		dataSize:       dataSize,
+		nodeCPU:        nodeCPU,
+		indexSizeRatio: indexSizeRatio,
+		factors:        *factors,
+	}
+}
+
+// CalcMaxNodeCountForAddIndex calculates the maximum number of nodes to execute add-index.
+func (rc *ResourceCalc) CalcMaxNodeCountForAddIndex() int {
+	size := rc.getAmplifiedDataSize()
+	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForAddIndex
+	return rc.calcMaxNodeCountBySize(size, limit)
+}
+
+// CalcMaxNodeCountForImportInto calculates the maximum number of nodes to execute import-into.
+func (rc *ResourceCalc) CalcMaxNodeCountForImportInto() int {
+	size := rc.getAmplifiedDataSize()
+	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForImportInto
+	return rc.calcMaxNodeCountBySize(size, limit)
+}
+
+func (rc *ResourceCalc) getAmplifiedDataSize() int64 {
+	return int64(rc.factors.AmplifyFactor * (1 + rc.indexSizeRatio) * float64(rc.dataSize))
+}
+
+func (rc *ResourceCalc) calcMaxNodeCountBySize(size int64, limit float64) int {
+	if rc.nodeCPU <= 0 {
 		return 0
 	}
-	r := baseCores / float64(coresPerNode)
+	r := baseCores / float64(rc.nodeCPU)
 	nodeCnt := float64(size) * r / baseDataSize
-	nodeCnt = min(nodeCnt, factor*r)
+	nodeCnt = min(nodeCnt, limit*r)
 	nodeCnt = max(nodeCnt, 1)
-	return int(nodeCnt)
+	return int(math.Round(nodeCnt))
 }
 
 // CalcMaxNodeCountByStoresNum calculates the maximum number of nodes to execute DXF based on the number of stores.
@@ -85,15 +139,16 @@ func CalcMaxNodeCountByStoresNum(ctx context.Context, store kv.Storage) int {
 	return max(3, len(stores)/3)
 }
 
-// CalcConcurrencyByDataSize calculates the concurrency based on the data size.
-func CalcConcurrencyByDataSize(size int64, coresPerNode int) int {
+// CalcConcurrency calculates the concurrency based on the data size.
+func (rc *ResourceCalc) CalcConcurrency() int {
+	size := rc.getAmplifiedDataSize()
 	if size <= 0 {
 		return 4
 	}
-	concurrency := size / baseSizePerConc
-	concurrency = min(concurrency, int64(coresPerNode))
+	concurrency := float64(size) / baseSizePerConc
+	concurrency = min(concurrency, float64(rc.nodeCPU))
 	concurrency = max(concurrency, 1)
-	return int(concurrency)
+	return int(math.Round(concurrency))
 }
 
 // GetExecCPUNode returns the number of CPU cores on the system keyspace node.
@@ -111,4 +166,21 @@ func GetExecCPUNode(ctx context.Context) (int, error) {
 		return 0, errors.Trace(err)
 	}
 	return cpuNode, nil
+}
+
+// CalcDistSQLConcurrency calculates the DistSQL concurrency based on the thread
+// count, max node count and CPU cores of each node.
+// when maxNodeCnt <= 1,we use task concurrency times DefDistSQLScanConcurrency,
+// else, we use a linear interpolation method to gradually increase the concurrency
+// to maxDistSQLConcurrencyPerCore*nodeCPU.
+func CalcDistSQLConcurrency(threadCnt, maxNodeCnt, nodeCPU int) int {
+	if maxNodeCnt <= 1 {
+		return threadCnt * vardef.DefDistSQLScanConcurrency
+	}
+
+	start := vardef.DefDistSQLScanConcurrency * nodeCPU
+	interval := nodeCPU * (maxDistSQLConcurrencyPerCore - vardef.DefDistSQLScanConcurrency)
+	totalStepCount := maxNodeCountLimitForImportInto - 1
+	stepCount := min(totalStepCount, maxNodeCnt-1)
+	return int(float64(start) + float64(interval)*float64(stepCount)/float64(totalStepCount))
 }

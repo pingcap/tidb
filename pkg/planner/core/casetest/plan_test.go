@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -151,57 +152,69 @@ func TestPreferRangeScanForDNF(t *testing.T) {
 	tk.MustExec("set @@session.tidb_opt_prefer_range_scan=1")
 }
 
+func testNormalizedPlan(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_partition_prune_mode='static';")
+	testKit.MustExec("drop table if exists t1,t2,t3,t4")
+	testKit.MustExec("create table t1 (a int key,b int,c int, index (b));")
+	testKit.MustExec("create table t2 (a int key,b int,c int, index (b));")
+	testKit.MustExec("create table t3 (a int key,b int) partition by hash(a) partitions 2;")
+	testKit.MustExec("create table t4 (a int, b int, index(a)) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
+	testKit.MustExec("set @@global.tidb_enable_foreign_key=1")
+	testKit.MustExec("set @@foreign_key_checks=1")
+	testKit.MustExec("create table t5 (id int key, id2 int, id3 int, unique index idx2(id2), index idx3(id3));")
+	testKit.MustExec("create table t6 (id int,     id2 int, id3 int, index idx_id(id), index idx_id2(id2), " +
+		"foreign key fk_1 (id) references t5(id) ON UPDATE CASCADE ON DELETE CASCADE, " +
+		"foreign key fk_2 (id2) references t5(id2) ON UPDATE CASCADE, " +
+		"foreign key fk_3 (id3) references t5(id3) ON DELETE CASCADE);")
+	testKit.MustExec("insert into t5 values (1,1,1), (2,2,2)")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	planNormalizedSuiteData := GetPlanNormalizedSuiteData()
+	planNormalizedSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+	for i, tt := range input {
+		testKit.Session().GetSessionVars().PlanID.Store(0)
+		testKit.MustExec(tt)
+		info := testKit.Session().ShowProcess()
+		require.NotNil(t, info)
+		p, ok := info.Plan.(base.Plan)
+		require.True(t, ok)
+		normalized, digest := core.NormalizePlan(p)
+
+		// test the new normalization code
+		flat := core.FlattenPhysicalPlan(p, false)
+		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
+		require.Equal(t, normalized, newNormalized)
+		require.Equal(t, digest, newDigest)
+		// Test for GenHintsFromFlatPlan won't panic.
+		core.GenHintsFromFlatPlan(flat)
+
+		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
+		normalizedPlanRows := getPlanRows(normalizedPlan)
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = normalizedPlanRows
+		})
+		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
+	}
+}
+
 func TestNormalizedPlan(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("set @@tidb_partition_prune_mode='static';")
-		testKit.MustExec("drop table if exists t1,t2,t3,t4")
-		testKit.MustExec("create table t1 (a int key,b int,c int, index (b));")
-		testKit.MustExec("create table t2 (a int key,b int,c int, index (b));")
-		testKit.MustExec("create table t3 (a int key,b int) partition by hash(a) partitions 2;")
-		testKit.MustExec("create table t4 (a int, b int, index(a)) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
-		testKit.MustExec("set @@global.tidb_enable_foreign_key=1")
-		testKit.MustExec("set @@foreign_key_checks=1")
-		testKit.MustExec("create table t5 (id int key, id2 int, id3 int, unique index idx2(id2), index idx3(id3));")
-		testKit.MustExec("create table t6 (id int,     id2 int, id3 int, index idx_id(id), index idx_id2(id2), " +
-			"foreign key fk_1 (id) references t5(id) ON UPDATE CASCADE ON DELETE CASCADE, " +
-			"foreign key fk_2 (id2) references t5(id2) ON UPDATE CASCADE, " +
-			"foreign key fk_3 (id3) references t5(id3) ON DELETE CASCADE);")
-		testKit.MustExec("insert into t5 values (1,1,1), (2,2,2)")
-		var input []string
-		var output []struct {
-			SQL  string
-			Plan []string
-		}
-		planNormalizedSuiteData := GetPlanNormalizedSuiteData()
-		planNormalizedSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		for i, tt := range input {
-			testKit.Session().GetSessionVars().PlanID.Store(0)
-			testKit.MustExec(tt)
-			info := testKit.Session().ShowProcess()
-			require.NotNil(t, info)
-			p, ok := info.Plan.(base.Plan)
-			require.True(t, ok)
-			normalized, digest := core.NormalizePlan(p)
+	if kerneltype.IsNextGen() {
+		t.Skip("Please run TestNormalizedPlanForNextGen under the next-gen mode")
+	}
+	testkit.RunTestUnderCascades(t, testNormalizedPlan)
+}
 
-			// test the new normalization code
-			flat := core.FlattenPhysicalPlan(p, false)
-			newNormalized, newDigest := core.NormalizeFlatPlan(flat)
-			require.Equal(t, normalized, newNormalized)
-			require.Equal(t, digest, newDigest)
-			// Test for GenHintsFromFlatPlan won't panic.
-			core.GenHintsFromFlatPlan(flat)
-
-			normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
-			normalizedPlanRows := getPlanRows(normalizedPlan)
-			require.NoError(t, err)
-			testdata.OnRecord(func() {
-				output[i].SQL = tt
-				output[i].Plan = normalizedPlanRows
-			})
-			compareStringSlice(t, normalizedPlanRows, output[i].Plan)
-		}
-	})
+func TestNormalizedPlanForNextGen(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("Please run TestNormalizedPlan under the non next-gen mode")
+	}
+	testkit.RunTestUnderCascades(t, testNormalizedPlan)
 }
 
 func TestPlanDigest4InList(t *testing.T) {
@@ -327,35 +340,51 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 	})
 }
 
+func testJSONPlanInExplain(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t1, t2")
+	testKit.MustExec("create table t1(id int, key(id))")
+	testKit.MustExec("create table t2(id int, key(id))")
+
+	var input []string
+	var output []struct {
+		SQL      string
+		JSONPlan []*core.ExplainInfoForEncode
+	}
+	planSuiteData := GetJSONPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+
+	for i, test := range input {
+		resJSON := testKit.MustQuery(test).Rows()
+		var res []*core.ExplainInfoForEncode
+		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), &res))
+		testdata.OnRecord(func() {
+			output[i].SQL = test
+			output[i].JSONPlan = res
+		})
+		for j, expect := range output[i].JSONPlan {
+			require.Equal(t, expect.ID, res[j].ID)
+			require.Equal(t, expect.EstRows, res[j].EstRows)
+			require.Equal(t, expect.ActRows, res[j].ActRows)
+			require.Equal(t, expect.TaskType, res[j].TaskType)
+			require.Equal(t, expect.AccessObject, res[j].AccessObject)
+			require.Equal(t, expect.OperatorInfo, res[j].OperatorInfo)
+		}
+	}
+}
+
 func TestJSONPlanInExplain(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("drop table if exists t1, t2")
-		testKit.MustExec("create table t1(id int, key(id))")
-		testKit.MustExec("create table t2(id int, key(id))")
+	if kerneltype.IsNextGen() {
+		t.Skip("Please run TestJSONPlanInExplainForNextGen under the next-gen mode")
+	}
+	testkit.RunTestUnderCascades(t, testJSONPlanInExplain)
+}
 
-		var input []string
-		var output []struct {
-			SQL      string
-			JSONPlan []*core.ExplainInfoForEncode
-		}
-		planSuiteData := GetJSONPlanSuiteData()
-		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-
-		for i, test := range input {
-			resJSON := testKit.MustQuery(test).Rows()
-			var res []*core.ExplainInfoForEncode
-			require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), &res))
-			for j, expect := range output[i].JSONPlan {
-				require.Equal(t, expect.ID, res[j].ID)
-				require.Equal(t, expect.EstRows, res[j].EstRows)
-				require.Equal(t, expect.ActRows, res[j].ActRows)
-				require.Equal(t, expect.TaskType, res[j].TaskType)
-				require.Equal(t, expect.AccessObject, res[j].AccessObject)
-				require.Equal(t, expect.OperatorInfo, res[j].OperatorInfo)
-			}
-		}
-	})
+func TestJSONPlanInExplainForNextGen(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("Please run TestJSONPlanInExplain under the non next-gen mode")
+	}
+	testkit.RunTestUnderCascades(t, testJSONPlanInExplain)
 }
 
 func TestHandleEQAll(t *testing.T) {
@@ -427,6 +456,14 @@ func TestOuterJoinElimination(t *testing.T) {
 		testKit.MustNotHavePlan("select distinct 1 from (select distinct a from t1) t1 left join t2 on t1.a = t2.a", "Join")
 		testKit.MustHavePlan("select t1.a from (select distinct a from t1) t1 left join t2 on t1.a = t2.a", "Join")
 		testKit.MustNotHavePlan("select distinct t1.a from (select distinct a from t1) t1 left join t2 on t1.a = t2.a", "Join")
+		// test subqueries in the select list with no_decorrelate_in_select=OFF
+		testKit.MustExec("set @@tidb_opt_enable_no_decorrelate_in_select=OFF")
+		testKit.MustHavePlan("select t1a.a, if(exists(select 1 from t2_uk t2b where t2b.a = t1a.a), 1, 0) as founda from t1 t1a left join t2_pk t2 on t1a.a = t2.a", "Join")
+		// test subqueries in the select list with no_decorrelate_in_select=ON
+		testKit.MustExec("set @@tidb_opt_enable_no_decorrelate_in_select=ON")
+		testKit.MustNotHavePlan("select t1a.a, if(exists(select 1 from t2_uk t2b where t2b.a = t1a.a), 1, 0) as founda from t1 t1a left join t2_pk t2 on t1a.a = t2.a", "Join")
+		// next query correlates on t2, so outer join elimination can't be applied
+		testKit.MustHavePlan("select t1a.a, if(exists(select 1 from t2_uk t2b where t2b.a = t2.a), 1, 0) as founda from t1 t1a left join t2_pk t2 on t1a.a = t2.a", "Join")
 	})
 }
 

@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
+	"github.com/aws/aws-sdk-go/aws/defaults"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
@@ -412,6 +414,12 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		awsSessionOpts.Profile = qs.Profile
 		// Use default credential chain when profile is specified
 		awsSessionOpts.SharedConfigState = session.SharedConfigEnable
+	}
+	if reqRec := recording.GetRequests(ctx); reqRec != nil {
+		awsSessionOpts.Handlers = defaults.Handlers()
+		awsSessionOpts.Handlers.Send.PushBack(func(r *request.Request) {
+			reqRec.Rec(r.HTTPRequest)
+		})
 	}
 	ses, err := session.NewSessionWithOptions(awsSessionOpts)
 	if err != nil {
@@ -1018,8 +1026,6 @@ type s3ObjectReader struct {
 	pos       int64
 	rangeInfo RangeInfo
 	// reader context used for implement `io.Seek`
-	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
-	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
 	ctx          context.Context
 	prefetchSize int
 }

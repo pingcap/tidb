@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -858,8 +860,7 @@ func TestExplainAnalyzeDML2(t *testing.T) {
 }
 
 func TestConflictReadFromStorage(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
@@ -1646,18 +1647,26 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 			testKit.MustExec("set @@sql_mode = ''")
 			rs = testKit.MustQuery(query).Rows()
 			checkRes(rs, 2, "mpp[tiflash]")
-			testKit.MustQuery("show warnings").Check(testkit.Rows())
 		}
 
 		// Insert into ... select
 		check("explain insert into t2 select a+b from t")
+		testKit.MustQuery("show warnings").Check(testkit.Rows())
 		check("explain insert into t2 select t.a from t2 join t on t2.a = t.a")
+		testKit.MustQuery("show warnings").Check(testkit.Rows())
 
 		// Replace into ... select
 		check("explain replace into t2 select a+b from t")
+		testKit.MustQuery("show warnings").Check(testkit.Rows())
 
 		// CTE
 		check("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)")
+		if kerneltype.IsClassic() {
+			testKit.MustQuery("show warnings").Check(testkit.Rows())
+		} else {
+			testKit.MustQuery("show warnings").Check(testkit.Rows(
+				"Warning 1105 MPP mode may be blocked because operator `SelectLock` is not supported now."))
+		}
 	})
 }
 
@@ -2289,6 +2298,15 @@ func TestNestedVirtualGeneratedColumnUpdate(t *testing.T) {
 	})
 }
 
+func TestIssue63949(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`use test`)
+		tk.MustExec(`create table t1 (a int)`)
+		tk.MustExec(`create table t2 (a int, b int, c int, d int, key ab(a, b), key abcd(a, b, c, d))`)
+		tk.MustUseIndex(`select /*+ tidb_inlj(t2) */ t2.a from t1, t2 where t1.a=t2.a and t2.b=1 and t2.d=1`, "abcd")
+	})
+}
+
 func TestIssue58829(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
@@ -2365,6 +2383,30 @@ JOIN
             ON A.BSTPRTFL_NO = f.BSTPRTFL_NO
     WHERE A.PCSG_BTNO_NO = 'MXUU2022123043502318'`)
 		require.True(t, len(r.Rows()) > 0) // no error
+	})
+}
+
+func TestIssue63869(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`use test`)
+		tk.MustExec(`create table ts (idx int, code int, a int, key k(idx, code))`)
+		tk.MustExec(`insert into ts select * from (
+		  with recursive tt as (
+			select 0 as idx, 0 as code, 0 as a
+			union all
+			select mod(a, 100) as idx, 0 as code, a+1 as a from tt where a<200
+		  ) select * from tt) tt`)
+		tk.MustExec(`create table h (idx int, code int, typ1 int, typ2 int, update_time int, key k1(idx, typ1, typ2), key k2(idx, update_time))`)
+		tk.MustExec(`insert into h select * from (
+		  with recursive tt as (
+			select 0 idx, 0 as code, 0 as typ1, 0 as typ2, 0 as update_time
+			union all
+			select mod(update_time, 5) as idx, 0 as code, 0 as typ1, 0 as typ2, update_time+1 as update_time from tt where update_time<200
+		  ) select * from tt) tt`)
+		tk.MustExec(`analyze table ts, h`)
+		// use the index k2(idx, update_time) since update_time has a higher NDV than typ1 and typ2
+		tk.MustUseIndex(`select /*+ tidb_inlj(h) */ 1 from ts inner join h on ts.idx=h.idx and ts.code=h.code
+				where h.typ1=0 and h.typ2=0 and h.update_time>0 and h.update_time<2 and h.code=0`, "k2")
 	})
 }
 

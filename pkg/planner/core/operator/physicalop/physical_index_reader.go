@@ -20,15 +20,14 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // PhysicalIndexReader is the index reader in tidb.
@@ -75,7 +74,7 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 // SetSchema overrides op.PhysicalPlan SetSchema interface.
 func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.IndexPlan != nil {
-		p.IndexPlans = FlattenPushDownPlan(p.IndexPlan)
+		p.IndexPlans = FlattenListPushDownPlan(p.IndexPlan)
 		switch p.IndexPlan.(type) {
 		case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalProjection:
 			p.PhysicalSchemaProducer.SetSchema(p.IndexPlan.Schema())
@@ -101,23 +100,6 @@ func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 	return corCols
 }
 
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.IndexPlan != nil {
-		rp.Children = append(rp.Children, p.IndexPlan.BuildPlanTrace())
-	}
-	return rp
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.BasePhysicalPlan.AppendChildCandidate(op)
-	if p.IndexPlan != nil {
-		AppendChildCandidate(p, p.IndexPlan, op)
-	}
-}
-
 // MemoryUsage return the memory usage of PhysicalIndexReader
 func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
 	if p == nil {
@@ -139,19 +121,19 @@ func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
 }
 
 // GetPlanCostVer1 implements PhysicalPlan cost v1 for IndexMergeReader.
-func (p *PhysicalIndexReader) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalIndexReader) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalIndexReader(p, taskType, option)
 }
 
 // GetPlanCostVer2 implements PhysicalPlan cost v2 for IndexMergeReader.
-func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
+func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalIndexReader(p, taskType, option, args...)
 }
 
 // LoadTableStats preloads the stats data for the physical table
 func (p *PhysicalIndexReader) LoadTableStats(ctx sessionctx.Context) {
 	is := p.IndexPlans[0].(*PhysicalIndexScan)
-	utilfuncp.LoadTableStats(ctx, is.Table, is.PhysicalTableID)
+	stats.LoadTableStats(ctx, is.Table, is.PhysicalTableID)
 }
 
 // AccessObject implements PartitionAccesser interface.
@@ -195,28 +177,6 @@ func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 	reader.SetSchema(schema)
 	reader.SetChildrenReqProps(props)
 	return reader
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexReader)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	if p.IndexPlan != nil {
-		indexPlan, ok := p.IndexPlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.IndexPlan = indexPlan.(base.PhysicalPlan)
-	}
-	cloned.IndexPlans = FlattenPushDownPlan(cloned.IndexPlan)
-	cloned.OutputColumns = utilfuncp.CloneColumnsForPlanCache(p.OutputColumns, nil)
-	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
-	return cloned, true
 }
 
 // ResolveIndices implements Plan interface.
