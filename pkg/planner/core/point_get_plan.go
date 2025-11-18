@@ -487,7 +487,7 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 		return nil
 	}
 
-	dbName := tblName.Schema.L
+	dbName := tblName.Schema.O
 	if dbName == "" {
 		dbName = ctx.GetSessionVars().CurrentDB
 	}
@@ -557,7 +557,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	if schema == nil {
 		return nil
 	}
-	dbName := tblName.Schema.L
+	dbName := tblName.Schema.O
 	if dbName == "" {
 		dbName = ctx.GetSessionVars().CurrentDB
 	}
@@ -579,7 +579,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 			tblName.IndexHints,
 		) {
 		if isTableDual {
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+			p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
@@ -608,7 +608,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 	var err error
 
 	tbl := tblName.TableInfo
-	dbName := tblName.Schema.L
+	dbName := tblName.Schema.O
 	if dbName == "" {
 		dbName = ctx.GetSessionVars().CurrentDB
 	}
@@ -645,7 +645,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 					continue
 				}
 			}
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+			p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}

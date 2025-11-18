@@ -3914,7 +3914,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			if user := b.ctx.GetSessionVars().User; user != nil {
 				authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT with locking clause", user.AuthUsername, user.AuthHostname, tNameW.Name.L)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv|mysql.UpdatePriv|mysql.LockTablesPriv, dbName, tNameW.Name.L, "", authErr)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv|mysql.UpdatePriv|mysql.LockTablesPriv, dbName, tNameW.Name.O, "", authErr)
 		}
 		p, err = b.buildSelectLock(p, l)
 		if err != nil {
@@ -4383,8 +4383,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if sessionVars.User != nil {
 		authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tableInfo.Name.L)
 	}
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
-
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.O, tableInfo.Name.O, "", authErr)
 	if tbl.Type().IsVirtualTable() {
 		if tn.TableSample != nil {
 			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in virtual tables")
@@ -5020,7 +5019,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	b.visitInfo = append(originalVisitInfo, b.visitInfo...)
 
 	if b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName.L, tableInfo.Name.L, "", plannererrors.ErrViewNoExplain)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName.O, tableInfo.Name.O, "", plannererrors.ErrViewNoExplain)
 	}
 
 	if len(tableInfo.Columns) != selectLogicalPlan.Schema().Len() {
@@ -5434,7 +5433,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		}
 		// Avoid adding CTE table to the SELECT privilege list, maybe we have better way to do this?
 		if _, ok := b.nameMapCTE[t.Name.L]; !ok {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.O, "", nil)
 		}
 	}
 
@@ -5776,7 +5775,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, name.OrigTblName.L, "", nil)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, name.OrigTblName.O, "", nil)
 	}
 	return newList, p, allAssignmentsAreConstant, nil
 }
@@ -5902,7 +5901,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			if sessionVars.User != nil {
 				authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tb.Name.L)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tnW.DBInfo.Name.L, tb.Name.L, "", authErr)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tnW.DBInfo.Name.O, tb.Name.O, "", authErr)
 		}
 	} else {
 		// Delete from a, b, c, d.
@@ -5926,7 +5925,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			if sessionVars.User != nil {
 				authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, v.Name.L)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.O, "", authErr)
 		}
 	}
 	handleColsMap := b.handleHelper.tailMap()
