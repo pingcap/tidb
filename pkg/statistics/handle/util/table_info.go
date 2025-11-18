@@ -30,6 +30,8 @@ type TableInfoGetter interface {
 	// If the physicalID is corresponding to a partition, return its parent table.
 	TableInfoByID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool)
 	// TableInfoByIDForInitStats returns the table info specified by the physicalID for initializing stats.
+	// It is very similar to TableInfoByID, but may have different internal implementation for optimization
+	// when used in the context of initializing statistics with InfoSchema V1.
 	TableInfoByIDForInitStats(is infoschema.InfoSchema, physicalID int64) (table.Table, bool)
 	// TableItemByID returns the schema name and table name specified by the physicalID.
 	// This is pure memory operation.
