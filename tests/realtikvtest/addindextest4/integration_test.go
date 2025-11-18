@@ -441,7 +441,9 @@ func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 
-		tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1")
+		if kerneltype.IsClassic() {
+			tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1")
+		}
 		if distTaskOn {
 			tk.MustExec("set global tidb_enable_dist_task = 1")
 		} else {
