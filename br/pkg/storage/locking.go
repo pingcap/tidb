@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -63,7 +64,7 @@ func (cx *VerifyWriteContext) IntentFileName() string {
 // - There shouldn't be any other intention files.
 // - Verify() returns no error. (If there is one.)
 func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.UUID, error) {
-	if _, ok := s.(StrongConsisency); !ok {
+	if _, ok := s.(StrongConsistency); !ok {
 		log.Warn("The external storage implementation doesn't provide a strong consistency guarantee. "+
 			"Please avoid concurrently accessing it if possible.",
 			zap.String("type", fmt.Sprintf("%T", s)))
@@ -170,7 +171,7 @@ func MakeLockMeta(hint string) LockMeta {
 	return meta
 }
 
-func readLockMeta(ctx context.Context, storage ExternalStorage, path string) (LockMeta, error) {
+func getLockMeta(ctx context.Context, storage ExternalStorage, path string) (LockMeta, error) {
 	file, err := storage.ReadFile(ctx, path)
 	if err != nil {
 		return LockMeta{}, errors.Annotatef(err, "failed to read existed lock file %s", path)
@@ -190,8 +191,12 @@ type RemoteLock struct {
 	path    string
 }
 
-func tryFetchRemoteLock(ctx context.Context, storage ExternalStorage, path string) error {
-	meta, err := readLockMeta(ctx, storage, path)
+func (l *RemoteLock) String() string {
+	return fmt.Sprintf("{path=%s,uuid=%s,storage_uri=%s}", l.path, l.txnID, l.storage.URI())
+}
+
+func tryFetchRemoteLockInfo(ctx context.Context, storage ExternalStorage, path string) error {
+	meta, err := getLockMeta(ctx, storage, path)
 	if err != nil {
 		return err
 	}
@@ -225,21 +230,22 @@ func TryLockRemote(ctx context.Context, storage ExternalStorage, path, hint stri
 	lock.path = path
 	lock.txnID, err = writer.CommitTo(ctx, storage)
 	if err != nil {
-		err = errors.Annotatef(err, "there is something about the lock: %s", tryFetchRemoteLock(ctx, storage, path))
+		lockInfo := tryFetchRemoteLockInfo(ctx, storage, path)
+		err = errors.Annotatef(err, "failed to acquire lock on '%s': %s", path, lockInfo)
 	}
 	return
 }
 
-// UnlockRemote removes the lock file at the specified path.
+// Unlock  removes the lock file at the specified path.
 // Removing that file will release the lock.
 func (l RemoteLock) Unlock(ctx context.Context) error {
-	meta, err := readLockMeta(ctx, l.storage, l.path)
+	meta, err := getLockMeta(ctx, l.storage, l.path)
 	if err != nil {
 		return err
 	}
-	// NOTE: this is for debug usage. For now, there isn't an Compare-And-Swap
+	// NOTE: this is for debug usage. For now, there isn't a Compare-And-Swap
 	// operation in our ExternalStorage abstraction.
-	// So, once our lock has been overwritten or we are overwriting other's lock,
+	// So, once our lock has been overwritten, or we are overwriting other's lock,
 	// this information will be useful for troubleshooting.
 	if !bytes.Equal(l.txnID[:], meta.TxnID) {
 		return errors.Errorf("Txn ID mismatch: remote is %v, our is %v", meta.TxnID, l.txnID)
@@ -253,6 +259,23 @@ func (l RemoteLock) Unlock(ctx context.Context) error {
 	return nil
 }
 
+func (l RemoteLock) UnlockOnCleanUp(ctx context.Context) {
+	const cleanUpContextTimeOut = 30 * time.Second
+
+	if ctx.Err() != nil {
+		logutil.CL(ctx).Warn("Unlocking but the context was done. Use the background context with a deadline.",
+			logutil.AShortError("ctx-err", ctx.Err()))
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), cleanUpContextTimeOut)
+		defer cancel()
+	}
+
+	if err := l.Unlock(ctx); err != nil {
+		logutil.CL(ctx).Warn("Failed to unlock a lock, you may need to manually delete it.",
+			zap.Stringer("lock", &l), zap.Int("pid", os.Getpid()), logutil.ShortError(err))
+	}
+}
+
 func writeLockName(path string) string {
 	return fmt.Sprintf("%s.WRIT", path)
 }
@@ -260,6 +283,48 @@ func writeLockName(path string) string {
 func newReadLockName(path string) string {
 	readID := rand.Int63()
 	return fmt.Sprintf("%s.READ.%016x", path, readID)
+}
+
+type Locker = func(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error)
+
+const (
+	// lockRetryTimes specifies the maximum number of times to retry acquiring a lock.
+	// This prevents infinite retries while allowing enough attempts for temporary contention to resolve.
+	lockRetryTimes = 60
+)
+
+func LockWithRetry(ctx context.Context, locker Locker, storage ExternalStorage, path, hint string) (
+	lock RemoteLock, err error) {
+	const JitterMs = 5000
+
+	retry := utils.InitialRetryState(lockRetryTimes, 1*time.Second, 60*time.Second)
+	jitter := time.Duration(rand.Uint32()%JitterMs+(JitterMs/2)) * time.Millisecond
+	for {
+		lock, err = locker(ctx, storage, path, hint)
+		if err == nil {
+			return lock, nil
+		}
+
+		if !retry.ShouldRetry() {
+			return RemoteLock{}, errors.Annotatef(err, "failed to acquire lock after %d retries", lockRetryTimes)
+		}
+
+		retryAfter := retry.ExponentialBackoff() + jitter
+		log.Info(
+			"Encountered lock, will retry",
+			logutil.ShortError(err),
+			zap.String("path", path),
+			zap.Duration("retry-after", retryAfter),
+			zap.Int("remaining-attempts", retry.RemainingAttempts()),
+		)
+
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			return
+		case <-time.After(retryAfter):
+		}
+	}
 }
 
 func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
@@ -288,7 +353,7 @@ func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint
 	lock.path = target
 	lock.txnID, err = writer.CommitTo(ctx, storage)
 	if err != nil {
-		err = errors.Annotatef(err, "there is something about the lock: %s", tryFetchRemoteLock(ctx, storage, target))
+		err = errors.Annotatef(err, "something wrong about the lock: %s", tryFetchRemoteLockInfo(ctx, storage, target))
 	}
 	return
 }
@@ -321,8 +386,7 @@ func TryLockRemoteRead(ctx context.Context, storage ExternalStorage, path, hint 
 	lock.txnID, err = writer.CommitTo(ctx, storage)
 	if err != nil {
 		err = errors.Annotatef(err, "failed to commit the lock due to existing lock: "+
-			"there is something about the lock: %s", tryFetchRemoteLock(ctx, storage, writeLock))
+			"something wrong about the lock: %s", tryFetchRemoteLockInfo(ctx, storage, writeLock))
 	}
-
 	return
 }

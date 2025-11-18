@@ -109,14 +109,16 @@ func (ds *pubSubDataSink) run() error {
 	for {
 		select {
 		case task := <-ds.sendTaskCh:
-			ctx, cancel := context.WithDeadline(ds.ctx, task.deadline)
-			var err error
+			ctx, rcancel := context.WithDeadline(ds.ctx, task.deadline)
+			// use a cancel cause context to return error safely
+			var cancel context.CancelCauseFunc
+			ctx, cancel = context.WithCancelCause(ctx)
 
 			start := time.Now()
 			go util.WithRecovery(func() {
-				defer cancel()
+				var err error
+				defer cancel(err)
 				err = ds.doSend(ctx, task.data)
-
 				if err != nil {
 					reporter_metrics.ReportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
 				} else {
@@ -129,6 +131,8 @@ func (ds *pubSubDataSink) run() error {
 			// In order to clean up resources as quickly as possible, we let that closure run in an individual goroutine,
 			// and wait for timeout here.
 			<-ctx.Done()
+			// useless, it is called to prevent linter error
+			rcancel()
 
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				logutil.BgLogger().Warn(
@@ -139,7 +143,7 @@ func (ds *pubSubDataSink) run() error {
 			}
 
 			failpoint.Inject("mockGrpcLogPanic", nil)
-			if err != nil {
+			if err := context.Cause(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				logutil.BgLogger().Warn(
 					"[top-sql] pubsub datasink failed to send data to subscriber",
 					zap.Error(err),

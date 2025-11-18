@@ -31,15 +31,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
 
 func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
 	sm := &testkit.MockSessionManager{}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
@@ -222,7 +222,7 @@ select 10;`
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowQueryFile = fileName4
 	})
-	for k := 0; k < 2; k++ {
+	for k := range 2 {
 		// k = 0 for normal files
 		// k = 1 for compressed files
 		var fileNames []string

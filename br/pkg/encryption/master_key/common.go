@@ -4,6 +4,7 @@ package encryption
 
 import (
 	"crypto/rand"
+	"slices"
 
 	"github.com/pingcap/errors"
 )
@@ -47,9 +48,9 @@ func NewIVGcm() (IV, error) {
 func NewIVFromSlice(src []byte) (IV, error) {
 	switch len(src) {
 	case CtrIv16:
-		return IV{Type: IvTypeCtr, Data: append([]byte(nil), src...)}, nil
+		return IV{Type: IvTypeCtr, Data: slices.Clone(src)}, nil
 	case GcmIv12:
-		return IV{Type: IvTypeGcm, Data: append([]byte(nil), src...)}, nil
+		return IV{Type: IvTypeGcm, Data: slices.Clone(src)}, nil
 	default:
 		return IV{}, errors.Errorf("invalid IV length, must be 12 or 16 bytes, got %d", len(src))
 	}

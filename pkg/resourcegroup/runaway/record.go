@@ -19,13 +19,14 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -213,21 +214,37 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 	return builder.String(), params
 }
 
+// hasDeletedExpiredRows just test mark for delete expired rows once.
+var hasDeletedExpiredRows = atomic.Bool{}
+
 func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	const (
 		tableName = "tidb_runaway_queries"
 		colName   = "start_time"
 	)
-	var systemSchemaCIStr = model.NewCIStr("mysql")
+	var systemSchemaCIStr = ast.NewCIStr("mysql")
 
 	if !rm.ddl.OwnerManager().IsOwner() {
 		return
 	}
+	batchSize := runawayRecordGCSelectBatchSize
+	deleteSize := runawayRecordGCBatchSize
 	failpoint.Inject("FastRunawayGC", func() {
-		expiredDuration = time.Second * 1
+		expiredDuration = time.Millisecond * 1
+		deleteSize = 2
+		batchSize = 5 * deleteSize
 	})
+
+	failpoint.Inject("deleteExpiredRows", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return()
+		}
+	})
+	if hasDeletedExpiredRows.Load() {
+		return
+	}
 	expiredTime := time.Now().Add(-expiredDuration)
-	tbCIStr := model.NewCIStr(tableName)
+	tbCIStr := ast.NewCIStr(tableName)
 	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
@@ -239,7 +256,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		logutil.BgLogger().Error("time column is not public in table", zap.String("table", tableName), zap.String("column", colName))
 		return
 	}
-	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, model.NewCIStr(""), col)
+	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, ast.NewCIStr(""), col)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
@@ -252,7 +269,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	var leftRows [][]types.Datum
 	for {
 		sql := ""
-		if sql, err = generator.NextSQL(leftRows, runawayRecordGCSelectBatchSize); err != nil {
+		if sql, err = generator.NextSQL(leftRows, batchSize); err != nil {
 			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 			return
 		}
@@ -260,7 +277,6 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		if len(sql) == 0 {
 			return
 		}
-
 		rows, sqlErr := ExecRCRestrictedSQL(rm.sysSessionPool, sql, nil)
 		if sqlErr != nil {
 			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
@@ -270,16 +286,15 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		for i, row := range rows {
 			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
 		}
-
-		for len(leftRows) > 0 {
-			var delBatch [][]types.Datum
-			if len(leftRows) < runawayRecordGCBatchSize {
-				delBatch = leftRows
-				leftRows = nil
-			} else {
-				delBatch = leftRows[0:runawayRecordGCBatchSize]
-				leftRows = leftRows[runawayRecordGCBatchSize:]
+		failpoint.Inject("deleteExpiredRows", func() {
+			hasDeletedExpiredRows.Store(true)
+		})
+		for startIndex := 0; startIndex < len(leftRows); startIndex += deleteSize {
+			endIndex := startIndex + deleteSize
+			if endIndex > len(leftRows) {
+				endIndex = len(leftRows)
 			}
+			delBatch := leftRows[startIndex:endIndex]
 			sql, err := sqlbuilder.BuildDeleteSQL(tb, delBatch, expiredTime)
 			if err != nil {
 				logutil.BgLogger().Error(
@@ -416,7 +431,7 @@ func (rm *Manager) AddRunawayWatch(record *QuarantineRecord) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	for retry := 0; retry < maxIDRetries; retry++ {
+	for retry := range maxIDRetries {
 		if retry > 0 {
 			select {
 			case <-rm.exit:
@@ -460,4 +475,20 @@ func (rm *Manager) RemoveRunawayWatch(recordID int64) error {
 
 	err = handleRunawayWatchDone(rm.sysSessionPool, records[0])
 	return err
+}
+
+// RemoveRunawayResourceGroupWatch is used to remove all runaway watch items of a resource group.
+func (rm *Manager) RemoveRunawayResourceGroupWatch(groupName string) error {
+	rm.runawaySyncer.mu.Lock()
+	defer rm.runawaySyncer.mu.Unlock()
+	records, err := rm.runawaySyncer.getWatchRecordByGroup(groupName)
+	if err != nil {
+		return errors.Annotate(err, "get watch records by resource group failed")
+	}
+	for _, record := range records {
+		if err := handleRunawayWatchDone(rm.sysSessionPool, record); err != nil {
+			return errors.Annotatef(err, "remove watch for resource group %s failed", groupName)
+		}
+	}
+	return nil
 }

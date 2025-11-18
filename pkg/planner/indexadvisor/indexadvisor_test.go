@@ -110,7 +110,7 @@ func TestIndexAdvisorBasic2(t *testing.T) {
 	tk.MustExec(`use test`)
 
 	sqls := make([]string, 0, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf(`create table t%d (a int, b int, c int)`, i))
 		sql := fmt.Sprintf("select * from t%d", i) // useless SQLs
 		sqls = append(sqls, sql)
@@ -176,12 +176,12 @@ func TestIndexAdvisorMassive(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`recommend index set max_num_index=3`)
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		sql := fmt.Sprintf(`create table t%d(c0 int,c1 int,c2 int,c3 int,c4 int,c5 int,c6 int,c7 int)`, i)
 		tk.MustExec(sql)
 	}
 	sqls := make([]string, 0, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		sql := fmt.Sprintf("select * from t%d where c%d=1 and c%d=1 and c%d=1",
 			rand.Intn(10), rand.Intn(8), rand.Intn(8), rand.Intn(8))
 		sqls = append(sqls, sql)
@@ -577,4 +577,15 @@ func TestIndexAdvisorStorage(t *testing.T) {
 		"b \"Column [b] appear in Equal or Range Predicate clause(s) in query: select `b` from `test` . `t` where `b` = ?\"",
 		"b,c \"Column [b c] appear in Equal or Range Predicate clause(s) in query: select `c` , `b` from `test` . `t` where `c` = ? and `b` = ?\"",
 		"d \"Column [d] appear in Equal or Range Predicate clause(s) in query: select `d` from `test` . `t` where `d` = ?\""))
+}
+
+func TestIndexAdvisorCreateIndexStmt(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int)`)
+	results := tk.MustQuery(`recommend index run for "select a from t where a=1"`).Rows()
+	require.Len(t, results, 1)
+	ddl := results[0][7].(string)
+	require.Equal(t, "CREATE INDEX idx_a ON t(a);", ddl)
 }

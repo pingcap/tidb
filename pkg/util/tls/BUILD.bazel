@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "tls",
@@ -6,4 +6,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/tls",
     visibility = ["//visibility:public"],
     deps = ["@org_uber_go_atomic//:atomic"],
+)
+
+go_test(
+    name = "tls_test",
+    timeout = "short",
+    srcs = ["tls_test.go"],
+    embed = [":tls"],
+    flaky = True,
 )

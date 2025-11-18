@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -53,13 +53,13 @@ func TestRuntimeFilterGenerator(t *testing.T) {
 	// set tiflash replica
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
 		Available: true,
 	}
-	tblInfo, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
+	tblInfo, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -85,8 +85,8 @@ func TestRuntimeFilterGenerator(t *testing.T) {
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + ts).Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
 }

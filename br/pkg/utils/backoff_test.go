@@ -101,7 +101,7 @@ func TestWithRetryReturnLastErr(t *testing.T) {
 		return nil
 	}, backoffStrategy)
 	require.Equal(t, 4, counter)
-	require.ErrorIs(t, berrors.ErrKVRangeIsEmpty, err)
+	require.ErrorIs(t, err, berrors.ErrKVRangeIsEmpty)
 }
 
 func TestBackoffWithFatalRawGRPCError(t *testing.T) {

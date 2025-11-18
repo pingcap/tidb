@@ -19,11 +19,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"go.uber.org/zap"
 )
@@ -54,6 +53,10 @@ func convertAddIdxJob2RollbackJob(
 			failpoint.Return(0, errors.New("mock convert add index job to rollback job error"))
 		}
 	})
+	if job.Type == model.ActionModifyColumn {
+		job.State = model.JobStateRollingback
+		return 0, err
+	}
 
 	dropArgs := &model.ModifyIndexArgs{
 		PartitionIDs: getPartitionIDs(tblInfo),
@@ -94,20 +97,12 @@ func convertAddIdxJob2RollbackJob(
 	job.State = model.JobStateRollingback
 	// TODO(tangenta): get duplicate column and match index.
 	err = completeErr(err, allIndexInfos[0])
-	if ingest.LitBackCtxMgr != nil {
-		ingest.LitBackCtxMgr.Unregister(job.ID)
-	}
 	return ver, errors.Trace(err)
 }
 
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, occuredErr error) (ver int64, err error) {
-	defer func() {
-		if ingest.LitBackCtxMgr != nil {
-			ingest.LitBackCtxMgr.Unregister(job.ID)
-		}
-	}()
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
@@ -139,22 +134,32 @@ func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, oc
 // normal-type has only two states:    None -> Public
 // reorg-type has five states:         None -> Delete-only -> Write-only -> Write-org -> Public
 func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	if !job.IsRollbackable() {
+		job.State = model.JobStateRunning
+		return ver, nil
+	}
+
 	args, err := model.GetModifyColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	_, tblInfo, oldCol, err := getModifyColumnInfo(jobCtx.metaMut, job, args.OldColumnName)
+	_, tblInfo, oldCol, err := getModifyColumnInfo(jobCtx.metaMut, job, args)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if !needChangeColumnData(oldCol, args.Column) {
-		// Normal-type rolling back
+
+	switch args.ModifyColumnType {
+	case ModifyTypeNone:
+		// The job hasn't been handled and we cancel it directly.
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	case ModifyTypeNoReorg, ModifyTypeNoReorgWithCheck, ModifyTypePrecheck:
 		if job.SchemaState == model.StateNone {
 			// When change null to not null, although state is unchanged with none, the oldCol flag's has been changed to preNullInsertFlag.
 			// To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
-			if args.ModifyColumnType == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].GetFlag()|mysql.PreventNullInsertFlag != 0 {
+			if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
 				job.State = model.JobStateRollingback
 				return ver, dbterror.ErrCancelledDDLJob
 			}
@@ -165,15 +170,17 @@ func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		// StatePublic couldn't be cancelled.
 		job.State = model.JobStateRunning
 		return ver, nil
-	}
-	// reorg-type rolling back
-	if args.ChangingColumn == nil {
-		// The job hasn't been handled and we cancel it directly.
-		job.State = model.JobStateCancelled
+	case ModifyTypeReorg, ModifyTypeIndexReorg:
+		// reorg-type rolling back
+		if args.ChangingColumn == nil {
+			// The job hasn't been handled and we cancel it directly.
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrCancelledDDLJob
+		}
+		// The job has been in its middle state (but the reorg worker hasn't started) and we roll it back here.
+		job.State = model.JobStateRollingback
 		return ver, dbterror.ErrCancelledDDLJob
 	}
-	// The job has been in its middle state (but the reorg worker hasn't started) and we roll it back here.
-	job.State = model.JobStateRollingback
 	return ver, dbterror.ErrCancelledDDLJob
 }
 
@@ -257,11 +264,11 @@ func rollingbackDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	}
 }
 
-func rollingbackAddVectorIndex(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+func rollingbackAddColumanrIndex(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	if job.SchemaState == model.StateWriteReorganization {
-		// Add vector index workers are started. need to ask them to exit.
+		// Add columnar index workers are started. need to ask them to exit.
 		jobCtx.logger.Info("run the cancelling DDL job", zap.String("job", job.String()))
-		ver, err = w.onCreateVectorIndex(jobCtx, job)
+		ver, err = w.onCreateColumnarIndex(jobCtx, job)
 	} else {
 		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
 		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
@@ -609,8 +616,8 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingbackAddIndex(jobCtx, job)
 	case model.ActionAddPrimaryKey:
 		ver, err = rollingbackAddIndex(jobCtx, job)
-	case model.ActionAddVectorIndex:
-		ver, err = rollingbackAddVectorIndex(w, jobCtx, job)
+	case model.ActionAddColumnarIndex:
+		ver, err = rollingbackAddColumanrIndex(w, jobCtx, job)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(jobCtx, job)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
@@ -677,10 +684,10 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 			// Once `convertJob2RollbackJob` meets an error, the job state can't be set as `JobStateRollingback` since
 			// job state and args may not be correctly overwritten. The job will be fetched to run with the cancelling
 			// state again. So we should check the error count here.
-			if err1 := loadDDLVars(w); err1 != nil {
+			if err1 := w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit); err1 != nil {
 				logger.Error("load DDL global variable failed", zap.Error(err1))
 			}
-			errorCount := variable.GetDDLErrorCountLimit()
+			errorCount := vardef.GetDDLErrorCountLimit()
 			if job.ErrorCount > errorCount {
 				logger.Warn("rollback DDL job error count exceed the limit, cancelled it now", zap.Int64("errorCountLimit", errorCount))
 				job.Error = toTError(errors.Errorf("rollback DDL job error count exceed the limit %d, cancelled it now", errorCount))

@@ -1,4 +1,4 @@
-set @@global.tidb_scatter_region='table'
+set @@global.tidb_scatter_region='table';
 drop table if exists t;
 set tidb_enable_clustered_index = on;
 create table t (a varchar(255) primary key, b bigint);

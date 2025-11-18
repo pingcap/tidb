@@ -32,7 +32,7 @@ func (b *builtinLog1ArgSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, res
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -56,7 +56,7 @@ func (b *builtinLog2Sig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -80,7 +80,7 @@ func (b *builtinLog10Sig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, resul
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -104,7 +104,7 @@ func (b *builtinSqrtSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -126,7 +126,7 @@ func (b *builtinAcosSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -148,7 +148,7 @@ func (b *builtinAsinSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -170,7 +170,7 @@ func (b *builtinAtan1ArgSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, re
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -203,7 +203,7 @@ func (b *builtinAtan2ArgsSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, r
 
 	result.MergeNulls(buf)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -221,7 +221,7 @@ func (b *builtinCosSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result 
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -239,7 +239,7 @@ func (b *builtinCotSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result 
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -267,7 +267,7 @@ func (b *builtinDegreesSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, res
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -285,7 +285,7 @@ func (b *builtinExpSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result 
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -310,7 +310,7 @@ func (b *builtinRadiansSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, res
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -328,7 +328,7 @@ func (b *builtinSinSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result 
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -346,7 +346,7 @@ func (b *builtinTanSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result 
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -366,7 +366,7 @@ func (b *builtinAbsDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, r
 	zero := new(types.MyDecimal)
 	buf := new(types.MyDecimal)
 	d64s := result.Decimals()
-	for i := 0; i < len(d64s); i++ {
+	for i := range d64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -390,7 +390,7 @@ func (b *builtinRoundDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk,
 	}
 	d64s := result.Decimals()
 	buf := new(types.MyDecimal)
-	for i := 0; i < len(d64s); i++ {
+	for i := range d64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -425,7 +425,7 @@ func (b *builtinPowSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result 
 	y := result.Float64s()
 	result.MergeNulls(buf1)
 	f64s := result.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -447,7 +447,7 @@ func (b *builtinFloorRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, r
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -477,7 +477,7 @@ func (b *builtinLog2ArgsSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, re
 	d := result.Float64s()
 	x := buf1.Float64s()
 	result.MergeNulls(buf1)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -500,7 +500,7 @@ func (b *builtinCeilRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, re
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -518,7 +518,7 @@ func (b *builtinRoundRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, r
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -548,7 +548,7 @@ func (b *builtinRoundWithFracRealSig) vecEvalReal(ctx EvalContext, input *chunk.
 	x := result.Float64s()
 	d := buf1.Int64s()
 	result.MergeNulls(buf1)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -578,7 +578,7 @@ func (b *builtinTruncateRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk
 	result.MergeNulls(buf1)
 	x := result.Float64s()
 	d := buf1.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -596,7 +596,7 @@ func (b *builtinAbsRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, res
 		return err
 	}
 	f64s := result.Float64s()
-	for i := 0; i < len(f64s); i++ {
+	for i := range f64s {
 		f64s[i] = math.Abs(f64s[i])
 	}
 	return nil
@@ -611,7 +611,7 @@ func (b *builtinAbsIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 		return err
 	}
 	i64s := result.Int64s()
-	for i := 0; i < len(i64s); i++ {
+	for i := range i64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -655,7 +655,7 @@ func (b *builtinRoundWithFracIntSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 	i64s := result.Int64s()
 	frac := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -738,7 +738,7 @@ func (b *builtinRandWithSeedFirstGenSig) vecEvalReal(ctx EvalContext, input *chu
 	result.ResizeFloat64(n, false)
 	i64s := buf.Int64s()
 	f64s := result.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// When the seed is null we need to use 0 as the seed.
 		// The behavior same as MySQL.
 		rng := mathutil.NewWithSeed(0)
@@ -771,7 +771,7 @@ func (b *builtinCeilIntToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Ch
 	i64s := buf.Int64s()
 	d := result.Decimals()
 	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -810,7 +810,7 @@ func (b *builtinTruncateIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 		return nil
 	}
 
-	for i := 0; i < len(i64s); i++ {
+	for i := range i64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -854,7 +854,7 @@ func (b *builtinTruncateUintSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 		return nil
 	}
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -883,7 +883,7 @@ func (b *builtinCeilDecToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Ch
 	}
 	ds := result.Decimals()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -912,7 +912,7 @@ func (b *builtinFloorDecToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 	}
 	ds := result.Decimals()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -957,7 +957,7 @@ func (b *builtinTruncateDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk
 	ds := result.Decimals()
 	i64s := buf.Int64s()
 	ft := b.getRetTp().GetDecimal()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -992,7 +992,7 @@ func (b *builtinRoundWithFracDecSig) vecEvalDecimal(ctx EvalContext, input *chun
 	tmp := new(types.MyDecimal)
 	d64s := result.Decimals()
 	i64s := buf.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1026,7 +1026,7 @@ func (b *builtinFloorIntToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 	i64s := buf.Int64s()
 	d := result.Decimals()
 	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1057,7 +1057,7 @@ func (b *builtinSignSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < len(i64s); i++ {
+	for i := range i64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1106,7 +1106,7 @@ func (b *builtinConvSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	result.ReserveString(n)
 	fromBase := buf2.Int64s()
 	toBase := buf3.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf1.IsNull(i) || buf2.IsNull(i) || buf3.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1151,7 +1151,7 @@ func (b *builtinCeilDecToIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 
 	d := buf.Decimals()
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1205,7 +1205,7 @@ func (b *builtinFloorDecToIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 
 	d := buf.Decimals()
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}

@@ -33,13 +33,15 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -89,7 +91,7 @@ func (d *Checker) CreateTestDB(ctx sessionctx.Context) {
 	d.tracker.CreateTestDB(ctx)
 }
 
-func (d *Checker) checkDBInfo(ctx sessionctx.Context, dbName pmodel.CIStr) {
+func (d *Checker) checkDBInfo(ctx sessionctx.Context, dbName ast.CIStr) {
 	if d.closed.Load() {
 		return
 	}
@@ -122,7 +124,7 @@ func (d *Checker) checkDBInfo(ctx sessionctx.Context, dbName pmodel.CIStr) {
 	}
 }
 
-func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName pmodel.CIStr) {
+func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName ast.CIStr) {
 	if d.closed.Load() {
 		return
 	}
@@ -399,6 +401,16 @@ func (d *Checker) UnlockTables(ctx sessionctx.Context, lockedTables []model.Tabl
 	return d.realExecutor.UnlockTables(ctx, lockedTables)
 }
 
+// AlterTableMode implements the DDL interface.
+func (d *Checker) AlterTableMode(ctx sessionctx.Context, args *model.AlterTableModeArgs) error {
+	return d.realExecutor.AlterTableMode(ctx, args)
+}
+
+// RefreshMeta implements the DDL interface.
+func (d *Checker) RefreshMeta(ctx sessionctx.Context, args *model.RefreshMetaArgs) error {
+	return d.realExecutor.RefreshMeta(ctx, args)
+}
+
 // CleanupTableLock implements the DDL interface.
 func (d *Checker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
 	return d.realExecutor.CleanupTableLock(ctx, tables)
@@ -484,13 +496,13 @@ func (d *Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInf
 }
 
 // CreateTableWithInfo implements the DDL interface.
-func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ pmodel.CIStr, _ *model.TableInfo, _ []model.InvolvingSchemaInfo, _ ...ddl.CreateTableOption) error {
+func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ ast.CIStr, _ *model.TableInfo, _ []model.InvolvingSchemaInfo, _ ...ddl.CreateTableOption) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // BatchCreateTableWithInfo implements the DDL interface.
-func (*Checker) BatchCreateTableWithInfo(_ sessionctx.Context, _ pmodel.CIStr, _ []*model.TableInfo, _ ...ddl.CreateTableOption) error {
+func (*Checker) BatchCreateTableWithInfo(_ sessionctx.Context, _ ast.CIStr, _ []*model.TableInfo, _ ...ddl.CreateTableOption) error {
 	//TODO implement me
 	panic("implement me")
 }
@@ -512,7 +524,7 @@ func (d *Checker) Stats(vars *variable.SessionVars) (map[string]any, error) {
 }
 
 // GetScope implements the DDL interface.
-func (d *Checker) GetScope(status string) variable.ScopeFlag {
+func (d *Checker) GetScope(status string) vardef.ScopeFlag {
 	return d.realDDL.GetScope(status)
 }
 
@@ -563,8 +575,16 @@ func (d *Checker) DoDDLJobWrapper(ctx sessionctx.Context, jobW *ddl.JobWrapper) 
 	return de.DoDDLJobWrapper(ctx, jobW)
 }
 
+// InitFromIS initializes the schema tracker from an InfoSchema.
+func (d *Checker) InitFromIS(is infoschema.InfoSchema) {
+	if err := d.tracker.InitFromIS(is); err != nil {
+		logutil.BgLogger().Warn("failed to init schema tracker from info schema", zap.Error(err))
+	}
+}
+
 type storageAndMore interface {
 	kv.Storage
+	kv.StorageWithPD
 	kv.EtcdBackend
 	helper.Storage
 }

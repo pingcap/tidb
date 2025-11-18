@@ -21,12 +21,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -49,6 +50,12 @@ func (m *taskManager) LockScanTask(se session.Session, task *cache.TTLTask, now 
 // ResizeWorkersWithSysVar is an exported version of resizeWorkersWithSysVar
 func (m *taskManager) ResizeWorkersWithSysVar() {
 	m.resizeWorkersWithSysVar()
+}
+
+// ResizeWorkersToZero resize workers to zero
+func (m *taskManager) ResizeWorkersToZero(t *testing.T) {
+	require.NoError(t, m.resizeScanWorkers(0))
+	require.NoError(t, m.resizeDelWorkers(0))
 }
 
 // RescheduleTasks is an exported version of rescheduleTasks
@@ -112,8 +119,41 @@ func (m *taskManager) CheckInvalidTask(se session.Session) {
 }
 
 // UpdateHeartBeat is an exported version of updateHeartBeat
-func (m *taskManager) UpdateHeartBeat(ctx context.Context, se session.Session, now time.Time) error {
-	return m.updateHeartBeat(ctx, se, now)
+func (m *taskManager) UpdateHeartBeat(ctx context.Context, se session.Session, now time.Time) {
+	m.updateHeartBeat(ctx, se, now)
+}
+
+// UpdateHeartBeatForTask is an exported version of updateHeartBeatForTask
+func (m *taskManager) UpdateHeartBeatForTask(ctx context.Context, se session.Session, now time.Time, task *runningScanTask) error {
+	return m.taskHeartbeatOrResignOwner(ctx, se, now, task, false)
+}
+
+// SetWaitWorkerStopTimeoutForTest sets the waitWorkerStopTimeout for testing
+func SetWaitWorkerStopTimeoutForTest(timeout time.Duration) func() {
+	original := waitWorkerStopTimeout
+	waitWorkerStopTimeout = timeout
+	return func() {
+		waitWorkerStopTimeout = original
+	}
+}
+
+// GetTerminateInfo returns the task terminates info
+func (t *runningScanTask) GetTerminateInfo() (bool, TaskTerminateReason, time.Time) {
+	if t.result == nil {
+		return false, "", time.Time{}
+	}
+	return true, t.result.reason, t.result.time
+}
+
+// GetStatistics returns the ttlStatistics
+func (t *runningScanTask) GetStatistics() *ttlStatistics {
+	return t.statistics
+}
+
+// ResetEndTimeForTest resets the end time
+func (t *runningScanTask) ResetEndTimeForTest(tb *testing.T, tm time.Time) {
+	require.NotNil(tb, t.result)
+	t.result.time = tm
 }
 
 func TestResizeWorkers(t *testing.T) {
@@ -244,18 +284,26 @@ func (s *mockTiKVStore) GetRegionCache() *tikv.RegionCache {
 }
 
 func TestGetMaxRunningTasksLimit(t *testing.T) {
-	variable.TTLRunningTasks.Store(1)
+	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	vardef.TTLRunningTasks.Store(1)
 	require.Equal(t, 1, getMaxRunningTasksLimit(&mockTiKVStore{}))
 
-	variable.TTLRunningTasks.Store(2)
+	vardef.TTLRunningTasks.Store(2)
 	require.Equal(t, 2, getMaxRunningTasksLimit(&mockTiKVStore{}))
 
-	variable.TTLRunningTasks.Store(-1)
-	require.Equal(t, variable.MaxConfigurableConcurrency, getMaxRunningTasksLimit(nil))
-	require.Equal(t, variable.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockKVStore{}))
-	require.Equal(t, variable.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockTiKVStore{}))
+	vardef.TTLRunningTasks.Store(-1)
+	require.Equal(t, vardef.MaxConfigurableConcurrency, getMaxRunningTasksLimit(nil))
+	require.Equal(t, vardef.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockKVStore{}))
+	require.Equal(t, vardef.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockTiKVStore{}))
 
-	s := &mockTiKVStore{regionCache: tikv.NewRegionCache(nil)}
+	s := &mockTiKVStore{regionCache: tikv.NewRegionCache(pdClient)}
 	s.GetRegionCache().SetRegionCacheStore(1, "", "", tikvrpc.TiKV, 1, nil)
 	s.GetRegionCache().SetRegionCacheStore(2, "", "", tikvrpc.TiKV, 1, nil)
 	s.GetRegionCache().SetRegionCacheStore(3, "", "", tikvrpc.TiFlash, 1, nil)

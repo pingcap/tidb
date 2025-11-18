@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -126,6 +127,7 @@ func (w *baseWorker) loop() {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Info("ttl worker panic", zap.Any("recover", r), zap.Stack("stack"))
+			intest.Assert(false, "ttl worker panic")
 		}
 		w.Lock()
 		w.toStopped(err)

@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
@@ -68,7 +68,7 @@ func TestAnalyzeStaticPartitionedTable(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
 
-	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	partitionInfo := tableInfo.Meta().GetPartitionInfo()
 	require.NotNil(t, partitionInfo)
@@ -82,10 +82,10 @@ func TestAnalyzeStaticPartitionedTable(t *testing.T) {
 	// Before analyze the partition.
 	handle := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats := handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.True(t, tblStats.Pseudo)
 
 	valid, failReason := job.ValidateAndPrepare(tk.Session())
@@ -94,10 +94,10 @@ func TestAnalyzeStaticPartitionedTable(t *testing.T) {
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats = handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.False(t, tblStats.Pseudo)
 	require.Equal(t, int64(1), tblStats.RealtimeCount)
 }
@@ -108,7 +108,7 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, index idx(a), index idx1(b)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
-	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	partitionInfo := tableInfo.Meta().GetPartitionInfo()
 	require.NotNil(t, partitionInfo)
@@ -121,10 +121,10 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Before analyze indexes.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats := handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.False(t, tblStats.GetIdx(1).IsAnalyzed())
 
 	valid, failReason := job.ValidateAndPrepare(tk.Session())
@@ -134,10 +134,10 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats = handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.NotNil(t, tblStats.GetIdx(1))
 	require.True(t, tblStats.GetIdx(1).IsAnalyzed())
 	require.NotNil(t, tblStats.GetIdx(2))
@@ -151,11 +151,11 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 func TestStaticPartitionedTableValidateAndPrepare(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(session.CreateAnalyzeJobs)
+	tk.MustExec(session.CreateAnalyzeJobsTable)
 	tk.MustExec("create schema example_schema")
 	tk.MustExec("use example_schema")
 	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
-	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("example_schema"), model.NewCIStr("example_table"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("example_schema"), ast.NewCIStr("example_table"))
 	require.NoError(t, err)
 	partitionInfo := tableInfo.Meta().GetPartitionInfo()
 	require.NotNil(t, partitionInfo)

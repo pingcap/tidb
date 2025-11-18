@@ -32,21 +32,26 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/util"
 )
 
 // RequestBuilder is used to build a "kv.Request".
 // It is called before we issue a kv request by "Select".
+// Notice a builder can only be used once unless it returns an error in test.
 type RequestBuilder struct {
 	kv.Request
-	is  infoschema.MetaOnlyInfoSchema
-	err error
+	is   infoschema.MetaOnlyInfoSchema
+	err  error
+	used bool
 
 	// When SetDAGRequest is called, builder will also this field.
 	dag *tipb.DAGRequest
@@ -54,6 +59,10 @@ type RequestBuilder struct {
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
+	if builder.used && intest.InTest {
+		return nil, errors.Errorf("request builder is already used")
+	}
+	builder.used = true
 	if builder.ReadReplicaScope == "" {
 		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}
@@ -81,14 +90,17 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 
 	if dag := builder.dag; dag != nil {
 		if execCnt := len(dag.Executors); execCnt == 1 {
-			oldConcurrency := builder.Request.Concurrency
 			// select * from t order by id
-			if builder.Request.KeepOrder {
+			if builder.Request.KeepOrder && builder.Request.Concurrency == vardef.DefDistSQLScanConcurrency {
 				// When the DAG is just simple scan and keep order, set concurrency to 2.
 				// If a lot data are returned to client, mysql protocol is the bottleneck so concurrency 2 is enough.
 				// If very few data are returned to client, the speed is not optimal but good enough.
+				//
+				// If a user set @@tidb_distsql_scan_concurrency, he must be doing it by intention.
+				// so only rewrite concurrency when @@tidb_distsql_scan_concurrency is default value.
 				switch dag.Executors[0].Tp {
 				case tipb.ExecType_TypeTableScan, tipb.ExecType_TypeIndexScan, tipb.ExecType_TypePartitionTableScan:
+					oldConcurrency := builder.Request.Concurrency
 					builder.Request.Concurrency = 2
 					failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 						if val.(bool) {
@@ -181,12 +193,31 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
 		builder.dag = dag
-		if execCnt := len(dag.Executors); execCnt != 0 && dag.Executors[execCnt-1].GetLimit() != nil {
+		execCnt := len(dag.Executors)
+		if execCnt != 0 && dag.Executors[execCnt-1].GetLimit() != nil {
 			limit := dag.Executors[execCnt-1].GetLimit()
 			builder.Request.LimitSize = limit.GetLimit()
-			// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
-			if execCnt == 2 {
-				if limit.Limit < estimatedRegionRowCount {
+		}
+
+		if execCnt >= 2 {
+			// When the DAG is just a simple scan and small limit, set concurrency to 1 would be sufficient.
+			secondExec := dag.Executors[1]
+			if limit := secondExec.GetLimit(); limit != nil && limit.Limit < estimatedRegionRowCount {
+				minimalConcurrency := false
+				if execCnt == 2 {
+					// execCnt == 2 indicates TableScan / IndexScan -> Limit
+					minimalConcurrency = true
+				} else {
+					// if execCnt > 2 and the limit's parent is IndexLookup,
+					// it means the DAG is a push-down IndexLookUp and its build side is IndexScan -> Limit.
+					// We can also apply minimal concurrency here.
+					limitParent := int(secondExec.GetParentIdx())
+					if limitParent > 0 && dag.Executors[limitParent].IndexLookup != nil {
+						minimalConcurrency = true
+					}
+				}
+
+				if minimalConcurrency {
 					if kr := builder.Request.KeyRanges; kr != nil {
 						builder.Request.Concurrency = kr.PartitionNum()
 					} else {
@@ -386,6 +417,12 @@ func (builder *RequestBuilder) SetResourceGroupName(name string) *RequestBuilder
 	return builder
 }
 
+// SetRequestSource sets the request source.
+func (builder *RequestBuilder) SetRequestSource(reqSource util.RequestSource) *RequestBuilder {
+	builder.RequestSource = reqSource
+	return builder
+}
+
 // SetExplicitRequestSourceType sets the explicit request source type.
 func (builder *RequestBuilder) SetExplicitRequestSourceType(sourceType string) *RequestBuilder {
 	builder.RequestSource.ExplicitRequestSourceType = sourceType
@@ -500,9 +537,9 @@ func tableRangesToKVRangesWithoutSplit(tids []int64, ranges []*ranger.Range) *kv
 	return kv.NewPartitionedKeyRanges(krs)
 }
 
-func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
-	low := codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
-	high := codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
+func encodeHandleKey(ran *ranger.Range) (low, high []byte) {
+	low = codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
+	high = codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
 	if ran.LowExclude {
 		low = kv.Key(low).PrefixNext()
 	}
@@ -526,7 +563,7 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 //
 // if `KeepOrder` is false, we merge the two groups of ranges into one group, to save a rpc call later
 // if `desc` is false, return signed ranges first, vice versa.
-func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
+func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) (signedRanges, unsignedRanges []*ranger.Range) {
 	if isCommonHandle || len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
 		return ranges, nil
 	}
@@ -546,8 +583,8 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 		return signedRanges, unsignedRanges
 	}
 	// need to split the range that straddles the int64 boundary
-	signedRanges := make([]*ranger.Range, 0, idx+1)
-	unsignedRanges := make([]*ranger.Range, 0, len(ranges)-idx)
+	signedRanges = make([]*ranger.Range, 0, idx+1)
+	unsignedRanges = make([]*ranger.Range, 0, len(ranges)-idx)
 	signedRanges = append(signedRanges, ranges[0:idx]...)
 	if !(ranges[idx].LowVal[0].GetUint64() == math.MaxInt64 && ranges[idx].LowExclude) {
 		signedRanges = append(signedRanges, &ranger.Range{
@@ -791,7 +828,7 @@ func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, 
 }
 
 // EncodeIndexKey gets encoded keys containing low and high
-func EncodeIndexKey(dctx *distsqlctx.DistSQLContext, ran *ranger.Range) ([]byte, []byte, error) {
+func EncodeIndexKey(dctx *distsqlctx.DistSQLContext, ran *ranger.Range) (low, high []byte, err error) {
 	tz := time.UTC
 	errCtx := errctx.StrictNoWarningContext
 	if dctx != nil {
@@ -799,7 +836,7 @@ func EncodeIndexKey(dctx *distsqlctx.DistSQLContext, ran *ranger.Range) ([]byte,
 		errCtx = dctx.ErrCtx
 	}
 
-	low, err := codec.EncodeKey(tz, nil, ran.LowVal...)
+	low, err = codec.EncodeKey(tz, nil, ran.LowVal...)
 	err = errCtx.HandleError(err)
 	if err != nil {
 		return nil, nil, err
@@ -807,7 +844,7 @@ func EncodeIndexKey(dctx *distsqlctx.DistSQLContext, ran *ranger.Range) ([]byte,
 	if ran.LowExclude {
 		low = kv.Key(low).PrefixNext()
 	}
-	high, err := codec.EncodeKey(tz, nil, ran.HighVal...)
+	high, err = codec.EncodeKey(tz, nil, ran.HighVal...)
 	err = errCtx.HandleError(err)
 	if err != nil {
 		return nil, nil, err

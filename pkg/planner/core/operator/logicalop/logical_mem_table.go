@@ -15,17 +15,16 @@
 package logicalop
 
 import (
+	"slices"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -43,7 +42,7 @@ type LogicalMemTable struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
 	Extractor base.MemTablePredicateExtractor
-	DBName    pmodel.CIStr     `hash64-equals:"true"`
+	DBName    ast.CIStr        `hash64-equals:"true"`
 	TableInfo *model.TableInfo `hash64-equals:"true"`
 	Columns   []*model.ColumnInfo
 	// QueryTimeRange is used to specify the time range for metrics summary tables and inspection tables
@@ -65,24 +64,26 @@ func (p LogicalMemTable) Init(ctx base.PlanContext, offset int) *LogicalMemTable
 // HashCode inherits BaseLogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	if p.Extractor != nil {
 		failpoint.Inject("skipExtractor", func(_ failpoint.Value) {
-			failpoint.Return(predicates, p.Self())
+			failpoint.Return(predicates, p.Self(), nil)
 		})
 		predicates = p.Extractor.Extract(p.SCtx(), p.Schema(), p.OutputNames(), predicates)
 	}
-	return predicates, p.Self()
+	return predicates, p.Self(), nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	switch p.TableInfo.Name.O {
 	case infoschema.TableStatementsSummary,
 		infoschema.TableStatementsSummaryHistory,
+		infoschema.TableTiDBStatementsStats,
 		infoschema.TableSlowQuery,
 		infoschema.ClusterTableStatementsSummary,
 		infoschema.ClusterTableStatementsSummaryHistory,
+		infoschema.ClusterTableTiDBStatementsStats,
 		infoschema.ClusterTableSlowLog,
 		infoschema.TableTiDBTrx,
 		infoschema.ClusterTableTiDBTrx,
@@ -98,18 +99,12 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && p.Schema().Len() > 1 {
 			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
-			p.SetOutputNames(append(p.OutputNames()[:i], p.OutputNames()[i+1:]...))
-			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
+			p.Schema().Columns = slices.Delete(p.Schema().Columns, i, i+1)
+			p.SetOutputNames(slices.Delete(p.OutputNames(), i, i+1))
+			p.Columns = slices.Delete(p.Columns, i, i+1)
 		}
 	}
-	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
 	return p, nil
-}
-
-// FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask4LogicalMemTable(p, prop, planCounter, opt)
 }
 
 // BuildKeyInfo inherits BaseLogicalPlan.<4th> implementation.
@@ -127,9 +122,13 @@ func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty, planCoun
 // RecursiveDeriveStats inherits BaseLogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
+func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && p.StatsInfo() != nil {
+		return p.StatsInfo(), false, nil
 	}
 	statsTable := statistics.PseudoTable(p.TableInfo, false, false)
 	stats := &property.StatsInfo{
@@ -142,7 +141,7 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 		stats.ColNDVs[col.UniqueID] = float64(statsTable.RealtimeCount)
 	}
 	p.SetStats(stats)
-	return p.StatsInfo(), nil
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.

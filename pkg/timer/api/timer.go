@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/robfig/cron/v3"
@@ -52,6 +53,9 @@ func NewSchedIntervalPolicy(expr string) (*SchedIntervalPolicy, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "invalid schedule event expr '%s'", expr)
 	}
+	failpoint.Inject("overwrite-ttl-job-interval", func(val failpoint.Value) {
+		interval = time.Duration(val.(int))
+	})
 
 	return &SchedIntervalPolicy{
 		expr:     expr,

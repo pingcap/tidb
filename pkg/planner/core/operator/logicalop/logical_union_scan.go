@@ -21,10 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -61,7 +58,7 @@ func (p *LogicalUnionScan) ExplainInfo() string {
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	var predicatesWithVCol, predicatesWithoutVCol []expression.Expression
 	// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
 	// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
@@ -73,17 +70,20 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression,
 		}
 	}
 	predicates = predicatesWithoutVCol
-	retainedPredicates, _ := p.Children()[0].PredicatePushDown(predicates, opt)
+	retainedPredicates, _, err := p.Children()[0].PredicatePushDown(predicates)
+	if err != nil {
+		return nil, nil, err
+	}
 	p.Conditions = make([]expression.Expression, 0, len(predicates))
 	p.Conditions = append(p.Conditions, predicates...)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
 	retainedPredicates = append(retainedPredicates, predicatesWithVCol...)
-	return retainedPredicates, p
+	return retainedPredicates, p, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	for i := 0; i < p.HandleCols.NumCols(); i++ {
+func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
+	for i := range p.HandleCols.NumCols() {
 		parentUsedCols = append(parentUsedCols, p.HandleCols.GetCol(i))
 	}
 	for _, col := range p.Schema().Columns {
@@ -91,10 +91,10 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 			parentUsedCols = append(parentUsedCols, col)
 		}
 	}
-	condCols := expression.ExtractColumnsFromExpressions(nil, p.Conditions, nil)
+	condCols := expression.ExtractColumnsFromExpressions(p.Conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
 	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)
+	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
@@ -122,10 +122,10 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalUnionScan) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan(p, prop)
+func (p *LogicalUnionScan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+	// ref exhaustPhysicalPlans4LogicalUnionScan: it will push down the sort prop directly.
+	// in union scan exec, it will feel the underlying tableReader or indexReader to get the keepOrder.
+	return p.Children()[0].PreparePossibleProperties(schema, childrenProperties...)
 }
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.

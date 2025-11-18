@@ -1,0 +1,44 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sem",
+    srcs = [
+        "config.go",
+        "sem.go",
+        "sql_rule.go",
+        "testhelper.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/sem/v2",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/storage",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "@com_github_coreos_go_semver//semver",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "sem_test",
+    timeout = "short",
+    srcs = [
+        "config_test.go",
+        "sem_test.go",
+        "sql_rule_test.go",
+    ],
+    embed = [":sem"],
+    flaky = True,
+    deps = [
+        "//pkg/parser",
+        "//pkg/parser/charset",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
+        "@com_github_stretchr_testify//require",
+    ],
+)

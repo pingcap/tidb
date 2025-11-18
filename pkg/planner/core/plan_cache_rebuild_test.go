@@ -30,8 +30,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -79,6 +81,14 @@ func TestPlanCacheClone(t *testing.T) {
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b>?'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b>?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// IndexLookUp push-down
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ index_lookup_pushdown(t, b) */ * from t where b<=?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ index_lookup_pushdown(t, b) */ * from t where b>?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ index_lookup_pushdown(t, b) */ * from t where b>?'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 
 	// IndexMerge
@@ -238,11 +248,11 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 	ctx = context.WithValue(ctx, core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
 		checked = true
 		require.NoError(t, checkUnclearPlanCacheClone(plan, cloned,
-			".ctx", ".AccessCondition", ".filterCondition", ".Conditions", ".Exprs", ".IndexConstants",
+			".ctx", ".AccessCondition", ".FilterCondition", ".Conditions", ".Exprs", ".IndexConstants",
 			"*collate", ".IdxCols", ".OutputColumns", ".EqualConditions", ".OuterHashKeys", ".InnerHashKeys",
-			".HandleParams", ".IndexValueParams", ".Insert.Lists", ".accessCols", ".physicalSchemaProducer.schema",
-			".PruningConds", ".PlanPartInfo.Columns", ".PlanPartInfo.ColumnNames", ".baseSchemaProducer.schema",
-			".pkIsHandleCol", "JoinKeys", ".OtherConditions", ".ExtraHandleCol", ".PointGetPlan.HandleConstant"))
+			".HandleParams", ".IndexValueParams", ".Insert.Lists", ".accessCols", ".PhysicalSchemaProducer.schema",
+			".PruningConds", ".PlanPartInfo.Columns", ".PlanPartInfo.ColumnNames", ".SimpleSchemaProducer.schema",
+			".PkIsHandleCol", "JoinKeys", ".OtherConditions", ".ExtraHandleCol", ".PointGetPlan.HandleConstant"))
 	})
 	if isDML {
 		tk2.MustExecWithContext(ctx, exec2)
@@ -254,44 +264,44 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 
 func TestCheckPlanClone(t *testing.T) {
 	// totally same pointer
-	ts1 := &core.PhysicalTableScan{}
-	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts1).Error(), "same pointer, path *core.PhysicalTableScan")
+	ts1 := &physicalop.PhysicalTableScan{}
+	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts1).Error(), "same pointer, path *physicalop.PhysicalTableScan")
 
 	// share the same slice
-	ts2 := &core.PhysicalTableScan{}
+	ts2 := &physicalop.PhysicalTableScan{}
 	ts1.AccessCondition = make([]expression.Expression, 10)
 	ts2.AccessCondition = ts1.AccessCondition
-	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same slice pointers, path *core.PhysicalTableScan.AccessCondition")
+	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same slice pointers, path *physicalop.PhysicalTableScan.AccessCondition")
 
 	// same slice element
 	ts2.AccessCondition = make([]expression.Expression, 10)
 	expr := &expression.Column{}
 	ts1.AccessCondition[0] = expr
 	ts2.AccessCondition[0] = expr
-	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.AccessCondition[0](*expression.Column)")
+	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *physicalop.PhysicalTableScan.AccessCondition[0](*expression.Column)")
 
 	// same map
-	l1 := &core.PhysicalLock{}
-	l2 := &core.PhysicalLock{}
+	l1 := &physicalop.PhysicalLock{}
+	l2 := &physicalop.PhysicalLock{}
 	l1.TblID2Handle = make(map[int64][]util.HandleCols)
 	l2.TblID2Handle = l1.TblID2Handle
-	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same map pointers, path *core.PhysicalLock.TblID2Handle")
+	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same map pointers, path *physicalop.PhysicalLock.TblID2Handle")
 
 	// same pointer in map
 	l2.TblID2Handle = make(map[int64][]util.HandleCols)
 	cols := make([]util.HandleCols, 10)
 	l1.TblID2Handle[1] = cols
 	l2.TblID2Handle[1] = cols
-	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same slice pointers, path *core.PhysicalLock.TblID2Handle[int64]")
+	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same slice pointers, path *physicalop.PhysicalLock.TblID2Handle[int64]")
 
 	// same sctx
 	l1.TblID2Handle[1] = nil
 	l2.TblID2Handle[1] = nil
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer ctx.Close()
 	l1.SetSCtx(ctx)
 	l2.SetSCtx(ctx)
-	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same pointer, path *core.PhysicalLock.BasePhysicalPlan.Plan.ctx(*mock.Context)")
+	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same pointer, path *physicalop.PhysicalLock.BasePhysicalPlan.Plan.ctx(*mock.Context)")
 
 	// test tag
 	type S struct {
@@ -358,7 +368,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 
 	switch v1.Kind() {
 	case reflect.Array:
-		for i := 0; i < v1.Len(); i++ {
+		for i := range v1.Len() {
 			if err := planCacheUnclearCloneCheck(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), visited, whiteLists...); err != nil {
 				return err
 			}
@@ -379,7 +389,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 		if v1.Pointer() == v2.Pointer() {
 			return errors.Errorf("same slice pointers, path %v", path)
 		}
-		for i := 0; i < v1.Len(); i++ {
+		for i := range v1.Len() {
 			if err := planCacheUnclearCloneCheck(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), visited, whiteLists...); err != nil {
 				return err
 			}
@@ -466,19 +476,35 @@ func TestFastPointGetClone(t *testing.T) {
 	cloneFuncCode := strings.Join(codeLines[beginIdx:endIdx+1], "\n")
 	fieldNoNeedToClone := map[string]struct{}{
 		"cost":         {},
-		"planCostInit": {},
-		"planCost":     {},
-		"planCostVer2": {},
+		"PlanCostInit": {},
+		"PlanCost":     {},
+		"PlanCostVer2": {},
 		"accessCols":   {},
 	}
 
-	pointPlan := reflect.TypeOf(core.PointGetPlan{})
-	for i := 0; i < pointPlan.NumField(); i++ {
+	fieldSetBySetter := map[string]string{
+		"dbName":      "SetDBName(",
+		"schema":      "SetSchema(",
+		"outputNames": "SetOutputNames(",
+		"ctx":         "SetCtx(",
+	}
+
+	pointPlan := reflect.TypeOf(physicalop.PointGetPlan{})
+	for i := range pointPlan.NumField() {
 		fieldName := pointPlan.Field(i).Name
 		if _, ok := fieldNoNeedToClone[fieldName]; ok {
 			continue
 		}
+
 		assignFieldCode := fmt.Sprintf("%v =", fieldName)
+
+		if setterCode, ok := fieldSetBySetter[fieldName]; ok {
+			if !strings.Contains(cloneFuncCode, setterCode) {
+				errMsg := fmt.Sprintf("field %v should be set via setter method in FastClonePointGetForPlanCache", fieldName)
+				t.Fatal(errMsg)
+			}
+			continue
+		}
 		if !strings.Contains(cloneFuncCode, assignFieldCode) {
 			errMsg := fmt.Sprintf("field %v might not be set in FastClonePointGetForPlanCache correctly", fieldName)
 			t.Fatal(errMsg)
@@ -500,8 +526,8 @@ func BenchmarkPointGetCloneFast(b *testing.B) {
 	require.NoError(b, err)
 
 	b.ResetTimer()
-	src := plan.(*core.PointGetPlan)
-	dst := new(core.PointGetPlan)
+	src := plan.(*physicalop.PointGetPlan)
+	dst := new(physicalop.PointGetPlan)
 	sctx := tk.Session().GetPlanCtx()
 	for i := 0; i < b.N; i++ {
 		core.FastClonePointGetForPlanCache(sctx, src, dst)
@@ -522,7 +548,7 @@ func BenchmarkPointGetClone(b *testing.B) {
 	require.NoError(b, err)
 
 	b.ResetTimer()
-	src := plan.(*core.PointGetPlan)
+	src := plan.(*physicalop.PointGetPlan)
 	sctx := tk.Session().GetPlanCtx()
 	for i := 0; i < b.N; i++ {
 		src.CloneForPlanCache(sctx)

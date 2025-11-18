@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
@@ -44,18 +45,20 @@ type Checker struct {
 	deadline               time.Time
 	ruThreshold            int64
 	processedKeysThreshold int64
-	// using total processed_keys to accumulate all coprocessor tasks.
-	totalProcessedKeys int64
 	// From the group runaway settings, which will be applied when a query lacks a specified watch rule.
 	settings *rmpb.RunawaySettings
 
+	// watchAction is the specified watch action for the runaway query.
+	// If it's not given, the action defined in `settings` will be used.
+	watchAction rmpb.RunawayAction
+
+	// mutable fields below
+	// using total processed_keys to accumulate all coprocessor tasks.
+	totalProcessedKeys int64
 	// markedByIdentifyInRunawaySettings is set to true when the query matches the group runaway settings.
 	markedByIdentifyInRunawaySettings atomic.Bool
 	// markedByQueryWatchRule is set to true when the query matches the specified watch rules.
 	markedByQueryWatchRule bool
-	// watchAction is the specified watch action for the runaway query.
-	// If it's not given, the action defined in `settings` will be used.
-	watchAction rmpb.RunawayAction
 }
 
 // NewChecker creates a new RunawayChecker.
@@ -110,6 +113,13 @@ func (rm *Manager) DeriveChecker(resourceGroupName, originalSQL, sqlDigest, plan
 	return NewChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest, startTime)
 }
 
+func (r *Checker) isMarkedByIdentifyInRunawaySettings() bool {
+	if r == nil {
+		return false
+	}
+	return r.markedByIdentifyInRunawaySettings.Load()
+}
+
 // BeforeExecutor checks whether query is in watch list before executing and after compiling.
 func (r *Checker) BeforeExecutor() (string, error) {
 	if r == nil {
@@ -147,7 +157,7 @@ func (r *Checker) BeforeExecutor() (string, error) {
 			return "", nil
 		case rmpb.RunawayAction_SwitchGroup:
 			// Return the switch group name to switch the resource group before executing.
-			return switchGroupName, nil
+			return r.checkSwitchGroupName(switchGroupName), nil
 		default:
 			// Continue to examine other convicts.
 		}
@@ -155,26 +165,35 @@ func (r *Checker) BeforeExecutor() (string, error) {
 	return "", nil
 }
 
+func (r *Checker) checkSwitchGroupName(groupName string) string {
+	if len(groupName) == 0 {
+		return ""
+	}
+	group, err := r.manager.ResourceGroupCtl.GetResourceGroup(groupName)
+	if err != nil || group == nil {
+		logutil.BgLogger().Debug("invalid switch resource group", zap.String("switch-group-name", groupName), zap.Error(err))
+		return ""
+	}
+	return groupName
+}
+
 // BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.
 func (r *Checker) BeforeCopRequest(req *tikvrpc.Request) error {
 	if r == nil {
 		return nil
 	}
-	// If the group settings are not available, and it's not marked by watch, skip this part.
-	if r.settings == nil && !r.markedByQueryWatchRule {
-		return nil
-	}
-	// If it's marked by watch and the action is cooldown, override the priority,
+	// If it's marked by watch and the action is cooldown, override the priority.
+	// Other watch actions should already been handled in `BeforeExecutor` before.
 	if r.markedByQueryWatchRule && r.watchAction == rmpb.RunawayAction_CoolDown {
 		req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
 	}
-	// If group settings are available and the query is not marked by a rule,
-	// verify if it matches any rules in the settings.
-	if r.settings != nil && !r.markedByIdentifyInRunawaySettings.Load() {
+	// If group settings are available, verify if it matches any rules in the settings.
+	if r.settings != nil {
 		now := time.Now()
-		// only check time and need to ensure deadline existed.
+		// Check and ensure the deadline exists.
 		exceedCause := r.exceedsThresholds(now, nil, 0)
-		if exceedCause == "" { // only set timeout when the query is not runaway.
+		// Only set timeout when the query has not been marked as runaway yet.
+		if !r.isMarkedByIdentifyInRunawaySettings() && len(exceedCause) == 0 {
 			if r.settings.Action == rmpb.RunawayAction_Kill {
 				until := r.deadline.Sub(now)
 				// if the execution time is close to the threshold, set a timeout
@@ -184,7 +203,8 @@ func (r *Checker) BeforeCopRequest(req *tikvrpc.Request) error {
 			}
 			return nil
 		}
-		// execution time exceeds the threshold, mark the query as runaway
+		// Try to mark the query as runaway, it's safe to call this method concurrently.
+		// So it's possible that the query has already been marked as runaway in `CheckThresholds`.
 		r.markRunawayByIdentifyInRunawaySettings(&now, exceedCause)
 		// Take action if needed.
 		switch r.settings.Action {
@@ -194,7 +214,9 @@ func (r *Checker) BeforeCopRequest(req *tikvrpc.Request) error {
 			req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
 			return nil
 		case rmpb.RunawayAction_SwitchGroup:
-			req.ResourceControlContext.ResourceGroupName = r.settings.SwitchGroupName
+			if switchGroupName := r.checkSwitchGroupName(r.settings.SwitchGroupName); len(switchGroupName) != 0 {
+				req.ResourceControlContext.ResourceGroupName = switchGroupName
+			}
 			return nil
 		default:
 			return nil
@@ -212,7 +234,7 @@ func (r *Checker) CheckAction() rmpb.RunawayAction {
 	if r.markedByQueryWatchRule {
 		return r.watchAction
 	}
-	if r.markedByIdentifyInRunawaySettings.Load() {
+	if r.isMarkedByIdentifyInRunawaySettings() {
 		return r.settings.Action
 	}
 	return rmpb.RunawayAction_NoneAction
@@ -225,7 +247,7 @@ func (r *Checker) CheckRuleKillAction() (string, bool) {
 		return "", false
 	}
 	// If the group settings are available, and it's not marked by rule, check the execution time.
-	if r.settings != nil && !r.markedByIdentifyInRunawaySettings.Load() {
+	if r.settings != nil && !r.isMarkedByIdentifyInRunawaySettings() {
 		now := time.Now()
 		exceedCause := r.exceedsThresholds(now, nil, 0)
 		if exceedCause == "" {
@@ -241,13 +263,18 @@ func (r *Checker) markQuarantine(now *time.Time, exceedCause string) {
 	if r.settings == nil || r.settings.Watch == nil {
 		return
 	}
+	// If the latest group settings have been changed, do not mark quarantine.
+	group, err := r.manager.ResourceGroupCtl.GetResourceGroup(r.resourceGroupName)
+	if err != nil || group == nil || !proto.Equal(r.settings, group.RunawaySettings) {
+		return
+	}
 	ttl := time.Duration(r.settings.Watch.LastingDurationMs) * time.Millisecond
 
 	r.manager.markQuarantine(r.resourceGroupName, r.getSettingConvictIdentifier(), r.settings.Watch.Type,
 		r.settings.Action, r.settings.SwitchGroupName, ttl, now, exceedCause)
 }
 
-func (r *Checker) markRunawayByIdentifyInRunawaySettings(now *time.Time, exceedCause string) bool {
+func (r *Checker) markRunawayByIdentifyInRunawaySettings(now *time.Time, exceedCause string) {
 	swapped := r.markedByIdentifyInRunawaySettings.CompareAndSwap(false, true)
 	if swapped {
 		r.markRunaway("identify", r.settings.Action, r.settings.SwitchGroupName, now, exceedCause)
@@ -255,7 +282,6 @@ func (r *Checker) markRunawayByIdentifyInRunawaySettings(now *time.Time, exceedC
 			r.markQuarantine(now, exceedCause)
 		}
 	}
-	return swapped
 }
 
 func (r *Checker) markRunawayByQueryWatchRule(action rmpb.RunawayAction, switchGroupName, exceedCause string) {
@@ -318,7 +344,7 @@ func (r *Checker) CheckThresholds(ruDetail *util.RUDetails, processKeys int64, e
 			processKeys = int64(100)
 		}
 	})
-	if r.settings == nil || r.settings.Action != rmpb.RunawayAction_Kill {
+	if r.settings == nil {
 		return err
 	}
 
@@ -328,20 +354,18 @@ func (r *Checker) CheckThresholds(ruDetail *util.RUDetails, processKeys int64, e
 		checkTime = now
 	}
 	// add the processed keys to the total processed keys.
-	r.totalProcessedKeys += processKeys
-	exceedCause := r.exceedsThresholds(checkTime, ruDetail, r.totalProcessedKeys)
-	if !r.markedByIdentifyInRunawaySettings.Load() {
-		if exceedCause != "" && r.markRunawayByIdentifyInRunawaySettings(&now, exceedCause) {
-			if r.markRunawayByIdentifyInRunawaySettings(&now, exceedCause) {
-				return exeerrors.ErrResourceGroupQueryRunawayInterrupted.FastGenByArgs(exceedCause)
-			}
-		}
+	atomic.AddInt64(&r.totalProcessedKeys, processKeys)
+	totalProcessedKeys := atomic.LoadInt64(&r.totalProcessedKeys)
+	exceedCause := r.exceedsThresholds(checkTime, ruDetail, totalProcessedKeys)
+	// No need to mark as runaway if the query is not exceeded any threshold.
+	if len(exceedCause) == 0 {
+		return err
 	}
-	// Due to concurrency, check again.
-	if r.markedByIdentifyInRunawaySettings.Load() {
+	r.markRunawayByIdentifyInRunawaySettings(&now, exceedCause)
+	// Other actions will be handled in `BeforeCopRequest` since they need to modify the request.
+	if r.settings.Action == rmpb.RunawayAction_Kill {
 		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.FastGenByArgs(exceedCause)
 	}
-
 	return err
 }
 
@@ -405,5 +429,5 @@ func (r *Checker) ResetTotalProcessedKeys() {
 	if r == nil {
 		return
 	}
-	r.totalProcessedKeys = 0
+	atomic.StoreInt64(&r.totalProcessedKeys, 0)
 }

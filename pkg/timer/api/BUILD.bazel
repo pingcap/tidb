@@ -19,6 +19,7 @@ go_library(
         "//pkg/util/timeutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_robfig_cron_v3//:cron",
         "@org_uber_go_zap//:zap",
     ],

@@ -17,6 +17,7 @@ package copr
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -35,6 +36,26 @@ func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req
 		eventCb:  eventCb,
 		respChan: true,
 	})
+}
+
+func TestEnsureMonotonicKeyRanges(t *testing.T) {
+	ctx := context.Background()
+	ranges := NewKeyRanges([]kv.KeyRange{
+		{StartKey: []byte("b"), EndKey: []byte("d")},
+		{StartKey: []byte("a"), EndKey: []byte("b")},
+	})
+	reordered := ensureMonotonicKeyRanges(ctx, ranges)
+	require.True(t, reordered)
+	require.Equal(t, "a", string(ranges.At(0).StartKey))
+	require.Equal(t, "b", string(ranges.At(0).EndKey))
+	require.Equal(t, "b", string(ranges.At(1).StartKey))
+
+	sortedRanges := NewKeyRanges([]kv.KeyRange{
+		{StartKey: []byte("a"), EndKey: []byte("b")},
+		{StartKey: []byte("b"), EndKey: []byte("c")},
+	})
+	reordered = ensureMonotonicKeyRanges(ctx, sortedRanges)
+	require.False(t, reordered)
 }
 
 func TestBuildTasksWithoutBuckets(t *testing.T) {
@@ -566,7 +587,7 @@ func buildCopRanges(keys ...string) *KeyRanges {
 func taskEqual(t *testing.T, task *copTask, regionID, bucketsVer uint64, keys ...string) {
 	require.Equal(t, task.region.GetID(), regionID)
 	require.Equal(t, task.bucketsVer, bucketsVer)
-	for i := 0; i < task.ranges.Len(); i++ {
+	for i := range task.ranges.Len() {
 		r := task.ranges.At(i)
 		require.Equal(t, string(r.StartKey), keys[2*i])
 		require.Equal(t, string(r.EndKey), keys[2*i+1])
@@ -574,7 +595,7 @@ func taskEqual(t *testing.T, task *copTask, regionID, bucketsVer uint64, keys ..
 }
 
 func rangeEqual(t *testing.T, ranges []kv.KeyRange, keys ...string) {
-	for i := 0; i < len(ranges); i++ {
+	for i := range ranges {
 		r := ranges[i]
 		require.Equal(t, string(r.StartKey), keys[2*i])
 		require.Equal(t, string(r.EndKey), keys[2*i+1])
@@ -868,7 +889,7 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 func TestSmallTaskConcurrencyLimit(t *testing.T) {
 	smallTaskCount := 1000
 	tasks := make([]*copTask, 0, smallTaskCount)
-	for i := 0; i < smallTaskCount; i++ {
+	for range smallTaskCount {
 		tasks = append(tasks, &copTask{
 			RowCountHint: 1,
 		})
@@ -880,4 +901,54 @@ func TestSmallTaskConcurrencyLimit(t *testing.T) {
 	count, conc = smallTaskConcurrency(tasks, 0)
 	require.Equal(t, smallConcPerCore, conc)
 	require.Equal(t, smallTaskCount, count)
+}
+
+func TestBatchStoreCoprOnlySendToLeader(t *testing.T) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+	_, _, _ = testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	req := &kv.Request{
+		StoreBatchSize:     3,
+		StoreBusyThreshold: time.Second,
+	}
+	ranges := buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z")
+	tasks, err := buildCopTasks(bo, ranges, &buildCopTaskOpt{
+		req:      req,
+		cache:    cache,
+		rowHints: []int{1, 1, 3, 3},
+	})
+	require.Len(t, tasks, 1)
+	require.Zero(t, tasks[0].busyThreshold)
+	batched := tasks[0].batchTaskList
+	require.Len(t, batched, 3)
+	for _, task := range batched {
+		require.Zero(t, task.task.busyThreshold)
+	}
+
+	req = &kv.Request{
+		StoreBatchSize:     0,
+		StoreBusyThreshold: time.Second,
+	}
+	tasks, err = buildCopTasks(bo, ranges, &buildCopTaskOpt{
+		req:      req,
+		cache:    cache,
+		rowHints: []int{1, 1, 3, 3},
+	})
+	require.Len(t, tasks, 4)
+	for _, task := range tasks {
+		require.Equal(t, task.busyThreshold, time.Second)
+	}
 }

@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -264,6 +266,17 @@ func dataToStrings(data []types.Datum) ([]string, error) {
 		str, err := datum.ToString()
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if datum.Kind() == types.KindBytes || datum.Kind() == types.KindMysqlBit || datum.Kind() == types.KindBinaryLiteral {
+			// Same as MySQL, remove all 0x00 on the tail,
+			// but keep one 0x00 at least.
+			if datum.Kind() == types.KindBytes {
+				str = strings.TrimRight(str, string(rune(0x00)))
+				if len(str) == 0 {
+					str = string(rune(0x00))
+				}
+			}
+			str = util.FmtNonASCIIPrintableCharToHex(str, len(str), true)
 		}
 		strs = append(strs, str)
 	}

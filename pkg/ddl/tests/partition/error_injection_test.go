@@ -295,18 +295,20 @@ func TestTruncatePartitionListFailures(t *testing.T) {
 
 func testDDLWithInjectedErrors(t *testing.T, tests FailureTest, createSQL, alterSQL string, beforeDML []TestQuery, beforeResult [][]any, afterDML []TestQuery, afterRollback, afterRecover [][]any, skipTests ...string) {
 TEST:
-	for _, test := range tests.Tests {
+	for i, test := range tests.Tests {
 		for _, skip := range skipTests {
 			if test.Name == skip {
 				continue TEST
 			}
 		}
-		if test.Recoverable {
-			runOneTest(t, test, true, tests.FailpointPrefix, createSQL, alterSQL, beforeDML, beforeResult, afterDML, afterRecover)
-		}
-		if test.Rollback {
-			runOneTest(t, test, false, tests.FailpointPrefix, createSQL, alterSQL, beforeDML, beforeResult, afterDML, afterRollback)
-		}
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			if test.Recoverable {
+				runOneTest(t, test, true, tests.FailpointPrefix, createSQL, alterSQL, beforeDML, beforeResult, afterDML, afterRecover)
+			}
+			if test.Rollback {
+				runOneTest(t, test, false, tests.FailpointPrefix, createSQL, alterSQL, beforeDML, beforeResult, afterDML, afterRollback)
+			}
+		})
 	}
 }
 

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -70,6 +71,9 @@ type LazyTxn struct {
 
 	// mark the txn enables lazy uniqueness check in pessimistic transactions.
 	lazyUniquenessCheckEnabled bool
+
+	// commit ts of the last successful transaction, to ensure ordering of TS
+	lastCommitTS uint64
 }
 
 // GetTableInfo returns the cached index name.
@@ -431,7 +435,16 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 		}
 	})
 
-	return txn.Transaction.Commit(ctx)
+	err := txn.Transaction.Commit(ctx)
+	if err == nil {
+		txn.lastCommitTS = txn.Transaction.CommitTS()
+		failpoint.Inject("mockFutureCommitTS", func(val failpoint.Value) {
+			if ts, ok := val.(int); ok {
+				txn.lastCommitTS = uint64(ts)
+			}
+		})
+	}
+	return err
 }
 
 // Rollback overrides the Transaction interface.
@@ -442,6 +455,8 @@ func (txn *LazyTxn) Rollback() error {
 	txn.mu.Unlock()
 	// mockSlowRollback is used to mock a rollback which takes a long time
 	failpoint.Inject("mockSlowRollback", func(_ failpoint.Value) {})
+	// When rolling back a txn, swap with a dummy hook to avoid operations on an invalid memory tracker.
+	txn.SetMemoryFootprintChangeHook(func(uint64) {})
 	return txn.Transaction.Rollback()
 }
 
@@ -595,7 +610,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
 		if err := txn.changePendingToValid(ctx, sctx); err != nil {
-			logutil.BgLogger().Error("active transaction fail",
+			logutil.BgLogger().Warn("active transaction fail",
 				zap.Error(err))
 			txn.cleanup()
 			sctx.GetSessionVars().TxnCtx.StartTS = 0
@@ -638,6 +653,11 @@ func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	}
 
 	if tablecodec.IsTempIndexKey(k) {
+		// We force DMLs to lock all temporary index keys in next-gen, because
+		// next-gen enforces conflict check on all keys, including non-unique index keys.
+		if kerneltype.IsNextGen() {
+			return true
+		}
 		tmpVal, err := tablecodec.DecodeTempIndexValue(v)
 		if err != nil {
 			logutil.BgLogger().Warn("decode temp index value failed", zap.Error(err))
@@ -647,7 +667,19 @@ func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 		return current.Handle != nil || tablecodec.IndexKVIsUnique(current.Value)
 	}
 
-	return tablecodec.IndexKVIsUnique(v)
+	if !tablecodec.IndexKVIsUnique(v) {
+		// In most times, if an index is not unique, its primary record is assumed to be locked if mutated.
+		// So we don't need to lock the index key for performance purposes.
+		// However, the above assumption is not always true, for example, when adding the index, the DDL background task
+		// may not lock the primary record.
+		// So, the SQL layer can use the flag `flagNeedLocked` to indicate whether the index key should be force locked.
+		// - If `flagNeedLocked` is true, we should lock the index key by force to guarantee the correctness.
+		// - If `flagNeedLocked` is false, it indicates we can skip locking the index key.
+		return flags.HasNeedLocked()
+	}
+
+	// Force to lock the unique index key to ensure the correctness.
+	return true
 }
 
 type txnFailFuture struct{}
@@ -658,30 +690,40 @@ func (txnFailFuture) Wait() (uint64, error) {
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
-	future    oracle.Future
-	store     kv.Storage
-	txnScope  string
-	pipelined bool
+	future                          oracle.Future
+	store                           kv.Storage
+	txnScope                        string
+	pipelined                       bool
+	pipelinedFlushConcurrency       int
+	pipelinedResolveLockConcurrency int
+	pipelinedWriteThrottleRatio     float64
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
+	options := []tikv.TxnOption{tikv.WithTxnScope(tf.txnScope)}
 	startTS, err := tf.future.Wait()
 	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
-		if tf.pipelined {
-			return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS), tikv.WithPipelinedMemDB())
+		options = append(options, tikv.WithStartTS(startTS))
+	} else {
+		if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
+			return nil, err
 		}
-		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
-	} else if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
-		return nil, err
+		logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	}
 
-	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
-	// It would retry get timestamp.
 	if tf.pipelined {
-		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithPipelinedMemDB())
+		options = append(
+			options,
+			tikv.WithPipelinedTxn(
+				tf.pipelinedFlushConcurrency,
+				tf.pipelinedResolveLockConcurrency,
+				tf.pipelinedWriteThrottleRatio,
+			),
+		)
 	}
-	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
+
+	return tf.store.Begin(options...)
 }
 
 // HasDirtyContent checks whether there's dirty update on the given table.

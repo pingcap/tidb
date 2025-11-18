@@ -46,10 +46,10 @@ func (ki KeyInfo) String() string {
 // Schema stands for the row schema and unique key information get from input.
 type Schema struct {
 	Columns []*Column
-	Keys    []KeyInfo
-	// UniqueKeys stores those unique indexes that allow null values, but Keys does not allow null values.
-	// since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
-	UniqueKeys []KeyInfo
+	PKOrUK  []KeyInfo // this fields stores the primary key or unique key.
+	// NullableUK stores those unique indexes that allow null values, but PKOrUK does not allow null values.
+	// Since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
+	NullableUK []KeyInfo
 }
 
 // String implements fmt.Stringer interface.
@@ -58,17 +58,17 @@ func (s *Schema) String() string {
 	for _, col := range s.Columns {
 		colStrs = append(colStrs, col.String())
 	}
-	strs := make([]string, 0, len(s.Keys))
-	for _, key := range s.Keys {
+	strs := make([]string, 0, len(s.PKOrUK))
+	for _, key := range s.PKOrUK {
 		strs = append(strs, key.String())
 	}
-	ukStrs := make([]string, 0, len(s.Keys))
-	for _, key := range s.UniqueKeys {
+	ukStrs := make([]string, 0, len(s.PKOrUK))
+	for _, key := range s.NullableUK {
 		ukStrs = append(ukStrs, key.String())
 	}
 	return "Column: [" + strings.Join(colStrs, ",") +
-		"] Key: [" + strings.Join(strs, ",") +
-		"] Unique key: [" + strings.Join(ukStrs, ",") + "]"
+		"] PKOrUK: [" + strings.Join(strs, ",") +
+		"] NullableUK: [" + strings.Join(ukStrs, ",") + "]"
 }
 
 // Clone copies the total schema.
@@ -77,18 +77,18 @@ func (s *Schema) Clone() *Schema {
 		return nil
 	}
 	cols := make([]*Column, 0, s.Len())
-	keys := make([]KeyInfo, 0, len(s.Keys))
+	keys := make([]KeyInfo, 0, len(s.PKOrUK))
 	for _, col := range s.Columns {
 		cols = append(cols, col.Clone().(*Column))
 	}
-	for _, key := range s.Keys {
+	for _, key := range s.PKOrUK {
 		keys = append(keys, key.Clone())
 	}
 	schema := NewSchema(cols...)
 	schema.SetKeys(keys)
-	if s.UniqueKeys != nil {
-		uniqueKeys := make([]KeyInfo, 0, len(s.UniqueKeys))
-		for _, key := range s.UniqueKeys {
+	if s.NullableUK != nil {
+		uniqueKeys := make([]KeyInfo, 0, len(s.NullableUK))
+		for _, key := range s.NullableUK {
 			uniqueKeys = append(uniqueKeys, key.Clone())
 		}
 		schema.SetUniqueKeys(uniqueKeys)
@@ -145,9 +145,9 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 // Pass strong=true to check strong contraint: unique && notnull.
 // Pass strong=false to check weak contraint: unique && nullable.
 func (s *Schema) IsUnique(strong bool, cols ...*Column) bool {
-	slicesToBeIterated := s.UniqueKeys
+	slicesToBeIterated := s.NullableUK
 	if strong {
-		slicesToBeIterated = s.Keys
+		slicesToBeIterated = s.PKOrUK
 	}
 	for _, key := range slicesToBeIterated {
 		if len(key) > len(cols) {
@@ -210,12 +210,12 @@ func (s *Schema) Append(col ...*Column) {
 
 // SetKeys will set the value of Schema.Keys.
 func (s *Schema) SetKeys(keys []KeyInfo) {
-	s.Keys = keys
+	s.PKOrUK = keys
 }
 
 // SetUniqueKeys will set the value of Schema.UniqueKeys.
 func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
-	s.UniqueKeys = keys
+	s.NullableUK = keys
 }
 
 // ColumnsIndices will return a slice which contains the position of each column in schema.
@@ -269,18 +269,18 @@ func (s *Schema) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptySchemaSize + int64(cap(s.Columns))*size.SizeOfPointer + int64(cap(s.Keys)+cap(s.UniqueKeys))*size.SizeOfSlice
+	sum = emptySchemaSize + int64(cap(s.Columns))*size.SizeOfPointer + int64(cap(s.PKOrUK)+cap(s.NullableUK))*size.SizeOfSlice
 
 	for _, col := range s.Columns {
 		sum += col.MemoryUsage()
 	}
-	for _, cols := range s.Keys {
+	for _, cols := range s.PKOrUK {
 		sum += int64(cap(cols)) * size.SizeOfPointer
 		for _, col := range cols {
 			sum += col.MemoryUsage()
 		}
 	}
-	for _, cols := range s.UniqueKeys {
+	for _, cols := range s.NullableUK {
 		sum += int64(cap(cols)) * size.SizeOfPointer
 		for _, col := range cols {
 			sum += col.MemoryUsage()

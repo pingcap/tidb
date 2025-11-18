@@ -44,10 +44,17 @@
 	"select /*+ USE_INDEX(tablename,PKK) */ count(*) from tablename where (primary_key,secondary_key,timestamp) >= ('1primary_key_start','3secondary_key_start','1707885658544000000') and (primary_key,secondary_key,timestamp) <= ('2primary_key_end','4secondary_key_end','2707885658544000000');",
 	"SELECT /*+ USE_INDEX(t,PK) */ a FROM tnull WHERE a IN (42) OR (a IS TRUE AND a IS NULL);",
 	"SELECT id7 FROM tkey_string WHERE id7 > 'large' AND id7 < 'x-small';",
+	// IN list and range intersection
+        "SELECT 1 FROM t_inlist_test FORCE INDEX (twoColIndex) WHERE a1 IN (44, 70, 76) AND (a1 > 70 OR (a1 = 70 AND b1 > 41));",
+        "SELECT 1 FROM t_inlist_test FORCE INDEX (twoColIndex) WHERE a1 IN (44,45) AND (a1 > 70 OR (a1 = 70 AND b1 > 41));",
+        "SELECT 1 FROM t_inlist_test FORCE INDEX (twoColIndex) WHERE a1 IN (70, 73, 76) AND (a1 > 70 OR (a1 = 70 AND b1 > 41));",
 	// Empty intersections.
 	"select count(*) from t1 where (a1, b1) > (1, 10) and (a1, b1) < (0, 20)", 
 	"select count(*) from t1 where (a1, b1) > (1, 10) and (a1, b1) < (2, 20) and b1 <5",
-	"select count(*) from t1 where (a1, b1) > (1, 10) and (a1, b1) < (4, 20) and a1 < 0"
+	"select count(*) from t1 where (a1, b1) > (1, 10) and (a1, b1) < (4, 20) and a1 < 0",
+	// Issue 60556
+        "SELECT 1 FROM t_issue_60556 FORCE INDEX (ab) where ((a>100) or (a=100 and b>0)) and ((a<100) or (a=100 and b<10))",
+        "SELECT 1 FROM t_issue_60556 FORCE INDEX (acbc) where ((ac>'100') or (ac='100' and bc>'0')) and ((ac<'100') or (ac='100' and bc<'10'))"
     ]
   }
 ]

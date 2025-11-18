@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	rg "github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -38,6 +37,7 @@ import (
 
 const (
 	defaultInfosyncTimeout = 5 * time.Second
+	unlimitedRURate        = uint64(math.MaxInt32)
 
 	// FIXME: this is a workaround for the compatibility, format the error code.
 	alreadyExists = "already exists"
@@ -202,7 +202,11 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 	resourceGroupSettings := groupInfo.ResourceGroupSettings
 	switch opt.Tp {
 	case ast.ResourceRURate:
-		return SetDirectResourceGroupRUSecondOption(resourceGroupSettings, opt.UintValue, opt.BoolValue)
+		if opt.Burstable == ast.BurstableUnlimited {
+			resourceGroupSettings.RURate = unlimitedRURate
+		} else {
+			resourceGroupSettings.RURate = opt.UintValue
+		}
 	case ast.ResourcePriority:
 		resourceGroupSettings.Priority = opt.UintValue
 	case ast.ResourceUnitCPU:
@@ -211,16 +215,21 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 		resourceGroupSettings.IOReadBandwidth = opt.StrValue
 	case ast.ResourceUnitIOWriteBandwidth:
 		resourceGroupSettings.IOWriteBandwidth = opt.StrValue
-	case ast.ResourceBurstableOpiton:
+	case ast.ResourceBurstable:
 		// Some about BurstLimit(b):
-		//   - If b == 0, that means the limiter is unlimited capacity. default use in resource controller (burst with a rate within a unlimited capacity).
-		//   - If b < 0, that means the limiter is unlimited capacity and fillrate(r) is ignored, can be seen as r == Inf (burst with a inf rate within a unlimited capacity).
 		//   - If b > 0, that means the limiter is limited capacity. (current not used).
-		limit := int64(0)
-		if opt.BoolValue {
-			limit = -1
+		//   - If b == 0, that means the limiter is unlimited capacity. default use in resource controller (burst with a rate within a unlimited capacity).
+		//   - If b == -1, that means the limiter is unlimited capacity and fillrate(r) is ignored, can be seen as r == Inf (burst with a inf rate within a unlimited capacity).
+		//   - If b == -2, that means the limiter is unlimited capacity and fillrate(r) is burstable, can be seen as r == n*fillrate (burst with a n times rate within a unlimited capacity).
+		// Note: If RU_PER_SEC=unlimted, it means unlimited whatever BURSTABLE is.
+		switch opt.Burstable {
+		case ast.BurstableUnlimited:
+			resourceGroupSettings.BurstLimit = -1
+		case ast.BurstableModerated:
+			resourceGroupSettings.BurstLimit = -2
+		default: // ast.BurstableDisable
+			resourceGroupSettings.BurstLimit = 0
 		}
-		resourceGroupSettings.BurstLimit = limit
 	case ast.ResourceGroupRunaway:
 		if len(opt.RunawayOptionList) == 0 {
 			resourceGroupSettings.Runaway = nil
@@ -253,22 +262,11 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 	return nil
 }
 
-// SetDirectResourceGroupRUSecondOption tries to set ru second part of the ResourceGroupSettings.
-func SetDirectResourceGroupRUSecondOption(resourceGroupSettings *model.ResourceGroupSettings, intVal uint64, unlimited bool) error {
-	if unlimited {
-		resourceGroupSettings.RURate = uint64(math.MaxInt32)
-		resourceGroupSettings.BurstLimit = -1
-	} else {
-		resourceGroupSettings.RURate = intVal
-	}
-	return nil
-}
-
 // SetDirectResourceGroupRunawayOption tries to set runaway part of the ResourceGroupSettings.
 func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupRunawayOption) error {
 	settings := resourceGroupSettings.Runaway
 	switch opt.Tp {
-	case pmodel.RunawayRule:
+	case ast.RunawayRule:
 		switch opt.RuleOption.Tp {
 		case ast.RunawayRuleExecElapsed:
 			// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
@@ -282,10 +280,10 @@ func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGr
 		case ast.RunawayRuleRequestUnit:
 			settings.RequestUnit = opt.RuleOption.RequestUnit
 		}
-	case pmodel.RunawayAction:
+	case ast.RunawayAction:
 		settings.Action = opt.ActionOption.Type
 		settings.SwitchGroupName = opt.ActionOption.SwitchGroupName.String()
-	case pmodel.RunawayWatch:
+	case ast.RunawayWatch:
 		settings.WatchType = opt.WatchOption.Type
 		if dur := opt.WatchOption.Duration; len(dur) > 0 {
 			dur, err := time.ParseDuration(dur)

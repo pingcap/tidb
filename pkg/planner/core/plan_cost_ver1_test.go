@@ -22,22 +22,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
-
-func skipPostOptimizedProjection(plan [][]any) int {
-	for i, r := range plan {
-		cost := r[2].(string)
-		if cost == "0.00" && strings.Contains(r[0].(string), "Projection") {
-			// projection injected in post-optimization, whose cost is always 0 under the old cost implementation
-			continue
-		}
-		return i
-	}
-	return 0
-}
 
 func TestTrueCardCost(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -109,7 +97,7 @@ func TestScanOnSmallTable(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
+	db, exists := is.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, exists)
 	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
 	require.NoError(t, err)

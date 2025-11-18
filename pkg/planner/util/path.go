@@ -21,10 +21,12 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 )
 
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
@@ -41,6 +43,16 @@ type AccessPath struct {
 	// CountAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	// For index merge path, CountAfterAccess is the row count after partial paths and before we apply table filters.
 	CountAfterAccess float64
+	// MinCountAfterAccess is a lower bound on CountAfterAccess, accounting for risks that could
+	// lead to overestimation, such as assuming correlation with exponential backoff when columns are actually independent.
+	// Case MinCountAfterAccess > 0 : we've encountered risky scenarios and have a potential lower row count estimation
+	// Default MinCountAfterAccess = 0 : we have not identified risks that could lead to lower row count
+	MinCountAfterAccess float64
+	// MaxCountAfterAccess is an upper bound on the CountAfterAccess, accounting for risks that could
+	// lead to underestimation, such as assuming independence between non-index columns.
+	// Case MaxCountAfterAccess > 0 : we've encountered risky scenarios and have a potential greater row count estimation
+	// Default MaxCountAfterAccess = 0 : we have not identified risks that could lead to greater row count
+	MaxCountAfterAccess float64
 	// CountAfterIndex is the row count after we apply filters on index and before we apply the table filters.
 	CountAfterIndex float64
 	AccessConds     []expression.Expression
@@ -52,17 +64,41 @@ type AccessPath struct {
 	// If there are extra filters, store them in TableFilters.
 	PartialIndexPaths []*AccessPath
 
-	// ************************************************** special field below *********************************************************
-	// For every dnf/cnf item, there maybe several matched partial index paths to be determined later in property detecting and cost model.
-	// when PartialAlternativeIndexPaths is not empty, it means a special state for index merge path, and it can't have PartialIndexPaths
-	// at same time. Normal single index or table path also doesn't use this field.
-	PartialAlternativeIndexPaths [][]*AccessPath
-	// KeepIndexMergeORSourceFilter and IndexMergeORSourceFilter are only used with PartialAlternativeIndexPaths, which means for
-	// the new state/type of access path. (undetermined index merge path)
+	// The 3 fields below are for another case for building IndexMerge path besides AccessPath.PartialIndexPaths.
+	// Currently, it only applies to OR type IndexMerge.
+	// For every item in the OR list, there might be multiple candidate paths that satisfy the filters.
+	// The AccessPath.PartialIndexPaths case decides on one of them when building AccessPath. But here, we keep all the
+	// alternatives and make the decision later in findBestTask (see matchPropForIndexMergeAlternatives()).
+	// It's because we only know the required Sort property at that time. Delaying the decision to findBestTask can make
+	// us able to consider and try to satisfy the required Sort property.
+	/* For example:
+		create table t (a int, b int, c int, key a(a), key b(b), key ac(a, c), key bc(b, c));
+		explain format='verbose' select * from t where a=1 or b=1 order by c;
+	For a=1, it has two partial alternative paths: [a, ac]
+	For b=1, it has two partial alternative paths: [b, bc]
+	Then we build such a AccessPath:
+		AccessPath {
+			PartialAlternativeIndexPaths: [[[a], [ac]], [[b], [bc]]]
+			IndexMergeORSourceFilter: a = 1 or b = 1
+		}
+	*/
+
+	// PartialAlternativeIndexPaths stores all the alternative paths for each OR branch.
+	// meaning of the 3 dimensions:
+	// each OR branch -> each alternative for this OR branch -> each access path of this alternative (One JSON filter on
+	// MV index may build into multiple partial paths. For example, json_overlap(a, '[1, 2, 3]') builds into 3 partial
+	// paths in the final plan. For non-MV index, each alternative only has one AccessPath.)
+	PartialAlternativeIndexPaths [][][]*AccessPath
+	// KeepIndexMergeORSourceFilter indicates if we need to keep IndexMergeORSourceFilter in the final Selection of the
+	// IndexMerge plan.
+	// It has 2 cases:
+	// 1. The AccessPath.PartialAlternativeIndexPaths is set.
+	// If this field is true, the final plan should keep the filter.
+	// 2. It's a children of AccessPath.PartialAlternativeIndexPaths.
+	// If the final plan contains this alternative, it should keep the filter.
 	KeepIndexMergeORSourceFilter bool
-	// IndexMergeORSourceFilter indicates that there are some expression inside this dnf that couldn't be pushed down, and we should keep the entire dnf above.
+	// IndexMergeORSourceFilter is the original OR list for building the IndexMerge path.
 	IndexMergeORSourceFilter expression.Expression
-	// ********************************************************************************************************************************
 
 	// IndexMergeIsIntersection means whether it's intersection type or union type IndexMerge path.
 	// It's only valid for a IndexMerge path.
@@ -93,6 +129,21 @@ type AccessPath struct {
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
+	// Whether to use the index lookup push down optimization for this access path.
+	IsIndexLookUpPushDown bool
+
+	// GroupedRanges and GroupByColIdxs are used for the SortPropSatisfiedNeedMergeSort case from matchProperty().
+	// It's for queries like `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c` with index(a, b, c), where we need a
+	// merge sort on the 3 ranges to satisfy the ORDER BY b, c.
+
+	// GroupedRanges stores the result of grouping ranges by columns. Finally, we need a merge sort on the results of
+	// each range group.
+	GroupedRanges [][]*ranger.Range
+	// GroupByColIdxs stores the column indices used for grouping ranges when using merge sort to satisfy the physical
+	// property.
+	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
+	// It's used in plan cache or Apply.
+	GroupByColIdxs []int
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -106,8 +157,10 @@ func (path *AccessPath) Clone() *AccessPath {
 		IdxCols:                      CloneCols(path.IdxCols),
 		IdxColLens:                   slices.Clone(path.IdxColLens),
 		ConstCols:                    slices.Clone(path.ConstCols),
-		Ranges:                       CloneRanges(path.Ranges),
+		Ranges:                       sliceutil.DeepClone(path.Ranges),
 		CountAfterAccess:             path.CountAfterAccess,
+		MinCountAfterAccess:          path.MinCountAfterAccess,
+		MaxCountAfterAccess:          path.MaxCountAfterAccess,
 		CountAfterIndex:              path.CountAfterIndex,
 		AccessConds:                  CloneExprs(path.AccessConds),
 		EqCondCount:                  path.EqCondCount,
@@ -127,19 +180,24 @@ func (path *AccessPath) Clone() *AccessPath {
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
+		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
+		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
 	}
-	for _, partialPath := range path.PartialIndexPaths {
-		ret.PartialIndexPaths = append(ret.PartialIndexPaths, partialPath.Clone())
-	}
-	for _, onePartialAlternative := range path.PartialAlternativeIndexPaths {
-		tmp := make([]*AccessPath, 0, len(onePartialAlternative))
-		for _, oneAlternative := range onePartialAlternative {
-			tmp = append(tmp, oneAlternative.Clone())
+	ret.PartialIndexPaths = sliceutil.DeepClone(path.PartialIndexPaths)
+	ret.PartialAlternativeIndexPaths = make([][][]*AccessPath, 0, len(path.PartialAlternativeIndexPaths))
+	for _, oneORBranch := range path.PartialAlternativeIndexPaths {
+		clonedORBranch := make([][]*AccessPath, 0, len(oneORBranch))
+		for _, oneAlternative := range oneORBranch {
+			clonedOneAlternative := sliceutil.DeepClone(oneAlternative)
+			clonedORBranch = append(clonedORBranch, clonedOneAlternative)
 		}
-		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, tmp)
+		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, clonedORBranch)
+	}
+	for _, ranges := range path.GroupedRanges {
+		ret.GroupedRanges = append(ret.GroupedRanges, sliceutil.DeepClone(ranges))
 	}
 	return ret
 }
@@ -165,11 +223,12 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	// The plan cache do not support subquery now. So we skip this function when
 	// 'MaybeOverOptimized4PlanCache' function return true .
-	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
+	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters...) {
 		return nil, path.TableFilters
 	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
+	usedCnt := 0
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
 		matched := false
 		for j, filter := range path.TableFilters {
@@ -193,6 +252,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			access[i-eqOrInCount] = filter
 			if path.IdxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
+				usedCnt++
 			}
 			break
 		}
@@ -201,6 +261,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			break
 		}
 	}
+	remained = make([]expression.Expression, 0, len(used)-usedCnt)
 	for i, ok := range used {
 		if !ok {
 			remained = append(remained, path.TableFilters[i]) // nozero
@@ -343,30 +404,39 @@ func (c1 Col2Len) dominate(c2 Col2Len) bool {
 	return true
 }
 
-// CompareCol2Len will compare the two Col2Len maps. The last return value is used to indicate whether they are comparable.
-// When the second return value is true, the first return value:
-// (1) -1 means that c1 is worse than c2;
-// (2) 0 means that c1 equals to c2;
+// CompareCol2Len will compare the two Col2Len maps.
+// The first return value:
+// (1) -1 means that len(c1) is less than len(c2);
+// (2) 0 means that len(c1) equals to len(c2);
 // (3) 1 means that c1 is better than c2;
+// The 2nd return value is used to indicate whether they are comparable. If they are NOT comparable, then the caller
+// should use other criteria to determine whether the winner is justified.
 func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
 	l1, l2 := len(c1), len(c2)
 	if l1 > l2 {
 		if c1.dominate(c2) {
 			return 1, true
 		}
-		return 0, false
+		return 1, false
 	}
 	if l1 < l2 {
 		if c2.dominate(c1) {
 			return -1, true
 		}
-		return 0, false
+		return -1, false
 	}
 	// If c1 and c2 have the same columns but have different lengths on some column, we regard c1 and c2 incomparable.
 	for colID, colLen2 := range c2 {
 		colLen1, ok := c1[colID]
-		if !ok || colLen1 != colLen2 {
+		if !ok {
 			return 0, false
+		}
+		if colLen1 != colLen2 {
+			// If lengths are not equal, return 1 if c1 is larger, or -1 if c2 is larger
+			if colLen1 > colLen2 {
+				return 1, false
+			}
+			return -1, false
 		}
 	}
 	return 0, true
@@ -378,4 +448,19 @@ func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2L
 		return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	}
 	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+}
+
+// IsFullScanRange checks that a table scan does not have any filtering such that it can limit the range of
+// the table scan.
+func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
+	var unsignedIntHandle bool
+	if path.IsIntHandlePath && tableInfo.PKIsHandle {
+		if pkColInfo := tableInfo.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
+		return true
+	}
+	return false
 }

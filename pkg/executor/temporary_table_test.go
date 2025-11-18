@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -161,4 +162,23 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 	tk.MustExec("select * from tmp_t where id in (1, 2, 3) for update")
 	tk.MustExec("select * from tmp_t where id > 1 for update")
 	tk.MustExec("rollback")
+}
+
+func TestIssue58875(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists users, users1;")
+	tk.MustExec("CREATE GLOBAL TEMPORARY TABLE users (     id BIGINT,     v1 int,     v2 int,  v3 int, v4 int,   PRIMARY KEY(id), index v1_index(v1,v2,v3) ) ON COMMIT DELETE ROWS;")
+	tk.MustExec("create table users1(id int, value int, index index_value(value));")
+	tk.MustExec("insert into users1 values(1,2);")
+	tk.MustExec("begin;")
+	res := tk.MustQuery("explain analyze select /*+ inl_join(users) */ * from users use index(v1_index) where v1 in (select value from users1);").Rows()
+	for _, row := range res {
+		// if access object contains 'table:users', the execution info should be empty.
+		if strings.Contains(row[4].(string), "table:users") && !strings.Contains(row[4].(string), "table:users1") {
+			require.Len(t, row[5].(string), 0)
+		}
+	}
 }

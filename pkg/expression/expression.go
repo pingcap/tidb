@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -57,7 +57,7 @@ type BuildOptions struct {
 	// InputNames is the input names for expression to build
 	InputNames types.NameSlice
 	// SourceTableDB is the database that the source table located
-	SourceTableDB pmodel.CIStr
+	SourceTableDB ast.CIStr
 	// SourceTable is used to provide some extra column info.
 	SourceTable *model.TableInfo
 	// AllowCastArray specifies whether to allow casting to an array type.
@@ -73,7 +73,7 @@ type BuildOption func(*BuildOptions)
 // When this option is specified, it will use the table meta to resolve column names.
 func WithTableInfo(db string, tblInfo *model.TableInfo) BuildOption {
 	return func(options *BuildOptions) {
-		options.SourceTableDB = pmodel.NewCIStr(db)
+		options.SourceTableDB = ast.NewCIStr(db)
 		options.SourceTable = tblInfo
 	}
 }
@@ -270,6 +270,23 @@ type Expression interface {
 	StringerWithCtx
 }
 
+var expressionSlices = zeropool.New[[]Expression](
+	func() []Expression {
+		return make([]Expression, 0, 4)
+	})
+
+// GetExpressionSlices gets a slice of Expression from pool.
+func GetExpressionSlices(size int) []Expression {
+	result := expressionSlices.Get()
+	return slices.Grow(result, size)
+}
+
+// PutExpressionSlices puts a slice of Expression back to pool.
+func PutExpressionSlices(exprs []Expression) {
+	exprs = exprs[:0]
+	expressionSlices.Put(exprs)
+}
+
 // CNFExprs stands for a CNF expression.
 type CNFExprs []Expression
 
@@ -299,8 +316,7 @@ func IsEQCondFromIn(expr Expression) bool {
 	if !ok || sf.FuncName.L != ast.EQ {
 		return false
 	}
-	cols := make([]*Column, 0, 1)
-	cols = ExtractColumnsFromExpressions(cols, sf.GetArgs(), isColumnInOperand)
+	cols := ExtractColumnsMapFromExpressions(isColumnInOperand, sf.GetArgs()...)
 	return len(cols) > 0
 }
 
@@ -400,7 +416,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 	n := input.NumRows()
 	selected = selected[:0]
 	nulls = nulls[:0]
-	for i := 0; i < n; i++ {
+	for range n {
 		selected = append(selected, false)
 		nulls = append(nulls, false)
 	}
@@ -408,7 +424,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 	sel := allocSelSlice(n)
 	defer deallocateSelSlice(sel)
 	sel = sel[:0]
-	for i := 0; i < n; i++ {
+	for i := range n {
 		sel = append(sel, i)
 	}
 	input.SetSel(sel)
@@ -822,7 +838,7 @@ func ComposeDNFCondition(ctx BuildContext, conditions ...Expression) Expression 
 }
 
 func extractBinaryOpItems(conditions *ScalarFunction, funcName string) []Expression {
-	var ret []Expression
+	ret := make([]Expression, 0, len(conditions.GetArgs()))
 	for _, arg := range conditions.GetArgs() {
 		if sf, ok := arg.(*ScalarFunction); ok && sf.FuncName.L == funcName {
 			ret = append(ret, extractBinaryOpItems(sf, funcName)...)
@@ -850,7 +866,7 @@ func FlattenCNFConditions(CNFCondition *ScalarFunction) []Expression {
 type Assignment struct {
 	Col *Column
 	// ColName indicates its original column name in table schema. It's used for outputting helping message when executing meets some errors.
-	ColName pmodel.CIStr
+	ColName ast.CIStr
 	Expr    Expression
 	// LazyErr is used in statement like `INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);`, ErrSubqueryMoreThan1Row
 	// should be evaluated after the duplicate situation is detected in the executing procedure.
@@ -886,6 +902,7 @@ type VarAssignment struct {
 	Expr        Expression
 	IsDefault   bool
 	IsGlobal    bool
+	IsInstance  bool
 	IsSystem    bool
 	ExtendValue *Constant
 }
@@ -920,23 +937,25 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) (Expression, error) {
-	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+// Set the skip cache to false when the caller will not change the logical plan tree.
+// it is currently closed only by pkg/planner/core.ExtractNotNullFromConds when to extractFD.
+func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCacheCheck bool) (Expression, error) {
+	if skipPlanCacheCheck && MaybeOverOptimized4PlanCache(ctx, expr) {
 		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 	}
 	if ctx.IsInNullRejectCheck() {
 		res, _, err := evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
 		return res, err
 	}
-	return evaluateExprWithNull(ctx, schema, expr)
+	return evaluateExprWithNull(ctx, schema, expr, skipPlanCacheCheck)
 }
 
-func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) (Expression, error) {
+func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCache bool) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			res, err := EvaluateExprWithNull(ctx, schema, arg)
+			res, err := EvaluateExprWithNull(ctx, schema, arg, skipPlanCache)
 			if err != nil {
 				return nil, err
 			}
@@ -1029,7 +1048,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
-func TableInfo2SchemaAndNames(ctx BuildContext, dbName pmodel.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
+func TableInfo2SchemaAndNames(ctx BuildContext, dbName ast.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
 	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
 	if err != nil {
 		return nil, nil, err
@@ -1076,7 +1095,7 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName pmodel.CIStr, tbl *model.
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName pmodel.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
+func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -1139,7 +1158,7 @@ func NewValuesFunc(ctx BuildContext, offset int, retTp *types.FieldType) *Scalar
 	bt, err := fc.getFunction(ctx, nil)
 	terror.Log(err)
 	return &ScalarFunction{
-		FuncName: pmodel.NewCIStr(ast.Values),
+		FuncName: ast.NewCIStr(ast.Values),
 		RetType:  retTp,
 		Function: bt,
 	}
@@ -1180,12 +1199,12 @@ func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt 
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: pmodel.NewCIStr(ast.IsTruthWithoutNull),
+		FuncName: ast.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
 	}
 	if keepNull {
-		sf.FuncName = pmodel.NewCIStr(ast.IsTruthWithNull)
+		sf.FuncName = ast.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(ctx, sf), nil
 }

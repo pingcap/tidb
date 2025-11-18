@@ -33,7 +33,7 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_partition_prune_mode = dynamic")
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		suffix := ""
 		if i == 1 {
 			suffix = "PARTITION BY HASH(a) partitions 4"
@@ -317,7 +317,7 @@ func TestIssue32422(t *testing.T) {
 	tk.MustExec("alter table t cache;")
 
 	var cacheUsed bool
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		tk.MustQuery("select id+1, c from t where c = 4;").Check(testkit.Rows("5 4"))
 		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
 			cacheUsed = true
@@ -368,7 +368,7 @@ func TestSnapshotWithConcurrentWrite(t *testing.T) {
 
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
-	for j := 0; j < 16; j++ {
+	for range 16 {
 		tk.MustExec("insert into t1 (b) select /*+ use_index(t1, b) */ id from t1;")
 	}
 	tk.MustQuery("select count(1) from t1").Check(testkit.Rows("524288")) // 8 * 2^16 rows
@@ -388,7 +388,7 @@ c4 varchar(12),
 c5 varchar(10),
 c6 datetime);`)
 	tk.MustExec(`begin;`)
-	for i := 0; i < 8000; i++ {
+	for range 8000 {
 		tk.MustExec("insert into t_us values ('54321', '1234', '1', '000000', '7518', '2014-05-08')")
 	}
 
@@ -408,7 +408,7 @@ func BenchmarkUnionScanIndexReadDescRead(b *testing.B) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t(a int, b int, c int, primary key(a), index k(b))`)
 	tk.MustExec(`begin;`)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
 	}
 
@@ -431,7 +431,7 @@ func BenchmarkUnionScanTableReadDescRead(b *testing.B) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t(a int, b int, c int, primary key(a), index k(b))`)
 	tk.MustExec(`begin;`)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
 	}
 
@@ -454,7 +454,7 @@ func BenchmarkUnionScanIndexLookUpDescRead(b *testing.B) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t(a int, b int, c int, primary key(a), index k(b))`)
 	tk.MustExec(`begin;`)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
 	}
 
@@ -479,5 +479,6 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkUnionScanIndexReadDescRead,
 		BenchmarkUnionScanTableReadDescRead,
 		BenchmarkUnionScanIndexLookUpDescRead,
+		BenchmarkInfoschemaTables,
 	)
 }

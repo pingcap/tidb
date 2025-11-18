@@ -2,15 +2,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "physicalplantest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "physical_plan_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    race = "on",
-    shard_count = 35,
+    shard_count = 41,
     deps = [
         "//pkg/config",
         "//pkg/domain",
@@ -21,7 +20,10 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/planner",
         "//pkg/planner/core",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
+        "//pkg/planner/util/coretestsdk",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/external",
@@ -30,6 +32,8 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/util/context",
         "//pkg/util/hint",
+        "//pkg/util/mock",
+        "//pkg/util/size",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

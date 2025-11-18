@@ -44,7 +44,7 @@ func (*XFJoinToApply) Match(_ base.LogicalPlan) bool {
 }
 
 // XForm implements thr Rule interface.
-func (*XFJoinToApply) XForm(_ base.LogicalPlan) ([]base.LogicalPlan, error) {
+func (*XFJoinToApply) XForm(_ base.LogicalPlan) ([]base.LogicalPlan, bool, error) {
 	// todo: Check whether the join can be converted to apply.
-	return nil, nil
+	return nil, false, nil
 }

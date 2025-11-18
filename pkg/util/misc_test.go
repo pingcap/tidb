@@ -23,9 +23,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
@@ -116,7 +117,7 @@ func TestBasicFuncSyntaxWarn(t *testing.T) {
 func TestBasicFuncProcessInfo(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
 	sc.MemTracker = memory.NewTracker(-1, -1)
-	pi := ProcessInfo{
+	pi := sessmgr.ProcessInfo{
 		ID:      1,
 		User:    "test",
 		Host:    "www",
@@ -156,7 +157,7 @@ func TestBasicFuncRandomBuf(t *testing.T) {
 func TestToPB(t *testing.T) {
 	column := &model.ColumnInfo{
 		ID:           1,
-		Name:         pmodel.NewCIStr("c"),
+		Name:         ast.NewCIStr("c"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(0),
@@ -166,7 +167,7 @@ func TestToPB(t *testing.T) {
 
 	column2 := &model.ColumnInfo{
 		ID:           1,
-		Name:         pmodel.NewCIStr("c"),
+		Name:         ast.NewCIStr("c"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(0),

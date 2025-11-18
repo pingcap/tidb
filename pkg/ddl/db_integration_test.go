@@ -36,13 +36,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -53,7 +53,6 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -139,6 +138,29 @@ func TestModifyColumnAfterAddIndex(t *testing.T) {
 	tk.MustExec("create table city (city VARCHAR(2) KEY);")
 	tk.MustExec("alter table city change column city city varchar(50);")
 	tk.MustExec(`insert into city values ("abc"), ("abd");`)
+}
+
+func TestModifyColumnOldColumnIDNotFound(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+	model.SetJobVerInUse(model.JobVersion1)
+	mockOwnerChange := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionModifyColumn &&
+			job.SchemaState == model.StateWriteReorganization &&
+			!mockOwnerChange {
+			// Mock the first few phases of this DDL job is executed in old version TiDB.
+			model.UpdateJobArgsForTest(job, func(args []any) []any {
+				return args[:len(args)-1]
+			})
+			mockOwnerChange = true
+		}
+	})
+	tk.MustExec("alter table t modify column a varchar(16);")
+	require.True(t, mockOwnerChange)
 }
 
 func TestIssue2293(t *testing.T) {
@@ -384,7 +406,7 @@ func TestUpdateMultipleTable(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
 			tk2.MustQuery("select * from t1").Check(testkit.Rows("8 1", "8 2"))
@@ -516,18 +538,17 @@ func TestChangingTableCharset(t *testing.T) {
 	ddlChecker.Disable()
 
 	// Mock table info with charset is "". Old TiDB maybe create table with charset is "".
-	db, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
+	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
 	tbl := external.GetTableByName(t, tk, "test", "t")
 	tblInfo := tbl.Meta().Clone()
 	tblInfo.Charset = ""
 	tblInfo.Collate = ""
 	updateTableInfo := func(tblInfo *model.TableInfo) {
-		mockCtx := mock.NewContext()
-		mockCtx.Store = store
-		err := sessiontxn.NewTxn(context.Background(), mockCtx)
+		ctx := testkit.NewSession(t, store)
+		err := sessiontxn.NewTxn(context.Background(), ctx)
 		require.NoError(t, err)
-		txn, err := mockCtx.Txn(true)
+		txn, err := ctx.Txn(true)
 		require.NoError(t, err)
 		mt := meta.NewMutator(txn)
 
@@ -758,7 +779,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	tk.MustExec("create table t5(a varchar(20)) ENGINE=InnoDB DEFAULT CHARSET=UTF8MB4 COLLATE=UTF8MB4_GENERAL_CI;")
 	tk.MustExec("insert into t5 values ('特克斯和凯科斯群岛')")
 
-	db, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("test_charset_collate"))
+	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test_charset_collate"))
 	require.True(t, ok)
 	tbl := external.GetTableByName(t, tk, "test_charset_collate", "t5")
 	tblInfo := tbl.Meta().Clone()
@@ -769,11 +790,10 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	tblInfo.Charset = "UTF8MB4"
 
 	updateTableInfo := func(tblInfo *model.TableInfo) {
-		mockCtx := mock.NewContext()
-		mockCtx.Store = store
-		err := sessiontxn.NewTxn(context.Background(), mockCtx)
+		sctx := testkit.NewSession(t, store)
+		err := sessiontxn.NewTxn(context.Background(), sctx)
 		require.NoError(t, err)
-		txn, err := mockCtx.Txn(true)
+		txn, err := sctx.Txn(true)
 		require.NoError(t, err)
 		mt := meta.NewMutator(txn)
 		require.True(t, ok)
@@ -809,7 +829,7 @@ func TestZeroFillCreateTable(t *testing.T) {
 	tk.MustExec("drop table if exists abc;")
 	tk.MustExec("create table abc(y year, z tinyint(10) zerofill, primary key(y));")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("abc"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("abc"))
 	require.NoError(t, err)
 	var yearCol, zCol *model.ColumnInfo
 	for _, col := range tbl.Meta().Columns {
@@ -1025,7 +1045,7 @@ func TestResolveCharset(t *testing.T) {
 	tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("resolve_charset"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("resolve_charset"))
 	require.NoError(t, err)
 	require.Equal(t, "latin1", tbl.Cols()[0].GetCharset())
 	tk.MustExec("INSERT INTO resolve_charset VALUES('鰈')")
@@ -1035,14 +1055,14 @@ func TestResolveCharset(t *testing.T) {
 	tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
 
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("resolve_charset"), pmodel.NewCIStr("resolve_charset"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("resolve_charset"), ast.NewCIStr("resolve_charset"))
 	require.NoError(t, err)
 	require.Equal(t, "latin1", tbl.Cols()[0].GetCharset())
 	require.Equal(t, "latin1", tbl.Meta().Charset)
 
 	tk.MustExec(`CREATE TABLE resolve_charset1 (a varchar(255) DEFAULT NULL)`)
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("resolve_charset"), pmodel.NewCIStr("resolve_charset1"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("resolve_charset"), ast.NewCIStr("resolve_charset1"))
 	require.NoError(t, err)
 	require.Equal(t, "binary", tbl.Cols()[0].GetCharset())
 	require.Equal(t, "binary", tbl.Meta().Charset)
@@ -1131,7 +1151,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_alter_column"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_alter_column"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colA := tblInfo.Columns[0]
@@ -1141,7 +1161,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("insert into test_alter_column set b = 'b', c = 'bb'")
 	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_alter_column"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_alter_column"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colA = tblInfo.Columns[0]
@@ -1151,7 +1171,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("insert into test_alter_column set c = 'cc'")
 	tk.MustQuery("select b from test_alter_column").Check(testkit.Rows("a", "b", "<nil>"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_alter_column"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_alter_column"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[2]
@@ -1161,7 +1181,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("insert into test_alter_column set a = 123")
 	tk.MustQuery("select c from test_alter_column").Check(testkit.Rows("aa", "bb", "cc", "xx"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_alter_column"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_alter_column"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC = tblInfo.Columns[2]
@@ -1431,17 +1451,16 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Mock old version table info with column charset is utf8.
-	db, ok := domain.GetDomain(tk.Session()).InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
+	db, ok := domain.GetDomain(tk.Session()).InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	tbl := external.GetTableByName(t, tk, "test", "t")
 	tblInfo := tbl.Meta().Clone()
 	tblInfo.Version = model.TableInfoVersion0
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
 	updateTableInfo := func(tblInfo *model.TableInfo) {
-		mockCtx := mock.NewContext()
-		mockCtx.Store = store
-		err := sessiontxn.NewTxn(context.Background(), mockCtx)
+		sctx := testkit.NewSession(t, store)
+		err := sessiontxn.NewTxn(context.Background(), sctx)
 		require.NoError(t, err)
-		txn, err := mockCtx.Txn(true)
+		txn, err := sctx.Txn(true)
 		require.NoError(t, err)
 		mt := meta.NewMutator(txn)
 		require.True(t, ok)
@@ -1721,7 +1740,7 @@ func TestChangingDBCharset(t *testing.T) {
 		// Make sure the table schema is the new schema.
 		err := dom.Reload()
 		require.NoError(t, err)
-		dbInfo, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr(dbName))
+		dbInfo, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr(dbName))
 		require.Equal(t, true, ok)
 		require.Equal(t, chs, dbInfo.Charset)
 		require.Equal(t, coll, dbInfo.Collate)
@@ -1904,7 +1923,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	tk.MustExec("alter table t add index idx((a+b));")
 	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE table_name = 't'").Check(testkit.Rows())
 
-	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	columns := tblInfo.Meta().Columns
 	require.Equal(t, 3, len(columns))
@@ -1913,7 +1932,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
 	tk.MustExec("alter table t add index idx_multi((a+b),(a+1), b);")
-	tblInfo, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tblInfo, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	columns = tblInfo.Meta().Columns
 	require.Equal(t, 5, len(columns))
@@ -1923,7 +1942,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
 	tk.MustExec("alter table t drop index idx;")
-	tblInfo, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tblInfo, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	columns = tblInfo.Meta().Columns
 	require.Equal(t, 4, len(columns))
@@ -1931,7 +1950,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
 	tk.MustExec("alter table t drop index idx_multi;")
-	tblInfo, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tblInfo, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	columns = tblInfo.Meta().Columns
 	require.Equal(t, 2, len(columns))
@@ -2276,8 +2295,12 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 		tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
 			fmt.Sprintf("auto_inc_force t a %d AUTO_INCREMENT", b),
 		))
-		tk.MustExec("insert into t values ();")
-		tk.MustQuery("select a from t;").Check(testkit.Rows(fmt.Sprintf("%d", b)))
+		if b != math.MaxUint64 {
+			tk.MustExec("insert into t values ();")
+			tk.MustQuery("select a from t;").Check(testkit.Rows(fmt.Sprintf("%d", b)))
+		} else {
+			tk.MustExecToErr("insert into t values ();")
+		}
 		tk.MustExec("delete from t;")
 	}
 	tk.MustExec("drop table if exists t;")
@@ -2383,7 +2406,7 @@ func TestDuplicateErrorMessage(t *testing.T) {
 
 	for _, newCollate := range []bool{false, true} {
 		collate.SetNewCollationEnabledForTest(newCollate)
-		for _, clusteredIndex := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
+		for _, clusteredIndex := range []vardef.ClusteredIndexDefMode{vardef.ClusteredIndexDefModeOn, vardef.ClusteredIndexDefModeOff, vardef.ClusteredIndexDefModeIntOnly} {
 			tk.Session().GetSessionVars().EnableClusteredIndex = clusteredIndex
 			for _, t := range tests {
 				tk.MustExec("drop table if exists t;")
@@ -2750,7 +2773,7 @@ func TestDropTemporaryTable(t *testing.T) {
 	sessionVars := tk.Session().GetSessionVars()
 	sessVarsTempTable := sessionVars.LocalTemporaryTables
 	localTemporaryTable := sessVarsTempTable.(*infoschema.SessionTables)
-	tbl, exist := localTemporaryTable.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("a_local_temp_table_7"))
+	tbl, exist := localTemporaryTable.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("a_local_temp_table_7"))
 	require.True(t, exist)
 	tblInfo := tbl.Meta()
 	tablePrefix := tablecodec.EncodeTablePrefix(tblInfo.ID)
@@ -2852,7 +2875,7 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 
 	// truncate temporary table will clear session data
 	localTemporaryTables := tk.Session().GetSessionVars().LocalTemporaryTables.(*infoschema.SessionTables)
-	tb1, exist := localTemporaryTables.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	tb1, exist := localTemporaryTables.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	tbl1Info := tb1.Meta()
 	tablePrefix := tablecodec.EncodeTablePrefix(tbl1Info.ID)
 	endTablePrefix := tablecodec.EncodeTablePrefix(tbl1Info.ID + 1)
@@ -3050,7 +3073,7 @@ func TestIssue52680(t *testing.T) {
 	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2"))
 
 	is := dom.InfoSchema()
-	ti, err := is.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("issue52680"))
+	ti, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("issue52680"))
 	require.NoError(t, err)
 
 	ddlutil.EmulatorGCDisable()
@@ -3093,7 +3116,7 @@ func TestIssue52680(t *testing.T) {
 	))
 
 	is = dom.InfoSchema()
-	ti1, err := is.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("issue52680"))
+	ti1, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("issue52680"))
 	require.NoError(t, err)
 	require.Equal(t, ti1.ID, ti.ID)
 
@@ -3108,7 +3131,7 @@ func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 		config.StoreGlobalConfig(originCfg)
 	}()
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type != model.ActionAddIndex {
 			return
 		}

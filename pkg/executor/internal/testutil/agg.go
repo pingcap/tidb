@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -53,8 +53,8 @@ func (a AggTestCase) String() string {
 
 // DefaultAggTestCase returns default agg test case
 func DefaultAggTestCase(ctx sessionctx.Context, exec string) *AggTestCase {
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	// return &AggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4, true, ctx}
 	return &AggTestCase{
 		ExecType:         exec,

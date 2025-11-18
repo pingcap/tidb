@@ -33,15 +33,17 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
-	util2 "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	util2 "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
@@ -106,6 +108,11 @@ func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.D
 }
 
 func TestDumpPlanReplayerAPI(t *testing.T) {
+	origin := config.GetGlobalConfig().TempDir
+	defer func() {
+		config.GetGlobalConfig().TempDir = origin
+	}()
+	config.GetGlobalConfig().TempDir = t.TempDir()
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
@@ -197,6 +204,16 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	require.Equal(t, "t", tableName)
 	require.Equal(t, int64(4), modifyCount)
 	require.Equal(t, int64(8), count)
+
+	// Extra. check the plan replayer file not exists
+	resp2, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename+"a"))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp2.Body.Close())
+	}()
+	body, err = io.ReadAll(resp2.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "can't find dump file")
 }
 
 // prepareData4PlanReplayer trigger tidb to dump 2 plan replayer files,
@@ -218,7 +235,7 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 	tk.MustExec("CREATE TABLE authors (id INT PRIMARY KEY AUTO_INCREMENT,name VARCHAR(100) NOT NULL,email VARCHAR(100) UNIQUE NOT NULL);")
 	tk.MustExec("CREATE TABLE books (id INT PRIMARY KEY AUTO_INCREMENT,title VARCHAR(200) NOT NULL,publication_date DATE NOT NULL,author_id INT,FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE CASCADE);")
 	tk.MustExec("create table tt(a int, b varchar(10)) PARTITION BY HASH(a) PARTITIONS 4;")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("insert into t values(1), (2), (3), (4)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -256,6 +273,11 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 }
 
 func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
+	origin := config.GetGlobalConfig().TempDir
+	defer func() {
+		config.GetGlobalConfig().TempDir = origin
+	}()
+	config.GetGlobalConfig().TempDir = t.TempDir()
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
@@ -289,6 +311,9 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 		"explain.txt",
 		"global_bindings.sql",
 		"meta.txt",
+		"schema/planreplayer.a.schema.txt",
+		"schema/planreplayer.b.schema.txt",
+		"schema/planreplayer.c.schema.txt",
 		"schema/planreplayer.t.schema.txt",
 		"schema/planreplayer.v.schema.txt",
 		"schema/planreplayer2.t.schema.txt",
@@ -296,9 +321,15 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 		"session_bindings.sql",
 		"sql/sql0.sql",
 		"sql_meta.toml",
+		"stats/planreplayer.a.json",
+		"stats/planreplayer.b.json",
+		"stats/planreplayer.c.json",
 		"stats/planreplayer.t.json",
 		"stats/planreplayer.v.json",
 		"stats/planreplayer2.t.json",
+		"statsMem/planreplayer.a.txt",
+		"statsMem/planreplayer.b.txt",
+		"statsMem/planreplayer.c.txt",
 		"statsMem/planreplayer.t.txt",
 		"statsMem/planreplayer.v.txt",
 		"statsMem/planreplayer2.t.txt",
@@ -333,9 +364,14 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	}()
 	tk := testkit.NewDBTestKit(t, db)
 	tk.MustExec("use planReplayer")
+	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 0;`)
 	tk.MustExec("drop table planReplayer.t")
 	tk.MustExec("drop table planReplayer2.t")
 	tk.MustExec("drop table planReplayer.v")
+	tk.MustExec("drop table planReplayer.a")
+	tk.MustExec("drop table planReplayer.b")
+	tk.MustExec("drop table planReplayer.c")
+	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
 
 	// 3-3. check whether binding takes effect
@@ -349,6 +385,11 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 }
 
 func TestIssue43192(t *testing.T) {
+	origin := config.GetGlobalConfig().TempDir
+	defer func() {
+		config.GetGlobalConfig().TempDir = origin
+	}()
+	config.GetGlobalConfig().TempDir = t.TempDir()
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
@@ -430,7 +471,8 @@ func prepareData4Issue43192(t *testing.T, client *testserverclient.TestServerCli
 	tk.MustExec("create database planReplayer")
 	tk.MustExec("use planReplayer")
 	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b)) PARTITION BY HASH(a) PARTITIONS 4;")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	tk.MustExec("INSERT INTO t (a, b) VALUES (1, 1), (2, 2), (3, 3), (4, 4),(5, 5), (6, 6), (7, 7), (8, 8),(9, 9), (10, 10), (11, 11), (12, 12),(13, 13), (14, 14), (15, 15), (16, 16),(17, 17), (18, 18), (19, 19), (20, 20),(21, 21), (22, 22), (23, 23), (24, 24),(25, 25), (26, 26), (27, 27), (28, 28),(29, 29), (30, 30), (31, 31), (32, 32),(33, 33), (34, 34), (35, 35), (36, 36),(37, 37), (38, 38), (39, 39), (40, 40),(41, 41), (42, 42), (43, 43), (44, 44),(45, 45), (46, 46), (47, 47), (48, 48),(49, 49), (50, 50), (51, 51), (52, 52),(53, 53), (54, 54), (55, 55), (56, 56),(57, 57), (58, 58), (59, 59), (60, 60),(61, 61), (62, 62), (63, 63), (64, 64),(65, 65), (66, 66), (67, 67), (68, 68),(69, 69), (70, 70), (71, 71), (72, 72),(73, 73), (74, 74), (75, 75), (76, 76),(77, 77), (78, 78), (79, 79), (80, 80),(81, 81), (82, 82), (83, 83), (84, 84),(85, 85), (86, 86), (87, 87), (88, 88),(89, 89), (90, 90), (91, 91), (92, 92),(93, 93), (94, 94), (95, 95), (96, 96),(97, 97), (98, 98), (99, 99), (100, 100);")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
@@ -456,7 +498,7 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 		require.NoError(t, err)
 	}()
 	tk := testkit.NewDBTestKit(t, db)
-
+	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 0;`)
 	tk.MustExec("create database planReplayer")
 	tk.MustExec("create database planReplayer2")
 	tk.MustExec("use planReplayer")
@@ -466,15 +508,40 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 		"FOLLOWERS=3 " +
 		"FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\"")
 	tk.MustExec("CREATE TABLE v(id INT PRIMARY KEY AUTO_INCREMENT);")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("create table planReplayer2.t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer.v(id) ON DELETE CASCADE);")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE) placement policy p;")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, b_id int, FOREIGN KEY (b_id) REFERENCES B(id),FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE) placement policy p;")
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-
+	// defining FKs in a circular manner
+	tk.MustExec(`CREATE TABLE A (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    b_id INT,
+    FOREIGN KEY (b_id) REFERENCES B(id)
+);`)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec(`CREATE TABLE B (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    c_id INT,
+    FOREIGN KEY (c_id) REFERENCES C(id)
+);`)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec(`CREATE TABLE C(
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    a_id INT,
+    FOREIGN KEY (a_id) REFERENCES A(id)
+);`)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec("create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)")
 	rows := tk.MustQuery("plan replayer dump explain select a, b from t where a in (1, 2, 3)")
 	require.True(t, rows.Next(), "unexpected data")
@@ -585,7 +652,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, index ia(a))")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 

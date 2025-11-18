@@ -12,9 +12,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/meta/model",
+        "//pkg/parser/ast",
         "//pkg/parser/charset",
         "//pkg/parser/format",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/types",
         "//pkg/types",

@@ -3,7 +3,8 @@
 CREATE TABLE `pt_case_2` (
   `a` int DEFAULT NULL,
   `b` int DEFAULT NULL,
-  UNIQUE KEY `idx` (`a`) /*T![global_index] GLOBAL */
+  UNIQUE KEY `idx` (`a`) /*T![global_index] GLOBAL */,
+  KEY `idx1` (`a`) /*T![global_index] GLOBAL */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`b`)
 (PARTITION `p0` VALUES LESS THAN (4),

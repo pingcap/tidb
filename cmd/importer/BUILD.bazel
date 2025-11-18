@@ -24,7 +24,7 @@ go_library(
         "//pkg/planner/core",
         "//pkg/statistics",
         "//pkg/statistics/handle/storage",
-        "//pkg/statistics/handle/util",
+        "//pkg/statistics/util",
         "//pkg/types",
         "@com_github_burntsushi_toml//:toml",
         "@com_github_go_sql_driver_mysql//:mysql",

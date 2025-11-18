@@ -17,16 +17,19 @@ package model
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/duration"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
@@ -82,30 +85,34 @@ const (
 )
 
 // ExtraHandleName is the name of ExtraHandle Column.
-var ExtraHandleName = model.NewCIStr("_tidb_rowid")
+var ExtraHandleName = ast.NewCIStr("_tidb_rowid")
 
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
-var ExtraPhysTblIDName = model.NewCIStr("_tidb_tid")
+var ExtraPhysTblIDName = ast.NewCIStr("_tidb_tid")
+
+// VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
+// When read column by vector index, sometimes there is no need to read vector column just need distance,
+// so a distance column will be added to table_scan. this field is used in the action.
+const VirtualColVecSearchDistanceID int64 = -2000
 
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
-	ID      int64       `json:"id"`
-	Name    model.CIStr `json:"name"`
-	Charset string      `json:"charset"`
-	Collate string      `json:"collate"`
+	ID      int64     `json:"id"`
+	Name    ast.CIStr `json:"name"`
+	Charset string    `json:"charset"`
+	Collate string    `json:"collate"`
 	// Columns are listed in the order in which they appear in the schema.
 	Columns     []*ColumnInfo     `json:"cols"`
 	Indices     []*IndexInfo      `json:"index_info"`
 	Constraints []*ConstraintInfo `json:"constraint_info"`
 	ForeignKeys []*FKInfo         `json:"fk_info"`
 	State       SchemaState       `json:"state"`
-	// PKIsHandle is true when primary key is a single integer column.
+	// PKIsHandle is true when PK is clustered and a single integer column.
 	PKIsHandle bool `json:"pk_is_handle"`
-	// IsCommonHandle is true when clustered index feature is
-	// enabled and the primary key is not a single integer column.
+	// IsCommonHandle is true when PK is clustered and not a single integer column.
 	IsCommonHandle bool `json:"is_common_handle"`
 	// CommonHandleVersion is the version of the clustered index.
 	// 0 for the clustered index created == 5.0.0 RC.
@@ -136,7 +143,8 @@ type TableInfo struct {
 	MaxForeignKeyID int64 `json:"max_fk_id"`
 	MaxConstraintID int64 `json:"max_cst_id"`
 	// UpdateTS is used to record the timestamp of updating the table's schema information.
-	// These changing schema operations don't include 'truncate table' and 'rename table'.
+	// These changing schema operations don't include 'truncate table', 'rename table',
+	// 'rename tables', 'truncate partition' and 'exchange partition'.
 	UpdateTS uint64 `json:"update_timestamp"`
 	// OldSchemaID :
 	// Because auto increment ID has schemaID as prefix,
@@ -195,6 +203,8 @@ type TableInfo struct {
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
+
+	Mode TableMode `json:"mode,omitempty"`
 }
 
 // Hash64 implement HashEquals interface.
@@ -241,7 +251,7 @@ func (t *TableInfo) Clone() *TableInfo {
 	nt := *t
 	nt.Columns = make([]*ColumnInfo, len(t.Columns))
 	nt.Indices = make([]*IndexInfo, len(t.Indices))
-	nt.ForeignKeys = make([]*FKInfo, len(t.ForeignKeys))
+	nt.ForeignKeys = nil
 
 	for i := range t.Columns {
 		nt.Columns[i] = t.Columns[i].Clone()
@@ -251,8 +261,11 @@ func (t *TableInfo) Clone() *TableInfo {
 		nt.Indices[i] = t.Indices[i].Clone()
 	}
 
-	for i := range t.ForeignKeys {
-		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+	if len(t.ForeignKeys) > 0 {
+		nt.ForeignKeys = make([]*FKInfo, len(t.ForeignKeys))
+		for i := range t.ForeignKeys {
+			nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+		}
 	}
 
 	if t.Partition != nil {
@@ -266,13 +279,13 @@ func (t *TableInfo) Clone() *TableInfo {
 }
 
 // GetPkName will return the pk name if pk exists.
-func (t *TableInfo) GetPkName() model.CIStr {
+func (t *TableInfo) GetPkName() ast.CIStr {
 	for _, colInfo := range t.Columns {
 		if mysql.HasPriKeyFlag(colInfo.GetFlag()) {
 			return colInfo.Name
 		}
 	}
-	return model.CIStr{}
+	return ast.CIStr{}
 }
 
 // GetPkColInfo gets the ColumnInfo of pk if exists.
@@ -384,6 +397,8 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 	if from == to {
 		return
 	}
+
+	// Update column offsets.
 	updatedOffsets := make(map[int]int)
 	src := t.Columns[from]
 	if from < to {
@@ -401,12 +416,31 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 	}
 	t.Columns[to] = src
 	t.Columns[to].Offset = to
+
+	// Update index column offsets.
 	updatedOffsets[from] = to
 	for _, idx := range t.Indices {
 		for _, idxCol := range idx.Columns {
 			newOffset, ok := updatedOffsets[idxCol.Offset]
 			if ok {
 				idxCol.Offset = newOffset
+			}
+		}
+
+		for _, affectedCol := range idx.AffectColumn {
+			newOffset, ok := updatedOffsets[affectedCol.Offset]
+			if ok {
+				affectedCol.Offset = newOffset
+			}
+		}
+	}
+
+	// Reconstruct the dependency column offsets.
+	for _, col := range t.Columns {
+		if col.ChangeStateInfo != nil {
+			newOffset, ok := updatedOffsets[col.ChangeStateInfo.DependencyColumnOffset]
+			if ok {
+				col.ChangeStateInfo.DependencyColumnOffset = newOffset
 			}
 		}
 	}
@@ -498,7 +532,7 @@ func (t *TableInfo) IsSequence() bool {
 	return t.Sequence != nil
 }
 
-// IsBaseTable checks to see the table is neither a view or a sequence.
+// IsBaseTable checks to see the table is neither a view nor a sequence.
 func (t *TableInfo) IsBaseTable() bool {
 	return t.Sequence == nil && t.View == nil
 }
@@ -555,10 +589,26 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 	return nil
 }
 
+// GetIdxChangingFieldType gets the field type of index column.
+// Since both old/new type may coexist in one column during modify column,
+// we need to get the correct type for index column.
+func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
+	if idxCol.UseChangingType && col.ChangingFieldType != nil {
+		return col.ChangingFieldType
+	}
+	return &col.FieldType
+}
+
+// ColumnNeedRestoredData checks whether a single index column needs restored data.
+func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
+	col := colInfos[idxCol.Offset]
+	return types.NeedRestoredData(GetIdxChangingFieldType(idxCol, col))
+}
+
 // TableNameInfo provides meta data describing a table name info.
 type TableNameInfo struct {
-	ID   int64       `json:"id"`
-	Name model.CIStr `json:"name"`
+	ID   int64     `json:"id"`
+	Name ast.CIStr `json:"name"`
 }
 
 // TableCacheStatusType is the type of the table cache status
@@ -609,7 +659,7 @@ func (t TempTableType) String() string {
 
 // TableLockInfo provides meta data describing a table lock.
 type TableLockInfo struct {
-	Tp model.TableLockType
+	Tp ast.TableLockType
 	// Use array because there may be multiple sessions holding the same read lock.
 	Sessions []SessionInfo
 	State    TableLockState
@@ -632,7 +682,7 @@ func (s SessionInfo) String() string {
 type TableLockTpInfo struct {
 	SchemaID int64
 	TableID  int64
-	Tp       model.TableLockType
+	Tp       ast.TableLockType
 }
 
 // TableLockState is the state for table lock.
@@ -659,6 +709,38 @@ func (t TableLockState) String() string {
 	}
 }
 
+// TableMode is the state for table mode, it's a table level metadata for prevent
+// table read/write during importing(import into) or BR restoring.
+// when table mode isn't TableModeNormal, DMLs or DDLs that change the table will
+// return error.
+// To modify table mode, only internal DDL operations(AlterTableMode) are permitted.
+// Now allow switching between the same table modes, and not allow convert between
+// TableModeImport and TableModeRestore
+type TableMode byte
+
+const (
+	// TableModeNormal means the table is in normal mode.
+	TableModeNormal TableMode = iota
+	// TableModeImport means the table is in import mode.
+	TableModeImport
+	// TableModeRestore means the table is in restore mode.
+	TableModeRestore
+)
+
+// String implements fmt.Stringer interface.
+func (t TableMode) String() string {
+	switch t {
+	case TableModeNormal:
+		return "Normal"
+	case TableModeImport:
+		return "Import"
+	case TableModeRestore:
+		return "Restore"
+	default:
+		return ""
+	}
+}
+
 // TiFlashReplicaInfo means the flash replica info.
 type TiFlashReplicaInfo struct {
 	Count                 uint64
@@ -669,22 +751,17 @@ type TiFlashReplicaInfo struct {
 
 // IsPartitionAvailable checks whether the partition table replica was available.
 func (tr *TiFlashReplicaInfo) IsPartitionAvailable(pid int64) bool {
-	for _, id := range tr.AvailablePartitionIDs {
-		if id == pid {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tr.AvailablePartitionIDs, pid)
 }
 
 // ViewInfo provides meta data describing a DB view.
 type ViewInfo struct {
-	Algorithm   model.ViewAlgorithm   `json:"view_algorithm"`
-	Definer     *auth.UserIdentity    `json:"view_definer"`
-	Security    model.ViewSecurity    `json:"view_security"`
-	SelectStmt  string                `json:"view_select"`
-	CheckOption model.ViewCheckOption `json:"view_checkoption"`
-	Cols        []model.CIStr         `json:"view_cols"`
+	Algorithm   ast.ViewAlgorithm   `json:"view_algorithm"`
+	Definer     *auth.UserIdentity  `json:"view_definer"`
+	Security    ast.ViewSecurity    `json:"view_security"`
+	SelectStmt  string              `json:"view_select"`
+	CheckOption ast.ViewCheckOption `json:"view_checkoption"`
+	Cols        []ast.CIStr         `json:"view_cols"`
 }
 
 // Some constants for sequence.
@@ -732,9 +809,9 @@ type UpdateIndexInfo struct {
 
 // PartitionInfo provides table partition info.
 type PartitionInfo struct {
-	Type    model.PartitionType `json:"type"`
-	Expr    string              `json:"expr"`
-	Columns []model.CIStr       `json:"columns"`
+	Type    ast.PartitionType `json:"type"`
+	Expr    string            `json:"expr"`
+	Columns []ast.CIStr       `json:"columns"`
 
 	// User may already create table with partition but table partition is not
 	// yet supported back then. When Enable is true, write/read need use tid
@@ -769,9 +846,9 @@ type PartitionInfo struct {
 	NewTableID int64 `json:"new_table_id,omitempty"`
 	// Set during ALTER TABLE ... PARTITION BY ...
 	// First as the new partition scheme, then in StateDeleteReorg as the old
-	DDLType    model.PartitionType `json:"ddl_type,omitempty"`
-	DDLExpr    string              `json:"ddl_expr,omitempty"`
-	DDLColumns []model.CIStr       `json:"ddl_columns,omitempty"`
+	DDLType    ast.PartitionType `json:"ddl_type,omitempty"`
+	DDLExpr    string            `json:"ddl_expr,omitempty"`
+	DDLColumns []ast.CIStr       `json:"ddl_columns,omitempty"`
 	// For ActionAlterTablePartitioning, UPDATE INDEXES
 	DDLUpdateIndexes []UpdateIndexInfo `json:"ddl_update_indexes,omitempty"`
 	// Simplified way to handle Global Index changes, instead of calculating
@@ -784,8 +861,7 @@ type PartitionInfo struct {
 // Clone clones itself.
 func (pi *PartitionInfo) Clone() *PartitionInfo {
 	newPi := *pi
-	newPi.Columns = make([]model.CIStr, len(pi.Columns))
-	copy(newPi.Columns, pi.Columns)
+	newPi.Columns = slices.Clone(pi.Columns)
 
 	newPi.Definitions = make([]PartitionDefinition, len(pi.Definitions))
 	for i := range pi.Definitions {
@@ -869,7 +945,7 @@ func (pi *PartitionInfo) GCPartitionStates() {
 func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
 	pi.DDLAction = ActionNone
 	pi.DDLState = StateNone
-	pi.DDLType = model.PartitionTypeNone
+	pi.DDLType = ast.PartitionTypeNone
 	pi.DDLExpr = ""
 	pi.DDLColumns = nil
 	pi.NewTableID = 0
@@ -902,7 +978,7 @@ func (pi *PartitionInfo) GetPartitionIDByName(partitionDefinitionName string) in
 // GetDefaultListPartition return the index of Definitions
 // that contains the LIST Default partition otherwise it returns -1
 func (pi *PartitionInfo) GetDefaultListPartition() int {
-	if pi.Type != model.PartitionTypeList {
+	if pi.Type != ast.PartitionTypeList {
 		return -1
 	}
 	defs := pi.Definitions
@@ -981,7 +1057,7 @@ func (pi *PartitionInfo) GetOverlappingDroppingPartitionIdx(idx int) int {
 	}
 	if pi.CanHaveOverlappingDroppingPartition() {
 		switch pi.Type {
-		case model.PartitionTypeRange:
+		case ast.PartitionTypeRange:
 			for i := idx; i < len(pi.Definitions); i++ {
 				if pi.IsDropping(i) {
 					continue
@@ -990,7 +1066,7 @@ func (pi *PartitionInfo) GetOverlappingDroppingPartitionIdx(idx int) int {
 			}
 			// Last partition is also dropped!
 			return -1
-		case model.PartitionTypeList:
+		case ast.PartitionTypeList:
 			if pi.IsDropping(idx) {
 				defaultIdx := pi.GetDefaultListPartition()
 				if defaultIdx == idx {
@@ -1064,7 +1140,7 @@ func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
 			return ids
 		}
 	case ActionDropTablePartition:
-		if len(pi.DroppingDefinitions) > 0 && pi.DDLState == StateDeleteOnly {
+		if len(pi.DroppingDefinitions) > 0 {
 			ids := make([]int64, 0, len(pi.DroppingDefinitions))
 			for _, def := range pi.DroppingDefinitions {
 				ids = append(ids, def.ID)
@@ -1094,7 +1170,7 @@ type PartitionState struct {
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
 	ID                 int64          `json:"id"`
-	Name               model.CIStr    `json:"name"`
+	Name               ast.CIStr      `json:"name"`
 	LessThan           []string       `json:"less_than"`
 	InValues           [][]string     `json:"in_values"`
 	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
@@ -1104,8 +1180,7 @@ type PartitionDefinition struct {
 // Clone clones PartitionDefinition.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
-	nci.LessThan = make([]string, len(ci.LessThan))
-	copy(nci.LessThan, ci.LessThan)
+	nci.LessThan = slices.Clone(ci.LessThan)
 	return nci
 }
 
@@ -1135,37 +1210,36 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 
 // ConstraintInfo provides meta data describing check-expression constraint.
 type ConstraintInfo struct {
-	ID             int64         `json:"id"`
-	Name           model.CIStr   `json:"constraint_name"`
-	Table          model.CIStr   `json:"tbl_name"`        // Table name.
-	ConstraintCols []model.CIStr `json:"constraint_cols"` // Depended column names.
-	Enforced       bool          `json:"enforced"`
-	InColumn       bool          `json:"in_column"` // Indicate whether the constraint is column type check.
-	ExprString     string        `json:"expr_string"`
-	State          SchemaState   `json:"state"`
+	ID             int64       `json:"id"`
+	Name           ast.CIStr   `json:"constraint_name"`
+	Table          ast.CIStr   `json:"tbl_name"`        // Table name.
+	ConstraintCols []ast.CIStr `json:"constraint_cols"` // Depended column names.
+	Enforced       bool        `json:"enforced"`
+	InColumn       bool        `json:"in_column"` // Indicate whether the constraint is column type check.
+	ExprString     string      `json:"expr_string"`
+	State          SchemaState `json:"state"`
 }
 
 // Clone clones ConstraintInfo.
 func (ci *ConstraintInfo) Clone() *ConstraintInfo {
 	nci := *ci
 
-	nci.ConstraintCols = make([]model.CIStr, len(ci.ConstraintCols))
-	copy(nci.ConstraintCols, ci.ConstraintCols)
+	nci.ConstraintCols = slices.Clone(ci.ConstraintCols)
 	return &nci
 }
 
 // FKInfo provides meta data describing a foreign key constraint.
 type FKInfo struct {
-	ID        int64         `json:"id"`
-	Name      model.CIStr   `json:"fk_name"`
-	RefSchema model.CIStr   `json:"ref_schema"`
-	RefTable  model.CIStr   `json:"ref_table"`
-	RefCols   []model.CIStr `json:"ref_cols"`
-	Cols      []model.CIStr `json:"cols"`
-	OnDelete  int           `json:"on_delete"`
-	OnUpdate  int           `json:"on_update"`
-	State     SchemaState   `json:"state"`
-	Version   int           `json:"version"`
+	ID        int64       `json:"id"`
+	Name      ast.CIStr   `json:"fk_name"`
+	RefSchema ast.CIStr   `json:"ref_schema"`
+	RefTable  ast.CIStr   `json:"ref_table"`
+	RefCols   []ast.CIStr `json:"ref_cols"`
+	Cols      []ast.CIStr `json:"cols"`
+	OnDelete  int         `json:"on_delete"`
+	OnUpdate  int         `json:"on_update"`
+	State     SchemaState `json:"state"`
+	Version   int         `json:"version"`
 }
 
 // String returns the string representation of FKInfo.
@@ -1194,11 +1268,11 @@ func (fk *FKInfo) String(db, tb string) string {
 		buf.WriteString("`" + col.O + "`")
 	}
 	buf.WriteString(")")
-	if onDelete := model.ReferOptionType(fk.OnDelete); onDelete != model.ReferOptionNoOption {
+	if onDelete := ast.ReferOptionType(fk.OnDelete); onDelete != ast.ReferOptionNoOption {
 		buf.WriteString(" ON DELETE ")
 		buf.WriteString(onDelete.String())
 	}
-	if onUpdate := model.ReferOptionType(fk.OnUpdate); onUpdate != model.ReferOptionNoOption {
+	if onUpdate := ast.ReferOptionType(fk.OnUpdate); onUpdate != ast.ReferOptionNoOption {
 		buf.WriteString(" ON UPDATE ")
 		buf.WriteString(onUpdate.String())
 	}
@@ -1209,10 +1283,8 @@ func (fk *FKInfo) String(db, tb string) string {
 func (fk *FKInfo) Clone() *FKInfo {
 	nfk := *fk
 
-	nfk.RefCols = make([]model.CIStr, len(fk.RefCols))
-	nfk.Cols = make([]model.CIStr, len(fk.Cols))
-	copy(nfk.RefCols, fk.RefCols)
-	copy(nfk.Cols, fk.Cols)
+	nfk.RefCols = slices.Clone(fk.RefCols)
+	nfk.Cols = slices.Clone(fk.Cols)
 
 	return &nfk
 }
@@ -1228,10 +1300,10 @@ const (
 
 // ReferredFKInfo provides the cited foreign key in the child table.
 type ReferredFKInfo struct {
-	Cols        []model.CIStr `json:"cols"`
-	ChildSchema model.CIStr   `json:"child_schema"`
-	ChildTable  model.CIStr   `json:"child_table"`
-	ChildFKName model.CIStr   `json:"child_fk_name"`
+	Cols        []ast.CIStr `json:"cols"`
+	ChildSchema ast.CIStr   `json:"child_schema"`
+	ChildTable  ast.CIStr   `json:"child_table"`
+	ChildFKName ast.CIStr   `json:"child_fk_name"`
 }
 
 // TableItemID is composed by table ID and column/index ID
@@ -1261,22 +1333,22 @@ func (s StatsLoadItem) Key() string {
 // StatsOptions is the struct to store the stats options.
 type StatsOptions struct {
 	*StatsWindowSettings
-	AutoRecalc   bool               `json:"auto_recalc"`
-	ColumnChoice model.ColumnChoice `json:"column_choice"`
-	ColumnList   []model.CIStr      `json:"column_list"`
-	SampleNum    uint64             `json:"sample_num"`
-	SampleRate   float64            `json:"sample_rate"`
-	Buckets      uint64             `json:"buckets"`
-	TopN         uint64             `json:"topn"`
-	Concurrency  uint               `json:"concurrency"`
+	AutoRecalc   bool             `json:"auto_recalc"`
+	ColumnChoice ast.ColumnChoice `json:"column_choice"`
+	ColumnList   []ast.CIStr      `json:"column_list"`
+	SampleNum    uint64           `json:"sample_num"`
+	SampleRate   float64          `json:"sample_rate"`
+	Buckets      uint64           `json:"buckets"`
+	TopN         uint64           `json:"topn"`
+	Concurrency  uint             `json:"concurrency"`
 }
 
 // NewStatsOptions creates a new StatsOptions.
 func NewStatsOptions() *StatsOptions {
 	return &StatsOptions{
 		AutoRecalc:   true,
-		ColumnChoice: model.DefaultChoice,
-		ColumnList:   []model.CIStr{},
+		ColumnChoice: ast.DefaultChoice,
+		ColumnList:   []ast.CIStr{},
 		SampleNum:    uint64(0),
 		SampleRate:   0.0,
 		Buckets:      uint64(0),
@@ -1329,8 +1401,8 @@ const OldDefaultTTLJobInterval = "1h"
 
 // TTLInfo records the TTL config
 type TTLInfo struct {
-	ColumnName      model.CIStr `json:"column"`
-	IntervalExprStr string      `json:"interval_expr"`
+	ColumnName      ast.CIStr `json:"column"`
+	IntervalExprStr string    `json:"interval_expr"`
 	// `IntervalTimeUnit` is actually ast.TimeUnitType. Use `int` to avoid cycle dependency
 	IntervalTimeUnit int  `json:"interval_time_unit"`
 	Enable           bool `json:"enable"`
@@ -1351,6 +1423,10 @@ func (t *TTLInfo) Clone() *TTLInfo {
 // Didn't set TTL_JOB_INTERVAL during upgrade and bootstrap because setting default value here is much simpler
 // and could avoid bugs blocking users from upgrading or bootstrapping the cluster.
 func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
+	failpoint.Inject("overwrite-ttl-job-interval", func(val failpoint.Value) (time.Duration, error) {
+		return time.Duration(val.(int)), nil
+	})
+
 	if len(t.JobInterval) == 0 {
 		// This only happens when the table is created from 6.5 in which the `tidb_job_interval` is not introduced yet.
 		// We use `OldDefaultTTLJobInterval` as the return value to ensure a consistent behavior for the

@@ -21,7 +21,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/stretchr/testify/require"
 )
@@ -63,9 +64,9 @@ func TestJobCodec(t *testing.T) {
 			Location: &TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 	}
-	job.FillArgs(&RenameTableArgs{OldSchemaID: 2, NewTableName: model.NewCIStr("table1")})
-	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: model.NewCIStr("test_history_db")})
-	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: model.NewCIStr("test_history_tbl")})
+	job.FillArgs(&RenameTableArgs{OldSchemaID: 2, NewTableName: ast.NewCIStr("table1")})
+	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: ast.NewCIStr("test_history_db")})
+	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: ast.NewCIStr("test_history_tbl")})
 
 	require.Equal(t, false, job.IsCancelled())
 	b, err := job.Encode(false)
@@ -161,8 +162,8 @@ func TestJobSize(t *testing.T) {
 - SubJob.FromProxyJob()
 - SubJob.ToProxyJob()
 `
-	job := Job{}
-	require.Equal(t, 400, int(unsafe.Sizeof(job)), msg)
+	require.Equal(t, 416, int(unsafe.Sizeof(Job{})), msg)
+	require.Equal(t, 160, int(unsafe.Sizeof(SubJob{})), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {
@@ -295,4 +296,12 @@ func TestJobEncodeV2(t *testing.T) {
 	args := &TruncateTableArgs{}
 	require.NoError(t, json.Unmarshal(j.RawArgs, args))
 	require.EqualValues(t, j.args[0], args)
+}
+
+func TestJobVerInUse(t *testing.T) {
+	if kerneltype.IsClassic() {
+		require.Equal(t, JobVersion1, GetJobVerInUse())
+	} else {
+		require.Equal(t, JobVersion2, GetJobVerInUse())
+	}
 }

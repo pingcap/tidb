@@ -62,7 +62,7 @@ func newOuterJoinProbe(base baseJoinProbe, isOuterSideBuild bool, isRightSideBui
 func (j *outerJoinProbe) prepareIsNotMatchedRows() {
 	if !j.isOuterSideBuild {
 		j.isNotMatchedRows = j.isNotMatchedRows[:0]
-		for i := 0; i < j.chunkRows; i++ {
+		for range j.chunkRows {
 			j.isNotMatchedRows = append(j.isNotMatchedRows, true)
 		}
 
@@ -111,19 +111,7 @@ func (j *outerJoinProbe) InitForScanRowTable() {
 	if !j.isOuterSideBuild {
 		panic("should not reach here")
 	}
-	totalRowCount := j.ctx.hashTableContext.hashTable.totalRowCount()
-	concurrency := j.ctx.Concurrency
-	workID := uint64(j.workID)
-	avgRowPerWorker := totalRowCount / uint64(concurrency)
-	startIndex := workID * avgRowPerWorker
-	endIndex := (workID + 1) * avgRowPerWorker
-	if workID == uint64(concurrency-1) {
-		endIndex = totalRowCount
-	}
-	if endIndex > totalRowCount {
-		endIndex = totalRowCount
-	}
-	j.rowIter = j.ctx.hashTableContext.hashTable.createRowIter(startIndex, endIndex)
+	j.rowIter = commonInitForScanRowTable(&j.baseJoinProbe)
 }
 
 func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) *hashjoinWorkerResult {

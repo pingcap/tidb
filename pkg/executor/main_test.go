@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
@@ -46,7 +46,7 @@ func TestMain(m *testing.M) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
-	variable.StatsCacheMemQuota.Store(5000)
+	vardef.StatsCacheMemQuota.Store(5000)
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),

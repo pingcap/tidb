@@ -109,7 +109,7 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	e.outerRow = make([]*chunk.Row, e.concurrency)
 	e.hasMatch = make([]bool, e.concurrency)
 	e.hasNull = make([]bool, e.concurrency)
-	for i := 0; i < e.concurrency; i++ {
+	for i := range e.concurrency {
 		e.innerChunk[i] = exec.TryNewCacheChunk(e.innerExecs[i])
 		e.innerList[i] = chunk.NewList(exec.RetTypes(e.innerExecs[i]), e.InitCap(), e.MaxChunkSize())
 		e.innerList[i].GetMemTracker().SetLabel(memory.LabelForInnerList)
@@ -120,7 +120,7 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	e.resultChkCh = make(chan result, e.concurrency+1) // innerWorkers + outerWorker
 	e.outerRowCh = make(chan outerRow)
 	e.exit = make(chan struct{})
-	for i := 0; i < e.concurrency; i++ {
+	for range e.concurrency {
 		e.freeChkCh <- exec.NewFirstChunk(e)
 	}
 
@@ -143,7 +143,7 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 	if atomic.CompareAndSwapUint32(&e.started, 0, 1) {
 		e.workerWg.Add(1)
 		go e.outerWorker(ctx)
-		for i := 0; i < e.concurrency; i++ {
+		for i := range e.concurrency {
 			e.workerWg.Add(1)
 			workID := i
 			go e.innerWorker(ctx, workID)
@@ -225,7 +225,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 			e.putResult(nil, err)
 			return
 		}
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := range chk.NumRows() {
 			row := chk.GetRow(i)
 			select {
 			case e.outerRowCh <- outerRow{&row, selected[i]}:

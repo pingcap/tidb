@@ -70,20 +70,25 @@ type hashJoinSpillHelper struct {
 	spilledPartitions []bool
 
 	validJoinKeysBuffer [][]byte
+	spilledValidRowNum  atomic.Uint64
 
 	// This variable will be set to false before restoring
 	spillTriggered bool
 
 	canSpillFlag atomic.Bool
 
+	round int
+
 	spillTriggeredForTest                        bool
 	spillRoundForTest                            int
 	spillTriggedInBuildingStageForTest           bool
 	spillTriggeredBeforeBuildingHashTableForTest bool
 	allPartitionsSpilledForTest                  bool
+	skipProbeInRestoreForTest                    atomic.Bool
+	fileNamePrefixForTest                        string
 }
 
-func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
+func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, probeFieldTypes []*types.FieldType, fileNamePrefixForTest string) *hashJoinSpillHelper {
 	helper := &hashJoinSpillHelper{hashJoinExec: hashJoinExec}
 	helper.cond = sync.NewCond(new(sync.Mutex))
 	helper.buildSpillChkFieldTypes = make([]*types.FieldType, 0, 3)
@@ -95,8 +100,10 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit)) // row data
 	helper.probeSpillFieldTypes = getProbeSpillChunkFieldTypes(probeFieldTypes)
 	helper.spilledPartitions = make([]bool, partitionNum)
+	helper.spilledValidRowNum.Store(0)
 	helper.hash = fnv.New64()
 	helper.rehashBuf = new(bytes.Buffer)
+	helper.fileNamePrefixForTest = fileNamePrefixForTest
 
 	// hashJoinExec may be nill in ut
 	if hashJoinExec != nil {
@@ -107,6 +114,8 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	for i := 1; i < len(helper.probeSpillFieldTypes); i++ {
 		helper.probeSpilledRowIdx = append(helper.probeSpilledRowIdx, i)
 	}
+
+	helper.round = 0
 
 	// hashJoinExec may be nil in test
 	if hashJoinExec != nil {
@@ -232,7 +241,7 @@ func (h *hashJoinSpillHelper) isPartitionSpilled(partID int) bool {
 func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64) ([]int, int64) {
 	partitionNum := h.hashJoinExec.partitionNumber
 	partitionsMemoryUsage := make([]int64, partitionNum)
-	for i := 0; i < int(partitionNum); i++ {
+	for i := range int(partitionNum) {
 		partitionsMemoryUsage[i] = h.hashJoinExec.hashTableContext.getPartitionMemoryUsage(i)
 		if hashTableMemUsage != nil {
 			partitionsMemoryUsage[i] += hashTableMemUsage[i]
@@ -287,15 +296,21 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64)
 	return spilledPartitions, releasedMemoryUsage
 }
 
-func (*hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
+func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
 	rowLen := len(seg.rowStartOffset)
-	validJoinKeys = validJoinKeys[:rowLen]
-	for i := 0; i < rowLen; i++ {
+	if cap(validJoinKeys) < rowLen {
+		validJoinKeys = make([]byte, rowLen)
+	} else {
+		validJoinKeys = validJoinKeys[:rowLen]
+	}
+	for i := range rowLen {
 		validJoinKeys[i] = byte(0)
 	}
 	for _, pos := range seg.validJoinKeyPos {
 		validJoinKeys[pos] = byte(1)
 	}
+
+	h.spilledValidRowNum.Add(uint64(len(seg.validJoinKeyPos)))
 	return validJoinKeys
 }
 
@@ -306,11 +321,11 @@ func (h *hashJoinSpillHelper) spillBuildSegmentToDisk(workerID int, partID int, 
 	}
 
 	if h.buildRowsInDisk[workerID][partID] == nil {
-		inDisk := chunk.NewDataInDiskByChunks(h.buildSpillChkFieldTypes)
+		inDisk := chunk.NewDataInDiskByChunks(h.buildSpillChkFieldTypes, h.fileNamePrefixForTest)
 		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
 		h.buildRowsInDisk[workerID][partID] = inDisk
 
-		inDisk = chunk.NewDataInDiskByChunks(h.probeSpillFieldTypes)
+		inDisk = chunk.NewDataInDiskByChunks(h.probeSpillFieldTypes, h.fileNamePrefixForTest)
 		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
 		h.probeRowsInDisk[workerID][partID] = inDisk
 	}
@@ -319,9 +334,6 @@ func (h *hashJoinSpillHelper) spillBuildSegmentToDisk(workerID int, partID int, 
 }
 
 func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.DataInDiskByChunks, segments []*rowTableSegment) error {
-	if cap(h.validJoinKeysBuffer[workerID]) == 0 {
-		h.validJoinKeysBuffer[workerID] = make([]byte, 0, maxRowTableSegmentSize)
-	}
 	h.validJoinKeysBuffer[workerID] = h.validJoinKeysBuffer[workerID][:0]
 	h.tmpSpillBuildSideChunks[workerID].Reset()
 
@@ -330,7 +342,7 @@ func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.
 		h.validJoinKeysBuffer[workerID] = h.generateSpilledValidJoinKey(seg, h.validJoinKeysBuffer[workerID])
 
 		rowNum := seg.getRowNum()
-		for i := 0; i < rowNum; i++ {
+		for i := range rowNum {
 			row := seg.getRowBytes(i)
 			if h.tmpSpillBuildSideChunks[workerID].IsFull() {
 				err := disk.Add(h.tmpSpillBuildSideChunks[workerID])
@@ -373,7 +385,43 @@ func (h *hashJoinSpillHelper) init() {
 
 		h.buildRowsInDisk = make([][]*chunk.DataInDiskByChunks, h.hashJoinExec.Concurrency)
 		h.probeRowsInDisk = make([][]*chunk.DataInDiskByChunks, h.hashJoinExec.Concurrency)
+
+		for _, worker := range h.hashJoinExec.BuildWorkers {
+			if worker.restoredChkBuf == nil {
+				worker.restoredChkBuf = chunk.NewEmptyChunk(h.buildSpillChkFieldTypes)
+			}
+		}
+
+		for _, worker := range h.hashJoinExec.ProbeWorkers {
+			if worker.restoredChkBuf == nil {
+				worker.restoredChkBuf = chunk.NewEmptyChunk(h.probeSpillFieldTypes)
+			}
+		}
 	}
+}
+
+func (h *hashJoinSpillHelper) getSpilledPartitionsNum() int {
+	return len(h.getSpilledPartitions())
+}
+
+func (h *hashJoinSpillHelper) getBuildSpillBytes() int64 {
+	return h.getSpillBytesImpl(h.buildRowsInDisk)
+}
+
+func (h *hashJoinSpillHelper) getProbeSpillBytes() int64 {
+	return h.getSpillBytesImpl(h.probeRowsInDisk)
+}
+
+func (*hashJoinSpillHelper) getSpillBytesImpl(disks [][]*chunk.DataInDiskByChunks) int64 {
+	totalBytes := int64(0)
+	for _, disk := range disks {
+		for _, d := range disk {
+			if d != nil {
+				totalBytes += d.GetTotalBytesInDisk()
+			}
+		}
+	}
+	return totalBytes
 }
 
 func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, totalReleasedMemory int64) error {
@@ -392,18 +440,13 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 	}
 
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
-	for i := 0; i < workerNum; i++ {
+	for i := range workerNum {
 		workerID := i
 		wg.RunWithRecover(
 			func() {
 				for _, partID := range partitionsNeedSpill {
 					// finalize current segment of every partition in the worker
 					worker := h.hashJoinExec.BuildWorkers[workerID]
-					builder := worker.builder
-
-					if builder.rowNumberInCurrentRowTableSeg[partID] > 0 {
-						worker.HashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, worker.builder, false)
-					}
 					spilledSegments := worker.getSegmentsInRowTable(partID)
 					worker.clearSegmentsInRowTable(partID)
 
@@ -483,6 +526,7 @@ func (h *hashJoinSpillHelper) reset() {
 		h.spilledPartitions[i] = false
 	}
 
+	h.spilledValidRowNum.Store(0)
 	h.spillTriggered = false
 }
 
@@ -503,11 +547,11 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 	partNum := h.hashJoinExec.partitionNumber
 	concurrency := int(h.hashJoinExec.Concurrency)
 
-	for i := 0; i < int(partNum); i++ {
+	for i := range int(partNum) {
 		if h.spilledPartitions[i] {
 			buildInDisks := make([]*chunk.DataInDiskByChunks, 0)
 			probeInDisks := make([]*chunk.DataInDiskByChunks, 0)
-			for j := 0; j < concurrency; j++ {
+			for j := range concurrency {
 				if h.buildRowsInDisk[j] != nil && h.buildRowsInDisk[j][i] != nil {
 					buildInDisks = append(buildInDisks, h.buildRowsInDisk[j][i])
 					probeInDisks = append(probeInDisks, h.probeRowsInDisk[j][i])
@@ -538,6 +582,10 @@ func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
 			h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
 		}
 	}
+}
+
+func (h *hashJoinSpillHelper) isProbeSkippedInRestoreForTest() bool {
+	return h.skipProbeInRestoreForTest.Load()
 }
 
 func (h *hashJoinSpillHelper) isRespillTriggeredForTest() bool {

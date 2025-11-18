@@ -22,11 +22,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	schmock "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
@@ -348,6 +352,9 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 	})
 	scheduler.Extension = schExt
 
+	runningTask := task
+	runningTask.State = proto.TaskStateRunning
+
 	t.Run("test onPausing", func(t *testing.T) {
 		scheduler.task.Store(&schTask)
 
@@ -490,8 +497,8 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 	})
 
-	t.Run("test on modifying", func(t *testing.T) {
-		taskBefore := schTask
+	t.Run("test on modifying, failed to update system table", func(t *testing.T) {
+		taskBefore := runningTask
 		taskBefore.State = proto.TaskStateModifying
 		taskBefore.ModifyParam = proto.ModifyParam{
 			PrevState: proto.TaskStateRunning,
@@ -504,15 +511,109 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		recreateScheduler, err := scheduler.onModifying()
 		require.ErrorContains(t, err, "modify err")
 		require.False(t, recreateScheduler)
+		require.Equal(t, taskBefore, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+	})
 
+	t.Run("test on modifying concurrency, success", func(t *testing.T) {
+		taskBefore := runningTask
+		taskBefore.State = proto.TaskStateModifying
+		taskBefore.ModifyParam = proto.ModifyParam{
+			PrevState: proto.TaskStateRunning,
+			Modifications: []proto.Modification{
+				{Type: proto.ModifyConcurrency, To: 123},
+			},
+		}
+		scheduler.task.Store(&taskBefore)
 		taskMgr.EXPECT().ModifiedTask(gomock.Any(), gomock.Any()).Return(nil)
-		recreateScheduler, err = scheduler.onModifying()
+		recreateScheduler, err := scheduler.onModifying()
 		require.NoError(t, err)
 		require.True(t, recreateScheduler)
-		expectedTask := taskBefore
+		expectedTask := runningTask
 		expectedTask.Concurrency = 123
-		expectedTask.State = proto.TaskStateRunning
-		expectedTask.ModifyParam = proto.ModifyParam{}
-		require.Equal(t, *scheduler.GetTask(), expectedTask)
+		require.Equal(t, expectedTask, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
 	})
+
+	t.Run("test on modifying task meta, failed to get new meta", func(t *testing.T) {
+		taskBefore := runningTask
+		taskBefore.State = proto.TaskStateModifying
+		taskBefore.ModifyParam = proto.ModifyParam{
+			PrevState: proto.TaskStateRunning,
+			Modifications: []proto.Modification{
+				{Type: proto.ModifyMaxWriteSpeed, To: 11111},
+			},
+		}
+		scheduler.task.Store(&taskBefore)
+		schExt.EXPECT().ModifyMeta(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("modify meta err"))
+		recreateScheduler, err := scheduler.onModifying()
+		require.ErrorContains(t, err, "modify meta err")
+		require.False(t, recreateScheduler)
+		require.Equal(t, taskBefore, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+	})
+
+	t.Run("test on modifying concurrency and task meta, success", func(t *testing.T) {
+		taskBefore := runningTask
+		taskBefore.State = proto.TaskStateModifying
+		taskBefore.ModifyParam = proto.ModifyParam{
+			PrevState: proto.TaskStateRunning,
+			Modifications: []proto.Modification{
+				{Type: proto.ModifyConcurrency, To: 123},
+				{Type: proto.ModifyMaxWriteSpeed, To: 11111},
+			},
+		}
+		scheduler.task.Store(&taskBefore)
+		schExt.EXPECT().ModifyMeta(gomock.Any(), gomock.Any()).Return([]byte("max-11111"), nil)
+		taskMgr.EXPECT().ModifiedTask(gomock.Any(), gomock.Any()).Return(nil)
+		recreateScheduler, err := scheduler.onModifying()
+		require.NoError(t, err)
+		require.True(t, recreateScheduler)
+		expectedTask := runningTask
+		expectedTask.Concurrency = 123
+		expectedTask.Meta = []byte("max-11111")
+		require.Equal(t, expectedTask, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+	})
+}
+
+func TestOnTaskFinished(t *testing.T) {
+	bak := dxfmetric.FinishedTaskCounter
+	t.Cleanup(func() {
+		dxfmetric.FinishedTaskCounter = bak
+	})
+	dxfmetric.FinishedTaskCounter = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test"}, []string{"state"})
+	collectMetricsFn := func() map[string]int {
+		var ch = make(chan prometheus.Metric)
+		items := make([]*dto.Metric, 0)
+		var wg tidbutil.WaitGroupWrapper
+		wg.Run(func() {
+			for m := range ch {
+				dm := &dto.Metric{}
+				require.NoError(t, m.Write(dm))
+				items = append(items, dm)
+			}
+		})
+		dxfmetric.FinishedTaskCounter.Collect(ch)
+		close(ch)
+		wg.Wait()
+		values := make(map[string]int)
+		for _, it := range items {
+			values[*it.GetLabel()[0].Value] = int(it.GetCounter().GetValue())
+		}
+		return values
+	}
+	onTaskFinished(proto.TaskStateSucceed, nil)
+	require.EqualValues(t, map[string]int{"all": 1, "succeed": 1}, collectMetricsFn())
+	onTaskFinished(proto.TaskStateReverted, nil)
+	require.EqualValues(t, map[string]int{"all": 2, "succeed": 1, "failed": 1}, collectMetricsFn())
+	onTaskFinished(proto.TaskStateReverted, errors.New("some err"))
+	require.EqualValues(t, map[string]int{"all": 3, "succeed": 1, "failed": 2}, collectMetricsFn())
+	onTaskFinished(proto.TaskStateReverted, errors.New(taskCancelMsg))
+	require.EqualValues(t, map[string]int{"all": 4, "succeed": 1, "failed": 2, "cancelled": 1}, collectMetricsFn())
+	onTaskFinished(proto.TaskStateFailed, errors.New("some err"))
+	require.EqualValues(t, map[string]int{"all": 5, "succeed": 1, "failed": 3, "cancelled": 1}, collectMetricsFn())
+	// noop for non-finished state.
+	onTaskFinished(proto.TaskStateRunning, nil)
+	require.EqualValues(t, map[string]int{"all": 5, "succeed": 1, "failed": 3, "cancelled": 1}, collectMetricsFn())
 }

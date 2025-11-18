@@ -19,19 +19,21 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/stretchr/testify/require"
 )
 
 // TestSchedulerContext is defined to test scheduling logic here.
 type TestSchedulerContext struct {
-	ts *taskStack
+	ts *Stack
 }
 
-func (t *TestSchedulerContext) getStack() Stack {
+func (t *TestSchedulerContext) getStack() base.Stack {
 	return t.ts
 }
 
-func (t *TestSchedulerContext) pushTask(task Task) {
+func (t *TestSchedulerContext) pushTask(task base.Task) {
 	t.ts.Push(task)
 }
 
@@ -40,7 +42,7 @@ type TestTaskImpl2 struct {
 	a int64
 }
 
-func (t *TestTaskImpl2) execute() error {
+func (t *TestTaskImpl2) Execute() error {
 	// mock error at special task
 	if t.a == 2 {
 		return errors.New("mock error at task id = 2")
@@ -48,23 +50,17 @@ func (t *TestTaskImpl2) execute() error {
 	return nil
 }
 
-func (t *TestTaskImpl2) desc() string {
-	return strconv.Itoa(int(t.a))
+func (t *TestTaskImpl2) Desc(w util.StrBufferWriter) {
+	w.WriteString(strconv.Itoa(int(t.a)))
 }
 
 func TestSimpleTaskScheduler(t *testing.T) {
-	testSchedulerContext := &TestSchedulerContext{
-		newTaskStack(),
-	}
-	testScheduler := &SimpleTaskScheduler{
-		SchedulerCtx: testSchedulerContext,
-	}
-	testScheduler.SchedulerCtx.pushTask(&TestTaskImpl2{a: 1})
-	testScheduler.SchedulerCtx.pushTask(&TestTaskImpl2{a: 2})
-	testScheduler.SchedulerCtx.pushTask(&TestTaskImpl2{a: 3})
+	testScheduler := NewSimpleTaskScheduler()
+	testScheduler.PushTask(&TestTaskImpl2{a: 1})
+	testScheduler.PushTask(&TestTaskImpl2{a: 2})
+	testScheduler.PushTask(&TestTaskImpl2{a: 3})
 
-	var testTaskScheduler Scheduler = testScheduler
-	testTaskScheduler.ExecuteTasks()
-	require.NotNil(t, testScheduler.Err)
-	require.Equal(t, testScheduler.Err.Error(), "mock error at task id = 2")
+	err := testScheduler.ExecuteTasks()
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "mock error at task id = 2")
 }

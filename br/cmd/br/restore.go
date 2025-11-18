@@ -30,7 +30,7 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		return errors.Trace(err)
 	}
 
-	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName); err != nil {
+	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.TLS, cfg.KeyspaceName); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -186,7 +186,7 @@ func newFullRestoreCommand() *cobra.Command {
 			return runRestoreCommand(cmd, task.FullRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
+	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, false)
 	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
@@ -254,7 +254,7 @@ func newStreamRestoreCommand() *cobra.Command {
 			return runRestoreCommand(command, task.PointRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
+	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, true)
 	task.DefineStreamRestoreFlags(command)
 	return command
 }

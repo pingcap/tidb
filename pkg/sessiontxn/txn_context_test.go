@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -150,6 +152,9 @@ func TestTxnContextForSimpleCases(t *testing.T) {
 }
 
 func TestTxnContextInExplicitTxn(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -251,6 +256,9 @@ func TestTxnContextBeginInUnfinishedTxn(t *testing.T) {
 }
 
 func TestTxnContextWithAutocommitFalse(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -591,7 +599,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	tk.MustExec("use test")
 	se := tk.Session()
 
-	is1 := se.GetDomainInfoSchema()
+	is1 := se.GetLatestInfoSchema()
 	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("set @a=now(6)")
 	tk.MustExec("prepare s1 from 'select * from t1 where id=1'")
@@ -660,7 +668,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 
 	// stale read should not use plan cache
-	is2 := se.GetDomainInfoSchema()
+	is2 := se.GetLatestInfoSchema()
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 	tk.MustExec("set @@tx_read_ts=''")
 	tk.MustExec("do sleep(0.1)")
@@ -687,6 +695,9 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 }
 
 func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
@@ -803,6 +814,10 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 }
 
 func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(false)
+	})
 	store, _ := setupTxnContextTest(t)
 
 	queries := []string{

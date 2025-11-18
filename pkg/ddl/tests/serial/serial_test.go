@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -35,12 +36,13 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -120,7 +122,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 12"))
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tbl1, err := is.TableByName(context.Background(), pmodel.NewCIStr("ctwl_db"), pmodel.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("ctwl_db"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbl1Info := tbl1.Meta()
 	require.Nil(t, tbl1Info.ForeignKeys)
@@ -128,7 +130,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	col := tbl1Info.Columns[0]
 	hasNotNull := mysql.HasNotNullFlag(col.GetFlag())
 	require.True(t, hasNotNull)
-	tbl2, err := is.TableByName(context.Background(), pmodel.NewCIStr("ctwl_db"), pmodel.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("ctwl_db"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tbl2Info := tbl2.Meta()
 	require.Nil(t, tbl2Info.ForeignKeys)
@@ -142,7 +144,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustExec("insert into t1 set c2=11")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl1, err = is.TableByName(context.Background(), pmodel.NewCIStr("ctwl_db1"), pmodel.NewCIStr("t1"))
+	tbl1, err = is.TableByName(context.Background(), ast.NewCIStr("ctwl_db1"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Nil(t, tbl1.Meta().ForeignKeys)
 
@@ -278,7 +280,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec(`create global temporary table test_gv_ddl_temp like test_gv_ddl on commit delete rows;`)
 	defer tk.MustExec("drop table if exists test_gv_ddl_temp, test_gv_ddl")
 	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_gv_ddl"))
+	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_gv_ddl"))
 	require.NoError(t, err)
 	testCases := []struct {
 		generatedExprString string
@@ -307,7 +309,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists test_foreign_key, t1")
 	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_foreign_key_temp"))
+	table, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_foreign_key_temp"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	require.Equal(t, 0, len(tableInfo.ForeignKeys))
@@ -391,7 +393,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b))")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("foreign_key_tmp"))
+	table, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("foreign_key_tmp"))
 	require.NoError(t, err)
 	tableInfo = table.Meta()
 	require.Equal(t, 0, len(tableInfo.ForeignKeys))
@@ -412,12 +414,12 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 }
 
 func createMockStore(t *testing.T) (store kv.Storage) {
-	session.SetSchemaLease(200 * time.Millisecond)
+	vardef.SetSchemaLease(200 * time.Millisecond)
 	session.DisableStats4Test()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 
 	var err error
-	store, err = mockstore.NewMockStore()
+	store, err = teststore.NewMockStoreWithoutBootstrap()
 	require.NoError(t, err)
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
@@ -442,11 +444,11 @@ func TestCancelAddIndexPanic(t *testing.T) {
 
 	tkCancel := testkit.NewTestKit(t, store)
 	defer tk.MustExec("drop table t")
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
@@ -683,7 +685,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockRecoverTableCommitErr", `return(true)`))
@@ -740,7 +742,7 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockRecoverTableCommitErr", `return(true)`))
@@ -767,16 +769,13 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 func TestCancelJobByErrorCountLimit(t *testing.T) {
 	store := createMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockExceedErrorLimit", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockExceedErrorLimit"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockExceedErrorLimit", `return(true)`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	limit := variable.GetDDLErrorCountLimit()
+	limit := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 16")
-	err := util.LoadDDLVars(tk.Session())
+	err := util.LoadGlobalVars(tk.Session(), vardef.TiDBDDLErrorCountLimit)
 	require.NoError(t, err)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
@@ -787,21 +786,19 @@ func TestCancelJobByErrorCountLimit(t *testing.T) {
 func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError", `return(true)`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError", `return(true)`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	limit := variable.GetDDLErrorCountLimit()
+	limit := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
-	err := util.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
 	tk.MustExec("create table t (a int)")
-	err = tk.ExecToErr("truncate table t")
+	err := tk.ExecToErr("truncate table t")
 	require.EqualError(t, err, "[ddl:-1]DDL job rollback, error msg: mock update version error")
 	// Disable fail point.
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError"))
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError")
 	tk.MustExec("truncate table t")
 }
 
@@ -812,7 +809,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 	tk.MustExec("create table t_cjtt(a int)")
 
 	once := sync.Once{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		once.Do(func() {
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 			err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
@@ -1177,7 +1174,7 @@ func TestCreateTableNoBlock(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/checkOwnerCheckAllVersionsWaitTime"))
 	}()
-	save := variable.GetDDLErrorCountLimit()
+	save := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1")
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", save))
@@ -1238,10 +1235,13 @@ func TestGetReverseKey(t *testing.T) {
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("db_get"), pmodel.NewCIStr("test_get"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("db_get"), ast.NewCIStr("test_get"))
 	require.NoError(t, err)
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	if kerneltype.IsNextGen() {
+		tableStart = store.GetCodec().EncodeKey(tableStart)
+	}
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 4)
 
 	tk.MustQuery("select * from test_get order by a").Check(testkit.Rows("-9223372036854775808 -9223372036854775808",

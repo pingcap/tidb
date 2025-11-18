@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/caller"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -78,7 +79,7 @@ func write2ImportService4Test(
 	sortedKVs [][2][]byte,
 	ts uint64,
 ) ([]*import_sstpb.SSTMeta, error) {
-	pdClient, err := pd.NewClient(pdAddrs, pd.SecurityOption{})
+	pdClient, err := pd.NewClient(caller.TestComponent, pdAddrs, pd.SecurityOption{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

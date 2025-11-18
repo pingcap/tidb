@@ -35,6 +35,8 @@ func newOperatorCommand() *cobra.Command {
 	cmd.AddCommand(newBase64ifyCommand())
 	cmd.AddCommand(newListMigrationsCommand())
 	cmd.AddCommand(newMigrateToCommand())
+	cmd.AddCommand(newForceFlushCommand())
+	cmd.AddCommand(newChecksumCommand())
 	return cmd
 }
 
@@ -94,9 +96,10 @@ func newListMigrationsCommand() *cobra.Command {
 
 func newMigrateToCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "migrate-to",
-		Short: "migrate to a specific version",
-		Args:  cobra.NoArgs,
+		Use: "unsafe-migrate-to",
+		Short: "migrate to a specific version, use truncate will auto migrate to correct version, " +
+			"you should never use this command unless you know what you are doing",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := operator.MigrateToConfig{}
 			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
@@ -107,5 +110,46 @@ func newMigrateToCommand() *cobra.Command {
 		},
 	}
 	operator.DefineFlagsForMigrateToConfig(cmd.Flags())
+	cmd.Hidden = true
+	return cmd
+}
+
+func newChecksumCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "checksum-as",
+		Short: "calculate the checksum with rewrite rules",
+		Long: "Calculate the checksum of the current cluster (specified by `-u`) " +
+			"with applying the rewrite rules generated from a backup (specified by `-s`). " +
+			"This can be used when you have the checksum of upstream elsewhere.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := operator.ChecksumWithRewriteRulesConfig{}
+			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return err
+			}
+			ctx := GetDefaultContext()
+			return operator.RunChecksumTable(ctx, tidbGlue, cfg)
+		},
+	}
+	task.DefineFilterFlags(cmd, []string{"!*.*"}, false)
+	operator.DefineFlagsForChecksumTableConfig(cmd.Flags())
+	return cmd
+}
+
+func newForceFlushCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "force-flush",
+		Short: "force a log backup task to flush",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := operator.ForceFlushConfig{}
+			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return err
+			}
+			ctx := GetDefaultContext()
+			return operator.RunForceFlush(ctx, &cfg)
+		},
+	}
+	operator.DefineFlagsForForceFlushConfig(cmd.Flags())
 	return cmd
 }

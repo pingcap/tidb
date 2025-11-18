@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/stretchr/testify/require"
@@ -223,7 +223,7 @@ func TestPasswordManagement(t *testing.T) {
 	// Password expires and takes effect.
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, sha1Password("Uu3@22222"), nil, nil)
 	require.ErrorContains(t, err, "Your password has expired.")
-	variable.IsSandBoxModeEnabled.Store(true)
+	vardef.IsSandBoxModeEnabled.Store(true)
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, sha1Password("Uu3@22222"), nil, nil)
 	require.NoError(t, err)
 	require.True(t, tk.Session().InSandBoxMode())

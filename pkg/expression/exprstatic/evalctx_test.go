@@ -15,6 +15,7 @@
 package exprstatic
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -27,6 +28,7 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -57,9 +59,9 @@ func checkDefaultStaticEvalCtx(t *testing.T, ctx *EvalContext) {
 	require.Equal(t, types.NewContext(types.StrictFlags, time.UTC, ctx), ctx.TypeCtx())
 	require.Equal(t, errctx.NewContextWithLevels(errctx.LevelMap{}, ctx), ctx.ErrCtx())
 	require.Equal(t, "", ctx.CurrentDB())
-	require.Equal(t, variable.DefMaxAllowedPacket, ctx.GetMaxAllowedPacket())
-	require.Equal(t, variable.DefDefaultWeekFormat, ctx.GetDefaultWeekFormatMode())
-	require.Equal(t, variable.DefDivPrecisionIncrement, ctx.GetDivPrecisionIncrement())
+	require.Equal(t, vardef.DefMaxAllowedPacket, ctx.GetMaxAllowedPacket())
+	require.Equal(t, vardef.DefDefaultWeekFormat, ctx.GetDefaultWeekFormatMode())
+	require.Equal(t, vardef.DefDivPrecisionIncrement, ctx.GetDivPrecisionIncrement())
 	require.Empty(t, ctx.AllParamValues())
 	require.Equal(t, variable.NewUserVars(), ctx.GetUserVarsReader())
 	require.True(t, ctx.GetOptionalPropSet().IsEmpty())
@@ -420,7 +422,7 @@ func TestParamList(t *testing.T) {
 	ctx := NewEvalContext(
 		WithParamList(paramList),
 	)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		val, err := ctx.GetParamValue(i)
 		require.NoError(t, err)
 		require.Equal(t, int64(i+1), val.GetInt64())
@@ -429,7 +431,7 @@ func TestParamList(t *testing.T) {
 	// after reset the paramList and append new one, the value is still persisted
 	paramList.Reset()
 	paramList.Append(types.NewDatum(4))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		val, err := ctx.GetParamValue(i)
 		require.NoError(t, err)
 		require.Equal(t, int64(i+1), val.GetInt64())
@@ -558,7 +560,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		},
 		{
 			name:  strings.ToUpper("tidb_redact_log"), // test for settings an upper case variable
-			val:   "on",
+			val:   "ON",
 			field: "$.enableRedactLog",
 			assert: func(ctx *EvalContext, vars *variable.SessionVars) {
 				require.Equal(t, "ON", ctx.GetTiDBRedactLog())
@@ -571,7 +573,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 			field: "$.defaultWeekFormatMode",
 			assert: func(ctx *EvalContext, vars *variable.SessionVars) {
 				require.Equal(t, "5", ctx.GetDefaultWeekFormatMode())
-				mode, ok := vars.GetSystemVar(variable.DefaultWeekFormat)
+				mode, ok := vars.GetSystemVar(vardef.DefaultWeekFormat)
 				require.True(t, ok)
 				require.Equal(t, mode, ctx.GetDefaultWeekFormatMode())
 			},
@@ -610,7 +612,13 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		if sysVar.field != "" {
 			varsRelatedFields = append(varsRelatedFields, sysVar.field)
 		}
-		require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
+		sv := variable.GetSysVar(sysVar.name)
+		require.NotNil(t, sv)
+		if sv.HasSessionScope() && !sv.InternalSessionVariable {
+			require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
+		} else if sv.HasGlobalScope() {
+			require.NoError(t, sv.SetGlobalFromHook(context.TODO(), sessionVars, sysVar.val, false))
+		}
 	}
 
 	defaultEvalCtx := NewEvalContext()
@@ -661,7 +669,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 	// additional check about @@timestamp
 	// setting to `variable.DefTimestamp` should return the current timestamp
 	ctx, err = defaultEvalCtx.LoadSystemVars(map[string]string{
-		"timestamp": variable.DefTimestamp,
+		"timestamp": vardef.DefTimestamp,
 	})
 	require.NoError(t, err)
 	tm, err := ctx.CurrentTime()

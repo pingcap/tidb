@@ -50,6 +50,8 @@ var (
 	// ErrRepairTableFail is used to repair tableInfo in repair mode.
 	ErrRepairTableFail = ClassDDL.NewStd(mysql.ErrRepairTable)
 
+	// ErrUnsupportedAddColumnarIndex means add columnar index is unsupported
+	ErrUnsupportedAddColumnarIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add columnar index: %s"), nil))
 	// ErrUnsupportedAddVectorIndex means add vector index is unsupported
 	ErrUnsupportedAddVectorIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add vector index: %s"), nil))
 	// ErrCantDropColWithIndex means can't drop the column with index. We don't support dropping column with index covered now.
@@ -58,6 +60,8 @@ var (
 	ErrCantDropColWithAutoInc = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "can't remove column with auto_increment when @@tidb_allow_remove_auto_inc disabled"), nil))
 	// ErrCantDropColWithCheckConstraint means can't drop column with check constraint
 	ErrCantDropColWithCheckConstraint = ClassDDL.NewStd(mysql.ErrDependentByCheckConstraint)
+	// ErrUnsupportedEngineAttribute means engine attribute option is unsupported
+	ErrUnsupportedEngineAttribute = ClassDDL.NewStd(mysql.ErrEngineAttributeNotSupported)
 	// ErrUnsupportedAddColumn means add columns is unsupported
 	ErrUnsupportedAddColumn = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add column"), nil))
 	// ErrUnsupportedModifyColumn means modify columns is unsupoorted
@@ -80,6 +84,10 @@ var (
 	ErrUnsupportedAlterTableOption = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("This type of ALTER TABLE is currently unsupported", nil))
 	// ErrUnsupportedAlterCacheForSysTable means we don't support the alter cache for system table.
 	ErrUnsupportedAlterCacheForSysTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table cache for tables in system database is currently unsupported", nil))
+	// ErrUnsupportedAddPartialIndex the partial index condition is not supported
+	ErrUnsupportedAddPartialIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add partial index: %s"), nil))
+	// ErrModifyColumnReferencedByPartialCondition is used when a column is referenced by a partial index condition.
+	ErrModifyColumnReferencedByPartialCondition = ClassDDL.NewStd(mysql.ErrModifyColumnReferencedByPartialCondition)
 	// ErrBlobKeyWithoutLength is used when BLOB is used as key but without a length.
 	ErrBlobKeyWithoutLength = ClassDDL.NewStd(mysql.ErrBlobKeyWithoutLength)
 	// ErrKeyPart0 is used when key parts length is 0.
@@ -503,6 +511,11 @@ var (
 	// ErrWarnGlobalIndexNeedManuallyAnalyze is used for global indexes,
 	// which cannot trigger automatic analysis when it contains prefix columns or virtual generated columns.
 	ErrWarnGlobalIndexNeedManuallyAnalyze = ClassDDL.NewStd(mysql.ErrWarnGlobalIndexNeedManuallyAnalyze)
+
+	// ErrEngineAttributeInvalidFormat is returned when meeting invalid format of engine attribute.
+	ErrEngineAttributeInvalidFormat = ClassDDL.NewStd(mysql.ErrEngineAttributeInvalidFormat)
+	// ErrStorageClassInvalidSpec is reserved for future use.
+	ErrStorageClassInvalidSpec = ClassDDL.NewStd(mysql.ErrStorageClassInvalidSpec)
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.
@@ -512,7 +525,7 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrTiKVServerBusy:            {},
 	mysql.ErrResolveLockTimeout:        {},
 	mysql.ErrRegionUnavailable:         {},
-	mysql.ErrGCTooEarly:                {},
+	mysql.ErrTxnAbortedByGC:            {},
 	mysql.ErrWriteConflict:             {},
 	mysql.ErrTiKVStoreLimit:            {},
 	mysql.ErrTiKVStaleCommand:          {},
@@ -524,6 +537,7 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrWriteConflictInTiDB:       {},
 	mysql.ErrTxnRetryable:              {},
 	mysql.ErrNotOwner:                  {},
+	mysql.ErrInvalidSplitRegionRanges:  {}, // PD client returns regions with no leader.
 
 	// Temporary network partitioning may cause pk commit failure.
 	uint16(terror.CodeResultUndetermined): {},
@@ -533,4 +547,5 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 var ReorgRetryableErrMsgs = []string{
 	"context deadline exceeded",
 	"requested lease not found",
+	"mvcc: required revision has been compacted",
 }

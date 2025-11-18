@@ -108,14 +108,14 @@ delete from t where cast(id as unsigned) = 1;
 -- replace_regex /BIGINT UNSIGNED/BIGINT/
 -- error 1690
 update t set id = '1' where cast(id as unsigned) = 1;
-set sql_mode=''
+set sql_mode='';
 -- enable_warnings
 -- replace_regex /evaluation failed: //
 delete from t where cast(id as unsigned) = 1;
 -- replace_regex /evaluation failed: //
 update t set id = '1' where cast(id as unsigned) = 1;
 -- disable_warnings
-set sql_mode=DEFAULT
+set sql_mode=DEFAULT;
 
 # TestDeleteIgnoreWithFK
 drop table if exists parent, child;

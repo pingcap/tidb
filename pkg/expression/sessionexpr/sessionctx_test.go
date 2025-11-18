@@ -44,7 +44,7 @@ func TestSessionEvalContextBasic(t *testing.T) {
 	require.True(t, impl.GetOptionalPropSet().IsFull())
 
 	// should contain all the optional properties
-	for i := 0; i < exprctx.OptPropsCnt; i++ {
+	for i := range exprctx.OptPropsCnt {
 		provider, ok := impl.GetOptionalPropProvider(exprctx.OptionalEvalPropKey(i))
 		require.True(t, ok)
 		require.NotNil(t, provider)

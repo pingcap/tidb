@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -33,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -194,6 +195,13 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		finishTS = job.BinlogInfo.FinishedTS
 		if job.BinlogInfo.TableInfo != nil {
 			tableName = job.BinlogInfo.TableInfo.Name.L
+		} else if job.Type == model.ActionRenameTable {
+			// For running rename table jobs, we use old table name stored in job
+			// since TableInfo is not set yet. So we extract the new table name from
+			// job args for consistent output.
+			if arg, err := model.GetRenameTableArgs(job); err == nil && len(arg.NewTableName.L) > 0 {
+				tableName = arg.NewTableName.L
+			}
 		}
 		if job.BinlogInfo.MultipleTableInfos != nil {
 			tablenames := new(strings.Builder)
@@ -297,13 +305,27 @@ func showCommentsFromJob(job *model.Job) string {
 		return ""
 	}
 	var labels []string
-	if job.Type == model.ActionAddIndex ||
-		job.Type == model.ActionAddPrimaryKey {
+	switch m.AnalyzeState {
+	case model.AnalyzeStateRunning:
+		labels = append(labels, "analyzing")
+	case model.AnalyzeStateFailed:
+		labels = append(labels, "analyze_failed")
+	case model.AnalyzeStateTimeout:
+		labels = append(labels, "analyze_timeout")
+	default:
+	}
+	isAddingIndex := job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionAddPrimaryKey
+	if isAddingIndex && kerneltype.IsNextGen() {
+		// The parameters are determined automatically in next-gen.
+		return strings.Join(labels, ", ")
+	}
+	if isAddingIndex {
 		switch m.ReorgTp {
 		case model.ReorgTypeTxn:
 			labels = append(labels, model.ReorgTypeTxn.String())
-		case model.ReorgTypeLitMerge:
-			labels = append(labels, model.ReorgTypeLitMerge.String())
+		case model.ReorgTypeIngest:
+			labels = append(labels, model.ReorgTypeIngest.String())
 			if m.IsDistReorg {
 				labels = append(labels, "DXF")
 			}
@@ -315,26 +337,33 @@ func showCommentsFromJob(job *model.Job) string {
 		}
 	}
 	if job.MayNeedReorg() {
-		concurrency := m.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-		batchSize := m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
-		maxWriteSpeed := m.GetMaxWriteSpeedOrDefault()
-		if concurrency != variable.DefTiDBDDLReorgWorkerCount {
+		concurrency := m.GetConcurrency()
+		batchSize := m.GetBatchSize()
+		maxWriteSpeed := m.GetMaxWriteSpeed()
+		if concurrency != vardef.DefTiDBDDLReorgWorkerCount {
 			labels = append(labels, fmt.Sprintf("thread=%d", concurrency))
 		}
-		if batchSize != variable.DefTiDBDDLReorgBatchSize {
+		if batchSize != vardef.DefTiDBDDLReorgBatchSize {
 			labels = append(labels, fmt.Sprintf("batch_size=%d", batchSize))
 		}
-		if maxWriteSpeed != variable.DefTiDBDDLReorgMaxWriteSpeed {
+		if maxWriteSpeed != vardef.DefTiDBDDLReorgMaxWriteSpeed {
 			labels = append(labels, fmt.Sprintf("max_write_speed=%d", maxWriteSpeed))
 		}
 		if m.TargetScope != "" {
 			labels = append(labels, fmt.Sprintf("service_scope=%s", m.TargetScope))
+		}
+		if m.MaxNodeCount != 0 {
+			labels = append(labels, fmt.Sprintf("max_node_count=%d", m.MaxNodeCount))
 		}
 	}
 	return strings.Join(labels, ", ")
 }
 
 func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
+	if kerneltype.IsNextGen() {
+		// The parameters are determined automatically in next-gen.
+		return ""
+	}
 	var labels []string
 	if sub.ReorgTp == model.ReorgTypeNone {
 		return ""

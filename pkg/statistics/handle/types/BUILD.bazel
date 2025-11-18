@@ -16,6 +16,7 @@ go_library(
         "//pkg/statistics",
         "//pkg/statistics/handle/usage/indexusage",
         "//pkg/statistics/handle/util",
+        "//pkg/statistics/util",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/sqlexec",

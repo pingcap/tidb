@@ -2,10 +2,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 
 go_library(
     name = "ut_lib",
-    srcs = ["ut.go"],
+    srcs = [
+        "longtests.go",
+        "ut.go",
+    ],
     importpath = "github.com/pingcap/tidb/tools/check",
     visibility = ["//visibility:private"],
     deps = [
+        "@org_golang_x_sync//errgroup",
         "@org_golang_x_tools//cover",
         "@org_uber_go_automaxprocs//:automaxprocs",
     ],

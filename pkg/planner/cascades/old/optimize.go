@@ -118,7 +118,7 @@ func (opt *Optimizer) FindBestPlan(sctx base.PlanContext, logical base.LogicalPl
 
 func (*Optimizer) onPhasePreprocessing(_ base.PlanContext, plan base.LogicalPlan) (base.LogicalPlan, error) {
 	var err error
-	plan, err = plan.PruneColumns(plan.Schema().Columns, nil)
+	plan, err = plan.PruneColumns(plan.Schema().Columns)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +237,7 @@ func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 		childSchema[i] = childGroup.Prop.Schema
 	}
 	planNode := expr.ExprNode
-	g.Prop.Stats, err = planNode.DeriveStats(childStats, g.Prop.Schema, childSchema, nil)
+	g.Prop.Stats, _, err = planNode.DeriveStats(childStats, g.Prop.Schema, childSchema, nil)
 	return err
 }
 

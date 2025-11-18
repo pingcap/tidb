@@ -11,10 +11,13 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/infoschema",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/session/syssession",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/usage/indexusage",
@@ -26,6 +29,7 @@ go_library(
         "//pkg/util/sqlescape",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -37,12 +41,12 @@ go_test(
         "predicate_column_test.go",
         "session_stats_collect_test.go",
     ],
-    embed = [":usage"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 13,
     deps = [
+        ":usage",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/statistics/handle/usage/indexusage",
         "//pkg/testkit",
         "@com_github_stretchr_testify//require",

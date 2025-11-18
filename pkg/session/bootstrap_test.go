@@ -15,32 +15,65 @@
 package session
 
 import (
+	"cmp"
 	"context"
+	"crypto/tls"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+func TestMySQLDBTables(t *testing.T) {
+	require.Len(t, tablesInSystemDatabase, 52,
+		"remember to add the new tables to versionedBootstrapSchemas too")
+	testTableBasicInfoSlice(t, tablesInSystemDatabase)
+	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
+	for _, v := range ddlTableVersionTables {
+		for _, tbl := range v.tables {
+			reservedIDs = append(reservedIDs, tbl.ID)
+		}
+	}
+	for _, tbl := range tablesInSystemDatabase {
+		reservedIDs = append(reservedIDs, tbl.ID)
+	}
+	for _, db := range systemDatabases {
+		reservedIDs = append(reservedIDs, db.ID)
+	}
+	slices.Sort(reservedIDs)
+	require.IsIncreasing(t, reservedIDs, "used IDs should be in increasing order")
+	require.Greater(t, reservedIDs[0], metadef.ReservedGlobalIDLowerBound, "reserved ID should be greater than ReservedGlobalIDLowerBound")
+	require.LessOrEqual(t, reservedIDs[len(reservedIDs)-1], metadef.ReservedGlobalIDUpperBound, "reserved ID should be less than or equal to ReservedGlobalIDUpperBound")
+}
 
 // This test file have many problem.
 // 1. Please use testkit to create dom, session and store.
@@ -64,7 +97,7 @@ func TestBootstrap(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 
 	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
 	r.Close()
 
 	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""), nil))
@@ -125,6 +158,12 @@ func TestBootstrap(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, req.NumRows())
 	se.Close()
+	r = MustExecToRecodeSet(t, se, fmt.Sprintf("select * from mysql.bind_info where original_sql = '%s'", bindinfo.BuiltinPseudoSQL4BindLock))
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	se.Close()
 }
 
 func globalVarsCount() int64 {
@@ -148,6 +187,10 @@ func TestBootstrapWithError(t *testing.T) {
 		require.NoError(t, store.Close())
 	}()
 
+	// system tables are not created in `doDDLWorks` for next-gen.
+	if kerneltype.IsNextGen() {
+		require.NoError(t, bootstrapSchemas(store))
+	}
 	// bootstrap
 	{
 		se := &session{
@@ -159,21 +202,18 @@ func TestBootstrapWithError(t *testing.T) {
 		se.tblctx = tblsession.NewMutateContext(se)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
+		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]any)
 		se.SetValue(sessionctx.Initing, true)
-		err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
-		require.NoError(t, err)
-		err = InitMDLTable(store)
-		require.NoError(t, err)
-		err = InitDDLJobTables(store, meta.BackfillTableVersion)
-		require.NoError(t, err)
-		err = InitDDLJobTables(store, meta.DDLNotifierTableVersion)
+		err := InitDDLTables(store)
 		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
 		require.NoError(t, dom.Start(ddl.Bootstrap))
-		domain.BindDomain(se, dom)
+		se.dom = dom
+		se.infoCache = dom.InfoCache()
+		se.schemaValidator = dom.GetSchemaValidator()
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
@@ -198,7 +238,7 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
 	require.NoError(t, r.Close())
 
 	MustExec(t, se, "USE test")
@@ -234,6 +274,8 @@ func TestBootstrapWithError(t *testing.T) {
 
 	// Check tidb_ttl_table_status table
 	MustExec(t, se, "SELECT * from mysql.tidb_ttl_table_status")
+	// Check mysql.tidb_workload_values table
+	MustExec(t, se, "SELECT * from mysql.tidb_workload_values")
 }
 
 func TestDDLTableCreateBackfillTable(t *testing.T) {
@@ -244,12 +286,12 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	ver, err := m.CheckDDLTableVersion()
+	ver, err := m.GetDDLTableVersion()
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, ver, meta.BackfillTableVersion)
 
 	// downgrade `mDDLTableVersion`
-	m.SetDDLTables(meta.MDLTableVersion)
+	m.SetDDLTableVersion(meta.MDLTableVersion)
 	MustExec(t, se, "drop table mysql.tidb_background_subtask")
 	MustExec(t, se, "drop table mysql.tidb_background_subtask_history")
 	// TODO(lance6716): remove it after tidb_ddl_notifier GA
@@ -276,12 +318,12 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	ver, err := m.CheckDDLTableVersion()
+	ver, err := m.GetDDLTableVersion()
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, ver, meta.DDLNotifierTableVersion)
 
 	// downgrade DDL table version
-	m.SetDDLTables(meta.BackfillTableVersion)
+	m.SetDDLTableVersion(meta.BackfillTableVersion)
 	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -296,7 +338,7 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	dom.Close()
 }
 
-func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
+func revertVersionAndVariables(t *testing.T, se sessionapi.Session, ver int) {
 	MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
 	if ver <= version195 {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
@@ -306,6 +348,10 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 
 // TestUpgrade tests upgrading
 func TestUpgrade(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -322,7 +368,7 @@ func TestUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, 0, req.NumRows())
 	require.Equal(t, 1, row.Len())
-	require.Equal(t, []byte(fmt.Sprintf("%d", currentBootstrapVersion)), row.GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", currentBootstrapVersion), row.GetBytes(0))
 	require.NoError(t, r.Close())
 
 	se1 := CreateSessionAndSetID(t, store)
@@ -341,7 +387,7 @@ func TestUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	MustExec(t, se1, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
 	MustExec(t, se1, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
-	MustExec(t, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s"`, variable.TiDBDistSQLScanConcurrency))
+	MustExec(t, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s"`, vardef.TiDBDistSQLScanConcurrency))
 	MustExec(t, se1, `commit`)
 	store.SetOption(StoreBootstrappedKey, nil)
 	revertVersionAndVariables(t, se1, 0)
@@ -369,7 +415,7 @@ func TestUpgrade(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 	row = req.GetRow(0)
 	require.Equal(t, 1, row.Len())
-	require.Equal(t, []byte(fmt.Sprintf("%d", currentBootstrapVersion)), row.GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", currentBootstrapVersion), row.GetBytes(0))
 	require.NoError(t, r.Close())
 
 	ver, err = getBootstrapVersion(se2)
@@ -390,7 +436,7 @@ func TestUpgrade(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	rowCnt := req.NumRows()
-	for i := 0; i < rowCnt; i++ {
+	for i := range rowCnt {
 		jobType := req.GetRow(i).GetString(3) // get job type.
 		// Should not use multi-schema change in bootstrap DDL because the job arguments may be changed.
 		require.False(t, strings.Contains(jobType, "multi-schema"))
@@ -401,6 +447,10 @@ func TestUpgrade(t *testing.T) {
 }
 
 func TestIssue17979_1(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -431,11 +481,15 @@ func TestIssue17979_1(t *testing.T) {
 	r := MustExecToRecodeSet(t, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, variable.OOMActionLog, req.GetRow(0).GetString(0))
+	require.Equal(t, vardef.OOMActionLog, req.GetRow(0).GetString(0))
 	domV4.Close()
 }
 
 func TestIssue17979_2(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -478,6 +532,10 @@ func TestIssue17979_2(t *testing.T) {
 // but from 4.0 -> 5.0, the new default is picked up.
 
 func TestIssue20900_2(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -580,54 +638,11 @@ func TestStmtSummary(t *testing.T) {
 	require.NoError(t, r.Close())
 }
 
-func TestUpdateDuplicateBindInfo(t *testing.T) {
-	ctx := context.Background()
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
-	se := CreateSessionAndSetID(t, store)
-	MustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
-	MustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
-
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	// The latest one.
-	MustExec(t, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t use index(idx) where a < 1', 'test', 'deleted', '2021-06-04 17:04:43.333', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t ignore index(idx) where a < 1', 'test', 'enabled', '2021-06-04 17:04:43.335', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t use index(idx) where a <= 1', '', 'deleted', '2021-06-04 17:04:43.345', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t ignore index(idx) where a <= 1', '', 'enabled', '2021-06-04 17:04:45.334', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
-
-	upgradeToVer67(se, version66)
-
-	r := MustExecToRecodeSet(t, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin' order by create_time`)
-	req := r.NewChunk(nil)
-	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, 3, req.NumRows())
-	row := req.GetRow(0)
-	require.Equal(t, "select * from `test` . `t`", row.GetString(0))
-	require.Equal(t, "SELECT /*+ use_index(`t` `idx_b`)*/ * FROM `test`.`t`", row.GetString(1))
-	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.Enabled, row.GetString(3))
-	require.Equal(t, "2021-01-04 14:50:58.257", row.GetTime(4).String())
-	row = req.GetRow(1)
-	require.Equal(t, "select * from `test` . `t` where `a` < ?", row.GetString(0))
-	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` < 1", row.GetString(1))
-	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.Enabled, row.GetString(3))
-	require.Equal(t, "2021-06-04 17:04:43.335", row.GetTime(4).String())
-	row = req.GetRow(2)
-	require.Equal(t, "select * from `test` . `t` where `a` <= ?", row.GetString(0))
-	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` <= 1", row.GetString(1))
-	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.Enabled, row.GetString(3))
-	require.Equal(t, "2021-06-04 17:04:45.334", row.GetTime(4).String())
-
-	require.NoError(t, r.Close())
-	MustExec(t, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
-}
-
 func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
@@ -672,9 +687,11 @@ func TestForIssue23387(t *testing.T) {
 	currentBootstrapVersion = version57
 
 	// Bootstrap to an old version, create a user.
-	store, err := mockstore.NewMockStore()
+	store, err := teststore.NewMockStoreWithoutBootstrap()
 	require.NoError(t, err)
-	defer func() { require.NoError(t, store.Close()) }()
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 
@@ -717,6 +734,10 @@ func TestReferencesPrivilegeOnColumn(t *testing.T) {
 }
 
 func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -732,7 +753,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV3, ver300)
-	MustExec(t, seV3, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBAnalyzeVersion))
+	MustExec(t, seV3, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBAnalyzeVersion))
 	MustExec(t, seV3, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV3)
@@ -740,7 +761,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	require.Equal(t, int64(ver300), ver)
 
 	// We are now in 3.0.0, check tidb_analyze_version should not exist.
-	res := MustExecToRecodeSet(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBAnalyzeVersion))
+	res := MustExecToRecodeSet(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBAnalyzeVersion))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -792,6 +813,10 @@ func TestIndexMergeInNewCluster(t *testing.T) {
 }
 
 func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -807,7 +832,7 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV3, ver300)
-	MustExec(t, seV3, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+	MustExec(t, seV3, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBEnableIndexMerge))
 	MustExec(t, seV3, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV3)
@@ -815,7 +840,7 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	require.Equal(t, int64(ver300), ver)
 
 	// We are now in 3.0.0, check tidb_enable_index_merge should not exist.
-	res := MustExecToRecodeSet(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+	res := MustExecToRecodeSet(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBEnableIndexMerge))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -843,10 +868,17 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 // We set tidb_enable_index_merge as on.
 // And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
 func TestIndexMergeUpgradeFrom400To540Enable(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	testIndexMergeUpgradeFrom400To540(t, true)
 }
 
 func TestIndexMergeUpgradeFrom400To540Disable(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
 	testIndexMergeUpgradeFrom400To540(t, false)
 }
 
@@ -866,7 +898,7 @@ func testIndexMergeUpgradeFrom400To540(t *testing.T, enable bool) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV4, ver400)
-	MustExec(t, seV4, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", variable.Off, variable.TiDBEnableIndexMerge))
+	MustExec(t, seV4, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", vardef.Off, vardef.TiDBEnableIndexMerge))
 	MustExec(t, seV4, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV4)
@@ -874,14 +906,14 @@ func testIndexMergeUpgradeFrom400To540(t *testing.T, enable bool) {
 	require.Equal(t, int64(ver400), ver)
 
 	// We are now in 4.0.0, tidb_enable_index_merge is off.
-	res := MustExecToRecodeSet(t, seV4, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+	res := MustExecToRecodeSet(t, seV4, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBEnableIndexMerge))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
 	require.Equal(t, 1, chk.NumRows())
 	row := chk.GetRow(0)
 	require.Equal(t, 2, row.Len())
-	require.Equal(t, variable.Off, row.GetString(1))
+	require.Equal(t, vardef.Off, row.GetString(1))
 
 	if enable {
 		// For the first time, We set tidb_enable_index_merge as on.
@@ -914,33 +946,6 @@ func testIndexMergeUpgradeFrom400To540(t *testing.T, enable bool) {
 	}
 }
 
-func TestUpgradeToVer85(t *testing.T) {
-	ctx := context.Background()
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
-	se := CreateSessionAndSetID(t, store)
-	MustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
-	MustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
-
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t1', 'select /*+ use_index(t1, idx_a)*/ * from t1', 'test', 'enabled', '2021-01-05 14:50:58.257', '2021-01-05 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t2', 'select /*+ use_index(t2, idx_a)*/ * from t2', 'test', 'disabled', '2021-01-06 14:50:58.257', '2021-01-06 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t3', 'select /*+ use_index(t3, idx_a)*/ * from t3', 'test', 'deleted', '2021-01-07 14:50:58.257', '2021-01-07 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t4', 'select /*+ use_index(t4, idx_a)*/ * from t4', 'test', 'invalid', '2021-01-08 14:50:58.257', '2021-01-08 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	upgradeToVer85(se, version84)
-
-	r := MustExecToRecodeSet(t, se, `select count(*) from mysql.bind_info where status = 'enabled'`)
-	req := r.NewChunk(nil)
-	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, 1, req.NumRows())
-	row := req.GetRow(0)
-	require.Equal(t, int64(2), row.GetInt64(0))
-
-	require.NoError(t, r.Close())
-	MustExec(t, se, "delete from mysql.bind_info where default_db = 'test'")
-}
-
 func TestTiDBEnablePagingVariable(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	se := CreateSessionAndSetID(t, store)
@@ -960,7 +965,7 @@ func TestTiDBEnablePagingVariable(t *testing.T) {
 		require.NotEqual(t, 0, req.NumRows())
 
 		rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
-		if variable.DefTiDBEnablePaging {
+		if vardef.DefTiDBEnablePaging {
 			match(t, rows, "1")
 		} else {
 			match(t, rows, "0")
@@ -970,6 +975,10 @@ func TestTiDBEnablePagingVariable(t *testing.T) {
 }
 
 func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -985,7 +994,7 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV630, ver94)
-	MustExec(t, seV630, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBOptRangeMaxSize))
+	MustExec(t, seV630, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBOptRangeMaxSize))
 	MustExec(t, seV630, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV630)
@@ -993,7 +1002,7 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	require.Equal(t, int64(ver94), ver)
 
 	// We are now in 6.3.0, check tidb_opt_range_max_size should not exist.
-	res := MustExecToRecodeSet(t, seV630, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBOptRangeMaxSize))
+	res := MustExecToRecodeSet(t, seV630, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBOptRangeMaxSize))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1028,6 +1037,10 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 }
 
 func TestTiDBOptAdvancedJoinHintWhenUpgrading(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1043,7 +1056,7 @@ func TestTiDBOptAdvancedJoinHintWhenUpgrading(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV660, ver134)
-	MustExec(t, seV660, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBOptAdvancedJoinHint))
+	MustExec(t, seV660, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBOptAdvancedJoinHint))
 	MustExec(t, seV660, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV660)
@@ -1051,7 +1064,7 @@ func TestTiDBOptAdvancedJoinHintWhenUpgrading(t *testing.T) {
 	require.Equal(t, int64(ver134), ver)
 
 	// We are now in 6.6.0, check tidb_opt_advanced_join_hint should not exist.
-	res := MustExecToRecodeSet(t, seV660, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBOptAdvancedJoinHint))
+	res := MustExecToRecodeSet(t, seV660, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBOptAdvancedJoinHint))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1138,6 +1151,10 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 }
 
 func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1153,7 +1170,7 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV3, ver300)
-	MustExec(t, seV3, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBCostModelVersion))
+	MustExec(t, seV3, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBCostModelVersion))
 	MustExec(t, seV3, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV3)
@@ -1161,7 +1178,7 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 	require.Equal(t, int64(ver300), ver)
 
 	// We are now in 3.0.0, check TiDBCostModelVersion should not exist.
-	res := MustExecToRecodeSet(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBCostModelVersion))
+	res := MustExecToRecodeSet(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBCostModelVersion))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1188,7 +1205,11 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 }
 
 func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
-	for i := 0; i < 2; i++ {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	for i := range 2 {
 		func() {
 			ctx := context.Background()
 			store, dom := CreateStoreAndBootstrap(t)
@@ -1205,7 +1226,7 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 			err = txn.Commit(context.Background())
 			require.NoError(t, err)
 			revertVersionAndVariables(t, seV61, ver61)
-			MustExec(t, seV61, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "1", variable.TiDBCostModelVersion))
+			MustExec(t, seV61, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "1", vardef.TiDBCostModelVersion))
 			MustExec(t, seV61, "commit")
 			store.SetOption(StoreBootstrappedKey, nil)
 			ver, err := getBootstrapVersion(seV61)
@@ -1213,7 +1234,7 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 			require.Equal(t, int64(ver61), ver)
 
 			// We are now in 6.1, tidb_cost_model_version is 1.
-			res := MustExecToRecodeSet(t, seV61, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBCostModelVersion))
+			res := MustExecToRecodeSet(t, seV61, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBCostModelVersion))
 			chk := res.NewChunk(nil)
 			err = res.Next(ctx, chk)
 			require.NoError(t, err)
@@ -1258,6 +1279,10 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 }
 
 func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1273,7 +1298,7 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV63, ver63)
-	MustExec(t, seV63, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "1", variable.TiDBEnableGCAwareMemoryTrack))
+	MustExec(t, seV63, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "1", vardef.TiDBEnableGCAwareMemoryTrack))
 	MustExec(t, seV63, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV63)
@@ -1281,7 +1306,7 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 	require.Equal(t, int64(ver63), ver)
 
 	// We are now in 6.3, tidb_enable_gc_aware_memory_track is ON.
-	res := MustExecToRecodeSet(t, seV63, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableGCAwareMemoryTrack))
+	res := MustExecToRecodeSet(t, seV63, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBEnableGCAwareMemoryTrack))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1301,7 +1326,7 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// We are now in 6.5.
-	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableGCAwareMemoryTrack))
+	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBEnableGCAwareMemoryTrack))
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1312,6 +1337,10 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 }
 
 func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1327,7 +1356,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV132, ver132)
-	MustExec(t, seV132, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", variable.TiDBServerMemoryLimit))
+	MustExec(t, seV132, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", vardef.TiDBServerMemoryLimit))
 	MustExec(t, seV132, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV132)
@@ -1335,7 +1364,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 	require.Equal(t, int64(ver132), ver)
 
 	// We are now in 6.5.0, tidb_server_memory_limit is 0.
-	res := MustExecToRecodeSet(t, seV132, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBServerMemoryLimit))
+	res := MustExecToRecodeSet(t, seV132, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBServerMemoryLimit))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1355,17 +1384,21 @@ func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// We are now in 6.5.1+.
-	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBServerMemoryLimit))
+	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBServerMemoryLimit))
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
 	require.Equal(t, 1, chk.NumRows())
 	row = chk.GetRow(0)
 	require.Equal(t, 2, row.Len())
-	require.Equal(t, variable.DefTiDBServerMemoryLimit, row.GetString(1))
+	require.Equal(t, vardef.DefTiDBServerMemoryLimit, row.GetString(1))
 }
 
 func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1381,7 +1414,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV132, ver132)
-	MustExec(t, seV132, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "70%", variable.TiDBServerMemoryLimit))
+	MustExec(t, seV132, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "70%", vardef.TiDBServerMemoryLimit))
 	MustExec(t, seV132, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV132)
@@ -1389,7 +1422,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 	require.Equal(t, int64(ver132), ver)
 
 	// We are now in 6.5.0, tidb_server_memory_limit is "70%".
-	res := MustExecToRecodeSet(t, seV132, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBServerMemoryLimit))
+	res := MustExecToRecodeSet(t, seV132, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBServerMemoryLimit))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1409,7 +1442,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// We are now in 6.5.1+.
-	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBServerMemoryLimit))
+	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBServerMemoryLimit))
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1420,6 +1453,10 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 }
 
 func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1435,10 +1472,10 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV630, ver630)
-	MustExec(t, seV630, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "OFF", variable.TiDBEnableForeignKey))
-	MustExec(t, seV630, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "OFF", variable.ForeignKeyChecks))
-	MustExec(t, seV630, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "OFF", variable.TiDBEnableHistoricalStats))
-	MustExec(t, seV630, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "OFF", variable.TiDBEnablePlanReplayerCapture))
+	MustExec(t, seV630, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "OFF", vardef.TiDBEnableForeignKey))
+	MustExec(t, seV630, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "OFF", vardef.ForeignKeyChecks))
+	MustExec(t, seV630, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "OFF", vardef.TiDBEnableHistoricalStats))
+	MustExec(t, seV630, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "OFF", vardef.TiDBEnablePlanReplayerCapture))
 	MustExec(t, seV630, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV630)
@@ -1446,7 +1483,7 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 	require.Equal(t, int64(ver630), ver)
 
 	// We are now in 6.3.0.
-	upgradeVars := []string{variable.TiDBEnableForeignKey, variable.ForeignKeyChecks, variable.TiDBEnableHistoricalStats, variable.TiDBEnablePlanReplayerCapture}
+	upgradeVars := []string{vardef.TiDBEnableForeignKey, vardef.ForeignKeyChecks, vardef.TiDBEnableHistoricalStats, vardef.TiDBEnablePlanReplayerCapture}
 	varsValueList := []string{"OFF", "OFF", "OFF", "OFF"}
 	for i := range upgradeVars {
 		res := MustExecToRecodeSet(t, seV630, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", upgradeVars[i]))
@@ -1484,7 +1521,11 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 }
 
 func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
-	for i := 0; i < 2; i++ {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	for i := range 2 {
 		func() {
 			ctx := context.Background()
 			store, dom := CreateStoreAndBootstrap(t)
@@ -1501,7 +1542,7 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 			err = txn.Commit(context.Background())
 			require.NoError(t, err)
 			revertVersionAndVariables(t, seV65, ver65)
-			MustExec(t, seV65, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", variable.TiDBStoreBatchSize))
+			MustExec(t, seV65, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", vardef.TiDBStoreBatchSize))
 			MustExec(t, seV65, "commit")
 			store.SetOption(StoreBootstrappedKey, nil)
 			ver, err := getBootstrapVersion(seV65)
@@ -1509,7 +1550,7 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 			require.Equal(t, int64(ver65), ver)
 
 			// We are now in 6.5, tidb_store_batch_size is 0.
-			res := MustExecToRecodeSet(t, seV65, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBStoreBatchSize))
+			res := MustExecToRecodeSet(t, seV65, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBStoreBatchSize))
 			chk := res.NewChunk(nil)
 			err = res.Next(ctx, chk)
 			require.NoError(t, err)
@@ -1554,6 +1595,10 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer136(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -1593,13 +1638,17 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer140(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
 
 	ver139 := version139
-	resetTo139 := func(s sessiontypes.Session) {
+	resetTo139 := func(s sessionapi.Session) {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		m := meta.NewMutator(txn)
@@ -1639,6 +1688,10 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 }
 
 func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1654,7 +1707,7 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV54, ver54)
-	MustExec(t, seV54, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableNonPreparedPlanCache))
+	MustExec(t, seV54, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBEnableNonPreparedPlanCache))
 	MustExec(t, seV54, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV54)
@@ -1662,7 +1715,7 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	require.Equal(t, int64(ver54), ver)
 
 	// We are now in 5.4, check TiDBCostModelVersion should not exist.
-	res := MustExecToRecodeSet(t, seV54, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableNonPreparedPlanCache))
+	res := MustExecToRecodeSet(t, seV54, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBEnableNonPreparedPlanCache))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1679,7 +1732,7 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// We are now in 7.0
-	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableNonPreparedPlanCache))
+	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBEnableNonPreparedPlanCache))
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1688,7 +1741,7 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	require.Equal(t, 2, row.Len())
 	require.Equal(t, "OFF", row.GetString(1)) // tidb_enable_non_prepared_plan_cache = off
 
-	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBNonPreparedPlanCacheSize))
+	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBNonPreparedPlanCacheSize))
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1699,6 +1752,10 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 }
 
 func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1714,7 +1771,7 @@ func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV61, ver61)
-	MustExec(t, seV61, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", variable.TiDBStatsLoadPseudoTimeout))
+	MustExec(t, seV61, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", vardef.TiDBStatsLoadPseudoTimeout))
 	MustExec(t, seV61, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV61)
@@ -1722,7 +1779,7 @@ func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 	require.Equal(t, int64(ver61), ver)
 
 	// We are now in 6.1, tidb_stats_load_pseudo_timeout is OFF.
-	res := MustExecToRecodeSet(t, seV61, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBStatsLoadPseudoTimeout))
+	res := MustExecToRecodeSet(t, seV61, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBStatsLoadPseudoTimeout))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1742,7 +1799,7 @@ func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// We are now in 6.5.
-	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBStatsLoadPseudoTimeout))
+	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBStatsLoadPseudoTimeout))
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1753,6 +1810,10 @@ func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 }
 
 func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1804,6 +1865,10 @@ func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer143(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -1835,6 +1900,10 @@ func TestTiDBUpgradeToVer143(t *testing.T) {
 }
 
 func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1850,7 +1919,7 @@ func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV70, ver70)
-	MustExec(t, seV70, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", variable.TiDBLoadBasedReplicaReadThreshold))
+	MustExec(t, seV70, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", vardef.TiDBLoadBasedReplicaReadThreshold))
 	MustExec(t, seV70, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV70)
@@ -1858,7 +1927,7 @@ func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
 	require.Equal(t, int64(ver70), ver)
 
 	// We are now in 7.0, tidb_load_based_replica_read_threshold is 0.
-	res := MustExecToRecodeSet(t, seV70, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBLoadBasedReplicaReadThreshold))
+	res := MustExecToRecodeSet(t, seV70, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBLoadBasedReplicaReadThreshold))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1878,7 +1947,7 @@ func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// We are now in 7.1.
-	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBLoadBasedReplicaReadThreshold))
+	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBLoadBasedReplicaReadThreshold))
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1889,6 +1958,10 @@ func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
 }
 
 func TestTiDBPlanCacheInvalidationOnFreshStatsWhenUpgradingToVer144(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1937,6 +2010,10 @@ func TestTiDBPlanCacheInvalidationOnFreshStatsWhenUpgradingToVer144(t *testing.T
 }
 
 func TestTiDBUpgradeToVer145(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -1968,6 +2045,10 @@ func TestTiDBUpgradeToVer145(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer170(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -1997,91 +2078,11 @@ func TestTiDBUpgradeToVer170(t *testing.T) {
 	dom.Close()
 }
 
-func TestTiDBBindingInListToVer175(t *testing.T) {
-	ctx := context.Background()
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-
-	// bootstrap as version174
-	ver174 := version174
-	seV174 := CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(ver174))
-	require.NoError(t, err)
-	revertVersionAndVariables(t, seV174, ver174)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	store.SetOption(StoreBootstrappedKey, nil)
-
-	// create some bindings at version174
-	MustExec(t, seV174, "use test")
-	MustExec(t, seV174, "create table t (a int, b int, c int, key(c))")
-	_, digest := parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1,2,3)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
-	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
-	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
-
-	showBindings := func(s sessiontypes.Session) (records []string) {
-		MustExec(t, s, "admin reload bindings")
-		res := MustExecToRecodeSet(t, s, "show global bindings")
-		chk := res.NewChunk(nil)
-		for {
-			require.NoError(t, res.Next(ctx, chk))
-			if chk.NumRows() == 0 {
-				break
-			}
-			for i := 0; i < chk.NumRows(); i++ {
-				originalSQL := chk.GetRow(i).GetString(0)
-				bindSQL := chk.GetRow(i).GetString(1)
-				records = append(records, fmt.Sprintf("%s:%s", bindSQL, originalSQL))
-			}
-		}
-		require.NoError(t, res.Close())
-		sort.Strings(records)
-		return
-	}
-	bindings := showBindings(seV174)
-	// on ver174, `in (1)` and `in (1,2,3)` have different normalized results: `in (?)` and `in (...)`
-	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )",
-		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ? )",
-		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3):select * from `test` . `t` where `a` in ( ... )"}, bindings)
-
-	// upgrade to ver175
-	dom.Close()
-	domCurVer, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer domCurVer.Close()
-	seCurVer := CreateSessionAndSetID(t, store)
-	ver, err := getBootstrapVersion(seCurVer)
-	require.NoError(t, err)
-	require.Equal(t, currentBootstrapVersion, ver)
-
-	// `in (?)` becomes to `in ( ... )`
-	bindings = showBindings(seCurVer)
-	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ... ) and `b` in ( ... )",
-		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ... )"}, bindings)
-
-	planFromBinding := func(s sessiontypes.Session, q string) {
-		MustExec(t, s, q)
-		res := MustExecToRecodeSet(t, s, "select @@last_plan_from_binding")
-		chk := res.NewChunk(nil)
-		require.NoError(t, res.Next(ctx, chk))
-		require.Equal(t, int64(1), chk.GetRow(0).GetInt64(0))
-		require.NoError(t, res.Close())
-	}
-	planFromBinding(seCurVer, "select * from test.t where a in (1)")
-	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3)")
-	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7)")
-	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7) and b in(1)")
-	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7) and b in(1,2,3,4)")
-	planFromBinding(seCurVer, "select * from test.t where a in (7) and b in(1,2,3,4)")
-}
-
 func TestTiDBUpgradeToVer176(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -2113,6 +2114,10 @@ func TestTiDBUpgradeToVer176(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer177(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -2151,7 +2156,7 @@ func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	ddlTableVer, err := m.CheckDDLTableVersion()
+	ddlTableVer, err := m.GetDDLTableVersion()
 	require.NoError(t, err)
 
 	// Verify that 'ddl_table_version' has been set to the correct value
@@ -2161,12 +2166,16 @@ func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, 1, req.NumRows())
-	require.Equal(t, []byte(fmt.Sprintf("%d", ddlTableVer)), req.GetRow(0).GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", ddlTableVer), req.GetRow(0).GetBytes(0))
 	require.NoError(t, r.Close())
 	dom.Close()
 }
 
 func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -2174,7 +2183,7 @@ func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	ddlTableVer, err := m.CheckDDLTableVersion()
+	ddlTableVer, err := m.GetDDLTableVersion()
 	require.NoError(t, err)
 
 	// bootstrap as version177
@@ -2208,11 +2217,15 @@ func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, 1, req.NumRows())
-	require.Equal(t, []byte(fmt.Sprintf("%d", ddlTableVer)), req.GetRow(0).GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", ddlTableVer), req.GetRow(0).GetBytes(0))
 	require.NoError(t, r.Close())
 }
 
 func TestTiDBUpgradeToVer179(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
@@ -2301,6 +2314,10 @@ func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
 }
 
 func TestTiDBUpgradeToVer209(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -2345,17 +2362,23 @@ func TestTiDBUpgradeToVer209(t *testing.T) {
 	require.Equal(t, 1, chk.NumRows())
 	row = chk.GetRow(0)
 	require.Equal(t, int64(0), row.GetInt64(0))
-	require.Equal(t, false, variable.EnableResourceControlStrictMode.Load())
+	require.Equal(t, false, vardef.EnableResourceControlStrictMode.Load())
 }
 
 func TestTiDBUpgradeWithDistTaskEnable(t *testing.T) {
-	t.Run("test enable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 1", true) })
+	if kerneltype.IsNextGen() {
+		t.Skip("the schema version of the first next-gen kernel release is 250, no need to go through upgrade operations below it, skip it")
+	}
+	t.Run("test enable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 1", false) })
 	t.Run("test disable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 0", false) })
 }
 
 func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the schema version of the first next-gen kernel release is 250, no need to go through upgrade operations below it, skip it")
+	}
 	t.Run("test dist task running", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'running'", true)
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'running'", false)
 	})
 	t.Run("test dist task succeed", func(t *testing.T) {
 		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'succeed'", false)
@@ -2367,14 +2390,18 @@ func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
 		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'reverted'", false)
 	})
 	t.Run("test dist task paused", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'paused'", true)
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'paused'", false)
 	})
 	t.Run("test dist task other", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'other'", true)
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'other'", false)
 	})
 }
 
 func TestTiDBUpgradeToVer211(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
@@ -2400,12 +2427,13 @@ func TestTiDBUpgradeToVer211(t *testing.T) {
 	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = getBootstrapVersion(seV210)
+
+	newSe := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(newSe)
 	require.NoError(t, err)
 	require.Less(t, int64(ver210), ver)
 
-	domain.BindDomain(seV210, dom)
-	r := MustExecToRecodeSet(t, seV210, "select count(summary) from mysql.tidb_background_subtask_history;")
+	r := MustExecToRecodeSet(t, newSe, "select count(summary) from mysql.tidb_background_subtask_history;")
 	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
@@ -2447,6 +2475,10 @@ func TestTiDBHistoryTableConsistent(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer212(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
@@ -2476,7 +2508,24 @@ func TestTiDBUpgradeToVer212(t *testing.T) {
 	MustExec(t, seCurVer, "select sample_sql, start_time, plan_digest from mysql.tidb_runaway_queries")
 }
 
+func TestIssue61890(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	s1 := CreateSessionAndSetID(t, store)
+	MustExec(t, s1, "drop table mysql.global_variables")
+	MustExec(t, s1, "create table mysql.global_variables(`VARIABLE_NAME` varchar(64) NOT NULL PRIMARY KEY clustered, `VARIABLE_VALUE` varchar(16383) DEFAULT NULL)")
+
+	s2 := CreateSessionAndSetID(t, store)
+	initGlobalVariableIfNotExists(s2, vardef.TiDBEnableINLJoinInnerMultiPattern, vardef.Off)
+
+	dom.Close()
+}
+
 func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -2492,7 +2541,7 @@ func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV7, ver650)
-	MustExec(t, seV7, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableINLJoinInnerMultiPattern))
+	MustExec(t, seV7, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBEnableINLJoinInnerMultiPattern))
 	MustExec(t, seV7, "commit")
 	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV7)
@@ -2500,7 +2549,7 @@ func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
 	require.Equal(t, int64(ver650), ver)
 
 	// We are now in 6.5.0, check tidb_enable_inl_join_inner_multi_pattern should not exist.
-	res := MustExecToRecodeSet(t, seV7, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableINLJoinInnerMultiPattern))
+	res := MustExecToRecodeSet(t, seV7, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBEnableINLJoinInnerMultiPattern))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -2523,4 +2572,347 @@ func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
 	row := chk.GetRow(0)
 	require.Equal(t, 1, row.Len())
 	require.Equal(t, int64(0), row.GetInt64(0))
+}
+
+func TestKeyspaceEtcdNamespace(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("keyspace is not supported in classic kernel")
+	}
+	keyspaceMeta := keyspacepb.KeyspaceMeta{}
+	keyspaceMeta.Id = 2
+	keyspaceMeta.Name = keyspace.System
+	makeStore(t, &keyspaceMeta, true)
+}
+
+func TestNullKeyspaceEtcdNamespace(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("next-gen kernel doesn't have the NULL keyspace concept")
+	}
+	makeStore(t, nil, false)
+}
+
+func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix bool) {
+	integration.BeforeTestExternal(t)
+	var store kv.Storage
+	var err error
+	if keyspaceMeta != nil {
+		store, err = mockstore.NewMockStore(
+			mockstore.WithCurrentKeyspaceMeta(keyspaceMeta),
+			mockstore.WithStoreType(mockstore.EmbedUnistore),
+		)
+	} else {
+		store, err = mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	}
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	// Build a mockEtcdBackend.
+	mockStore := &mockEtcdBackend{
+		Storage: store,
+		pdAddrs: []string{cluster.Members[0].GRPCURL()}}
+	etcdClient := cluster.RandClient()
+
+	ctx := context.Background()
+	require.NoError(t, ddl.StartOwnerManager(ctx, mockStore))
+	t.Cleanup(func() {
+		ddl.CloseOwnerManager(mockStore)
+	})
+	dom, err := domap.getWithEtcdClient(mockStore, etcdClient)
+	require.NoError(t, err)
+	defer dom.Close()
+
+	checkETCDNameSpace(t, dom, isHasPrefix)
+}
+
+func checkETCDNameSpace(t *testing.T, dom *domain.Domain, isHasPrefix bool) {
+	namespacePrefix := keyspace.MakeKeyspaceEtcdNamespace(dom.Store().GetCodec())
+	testKeyWithoutPrefix := "/testkey"
+	testVal := "test"
+	var expectTestKey string
+	if isHasPrefix {
+		expectTestKey = namespacePrefix + testKeyWithoutPrefix
+	} else {
+		expectTestKey = testKeyWithoutPrefix
+	}
+
+	// Put key value into etcd.
+	_, err := dom.GetEtcdClient().Put(context.Background(), testKeyWithoutPrefix, testVal)
+	require.NoError(t, err)
+
+	// Use expectTestKey to get the key from etcd.
+	getResp, err := dom.UnprefixedEtcdCli().Get(context.Background(), expectTestKey)
+	require.NoError(t, err)
+	require.Equal(t, len(getResp.Kvs), 1)
+
+	if isHasPrefix {
+		getResp, err = dom.UnprefixedEtcdCli().Get(context.Background(), testKeyWithoutPrefix)
+		require.NoError(t, err)
+		require.Equal(t, 0, len(getResp.Kvs))
+	}
+}
+
+type mockEtcdBackend struct {
+	kv.Storage
+	pdAddrs []string
+}
+
+func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
+}
+
+func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
+
+func (mebd *mockEtcdBackend) StartGCWorker() error { return nil }
+
+func TestTiDBUpgradeToVer240(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver239 := version239
+	seV239 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver239))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV239, ver239)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	// Check if the required indexes already exist in mysql.analyze_jobs (they are created by default in new clusters)
+	res := MustExecToRecodeSet(t, seV239, "show create table mysql.analyze_jobs")
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
+	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
+
+	// Check that the indexes still exist after upgrading to the new version and that no errors occurred during the upgrade.
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	res = MustExecToRecodeSet(t, seCurVer, "show create table mysql.analyze_jobs")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
+	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
+}
+
+func TestTiDBUpgradeToVer252(t *testing.T) {
+	// NOTE: this case needed to be passed in both classic and next-gen kernel.
+	// in the first release of next-gen kernel, the version is 250.
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver250 := version250
+	seV250 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver250))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV250, ver250)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	getBindInfoSQLFn := func(se sessionapi.Session) string {
+		res := MustExecToRecodeSet(t, se, "show create table mysql.bind_info")
+		chk := res.NewChunk(nil)
+		err = res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		return string(chk.GetRow(0).GetBytes(1))
+	}
+	createTblSQL := getBindInfoSQLFn(seV250)
+	require.Contains(t, createTblSQL, "`create_time` timestamp(6)")
+	require.Contains(t, createTblSQL, "`update_time` timestamp(6)")
+	// revert it back to timestamp(3) for testing. we must set below fields to
+	// simulate the real session in upgrade process.
+	seV250.SetValue(sessionctx.Initing, true)
+	seV250.GetSessionVars().SQLMode = mysql.ModeNone
+	res := MustExecToRecodeSet(t, seV250, "select create_time,update_time from mysql.bind_info")
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	for i := range chk.NumRows() {
+		getTime := chk.GetRow(i).GetTime(0)
+		getTime = chk.GetRow(i).GetTime(1)
+		_ = getTime
+	}
+	mustExecute(seV250, "alter table mysql.bind_info modify create_time timestamp(3)")
+	mustExecute(seV250, "alter table mysql.bind_info modify update_time timestamp(3)")
+	createTblSQL = getBindInfoSQLFn(seV250)
+	require.Contains(t, createTblSQL, "`create_time` timestamp(3)")
+	require.Contains(t, createTblSQL, "`update_time` timestamp(3)")
+
+	// do upgrade to latest version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	// check if the columns have been changed to timestamp(6)
+	createTblSQL = getBindInfoSQLFn(seCurVer)
+	require.Contains(t, createTblSQL, "`create_time` timestamp(6)")
+	require.Contains(t, createTblSQL, "`update_time` timestamp(6)")
+}
+
+func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// `cluster_id` is inserted for a new TiDB cluster.
+	se := CreateSessionAndSetID(t, store)
+	r := MustExecToRecodeSet(t, se, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req := r.NewChunk(nil)
+	err := r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	se.Close()
+
+	// bootstrap as version241
+	ver241 := version241
+	seV241 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver241))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV241, ver241)
+	// remove the cluster_id entry from mysql.tidb table
+	MustExec(t, seV241, "delete from mysql.tidb where variable_name='cluster_id'")
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+	ver, err := getBootstrapVersion(seV241)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver241), ver)
+	seV241.Close()
+
+	// upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// check if the cluster_id has been set in the `mysql.tidb` table during upgrade
+	r = MustExecToRecodeSet(t, seCurVer, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	seCurVer.Close()
+}
+
+func TestBindInfoUniqueIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// bootstrap as version245
+	ver245 := version245
+	seV245 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver245))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV245, ver245)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	// remove the unique index on mysql.bind_info for testing
+	MustExec(t, seV245, "alter table mysql.bind_info drop index digest_index")
+
+	// insert duplicated values into mysql.bind_info
+	for _, sqlDigest := range []string{"null", "'x'", "'y'"} {
+		for _, planDigest := range []string{"null", "'x'", "'y'"} {
+			insertStmt := fmt.Sprintf(`insert into mysql.bind_info values (
+             "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s, null)`,
+				sqlDigest, planDigest)
+			MustExec(t, seV245, insertStmt)
+			MustExec(t, seV245, insertStmt)
+		}
+	}
+
+	// upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+}
+
+func TestVersionedBootstrapSchemas(t *testing.T) {
+	require.True(t, slices.IsSortedFunc(versionedBootstrapSchemas, func(a, b versionedBootstrapSchema) int {
+		return cmp.Compare(a.ver, b.ver)
+	}), "versionedBootstrapSchemas should be sorted by version")
+
+	// make sure that later change won't affect existing version schemas.
+	require.Len(t, versionedBootstrapSchemas[0].databases[0].Tables, 52)
+	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
+
+	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
+	var allTableCount int
+	for _, vbs := range versionedBootstrapSchemas {
+		for _, db := range vbs.databases {
+			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
+			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
+			allIDs = append(allIDs, db.ID)
+
+			testTableBasicInfoSlice(t, db.Tables)
+			allTableCount += len(db.Tables)
+			for _, tbl := range db.Tables {
+				allIDs = append(allIDs, tbl.ID)
+			}
+		}
+	}
+	require.Len(t, tablesInSystemDatabase, allTableCount,
+		"versionedBootstrapSchemas should have the same number of tables as tablesInSystemDatabase")
+	slices.Sort(allIDs)
+	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
 }

@@ -72,7 +72,7 @@ func TestInDecimal(t *testing.T) {
 	require.NoError(t, err)
 
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		d0 := new(types.MyDecimal)
 		d1 := new(types.MyDecimal)
 		v := fmt.Sprintf("%d.%d", rand.Intn(1000), rand.Int31())
@@ -85,7 +85,7 @@ func TestInDecimal(t *testing.T) {
 	}
 	result := chunk.NewColumn(ft, 1024)
 	require.NoError(t, vecEvalType(ctx, inFunc, types.ETInt, input, result))
-	for i := 0; i < 1024; i++ {
+	for range 1024 {
 		require.Equal(t, int64(1), result.GetInt64(0))
 	}
 }
@@ -109,7 +109,7 @@ func TestGetParamVec(t *testing.T) {
 	result := chunk.NewColumn(ft, 3)
 	require.NoError(t, vecEvalType(ctx, fn, types.ETString, input, result))
 	require.Equal(t, len(params), result.Rows())
-	for i := 0; i < result.Rows(); i++ {
+	for i := range result.Rows() {
 		require.False(t, result.IsNull(i))
 		val := result.GetString(i)
 		str, err := params[i].ToString()

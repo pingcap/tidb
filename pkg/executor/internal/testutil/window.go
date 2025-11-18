@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -50,8 +50,8 @@ func (a WindowTestCase) String() string {
 
 // DefaultWindowTestCase returns default window test case
 func DefaultWindowTestCase(ctx sessionctx.Context) *WindowTestCase {
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	return &WindowTestCase{
 		WindowFunc:       ast.WindowFuncRowNumber,
 		NumFunc:          1,

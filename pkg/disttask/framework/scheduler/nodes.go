@@ -16,14 +16,15 @@ package scheduler
 
 import (
 	"context"
+	"slices"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -44,9 +45,9 @@ type NodeManager struct {
 }
 
 func newNodeManager(serverID string) *NodeManager {
-	logger := log.L()
+	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
-		logger = log.L().With(zap.String("server-id", serverID))
+		logger = logger.With(zap.String("server-id", serverID))
 	}
 	nm := &NodeManager{
 		logger:        logger,
@@ -155,9 +156,10 @@ func (nm *NodeManager) refreshNodes(ctx context.Context, taskMgr TaskManager, sl
 // return a copy of the nodes.
 func (nm *NodeManager) getNodes() []proto.ManagedNode {
 	nodes := *nm.nodes.Load()
-	res := make([]proto.ManagedNode, len(nodes))
-	copy(res, nodes)
-	return res
+	if nodes == nil {
+		return []proto.ManagedNode{}
+	}
+	return slices.Clone(nodes)
 }
 
 func filterByScope(nodes []proto.ManagedNode, targetScope string) []string {

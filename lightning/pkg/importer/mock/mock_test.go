@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/lightning/pkg/importer"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -164,16 +164,16 @@ func TestMockTargetInfoBasic(t *testing.T) {
 		&TableInfo{
 			TableModel: &model.TableInfo{
 				ID:   1,
-				Name: pmodel.NewCIStr("testtbl1"),
+				Name: ast.NewCIStr("testtbl1"),
 				Columns: []*model.ColumnInfo{
 					{
 						ID:     1,
-						Name:   pmodel.NewCIStr("c_1"),
+						Name:   ast.NewCIStr("c_1"),
 						Offset: 0,
 					},
 					{
 						ID:     2,
-						Name:   pmodel.NewCIStr("c_2"),
+						Name:   ast.NewCIStr("c_2"),
 						Offset: 1,
 					},
 				},

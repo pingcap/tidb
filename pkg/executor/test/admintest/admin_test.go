@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"regexp"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,10 +32,11 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	ast "github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -87,14 +89,16 @@ func TestAdminRecoverIndex(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_test")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("c2")
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
+	require.NoError(t, err)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	err = indexOpr.Delete(ctx, txn, types.MakeDatums(1), kv.IntHandle(1))
@@ -177,14 +181,15 @@ func TestAdminRecoverIndex(t *testing.T) {
 	sctx.Store = store
 	ctx = sctx.GetTableCtx()
 	is = domain.InfoSchema()
-	dbName = pmodel.NewCIStr("test")
-	tblName = pmodel.NewCIStr("admin_test")
+	dbName = ast.NewCIStr("test")
+	tblName = ast.NewCIStr("admin_test")
 	tbl, err = is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 
 	tblInfo = tbl.Meta()
 	idxInfo = tblInfo.FindIndexByName("i1")
-	indexOpr = tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err = tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 	txn, err = store.Begin()
 	require.NoError(t, err)
 	err = indexOpr.Delete(ctx, txn, types.MakeDatums(2), kv.IntHandle(1))
@@ -223,8 +228,8 @@ func TestAdminRecoverMVIndex(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("t")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("t")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -234,7 +239,9 @@ func TestAdminRecoverMVIndex(t *testing.T) {
 
 	cpIdx := idxInfo.Clone()
 	cpIdx.MVIndex = false
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	require.NoError(t, err)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -268,8 +275,8 @@ func TestAdminCleanupMVIndex(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("t")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("t")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -279,7 +286,8 @@ func TestAdminCleanupMVIndex(t *testing.T) {
 
 	cpIdx := idxInfo.Clone()
 	cpIdx.MVIndex = false
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -302,9 +310,9 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	tk.MustExec("drop database if exists test_cluster_index_admin_recover;")
 	tk.MustExec("create database test_cluster_index_admin_recover;")
 	tk.MustExec("use test_cluster_index_admin_recover;")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	dbName := pmodel.NewCIStr("test_cluster_index_admin_recover")
-	tblName := pmodel.NewCIStr("t")
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
+	dbName := ast.NewCIStr("test_cluster_index_admin_recover")
+	tblName := ast.NewCIStr("t")
 
 	// Test no corruption case.
 	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key(a, c), index idx(b), index idx1(c));")
@@ -321,7 +329,8 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx")
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	// Some index entries are missed.
 	// Recover an index don't covered by clustered index.
@@ -342,7 +351,8 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 
 	// Recover an index covered by clustered index.
 	idx1Info := tblInfo.FindIndexByName("idx1")
-	indexOpr1 := tables.NewIndex(tblInfo.ID, tblInfo, idx1Info)
+	indexOpr1, err := tables.NewIndex(tblInfo.ID, tblInfo, idx1Info)
+	require.NoError(t, err)
 	txn, err = store.Begin()
 	require.NoError(t, err)
 	err = indexOpr1.Delete(ctx, txn, types.MakeDatums("3"), cHandle)
@@ -367,8 +377,8 @@ func TestAdminRecoverPartitionTableIndex(t *testing.T) {
 		ctx := mock.NewContext()
 		ctx.Store = store
 		is := domain.InfoSchema()
-		dbName := pmodel.NewCIStr("test")
-		tblName := pmodel.NewCIStr("admin_test")
+		dbName := ast.NewCIStr("test")
+		tblName := ast.NewCIStr("admin_test")
 		tbl, err := is.TableByName(context.Background(), dbName, tblName)
 		require.NoError(t, err)
 		return tbl
@@ -376,7 +386,8 @@ func TestAdminRecoverPartitionTableIndex(t *testing.T) {
 
 	checkFunc := func(tbl table.Table, pid int64, idxValue int) {
 		idxInfo := tbl.Meta().FindIndexByName("c2")
-		indexOpr := tables.NewIndex(pid, tbl.Meta(), idxInfo)
+		indexOpr, err := tables.NewIndex(pid, tbl.Meta(), idxInfo)
+		require.NoError(t, err)
 		ctx := mock.NewContext()
 		txn, err := store.Begin()
 		require.NoError(t, err)
@@ -436,11 +447,11 @@ func TestAdminRecoverIndex1(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_test")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("admin_test")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table admin_test (c1 varchar(255), c2 int, c3 int default 1, primary key(c1), unique key(c2))")
 	tk.MustExec("insert admin_test (c1, c2) values ('1', 1), ('2', 2), ('3', 3), ('10', 10), ('20', 20)")
 
@@ -454,7 +465,8 @@ func TestAdminRecoverIndex1(t *testing.T) {
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("primary")
 	require.NotNil(t, idxInfo)
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -506,16 +518,18 @@ func TestAdminCleanupIndex(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_test")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 
 	tblInfo := tbl.Meta()
 	idxInfo2 := tblInfo.FindIndexByName("c2")
-	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
+	indexOpr2, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
+	require.NoError(t, err)
 	idxInfo3 := tblInfo.FindIndexByName("c3")
-	indexOpr3 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo3)
+	indexOpr3, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo3)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -575,8 +589,8 @@ func TestAdminCleanupIndexForPartitionTable(t *testing.T) {
 		ctx := mock.NewContext()
 		ctx.Store = store
 		is := domain.InfoSchema()
-		dbName := pmodel.NewCIStr("test")
-		tblName := pmodel.NewCIStr("admin_test")
+		dbName := ast.NewCIStr("test")
+		tblName := ast.NewCIStr("admin_test")
 		tbl, err := is.TableByName(context.Background(), dbName, tblName)
 		require.NoError(t, err)
 		return tbl
@@ -584,9 +598,11 @@ func TestAdminCleanupIndexForPartitionTable(t *testing.T) {
 
 	checkFunc := func(tbl table.Table, pid int64, idxValue, handle int) {
 		idxInfo2 := tbl.Meta().FindIndexByName("c2")
-		indexOpr2 := tables.NewIndex(pid, tbl.Meta(), idxInfo2)
+		indexOpr2, err := tables.NewIndex(pid, tbl.Meta(), idxInfo2)
+		require.NoError(t, err)
 		idxInfo3 := tbl.Meta().FindIndexByName("c3")
-		indexOpr3 := tables.NewIndex(pid, tbl.Meta(), idxInfo3)
+		indexOpr3, err := tables.NewIndex(pid, tbl.Meta(), idxInfo3)
+		require.NoError(t, err)
 
 		txn, err := store.Begin()
 		sctx := mock.NewContext()
@@ -654,7 +670,7 @@ func TestAdminCleanupIndexPKNotHandle(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int, primary key (c1, c2))")
 	tk.MustExec("insert admin_test (c1, c2) values (1, 2), (3, 4), (-5, 5)")
 
@@ -666,14 +682,15 @@ func TestAdminCleanupIndexPKNotHandle(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_test")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("primary")
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -717,20 +734,22 @@ func TestAdminCleanupIndexMore(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_test")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 
 	tblInfo := tbl.Meta()
 	idxInfo1 := tblInfo.FindIndexByName("c1")
-	indexOpr1 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo1)
+	indexOpr1, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo1)
+	require.NoError(t, err)
 	idxInfo2 := tblInfo.FindIndexByName("c2")
-	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
+	indexOpr2, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
+	require.NoError(t, err)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	for i := 0; i < 2000; i++ {
+	for i := range 2000 {
 		c1 := int64(2*i + 7)
 		c2 := int64(2*i + 8)
 		_, err = indexOpr1.Create(ctx, txn, types.MakeDatums(c1, c2), kv.IntHandle(c1), nil)
@@ -772,7 +791,7 @@ func TestClusteredAdminCleanupIndex(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("create table admin_test (c1 varchar(255), c2 int, c3 char(10) default 'c3', primary key (c1, c3), unique key(c2), key (c3))")
 	tk.MustExec("insert admin_test (c1, c2) values ('c1_1', 2), ('c1_2', 4), ('c1_3', NULL)")
 	tk.MustExec("insert admin_test (c1, c3) values ('c1_4', 'c3_4'), ('c1_5', 'c3_5'), ('c1_6', default)")
@@ -786,15 +805,17 @@ func TestClusteredAdminCleanupIndex(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
-	tbl, err := domain.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("admin_test"))
+	tbl, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("admin_test"))
 	require.NoError(t, err)
 	// cleanup clustered primary key takes no effect.
 
 	tblInfo := tbl.Meta()
 	idxInfo2 := tblInfo.FindIndexByName("c2")
-	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
+	indexOpr2, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
+	require.NoError(t, err)
 	idxInfo3 := tblInfo.FindIndexByName("c3")
-	indexOpr3 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo3)
+	indexOpr3, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo3)
+	require.NoError(t, err)
 
 	c2DanglingIdx := []struct {
 		handle kv.Handle
@@ -864,8 +885,8 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("t")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("t")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -875,7 +896,8 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 
 	cpIdx := idxInfo.Clone()
 	cpIdx.MVIndex = false
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	require.NoError(t, err)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	err = indexOpr.Delete(ctx, txn, types.MakeDatums(0), kv.IntHandle(0))
@@ -919,8 +941,8 @@ func TestAdminCheckPartitionTableFailed(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_test_p")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("admin_test_p")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -932,7 +954,8 @@ func TestAdminCheckPartitionTableFailed(t *testing.T) {
 	// Table count > index count.
 	for i := 0; i <= 5; i++ {
 		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
-		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		indexOpr, err := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		err = indexOpr.Delete(ctx, txn, types.MakeDatums(i), kv.IntHandle(i))
@@ -961,7 +984,8 @@ func TestAdminCheckPartitionTableFailed(t *testing.T) {
 	// Table count < index count.
 	for i := 0; i <= 5; i++ {
 		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
-		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		indexOpr, err := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(i+8), kv.IntHandle(i+8), nil)
@@ -984,7 +1008,8 @@ func TestAdminCheckPartitionTableFailed(t *testing.T) {
 	// Table count = index count, but the index value was wrong.
 	for i := 0; i <= 5; i++ {
 		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
-		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		indexOpr, err := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(i+8), kv.IntHandle(i), nil)
@@ -1052,10 +1077,12 @@ func newInconsistencyKit(t *testing.T, tk *testkit.AsyncTestKit, opt *kitOpt) *i
 func (tk *inconsistencyTestKit) rebuild() {
 	tk.MustExec(tk.ctx, "truncate table "+tblName)
 	is := domain.GetDomain(testkit.TryRetrieveSession(tk.ctx)).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tblName))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
 	require.NoError(tk.t, err)
-	tk.uniqueIndex = tables.NewIndex(tbl.Meta().ID, tbl.Meta(), tbl.Meta().Indices[0])
-	tk.plainIndex = tables.NewIndex(tbl.Meta().ID, tbl.Meta(), tbl.Meta().Indices[1])
+	tk.uniqueIndex, err = tables.NewIndex(tbl.Meta().ID, tbl.Meta(), tbl.Meta().Indices[0])
+	require.NoError(tk.t, err)
+	tk.plainIndex, err = tables.NewIndex(tbl.Meta().ID, tbl.Meta(), tbl.Meta().Indices[1])
+	require.NoError(tk.t, err)
 }
 
 func TestCheckFailReport(t *testing.T) {
@@ -1304,14 +1331,15 @@ func TestAdminCheckWithSnapshot(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_t_s")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("admin_t_s")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("a")
-	idxOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	idxOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	_, err = idxOpr.Create(ctx, txn, types.MakeDatums(2), kv.IntHandle(100), nil)
@@ -1349,6 +1377,69 @@ func TestAdminCheckWithSnapshot(t *testing.T) {
 	tk.MustExec("drop table if exists admin_t_s")
 }
 
+func TestAdminCheckTableWithSnapshot(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+	conn2 := server.CreateMockConn(t, sv)
+	tk2 := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1), (2), (3);")
+	tk.MustExec("alter table t add index(a)")
+	tk2.MustExec("use test")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+			ON DUPLICATE KEY UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	var (
+		wg      sync.WaitGroup
+		startTS uint64
+	)
+	wg.Add(1)
+	ch := make(chan uint64)
+
+	go func() {
+		defer wg.Done()
+
+		for tso := range ch {
+			tk2.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%d'", tso))
+			tk2.MustExec("ADMIN CHECK TABLE t")
+		}
+
+		tk2.MustExec("set @@tidb_snapshot = ''")
+		tk2.MustExec("ADMIN CHECK TABLE t")
+	}()
+
+	for _, alterTableSQL := range []string{
+		"ALTER TABLE t MODIFY COLUMN a VARCHAR(4)",
+		"ALTER TABLE t MODIFY COLUMN a INT",
+		"ALTER TABLE t RENAME COLUMN a TO aa",
+		"ALTER TABLE t ADD INDEX idx(aa)",
+		"ALTER TABLE t DROP INDEX idx",
+	} {
+		tk.MustExec("BEGIN")
+		startTS = tk.Session().GetSessionVars().TxnCtx.StartTS
+		tk.MustExec(alterTableSQL)
+		tk.MustExec("COMMIT")
+		ch <- startTS
+	}
+	close(ch)
+
+	wg.Wait()
+}
+
 func TestAdminCheckTableFailed(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
@@ -1363,13 +1454,14 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_test")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[1]
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 	tk.Session().GetSessionVars().IndexLookupSize = 3
 	tk.Session().GetSessionVars().MaxChunkSize = 3
 
@@ -1386,16 +1478,16 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: -1, index-values:\"\" != record-values:\"handle: -1, values: [KindInt64 -10]\"")
 	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
-	tk.MustExec("set @@tidb_redact_log=1;")
+	tk.MustExec("set @@global.tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
 
-	tk.MustExec("set @@tidb_redact_log=marker;")
+	tk.MustExec("set @@global.tidb_redact_log=marker;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ‹-1›, index-values:‹\"\"› != record-values:‹\"handle: -1, values: [KindInt64 -10]\"›")
-	tk.MustExec("set @@tidb_redact_log=0;")
+	tk.MustExec("set @@global.tidb_redact_log=0;")
 	r := tk.MustQuery("admin recover index admin_test c2")
 	r.Check(testkit.Rows("1 7"))
 	tk.MustExec("admin check table admin_test")
@@ -1412,15 +1504,15 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 0, index-values:\"handle: 0, values: [KindInt64 0]\" != record-values:\"\"")
-	tk.MustExec("set @@tidb_redact_log=1;")
+	tk.MustExec("set @@global.tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
-	tk.MustExec("set @@tidb_redact_log=marker;")
+	tk.MustExec("set @@global.tidb_redact_log=marker;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ‹0›, index-values:‹\"handle: 0, values: [KindInt64 0]\"› != record-values:‹\"\"›")
-	tk.MustExec("set @@tidb_redact_log=0;")
+	tk.MustExec("set @@global.tidb_redact_log=0;")
 
 	// Add one row of index.
 	// Table count < index count.
@@ -1439,15 +1531,15 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 10, index-values:\"handle: 10, values: [KindInt64 19]\" != record-values:\"handle: 10, values: [KindInt64 20]\"")
-	tk.MustExec("set @@tidb_redact_log=1;")
+	tk.MustExec("set @@global.tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
-	tk.MustExec("set @@tidb_redact_log=marker;")
+	tk.MustExec("set @@global.tidb_redact_log=marker;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ‹10›, index-values:‹\"handle: 10, values: [KindInt64 19]\"› != record-values:‹\"handle: 10, values: [KindInt64 20]\"›")
-	tk.MustExec("set @@tidb_redact_log=0;")
+	tk.MustExec("set @@global.tidb_redact_log=0;")
 
 	// Table count = index count.
 	// Two indices have the same handle.
@@ -1461,16 +1553,16 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	require.NoError(t, err)
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
-	require.Error(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 2, index-values:\"\" != record-values:\"handle: 2, values: [KindInt64 12]\"")
-	tk.MustExec("set @@tidb_redact_log=1;")
+	require.ErrorContains(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2")
+	tk.MustExec("set @@global.tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
-	tk.MustExec("set @@tidb_redact_log=marker;")
+	tk.MustExec("set @@global.tidb_redact_log=marker;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ‹10›, index-values:‹\"handle: 10, values: [KindInt64 19]\"› != record-values:‹\"handle: 10, values: [KindInt64 20]\"›")
-	tk.MustExec("set @@tidb_redact_log=0;")
+	tk.MustExec("set @@global.tidb_redact_log=0;")
 
 	// Table count = index count.
 	// Index c2 has one line of data is 19, the corresponding table data is 20.
@@ -1485,15 +1577,19 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 10, index-values:\"handle: 10, values: [KindInt64 19]\" != record-values:\"handle: 10, values: [KindInt64 20]\"")
-	tk.MustExec("set @@tidb_redact_log=1;")
+	tk.MustExec("set @@global.tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
-	tk.MustExec("set @@tidb_redact_log=marker;")
+	tk.MustExec("set @@global.tidb_redact_log=marker;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ‹10›, index-values:‹\"handle: 10, values: [KindInt64 19]\"› != record-values:‹\"handle: 10, values: [KindInt64 20]\"›")
-	tk.MustExec("set @@tidb_redact_log=0;")
+	tk.MustExec("set @@global.tidb_redact_log=0;")
+
+	tk.MustExec("create table other (a int);")
+	tk.MustGetErrMsg("admin check table other, admin_test;",
+		"admin check only supports one table at a time")
 
 	// Recover records.
 	txn, err = store.Begin()
@@ -1523,24 +1619,61 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	tk.MustExec("set cte_max_recursion_depth=10000;")
 	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
 
-	// Make some corrupted index. Build the index information.
 	sctx := mock.NewContext()
-	sctx.Store = store
 	ctx := sctx.GetTableCtx()
-	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_test")
-	tbl, err := is.TableByName(context.Background(), dbName, tblName)
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	idxInfo := tblInfo.Indices[0]
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+
+	// Make some corrupted index. Build the index information.
+	getIndex := func() table.Index {
+		sctx.Store = store
+		is := domain.InfoSchema()
+		dbName := ast.NewCIStr("test")
+		tblName := ast.NewCIStr("admin_test")
+		tbl, err := is.TableByName(context.Background(), dbName, tblName)
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+		idxInfo := tblInfo.Indices[0]
+		indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+		require.NoError(t, err)
+		return indexOpr
+	}
+
+	indexOpr := getIndex()
 
 	pattern := "handle:\\s(\\d+)"
 	r := regexp.MustCompile(pattern)
 
+	// No index record
+	for i := range 10001 {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		err = indexOpr.Delete(ctx, txn, types.MakeDatums(i), kv.IntHandle(i))
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+	}
+	err := tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+
+	// Reset table.
+	tk.MustExec("truncate admin_test")
+	indexOpr = getIndex()
+	// No table record
+	for i := range 100 {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(i), kv.IntHandle(i), nil)
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+	}
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+
+	tk.MustExec("truncate admin_test")
+	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
+	indexOpr = getIndex()
 	// Delete an index record randomly.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 1
@@ -1562,7 +1695,7 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	}
 
 	// Add an index record randomly on exists row.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 1
@@ -1586,7 +1719,7 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	}
 
 	// Add an index record randomly on not exists row.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 10000
@@ -1610,7 +1743,7 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	}
 
 	// Modify an index record randomly.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 1
@@ -1660,13 +1793,14 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_test")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	pattern := "handle:\\s(\\d+)"
 	r := regexp.MustCompile(pattern)
@@ -1680,7 +1814,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	}
 
 	// Delete an index record randomly.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 1
@@ -1702,7 +1836,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	}
 
 	// Add an index record randomly on exists row.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 1
@@ -1726,7 +1860,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	}
 
 	// Add an index record randomly on not exists row.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 10000
@@ -1750,7 +1884,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	}
 
 	// Modify an index record randomly.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 1
@@ -1794,8 +1928,8 @@ func TestAdminCleanUpGlobalIndex(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.Store = store
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_test")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -1838,8 +1972,8 @@ func TestAdminRecoverGlobalIndex(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.Store = store
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_test")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -1848,7 +1982,8 @@ func TestAdminRecoverGlobalIndex(t *testing.T) {
 	idx := tbl.Indices()[0]
 	require.NotNil(t, idx)
 
-	indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 
 	// Reduce one row of index.
 	// Index count < table count, (-1, -10, 2) is deleted.
@@ -1887,8 +2022,8 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 		sctx := mock.NewContext()
 		sctx.Store = store
 		is := domain.InfoSchema()
-		dbName := pmodel.NewCIStr("test")
-		tblName := pmodel.NewCIStr("admin_test")
+		dbName := ast.NewCIStr("test")
+		tblName := ast.NewCIStr("admin_test")
 		tbl, err := is.TableByName(context.Background(), dbName, tblName)
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
@@ -1910,7 +2045,8 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
 		require.ErrorContains(t, err, "[admin:8223]data inconsistency in table: admin_test, index: uidx_a, handle: 4, index-values:\"handle: 4, values: [KindInt64 2")
 
-		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[0].ID, tblInfo, idxInfo)
+		indexOpr, err := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[0].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		// Remove corresponding index key/value.
 		// Admin check table will success.
 		txn, err = store.Begin()
@@ -1921,7 +2057,8 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 		require.NoError(t, err)
 		tk.MustExec("admin check table admin_test")
 
-		indexOpr = tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
+		indexOpr, err = tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 
 		// Reduce one row of index.
 		// Index count < table count, (-1, -10, 2) is deleted.
@@ -1983,8 +2120,8 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 		sctx := mock.NewContext()
 		sctx.Store = store
 		is := domain.InfoSchema()
-		dbName := pmodel.NewCIStr("test")
-		tblName := pmodel.NewCIStr("admin_test")
+		dbName := ast.NewCIStr("test")
+		tblName := ast.NewCIStr("admin_test")
 		tbl, err := is.TableByName(context.Background(), dbName, tblName)
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
@@ -2004,7 +2141,8 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
 		require.ErrorContains(t, err, "[admin:8223]data inconsistency in table: admin_test, index: uidx_a, handle: 0, index-values:\"handle: 0, values: [KindInt64 2")
 
-		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[0].ID, tblInfo, idxInfo)
+		indexOpr, err := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[0].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		// Remove corresponding index key/value.
 		// Admin check table will success.
 		txn, err = store.Begin()
@@ -2015,7 +2153,8 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 		require.NoError(t, err)
 		tk.MustExec("admin check table admin_test")
 
-		indexOpr = tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
+		indexOpr, err = tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		// Reduce one row of index.
 		// Index count < table count, (-1, -10, 2) is deleted.
 		txn, err = store.Begin()
@@ -2085,11 +2224,11 @@ func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("insert admin_test values (%d, %d, %d)", i*5+1, i, i*5+1))
 		}
 
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", onJobUpdatedExportedFunc)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", onJobUpdatedExportedFunc)
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)"))
 		tk.MustExec("alter table admin_test truncate partition p1")
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution"))
-		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 
 		// Should have 4 different schema states, `none`, `writeOnly`, `deleteOnly`, `deleteReorg`
 		require.Len(t, schemaMap, 4)
@@ -2114,8 +2253,8 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("t")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("t")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -2124,7 +2263,8 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 	tk.Session().GetSessionVars().MaxChunkSize = 3
 
 	// Simulate inconsistent index column
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	err = indexOpr.Delete(ctx, txn, types.MakeDatums(10), kv.IntHandle(2))
@@ -2139,4 +2279,22 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 		err = tk.ExecToErr("admin check table t")
 		require.Error(t, err)
 	}
+}
+
+func TestFastAdminCheckWithError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockFastCheckTableError", "return(true)")
+
+	// Create a table with number of indexes larger than the worker pool size in check executor.
+	// And the admin check shouldn't be blocked when meeting error.
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec(`
+		create table admin_test (c1 int, c2 int,
+		key idx1(c1), key idx2(c1), key idx3(c1), key idx4(c1), key idx5(c1),
+		key idx6(c1), key idx7(c1), key idx8(c1), key idx9(c1), key idx10(c1))
+	`)
+	tk.MustExecToErr("admin check table admin_test")
 }

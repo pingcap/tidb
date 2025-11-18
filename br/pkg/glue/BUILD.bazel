@@ -15,7 +15,7 @@ go_library(
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/sessionctx",
         "@com_github_fatih_color//:color",
         "@com_github_pingcap_log//:log",

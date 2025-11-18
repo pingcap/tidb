@@ -26,7 +26,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -40,9 +39,10 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -87,7 +87,7 @@ func (s *JobSubmitter) submitLoop() {
 			failpoint.InjectCall("afterGetJobFromLimitCh", ch)
 			jobLen := len(ch)
 			jobWs = append(jobWs, jobW)
-			for i := 0; i < jobLen; i++ {
+			for range jobLen {
 				jobWs = append(jobWs, <-ch)
 			}
 			s.addBatchDDLJobs(jobWs)
@@ -104,7 +104,7 @@ func (s *JobSubmitter) addBatchDDLJobs(jobWs []*JobWrapper) {
 		err   error
 		newWs []*JobWrapper
 	)
-	fastCreate := variable.EnableFastCreateTable.Load()
+	fastCreate := vardef.EnableFastCreateTable.Load()
 	if fastCreate {
 		newWs, err = mergeCreateTableJobs(jobWs)
 		if err != nil {
@@ -312,11 +312,11 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		if job.CDCWriteSource == 0 && bdrRole != string(ast.BDRRoleNone) {
 			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 				for _, subJob := range job.MultiSchemaInfo.SubJobs {
-					if DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type, subJob.JobArgs) {
+					if DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type, subJob.JobArgs) && !filter.IsSystemSchema(job.SchemaName) {
 						return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 					}
 				}
-			} else if DeniedByBDR(ast.BDRRole(bdrRole), job.Type, jobW.JobArgs) {
+			} else if DeniedByBDR(ast.BDRRole(bdrRole), job.Type, jobW.JobArgs) && !filter.IsSystemSchema(job.SchemaName) {
 				return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 			}
 		}
@@ -333,7 +333,6 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		}
 	}
 
-	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	ddlSe := sess.NewSession(se)
 	if err = s.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobWs); err != nil {
 		return errors.Trace(err)
@@ -514,7 +513,7 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 // generate ID and call function runs in the same transaction.
 func genGIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int, fn func(ids []int64) error) error {
 	var resErr error
-	for i := uint(0); i < kv.MaxRetryCnt; i++ {
+	for i := range kv.MaxRetryCnt {
 		resErr = func() (err error) {
 			if err := ddlSe.Begin(ctx); err != nil {
 				return errors.Trace(err)
@@ -624,7 +623,6 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 			strconv.Quote(job2SchemaIDs(jobW)), strconv.Quote(job2TableIDs(jobW)),
 			ddlutil.WrapKey2String(b), jobW.Type, jobW.Started())
 	}
-	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(ctx, sql.String(), "insert_job")
 	logutil.DDLLogger().Debug("add job to mysql.tidb_ddl_job table", zap.String("sql", sql.String()))
 	return errors.Trace(err)

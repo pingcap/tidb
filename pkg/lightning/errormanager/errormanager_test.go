@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
-	"io"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -28,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -113,57 +112,10 @@ func (c mockConn) ExecContext(_ context.Context, _ string, _ []driver.NamedValue
 
 func (mockConn) Close() error { return nil }
 
-type mockRows struct {
-	driver.Rows
-	start int64
-	end   int64
-}
-
-func (r *mockRows) Columns() []string {
-	return []string{"id", "raw_handle", "raw_row"}
-}
-
-func (r *mockRows) Close() error { return nil }
-
-func (r *mockRows) Next(dest []driver.Value) error {
-	if r.start >= r.end {
-		return io.EOF
-	}
-	dest[0] = r.start  // id
-	dest[1] = []byte{} // raw_handle
-	dest[2] = []byte{} // raw_row
-	r.start++
-	return nil
-}
-
-func (c mockConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	expectedQuery := "SELECT id, raw_handle, raw_row.*"
-	if err := sqlmock.QueryMatcherRegexp.Match(expectedQuery, query); err != nil {
-		return &mockRows{}, nil
-	}
-	if len(args) != 4 {
-		return &mockRows{}, nil
-	}
-	// args are tableName, start, end, and limit.
-	start := args[1].Value.(int64)
-	if start < 1 {
-		start = 1
-	}
-	end := args[2].Value.(int64)
-	if end > c.totalRows+1 {
-		end = c.totalRows + 1
-	}
-	limit := args[3].Value.(int64)
-	if start+limit < end {
-		end = start + limit
-	}
-	return &mockRows{start: start, end: end}, nil
-}
-
 func TestReplaceConflictOneKey(t *testing.T) {
 	column1 := &model.ColumnInfo{
 		ID:           1,
-		Name:         pmodel.NewCIStr("a"),
+		Name:         ast.NewCIStr("a"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -174,7 +126,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	column2 := &model.ColumnInfo{
 		ID:           2,
-		Name:         pmodel.NewCIStr("b"),
+		Name:         ast.NewCIStr("b"),
 		Offset:       1,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -184,7 +136,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	column3 := &model.ColumnInfo{
 		ID:           3,
-		Name:         pmodel.NewCIStr("c"),
+		Name:         ast.NewCIStr("c"),
 		Offset:       2,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeBlob),
@@ -194,11 +146,11 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	index := &model.IndexInfo{
 		ID:    1,
-		Name:  pmodel.NewCIStr("key_b"),
-		Table: pmodel.NewCIStr(""),
+		Name:  ast.NewCIStr("key_b"),
+		Table: ast.NewCIStr(""),
 		Columns: []*model.IndexColumn{
 			{
-				Name:   pmodel.NewCIStr("b"),
+				Name:   ast.NewCIStr("b"),
 				Offset: 1,
 				Length: -1,
 			}},
@@ -209,7 +161,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	table := &model.TableInfo{
 		ID:         104,
-		Name:       pmodel.NewCIStr("a"),
+		Name:       ast.NewCIStr("a"),
 		Charset:    "utf8mb4",
 		Collate:    "utf8mb4_bin",
 		Columns:    []*model.ColumnInfo{column1, column2, column3},
@@ -298,7 +250,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}).
 			AddRow(1, data1RowKey, data1RowValue).
 			AddRow(2, data1RowKey, data2RowValue))
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}))
 	}
@@ -351,7 +303,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 func TestReplaceConflictOneUniqueKey(t *testing.T) {
 	column1 := &model.ColumnInfo{
 		ID:           1,
-		Name:         pmodel.NewCIStr("a"),
+		Name:         ast.NewCIStr("a"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -362,7 +314,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	column2 := &model.ColumnInfo{
 		ID:           2,
-		Name:         pmodel.NewCIStr("b"),
+		Name:         ast.NewCIStr("b"),
 		Offset:       1,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -373,7 +325,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	column3 := &model.ColumnInfo{
 		ID:           3,
-		Name:         pmodel.NewCIStr("c"),
+		Name:         ast.NewCIStr("c"),
 		Offset:       2,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeBlob),
@@ -383,11 +335,11 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	index := &model.IndexInfo{
 		ID:    1,
-		Name:  pmodel.NewCIStr("uni_b"),
-		Table: pmodel.NewCIStr(""),
+		Name:  ast.NewCIStr("uni_b"),
+		Table: ast.NewCIStr(""),
 		Columns: []*model.IndexColumn{
 			{
-				Name:   pmodel.NewCIStr("b"),
+				Name:   ast.NewCIStr("b"),
 				Offset: 1,
 				Length: -1,
 			}},
@@ -398,7 +350,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	table := &model.TableInfo{
 		ID:         104,
-		Name:       pmodel.NewCIStr("a"),
+		Name:       ast.NewCIStr("a"),
 		Charset:    "utf8mb4",
 		Collate:    "utf8mb4_bin",
 		Columns:    []*model.ColumnInfo{column1, column2, column3},
@@ -502,7 +454,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 			0, "test", nil, nil, data4RowKey, data4RowValue, 2).
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}))
 	}
@@ -510,7 +462,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}).
 			AddRow(1, data1RowKey, data1RowValue).
 			AddRow(2, data1RowKey, data3RowValue))
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}))
 	}
@@ -706,5 +658,19 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                \x1b[0m|\n" +
 		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_view`   \x1b[0m|\n" +
 		"+---+---------------------+-------------+--------------------------------+\n"
+	require.Equal(t, expected, output)
+
+	em.schema = "long_long_long_long_long_long_long_long_dbname"
+	output = em.Output()
+	expected = "\n" +
+		"Import Data Error Summary: \n" +
+		"+---+---------------------+-------------+--------------------------------------------------------------------+\n" +
+		"| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                                                   |\n" +
+		"+---+---------------------+-------------+--------------------------------------------------------------------+\n" +
+		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `long_long_long_long_long_long_long_long_dbname`.`type_error_v2`   \x1b[0m|\n" +
+		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `long_long_long_long_long_long_long_long_dbname`.`syntax_error_v2` \x1b[0m|\n" +
+		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                                                    \x1b[0m|\n" +
+		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `long_long_long_long_long_long_long_long_dbname`.`conflict_view`   \x1b[0m|\n" +
+		"+---+---------------------+-------------+--------------------------------------------------------------------+\n"
 	require.Equal(t, expected, output)
 }

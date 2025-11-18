@@ -139,8 +139,8 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		// If it's a vector index, it needn't to store key ranges to gc_delete_range.
-		if args.IndexArgs[0].IsVector {
+		// If it's a columnar index, it needn't to store key ranges to gc_delete_range.
+		if args.IndexArgs[0].IsColumnar {
 			return 0, nil
 		}
 		return max(len(args.PartitionIDs), 1), nil
@@ -189,11 +189,27 @@ func (ctx *delRangeCntCtx) deduplicateIdxCnt(indexIDs []int64) int {
 	return cnt
 }
 
+// checkInvolvingSchemaInfoInTest check all DDLs should set InvolvingSchemaInfo
+// to make sure DDL execution in order. It's only check during the
+// test environment, so it would panic directly.
+func (*executor) checkInvolvingSchemaInfoInTest(job *model.Job) {
+	if !intest.EnableInternalCheck {
+		return
+	}
+	// all DDLs should set InvolvingSchemaInfo to make sure DDL execution in order.
+	for _, info := range job.GetInvolvingSchemaInfo() {
+		if (info.Database == model.InvolvingNone || info.Table == model.InvolvingNone) &&
+			info.Policy == model.InvolvingNone && info.ResourceGroup == model.InvolvingNone {
+			panic(fmt.Sprintf("job ID %d, type %s", job.ID, job.Type))
+		}
+	}
+}
+
 // checkHistoryJobInTest does some sanity check to make sure something is correct after DDL complete.
 // It's only check during the test environment, so it would panic directly.
 // These checks may be controlled by configuration in the future.
 func (e *executor) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
-	if !intest.InTest {
+	if !intest.EnableInternalCheck {
 		return
 	}
 

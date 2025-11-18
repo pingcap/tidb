@@ -26,17 +26,16 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/lightning/pkg/importer/mock"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
-	pqt_buf_src "github.com/xitongsys/parquet-go-source/buffer"
-	pqtwriter "github.com/xitongsys/parquet-go/writer"
 )
 
 type colDef struct {
@@ -80,12 +79,12 @@ func TestGetPreInfoGenerateTableInfo(t *testing.T) {
 	createTblSQL := fmt.Sprintf("create table `%s`.`%s` (a varchar(16) not null, b varchar(8) default 'DEFA')", schemaName, tblName)
 	tblInfo, err := newTableInfo(createTblSQL, 1)
 	require.Nil(t, err)
-	require.Equal(t, model.NewCIStr(tblName), tblInfo.Name)
+	require.Equal(t, ast.NewCIStr(tblName), tblInfo.Name)
 	require.Equal(t, len(tblInfo.Columns), 2)
-	require.Equal(t, model.NewCIStr("a"), tblInfo.Columns[0].Name)
+	require.Equal(t, ast.NewCIStr("a"), tblInfo.Columns[0].Name)
 	require.Nil(t, tblInfo.Columns[0].DefaultValue)
 	require.False(t, hasDefault(tblInfo.Columns[0]))
-	require.Equal(t, model.NewCIStr("b"), tblInfo.Columns[1].Name)
+	require.Equal(t, ast.NewCIStr("b"), tblInfo.Columns[1].Name)
 	require.NotNil(t, tblInfo.Columns[1].DefaultValue)
 
 	createTblSQL = fmt.Sprintf("create table `%s`.`%s` (a varchar(16), b varchar(8) default 'DEFAULT_BBBBB')", schemaName, tblName) // default value exceeds the length
@@ -252,26 +251,24 @@ func TestGetPreInfoGetAllTableStructures(t *testing.T) {
 	}
 }
 
-func generateParquetData(t *testing.T) []byte {
-	type parquetStruct struct {
-		ID   int64  `parquet:"name=id, type=INT64"`
-		Name string `parquet:"name=name, type=BYTE_ARRAY"`
-	}
-	pf, err := pqt_buf_src.NewBufferFile(make([]byte, 0))
+func readParquetData(t *testing.T) []byte {
+	s, err := storage.ParseBackend("./testdata", nil)
 	require.NoError(t, err)
-	pw, err := pqtwriter.NewParquetWriter(pf, new(parquetStruct), 4)
+
+	store, err := storage.NewWithDefaultOpt(context.Background(), s)
 	require.NoError(t, err)
-	for i := 0; i < 10; i++ {
-		require.NoError(t, pw.Write(parquetStruct{
-			ID:   int64(i + 1),
-			Name: fmt.Sprintf("name_%d", i+1),
-		}))
-	}
-	require.NoError(t, pw.WriteStop())
-	require.NoError(t, pf.Close())
-	bf, ok := pf.(pqt_buf_src.BufferFile)
-	require.True(t, ok)
-	return append([]byte(nil), bf.Bytes()...)
+	defer store.Close()
+
+	reader, err := store.Open(context.Background(), "test.parquet", nil)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	bs := make([]byte, 1024)
+	l, err := reader.Read(bs)
+	bs = bs[:l]
+	require.NoError(t, err)
+
+	return bs
 }
 
 func TestGetPreInfoReadFirstRow(t *testing.T) {
@@ -281,7 +278,6 @@ func TestGetPreInfoReadFirstRow(t *testing.T) {
 111,"aaa"
 222,"bbb"
 `)
-	pqtData := generateParquetData(t)
 	const testSQLData01 string = `INSERT INTO db01.tbl01 (ival, sval) VALUES (333, 'ccc');
 INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`
 	testDataInfos := []struct {
@@ -348,7 +344,7 @@ INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`
 		},
 		{
 			FileName: "/db01/tbl01/data.005.parquet",
-			Data:     pqtData,
+			Data:     readParquetData(t),
 			FirstN:   3,
 			ExpectFirstRowDatums: [][]types.Datum{
 				{

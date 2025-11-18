@@ -35,10 +35,10 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	util2 "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	util2 "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -139,7 +139,7 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 		return
 	}
 	// If we didn't find file in origin request, try to broadcast the request to all remote tidb-servers
-	topos, err := dfHandler.infoGetter.GetAllTiDBTopology(req.Context())
+	topos, err := dfHandler.infoGetter.ServerInfoSyncer().GetAllTiDBTopology(req.Context())
 	if err != nil {
 		handler.WriteError(w, err)
 		return
@@ -189,7 +189,9 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 	logutil.BgLogger().Info("can't find dump file in any remote server", zap.String("filename", name))
 	w.WriteHeader(http.StatusNotFound)
 	_, err = fmt.Fprintf(w, "can't find dump file %s in any remote server", name)
-	handler.WriteError(w, err)
+	if err != nil {
+		handler.WriteError(w, err)
+	}
 }
 
 type downloadFileHandler struct {
@@ -308,7 +310,7 @@ func loadSchemaMeta(z *zip.Reader, is infoschema.InfoSchema) (map[int64]*tblInfo
 				s := strings.Split(row, ";")
 				databaseName := s[0]
 				tableName := s[1]
-				t, err := is.TableByName(context.Background(), pmodel.NewCIStr(databaseName), pmodel.NewCIStr(tableName))
+				t, err := is.TableByName(context.Background(), ast.NewCIStr(databaseName), ast.NewCIStr(tableName))
 				if err != nil {
 					return nil, err
 				}

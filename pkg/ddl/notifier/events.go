@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -177,12 +177,14 @@ func (s *SchemaChangeEvent) GetAddColumnInfo() (
 func NewModifyColumnEvent(
 	tableInfo *model.TableInfo,
 	modifiedColumns []*model.ColumnInfo,
+	analyzed bool,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
 		inner: &jsonSchemaChangeEvent{
 			Tp:        model.ActionModifyColumn,
 			TableInfo: tableInfo,
 			Columns:   modifiedColumns,
+			Analyzed:  analyzed,
 		},
 	}
 }
@@ -192,9 +194,10 @@ func NewModifyColumnEvent(
 func (s *SchemaChangeEvent) GetModifyColumnInfo() (
 	newTableInfo *model.TableInfo,
 	modifiedColumns []*model.ColumnInfo,
+	analyzed bool,
 ) {
 	intest.Assert(s.inner.Tp == model.ActionModifyColumn)
-	return s.inner.TableInfo, s.inner.Columns
+	return s.inner.TableInfo, s.inner.Columns, s.inner.Analyzed
 }
 
 // NewAddPartitionEvent creates a SchemaChangeEvent whose type is
@@ -397,12 +400,14 @@ func (s *SchemaChangeEvent) GetRemovePartitioningInfo() (
 func NewAddIndexEvent(
 	tableInfo *model.TableInfo,
 	newIndexes []*model.IndexInfo,
+	analyzed bool,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
 		inner: &jsonSchemaChangeEvent{
 			Tp:        model.ActionAddIndex,
 			TableInfo: tableInfo,
 			Indexes:   newIndexes,
+			Analyzed:  analyzed,
 		},
 	}
 }
@@ -412,9 +417,10 @@ func NewAddIndexEvent(
 func (s *SchemaChangeEvent) GetAddIndexInfo() (
 	tableInfo *model.TableInfo,
 	indexes []*model.IndexInfo,
+	analyzed bool,
 ) {
 	intest.Assert(s.inner.Tp == model.ActionAddIndex)
-	return s.inner.TableInfo, s.inner.Indexes
+	return s.inner.TableInfo, s.inner.Indexes, s.inner.Analyzed
 }
 
 // NewFlashbackClusterEvent creates a schema change event whose type is
@@ -467,7 +473,7 @@ func (s *SchemaChangeEvent) GetDropSchemaInfo() (miniDBInfo *MiniDBInfoForSchema
 // MiniDBInfoForSchemaEvent is a mini version of DBInfo for DropSchemaEvent only.
 type MiniDBInfoForSchemaEvent struct {
 	ID     int64                          `json:"id"`
-	Name   pmodel.CIStr                   `json:"name"`
+	Name   ast.CIStr                      `json:"name"`
 	Tables []*MiniTableInfoForSchemaEvent `json:"tables,omitempty"`
 }
 
@@ -477,7 +483,7 @@ type MiniDBInfoForSchemaEvent struct {
 // So please do not use this mini version in other places.
 type MiniTableInfoForSchemaEvent struct {
 	ID         int64                              `json:"id"`
-	Name       pmodel.CIStr                       `json:"name"`
+	Name       ast.CIStr                          `json:"name"`
 	Partitions []*MiniPartitionInfoForSchemaEvent `json:"partitions,omitempty"`
 }
 
@@ -486,8 +492,8 @@ type MiniTableInfoForSchemaEvent struct {
 // DropSchemaEvent, it's more efficient to use this mini version.
 // So please do not use this mini version in other places.
 type MiniPartitionInfoForSchemaEvent struct {
-	ID   int64        `json:"id"`
-	Name pmodel.CIStr `json:"name"`
+	ID   int64     `json:"id"`
+	Name ast.CIStr `json:"name"`
 }
 
 // jsonSchemaChangeEvent is used by SchemaChangeEvent when needed to (un)marshal data,
@@ -500,6 +506,7 @@ type jsonSchemaChangeEvent struct {
 	DroppedPartInfo *model.PartitionInfo      `json:"dropped_partition_info,omitempty"`
 	Columns         []*model.ColumnInfo       `json:"columns,omitempty"`
 	Indexes         []*model.IndexInfo        `json:"indexes,omitempty"`
+	Analyzed        bool                      `json:"Analyzed,omitempty"`
 	// OldTableID4Partition is used to store the table ID when a table transitions from being partitioned to non-partitioned,
 	// or vice versa.
 	OldTableID4Partition int64 `json:"old_table_id_for_partition,omitempty"`
