@@ -803,6 +803,10 @@ func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*Column, index *mod
 			continue
 		}
 
+		// We use `types.UnspecifiedLength` to specifically indicate that a column does not
+		// have a prefix length (see the `hasPrefix` function in util/ranger, for example).
+		// In other words, `length` is only used for indexed columns with a prefix length
+		// (as long as it is less than the full length).
 		length := c.Length
 		if length != types.UnspecifiedLength && length == col.RetType.GetFlen() {
 			length = types.UnspecifiedLength
