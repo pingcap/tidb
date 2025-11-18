@@ -22,8 +22,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -306,8 +308,12 @@ func GetBackfillTotalByLabel(id int64, label, schemaName, tableName, colOrIdxNam
 		cleanupFuncs[id] = make(map[string]func(), 8)
 	}
 
-	cleanupFuncs[id][lv] = func() {
-		BackfillTotalCounter.DeleteLabelValues(lv)
+	if _, ok := cleanupFuncs[id][lv]; !ok {
+		logutil.BgLogger().Debug("add backfill total counter metric", zap.Int64("jobID", id), zap.String("label", lv))
+		cleanupFuncs[id][lv] = func() {
+			logutil.BgLogger().Debug("cleanup backfill total counter metric", zap.Int64("jobID", id), zap.String("label", lv))
+			BackfillTotalCounter.DeleteLabelValues(lv)
+		}
 	}
 	return counter
 }
@@ -323,8 +329,12 @@ func GetBackfillProgressByLabel(id int64, label, schemaName, tableName, colOrIdx
 		cleanupFuncs[id] = make(map[string]func(), 8)
 	}
 
-	cleanupFuncs[id][lv] = func() {
-		BackfillProgressGauge.DeleteLabelValues(lv)
+	if _, ok := cleanupFuncs[id][lv]; !ok {
+		logutil.BgLogger().Debug("add backfill progress gauge metric", zap.Int64("jobID", id), zap.String("label", lv))
+		cleanupFuncs[id][lv] = func() {
+			logutil.BgLogger().Debug("cleanup backfill progress gauge metric", zap.Int64("jobID", id), zap.String("label", lv))
+			BackfillProgressGauge.DeleteLabelValues(lv)
+		}
 	}
 	return counter
 }
