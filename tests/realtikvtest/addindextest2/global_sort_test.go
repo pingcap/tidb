@@ -936,8 +936,14 @@ func TestNextGenMetering(t *testing.T) {
 		return gotMeterData.Load() != ""
 	}, 30*time.Second, 300*time.Millisecond)
 	require.Contains(t, gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	// the read bytes is not stable, but it's more than 100B
-	require.Regexp(t, `requests{get: 7, put: 6}, read: 1\d\dB, write: 153B`, gotMeterData.Load())
+	require.Contains(t, gotMeterData.Load(), "requests{get: 7, put: 6}")
+	// the read bytes is not stable, but it's more than 100B.
+	// the write bytes is also not stable, due to retry, but mostly 100B to a few KB.
+	require.Regexp(t, `cluster{r: 1\d\dB, w: (\d{3}|.*Ki)B}`, gotMeterData.Load())
+	// note: the read/write of subtask meta file is also counted in obj_store part,
+	// but meta file contains file name which contains task and subtask ID, so
+	// the length may vary, we just use regexp to match here.
+	require.Regexp(t, `obj_store{r: 1.\d+KiB, w: \d.\d+KiB}`, gotMeterData.Load())
 
 	sum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepReadIndex)
 	require.EqualValues(t, 1, sum.GetReqCnt.Load())

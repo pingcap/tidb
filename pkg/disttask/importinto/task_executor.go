@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	dxfstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -172,20 +174,20 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 // Accepted implements Collector.Accepted interface.
 func (s *importStepExecutor) Accepted(bytes int64) {
 	s.summary.Bytes.Add(bytes)
-	s.GetMeterRecorder().IncReadBytes(uint64(bytes))
 }
 
 // Processed implements Collector.Processed interface.
-func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
+func (s *importStepExecutor) Processed(_, rowCnt int64) {
 	s.summary.RowCnt.Add(rowCnt)
-	s.GetMeterRecorder().IncWriteBytes(uint64(bytes))
 }
 
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	logger := s.logger.With(zap.Int64("subtask-id", subtask.ID))
 	task := log.BeginTask(logger, "run subtask")
+	var dataKVFiles, indexKVFiles atomic.Int64
 	defer func() {
-		task.End(zapcore.ErrorLevel, err)
+		task.End(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
+			zap.Int64("index-kv-files", indexKVFiles.Load()))
 	}()
 
 	bs := subtask.Meta
@@ -196,19 +198,19 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	var (
-		reqRec   = &recording.Requests{}
-		objStore storage.ExternalStorage
+		accessRec = &recording.AccessStats{}
+		objStore  storage.ExternalStorage
 	)
 	if s.tableImporter.IsGlobalSort() {
 		var err3 error
-		reqRec, objStore, err3 = handle.NewObjStoreWithRecording(ctx, s.tableImporter.CloudStorageURI)
+		accessRec, objStore, err3 = handle.NewObjStoreWithRecording(ctx, s.tableImporter.CloudStorageURI)
 		if err3 != nil {
 			return err3
 		}
 		defer func() {
 			objStore.Close()
-			s.summary.MergeObjStoreRequests(reqRec)
-			s.GetMeterRecorder().MergeObjStoreRequests(reqRec)
+			s.summary.MergeObjStoreRequests(&accessRec.Requests)
+			s.GetMeterRecorder().MergeObjStoreAccess(accessRec)
 		}()
 	}
 	// read import step meta from external storage when using global sort.
@@ -244,6 +246,8 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		SortedDataMeta:   &external.SortedKVMeta{},
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 		globalSortStore:  objStore,
+		dataKVFileCount:  &dataKVFiles,
+		indexKVFileCount: &indexKVFiles,
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
@@ -403,14 +407,14 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		return errors.Trace(err)
 	}
 
-	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, m.taskMeta.Plan.CloudStorageURI)
+	accessRec, objStore, err := handle.NewObjStoreWithRecording(ctx, m.taskMeta.Plan.CloudStorageURI)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		objStore.Close()
-		m.summary.MergeObjStoreRequests(reqRec)
-		m.GetMeterRecorder().MergeObjStoreRequests(reqRec)
+		m.summary.MergeObjStoreRequests(&accessRec.Requests)
+		m.GetMeterRecorder().MergeObjStoreAccess(accessRec)
 	}()
 	// read merge sort step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
@@ -510,8 +514,9 @@ func (m *mergeSortStepExecutor) ResetSummary() {
 
 type ingestCollector struct {
 	execute.NoopCollector
-	summary *execute.SubtaskSummary
-	kvGroup string
+	summary  *execute.SubtaskSummary
+	kvGroup  string
+	meterRec *metering.Recorder
 }
 
 func (c *ingestCollector) Processed(bytes, rowCnt int64) {
@@ -519,6 +524,9 @@ func (c *ingestCollector) Processed(bytes, rowCnt int64) {
 	if c.kvGroup == dataKVGroup {
 		c.summary.RowCnt.Add(rowCnt)
 	}
+	// since the region job might be retried, this value might be larger than
+	// the total KV size.
+	c.meterRec.IncClusterWriteBytes(uint64(bytes))
 }
 
 type writeAndIngestStepExecutor struct {
@@ -551,14 +559,15 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		return errors.Trace(err)
 	}
 
-	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.tableImporter.CloudStorageURI)
+	accessRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.tableImporter.CloudStorageURI)
 	if err != nil {
 		return err
 	}
+	meterRec := e.GetMeterRecorder()
 	defer func() {
 		objStore.Close()
-		e.summary.MergeObjStoreRequests(reqRec)
-		e.GetMeterRecorder().MergeObjStoreRequests(reqRec)
+		e.summary.MergeObjStoreRequests(&accessRec.Requests)
+		meterRec.MergeObjStoreAccess(accessRec)
 	}()
 	// read write and ingest step meta from external storage when using global sort.
 	if sm.ExternalPath != "" {
@@ -583,8 +592,9 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	}
 
 	collector := &ingestCollector{
-		summary: &e.summary,
-		kvGroup: sm.KVGroup,
+		summary:  &e.summary,
+		kvGroup:  sm.KVGroup,
+		meterRec: meterRec,
 	}
 	localBackend.SetCollector(collector)
 

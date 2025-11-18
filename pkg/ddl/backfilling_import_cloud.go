@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -93,14 +94,15 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
-	reqRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.cloudStoreURI)
+	accessRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.cloudStoreURI)
 	if err != nil {
 		return err
 	}
+	meterRec := e.GetMeterRecorder()
 	defer func() {
 		objStore.Close()
-		e.summary.MergeObjStoreRequests(reqRec)
-		e.GetMeterRecorder().MergeObjStoreRequests(reqRec)
+		e.summary.MergeObjStoreRequests(&accessRec.Requests)
+		meterRec.MergeObjStoreAccess(accessRec)
 	}()
 
 	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)
@@ -111,6 +113,10 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if localBackend == nil {
 		return errors.Errorf("local backend not found")
 	}
+
+	localBackend.SetCollector(&ingestCollector{
+		meterRec: meterRec,
+	})
 
 	currentIdx, idxID, err := getIndexInfoAndID(sm.EleIDs, e.indexes)
 	if err != nil {
@@ -211,6 +217,17 @@ func (*cloudImportExecutor) TaskMetaModified(context.Context, []byte) error {
 func (*cloudImportExecutor) ResourceModified(context.Context, *proto.StepResource) error {
 	// Will be added in the future PR
 	return nil
+}
+
+type ingestCollector struct {
+	execute.NoopCollector
+	meterRec *metering.Recorder
+}
+
+func (c *ingestCollector) Processed(bytes, _ int64) {
+	// since the region job might be retried, this value might be larger than
+	// the total KV size.
+	c.meterRec.IncClusterWriteBytes(uint64(bytes))
 }
 
 func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *model.IndexInfo, idxID int64, err error) {

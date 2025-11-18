@@ -473,7 +473,13 @@ func TestNextGenMetering(t *testing.T) {
 	}, 30*time.Second, 300*time.Millisecond)
 
 	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	s.Contains(gotMeterData.Load(), "requests{get: 8, put: 6}, read: 27B, write: 102B")
+	s.Contains(gotMeterData.Load(), "requests{get: 8, put: 6}")
+	// note: the read/write of subtask meta file is also counted in obj_store part,
+	// but meta file contains file name which contains task and subtask ID, so
+	// the length may vary, we just use regexp to match here.
+	s.Regexp(`obj_store{r: 1.3\d*KiB, w: 1.3\d*KiB}`, gotMeterData.Load())
+	// the write bytes is also not stable, due to retry, but mostly 100B to a few KB.
+	s.Regexp(`cluster{r: 0B, w: (\d{3}|.*Ki)B}`, gotMeterData.Load())
 
 	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
 	s.EqualValues(3, sum.RowCnt.Load())
@@ -482,10 +488,12 @@ func TestNextGenMetering(t *testing.T) {
 	s.EqualValues(3, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepMergeSort)
+	s.EqualValues(114, sum.Bytes.Load())
 	s.EqualValues(3, sum.GetReqCnt.Load())
 	s.EqualValues(3, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
+	s.EqualValues(114, sum.Bytes.Load())
 	s.EqualValues(3, sum.GetReqCnt.Load())
 	s.EqualValues(0, sum.PutReqCnt.Load())
 }
