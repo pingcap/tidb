@@ -21,7 +21,6 @@ package ddl
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -6694,8 +6693,10 @@ func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
-	r := tracing.StartRegion(ctx.GetTraceCtx(), "ddl.DoDDLJobWrapper")
-	defer r.End()
+	if traceCtx := ctx.GetTraceCtx(); traceCtx != nil {
+		r := tracing.StartRegion(traceCtx, "ddl.DoDDLJobWrapper")
+		defer r.End()
+	}
 
 	job := jobW.Job
 	job.TraceInfo = &tracing.TraceInfo{
@@ -6712,10 +6713,10 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 
-	if traceevent.IsEnabled(tracing.DDLJob) {
+	if traceevent.IsEnabled(tracing.DDLJob) && ctx.GetTraceCtx() != nil {
 		traceevent.TraceEvent(ctx.GetTraceCtx(), tracing.DDLJob, "ddlDelieverJobTask",
-			zap.Int64("jobID", job.ID),
-			zap.String("traceID", hex.EncodeToString(job.TraceInfo.TraceID)))
+			zap.Uint64("ConnID", job.TraceInfo.ConnectionID),
+			zap.String("SessionAlias", job.TraceInfo.SessionAlias))
 	}
 	e.deliverJobTask(jobW)
 

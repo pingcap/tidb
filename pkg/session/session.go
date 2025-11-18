@@ -2837,6 +2837,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	stmtCount := uint64(se.sessionVars.TxnCtx.StatementCount)
 	traceID := traceevent.GenerateTraceID(ctx, startTS, stmtCount)
 	ctx = trace.ContextWithTraceID(ctx, traceID)
+	se.currentCtx = ctx
 	// Store trace ID for next statement
 	se.sessionVars.PrevTraceID = traceID
 	stmtCtx := se.sessionVars.StmtCtx
