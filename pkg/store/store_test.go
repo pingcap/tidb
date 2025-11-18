@@ -133,7 +133,7 @@ func mustGet(t *testing.T, txn kv.Transaction) {
 		s := encodeInt(i * indexStep)
 		val, err := txn.Get(context.TODO(), s)
 		require.NoError(t, err)
-		require.Equal(t, string(s), string(val))
+		require.Equal(t, kv.NewValueEntry(s, 0), val)
 	}
 }
 
