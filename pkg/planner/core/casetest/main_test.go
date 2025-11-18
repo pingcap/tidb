@@ -30,10 +30,10 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
-	testDataMap.LoadTestSuiteData("testdata", "plan_normalized_suite")
-	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
-	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
-	testDataMap.LoadTestSuiteData("testdata", "json_plan_suite")
+	testDataMap.LoadTestSuiteData("testdata", "plan_normalized_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "stats_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "integration_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "json_plan_suite", true)
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),

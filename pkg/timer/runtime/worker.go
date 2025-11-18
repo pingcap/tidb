@@ -324,7 +324,7 @@ func (w *hookWorker) triggerEvent(hook api.Hook, req *triggerEventRequest, logge
 			})
 
 			if err != nil {
-				logger.Error(
+				logger.Warn(
 					"error occurs when invoking hook.OnPreSchedEvent",
 					zap.Error(err),
 					zap.Duration("retryAfter", workerEventDefaultRetryInterval),
@@ -358,7 +358,7 @@ func (w *hookWorker) triggerEvent(hook api.Hook, req *triggerEventRequest, logge
 				return req.TimerMetaChangedResponse(nil)
 			}
 
-			logger.Error("error occurs to change timer to trigger state,",
+			logger.Warn("error occurs to change timer to trigger state,",
 				zap.Error(err),
 				zap.Duration("retryAfter", workerEventDefaultRetryInterval),
 			)
@@ -373,7 +373,7 @@ func (w *hookWorker) triggerEvent(hook api.Hook, req *triggerEventRequest, logge
 	}
 
 	if err != nil {
-		logger.Error(
+		logger.Warn(
 			"error occurs when getting timer record to trigger timer event",
 			zap.Duration("retryAfter", workerEventDefaultRetryInterval),
 		)
@@ -395,8 +395,8 @@ func (w *hookWorker) triggerEvent(hook api.Hook, req *triggerEventRequest, logge
 
 		if err != nil {
 			w.onSchedEventErrCounter.Inc()
-			logger.Error(
-				"error occurs when invoking hook OnTimerEvent",
+			logger.Warn(
+				"error occurs when invoking hook.OnSchedEvent",
 				zap.Error(err),
 				zap.Duration("retryAfter", workerEventDefaultRetryInterval),
 			)

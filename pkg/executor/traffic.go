@@ -196,7 +196,7 @@ func (e *TrafficShowExec) Open(ctx context.Context) error {
 			logutil.Logger(ctx).Error("unmarshal traffic job failed", zap.String("addr", addr), zap.String("jobs", resp), zap.Error(err))
 			return err
 		}
-		for i := range len(jobs) {
+		for i := range jobs {
 			if (jobs[i].Type == "capture" && !hasCapturePriv) || (jobs[i].Type == "replay" && !hasReplayPriv) {
 				continue
 			}
@@ -220,7 +220,7 @@ func (e *TrafficShowExec) Open(ctx context.Context) error {
 func (e *TrafficShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	batchSize := min(e.MaxChunkSize(), len(e.jobs)-e.cursor)
 	req.GrowAndReset(batchSize)
-	for i := 0; i < batchSize; i++ {
+	for range batchSize {
 		job := e.jobs[e.cursor]
 		e.cursor++
 		req.AppendTime(0, parseTime(ctx, e.BaseExecutor, job.StartTime))
@@ -343,11 +343,11 @@ func formReader4Capture(args map[string]string, tiproxyNum int) ([]io.Reader, er
 	readers := make([]io.Reader, tiproxyNum)
 	if storage.IsLocal(u) {
 		form := getForm(args)
-		for i := 0; i < tiproxyNum; i++ {
+		for i := range tiproxyNum {
 			readers[i] = strings.NewReader(form)
 		}
 	} else {
-		for i := 0; i < tiproxyNum; i++ {
+		for i := range tiproxyNum {
 			m := maps.Clone(args)
 			m[outputKey] = u.JoinPath(fmt.Sprintf("%s%d", filePrefix, i)).String()
 			form := getForm(m)
@@ -369,7 +369,7 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 	if backend.GetLocal() != nil {
 		readers := make([]io.Reader, tiproxyNum)
 		form := getForm(args)
-		for i := 0; i < tiproxyNum; i++ {
+		for i := range tiproxyNum {
 			readers[i] = strings.NewReader(form)
 		}
 		return readers, nil

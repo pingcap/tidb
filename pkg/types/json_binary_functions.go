@@ -22,6 +22,7 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -132,8 +133,18 @@ func unquoteJSONString(s string) (string, error) {
 				if i+4 > len(s) {
 					return "", errors.Errorf("Invalid unicode: %s", s[i+1:])
 				}
-				char, size, err := decodeEscapedUnicode(hack.Slice(s[i+1 : i+5]))
+				char, size, inSurrogateRange, err := decodeOneEscapedUnicode(hack.Slice(s[i+1 : i+5]))
 				if err != nil {
+					// For `surrogate pair`, it uses two `\\uxxx` to encode a character.
+					if inSurrogateRange && len(s) >= i+10 && s[i+5] == '\\' && s[i+6] == 'u' {
+						char, size, _, err = decodeOneEscapedUnicode(append([]byte(s[i+1:i+5]), []byte(s[i+7:i+11])...))
+						if err != nil {
+							return "", errors.Trace(err)
+						}
+						ret.Write(char[0:size])
+						i += 10
+						continue
+					}
 					return "", errors.Trace(err)
 				}
 				ret.Write(char[0:size])
@@ -149,19 +160,34 @@ func unquoteJSONString(s string) (string, error) {
 	return ret.String(), nil
 }
 
-// decodeEscapedUnicode decodes unicode into utf8 bytes specified in RFC 3629.
+// decodeOneEscapedUnicode decodes one unicode into utf8 bytes specified in RFC 3629.
 // According RFC 3629, the max length of utf8 characters is 4 bytes.
 // And MySQL use 4 bytes to represent the unicode which must be in [0, 65536).
-func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
-	size, err = hex.Decode(char[0:2], s)
-	if err != nil || size != 2 {
-		// The unicode must can be represented in 2 bytes.
-		return char, 0, errors.Trace(err)
+func decodeOneEscapedUnicode(s []byte) (char [4]byte, size int, inSurrogateRange bool, err error) {
+	if len(s) > 8 {
+		return char, 0, false, errors.Errorf("Invalid `s` for decodeEscapedUnicode: %s", s)
+	}
+	size, err = hex.Decode(char[0:4], s)
+	if err != nil {
+		return char, 0, false, errors.Trace(err)
+	}
+	if size != 2 && size != 4 {
+		// The unicode must can be represented in 2 bytes or 4 bytes.
+		return char, size, false, errors.Errorf("Invalid unicode length: %d", size)
 	}
 
-	unicode := binary.BigEndian.Uint16(char[0:2])
-	size = utf8.RuneLen(rune(unicode))
-	utf8.EncodeRune(char[0:size], rune(unicode))
+	r1 := rune(binary.BigEndian.Uint16(char[0:2]))
+	if size == 4 {
+		r1 = utf16.DecodeRune(r1, rune(binary.BigEndian.Uint16(char[2:4])))
+	}
+	size = utf8.RuneLen(r1)
+	if size < 0 {
+		if r1 >= 0xD800 && r1 <= 0xDFFF {
+			inSurrogateRange = true
+		}
+		return char, size, inSurrogateRange, errors.Errorf("Invalid unicode: %s", s)
+	}
+	utf8.EncodeRune(char[0:size], r1)
 	return
 }
 
@@ -409,7 +435,7 @@ func (bj BinaryJSON) Modify(pathExprList []JSONPathExpression, values []BinaryJS
 			return retj, ErrInvalidJSONPathMultipleSelection
 		}
 	}
-	for i := 0; i < len(pathExprList); i++ {
+	for i := range pathExprList {
 		pathExpr, value := pathExprList[i], values[i]
 		modifier := &binaryModifier{bj: bj}
 		switch mt {
@@ -461,7 +487,7 @@ func (bj BinaryJSON) ArrayInsert(pathExpr JSONPathExpression, value BinaryJSON) 
 	}
 	// Insert into the array
 	newArray := make([]BinaryJSON, 0, count+1)
-	for i := 0; i < idx; i++ {
+	for i := range idx {
 		elem := obj.ArrayGetElem(i)
 		newArray = append(newArray, elem)
 	}
@@ -556,7 +582,7 @@ func (bm *binaryModifier) doInsert(path JSONPathExpression, newBj BinaryJSON) {
 		}
 		elemCount := parentBj.GetElemCount()
 		elems := make([]BinaryJSON, 0, elemCount+1)
-		for i := 0; i < elemCount; i++ {
+		for i := range elemCount {
 			elems = append(elems, parentBj.ArrayGetElem(i))
 		}
 		elems = append(elems, newBj)
@@ -574,7 +600,7 @@ func (bm *binaryModifier) doInsert(path JSONPathExpression, newBj BinaryJSON) {
 	})
 	keys := make([][]byte, 0, elemCount+1)
 	elems := make([]BinaryJSON, 0, elemCount+1)
-	for i := 0; i < elemCount; i++ {
+	for i := range elemCount {
 		if i == insertIdx {
 			keys = append(keys, insertKey)
 			elems = append(elems, newBj)
@@ -621,7 +647,7 @@ func (bm *binaryModifier) doRemove(path JSONPathExpression) {
 		bm.modifyPtr = &parentBj.Value[0]
 		elemCount := parentBj.GetElemCount()
 		elems := make([]BinaryJSON, 0, elemCount-1)
-		for i := 0; i < elemCount; i++ {
+		for i := range elemCount {
 			if i != idx {
 				elems = append(elems, parentBj.ArrayGetElem(i))
 			}
@@ -637,7 +663,7 @@ func (bm *binaryModifier) doRemove(path JSONPathExpression) {
 	removeKey := hack.Slice(lastLeg.dotKey)
 	keys := make([][]byte, 0, elemCount+1)
 	elems := make([]BinaryJSON, 0, elemCount+1)
-	for i := 0; i < elemCount; i++ {
+	for i := range elemCount {
 		key := parentBj.objectGetKey(i)
 		if !bytes.Equal(key, removeKey) {
 			keys = append(keys, parentBj.objectGetKey(i))
@@ -683,7 +709,7 @@ func (bm *binaryModifier) rebuildTo(buf []byte) ([]byte, JSONTypeCode) {
 			buf = append(buf, bj.Value[firstKeyOff:lastKeyOff+lastKeyLen]...)
 		}
 	}
-	for i := 0; i < elemCount; i++ {
+	for i := range elemCount {
 		valEntryOff := valEntryStart + i*valEntrySize
 		elem := bj.valEntryGet(valEntryOff)
 		bm.bj = elem
@@ -826,7 +852,7 @@ func CompareBinaryJSON(left, right BinaryJSON) int {
 			if cmp != 0 {
 				return cmp
 			}
-			for i := 0; i < leftCount; i++ {
+			for i := range leftCount {
 				leftKey, rightKey := left.objectGetKey(i), right.objectGetKey(i)
 				cmp = bytes.Compare(leftKey, rightKey)
 				if cmp != 0 {
@@ -901,7 +927,7 @@ func mergePatchBinaryJSON(target, patch *BinaryJSON) (result *BinaryJSON, err er
 		keyValMap := make(map[string]BinaryJSON)
 		if target.TypeCode == JSONTypeCodeObject {
 			elemCount := target.GetElemCount()
-			for i := 0; i < elemCount; i++ {
+			for i := range elemCount {
 				key := target.objectGetKey(i)
 				val := target.objectGetVal(i)
 				keyValMap[string(key)] = val
@@ -909,7 +935,7 @@ func mergePatchBinaryJSON(target, patch *BinaryJSON) (result *BinaryJSON, err er
 		}
 		var tmp *BinaryJSON
 		elemCount := patch.GetElemCount()
-		for i := 0; i < elemCount; i++ {
+		for i := range elemCount {
 			key := patch.objectGetKey(i)
 			val := patch.objectGetVal(i)
 			k := string(key)
@@ -937,7 +963,7 @@ func mergePatchBinaryJSON(target, patch *BinaryJSON) (result *BinaryJSON, err er
 		slices.SortFunc(keys, bytes.Compare)
 		length = len(keys)
 		values := make([]BinaryJSON, 0, len(keys))
-		for i := 0; i < length; i++ {
+		for i := range length {
 			values = append(values, keyValMap[string(keys[i])])
 		}
 
@@ -975,7 +1001,7 @@ func MergeBinaryJSON(bjs []BinaryJSON) BinaryJSON {
 }
 
 func getAdjacentObjects(bjs []BinaryJSON) (objects, remain []BinaryJSON) {
-	for i := 0; i < len(bjs); i++ {
+	for i := range bjs {
 		if bjs[i].TypeCode != JSONTypeCodeObject {
 			return bjs[:i], bjs[i:]
 		}
@@ -985,13 +1011,13 @@ func getAdjacentObjects(bjs []BinaryJSON) (objects, remain []BinaryJSON) {
 
 func mergeBinaryArray(elems []BinaryJSON) BinaryJSON {
 	buf := make([]BinaryJSON, 0, len(elems))
-	for i := 0; i < len(elems); i++ {
+	for i := range elems {
 		elem := elems[i]
 		if elem.TypeCode != JSONTypeCodeArray {
 			buf = append(buf, elem)
 		} else {
 			childCount := elem.GetElemCount()
-			for j := 0; j < childCount; j++ {
+			for j := range childCount {
 				buf = append(buf, elem.ArrayGetElem(j))
 			}
 		}
@@ -1004,7 +1030,7 @@ func mergeBinaryObject(objects []BinaryJSON) BinaryJSON {
 	keys := make([][]byte, 0, len(keyValMap))
 	for _, obj := range objects {
 		elemCount := obj.GetElemCount()
-		for i := 0; i < elemCount; i++ {
+		for i := range elemCount {
 			key := obj.objectGetKey(i)
 			val := obj.objectGetVal(i)
 			if old, ok := keyValMap[string(key)]; ok {
@@ -1071,7 +1097,7 @@ func ContainsBinaryJSON(obj, target BinaryJSON) bool {
 	case JSONTypeCodeObject:
 		if target.TypeCode == JSONTypeCodeObject {
 			elemCount := target.GetElemCount()
-			for i := 0; i < elemCount; i++ {
+			for i := range elemCount {
 				key := target.objectGetKey(i)
 				val := target.objectGetVal(i)
 				if exp, exists := obj.objectSearchKey(key); !exists || !ContainsBinaryJSON(exp, val) {
@@ -1084,7 +1110,7 @@ func ContainsBinaryJSON(obj, target BinaryJSON) bool {
 	case JSONTypeCodeArray:
 		if target.TypeCode == JSONTypeCodeArray {
 			elemCount := target.GetElemCount()
-			for i := 0; i < elemCount; i++ {
+			for i := range elemCount {
 				if !ContainsBinaryJSON(obj, target.ArrayGetElem(i)) {
 					return false
 				}
@@ -1092,7 +1118,7 @@ func ContainsBinaryJSON(obj, target BinaryJSON) bool {
 			return true
 		}
 		elemCount := obj.GetElemCount()
-		for i := 0; i < elemCount; i++ {
+		for i := range elemCount {
 			if ContainsBinaryJSON(obj.ArrayGetElem(i), target) {
 				return true
 			}
@@ -1112,7 +1138,7 @@ func OverlapsBinaryJSON(obj, target BinaryJSON) bool {
 	case JSONTypeCodeObject:
 		if target.TypeCode == JSONTypeCodeObject {
 			elemCount := target.GetElemCount()
-			for i := 0; i < elemCount; i++ {
+			for i := range elemCount {
 				key := target.objectGetKey(i)
 				val := target.objectGetVal(i)
 				if exp, exists := obj.objectSearchKey(key); exists && CompareBinaryJSON(exp, val) == 0 {
@@ -1123,9 +1149,9 @@ func OverlapsBinaryJSON(obj, target BinaryJSON) bool {
 		return false
 	case JSONTypeCodeArray:
 		if target.TypeCode == JSONTypeCodeArray {
-			for i := 0; i < obj.GetElemCount(); i++ {
+			for i := range obj.GetElemCount() {
 				o := obj.ArrayGetElem(i)
-				for j := 0; j < target.GetElemCount(); j++ {
+				for j := range target.GetElemCount() {
 					if CompareBinaryJSON(o, target.ArrayGetElem(j)) == 0 {
 						return true
 					}
@@ -1134,7 +1160,7 @@ func OverlapsBinaryJSON(obj, target BinaryJSON) bool {
 			return false
 		}
 		elemCount := obj.GetElemCount()
-		for i := 0; i < elemCount; i++ {
+		for i := range elemCount {
 			if CompareBinaryJSON(obj.ArrayGetElem(i), target) == 0 {
 				return true
 			}
@@ -1160,7 +1186,7 @@ func (bj BinaryJSON) GetElemDepth() int {
 	case JSONTypeCodeObject:
 		elemCount := bj.GetElemCount()
 		maxDepth := 0
-		for i := 0; i < elemCount; i++ {
+		for i := range elemCount {
 			obj := bj.objectGetVal(i)
 			depth := obj.GetElemDepth()
 			if depth > maxDepth {
@@ -1171,7 +1197,7 @@ func (bj BinaryJSON) GetElemDepth() int {
 	case JSONTypeCodeArray:
 		elemCount := bj.GetElemCount()
 		maxDepth := 0
-		for i := 0; i < elemCount; i++ {
+		for i := range elemCount {
 			obj := bj.ArrayGetElem(i)
 			depth := obj.GetElemDepth()
 			if depth > maxDepth {
@@ -1242,7 +1268,7 @@ func (bj BinaryJSON) extractToCallback(pathExpr JSONPathExpression, callbackFn e
 		elemCount := bj.GetElemCount()
 		switch selection := currentLeg.arraySelection.(type) {
 		case jsonPathArraySelectionAsterisk:
-			for i := 0; i < elemCount; i++ {
+			for i := range elemCount {
 				// buf = bj.ArrayGetElem(i).extractTo(buf, subPathExpr)
 				path := fullpath.pushBackOneArraySelectionLeg(jsonPathArraySelectionIndex{jsonPathArrayIndexFromStart(i)})
 				stop, err = bj.ArrayGetElem(i).extractToCallback(subPathExpr, callbackFn, path)
@@ -1279,7 +1305,7 @@ func (bj BinaryJSON) extractToCallback(pathExpr JSONPathExpression, callbackFn e
 	} else if currentLeg.typ == jsonPathLegKey && bj.TypeCode == JSONTypeCodeObject {
 		elemCount := bj.GetElemCount()
 		if currentLeg.dotKey == "*" {
-			for i := 0; i < elemCount; i++ {
+			for i := range elemCount {
 				// buf = bj.objectGetVal(i).extractTo(buf, subPathExpr)
 				path := fullpath.pushBackOneKeyLeg(string(bj.objectGetKey(i)))
 				stop, err = bj.objectGetVal(i).extractToCallback(subPathExpr, callbackFn, path)
@@ -1307,7 +1333,7 @@ func (bj BinaryJSON) extractToCallback(pathExpr JSONPathExpression, callbackFn e
 
 		if bj.TypeCode == JSONTypeCodeArray {
 			elemCount := bj.GetElemCount()
-			for i := 0; i < elemCount; i++ {
+			for i := range elemCount {
 				// buf = bj.ArrayGetElem(i).extractTo(buf, pathExpr)
 				path := fullpath.pushBackOneArraySelectionLeg(jsonPathArraySelectionIndex{jsonPathArrayIndexFromStart(i)})
 				stop, err = bj.ArrayGetElem(i).extractToCallback(pathExpr, callbackFn, path)
@@ -1317,7 +1343,7 @@ func (bj BinaryJSON) extractToCallback(pathExpr JSONPathExpression, callbackFn e
 			}
 		} else if bj.TypeCode == JSONTypeCodeObject {
 			elemCount := bj.GetElemCount()
-			for i := 0; i < elemCount; i++ {
+			for i := range elemCount {
 				// buf = bj.objectGetVal(i).extractTo(buf, pathExpr)
 				path := fullpath.pushBackOneKeyLeg(string(bj.objectGetKey(i)))
 				stop, err = bj.objectGetVal(i).extractToCallback(pathExpr, callbackFn, path)
@@ -1352,7 +1378,7 @@ func (bj BinaryJSON) Walk(walkFn BinaryJSONWalkFunc, pathExprList ...JSONPathExp
 
 		if bj.TypeCode == JSONTypeCodeArray {
 			elemCount := bj.GetElemCount()
-			for i := 0; i < elemCount; i++ {
+			for i := range elemCount {
 				path := fullpath.pushBackOneArraySelectionLeg(jsonPathArraySelectionIndex{jsonPathArrayIndexFromStart(i)})
 				stop, err = doWalk(path, bj.ArrayGetElem(i))
 				if stop || err != nil {
@@ -1361,7 +1387,7 @@ func (bj BinaryJSON) Walk(walkFn BinaryJSONWalkFunc, pathExprList ...JSONPathExp
 			}
 		} else if bj.TypeCode == JSONTypeCodeObject {
 			elemCount := bj.GetElemCount()
-			for i := 0; i < elemCount; i++ {
+			for i := range elemCount {
 				path := fullpath.pushBackOneKeyLeg(string(bj.objectGetKey(i)))
 				stop, err = doWalk(path, bj.objectGetVal(i))
 				if stop || err != nil {

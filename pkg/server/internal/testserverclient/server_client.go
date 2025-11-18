@@ -28,6 +28,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -522,7 +523,7 @@ func (cli *TestServerClient) RunTestLoadDataAutoRandom(t *testing.T) {
 
 	cksum1 := 0
 	cksum2 := 0
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		n1 := rand.Intn(1000)
 		n2 := rand.Intn(1000)
 		str1 := strconv.Itoa(n1)
@@ -577,7 +578,7 @@ func (cli *TestServerClient) RunTestLoadDataAutoRandomWithSpecialTerm(t *testing
 
 	cksum1 := 0
 	cksum2 := 0
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		n1 := rand.Intn(1000)
 		n2 := rand.Intn(1000)
 		str1 := strconv.Itoa(n1)
@@ -1021,7 +1022,7 @@ func (cli *TestServerClient) RunTestLoadDataWithColumnList(t *testing.T, _ *serv
 func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []string) {
 	require.Equal(t, len(columns), len(expected))
 
-	for i := 0; i < len(columns); i++ {
+	for i := range columns {
 		require.Equal(t, expected[i], columns[i].String)
 	}
 }
@@ -1876,13 +1877,7 @@ func checkErrorCode(t *testing.T, e error, codes ...uint16) {
 	if len(codes) == 1 {
 		require.Equal(t, codes[0], me.Number)
 	}
-	isMatchCode := false
-	for _, code := range codes {
-		if me.Number == code {
-			isMatchCode = true
-			break
-		}
-	}
+	isMatchCode := slices.Contains(codes, me.Number)
 	require.Truef(t, isMatchCode, "got err %v, expected err codes %v", me, codes)
 }
 
@@ -2702,7 +2697,7 @@ func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
 
 		// start 100 connections
 		conns := make([]*sql.Conn, 100)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			conn, err := dbt.GetDB().Conn(ctx)
 			require.NoError(t, err)
 			conns[i] = conn
@@ -2710,7 +2705,7 @@ func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
 		resourceGroupConnCountReached(t, "default", 100.0)
 
 		// close 50 connections
-		for i := 0; i < 50; i++ {
+		for i := range 50 {
 			err := conns[i].Close()
 			require.NoError(t, err)
 		}
@@ -2766,7 +2761,7 @@ func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
 
 		// start 100 connections
 		conns := make([]*sql.Conn, 100)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			conn, err := dbt.GetDB().Conn(ctx)
 			require.NoError(t, err)
 			conns[i] = conn
@@ -2781,7 +2776,7 @@ func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
 		resourceGroupConnCountReached(t, "test", 75.0)
 
 		// close the rest of them
-		for i := 0; i < 75; i++ {
+		for i := range 75 {
 			err := conns[i].Close()
 			require.NoError(t, err)
 		}

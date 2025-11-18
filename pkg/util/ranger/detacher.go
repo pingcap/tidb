@@ -26,13 +26,13 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 )
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
 // Please make sure that the top level is CNF form.
-func detachColumnCNFConditions(sctx expression.BuildContext, conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, []expression.Expression) {
-	var accessConditions, filterConditions []expression.Expression //nolint: prealloc
+func detachColumnCNFConditions(sctx expression.BuildContext, conditions []expression.Expression, checker *conditionChecker) (accessConditions, filterConditions []expression.Expression) {
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			dnfItems := expression.FlattenDNFConditions(sf)
@@ -138,6 +138,12 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				val, err := constVal.Eval(evalCtx, chunk.Row{})
+				intest.AssertFunc(func() bool {
+					if sctx.ExprCtx.ConnectionID() == 0 {
+						return sctx.RegardNULLAsPoint
+					}
+					return true
+				})
 				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
@@ -332,13 +338,12 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 		}
 		// take the union of the two columnValues
 		columnValues = unionColumnValues(columnValues, res.ColumnValues)
-		if len(res.AccessConds) == 0 || len(res.RemainedConds) > 0 {
+		if len(res.AccessConds) == 0 {
 			continue
 		}
 		curRes := getCNFItemRangeResult(sctx, res, i)
 		bestRes = mergeTwoCNFRanges(sctx, cond, bestRes, curRes)
 	}
-
 	if bestRes != nil && bestRes.rangeResult != nil {
 		bestRes.rangeResult.IsDNFCond = false
 	}
@@ -722,14 +727,19 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 // columnValues: the constant column values for all index columns. columnValues[i] is nil if cols[i] is not constant.
 // bool: indicate whether there's nil range when merging eq and in conditions.
 func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
-	lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, []*valueInfo, bool) {
-	var filters []expression.Expression
+	lengths []int) (accesses, filters, newConditions []expression.Expression, columnValues []*valueInfo, _ bool) {
 	rb := builder{sctx: sctx}
-	accesses := make([]expression.Expression, len(cols))
+	accesses = make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
-	mergedAccesses := make([]expression.Expression, len(cols))
-	newConditions := make([]expression.Expression, 0, len(conditions))
-	columnValues := make([]*valueInfo, len(cols))
+	mergedAccesses := expression.GetExpressionSlices(len(cols))
+	for range cols {
+		mergedAccesses = append(mergedAccesses, nil)
+	}
+	defer func() {
+		expression.PutExpressionSlices(mergedAccesses)
+	}()
+	newConditions = make([]expression.Expression, 0, len(conditions))
+	columnValues = make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
 	for i, cond := range conditions {
 		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
@@ -754,7 +764,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		}
 		points[offset] = rb.intersection(points[offset], rb.build(cond, newTp, types.UnspecifiedLength, false), collator)
 		if len(points[offset]) == 0 { // Early termination if false expression found
-			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions) {
+			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
 				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}
@@ -782,7 +792,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			// There exists an interval whose length is larger than 0
 			accesses[i] = nil
 		} else if len(points[i]) == 0 { // Early termination if false expression found
-			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions) {
+			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
 				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}
@@ -797,7 +807,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 				// Maybe we can improve it later.
 				columnValues[i] = &valueInfo{mutable: true}
 			}
-			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions) {
+			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
 				// `a=@x and a=@y` --> `a=@x if @x==@y`
 				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}

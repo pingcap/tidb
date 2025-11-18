@@ -183,7 +183,7 @@ func TestMergeCreateTableJobs(t *testing.T) {
 			"db4": 7,
 			"db5": 22,
 		} {
-			for i := 0; i < cnt; i++ {
+			for i := range cnt {
 				tblName := fmt.Sprintf("t%d", i)
 				jobW := NewJobWrapperWithArgs(&model.Job{Version: model.GetJobVerInUse(), SchemaName: db, Type: model.ActionCreateTable},
 					&model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr(tblName)}}, false)

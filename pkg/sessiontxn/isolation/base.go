@@ -119,7 +119,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 
 	p.enterNewTxnType = tp
-	p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	p.infoSchema = p.sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
@@ -133,7 +133,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx = txnCtx
 	sessVars.TxnCtxMu.Unlock()
-	if vardef.EnableMDL.Load() {
+	if vardef.IsMDLEnabled() {
 		sessVars.TxnCtx.EnableMDL = true
 	}
 
@@ -447,23 +447,18 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
+
+	var snapshot kv.Snapshot
 	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
-		return txn.GetSnapshot(), nil
+		snapshot = txn.GetSnapshot()
+	} else {
+		snapshot = internal.GetSnapshotWithTS(
+			p.sctx,
+			snapshotTS,
+			temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema),
+		)
 	}
-
-	sessVars := p.sctx.GetSessionVars()
-	snapshot := internal.GetSnapshotWithTS(
-		p.sctx,
-		snapshotTS,
-		temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema),
-	)
-
-	replicaReadType := sessVars.GetReplicaRead()
-	if replicaReadType.IsFollowerRead() &&
-		!sessVars.StmtCtx.RCCheckTS &&
-		!sessVars.RcWriteCheckTS {
-		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
-	}
+	snapshot.SetOption(kv.ReplicaRead, p.sctx.GetSessionVars().GetReplicaRead())
 
 	return snapshot, nil
 }
@@ -590,10 +585,10 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		}
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
-	needCheckSchema := true
+	needCheckSchemaByDelta := true
 	// Set this option for 2 phase commit to validate schema lease.
 	if sessVars.TxnCtx != nil {
-		needCheckSchema = !sessVars.TxnCtx.EnableMDL
+		needCheckSchemaByDelta = !sessVars.TxnCtx.EnableMDL
 	}
 
 	// TODO: refactor SetOption usage to avoid race risk, should detect it in test.
@@ -602,10 +597,10 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	txn.SetOption(
 		kv.SchemaChecker,
 		domain.NewSchemaChecker(
-			domain.GetDomain(p.sctx),
+			p.sctx.GetSchemaValidator(),
 			p.GetTxnInfoSchema().SchemaMetaVersion(),
 			physicalTableIDs,
-			needCheckSchema,
+			needCheckSchemaByDelta,
 		),
 	)
 

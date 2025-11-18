@@ -50,9 +50,9 @@ create table orders (O_ORDERKEY bigint(20) NOT NULL, O_CUSTKEY bigint(20) NOT NU
 insert into customer values (6, "xiao zhang", "address1");
 set @@tidb_opt_agg_push_down=1;
 select c_custkey, count(o_orderkey) as c_count from customer left outer join orders on c_custkey = o_custkey group by c_custkey;
-explain format='brief' select c_custkey, count(o_orderkey) as c_count from customer left outer join orders on c_custkey = o_custkey group by c_custkey;
+explain format='plan_tree' select c_custkey, count(o_orderkey) as c_count from customer left outer join orders on c_custkey = o_custkey group by c_custkey;
 select c_custkey, count(o_orderkey) as c_count from orders right outer join customer on c_custkey = o_custkey group by c_custkey;
-explain format='brief' select c_custkey, count(o_orderkey) as c_count from orders right outer join customer on c_custkey = o_custkey group by c_custkey;
+explain format='plan_tree' select c_custkey, count(o_orderkey) as c_count from orders right outer join customer on c_custkey = o_custkey group by c_custkey;
 
 
 # TestIssue22298
@@ -220,7 +220,7 @@ insert into t1 values(1,1),(2,2);
 create table t2(a int not null, b int, key(a));
 insert into t2 values(1,1),(2,2),(3,3),(4,4),(5,5);
 analyze table t1, t2;
-explain format = 'brief' select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a = t2.a;
+explain format='plan_tree' select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a = t2.a;
 
 
 # TestIssue46580
@@ -261,7 +261,7 @@ create table t(a int(11), b int) partition by range (a) (partition p0 values les
 insert into t values(1, 1), (2, 1), (3, 1), (4, 2), (4, 2);
 set session tidb_opt_agg_push_down=1;
 set @@tidb_partition_prune_mode='static';
-explain format = 'brief' select approx_count_distinct(a), b from t group by b order by b desc;
+explain format='plan_tree' select approx_count_distinct(a), b from t group by b order by b desc;
 select approx_count_distinct(a), b from t group by b order by b desc;
 
 
@@ -380,7 +380,7 @@ select /*+ MERGE_JOIN(t1, t2) */ * from t1 partition (p0), t2  where t1.a > 100 
 drop table if exists t;
 create table t(a int,b int,c int,d int,e int,unique key idx_ab(a,b),unique key(c),unique key(d));
 --enable_warnings
-explain format = 'brief' select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1);
+explain format='plan_tree' select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1);
 --disable_warnings
 insert into t values (2, 1, 1, 1, 2);
 select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1);
@@ -390,61 +390,61 @@ select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c =
 drop table if exists t;
 create table t (a int, b int, c int, primary key (a, b) clustered, key idx_c(c));
 insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);
-explain select /*+ use_index_merge(t) */ a from t where a < 2 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where a < 2 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ a from t where a < 2 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ a from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where a < 2 or a > 88 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ a from t where a < 2 or a > 88 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ a from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ a from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
-explain select /*+ use_index_merge(t) */ a from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ a from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
-explain select /*+ use_index_merge(t) */ b from t where a < 2 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where a < 2 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ b from t where a < 2 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ b from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where a < 2 or a > 88 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ b from t where a < 2 or a > 88 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ b from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ b from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
-explain select /*+ use_index_merge(t) */ b from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ b from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
-explain select /*+ use_index_merge(t) */ c from t where a < 2 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where a < 2 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ c from t where a < 2 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ c from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where a < 2 or a > 88 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ c from t where a < 2 or a > 88 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
-explain select /*+ use_index_merge(t) */ c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
-explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where a < 2 or a > 88 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or a > 88 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
-explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
-explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where a < 2 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ b,c from t where a < 2 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where a < 2 or a > 88 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ b,c from t where a < 2 or a > 88 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ b,c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
-explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ b,c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
-explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where a < 2 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ c,a from t where a < 2 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where a < 2 or a > 88 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ c,a from t where a < 2 or a > 88 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ c,a from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
-explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ c,a from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
-explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a > 88 or c > 10000 order by a, b;
 select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a > 88 or c > 10000 order by a, b;
-explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
-explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
 select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
 
 
@@ -452,75 +452,75 @@ select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or (a >= 10 and b >= 1
 drop table if exists t;
 create table t (a int, b int, c int, unique key (a, b), key idx_c(c));
 insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);
-explain select /*+ use_index_merge(t) */ a from t where c < 10 or a < 2 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where c < 10 or a < 2 order by a;
 select /*+ use_index_merge(t) */ a from t where c < 10 or a < 2 order by a;
-explain select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or c > 10000 order by a;
 select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or c > 10000 order by a;
-explain select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
 select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
-explain select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
-explain select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
-explain select /*+ use_index_merge(t) */ b from t where c < 10 or a < 2 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where c < 10 or a < 2 order by a;
 select /*+ use_index_merge(t) */ b from t where c < 10 or a < 2 order by a;
-explain select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or c > 10000 order by a;
 select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or c > 10000 order by a;
-explain select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
 select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
-explain select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
-explain select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
-explain select /*+ use_index_merge(t) */ c from t where c < 10 or a < 2 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where c < 10 or a < 2 order by a;
 select /*+ use_index_merge(t) */ c from t where c < 10 or a < 2 order by a;
-explain select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or c > 10000 order by a;
 select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or c > 10000 order by a;
-explain select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
 select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
-explain select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
-explain select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
-explain select /*+ use_index_merge(t) */ a,b from t where c < 10 or a < 2 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where c < 10 or a < 2 order by a;
 select /*+ use_index_merge(t) */ a,b from t where c < 10 or a < 2 order by a;
-explain select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or c > 10000 order by a;
 select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or c > 10000 order by a;
-explain select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
 select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
-explain select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
-explain select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
-explain select /*+ use_index_merge(t) */ b,c from t where c < 10 or a < 2 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where c < 10 or a < 2 order by a;
 select /*+ use_index_merge(t) */ b,c from t where c < 10 or a < 2 order by a;
-explain select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or c > 10000 order by a;
 select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or c > 10000 order by a;
-explain select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
 select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
-explain select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
-explain select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
-explain select /*+ use_index_merge(t) */ c,a from t where c < 10 or a < 2 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where c < 10 or a < 2 order by a;
 select /*+ use_index_merge(t) */ c,a from t where c < 10 or a < 2 order by a;
-explain select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or c > 10000 order by a;
 select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or c > 10000 order by a;
-explain select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
 select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
-explain select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
-explain select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
-explain select /*+ use_index_merge(t) */ b,a,c from t where c < 10 or a < 2 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where c < 10 or a < 2 order by a;
 select /*+ use_index_merge(t) */ b,a,c from t where c < 10 or a < 2 order by a;
-explain select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or c > 10000 order by a;
 select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or c > 10000 order by a;
-explain select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
 select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
-explain select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
-explain select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
 select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
 
 
@@ -528,75 +528,75 @@ select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (a >= 10 
 drop table if exists t;
 create table t (a int, b int, c int, primary key (a), unique key (b), key idx_c(c));
 insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);
-explain select /*+ use_index_merge(t) */ a from t where b < 10 or c < 11 or c > 50 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where b < 10 or c < 11 or c > 50 order by b;
 select /*+ use_index_merge(t) */ a from t where b < 10 or c < 11 or c > 50 order by b;
-explain select /*+ use_index_merge(t) */ a from t where a < 2 or c > 10000 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where a < 2 or c > 10000 order by b;
 select /*+ use_index_merge(t) */ a from t where a < 2 or c > 10000 order by b;
-explain select /*+ use_index_merge(t) */ a from t where a < 2 or a < 10 or b > 11 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where a < 2 or a < 10 or b > 11 order by b;
 select /*+ use_index_merge(t) */ a from t where a < 2 or a < 10 or b > 11 order by b;
-explain select /*+ use_index_merge(t) */ a from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
 select /*+ use_index_merge(t) */ a from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
-explain select /*+ use_index_merge(t) */ a from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
 select /*+ use_index_merge(t) */ a from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
-explain select /*+ use_index_merge(t) */ b from t where b < 10 or c < 11 or c > 50 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where b < 10 or c < 11 or c > 50 order by b;
 select /*+ use_index_merge(t) */ b from t where b < 10 or c < 11 or c > 50 order by b;
-explain select /*+ use_index_merge(t) */ b from t where a < 2 or c > 10000 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where a < 2 or c > 10000 order by b;
 select /*+ use_index_merge(t) */ b from t where a < 2 or c > 10000 order by b;
-explain select /*+ use_index_merge(t) */ b from t where a < 2 or a < 10 or b > 11 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where a < 2 or a < 10 or b > 11 order by b;
 select /*+ use_index_merge(t) */ b from t where a < 2 or a < 10 or b > 11 order by b;
-explain select /*+ use_index_merge(t) */ b from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
 select /*+ use_index_merge(t) */ b from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
-explain select /*+ use_index_merge(t) */ b from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
 select /*+ use_index_merge(t) */ b from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
-explain select /*+ use_index_merge(t) */ c from t where b < 10 or c < 11 or c > 50 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where b < 10 or c < 11 or c > 50 order by b;
 select /*+ use_index_merge(t) */ c from t where b < 10 or c < 11 or c > 50 order by b;
-explain select /*+ use_index_merge(t) */ c from t where a < 2 or c > 10000 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where a < 2 or c > 10000 order by b;
 select /*+ use_index_merge(t) */ c from t where a < 2 or c > 10000 order by b;
-explain select /*+ use_index_merge(t) */ c from t where a < 2 or a < 10 or b > 11 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where a < 2 or a < 10 or b > 11 order by b;
 select /*+ use_index_merge(t) */ c from t where a < 2 or a < 10 or b > 11 order by b;
-explain select /*+ use_index_merge(t) */ c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
 select /*+ use_index_merge(t) */ c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
-explain select /*+ use_index_merge(t) */ c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
 select /*+ use_index_merge(t) */ c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
-explain select /*+ use_index_merge(t) */ a,b from t where b < 10 or c < 11 or c > 50 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where b < 10 or c < 11 or c > 50 order by b;
 select /*+ use_index_merge(t) */ a,b from t where b < 10 or c < 11 or c > 50 order by b;
-explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 order by b;
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 order by b;
-explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or a < 10 or b > 11 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where a < 2 or a < 10 or b > 11 order by b;
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or a < 10 or b > 11 order by b;
-explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
-explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ a,b from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
-explain select /*+ use_index_merge(t) */ b,c from t where b < 10 or c < 11 or c > 50 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where b < 10 or c < 11 or c > 50 order by b;
 select /*+ use_index_merge(t) */ b,c from t where b < 10 or c < 11 or c > 50 order by b;
-explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or c > 10000 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where a < 2 or c > 10000 order by b;
 select /*+ use_index_merge(t) */ b,c from t where a < 2 or c > 10000 order by b;
-explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or a < 10 or b > 11 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where a < 2 or a < 10 or b > 11 order by b;
 select /*+ use_index_merge(t) */ b,c from t where a < 2 or a < 10 or b > 11 order by b;
-explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
 select /*+ use_index_merge(t) */ b,c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
-explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
 select /*+ use_index_merge(t) */ b,c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
-explain select /*+ use_index_merge(t) */ c,a from t where b < 10 or c < 11 or c > 50 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where b < 10 or c < 11 or c > 50 order by b;
 select /*+ use_index_merge(t) */ c,a from t where b < 10 or c < 11 or c > 50 order by b;
-explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or c > 10000 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where a < 2 or c > 10000 order by b;
 select /*+ use_index_merge(t) */ c,a from t where a < 2 or c > 10000 order by b;
-explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or a < 10 or b > 11 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where a < 2 or a < 10 or b > 11 order by b;
 select /*+ use_index_merge(t) */ c,a from t where a < 2 or a < 10 or b > 11 order by b;
-explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
 select /*+ use_index_merge(t) */ c,a from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
-explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ c,a from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
 select /*+ use_index_merge(t) */ c,a from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
-explain select /*+ use_index_merge(t) */ b,a,c from t where b < 10 or c < 11 or c > 50 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where b < 10 or c < 11 or c > 50 order by b;
 select /*+ use_index_merge(t) */ b,a,c from t where b < 10 or c < 11 or c > 50 order by b;
-explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or c > 10000 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or c > 10000 order by b;
 select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or c > 10000 order by b;
-explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a < 10 or b > 11 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a < 10 or b > 11 order by b;
 select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a < 10 or b > 11 order by b;
-explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
 select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
-explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+explain format='plan_tree' select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
 select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
 
 
@@ -632,7 +632,7 @@ select  var_samp(col_7) aggCol from (select  /*+ use_index_merge( t ) */ * from 
 drop table if exists t;
 create table t(a int,b char(100),key(a),key(b(10)));
 --enable_warnings;
-explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a=10 or b='x';
+explain format='plan_tree' select /*+ use_index_merge(t) */ * from t where a=10 or b='x';
 --disable_warnings;
 insert into t values (1, 'xx');
 select /*+ use_index_merge(t) */ * from t where a=10 or b='x';
@@ -858,12 +858,12 @@ SELECT DISTINCT t.bid, t.r5 FROM t left join t parent on parent.oid = t.pid WHER
 # TestIssue14481
 drop table if exists t;
 create table t(a int default null, b int default null, c int default null);
-explain format = 'brief' select * from t where a = 1 and a = 2;
+explain format='plan_tree' select * from t where a = 1 and a = 2;
 drop table t;
 
 
 # TestQueryBlockTableAliasInHint
-explain select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2;
+explain format='plan_tree' select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2;
 --enable_warnings
 select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2;
 --disable_warnings
@@ -965,9 +965,9 @@ select stats, status from mysql.stats_extended where name = 's1';
 set session tidb_enable_extended_stats = on;
 analyze table t;
 select stats, status from mysql.stats_extended where name = 's1';
-explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1;
+explain format='plan_tree' select * from t use index(b) where a > 3 order by b limit 1;
 set session tidb_enable_extended_stats = off;
-explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1;
+explain format='plan_tree' select * from t use index(b) where a > 3 order by b limit 1;
 
 
 # TestOrderByNotInSelectDistinct
@@ -1190,9 +1190,9 @@ delete /*+ use_index_merge(t) */ FROM t WHERE a=1 OR (a<2 and b<2);
 drop table if exists t;
 create table t(a int, b int, c int, d int, key(a), key(b));
 insert into t values(10,1,1,10);
-explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a=10 or (b=10 and c=10);
+explain format='plan_tree' select /*+ use_index_merge(t) */ * from t where a=10 or (b=10 and c=10);
 select /*+ use_index_merge(t) */ * from t where a=10 or (b=10 and c=10);
-explain format = 'brief' select /*+ use_index_merge(t) */ * from t where (a=10 and d=10) or (b=10 and c=10);
+explain format='plan_tree' select /*+ use_index_merge(t) */ * from t where (a=10 and d=10) or (b=10 and c=10);
 select /*+ use_index_merge(t) */ * from t where (a=10 and d=10) or (b=10 and c=10);
 
 
@@ -1283,7 +1283,7 @@ select /*+ stream_agg() */ count(1) from t1 where c > 10 and b < 2;
 delete from t0;
 insert into t0(a, b) values (5, 1);
 select /*+ nth_plan(3) */ count(1) from t0 where c > 10 and b < 2;
-explain select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2;
+explain format='plan_tree' select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2;
 
 
 # TestPanicWhileQueryTableWithIsNull
@@ -1318,7 +1318,7 @@ CREATE TABLE `BB` (
 	PRIMARY KEY (`pk`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2000001;
 --error 1055
-explain SELECT OUTR . col2 AS X FROM (SELECT INNR . col1 as col1, SUM( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR2 INNER JOIN (SELECT INNR . col1 as col1, MAX( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR ON OUTR2.col1 = OUTR.col1 GROUP BY OUTR . col1, OUTR2 . col1 HAVING X <> 'b';
+explain format='plan_tree' SELECT OUTR . col2 AS X FROM (SELECT INNR . col1 as col1, SUM( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR2 INNER JOIN (SELECT INNR . col1 as col1, MAX( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR ON OUTR2.col1 = OUTR.col1 GROUP BY OUTR . col1, OUTR2 . col1 HAVING X <> 'b';
 
 
 # TestIssue24281
@@ -1336,7 +1336,7 @@ create table t1 (a float default null, b smallint(6) DEFAULT NULL);
 insert into t1 values (1, 1);
 create table t2 (a float default null, b tinyint(4) DEFAULT NULL, key b (b));
 insert into t2 values (null, 1);
-explain select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b);
+explain format='plan_tree' select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b);
 select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b);
 
 
@@ -1419,9 +1419,9 @@ insert into t (year, c) values (2002, space(256));
 insert into t (year, c) values (2002, space(256));
 analyze table t;
 set @@tidb_opt_enable_correlation_adjustment = false;
-explain format=brief select * from t use index(primary) where year=2002 limit 1;
+explain format='plan_tree' select * from t use index(primary) where year=2002 limit 1;
 set @@tidb_opt_enable_correlation_adjustment = true;
-explain format=brief select * from t use index(primary) where year=2002 limit 1;
+explain format='plan_tree' select * from t use index(primary) where year=2002 limit 1;
 truncate table t;
 insert into t (year, c) values (2000, space(256));
 insert into t (year, c) values (2000, space(256));
@@ -1526,7 +1526,7 @@ insert into t (year, c) values (2049, space(256));
 insert into t (year, c) values (2050, space(256));
 insert into t (year, c) values (2050, space(256));
 analyze table t;
-explain format=brief select * from t use index(primary) where year=2000 limit 1;
+explain format='plan_tree' select * from t use index(primary) where year=2000 limit 1;
 
 
 # TestCTESelfJoin
@@ -1580,12 +1580,13 @@ drop table if exists t;
 create table t (a int);
 insert into t values (1);
 analyze table t all columns;
+select @@tidb_opt_limit_push_down_threshold;
 set tidb_opt_limit_push_down_threshold=0;
-explain format=brief select a from t order by a desc limit 10;
+explain format='plan_tree' select a from t order by a desc limit 10;
 set tidb_opt_limit_push_down_threshold=10;
-explain format=brief select a from t order by a desc limit 10;
-explain format=brief select a from t order by a desc limit 11;
-explain format=brief select /*+ limit_to_cop() */ a from t order by a desc limit 11;
+explain format='plan_tree' select a from t order by a desc limit 10;
+explain format='plan_tree' select a from t order by a desc limit 11;
+explain format='plan_tree' select /*+ limit_to_cop() */ a from t order by a desc limit 11;
 
 
 # TestIssue26559
@@ -1601,15 +1602,15 @@ select greatest(a, b) from t union select null;
 drop table if exists t1;
 set tidb_cost_model_version=2;
 create table t1( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a));
-explain format=brief select * from t1 where a like "A%";
-explain format=brief select * from t1 where b like "A%";
+explain format='plan_tree' select * from t1 where a like "A%";
+explain format='plan_tree' select * from t1 where b like "A%";
 drop table if exists t2;
 create table t2( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a, b));
-explain format=brief select * from t2 where a like "A%";
-explain format=brief select * from t2 where a like "A%" and b like "A%";
+explain format='plan_tree' select * from t2 where a like "A%";
+explain format='plan_tree' select * from t2 where a like "A%" and b like "A%";
 drop table if exists t3;
 create table t3( a int,b enum('y','b','Abc','null'), c enum('y','b','Abc','null'),key(a, b, c));
-explain format=brief select * from t3 where a = 1 and b like "A%";
+explain format='plan_tree' select * from t3 where a = 1 and b like "A%";
 
 
 # TestIssue27242
@@ -1719,10 +1720,10 @@ drop table if exists t;
 # TestIssues29711
 drop table if exists tbl_29711;
 CREATE TABLE `tbl_29711` (`col_250` text COLLATE utf8_unicode_ci NOT NULL,`col_251` enum('Alice','Bob','Charlie','David') COLLATE utf8_unicode_ci NOT NULL DEFAULT 'Charlie',PRIMARY KEY (`col_251`,`col_250`(1)) NONCLUSTERED);
-explain format=brief select col_250,col_251 from tbl_29711 use index (primary) where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;
+explain format='plan_tree' select col_250,col_251 from tbl_29711 use index (primary) where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;
 drop table if exists t29711;
 CREATE TABLE `t29711` (`a` varchar(10) DEFAULT NULL,`b` int(11) DEFAULT NULL,`c` int(11) DEFAULT NULL,KEY `ia` (`a`(2)));
-explain format=brief select * from t29711 use index (ia) order by a limit 10;
+explain format='plan_tree' select * from t29711 use index (ia) order by a limit 10;
 
 
 # TestIssue27313
@@ -1736,8 +1737,8 @@ explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4;
 # TestIssue30094
 drop table if exists t30094;
 create table t30094(a varchar(10));
-explain format = 'brief' select * from t30094 where cast(a as float) and cast(a as char);
-explain format = 'brief' select * from t30094 where  concat(a,'1') = _binary 0xe59388e59388e59388 collate binary and concat(a,'1') = _binary 0xe598bfe598bfe598bf collate binary;
+explain format='plan_tree' select * from t30094 where cast(a as float) and cast(a as char);
+explain format='plan_tree' select * from t30094 where  concat(a,'1') = _binary 0xe59388e59388e59388 collate binary and concat(a,'1') = _binary 0xe598bfe598bfe598bf collate binary;
 
 
 # TestIssue29705
@@ -1788,7 +1789,7 @@ CREATE TABLE t1 (a int PRIMARY KEY, b int);
 CREATE TABLE t2 (a int PRIMARY KEY, b int);
 INSERT INTO t1 VALUES (1,1), (2,1), (3,1), (4,2);
 INSERT INTO t2 VALUES (1,2), (2,2);
-explain format=brief SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(0+(t1.a=30 and t2.b=1));
+explain format='plan_tree' SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(0+(t1.a=30 and t2.b=1));
 SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(0+(t1.a=30 and t2.b=1));
 
 
@@ -1812,13 +1813,13 @@ insert into t1 select * from t1;
 insert into t1 select * from t1;
 insert into t1 value(1,1,1);
 analyze table t1 all columns;
-explain format = 'brief' select * from t1 where a=1 or b=1;
-explain format = 'brief' select * from t1 where 0=1 or a=1 or b=1;
-explain format = 'brief' select * from t1 where null or a=1 or b=1;
-explain format = 'brief' select * from t1 where a=1 or false or b=1;
-explain format = 'brief' select * from t1 where a=1 or b=1 or "false";
-explain format = 'brief' select * from t1 where 1=1 or a=1 or b=1;
-explain format = 'brief' select * from t1 where a=1 or b=1 or 1=1;
+explain format='plan_tree' select * from t1 where a=1 or b=1;
+explain format='plan_tree' select * from t1 where 0=1 or a=1 or b=1;
+explain format='plan_tree' select * from t1 where null or a=1 or b=1;
+explain format='plan_tree' select * from t1 where a=1 or false or b=1;
+explain format='plan_tree' select * from t1 where a=1 or b=1 or "false";
+explain format='plan_tree' select * from t1 where 1=1 or a=1 or b=1;
+explain format='plan_tree' select * from t1 where a=1 or b=1 or 1=1;
 drop table if exists t1;
 
 
@@ -1861,7 +1862,7 @@ use planner__core__integration;
 drop table if exists t1, t2;
 create table t1(id int primary key, col1 int);
 create table t2(id int primary key, col1 int);
-explain format='brief' SELECT /*+ merge_join(t1, t2)*/ * FROM (t1 LEFT JOIN t2 ON t1.col1=t2.id) order by t2.id;
+explain format='plan_tree' SELECT /*+ merge_join(t1, t2)*/ * FROM (t1 LEFT JOIN t2 ON t1.col1=t2.id) order by t2.id;
 
 
 # TestIssue29663
@@ -1871,11 +1872,11 @@ create table t1 (a int, b int);
 create table t2 (c int, d int);
 insert into t1 values(1, 1), (1,2),(2,1),(2,2);
 insert into t2 values(1, 3), (1,4),(2,5),(2,6);
-explain select one.a from t1 one order by (select two.d from t2 two where two.c = one.b);
+explain format='plan_tree' select one.a from t1 one order by (select two.d from t2 two where two.c = one.b);
 
 
 # TestIssue31609
-explain select rank() over (partition by table_name) from information_schema.tables;
+explain format='plan_tree' select rank() over (partition by table_name) from information_schema.tables;
 
 
 # TestDecimalOverflow
@@ -1891,7 +1892,7 @@ drop table if exists t;
 create table t(a json);
 insert into t values('{"id": "ish"}');
 select t2.a from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';
-explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';
+explain format='plan_tree' select * from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';
 
 
 # TestPartitionTableFallBackStatic
@@ -1900,15 +1901,15 @@ set @@tidb_partition_prune_mode='static';
 CREATE TABLE t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));
 insert into t values (1),(2),(3),(4),(7),(8),(9),(10);
 analyze table t all columns;
-explain format='brief' select * from t;
+explain format='plan_tree' select * from t;
 CREATE TABLE t2 (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));
 insert into t2 values (1),(2),(3),(4),(7),(8),(9),(10);
 analyze table t2;
 set @@tidb_partition_prune_mode='dynamic';
-explain format='brief' select * from t;
+explain format='plan_tree' select * from t;
 analyze table t;
-explain format='brief' select * from t;
-explain format='brief' select  * from t union all select * from t2;
+explain format='plan_tree' select * from t;
+explain format='plan_tree' select  * from t union all select * from t2;
 set @@tidb_partition_prune_mode=DEFAULT;
 
 
@@ -1916,12 +1917,12 @@ set @@tidb_partition_prune_mode=DEFAULT;
 drop table if exists t1, t2;
 create table t1 (a int primary key, b int);
 create table t2 (c int);
-explain format='brief' select * from t1 where a in (10, 20, 30, 40, 50) and b > 1;
-explain format='brief' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50);
+explain format='plan_tree' select * from t1 where a in (10, 20, 30, 40, 50) and b > 1;
+explain format='plan_tree' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50);
 set @@tidb_opt_range_max_size=10;
 --enable_warnings
-explain format='brief' select * from t1 where a in (10, 20, 30, 40, 50) and b > 1;
-explain format='brief' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50);
+explain format='plan_tree' select * from t1 where a in (10, 20, 30, 40, 50) and b > 1;
+explain format='plan_tree' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50);
 --disable_warnings
 
 
@@ -1933,21 +1934,21 @@ create table t3 (pk int primary key, a int, key(a));
 create table t4 (a int, b int, c int, index idx_a_b(a, b));
 set @@tidb_opt_range_max_size=0;
 --enable_warnings
-explain format='brief' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
+explain format='plan_tree' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 set @@tidb_opt_range_max_size=1000;
-explain format='brief' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
+explain format='plan_tree' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 set @@tidb_opt_range_max_size=0;
-explain format='brief' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
+explain format='plan_tree' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 set @@tidb_opt_range_max_size=1000;
-explain format='brief' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
+explain format='plan_tree' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 set @@tidb_opt_range_max_size=0;
-explain format='brief' select /*+ use_index(t3, a) */ * from t3 where a in (1, 3, 5) and pk in (2, 4, 6);
+explain format='plan_tree' select /*+ use_index(t3, a) */ * from t3 where a in (1, 3, 5) and pk in (2, 4, 6);
 set @@tidb_opt_range_max_size=1000;
-explain format='brief' select /*+ use_index(t3, a) */ * from t3 where a in (1, 3, 5) and pk in (2, 4, 6);
+explain format='plan_tree' select /*+ use_index(t3, a) */ * from t3 where a in (1, 3, 5) and pk in (2, 4, 6);
 set @@tidb_opt_range_max_size=0;
-explain format='brief' select /*+ use_index(t4, idx_a_b) */ * from t4 where a in (1, 3, 5) and b = 2;
+explain format='plan_tree' select /*+ use_index(t4, idx_a_b) */ * from t4 where a in (1, 3, 5) and b = 2;
 set @@tidb_opt_range_max_size=1000;
-explain format='brief' select /*+ use_index(t4, idx_a_b) */ * from t4 where a in (1, 3, 5) and b = 2;
+explain format='plan_tree' select /*+ use_index(t4, idx_a_b) */ * from t4 where a in (1, 3, 5) and b = 2;
 --disable_warnings
 set @@tidb_opt_range_max_size=DEFAULT;
 
@@ -2004,7 +2005,7 @@ CREATE TABLE t(col1 enum('p5', '9a33x') NOT NULL DEFAULT 'p5',col2 tinyblob DEFA
 CREATE TABLE `sbtest1` ( `id` bigint(20) NOT NULL AUTO_INCREMENT, `k` int(11) NOT NULL DEFAULT '0', `c` char(120) NOT NULL DEFAULT '', `pad` char(60) NOT NULL DEFAULT '', PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */ , KEY `k_1` (`k`) );
 set @@tidb_opt_range_max_size = 111;
 -- enable_warnings
-explain format='brief' select * from planner__core__integration.sbtest1 a where pad in ('1','1','1','1','1') and id in (1,1,1,1,1);
+explain format='plan_tree' select * from planner__core__integration.sbtest1 a where pad in ('1','1','1','1','1') and id in (1,1,1,1,1);
 -- disable_warnings
 set @@tidb_opt_range_max_size = DEFAULT;
 
@@ -2052,7 +2053,7 @@ drop table if exists t;
 create table t(a datetime) partition by range columns (a) (partition p1 values less than ('20000101'), partition p2 values less than ('2000-10-01'));
 insert into t values ('20000201'), ('19000101');
 analyze table t all columns;
-desc format='brief' select * from t where a < '2000-01-01';
+explain format='plan_tree' select * from t where a < '2000-01-01';
 
 
 # TestErrNoDB
@@ -2078,9 +2079,9 @@ drop table if exists t;
 create table t(a int primary key, b varchar(20));
 insert into t values (1,1);
 --replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}/
-explain analyze select * from t where a=1;
+explain analyze format='brief' select * from t where a=1;
 --replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}/
-explain analyze select * from t where a in (1,2,3);
+explain analyze format='brief' select * from t where a in (1,2,3);
 
 
 # TestExplainAnalyzeDML
@@ -2088,9 +2089,9 @@ drop table if exists t;
 create table t (a int, b int, unique index (a));
 insert into t values (1,1);
 --replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}/
-explain analyze select * from t where a=1;
+explain analyze format='brief' select * from t where a=1;
 --replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}}}/ /[0-9]+ Bytes/<num> Bytes/
-explain analyze insert ignore into t values (1,1),(2,2),(3,3),(4,4);
+explain analyze format='brief' insert ignore into t values (1,1),(2,2),(3,3),(4,4);
 
 
 # TestConditionColPruneInPhysicalUnionScan
@@ -2147,11 +2148,11 @@ drop table t1, t2;
 # TestIssue27949
 drop table if exists t27949;
 create table t27949 (a int, b int, key(b));
-explain format = 'brief' select * from t27949 where b=1;
+explain format='plan_tree' select * from t27949 where b=1;
 create global binding for select * from t27949 where b=1 using select * from t27949 ignore index(b) where b=1;
-explain format = 'brief' select * from t27949 where b=1;
+explain format='plan_tree' select * from t27949 where b=1;
 set @@sql_select_limit=100;
-explain format = 'brief' select * from t27949 where b=1;
+explain format='plan_tree' select * from t27949 where b=1;
 drop table if exists t;
 create table t(a int, index idx_a(a));
 create binding for select * from t  using select * from t use index(idx_a);
@@ -2249,7 +2250,7 @@ select * from t where a between 'e6yd' and 'z' or b <> '8ue';
 select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';
 
 --echo ## For now tidb doesn't support push set type to TiKV, and column a is a set type, so we shouldn't generate a IndexMerge path.
-explain format='brief' select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';
+explain format='plan_tree' select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';
 
 
 # TestIssue46298
@@ -2340,7 +2341,7 @@ drop table if exists t;
 set tidb_opt_fix_control='44262:ON';
 create table t (id int, c int) partition by range (id) (partition p0 values less than (4), partition p1 values less than (7));
 insert into t values(3, 3), (5, 5);
-explain format = 'brief' select * from t where c = 1 and id = c;
+explain format='plan_tree' select * from t where c = 1 and id = c;
 
 
 # TestIssue46177
@@ -2354,8 +2355,8 @@ CREATE TABLE sbtest (
   KEY k (k)
 );
 ## confirm that we can choose the best plan with RangeScan.
-explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
-explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
+explain format='plan_tree'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
+explain format='plan_tree' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
 
 # TestSysIsAccessibleWithTiFlashReadIsolation
 create table sys.t (id int);
@@ -2372,3 +2373,8 @@ select 1 from (select t.col as c0, 46578369 as c1 from t) as t where
   case when (
     t.c0 in (t.c0, cast((cast(1 as unsigned) - cast(t.c1 as signed)) as char))
   ) then 1 else 2 end;
+
+# TestIssue62350
+drop table if exists t;
+create table t (col timestamp);
+explain format='plan_tree' select cast(col as char) from t group by cast(col as char);

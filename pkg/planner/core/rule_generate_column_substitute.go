@@ -15,15 +15,12 @@
 package core
 
 import (
-	"bytes"
 	"context"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
@@ -43,14 +40,14 @@ type ExprColumnMap map[expression.Expression]*expression.Column
 // For example: select a+1 from t order by a+1, with a virtual generate column c as (a+1) and
 // an index on c. We need to replace a+1 with c so that we can use the index on c.
 // See also https://dev.mysql.com/doc/refman/8.0/en/generated-column-index-optimizations.html
-func (gc *GcSubstituter) Optimize(ctx context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (gc *GcSubstituter) Optimize(ctx context.Context, lp base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	exprToColumn := make(ExprColumnMap)
 	collectGenerateColumn(lp, exprToColumn)
 	if len(exprToColumn) == 0 {
 		return lp, planChanged, nil
 	}
-	return gc.substitute(ctx, lp, exprToColumn, opt), planChanged, nil
+	return gc.substitute(ctx, lp, exprToColumn), planChanged, nil
 }
 
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
@@ -91,38 +88,23 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 	}
 }
 
-func tryToSubstituteExpr(expr *expression.Expression, lp base.LogicalPlan, candidateExpr expression.Expression, tp types.EvalType, schema *expression.Schema, col *expression.Column, opt *optimizetrace.LogicalOptimizeOp) bool {
+func tryToSubstituteExpr(expr *expression.Expression, lp base.LogicalPlan, candidateExpr expression.Expression, tp types.EvalType, schema *expression.Schema, col *expression.Column) bool {
 	changed := false
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
 	if (*expr).Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
 		schema.ColumnIndex(col) != -1 {
 		*expr = col
-		appendSubstituteColumnStep(lp, candidateExpr, col, opt)
 		changed = true
 	}
 	return changed
 }
 
-func appendSubstituteColumnStep(lp base.LogicalPlan, candidateExpr expression.Expression, col *expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
-	reason := func() string { return "" }
-	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
-	action := func() string {
-		buffer := bytes.NewBufferString("expression:")
-		buffer.WriteString(candidateExpr.StringWithCtx(ectx, errors.RedactLogDisable))
-		buffer.WriteString(" substituted by")
-		buffer.WriteString(" column:")
-		buffer.WriteString(col.StringWithCtx(ectx, errors.RedactLogDisable))
-		return buffer.String()
-	}
-	opt.AppendStepToCurrent(lp.ID(), lp.TP(), reason, action)
-}
-
 // SubstituteExpression is Exported for bench
-func SubstituteExpression(cond expression.Expression, lp base.LogicalPlan, exprToColumn ExprColumnMap, schema *expression.Schema, opt *optimizetrace.LogicalOptimizeOp) bool {
-	return substituteExpression(cond, lp, exprToColumn, schema, opt)
+func SubstituteExpression(cond expression.Expression, lp base.LogicalPlan, exprToColumn ExprColumnMap, schema *expression.Schema) bool {
+	return substituteExpression(cond, lp, exprToColumn, schema)
 }
 
-func substituteExpression(cond expression.Expression, lp base.LogicalPlan, exprToColumn ExprColumnMap, schema *expression.Schema, opt *optimizetrace.LogicalOptimizeOp) bool {
+func substituteExpression(cond expression.Expression, lp base.LogicalPlan, exprToColumn ExprColumnMap, schema *expression.Schema) bool {
 	sf, ok := cond.(*expression.ScalarFunction)
 	if !ok {
 		return false
@@ -145,10 +127,10 @@ func substituteExpression(cond expression.Expression, lp base.LogicalPlan, exprT
 	switch sf.FuncName.L {
 	case ast.EQ, ast.LT, ast.LE, ast.GT, ast.GE:
 		for candidateExpr, column := range exprToColumn {
-			collectChanged(tryToSubstituteExpr(&sf.GetArgs()[1], lp, candidateExpr, sf.GetArgs()[0].GetType(ectx).EvalType(), schema, column, opt))
+			collectChanged(tryToSubstituteExpr(&sf.GetArgs()[1], lp, candidateExpr, sf.GetArgs()[0].GetType(ectx).EvalType(), schema, column))
 		}
 		for candidateExpr, column := range exprToColumn {
-			collectChanged(tryToSubstituteExpr(&sf.GetArgs()[0], lp, candidateExpr, sf.GetArgs()[1].GetType(ectx).EvalType(), schema, column, opt))
+			collectChanged(tryToSubstituteExpr(&sf.GetArgs()[0], lp, candidateExpr, sf.GetArgs()[1].GetType(ectx).EvalType(), schema, column))
 		}
 	case ast.In:
 		expr = &sf.GetArgs()[0]
@@ -164,72 +146,70 @@ func substituteExpression(cond expression.Expression, lp base.LogicalPlan, exprT
 		}
 		if canSubstitute {
 			for candidateExpr, column := range exprToColumn {
-				collectChanged(tryToSubstituteExpr(expr, lp, candidateExpr, tp, schema, column, opt))
+				collectChanged(tryToSubstituteExpr(expr, lp, candidateExpr, tp, schema, column))
 			}
 		}
 	case ast.Like:
 		expr = &sf.GetArgs()[0]
 		tp = sf.GetArgs()[1].GetType(ectx).EvalType()
 		for candidateExpr, column := range exprToColumn {
-			collectChanged(tryToSubstituteExpr(expr, lp, candidateExpr, tp, schema, column, opt))
+			collectChanged(tryToSubstituteExpr(expr, lp, candidateExpr, tp, schema, column))
 		}
 	case ast.LogicOr, ast.LogicAnd:
-		collectChanged(substituteExpression(sf.GetArgs()[0], lp, exprToColumn, schema, opt))
-		collectChanged(substituteExpression(sf.GetArgs()[1], lp, exprToColumn, schema, opt))
+		collectChanged(substituteExpression(sf.GetArgs()[0], lp, exprToColumn, schema))
+		collectChanged(substituteExpression(sf.GetArgs()[1], lp, exprToColumn, schema))
 	case ast.UnaryNot:
-		collectChanged(substituteExpression(sf.GetArgs()[0], lp, exprToColumn, schema, opt))
+		collectChanged(substituteExpression(sf.GetArgs()[0], lp, exprToColumn, schema))
 	}
 	return changed
 }
 
-func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, exprToColumn ExprColumnMap, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, exprToColumn ExprColumnMap) base.LogicalPlan {
 	var tp types.EvalType
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
 	switch x := lp.(type) {
 	case *logicalop.LogicalSelection:
 		for _, cond := range x.Conditions {
-			substituteExpression(cond, lp, exprToColumn, x.Schema(), opt)
+			substituteExpression(cond, lp, exprToColumn, x.Schema())
 		}
 	case *logicalop.LogicalProjection:
 		for i := range x.Exprs {
 			tp = x.Exprs[i].GetType(ectx).EvalType()
 			for candidateExpr, column := range exprToColumn {
-				tryToSubstituteExpr(&x.Exprs[i], lp, candidateExpr, tp, x.Children()[0].Schema(), column, opt)
+				tryToSubstituteExpr(&x.Exprs[i], lp, candidateExpr, tp, x.Children()[0].Schema(), column)
 			}
 		}
 	case *logicalop.LogicalSort:
 		for i := range x.ByItems {
 			tp = x.ByItems[i].Expr.GetType(ectx).EvalType()
 			for candidateExpr, column := range exprToColumn {
-				tryToSubstituteExpr(&x.ByItems[i].Expr, lp, candidateExpr, tp, x.Schema(), column, opt)
+				tryToSubstituteExpr(&x.ByItems[i].Expr, lp, candidateExpr, tp, x.Schema(), column)
 			}
 		}
 	case *logicalop.LogicalAggregation:
 		for _, aggFunc := range x.AggFuncs {
-			for i := 0; i < len(aggFunc.Args); i++ {
+			for i := range aggFunc.Args {
 				tp = aggFunc.Args[i].GetType(ectx).EvalType()
 				for candidateExpr, column := range exprToColumn {
 					if aggFunc.Args[i].Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
 						x.Schema().ColumnIndex(column) != -1 {
 						aggFunc.Args[i] = column
-						appendSubstituteColumnStep(lp, candidateExpr, column, opt)
 					}
 				}
 			}
 		}
-		for i := 0; i < len(x.GroupByItems); i++ {
+		for i := range x.GroupByItems {
 			tp = x.GroupByItems[i].GetType(ectx).EvalType()
 			for candidateExpr, column := range exprToColumn {
 				if x.GroupByItems[i].Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
 					x.Schema().ColumnIndex(column) != -1 {
 					x.GroupByItems[i] = column
-					appendSubstituteColumnStep(lp, candidateExpr, column, opt)
 				}
 			}
 		}
 	}
 	for _, child := range lp.Children() {
-		gc.substitute(ctx, child, exprToColumn, opt)
+		gc.substitute(ctx, child, exprToColumn)
 	}
 	return lp
 }

@@ -109,7 +109,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 				return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, version, source, tableID)
 			}, handleutil.FlagWrapTxn)
 			if err != nil {
-				statslogutil.StatsLogger().Error("record historical stats meta failed",
+				statslogutil.StatsLogger().Warn("record historical stats meta failed",
 					zap.Uint64("version", version),
 					zap.String("source", source),
 					zap.Int64("tableID", tableID),
@@ -197,7 +197,7 @@ func RecordHistoricalStatsToStorage(sctx sessionctx.Context, physicalID int64, j
 	ts := time.Now().Format("2006-01-02 15:04:05.999999")
 	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)" +
 		"ON DUPLICATE KEY UPDATE stats_data=%?, create_time=%?"
-	for i := 0; i < len(blocks); i++ {
+	for i := range blocks {
 		if _, err = handleutil.Exec(sctx, sql, physicalID, blocks[i], i, version, ts, blocks[i], ts); err != nil {
 			return 0, errors.Trace(err)
 		}

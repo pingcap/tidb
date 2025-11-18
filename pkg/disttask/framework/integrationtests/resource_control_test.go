@@ -72,8 +72,8 @@ func (c *resourceCtrlCaseContext) init(subtaskCntMap map[int64]map[proto.Step]in
 		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, nextStep proto.Step) (metas [][]byte, err error) {
 			cnt := subtaskCntMap[task.ID][nextStep]
 			res := make([][]byte, cnt)
-			for i := 0; i < cnt; i++ {
-				res[i] = []byte(fmt.Sprintf("subtask-%d", i))
+			for i := range cnt {
+				res[i] = fmt.Appendf(nil, "subtask-%d", i)
 			}
 			return res, nil
 		},
@@ -94,9 +94,10 @@ func (c *resourceCtrlCaseContext) init(subtaskCntMap map[int64]map[proto.Step]in
 
 // tasks are created in order, so they have increasing IDs starting from 1.
 func (c *resourceCtrlCaseContext) runTaskAsync(prefix string, concurrencies []int) {
+	scope := handle.GetTargetScope()
 	for i, concurrency := range concurrencies {
 		taskKey := fmt.Sprintf("%s-%d", prefix, i)
-		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, concurrency, "", 0, nil)
+		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, "", concurrency, scope, 0, nil)
 		require.NoError(c.T, err)
 		c.taskWG.RunWithLog(func() {
 			task := testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
@@ -249,7 +250,9 @@ func TestResourceControl(t *testing.T) {
 		c.continueAllSubtasks()
 		// wait all subtasks done, else we don't know whether they are done or cancelled,
 		// so hard to do wait
-		c.waitTotalSubtaskCount(0)
+		for taskID := int64(1); taskID <= 4; taskID++ {
+			c.waitNewSubtasksNotIn(taskID, allSubtasks[taskID], 1)
+		}
 		// now there are 4 subtasks left, 1 node should be enough to run them
 		c.ScaleIn(2)
 		c.waitTotalSubtaskCount(4)

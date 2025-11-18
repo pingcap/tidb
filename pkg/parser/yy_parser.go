@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"unicode"
 
@@ -126,11 +127,23 @@ func New() *Parser {
 	p := &Parser{
 		cache: make([]yySymType, 200),
 	}
-	p.EnableWindowFunc(true)
-	p.SetStrictDoubleTypeCheck(true)
-	mode, _ := mysql.GetSQLMode(mysql.DefaultSQLMode)
-	p.SetSQLMode(mode)
+	p.reset()
 	return p
+}
+
+// Reset resets the parser.
+func (parser *Parser) Reset() {
+	clear(parser.cache)
+	parser.reset()
+}
+
+func (parser *Parser) reset() {
+	parser.explicitCharset = false
+	parser.strictDoubleFieldType = false
+	parser.EnableWindowFunc(true)
+	parser.SetStrictDoubleTypeCheck(true)
+	mode, _ := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	parser.SetSQLMode(mode)
 }
 
 // SetStrictDoubleTypeCheck enables/disables strict double type check.
@@ -162,7 +175,7 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 
 	warns, errs := l.Errors()
 	if len(warns) > 0 {
-		warns = append([]error(nil), warns...)
+		warns = slices.Clone(warns)
 	} else {
 		warns = nil
 	}

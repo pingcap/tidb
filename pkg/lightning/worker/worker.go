@@ -37,7 +37,7 @@ type Worker struct {
 // NewPool creates a new worker pool.
 func NewPool(ctx context.Context, limit int, name string) *Pool {
 	workers := make(chan *Worker, limit)
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		workers <- &Worker{ID: int64(i + 1)}
 	}
 

@@ -19,10 +19,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -97,7 +98,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 						}
 
 						otherConditionSuccessNum := rand.Int31n(singleKeyNum) + 1
-						for j := 0; j < int(singleKeyNum); j++ {
+						for j := range int(singleKeyNum) {
 							rightCol0Datums = append(rightCol0Datums, i)
 							if j < int(otherConditionSuccessNum) {
 								rightCol1Datums = append(rightCol1Datums, int64(0))
@@ -111,7 +112,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 							expectResultChunk.AppendInt64(1, 1)
 						}
 
-						for j := 0; j < int(singleKeyNum); j++ {
+						for range int(singleKeyNum) {
 							rightCol0Datums = append(rightCol0Datums, i)
 							rightCol1Datums = append(rightCol1Datums, int64(1))
 						}
@@ -131,7 +132,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 					canOtherConditionSuccess := rand.Int31n(10) < 5
 					if canOtherConditionSuccess {
 						otherConditionSuccessNum := rand.Int31n(singleKeyNum) + 1
-						for j := 0; j < int(singleKeyNum); j++ {
+						for j := range int(singleKeyNum) {
 							leftCol0Datums = append(leftCol0Datums, i)
 							if j < int(otherConditionSuccessNum) {
 								leftCol1Datums = append(leftCol1Datums, int64(1))
@@ -148,7 +149,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 							}
 						}
 					} else {
-						for j := 0; j < int(singleKeyNum); j++ {
+						for range int(singleKeyNum) {
 							leftCol0Datums = append(leftCol0Datums, i)
 							leftCol1Datums = append(leftCol1Datums, int64(0))
 							if isAntiSemiJoin {
@@ -165,26 +166,26 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 				leftSingleKeyNum := rand.Int31n(2*maxChunkSizeInTest) + 1
 				rightSingleKeyNum := rand.Int31n(2*maxChunkSizeInTest) + 1
 
-				for j := 0; j < int(leftSingleKeyNum); j++ {
+				for range int(leftSingleKeyNum) {
 					leftCol0Datums = append(leftCol0Datums, i)
 					leftCol1Datums = append(leftCol1Datums, int64(0))
 				}
 
 				if i%2 == 0 {
-					for j := 0; j < int(rightSingleKeyNum); j++ {
+					for range int(rightSingleKeyNum) {
 						rightCol0Datums = append(rightCol0Datums, i)
 						rightCol1Datums = append(rightCol1Datums, int64(0))
 					}
 
 					if !isAntiSemiJoin {
-						for j := 0; j < int(leftSingleKeyNum); j++ {
+						for range int(leftSingleKeyNum) {
 							expectResultChunk.AppendInt64(0, i)
 							expectResultChunk.AppendInt64(1, 0)
 						}
 					}
 				} else {
 					if isAntiSemiJoin {
-						for j := 0; j < int(leftSingleKeyNum); j++ {
+						for range int(leftSingleKeyNum) {
 							expectResultChunk.AppendInt64(0, i)
 							expectResultChunk.AppendInt64(1, 0)
 						}
@@ -259,7 +260,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 		expectResult = sortRows([]*chunk.Chunk{expectResultChunk}, semiJoinRetTypes)
 	} else {
 		resultRowNum := expectResultChunk.NumRows()
-		for i := 0; i < resultRowNum; i++ {
+		for i := range resultRowNum {
 			expectResult = append(expectResult, expectResultChunk.GetRow(i))
 		}
 	}
@@ -278,8 +279,6 @@ func testSemiOrAntiSemiJoin(t *testing.T, rightAsBuildSide bool, hasOtherConditi
 	ctx.GetSessionVars().InitChunkSize = maxChunkSizeInTest
 	ctx.GetSessionVars().MaxChunkSize = maxChunkSizeInTest
 	leftDataSource, rightDataSource, expectedResult := buildSemiDataSourceAndExpectResult(ctx, semiJoinleftCols, semiJoinrightCols, rightAsBuildSide, hasOtherCondition, hasDuplicateKey, isAntiSemiJoin)
-
-	maxRowTableSegmentSize = 100
 
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 
@@ -316,11 +315,11 @@ func testSemiOrAntiSemiJoin(t *testing.T, rightAsBuildSide bool, hasOtherConditi
 		otherCondition = append(otherCondition, sf)
 	}
 
-	var joinType logicalop.JoinType
+	var joinType base.JoinType
 	if isAntiSemiJoin {
-		joinType = logicalop.AntiSemiJoin
+		joinType = base.AntiSemiJoin
 	} else {
-		joinType = logicalop.SemiJoin
+		joinType = base.SemiJoin
 	}
 
 	info := &hashJoinInfo{
@@ -362,6 +361,8 @@ func TestSemiJoinDuplicateKeys(t *testing.T) {
 }
 
 func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	var leftCols = []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
@@ -397,17 +398,16 @@ func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
 
-	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	joinTypes := []logicalop.JoinType{logicalop.SemiJoin}
+	joinTypes := []base.JoinType{base.SemiJoin}
 	params := []spillTestParam{
 		// basic case
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1800000, 1500000, 3000000, 100000, 10000}},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1800000, 1500000, 3500000, 100000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1500000, 1700000, 2700000, 100000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1500000, 1700000, 3300000, 100000, 10000}, testFuncName},
 		// with other condition
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, otherCondition, []int{1}, []int{1}, []int64{1800000, 1500000, 3500000, 100000, 10000}},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, otherCondition, []int{1}, []int{1}, []int64{1800000, 1500000, 3500000, 100000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, otherCondition, []int{1}, []int{1}, []int64{1500000, 1700000, 3300000, 100000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, otherCondition, []int{1}, []int{1}, []int64{1500000, 1700000, 3300000, 100000, 10000}, testFuncName},
 	}
 
 	for _, joinType := range joinTypes {
@@ -415,6 +415,7 @@ func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
 			testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
 		}
 	}
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestSemiJoinProbeBasic(t *testing.T) {

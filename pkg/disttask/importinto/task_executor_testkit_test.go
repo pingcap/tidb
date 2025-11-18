@@ -20,9 +20,12 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
@@ -57,10 +60,13 @@ func TestPostProcessStepExecutor(t *testing.T) {
 
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
+	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	taskMeta := &importinto.TaskMeta{
 		Plan: importer.Plan{
+			DBID:             db.ID,
 			Checksum:         config.OpLevelRequired,
 			TableInfo:        table.Meta(),
 			DesiredTableInfo: table.Meta(),
@@ -70,7 +76,13 @@ func TestPostProcessStepExecutor(t *testing.T) {
 
 	bytes, err := json.Marshal(stepMeta)
 	require.NoError(t, err)
-	executor := importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
+	var taskKS string
+	if kerneltype.IsNextGen() {
+		taskKS = keyspace.System
+	}
+	taskMgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	executor := importinto.NewPostProcessStepExecutor(1, store, taskMgr, taskMeta, taskKS, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 
@@ -79,17 +91,17 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	stepMeta.Checksum[-1] = tmp
 	bytes, err = json.Marshal(stepMeta)
 	require.NoError(t, err)
-	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMgr, taskMeta, taskKS, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.ErrorContains(t, err, "checksum mismatched remote vs local")
 
 	taskMeta.Plan.Checksum = config.OpLevelOptional
-	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMgr, taskMeta, taskKS, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 
 	taskMeta.Plan.Checksum = config.OpLevelOff
-	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMgr, taskMeta, taskKS, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 }

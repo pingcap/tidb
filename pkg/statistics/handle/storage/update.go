@@ -261,7 +261,7 @@ func removeExtendedStatsItem(statsCache types.StatsCache,
 	if !ok || tbl.ExtendedStats == nil || len(tbl.ExtendedStats.Stats) == 0 {
 		return
 	}
-	newTbl := tbl.Copy()
+	newTbl := tbl.CopyAs(statistics.ExtendedStatsWritable)
 	delete(newTbl.ExtendedStats.Stats, statsName)
 	statsCache.UpdateStatsCache(types.CacheUpdate{
 		Updated: []*statistics.Table{newTbl},
@@ -292,8 +292,8 @@ func ChangeGlobalStatsID(
 	return nil
 }
 
-// UpdateStatsMetaVersion updates the version to the newest TS for a table.
-func UpdateStatsMetaVersion(
+// UpdateStatsMetaVerAndLastHistUpdateVer updates the version to the newest TS for a table.
+func UpdateStatsMetaVerAndLastHistUpdateVer(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalID int64,
@@ -305,8 +305,8 @@ func UpdateStatsMetaVersion(
 	if _, err = statsutil.ExecWithCtx(
 		ctx,
 		sctx,
-		"update mysql.stats_meta set version=%? where table_id =%?",
-		startTS, physicalID,
+		"update mysql.stats_meta set version=%?, last_stats_histograms_version=%? where table_id =%?",
+		startTS, startTS, physicalID,
 	); err != nil {
 		return 0, errors.Trace(err)
 	}

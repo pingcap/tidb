@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -66,13 +65,13 @@ func PeekWaitingTTLTask(hbExpire time.Time) (string, []any) {
 }
 
 // InsertIntoTTLTask returns an SQL statement to insert a ttl task into mysql.tidb_ttl_task
-func InsertIntoTTLTask(sctx sessionctx.Context, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
+func InsertIntoTTLTask(loc *time.Location, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
 	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []any, error) {
-	rangeStart, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), []byte{}, scanRangeStart...)
+	rangeStart, err := codec.EncodeKey(loc, []byte{}, scanRangeStart...)
 	if err != nil {
 		return "", nil, err
 	}
-	rangeEnd, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), []byte{}, scanRangeEnd...)
+	rangeEnd, err := codec.EncodeKey(loc, []byte{}, scanRangeEnd...)
 	if err != nil {
 		return "", nil, err
 	}
@@ -122,9 +121,8 @@ type TTLTaskState struct {
 }
 
 // RowToTTLTask converts a row into TTL task
-func RowToTTLTask(sctx sessionctx.Context, row chunk.Row) (*TTLTask, error) {
+func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 	var err error
-	timeZone := sctx.GetSessionVars().Location()
 
 	task := &TTLTask{
 		JobID:   row.GetString(0),

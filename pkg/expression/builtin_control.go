@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -134,21 +136,11 @@ func setDecimalFromArgs(evalType types.EvalType, resultFieldType *types.FieldTyp
 
 // NonBinaryStr means the arg is a string but not binary string
 func hasNonBinaryStr(args []*types.FieldType) bool {
-	for _, arg := range args {
-		if types.IsNonBinaryStr(arg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(args, types.IsNonBinaryStr)
 }
 
 func hasBinaryStr(args []*types.FieldType) bool {
-	for _, arg := range args {
-		if types.IsBinaryStr(arg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(args, types.IsBinaryStr)
 }
 
 func addCollateAndCharsetAndFlagFromArgs(ctx BuildContext, funcName string, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) error {

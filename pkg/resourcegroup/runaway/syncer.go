@@ -15,6 +15,7 @@
 package runaway
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -24,10 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-const (
-	// watchSyncInterval is the interval to sync the watch record.
-	watchSyncInterval = time.Second
-)
+// watchSyncInterval is the interval to sync the watch record.
+const watchSyncInterval = time.Second
 
 // Syncer is used to sync the runaway records.
 type syncer struct {
@@ -45,14 +44,36 @@ func newSyncer(sysSessionPool util.SessionPool) *syncer {
 			watchTableName,
 			"start_time",
 			NullTime},
-		deletionWatchReader: &systemTableReader{watchDoneTableName,
+		deletionWatchReader: &systemTableReader{
+			watchDoneTableName,
 			"done_time",
 			NullTime},
 	}
 }
 
+func (s *syncer) checkWatchTableExist() (bool, error) {
+	return s.checkTableExist("tidb_runaway_watch")
+}
+
+func (s *syncer) checkWatchDoneTableExist() (bool, error) {
+	return s.checkTableExist("tidb_runaway_watch_done")
+}
+
+func (s *syncer) checkTableExist(tableName string) (bool, error) {
+	sql := fmt.Sprintf(`SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'mysql' AND TABLE_NAME = '%s'`, tableName)
+	rows, err := ExecRCRestrictedSQL(s.sysSessionPool, sql, nil)
+	if err != nil || len(rows) == 0 {
+		return false, err
+	}
+	return rows[0].GetInt64(0) > 0, nil
+}
+
 func (s *syncer) getWatchRecordByID(id int64) ([]*QuarantineRecord, error) {
 	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByIDStmt(id), false)
+}
+
+func (s *syncer) getWatchRecordByGroup(groupName string) ([]*QuarantineRecord, error) {
+	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByGroupStmt(groupName), false)
 }
 
 func (s *syncer) getNewWatchRecords() ([]*QuarantineRecord, error) {
@@ -170,6 +191,18 @@ func (r *systemTableReader) genSelectByIDStmt(id int64) func() (string, []any) {
 		builder.WriteString(r.TableName)
 		builder.WriteString(" where id = %?")
 		params = append(params, id)
+		return builder.String(), params
+	}
+}
+
+func (r *systemTableReader) genSelectByGroupStmt(groupName string) func() (string, []any) {
+	return func() (string, []any) {
+		var builder strings.Builder
+		params := make([]any, 0, 1)
+		builder.WriteString("select * from ")
+		builder.WriteString(r.TableName)
+		builder.WriteString(" where resource_group_name = %?")
+		params = append(params, groupName)
 		return builder.String(), params
 	}
 }

@@ -259,7 +259,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx AggFuncUpdateContext, row
 			if isNull {
 				break
 			}
-			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].Key(v))
+			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].ImmutableKey(v))
 			p.valsBuf.WriteString(v)
 		}
 		if isNull {
@@ -326,7 +326,7 @@ func (h topNRows) Len() int {
 
 func (h topNRows) Less(i, j int) bool {
 	n := len(h.rows[i].byItems)
-	for k := 0; k < n; k++ {
+	for k := range n {
 		ret, err := h.rows[i].byItems[k].Compare(h.sctx.TypeCtx(), h.rows[j].byItems[k], h.collators[k])
 		if err != nil {
 			// TODO: check whether it's appropriate to just ignore the error here.
@@ -592,7 +592,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx AggFuncUpdateContext
 			if isNull {
 				break
 			}
-			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].Key(v))
+			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].ImmutableKey(v))
 			buffer.WriteString(v)
 		}
 		if isNull {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -23,12 +24,16 @@ func main() {
 	}
 	DefineCommonFlags(rootCmd)
 	SetDefaultContext(ctx)
+
+	config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
+
 	rootCmd.AddCommand(
 		NewDebugCommand(),
 		NewBackupCommand(),
 		NewRestoreCommand(),
 		NewStreamCommand(),
 		newOperatorCommand(),
+		NewAbortCommand(),
 	)
 	// Outputs cmd.Print to stdout.
 	rootCmd.SetOut(os.Stdout)

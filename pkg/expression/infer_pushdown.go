@@ -16,6 +16,8 @@ package expression
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -36,11 +38,26 @@ import (
 )
 
 // DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
-var DefaultExprPushDownBlacklist *atomic.Value
+var DefaultExprPushDownBlacklist atomic.Pointer[map[string]uint32]
 
 // ExprPushDownBlackListReloadTimeStamp is used to record the last time when the push-down black list is reloaded.
 // This is for plan cache, when the push-down black list is updated, we invalid all cached plans to avoid error.
 var ExprPushDownBlackListReloadTimeStamp *atomic.Int64
+
+// scalarFuncSigLowerNameMap is a map from the upper case function name in tipb.ScalarFuncSig_name to the lower case function name.
+var scalarFuncSigLowerNameMap map[string]string
+
+func init() {
+	defaultExprPushDownBlacklistMap := make(map[string]uint32)
+	DefaultExprPushDownBlacklist.Store(&defaultExprPushDownBlacklistMap)
+	ExprPushDownBlackListReloadTimeStamp = new(atomic.Int64)
+	nameSlices := slices.Collect(maps.Values(tipb.ScalarFuncSig_name))
+	scalarFuncSigLowerNameMap = make(map[string]string, len(nameSlices))
+	for _, name := range nameSlices {
+		// The name in tipb.ScalarFuncSig_name is upper case, we need to convert it to lower case.
+		scalarFuncSigLowerNameMap[name] = strings.ToLower(name)
+	}
+}
 
 func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType) bool {
 	// Use the failpoint to control whether to push down an expression in the integration test.
@@ -75,9 +92,18 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 	}
 
 	if ret {
-		funcFullName := fmt.Sprintf("%s.%s", sf.FuncName.L, strings.ToLower(sf.Function.PbCode().String()))
+		defaultExprPushDownBlacklistMap := DefaultExprPushDownBlacklist.Load()
+		if len(*defaultExprPushDownBlacklistMap) == 0 {
+			return true
+		}
+		if result := IsPushDownEnabled(sf.FuncName.L, storeType); !result {
+			return result
+		}
+		// scalarFuncSigLowerNameMap is to string.ToLower the function name in tipb.ScalarFuncSig_name.
+		// ref https://github.com/pingcap/tidb/issues/61375
+		funcFullName := fmt.Sprintf("%s.%s", sf.FuncName.L, scalarFuncSigLowerNameMap[sf.Function.PbCode().String()])
 		// Aside from checking function name, also check the pb name in case only the specific push down is disabled.
-		ret = IsPushDownEnabled(sf.FuncName.L, storeType) && IsPushDownEnabled(funcFullName, storeType)
+		ret = IsPushDownEnabled(funcFullName, storeType)
 	}
 	return ret
 }
@@ -424,6 +450,8 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		return true
 	case ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText:
 		return true
+	case ast.FTSMatchWord:
+		return true
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}
@@ -441,15 +469,11 @@ func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {
 
 // IsPushDownEnabled returns true if the input expr is not in the expr_pushdown_blacklist
 func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
-	value, exists := DefaultExprPushDownBlacklist.Load().(map[string]uint32)[name]
+	blacklistmap := *DefaultExprPushDownBlacklist.Load()
+	value, exists := blacklistmap[name]
 	if exists {
 		mask := storeTypeMask(storeType)
 		return !(value&mask == mask)
-	}
-
-	if storeType != kv.TiFlash && name == ast.AggFuncApproxCountDistinct {
-		// Can not push down approx_count_distinct to other store except tiflash by now.
-		return false
 	}
 
 	return true
@@ -559,10 +583,4 @@ func storeTypeMask(storeType kv.StoreType) uint32 {
 		return 1<<kv.TiKV | 1<<kv.TiFlash | 1<<kv.TiDB
 	}
 	return 1 << storeType
-}
-
-func init() {
-	DefaultExprPushDownBlacklist = new(atomic.Value)
-	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
-	ExprPushDownBlackListReloadTimeStamp = new(atomic.Int64)
 }

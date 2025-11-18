@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -31,6 +32,9 @@ import (
 )
 
 func TestPointGetPlanCache(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Please run the TestPointGetPlanCacheForNextGen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect hit counter in this ut
@@ -148,6 +152,127 @@ func TestPointGetPlanCache(t *testing.T) {
 	require.Equal(t, float64(2), hit)
 }
 
+func TestPointGetPlanCacheForNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("Please run the TestPointGetPlanCache")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect hit counter in this ut
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, key idx_bc(b,c))")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3)")
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
+		"Point_Get 1.00 root table:t handle:1",
+	))
+	tk.MustQuery("explain format = 'brief' select * from t where 1 = a").Check(testkit.Rows(
+		"Point_Get 1.00 root table:t handle:1",
+	))
+	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
+		"Update N/A root  N/A",
+		"└─Point_Get 1.00 root table:t handle:1, lock",
+	))
+	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
+		"Delete N/A root  N/A",
+		"└─Point_Get 1.00 root table:t handle:1, lock",
+	))
+	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
+		"TableDual 0.00 root  rows:0",
+	))
+	tk.MustExec(`prepare stmt0 from "select a from t where a = ?"`)
+	tk.MustExec("set @p0 = -1")
+	tk.MustQuery("execute stmt0 using @p0").Check(testkit.Rows())
+	metrics.ResettablePlanCacheCounterFortTest = true
+	metrics.PlanCacheCounter.Reset()
+	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
+	pb := &dto.Metric{}
+	var hit float64
+	// PointGetPlan for Select.
+	tk.MustExec(`prepare stmt1 from "select * from t where a = ?"`)
+	tk.MustExec(`prepare stmt2 from "select * from t where b = ? and c = ?"`)
+	tk.MustExec("set @param=1")
+	tk.MustQuery("execute stmt1 using @param").Check(testkit.Rows("1 1 1"))
+	err := counter.Write(pb)
+	require.NoError(t, err)
+	hit = pb.GetCounter().GetValue()
+	require.Equal(t, float64(0), hit)
+	tk.MustExec("set @param=2")
+	tk.MustQuery("execute stmt1 using @param").Check(testkit.Rows("2 2 2"))
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	hit = pb.GetCounter().GetValue()
+	require.Equal(t, float64(1), hit)
+	tk.MustQuery("execute stmt2 using @param, @param").Check(testkit.Rows("2 2 2"))
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	hit = pb.GetCounter().GetValue()
+	require.Equal(t, float64(1), hit)
+	tk.MustExec("set @param=1")
+	tk.MustQuery("execute stmt2 using @param, @param").Check(testkit.Rows("1 1 1"))
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	hit = pb.GetCounter().GetValue()
+	require.Equal(t, float64(2), hit)
+	// PointGetPlan for Update.
+	tk.MustExec(`prepare stmt3 from "update t set b=b+1, c=c+1 where a = ?"`)
+	tk.MustExec(`prepare stmt4 from "update t set a=a+1 where b = ? and c = ?"`)
+	tk.MustExec("set @param=3")
+	tk.MustExec("execute stmt3 using @param")
+	tk.MustQuery("select * from t").Check(testkit.Rows(
+		"1 1 1",
+		"2 2 2",
+		"3 4 4",
+	))
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	hit = pb.GetCounter().GetValue()
+	require.Equal(t, float64(2), hit)
+	tk.MustExec("set @param=4")
+	tk.MustExec("execute stmt4 using @param, @param")
+	tk.MustQuery("select * from t").Check(testkit.Rows(
+		"1 1 1",
+		"2 2 2",
+		"4 4 4",
+	))
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	hit = pb.GetCounter().GetValue()
+	require.Equal(t, float64(2), hit)
+	// PointGetPlan for Delete.
+	tk.MustExec(`prepare stmt5 from "delete from t where a = ?"`)
+	tk.MustExec(`prepare stmt6 from "delete from t where b = ? and c = ?"`)
+	tk.MustExec("execute stmt5 using @param")
+	tk.MustQuery("select * from t").Check(testkit.Rows(
+		"1 1 1",
+		"2 2 2",
+	))
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	hit = pb.GetCounter().GetValue()
+	require.Equal(t, float64(2), hit)
+	tk.MustExec("set @param=2")
+	tk.MustExec("execute stmt6 using @param, @param")
+	tk.MustQuery("select * from t").Check(testkit.Rows(
+		"1 1 1",
+	))
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	hit = pb.GetCounter().GetValue()
+	require.Equal(t, float64(2), hit)
+	tk.MustExec("insert into t (a, b, c) values (18446744073709551615, 4, 4)")
+	tk.MustExec("set @p1=-1")
+	tk.MustExec("set @p2=1")
+	tk.MustExec(`prepare stmt7 from "select a from t where a = ?"`)
+	tk.MustQuery("execute stmt7 using @p1").Check(testkit.Rows())
+	tk.MustQuery("execute stmt7 using @p2").Check(testkit.Rows("1"))
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	hit = pb.GetCounter().GetValue()
+	require.Equal(t, float64(2), hit)
+}
+
 // Test that the plan id will be reset before optimization every time.
 func TestPointGetId(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -157,7 +282,7 @@ func TestPointGetId(t *testing.T) {
 	tk.MustExec("create table t (c1 int primary key, c2 int)")
 	defer tk.MustExec("drop table if exists t")
 	pointGetQuery := "select c2 from t where c1 = 1"
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		ctx := tk.Session().(sessionctx.Context)
 		stmts, err := session.Parse(ctx, pointGetQuery)
 		require.NoError(t, err)
@@ -228,6 +353,9 @@ func TestIssue18042(t *testing.T) {
 }
 
 func TestIssue52592(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Please run the TestIssue52592ForNextGen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set @@tidb_opt_fix_control = "52592:OFF"`) // affect hit counter in this ut
@@ -270,6 +398,60 @@ func TestIssue52592(t *testing.T) {
 		"Delete N/A root  N/A",
 		"└─TableReader 1.00 root  data:TableRangeScan",
 		"  └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
+		"TableDual 0.00 root  rows:0",
+	))
+}
+
+func TestIssue52592ForNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("Please run the TestIssue52592")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set @@tidb_opt_fix_control = "52592:OFF"`) // affect hit counter in this ut
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, key idx_bc(b,c))")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3)")
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
+		"Point_Get 1.00 root table:t handle:1",
+	))
+	tk.MustQuery("explain format = 'brief' select * from t where 1 = a").Check(testkit.Rows(
+		"Point_Get 1.00 root table:t handle:1",
+	))
+	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
+		"Update N/A root  N/A",
+		"└─Point_Get 1.00 root table:t handle:1, lock",
+	))
+	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
+		"Delete N/A root  N/A",
+		"└─Point_Get 1.00 root table:t handle:1, lock",
+	))
+	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
+		"TableDual 0.00 root  rows:0",
+	))
+	tk.MustExec(`set @@tidb_opt_fix_control = "52592:ON"`)
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableRangeScan",
+		"└─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("explain format = 'brief' select * from t where 1 = a").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableRangeScan",
+		"└─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
+		"Update N/A root  N/A",
+		`└─SelectLock 1.00 root  for update 0`,
+		`  └─TableReader 1.00 root  data:TableRangeScan`,
+		`    └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`,
+	))
+	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
+		"Delete N/A root  N/A",
+		`└─SelectLock 1.00 root  for update 0`,
+		`  └─TableReader 1.00 root  data:TableRangeScan`,
+		`    └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`,
 	))
 	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
 		"TableDual 0.00 root  rows:0",

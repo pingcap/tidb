@@ -16,7 +16,6 @@ package chunk
 
 import (
 	"encoding/binary"
-	"reflect"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -79,11 +78,7 @@ func i64SliceToBytes(i64s []int64) (b []byte) {
 	if len(i64s) == 0 {
 		return nil
 	}
-	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	hdr.Len = len(i64s) * 8
-	hdr.Cap = hdr.Len
-	hdr.Data = uintptr(unsafe.Pointer(&i64s[0]))
-	return b
+	return unsafe.Slice((*byte)(unsafe.Pointer(&i64s[0])), len(i64s)*8)
 }
 
 // Decode decodes a Chunk from a byte slice, return the remained unused bytes.
@@ -161,11 +156,7 @@ func bytesToI64Slice(b []byte) (i64s []int64) {
 	if len(b) == 0 {
 		return nil
 	}
-	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&i64s))
-	hdr.Len = len(b) / 8
-	hdr.Cap = hdr.Len
-	hdr.Data = uintptr(unsafe.Pointer(&b[0]))
-	return i64s
+	return unsafe.Slice((*int64)(unsafe.Pointer(&b[0])), len(b)/8)
 }
 
 // VarElemLen indicates this Column is a variable length Column.
@@ -258,10 +249,7 @@ func NewDecoder(chk *Chunk, colTypes []*types.FieldType) *Decoder {
 func (c *Decoder) Decode(chk *Chunk) {
 	requiredRows := chk.RequiredRows() - chk.NumRows()
 	// Set the requiredRows to a multiple of 8.
-	requiredRows = (requiredRows + 7) >> 3 << 3
-	if requiredRows > c.remainedRows {
-		requiredRows = c.remainedRows
-	}
+	requiredRows = min((requiredRows+7)>>3<<3, c.remainedRows)
 	for i := range chk.NumCols() {
 		c.decodeColumn(chk, i, requiredRows)
 	}
@@ -296,7 +284,7 @@ func (c *Decoder) ReuseIntermChk(chk *Chunk) {
 		if elemLen == VarElemLen {
 			// For var-length types, we need to adjust the offsets before reuse.
 			if deltaOffset := col.offsets[0]; deltaOffset != 0 {
-				for j := 0; j < len(col.offsets); j++ {
+				for j := range col.offsets {
 					col.offsets[j] -= deltaOffset
 				}
 			}

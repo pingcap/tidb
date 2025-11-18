@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -57,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	tmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/promutil"
@@ -65,6 +67,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/mock/gomock"
 )
 
@@ -231,10 +234,7 @@ func (s *tableRestoreSuite) SetupTest() {
 }
 
 func (s *tableRestoreSuite) TestPopulateChunks() {
-	_ = failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp")
-	}()
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
 
 	cp := &checkpoints.TableCheckpoint{
 		Engines: make(map[int32]*checkpoints.EngineCheckpoint),
@@ -367,7 +367,7 @@ func (w errorLocalWriter) IsSynced() bool {
 	return true
 }
 
-func (w errorLocalWriter) Close(context.Context) (backend.ChunkFlushStatus, error) {
+func (w errorLocalWriter) Close(context.Context) (common.ChunkFlushStatus, error) {
 	return nil, nil
 }
 
@@ -1249,6 +1249,10 @@ func (m *mockPDClient) GetLeaderAddr() string {
 	return m.leaderAddr
 }
 
+func (m *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return m
+}
+
 func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	type testCase struct {
 		stores         pdhttp.StoresInfo
@@ -1259,7 +1263,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 
 	makeRegions := func(regionCnt int, storeID int64) []pdhttp.RegionInfo {
 		var regions []pdhttp.RegionInfo
-		for i := 0; i < regionCnt; i++ {
+		for range regionCnt {
 			regions = append(regions, pdhttp.RegionInfo{Peers: []pdhttp.RegionPeer{{StoreID: storeID}}})
 		}
 		return regions
@@ -1271,7 +1275,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{RegionCount: 200}},
 			}},
 			emptyRegions: pdhttp.RegionsInfo{
-				Regions: append([]pdhttp.RegionInfo(nil), makeRegions(100, 1)...),
+				Regions: slices.Clone(makeRegions(100, 1)),
 			},
 			expectMsgs:     []string{".*Cluster doesn't have too many empty regions.*", ".*Cluster region distribution is balanced.*"},
 			expectErrorCnt: 0,
@@ -1283,10 +1287,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				{Store: pdhttp.MetaStore{ID: 3}, Status: pdhttp.StoreStatus{RegionCount: 2500}},
 			}},
 			emptyRegions: pdhttp.RegionsInfo{
-				Regions: append(append(append([]pdhttp.RegionInfo(nil),
-					makeRegions(600, 1)...),
-					makeRegions(300, 2)...),
-					makeRegions(1200, 3)...),
+				Regions: slices.Concat(makeRegions(600, 1), makeRegions(300, 2), makeRegions(1200, 3)),
 			},
 			expectMsgs: []string{
 				".*TiKV stores \\(3\\) contains more than 1000 empty regions respectively.*",
@@ -1544,7 +1545,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// we expect the check failed.
 		{
 			nil,
-			"TiDB schema `db1`.`table1` has 2 columns,and data file has 1 columns, but column colb are missing(.*)",
+			"TiDB schema `db1`.`table1` has 2 columns, and data file has 1 columns, but column colb is missing(.*)",
 			1,
 			false,
 			map[string]*checkpoints.TidbDBInfo{
@@ -2396,40 +2397,4 @@ func TestGetDDLStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, model.JobStateRunning, status.state)
 	require.Equal(t, int64(123)+int64(456), status.rowCount)
-}
-
-func TestGetChunkCompressedSizeForParquet(t *testing.T) {
-	dir := "./testdata/"
-	fileName := "000000_0.parquet"
-	store, err := storage.NewLocalStorage(dir)
-	require.NoError(t, err)
-
-	dataFiles := make([]mydump.FileInfo, 0)
-	dataFiles = append(dataFiles, mydump.FileInfo{
-		TableName: filter.Table{Schema: "db", Name: "table"},
-		FileMeta: mydump.SourceFileMeta{
-			Path:        fileName,
-			Type:        mydump.SourceTypeParquet,
-			Compression: mydump.CompressionNone,
-			SortKey:     "99",
-			FileSize:    192,
-		},
-	})
-
-	chunk := checkpoints.ChunkCheckpoint{
-		Key:      checkpoints.ChunkCheckpointKey{Path: dataFiles[0].FileMeta.Path, Offset: 0},
-		FileMeta: dataFiles[0].FileMeta,
-		Chunk: mydump.Chunk{
-			Offset:       0,
-			EndOffset:    192,
-			PrevRowIDMax: 0,
-			RowIDMax:     100,
-		},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	compressedSize, err := getChunkCompressedSizeForParquet(ctx, &chunk, store)
-	require.NoError(t, err)
-	require.Equal(t, compressedSize, int64(192))
 }

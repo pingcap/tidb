@@ -102,11 +102,11 @@ func TestKVMemBufBatchAllocAndRecycle(t *testing.T) {
 	}
 	testKVMemBuf := &MemBuf{}
 	bBufs := []*BytesBuf{}
-	for i := 0; i < maxAvailableBufSize; i++ {
+	for range maxAvailableBufSize {
 		testKVMemBuf.AllocateBuf(1 * units.MiB)
 		bBufs = append(bBufs, testKVMemBuf.buf)
 	}
-	for i := 0; i < maxAvailableBufSize; i++ {
+	for range maxAvailableBufSize {
 		testKVMemBuf.AllocateBuf(2 * units.MiB)
 		bBufs = append(bBufs, testKVMemBuf.buf)
 	}
@@ -118,7 +118,7 @@ func TestKVMemBufBatchAllocAndRecycle(t *testing.T) {
 		require.Equal(t, 4*units.MiB, bb.cap)
 	}
 	bBufs = bBufs[:0]
-	for i := 0; i < maxAvailableBufSize; i++ {
+	for i := range maxAvailableBufSize {
 		testKVMemBuf.AllocateBuf(1 * units.MiB)
 		bb := testKVMemBuf.buf
 		require.Equal(t, 4*units.MiB, bb.cap)

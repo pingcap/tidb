@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -100,7 +101,7 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	// initialize column value factories.
 	e.columnValueFactoryMap = make(map[string]slowQueryColumnValueFactory, len(e.outputCols))
 	for idx, col := range e.outputCols {
-		if col.Name.O == util.ClusterTableInstanceColumnName {
+		if col.Name.O == metadef.ClusterTableInstanceColumnName {
 			e.instanceFactory, err = getInstanceColumnValueFactory(sctx, idx)
 			if err != nil {
 				return err
@@ -315,7 +316,7 @@ func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Read
 	var line string
 	log := make([]string, 0, num)
 	var err error
-	for i := 0; i < num; i++ {
+	for range num {
 		for {
 			if isCtxDone(ctx) {
 				return nil, ctx.Err()
@@ -415,7 +416,7 @@ func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
 
 	//In reversed scan, We should reverse the blocks.
 	last := len(logs) - 1
-	for i := 0; i < len(logs)/2; i++ {
+	for i := range len(logs) / 2 {
 		logs[i], logs[last-i] = logs[last-i], logs[i]
 	}
 
@@ -709,7 +710,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogDBStr, line, e.checker, fileLine)
 				} else {
 					fields, values := splitByColon(line)
-					for i := 0; i < len(fields); i++ {
+					for i := range fields {
 						valid := e.setColumnValue(sctx, row, tz, fields[i], values[i], e.checker, fileLine)
 						if !valid {
 							startFlag = false
@@ -852,7 +853,7 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 		execdetails.LockKeysTimeStr, variable.SlowLogCopProcAvg, variable.SlowLogCopProcP90, variable.SlowLogCopProcMax,
 		variable.SlowLogCopWaitAvg, variable.SlowLogCopWaitP90, variable.SlowLogCopWaitMax, variable.SlowLogKVTotal,
 		variable.SlowLogPDTotal, variable.SlowLogBackoffTotal, variable.SlowLogWriteSQLRespTotal, variable.SlowLogRRU,
-		variable.SlowLogWRU, variable.SlowLogWaitRUDuration, variable.SlowLogTidbCPUUsageDuration, variable.SlowLogTikvCPUUsageDuration:
+		variable.SlowLogWRU, variable.SlowLogWaitRUDuration, variable.SlowLogTidbCPUUsageDuration, variable.SlowLogTikvCPUUsageDuration, variable.SlowLogMemArbitration:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseFloat(value, 64)
 			if err != nil {
@@ -882,7 +883,8 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 			return true, nil
 		}, nil
 	case variable.SlowLogPrepared, variable.SlowLogSucc, variable.SlowLogPlanFromCache, variable.SlowLogPlanFromBinding,
-		variable.SlowLogIsInternalStr, variable.SlowLogIsExplicitTxn, variable.SlowLogIsWriteCacheTable, variable.SlowLogHasMoreResults:
+		variable.SlowLogIsInternalStr, variable.SlowLogIsExplicitTxn, variable.SlowLogIsWriteCacheTable, variable.SlowLogHasMoreResults,
+		variable.SlowLogStorageFromKV, variable.SlowLogStorageFromMPP:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseBool(value)
 			if err != nil {
@@ -1228,7 +1230,7 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 		lines = append(chars, lines...) // nozero
 
 		// find first '\n' or '\r'
-		for i := 0; i < len(chars)-1; i++ {
+		for i := range len(chars) - 1 {
 			if (chars[i] == '\n' || chars[i] == '\r') && chars[i+1] != '\n' && chars[i+1] != '\r' {
 				firstNonNewlinePos = i + 1
 				break

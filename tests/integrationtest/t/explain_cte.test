@@ -6,37 +6,37 @@ insert into t1 values(1, 0), (2, 1);
 insert into t2 values(1, 0), (2, 1);
 
 # simple cte
-explain with cte(a) as (select 1) select * from cte;
-explain with cte(a) as (select c1 from t1) select * from cte;
-explain with cte(a,b,c,d) as (select * from t1, t2) select * from cte;
+explain format='plan_tree' with cte(a) as (select 1) select * from cte;
+explain format='plan_tree' with cte(a) as (select c1 from t1) select * from cte;
+explain format='plan_tree' with cte(a,b,c,d) as (select * from t1, t2) select * from cte;
 
 # recursive cte
-explain with recursive cte(a) as (select 1 union select a+1 from cte where a < 10) select * from cte;
-explain with recursive cte(a) as (select c2 from t1 union select a+1 from cte where a < 10) select * from cte;
+explain format='plan_tree' with recursive cte(a) as (select 1 union select a+1 from cte where a < 10) select * from cte;
+explain format='plan_tree' with recursive cte(a) as (select c2 from t1 union select a+1 from cte where a < 10) select * from cte;
 
 # nested cte
-explain with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte;
+explain format='plan_tree' with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte;
 
 # cte with join
-explain with recursive cte(a) as (select 1 union select a+1 from cte where a < 10) select * from cte t1, cte t2;
-explain with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte t1, cte t2;
+explain format='plan_tree' with recursive cte(a) as (select 1 union select a+1 from cte where a < 10) select * from cte t1, cte t2;
+explain format='plan_tree' with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte t1, cte t2;
 
 # multiple cte
-explain with recursive cte1(a) as (select 1 union select a+1 from cte1 where a < 10), cte2(a) as (select c2 from t1 union select a+1 from cte2 where a < 10) select * from cte1, cte2;
+explain format='plan_tree' with recursive cte1(a) as (select 1 union select a+1 from cte1 where a < 10), cte2(a) as (select c2 from t1 union select a+1 from cte2 where a < 10) select * from cte1, cte2;
 
 # other
-explain with q(a,b) as (select * from t1) select /*+ merge(q) no_merge(q1) */ * from q, q q1 where q.a=1 and q1.a=2;
+explain format='plan_tree' with q(a,b) as (select * from t1) select /*+ merge(q) no_merge(q1) */ * from q, q q1 where q.a=1 and q1.a=2;
 # explain with cte(a,b) as (select * from t1) select (select 1 from cte limit 1) from cte;
-explain with recursive cte(a,b) as (select 1, concat('a', 1) union select a+1, concat(b, 1) from cte where a < 5) select * from cte;
-explain select * from t1 dt where exists(with recursive qn as (select c1*0+1 as b union all select b+1 from qn where b=0) select * from qn where b=1);
+explain format='plan_tree' with recursive cte(a,b) as (select 1, concat('a', 1) union select a+1, concat(b, 1) from cte where a < 5) select * from cte;
+explain format='plan_tree' select * from t1 dt where exists(with recursive qn as (select c1*0+1 as b union all select b+1 from qn where b=0) select * from qn where b=1);
 
 # recursive limit
-explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1) select * from cte1;
-explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 100 offset 100) select * from cte1;
-explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 0 offset 0) select * from cte1;
+explain format='plan_tree' with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1) select * from cte1;
+explain format='plan_tree' with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 100 offset 100) select * from cte1;
+explain format='plan_tree' with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 0 offset 0) select * from cte1;
 
-explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1;
-explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 0 offset 0) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1;
+explain format='plan_tree' with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1;
+explain format='plan_tree' with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 0 offset 0) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1;
 
 # TPC-DS Q11
 CREATE TABLE `customer` (
@@ -154,7 +154,7 @@ CREATE TABLE `web_sales` (
   `ws_net_profit` decimal(7,2) DEFAULT NULL,
   PRIMARY KEY (`ws_item_sk`,`ws_order_number`) /*T![clustered_index] NONCLUSTERED */
 );
-desc format='brief' with year_total as (
+explain format='plan_tree' with year_total as (
  select c_customer_id customer_id
        ,c_first_name customer_first_name
        ,c_last_name customer_last_name
@@ -246,7 +246,7 @@ with all_data as
 select v1.tps v1_tps,v2.tps v2_tps
 from version1 v1, version2 v2
 where v1.bench_type =v2.bench_type;
-desc format='brief' with all_data as
+explain format='plan_tree' with all_data as
 (select * from t1
 ),version1 as (select * from all_data where version ='5.4.0'
 ),version2 as(select * from all_data where version ='6.0.0')
@@ -257,7 +257,7 @@ where v1.bench_type =v2.bench_type;
 # issue 35404
 drop table if exists tbl;
 create table tbl (id int);
-explain with t1 as (select id from tbl), t2 as (select a.id from t1 a join t1 b on a.id = b.id) select * from t2 where id in (select id from t2);
+explain format='plan_tree' with t1 as (select id from tbl), t2 as (select a.id from t1 a join t1 b on a.id = b.id) select * from t2 where id in (select id from t2);
 
 # issue 35758
 drop table if exists t1, t2, t3;
@@ -267,12 +267,12 @@ create table t3 (e int, f int);
 insert into t1 values(1,1);
 insert into t2 values(1,1);
 insert into t3 values(1,1234);
-explain update t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c set t1.b = 4321;
+explain format='plan_tree' update t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c set t1.b = 4321;
 update t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c set t1.b = 4321;
 select * from t1;
-explain insert into t1  select t1.a, t1.b  from  t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
+explain format='plan_tree' insert into t1  select t1.a, t1.b  from  t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
 insert into t1  select t1.a, t1.b  from  t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
 select * from t1;
-explain delete from  t1 using t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
+explain format='plan_tree' delete from  t1 using t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
 delete from  t1 using t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
 select * from t1;

@@ -17,10 +17,11 @@ package sortexec_test
 import (
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -77,14 +78,14 @@ func failpointDataInMemoryThenSpillTest(t *testing.T, ctx *mock.Context, exe *so
 }
 
 func TestParallelSortSpillDisk(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
-	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
 
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -95,32 +96,32 @@ func TestParallelSortSpillDisk(t *testing.T) {
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		oneSpillCase(t, nil, sortCase, schema, dataSource)
 		oneSpillCase(t, exe, sortCase, schema, dataSource)
 	}
 
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		inMemoryThenSpill(t, ctx, nil, sortCase, schema, dataSource)
 		inMemoryThenSpill(t, ctx, exe, sortCase, schema, dataSource)
 	}
+
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestParallelSortSpillDiskFailpoint(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
-	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(true)`)
 
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -131,26 +132,29 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		failpointNoMemoryDataTest(t, nil, sortCase, dataSource)
 		failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
 	}
 
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		failpointDataInMemoryThenSpillTest(t, ctx, nil, sortCase, dataSource)
 		failpointDataInMemoryThenSpillTest(t, ctx, exe, sortCase, dataSource)
 	}
+
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestIssue59655(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
-	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/Issue59655", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/Issue59655")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/Issue59655", `return(true)`)
 
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -162,8 +166,33 @@ func TestIssue59655(t *testing.T) {
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		failpointNoMemoryDataTest(t, nil, sortCase, dataSource)
 		failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
 	}
+
+	util.CheckNoLeakFiles(t, testFuncName)
+}
+
+func TestIssue63216(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
+	sortexec.SetSmallSpillChunkSizeForTest()
+	ctx := mock.NewContext()
+	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/Issue63216", `return(true)`)
+
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(sortCase, schema)
+	exe := buildSortExec(sortCase, dataSource)
+	failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
+
+	util.CheckNoLeakFiles(t, testFuncName)
 }

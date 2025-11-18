@@ -155,7 +155,7 @@ KEY `idx_delivery_status_delivery_user_id` (`delivery_status`,`delivery_user_id`
 KEY `idx_trade_uuid` (`trade_uuid`(10)),
 KEY `idx_third_tran_no` (`third_tran_no`(10))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='';
-explain format = 'brief' SELECT te.expect_time AS expected_time FROM
+explain format = 'plan_tree' SELECT te.expect_time AS expected_time FROM
 tr tr inner JOIN te te ON te.trade_id = tr.id
 left JOIN p p ON p.relate_id = tr.id
 WHERE
@@ -167,105 +167,105 @@ tr.trade_type IN (1) AND
 te.expect_time BETWEEN '2018-04-23 00:00:00.0' AND '2018-04-23 23:59:59.0'
 ORDER BY te.expect_time asc
 LIMIT 0, 5;
-id	estRows	task	access object	operator info
-Limit	0.00	root		offset:0, count:5
-└─IndexJoin	0.00	root		left outer join, inner:IndexReader, left side:TopN, outer key:topn_push_down.tr.id, inner key:topn_push_down.p.relate_id, equal cond:eq(topn_push_down.tr.id, topn_push_down.p.relate_id)
-  ├─TopN(Build)	0.00	root		topn_push_down.te.expect_time, offset:0, count:5
-  │ └─IndexJoin	0.00	root		inner join, inner:IndexLookUp, outer key:topn_push_down.tr.id, inner key:topn_push_down.te.trade_id, equal cond:eq(topn_push_down.tr.id, topn_push_down.te.trade_id)
-  │   ├─IndexLookUp(Build)	0.00	root		
-  │   │ ├─Selection(Build)	0.00	cop[tikv]		eq(topn_push_down.tr.business_type, 18), eq(topn_push_down.tr.trade_type, 1)
-  │   │ │ └─IndexRangeScan	10.00	cop[tikv]	table:tr, index:idx_shop_identy_trade_status_business_type(shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date)	range:[810094178,810094178], keep order:false, stats:pseudo
-  │   │ └─Selection(Probe)	0.00	cop[tikv]		eq(topn_push_down.tr.brand_identy, 32314), eq(topn_push_down.tr.domain_type, 2)
-  │   │   └─TableRowIDScan	0.00	cop[tikv]	table:tr	keep order:false, stats:pseudo
-  │   └─IndexLookUp(Probe)	0.00	root		
-  │     ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:te, index:idx_trade_id(trade_id)	range: decided by [eq(topn_push_down.te.trade_id, topn_push_down.tr.id)], keep order:false, stats:pseudo
-  │     └─Selection(Probe)	0.00	cop[tikv]		ge(topn_push_down.te.expect_time, 2018-04-23 00:00:00.000000), le(topn_push_down.te.expect_time, 2018-04-23 23:59:59.000000)
-  │       └─TableRowIDScan	0.00	cop[tikv]	table:te	keep order:false, stats:pseudo
-  └─IndexReader(Probe)	0.00	root		index:Selection
-    └─Selection	0.00	cop[tikv]		not(isnull(topn_push_down.p.relate_id))
-      └─IndexRangeScan	0.00	cop[tikv]	table:p, index:payment_relate_id(relate_id)	range: decided by [eq(topn_push_down.p.relate_id, topn_push_down.tr.id)], keep order:false, stats:pseudo
+id	task	access object	operator info
+Limit	root		offset:0, count:5
+└─IndexJoin	root		left outer join, inner:IndexReader, left side:TopN, outer key:topn_push_down.tr.id, inner key:topn_push_down.p.relate_id, equal cond:eq(topn_push_down.tr.id, topn_push_down.p.relate_id)
+  ├─TopN(Build)	root		topn_push_down.te.expect_time, offset:0, count:5
+  │ └─IndexJoin	root		inner join, inner:IndexLookUp, outer key:topn_push_down.tr.id, inner key:topn_push_down.te.trade_id, equal cond:eq(topn_push_down.tr.id, topn_push_down.te.trade_id)
+  │   ├─IndexLookUp(Build)	root		
+  │   │ ├─Selection(Build)	cop[tikv]		eq(topn_push_down.tr.business_type, 18), eq(topn_push_down.tr.trade_type, 1)
+  │   │ │ └─IndexRangeScan	cop[tikv]	table:tr, index:idx_shop_identy_trade_status_business_type(shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date)	range:[810094178,810094178], keep order:false, stats:pseudo
+  │   │ └─Selection(Probe)	cop[tikv]		eq(topn_push_down.tr.brand_identy, 32314), eq(topn_push_down.tr.domain_type, 2)
+  │   │   └─TableRowIDScan	cop[tikv]	table:tr	keep order:false, stats:pseudo
+  │   └─IndexLookUp(Probe)	root		
+  │     ├─IndexRangeScan(Build)	cop[tikv]	table:te, index:idx_trade_id(trade_id)	range: decided by [eq(topn_push_down.te.trade_id, topn_push_down.tr.id)], keep order:false, stats:pseudo
+  │     └─Selection(Probe)	cop[tikv]		ge(topn_push_down.te.expect_time, 2018-04-23 00:00:00.000000), le(topn_push_down.te.expect_time, 2018-04-23 23:59:59.000000)
+  │       └─TableRowIDScan	cop[tikv]	table:te	keep order:false, stats:pseudo
+  └─IndexReader(Probe)	root		index:Selection
+    └─Selection	cop[tikv]		not(isnull(topn_push_down.p.relate_id))
+      └─IndexRangeScan	cop[tikv]	table:p, index:payment_relate_id(relate_id)	range: decided by [eq(topn_push_down.p.relate_id, topn_push_down.tr.id)], keep order:false, stats:pseudo
 desc select 1 as a from dual order by a limit 1;
 id	estRows	task	access object	operator info
 Projection_6	1.00	root		1->Column#1
-└─TableDual_7	1.00	root		rows:1
+└─TableDual_8	1.00	root		rows:1
 drop table if exists t1;
 drop table if exists t2;
 create table t1(a bigint, b bigint);
 create table t2(a bigint, b bigint);
 desc select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b limit 1);
 id	estRows	task	access object	operator info
-Apply_15	9990.00	root		semi join, left side:TableReader_18, equal:[eq(topn_push_down.t1.a, topn_push_down.t2.a)]
-├─TableReader_18(Build)	9990.00	root		data:Selection_17
-│ └─Selection_17	9990.00	cop[tikv]		not(isnull(topn_push_down.t1.a))
-│   └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Selection_19(Probe)	7992.00	root		not(isnull(topn_push_down.t2.a))
-  └─Limit_20	9990.00	root		offset:0, count:1
-    └─TableReader_25	9990.00	root		data:Limit_24
-      └─Limit_24	9990.00	cop[tikv]		offset:0, count:1
-        └─Selection_23	9990.00	cop[tikv]		gt(topn_push_down.t2.b, topn_push_down.t1.b)
-          └─TableFullScan_22	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Apply_16	9990.00	root		semi join, left side:TableReader_19, equal:[eq(topn_push_down.t1.a, topn_push_down.t2.a)]
+├─TableReader_19(Build)	9990.00	root		data:Selection_18
+│ └─Selection_18	9990.00	cop[tikv]		not(isnull(topn_push_down.t1.a))
+│   └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_20(Probe)	7992.00	root		not(isnull(topn_push_down.t2.a))
+  └─Limit_22	9990.00	root		offset:0, count:1
+    └─TableReader_29	9990.00	root		data:Limit_28
+      └─Limit_28	9990.00	cop[tikv]		offset:0, count:1
+        └─Selection_27	9990.00	cop[tikv]		gt(topn_push_down.t2.b, topn_push_down.t1.b)
+          └─TableFullScan_26	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
 id	estRows	task	access object	operator info
-Apply_17	9990.00	root		semi join, left side:TableReader_20, equal:[eq(topn_push_down.t1.a, topn_push_down.t2.a)]
-├─TableReader_20(Build)	9990.00	root		data:Selection_19
-│ └─Selection_19	9990.00	cop[tikv]		not(isnull(topn_push_down.t1.a))
-│   └─TableFullScan_18	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Selection_21(Probe)	7992.00	root		not(isnull(topn_push_down.t2.a))
-  └─Limit_23	9990.00	root		offset:0, count:1
-    └─TableReader_28	9990.00	root		data:Limit_27
-      └─Limit_27	9990.00	cop[tikv]		offset:0, count:1
-        └─Selection_26	9990.00	cop[tikv]		gt(topn_push_down.t2.b, topn_push_down.t1.b)
-          └─TableFullScan_25	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Apply_18	9990.00	root		semi join, left side:TableReader_21, equal:[eq(topn_push_down.t1.a, topn_push_down.t2.a)]
+├─TableReader_21(Build)	9990.00	root		data:Selection_20
+│ └─Selection_20	9990.00	cop[tikv]		not(isnull(topn_push_down.t1.a))
+│   └─TableFullScan_19	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_22(Probe)	7992.00	root		not(isnull(topn_push_down.t2.a))
+  └─Limit_26	9990.00	root		offset:0, count:1
+    └─TableReader_33	9990.00	root		data:Limit_32
+      └─Limit_32	9990.00	cop[tikv]		offset:0, count:1
+        └─Selection_31	9990.00	cop[tikv]		gt(topn_push_down.t2.b, topn_push_down.t1.b)
+          └─TableFullScan_30	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int not null, index idx(a));
-explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
-id	estRows	task	access object	operator info
-Limit	5.00	root		offset:0, count:5
-└─IndexJoin	5.00	root		inner join, inner:IndexReader, outer key:topn_push_down.t.a, inner key:topn_push_down.t.a, equal cond:eq(topn_push_down.t.a, topn_push_down.t.a)
-  ├─TableReader(Build)	4.00	root		data:TableFullScan
-  │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─IndexReader(Probe)	5.00	root		index:IndexRangeScan
-    └─IndexRangeScan	5.00	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(topn_push_down.t.a, topn_push_down.t.a)], keep order:false, stats:pseudo
-explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
-id	estRows	task	access object	operator info
-Limit	5.00	root		offset:0, count:5
-└─Selection	5.00	root		isnull(topn_push_down.t.a)
-  └─IndexJoin	5.00	root		left outer join, inner:IndexReader, left side:TableReader, outer key:topn_push_down.t.a, inner key:topn_push_down.t.a, equal cond:eq(topn_push_down.t.a, topn_push_down.t.a)
-    ├─TableReader(Build)	4.00	root		data:TableFullScan
-    │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─IndexReader(Probe)	5.00	root		index:IndexRangeScan
-      └─IndexRangeScan	5.00	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(topn_push_down.t.a, topn_push_down.t.a)], keep order:false, stats:pseudo
-explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
-id	estRows	task	access object	operator info
-Limit	5.00	root		offset:0, count:5
-└─MergeJoin	5.00	root		inner join, left key:topn_push_down.t.a, right key:topn_push_down.t.a
-  ├─IndexReader(Build)	4.00	root		index:IndexFullScan
-  │ └─IndexFullScan	4.00	cop[tikv]	table:t2, index:idx(a)	keep order:true, stats:pseudo
-  └─IndexReader(Probe)	4.00	root		index:IndexFullScan
-    └─IndexFullScan	4.00	cop[tikv]	table:t1, index:idx(a)	keep order:true, stats:pseudo
-explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
-id	estRows	task	access object	operator info
-Limit	5.00	root		offset:0, count:5
-└─Selection	5.00	root		isnull(topn_push_down.t.a)
-  └─MergeJoin	5.00	root		left outer join, left side:IndexReader, left key:topn_push_down.t.a, right key:topn_push_down.t.a
-    ├─IndexReader(Build)	4.00	root		index:IndexFullScan
-    │ └─IndexFullScan	4.00	cop[tikv]	table:t2, index:idx(a)	keep order:true, stats:pseudo
-    └─IndexReader(Probe)	4.00	root		index:IndexFullScan
-      └─IndexFullScan	4.00	cop[tikv]	table:t1, index:idx(a)	keep order:true, stats:pseudo
-explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
-id	estRows	task	access object	operator info
-Limit	5.00	root		offset:0, count:5
-└─HashJoin	5.00	root		inner join, equal:[eq(topn_push_down.t.a, topn_push_down.t.a)]
-  ├─TableReader(Build)	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader(Probe)	4.00	root		data:TableFullScan
-    └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
-id	estRows	task	access object	operator info
-Limit	5.00	root		offset:0, count:5
-└─Selection	5.00	root		isnull(topn_push_down.t.a)
-  └─HashJoin	5.00	root		left outer join, left side:TableReader, equal:[eq(topn_push_down.t.a, topn_push_down.t.a)]
-    ├─TableReader(Build)	4.00	root		data:TableFullScan
-    │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader(Probe)	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+id	task	access object	operator info
+Limit	root		offset:0, count:5
+└─IndexJoin	root		inner join, inner:IndexReader, outer key:topn_push_down.t.a, inner key:topn_push_down.t.a, equal cond:eq(topn_push_down.t.a, topn_push_down.t.a)
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─IndexReader(Probe)	root		index:IndexRangeScan
+    └─IndexRangeScan	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(topn_push_down.t.a, topn_push_down.t.a)], keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+id	task	access object	operator info
+Limit	root		offset:0, count:5
+└─Selection	root		isnull(topn_push_down.t.a)
+  └─IndexJoin	root		left outer join, inner:IndexReader, left side:TableReader, outer key:topn_push_down.t.a, inner key:topn_push_down.t.a, equal cond:eq(topn_push_down.t.a, topn_push_down.t.a)
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─IndexReader(Probe)	root		index:IndexRangeScan
+      └─IndexRangeScan	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(topn_push_down.t.a, topn_push_down.t.a)], keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+id	task	access object	operator info
+Limit	root		offset:0, count:5
+└─MergeJoin	root		inner join, left key:topn_push_down.t.a, right key:topn_push_down.t.a
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t2, index:idx(a)	keep order:true, stats:pseudo
+  └─IndexReader(Probe)	root		index:IndexFullScan
+    └─IndexFullScan	cop[tikv]	table:t1, index:idx(a)	keep order:true, stats:pseudo
+explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+id	task	access object	operator info
+Limit	root		offset:0, count:5
+└─Selection	root		isnull(topn_push_down.t.a)
+  └─MergeJoin	root		left outer join, left side:IndexReader, left key:topn_push_down.t.a, right key:topn_push_down.t.a
+    ├─IndexReader(Build)	root		index:IndexFullScan
+    │ └─IndexFullScan	cop[tikv]	table:t2, index:idx(a)	keep order:true, stats:pseudo
+    └─IndexReader(Probe)	root		index:IndexFullScan
+      └─IndexFullScan	cop[tikv]	table:t1, index:idx(a)	keep order:true, stats:pseudo
+explain format = 'plan_tree' select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+id	task	access object	operator info
+Limit	root		offset:0, count:5
+└─HashJoin	root		inner join, equal:[eq(topn_push_down.t.a, topn_push_down.t.a)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+id	task	access object	operator info
+Limit	root		offset:0, count:5
+└─Selection	root		isnull(topn_push_down.t.a)
+  └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(topn_push_down.t.a, topn_push_down.t.a)]
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo

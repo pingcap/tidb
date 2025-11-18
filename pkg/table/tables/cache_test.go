@@ -68,7 +68,7 @@ func TestCacheTableBasicScan(t *testing.T) {
 	tk.MustExec("create table join_t3 (id int)")
 	tk.MustExec("insert into join_t3 values(3)")
 	planUsed := false
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustQuery("select *from join_t1 join join_t2").Check(testkit.Rows("1 2"))
 		if lastReadFromCache(tk) {
 			planUsed = true
@@ -78,7 +78,7 @@ func TestCacheTableBasicScan(t *testing.T) {
 	require.True(t, planUsed)
 
 	// Test for join a cache table and a normal table
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustQuery("select * from join_t1 join join_t3").Check(testkit.Rows("1 3"))
 		if lastReadFromCache(tk) {
 			planUsed = true
@@ -88,7 +88,7 @@ func TestCacheTableBasicScan(t *testing.T) {
 	require.True(t, planUsed)
 
 	// Second read will from cache table
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		tk.MustQuery("select * from tmp1 where id>4 order by id").Check(testkit.Rows(
 			"5 105 1005", "7 117 1007", "9 109 1009",
 			"10 110 1010", "12 112 1012", "14 114 1014", "16 116 1016", "18 118 1018",
@@ -101,7 +101,7 @@ func TestCacheTableBasicScan(t *testing.T) {
 	require.True(t, planUsed)
 
 	// For IndexLookUpReader
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u").Check(testkit.Rows(
 			"5 105 1005", "9 109 1009", "10 110 1010",
 			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
@@ -138,35 +138,35 @@ func TestCacheCondition(t *testing.T) {
 	tk.MustExec("alter table t2 cache")
 
 	// Explain should not trigger cache.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustQuery("explain select * from t2")
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Insert should not trigger cache.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tk.MustExec(fmt.Sprintf("insert into t2 values (%d,%d)", i, i))
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Update should not trigger cache.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("update t2 set v = v + 1 where id > 0")
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Contains PointGet Update should not trigger cache.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("update t2 set v = v + 1 where id = 2")
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Contains PointGet Delete should not trigger cache.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tk.MustExec(fmt.Sprintf("delete from t2 where id = %d", i))
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
@@ -175,7 +175,7 @@ func TestCacheCondition(t *testing.T) {
 	// Normal query should trigger cache.
 	tk.MustQuery("select * from t2")
 	cacheUsed := false
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		tk.MustQuery("select * from t2")
 		if lastReadFromCache(tk) {
 			cacheUsed = true
@@ -203,7 +203,7 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "3 113 1003"))
 	// read lock should valid
 	var i int
-	for i = 0; i < 10; i++ {
+	for i = range 10 {
 		if lastReadFromCache(tk) {
 			break
 		}
@@ -247,7 +247,7 @@ func TestCacheTableComplexRead(t *testing.T) {
 	tk1.MustExec("alter table complex_cache cache")
 	tk1.MustQuery("select * from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
 	var i int
-	for i = 0; i < 100; i++ {
+	for i = range 100 {
 		time.Sleep(100 * time.Millisecond)
 		tk1.MustQuery("select * from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
 		if lastReadFromCache(tk1) {
@@ -259,7 +259,7 @@ func TestCacheTableComplexRead(t *testing.T) {
 	tk1.MustExec("begin")
 	tk2.MustExec("begin")
 	tk2.MustQuery("select * from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
-	for i = 0; i < 10; i++ {
+	for i = range 10 {
 		time.Sleep(100 * time.Millisecond)
 		tk2.MustQuery("select * from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
 		if lastReadFromCache(tk2) {
@@ -290,7 +290,7 @@ func TestBeginSleepABA(t *testing.T) {
 	tk1.MustExec("alter table aba cache")
 	tk1.MustQuery("select * from aba").Check(testkit.Rows("1 1"))
 	cacheUsed := false
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		tk1.MustQuery("select * from aba").Check(testkit.Rows("1 1"))
 		if lastReadFromCache(tk1) {
 			cacheUsed = true
@@ -314,7 +314,7 @@ func TestBeginSleepABA(t *testing.T) {
 
 	// And then make the cache available again.
 	cacheUsed = false
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		tk2.MustQuery("select * from aba").Check(testkit.Rows("1 2"))
 		if lastReadFromCache(tk2) {
 			cacheUsed = true
@@ -346,7 +346,7 @@ func TestRenewLease(t *testing.T) {
 
 	remote := tables.NewStateRemote(tk1.Session())
 	var leaseBefore uint64
-	for i = 0; i < 20; i++ {
+	for i = range 20 {
 		time.Sleep(200 * time.Millisecond)
 		lockType, lease, err := remote.Load(context.Background(), tbl.Meta().ID)
 		require.NoError(t, err)
@@ -357,7 +357,7 @@ func TestRenewLease(t *testing.T) {
 	}
 	require.True(t, i < 20)
 
-	for i = 0; i < 20; i++ {
+	for i = range 20 {
 		time.Sleep(200 * time.Millisecond)
 		tk.MustExec("select * from cache_renew_t")
 		lockType, lease, err := remote.Load(context.Background(), tbl.Meta().ID)
@@ -385,7 +385,7 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 	tk.MustExec("create table wait_tb1(id int)")
 	tk.MustExec("alter table wait_tb1 cache")
 	var i int
-	for i = 0; i < 10; i++ {
+	for i = range 10 {
 		tk.MustQuery("select * from wait_tb1").Check(testkit.Rows())
 		if lastReadFromCache(tk) {
 			break
@@ -426,7 +426,7 @@ func TestTableCacheLeaseVariable(t *testing.T) {
 	tk.MustExec(`alter table test_lease_variable cache;`)
 
 	cached := false
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		tk.MustQuery("select * from test_lease_variable").Check(testkit.Rows("1 <nil> green"))
 		if lastReadFromCache(tk) {
 			cached = true
@@ -458,7 +458,7 @@ func TestMetrics(t *testing.T) {
 
 	tk.MustQuery("select * from test_metrics").Check(testkit.Rows("1 <nil> green"))
 	cached := false
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		if lastReadFromCache(tk) {
 			cached = true
 			break

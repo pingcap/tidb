@@ -30,5 +30,6 @@ func TestMain(m *testing.M) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Store = config.StoreTypeTiKV
 	})
+	realtikvtest.UpdateTiDBConfig()
 	realtikvtest.RunTestMain(m)
 }

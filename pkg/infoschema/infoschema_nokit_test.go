@@ -30,7 +30,7 @@ func (is *infoschemaV2) HasCache(tableID int64, schemaVersion int64) bool {
 }
 
 func TestInfoSchemaAddDel(t *testing.T) {
-	is := newInfoSchema()
+	is := newInfoSchema(nil)
 	is.addSchema(&schemaTables{
 		dbInfo: &model.DBInfo{ID: 1, Name: ast.NewCIStr("test")},
 	})

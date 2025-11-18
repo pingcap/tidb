@@ -245,7 +245,7 @@ func (rt *TimerGroupRuntime) fullRefreshTimers() {
 	rt.fullRefreshTimerCounter.Inc()
 	timers, err := rt.store.List(rt.ctx, rt.cond)
 	if err != nil {
-		rt.logger.Error("error occurs when fullRefreshTimers", zap.Error(err))
+		rt.logger.Warn("error occurs when fullRefreshTimers", zap.Error(err))
 		return
 	}
 	rt.cache.fullUpdateTimers(timers)
@@ -366,20 +366,14 @@ func (rt *TimerGroupRuntime) setTryTriggerTimer(t *time.Timer, lastTryTriggerTim
 
 func (rt *TimerGroupRuntime) getNextTryTriggerDuration(lastTryTriggerTime time.Time) time.Duration {
 	now := rt.nowFunc()
-	sinceLastTrigger := now.Sub(lastTryTriggerTime)
-	if sinceLastTrigger < 0 {
-		sinceLastTrigger = 0
-	}
+	sinceLastTrigger := max(now.Sub(lastTryTriggerTime), 0)
 
 	maxDuration := maxTriggerEventInterval - sinceLastTrigger
 	if maxDuration <= 0 {
 		return time.Duration(0)
 	}
 
-	minDuration := minTriggerEventInterval - sinceLastTrigger
-	if minDuration < 0 {
-		minDuration = 0
-	}
+	minDuration := max(minTriggerEventInterval-sinceLastTrigger, 0)
 
 	duration := maxDuration
 	rt.cache.iterTryTriggerTimers(func(_ *api.TimerRecord, tryTriggerTime time.Time, _ *time.Time) bool {
@@ -427,7 +421,7 @@ func (rt *TimerGroupRuntime) partialRefreshTimers(timerIDs map[string]struct{}) 
 	cond := rt.buildTimerIDsCond(timerIDs)
 	timers, err := rt.store.List(rt.ctx, cond)
 	if err != nil {
-		rt.logger.Error("error occurs when get timers", zap.Error(err))
+		rt.logger.Warn("error occurs when get timers", zap.Error(err))
 		return false
 	}
 

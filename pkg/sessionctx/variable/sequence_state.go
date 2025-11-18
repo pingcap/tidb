@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"maps"
 	"sync"
 )
 
@@ -56,9 +57,7 @@ func (ss *SequenceState) GetAllStates() map[int64]int64 {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	latestValueMap := make(map[int64]int64, len(ss.latestValueMap))
-	for seqID, latestValue := range ss.latestValueMap {
-		latestValueMap[seqID] = latestValue
-	}
+	maps.Copy(latestValueMap, ss.latestValueMap)
 	return latestValueMap
 }
 
@@ -66,7 +65,5 @@ func (ss *SequenceState) GetAllStates() map[int64]int64 {
 func (ss *SequenceState) SetAllStates(latestValueMap map[int64]int64) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	for seqID, latestValue := range latestValueMap {
-		ss.latestValueMap[seqID] = latestValue
-	}
+	maps.Copy(ss.latestValueMap, latestValueMap)
 }

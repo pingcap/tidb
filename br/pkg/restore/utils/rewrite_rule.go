@@ -16,6 +16,7 @@ package utils
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -96,6 +97,41 @@ func (r *RewriteRules) Clone() *RewriteRules {
 	}
 }
 
+func (r *RewriteRules) Equal(rhs *RewriteRules) bool {
+	if !bytes.Equal(r.NewKeyspace, rhs.NewKeyspace) ||
+		!bytes.Equal(r.OldKeyspace, rhs.OldKeyspace) ||
+		r.NewTableID != rhs.NewTableID ||
+		r.ShiftStartTs != rhs.ShiftStartTs ||
+		r.StartTs != rhs.StartTs ||
+		r.RestoredTs != rhs.RestoredTs {
+		return false
+	}
+
+	if len(r.TableIDRemapHint) != len(rhs.TableIDRemapHint) {
+		return false
+	}
+	for i, remap := range r.TableIDRemapHint {
+		if remap.Origin != rhs.TableIDRemapHint[i].Origin ||
+			remap.Rewritten != rhs.TableIDRemapHint[i].Rewritten {
+			return false
+		}
+	}
+	if len(r.Data) != len(rhs.Data) {
+		return false
+	}
+	for i, rule := range r.Data {
+		rhsRule := rhs.Data[i]
+		if !bytes.Equal(rule.NewKeyPrefix, rhsRule.NewKeyPrefix) ||
+			!bytes.Equal(rule.OldKeyPrefix, rhsRule.OldKeyPrefix) ||
+			rule.NewTimestamp != rhsRule.NewTimestamp ||
+			rule.IgnoreAfterTimestamp != rhsRule.IgnoreAfterTimestamp ||
+			rule.IgnoreBeforeTimestamp != rhsRule.IgnoreBeforeTimestamp {
+			return false
+		}
+	}
+	return true
+}
+
 // TableIDRemap presents a remapping of table id during rewriting.
 type TableIDRemap struct {
 	Origin    int64
@@ -107,32 +143,29 @@ func (r *RewriteRules) Append(other RewriteRules) {
 	r.Data = append(r.Data, other.Data...)
 }
 
-func (r *RewriteRules) SetTimeRangeFilter(cfName string) error {
+func SetTimeRangeFilter(tableRules *RewriteRules,
+	fileRule *import_sstpb.RewriteRule, cfName string) error {
 	// for some sst files like db restore copy ssts, we don't need to set the time range filter
-	if !r.HasSetTs() {
+	if !tableRules.HasSetTs() {
 		return nil
 	}
 
 	var ignoreBeforeTs uint64
 	switch {
 	case strings.Contains(cfName, DefaultCFName):
-		ignoreBeforeTs = r.ShiftStartTs
-		if ignoreBeforeTs > r.StartTs {
-			// for default cf, shift start ts could less than start ts
-			// this could happen when large kv txn happen after small kv txn.
-			// use the start ts to filter out irrelevant data for default cf is more safe
-			ignoreBeforeTs = r.StartTs
-		}
+		// for default cf, shift start ts could be less than start ts
+		// this could happen when large kv txn happen after small kv txn.
+		// use the start ts to filter out irrelevant data for default cf is more safe
+		ignoreBeforeTs = min(tableRules.ShiftStartTs, tableRules.StartTs)
 	case strings.Contains(cfName, WriteCFName):
-		ignoreBeforeTs = r.StartTs
+		ignoreBeforeTs = tableRules.StartTs
 	default:
 		return errors.Errorf("unsupported column family type: %s", cfName)
 	}
 
-	for _, rule := range r.Data {
-		rule.IgnoreBeforeTimestamp = ignoreBeforeTs
-		rule.IgnoreAfterTimestamp = r.RestoredTs
-	}
+	// Set both timestamps since file's range needs filtering
+	fileRule.IgnoreBeforeTimestamp = ignoreBeforeTs
+	fileRule.IgnoreAfterTimestamp = tableRules.RestoredTs
 	return nil
 }
 
@@ -453,7 +486,7 @@ func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *import_sstpb.
 	// We should search the dataRules firstly.
 	for _, rule := range rewriteRules.Data {
 		if bytes.HasPrefix(s, rule.GetOldKeyPrefix()) {
-			return append(append([]byte{}, rule.GetNewKeyPrefix()...), s[len(rule.GetOldKeyPrefix()):]...), rule
+			return slices.Concat(rule.GetNewKeyPrefix(), s[len(rule.GetOldKeyPrefix()):]), rule
 		}
 	}
 

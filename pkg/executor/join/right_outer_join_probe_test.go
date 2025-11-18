@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -48,7 +48,7 @@ func genRightOuterJoinResult(t *testing.T, sessCtx sessionctx.Context, rightFilt
 			filterVector, err = expression.VectorizedFilter(sessCtx.GetExprCtx().GetEvalCtx(), sessCtx.GetSessionVars().EnableVectorizedExpression, rightFilter, chunk.NewIterator4Chunk(rightChunk), filterVector)
 			require.NoError(t, err)
 		}
-		for rightIndex := 0; rightIndex < rightChunk.NumRows(); rightIndex++ {
+		for rightIndex := range rightChunk.NumRows() {
 			filterIndex := rightIndex
 			if rightChunk.Sel() != nil {
 				filterIndex = rightChunk.Sel()[rightIndex]
@@ -65,7 +65,7 @@ func genRightOuterJoinResult(t *testing.T, sessCtx sessionctx.Context, rightFilt
 			rightRow := rightChunk.GetRow(rightIndex)
 			hasAtLeastOneMatch := false
 			for _, leftChunk := range leftChunks {
-				for leftIndex := 0; leftIndex < leftChunk.NumRows(); leftIndex++ {
+				for leftIndex := range leftChunk.NumRows() {
 					if resultChk.IsFull() {
 						returnChks = append(returnChks, resultChk)
 						resultChk = chunk.New(resultTypes, sessCtx.GetSessionVars().MaxChunkSize, sessCtx.GetSessionVars().MaxChunkSize)
@@ -154,10 +154,10 @@ func TestRightOuterJoinProbeBasic(t *testing.T) {
 					rightFilter = nil
 				}
 				testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, tc.leftKeyTypes, tc.rightKeyTypes, tc.leftTypes, tc.rightTypes, value, tc.leftUsed,
-					tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, nil, rightFilter, tc.otherCondition, partitionNumber, logicalop.RightOuterJoin, 200)
+					tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, nil, rightFilter, tc.otherCondition, partitionNumber, base.RightOuterJoin, 200)
 				testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, toNullableTypes(tc.leftKeyTypes), toNullableTypes(tc.rightKeyTypes),
 					toNullableTypes(tc.leftTypes), toNullableTypes(tc.rightTypes), value, tc.leftUsed, tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition,
-					nil, rightFilter, tc.otherCondition, partitionNumber, logicalop.RightOuterJoin, 200)
+					nil, rightFilter, tc.otherCondition, partitionNumber, base.RightOuterJoin, 200)
 			}
 		}
 	}
@@ -207,12 +207,12 @@ func TestRightOuterJoinProbeAllJoinKeys(t *testing.T) {
 	rTypes := lTypes
 	lUsed := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
 	rUsed := lUsed
-	joinType := logicalop.RightOuterJoin
+	joinType := base.RightOuterJoin
 
 	rightAsBuildSide := []bool{true, false}
 
 	// single key
-	for i := 0; i < len(lTypes); i++ {
+	for i := range lTypes {
 		lKeyTypes := []*types.FieldType{lTypes[i]}
 		rKeyTypes := []*types.FieldType{rTypes[i]}
 		for _, rightAsBuild := range rightAsBuildSide {
@@ -272,7 +272,7 @@ func TestRightOuterJoinProbeOtherCondition(t *testing.T) {
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
-	joinType := logicalop.RightOuterJoin
+	joinType := base.RightOuterJoin
 	simpleFilter := createSimpleFilter(t)
 	hasFilter := []bool{false, true}
 	rightAsBuildSide := []bool{false, true}
@@ -314,7 +314,7 @@ func TestRightOuterJoinProbeWithSel(t *testing.T) {
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
-	joinType := logicalop.RightOuterJoin
+	joinType := base.RightOuterJoin
 	rightAsBuildSide := []bool{false, true}
 	simpleFilter := createSimpleFilter(t)
 	hasFilter := []bool{false, true}

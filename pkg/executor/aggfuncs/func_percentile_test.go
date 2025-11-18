@@ -54,7 +54,7 @@ func TestFix26807(t *testing.T) {
 	for i := 1; i <= want; i++ {
 		data = append(data, i)
 	}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		index := aggfuncs.PercentileForTesting(data, 100)
 		require.Equal(t, want, data[index])
 	}

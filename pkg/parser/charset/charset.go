@@ -632,7 +632,7 @@ func RemoveCharset(c string) {
 	delete(CharacterSetInfos, c)
 	for i := range supportedCollations {
 		if supportedCollations[i].Name == c {
-			supportedCollations = append(supportedCollations[:i], supportedCollations[i+1:]...)
+			supportedCollations = slices.Delete(supportedCollations, i, i+1)
 		}
 	}
 }

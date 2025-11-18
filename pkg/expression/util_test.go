@@ -337,7 +337,7 @@ func TestHashGroupKey(t *testing.T) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
-	for i := 0; i < len(tNames); i++ {
+	for i := range tNames {
 		ft := eType2FieldType(eTypes[i])
 		if eTypes[i] == types.ETDecimal {
 			ft.SetFlen(0)
@@ -347,7 +347,7 @@ func TestHashGroupKey(t *testing.T) {
 		fillColumnWithGener(eTypes[i], input, 0, nil)
 		colBuf := chunk.NewColumn(ft, 1024)
 		bufs := make([][]byte, 1024)
-		for j := 0; j < 1024; j++ {
+		for j := range 1024 {
 			bufs[j] = bufs[j][:0]
 		}
 		var err error
@@ -357,7 +357,7 @@ func TestHashGroupKey(t *testing.T) {
 		require.NoError(t, err)
 
 		var buf []byte
-		for j := 0; j < input.NumRows(); j++ {
+		for j := range input.NumRows() {
 			d, err := colExpr.Eval(ctx, input.GetRow(j))
 			require.NoError(t, err)
 			buf, err = codec.EncodeValue(sc.TimeZone(), buf[:0], d)

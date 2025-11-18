@@ -42,16 +42,16 @@ drop table if exists t1;
 drop table if exists t2;
 create table t1(id int);
 create table t2(id int);
-explain format='brief' SELECT * from t1,t2 where t1.id = t2.id;
-explain format='brief' SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+explain format='plan_tree' SELECT * from t1,t2 where t1.id = t2.id;
+explain format='plan_tree' SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
 create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
-explain format='brief' SELECT * from t1,t2 where t1.id = t2.id;
+explain format='plan_tree' SELECT * from t1,t2 where t1.id = t2.id;
 drop global binding for SELECT * from t1,t2 where t1.id = t2.id;
 create index index_id on t1(id);
-explain format='brief' SELECT * from t1 union SELECT * from t1;
-explain format='brief' SELECT * from t1 use index(index_id) union SELECT * from t1;
+explain format='plan_tree' SELECT * from t1 union SELECT * from t1;
+explain format='plan_tree' SELECT * from t1 use index(index_id) union SELECT * from t1;
 create global binding for SELECT * from t1 union SELECT * from t1 using SELECT * from t1 use index(index_id) union SELECT * from t1;
-explain format='brief' SELECT * from t1 union SELECT * from t1;
+explain format='plan_tree' SELECT * from t1 union SELECT * from t1;
 drop global binding for SELECT * from t1 union SELECT * from t1;
 set tidb_cost_model_version=default;
 
@@ -60,13 +60,13 @@ drop table if exists t1;
 drop table if exists t2;
 create table t1(id int);
 create table t2(id int);
-explain format='brief' select * from t1 where exists(select 1 from t2 where t1.id=t2.id);
-explain format='brief' select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id);
+explain format='plan_tree' select * from t1 where exists(select 1 from t2 where t1.id=t2.id);
+explain format='plan_tree' select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id);
 create global binding for
 	select * from t1 where exists(select 1 from t2 where t1.id=t2.id)
 using
 	select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id);
-explain format='brief' select * from t1 where exists(select 1 from t2 where t1.id=t2.id);
+explain format='plan_tree' select * from t1 where exists(select 1 from t2 where t1.id=t2.id);
 drop global binding for
 	select * from t1 where exists(select 1 from t2 where t1.id=t2.id)
 using
@@ -75,13 +75,13 @@ using
 # TestBindCTEMerge
 drop table if exists t1;
 create table t1(id int);
-explain format='brief' with cte as (select * from t1) select * from cte a, cte b;
-explain format='brief' with cte as (select /*+ MERGE() */ * from t1) select * from cte a, cte b;
+explain format='plan_tree' with cte as (select * from t1) select * from cte a, cte b;
+explain format='plan_tree' with cte as (select /*+ MERGE() */ * from t1) select * from cte a, cte b;
 create global binding for
 	with cte as (select * from t1) select * from cte
 using
 	with cte as (select /*+ MERGE() */ * from t1) select * from cte;
-explain format='brief' with cte as (select * from t1) select * from cte;
+explain format='plan_tree' with cte as (select * from t1) select * from cte;
 drop global binding for
 	with cte as (select * from t1) select * from cte
 using
@@ -92,13 +92,13 @@ drop table if exists t1;
 drop table if exists t2;
 create table t1(a int, b int);
 create table t2(a int, b int);
-explain format='brief' select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1;
-explain format='brief' select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
+explain format='plan_tree' select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1;
+explain format='plan_tree' select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
 create global binding for
 	select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1
 using
 	select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
-explain format='brief' select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1;
+explain format='plan_tree' select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1;
 drop global binding for
 	select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1
 using
@@ -115,13 +115,13 @@ drop table if exists t1;
 drop table if exists t2;
 create table t1(id int);
 create table t2(id int);
-explain SELECT * from t1,t2 where t1.id = t2.id;
-explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+explain format='plan_tree' SELECT * from t1,t2 where t1.id = t2.id;
+explain format='plan_tree' SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
 begin;
 SELECT * from t1,t2 where t1.id = t2.id;
 select @@last_plan_from_binding;
 create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
-explain format='brief' SELECT * from t1,t2 where t1.id = t2.id;
+explain format='plan_tree' SELECT * from t1,t2 where t1.id = t2.id;
 SELECT * from t1,t2 where t1.id = t2.id;
 select @@last_plan_from_binding;
 set binding disabled for SELECT * from t1,t2 where t1.id = t2.id;
@@ -240,7 +240,7 @@ connect (conn1, localhost, root,);
 --error 1046
 select * from t;
 select @@last_plan_from_binding;
-explain format ='brief' select * from bindinfo__bind.t;
+explain format ='plan_tree' select * from bindinfo__bind.t;
 select * from bindinfo__bind.t;
 select @@last_plan_from_binding;
 set binding disabled for select * from bindinfo__bind.t;
@@ -253,9 +253,9 @@ drop global binding for select * from t;
 # TestDMLIndexHintBind
 drop table if exists t;
 create table t(a int, b int, c int, key idx_b(b), key idx_c(c));
-explain format='brief' delete from t where b = 1 and c > 1;
+explain format='plan_tree' delete from t where b = 1 and c > 1;
 create global binding for delete from t where b = 1 and c > 1 using delete from t use index(idx_c) where b = 1 and c > 1;
-explain format='brief' delete from t where b = 1 and c > 1;
+explain format='plan_tree' delete from t where b = 1 and c > 1;
 
 drop global binding for delete from t where b = 1 and c > 1;
 
@@ -299,32 +299,32 @@ drop database bindinfo__bind_test;
 drop table if exists t1, t2;
 create table t1(a int, b int, c int, key idx_b(b), key idx_c(c));
 create table t2(a int, b int, c int, key idx_b(b), key idx_c(c));
-explain format='brief' delete from t1 where b = 1 and c > 1;
+explain format='plan_tree' delete from t1 where b = 1 and c > 1;
 create global binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1,idx_c) */ from t1 where b = 1 and c > 1;
-explain format='brief' delete from t1 where b = 1 and c > 1;
+explain format='plan_tree' delete from t1 where b = 1 and c > 1;
 
-explain format='brief' delete t1, t2 from t1 inner join t2 on t1.b = t2.b;
+explain format='plan_tree' delete t1, t2 from t1 inner join t2 on t1.b = t2.b;
 create global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b using delete /*+ inl_join(t1) */ t1, t2 from t1 inner join t2 on t1.b = t2.b;
-explain format='brief' delete t1, t2 from t1 inner join t2 on t1.b = t2.b;
+explain format='plan_tree' delete t1, t2 from t1 inner join t2 on t1.b = t2.b;
 
-explain format='brief' update t1 set a = 1 where b = 1 and c > 1;
+explain format='plan_tree' update t1 set a = 1 where b = 1 and c > 1;
 create global binding for update t1 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t1,idx_c) */ t1 set a = 1 where b = 1 and c > 1;
-explain format='brief' update t1 set a = 1 where b = 1 and c > 1;
+explain format='plan_tree' update t1 set a = 1 where b = 1 and c > 1;
 
-explain format='brief' update t1, t2 set t1.a = 1 where t1.b = t2.b;
+explain format='plan_tree' update t1, t2 set t1.a = 1 where t1.b = t2.b;
 create global binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b;
-explain format='brief' update t1, t2 set t1.a = 1 where t1.b = t2.b;
+explain format='plan_tree' update t1, t2 set t1.a = 1 where t1.b = t2.b;
 
-explain format='brief' insert into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+explain format='plan_tree' insert into t1 select * from t2 where t2.b = 2 and t2.c > 2;
 create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert /*+ use_index(t2,idx_c) */ into t1 select * from t2 where t2.b = 1 and t2.c > 1;
-explain format='brief' insert into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+explain format='plan_tree' insert into t1 select * from t2 where t2.b = 2 and t2.c > 2;
 drop global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1;
 create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1;
-explain format='brief' insert into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+explain format='plan_tree' insert into t1 select * from t2 where t2.b = 2 and t2.c > 2;
 
-explain format='brief' replace into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+explain format='plan_tree' replace into t1 select * from t2 where t2.b = 2 and t2.c > 2;
 create global binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1;
-explain format='brief' replace into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+explain format='plan_tree' replace into t1 select * from t2 where t2.b = 2 and t2.c > 2;
 
 drop global binding for delete from t1 where b = 1 and c > 1;
 drop global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b;

@@ -94,8 +94,8 @@ func GetMockSchedulerExt(ctrl *gomock.Controller, schedulerInfo SchedulerInfo) s
 				return nil, stepInfo.Err
 			}
 			res := make([][]byte, stepInfo.SubtaskCnt)
-			for i := 0; i < stepInfo.SubtaskCnt; i++ {
-				res[i] = []byte(fmt.Sprintf("subtask-%d", i))
+			for i := range stepInfo.SubtaskCnt {
+				res[i] = fmt.Appendf(nil, "subtask-%d", i)
 			}
 			return res, nil
 		},

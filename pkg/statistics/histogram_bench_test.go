@@ -36,7 +36,7 @@ const (
 func genBucket4TestData(length int) []*bucket4Test {
 	result := make([]*bucket4Test, 0, length)
 	var lower, upper int64
-	for n := 0; n < length; n++ {
+	for n := range length {
 		if n == 0 {
 			lower = 0
 		} else {
@@ -75,13 +75,13 @@ func benchmarkMergePartitionHist2GlobalHist(b *testing.B, partition int) {
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 	hists := make([]*Histogram, 0, partition)
-	for i := 0; i < partition; i++ {
+	for range partition {
 		buckets := genBucket4TestData(histogramLen)
 		hist := genHist4Bench(b, buckets, histogramLen)
 		hists = append(hists, hist)
 	}
 	poped := make([]TopNMeta, 0, popedTopNLen)
-	for n := 0; n < popedTopNLen; n++ {
+	for range popedTopNLen {
 		b, _ := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(rand.Int63n(10000)))
 		tmp := TopNMeta{
 			Encoded: b,

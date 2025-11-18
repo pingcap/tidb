@@ -4,6 +4,7 @@ package gluetidb
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -20,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -55,21 +56,21 @@ type Glue struct {
 	startDomainMu *sync.Mutex
 }
 
-func WrapSession(se sessiontypes.Session) glue.Session {
+func WrapSession(se sessionapi.Session) glue.Session {
 	return &tidbSession{se: se}
 }
 
 type tidbSession struct {
-	se sessiontypes.Session
+	se sessionapi.Session
 }
 
 // GetDomain implements glue.Glue.
 func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	existDom, _ := session.GetDomain(nil)
-	initStatsSe, err := g.createTypesSession(store)
-	if err != nil {
+	if err := g.startDomainAsNeeded(store); err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	dom, err := session.GetDomain(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -80,7 +81,7 @@ func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 		// create stats handler for backup and restore.
-		err = dom.UpdateTableStatsLoop(initStatsSe)
+		err = dom.UpdateTableStatsLoop()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -114,10 +115,10 @@ func (g Glue) startDomainAsNeeded(store kv.Storage) error {
 	if err != nil {
 		return err
 	}
-	return dom.Start(ddl.Normal)
+	return dom.Start(ddl.BR)
 }
 
-func (g Glue) createTypesSession(store kv.Storage) (sessiontypes.Session, error) {
+func (g Glue) createTypesSession(store kv.Storage) (sessionapi.Session, error) {
 	if err := g.startDomainAsNeeded(store); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -260,7 +261,7 @@ func (gs *tidbSession) Close() {
 	gs.se.Close()
 }
 
-// GetGlobalVariables implements glue.Session.
+// GetGlobalVariable implements glue.Session.
 func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
@@ -272,4 +273,35 @@ func (gs *tidbSession) GetGlobalSysVar(name string) (string, error) {
 
 func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) string {
 	return executor.ConstructResultOfShowCreatePlacementPolicy(policy)
+}
+
+func (gs *tidbSession) AlterTableMode(
+	_ context.Context,
+	schemaID int64,
+	tableID int64,
+	tableMode model.TableMode) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
+	d := domain.GetDomain(gs.se).DDLExecutor()
+	gs.se.SetValue(sessionctx.QueryString,
+		fmt.Sprintf("ALTER TABLE MODE SCHEMA_ID=%d TABLE_ID=%d TO %s", schemaID, tableID, tableMode.String()))
+	args := &model.AlterTableModeArgs{
+		SchemaID:  schemaID,
+		TableID:   tableID,
+		TableMode: tableMode,
+	}
+	return d.AlterTableMode(gs.se, args)
+}
+
+// RefreshMeta submits a refresh meta job to update the info schema with the latest metadata.
+func (gs *tidbSession) RefreshMeta(
+	_ context.Context,
+	args *model.RefreshMetaArgs) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
+	d := domain.GetDomain(gs.se).DDLExecutor()
+	gs.se.SetValue(sessionctx.QueryString,
+		fmt.Sprintf("REFRESH META SCHEMA_ID=%d TABLE_ID=%d INVOLVED_DB=%s INVOLVED_TABLE=%s",
+			args.SchemaID, args.TableID, args.InvolvedDB, args.InvolvedTable))
+	return d.RefreshMeta(gs.se, args)
 }

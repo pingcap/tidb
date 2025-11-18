@@ -97,26 +97,84 @@
     ]
   },
   {
-    "name": "TestOutOfRangeEstimationAfterDelete",
-    "cases": [
-      "explain format = 'brief' select * from t where a <= 300",
-      "explain format = 'brief' select * from t where a < 300",
-      "explain format = 'brief' select * from t where a <= 500",
-      "explain format = 'brief' select * from t where a >= 300 and a <= 900",
-      "explain format = 'brief' select * from t where a >= 900",
-      "explain format = 'brief' select * from t where a > 900",
-      "explain format = 'brief' select * from t where a >= 300",
-      "explain format = 'brief' select * from t where a <= 900",
-      "explain format = 'brief' select * from t where a > 800 and a < 1000",
-      "explain format = 'brief' select * from t where a > 900 and a < 1000",
-      "explain format = 'brief' select * from t where a > 900 and a < 1100",
-      "explain format = 'brief' select * from t where a > 200 and a < 300",
-      "explain format = 'brief' select * from t where a > 100 and a < 300",
-      "set @@tidb_opt_objective = 'determinate'",
-      "explain format = 'brief' select * from t where a <= 300",
-      "explain format = 'brief' select * from t where a <= 500",
-      "explain format = 'brief' select * from t where a > 900",
-      "explain format = 'brief' select * from t where a <= 900"
+    "Name": "TestOutOfRangeEstimationAfterDelete",
+    "Cases": [
+      {
+        "Start": 300,
+        "End": 500
+      },
+      {
+        "Start": 500,
+        "End": 700
+      },
+      {
+        "Start": 700,
+        "End": 900
+      },
+      {
+        "Start": 900,
+        "End": 1100
+      },
+      {
+        "Start": 200,
+        "End": 400
+      },
+      {
+        "Start": 400,
+        "End": 600
+      },
+      {
+        "Start": 600,
+        "End": 800
+      },
+      {
+        "Start": 800,
+        "End": 1000
+      },
+      {
+        "Start": 100,
+        "End": 300
+      },
+      {
+        "Start": 300,
+        "End": 500
+      },
+      {
+        "Start": 500,
+        "End": 700
+      },
+      {
+        "Start": 700,
+        "End": 900
+      },
+      {
+        "Start": 900,
+        "End": 1100
+      },
+      {
+        "Start": 0,
+        "End": 200
+      },
+      {
+        "Start": 200,
+        "End": 400
+      },
+      {
+        "Start": 400,
+        "End": 600
+      },
+      {
+        "Start": 600,
+        "End": 800
+      },
+      {
+        "Start": 800,
+        "End": 1000
+      },
+      {
+        "Start": 1000,
+        "End": 1200
+      }
     ]
   },
   {
@@ -281,6 +339,8 @@
       "explain format = 'brief' select * from t where a < 9999 order by c limit 1",
       "explain format = 'brief' select * from t where b >= 0 and b <= 100 or c >= 0 and c <= 100 order by c limit 1",
       "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
+      "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where d < 9950 order by c limit 1",
       "set @@tidb_opt_ordering_index_selectivity_threshold = 0.1",
       "explain format = 'brief' select * from t where b >= 9950 order by c limit 1",
       "explain format = 'brief' select * from t where b >= 9950 order by c desc limit 1",
@@ -293,7 +353,12 @@
       "explain format = 'brief' select * from t where b >= 0 and b <= 50 or c >= 0 and c <= 50 order by c limit 1",
       "explain format = 'brief' select * from t where b >= 9950 and c >= 9950 order by c limit 1",
       "explain format = 'brief' select * from t where b >= 9950 and c >= 9900 order by c limit 1",
-      "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1"
+      "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
+      "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where d < 9950 order by c limit 1",
+      "set @@tidb_opt_ordering_index_selectivity_threshold = 1",
+      "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where d < 9950 order by c limit 1"
     ]
   },
   {
@@ -305,6 +370,10 @@
       "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
       "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
       "set @@tidb_opt_ordering_index_selectivity_ratio = 0",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+      "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+      "set @@tidb_opt_ordering_index_selectivity_ratio = 0.01",
       "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
       "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
       "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",

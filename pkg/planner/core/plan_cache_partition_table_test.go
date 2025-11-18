@@ -17,14 +17,15 @@ package core_test
 import (
 	"fmt"
 	"math/rand"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -88,14 +89,14 @@ func TestPreparedPlanCachePartitions(t *testing.T) {
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows())
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"Point_Get", "partition:dual", "handle:2000000"})
 	tk.MustExec(`set @a=1999999`)
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"Point_Get", "partition:p1M", "handle:1999999"})
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
@@ -123,12 +124,12 @@ func TestPreparedPlanCachePartitionIndex(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{
-		{"IndexLookUp_7"},
-		{"├─IndexRangeScan_5(Build)"},
-		{"└─TableRowIDScan_6(Probe)"}})
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{
+		{"IndexLookUp"},
+		{"├─IndexRangeScan(Build)"},
+		{"└─TableRowIDScan(Probe)"}})
 	tk.MustExec(`set @a=2,@b=5,@c=4`)
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "BA 5", "abc 2"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
@@ -145,9 +146,9 @@ func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
 	tk.MustExec(`insert into t values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6)`)
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`explain format='plan_cache' select * from t where a IN (2,1,4,1,1,5,5)`).Check(testkit.Rows(""+
-		"IndexLookUp_7 4.00 root partition:p1,p2 ",
-		"├─IndexRangeScan_5(Build) 4.00 cop[tikv] table:t, index:PRIMARY(a) range:[1,1], [2,2], [4,4], [5,5], keep order:false",
-		"└─TableRowIDScan_6(Probe) 4.00 cop[tikv] table:t keep order:false"))
+		"IndexLookUp_8 4.00 root partition:p1,p2 ",
+		"├─IndexRangeScan_6(Build) 4.00 cop[tikv] table:t, index:PRIMARY(a) range:[1,1], [2,2], [4,4], [5,5], keep order:false",
+		"└─TableRowIDScan_7(Probe) 4.00 cop[tikv] table:t keep order:false"))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(`select * from t where a IN (2,1,4,1,1,5,5)`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BA 5", "abc 2"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
@@ -165,7 +166,7 @@ func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
 
 	tk.MustQuery(`explain format='plan_cache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:p1, index:PRIMARY(a) "))
 	tk.MustQuery(`explain format='plan_cache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:p1, index:PRIMARY(a) "))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(`select * from t where a = 2`).Check(testkit.Rows("abc 2"))
 	tk.MustExec(`create table tk (a int primary key nonclustered, b varchar(255), key (b)) partition by key (a) partitions 3`)
 	tk.MustExec(`insert into tk select a, b from t`)
@@ -174,7 +175,7 @@ func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	// PointGet will use Fast Plan, so no Plan Cache, even for Key Partitioned tables.
 	tk.MustQuery(`select * from tk where a = 2`).Check(testkit.Rows("2 abc"))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 }
 
 func TestFixControl33031(t *testing.T) {
@@ -247,7 +248,7 @@ func TestPlanCachePartitionDuplicates(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a0, @a1, @a2`).Sort().Check(testkit.Rows("20001 20001", "3 3"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{{"Batch_Point_Get_1"}})
 	tk.MustExec(`set @a0 = 30003, @a1 = 20002, @a2 = 4`)
@@ -266,7 +267,7 @@ func TestPreparedStmtIndexLookup(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, unique key (a))
 partition by hash (a) partitions 3`)
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	tk.MustExec("analyze table t")
@@ -282,7 +283,7 @@ partition by hash (a) partitions 3`)
 	tk.MustQuery(`execute stmt`)
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"PartitionUnion", "Batch_Point_Get", "partition:p0", "partition:p1"})
 	tk.MustQuery(`execute stmt`)
@@ -337,7 +338,7 @@ func testPartitionFullCover(t *testing.T, tableDefSQL []partCoverStruct, partiti
 	ids := make([]any, 0, rows)
 	maxRange := 2000000
 	maxID := maxRange + 500000
-	for i := 0; i < rows; i++ {
+	for range rows {
 		var id any
 		var lc any
 		createNew := true
@@ -593,7 +594,7 @@ func preparedStmtPointGet(t *testing.T, ids []any, tk *testkit.TestKit, testTbl 
 		tk.MustQuery(`execute stmt using @a ` + comment).Check(testkit.Rows(expect...))
 		require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tkProcess := tk.Session().ShowProcess()
-		ps := []*util.ProcessInfo{tkProcess}
+		ps := []*sessmgr.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		res := tk.MustQuery(fmt.Sprintf("explain for connection %d "+comment, tkProcess.ID))
 		if len(testTbl.pointGetExplain) > 0 {
@@ -668,13 +669,7 @@ func getRandCols(seededRand *rand.Rand) ([]string, bool) {
 		allCols[i], allCols[j] = allCols[j], allCols[i]
 	})
 	cols := allCols[:seededRand.Intn(len(allCols)-1)+1]
-	hasSpaceCol := false
-	for _, col := range cols {
-		if col == "space(1)" {
-			hasSpaceCol = true
-			break
-		}
-	}
+	hasSpaceCol := slices.Contains(cols, "space(1)")
 	return cols, hasSpaceCol
 }
 
@@ -717,7 +712,7 @@ func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, poi
 		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(expect...))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tkProcess := tk.Session().ShowProcess()
-		ps := []*util.ProcessInfo{tkProcess}
+		ps := []*sessmgr.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		res := tk.MustQuery(fmt.Sprintf("explain for connection %d "+comment, tkProcess.ID))
 		if q.usesBatchPointGet &&
@@ -750,11 +745,10 @@ func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, poi
 func nonPreparedStmtPointGet(t *testing.T, ids []any, tk *testkit.TestKit, testTbl partCoverStruct, seededRand *rand.Rand, rowData map[any]string, filler, comment string, isCaseSensitive bool) {
 	// Test non-prepared statements
 	// FastPlan will be used instead of checking plan cache!
-	usePlanCache := len(testTbl.pointGetExplain) == 0
 	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
 	id := ids[seededRand.Intn(len(ids))]
 	idStr := getIDStr(id)
-	cols, hasSpaceCol := getRandCols(seededRand)
+	cols, _ := getRandCols(seededRand)
 	sql := `select ` + strings.Join(cols, ",") + ` from t where a = `
 	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, isCaseSensitive, id)...))
 	prevID := id
@@ -762,26 +756,21 @@ func nonPreparedStmtPointGet(t *testing.T, ids []any, tk *testkit.TestKit, testT
 	id = ids[seededRand.Intn(len(ids))]
 	idStr = getIDStr(id)
 	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, isCaseSensitive, id)...))
-	if usePlanCache != tk.Session().GetSessionVars().FoundInPlanCache {
-		require.Equal(t, usePlanCache || hasSpaceCol, tk.Session().GetSessionVars().FoundInPlanCache, fmt.Sprintf("id: %d, prev id: %d", id, prevID))
-	}
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache, fmt.Sprintf("id: %d, prev id: %d", id, prevID))
 	id = ids[seededRand.Intn(len(ids))]
 	idStr = getIDStr(id)
 	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, isCaseSensitive, id)...))
-	if usePlanCache || hasSpaceCol != tk.Session().GetSessionVars().FoundInPlanCache {
-		require.Equal(t, usePlanCache || hasSpaceCol, tk.Session().GetSessionVars().FoundInPlanCache)
-	}
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	id = ids[seededRand.Intn(len(ids))]
 	idStr = getIDStr(id)
 	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, isCaseSensitive, id)...))
-	require.Equal(t, usePlanCache || hasSpaceCol, tk.Session().GetSessionVars().FoundInPlanCache)
-	if usePlanCache {
-		tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`)
-		id = ids[seededRand.Intn(len(ids))]
-		idStr = getIDStr(id)
-		tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, isCaseSensitive, id)...))
-		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	}
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`)
+	id = ids[seededRand.Intn(len(ids))]
+	idStr = getIDStr(id)
+	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, isCaseSensitive, id)...))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 }
 
 func nonpreparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, pointGetExplain []string, seededRand *rand.Rand, rowData map[any]string, filler, currTest string, canUseBatchPointGet, isCaseSensitive bool) {

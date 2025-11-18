@@ -24,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -287,15 +285,15 @@ func (p LogicalWindow) Init(ctx base.PlanContext, offset int) *LogicalWindow {
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, desc := range p.WindowFuncDescs {
-		for _, arg := range desc.Args {
-			ruleutil.ResolveExprAndReplace(arg, replace)
+		for i, arg := range desc.Args {
+			desc.Args[i] = ruleutil.ResolveExprAndReplace(arg, replace)
 		}
 	}
-	for _, item := range p.PartitionBy {
-		ruleutil.ResolveColumnAndReplace(item.Col, replace)
+	for i, item := range p.PartitionBy {
+		p.PartitionBy[i].Col = ruleutil.ResolveColumnAndReplace(item.Col, replace)
 	}
-	for _, item := range p.OrderBy {
-		ruleutil.ResolveColumnAndReplace(item.Col, replace)
+	for i, item := range p.OrderBy {
+		p.OrderBy[i].Col = ruleutil.ResolveColumnAndReplace(item.Col, replace)
 	}
 }
 
@@ -306,7 +304,7 @@ func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
 	partitionCols := expression.NewSchema(p.GetPartitionByCols()...)
@@ -319,12 +317,12 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 			canNotBePushed = append(canNotBePushed, cond)
 		}
 	}
-	p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
-	return canNotBePushed, p
+	_, _, err := p.BaseLogicalPlan.PredicatePushDown(canBePushed)
+	return canNotBePushed, p, err
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	windowColumns := p.GetWindowResultColumns()
 	cnt := 0
 	for _, col := range parentUsedCols {
@@ -343,7 +341,7 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	parentUsedCols = parentUsedCols[:cnt]
 	parentUsedCols = p.extractUsedCols(parentUsedCols)
 	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)
+	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +384,7 @@ func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	})
 	childLen := selfSchema.Len() - len(p.WindowFuncDescs)
-	for i := 0; i < childLen; i++ {
+	for i := range childLen {
 		id := selfSchema.Columns[i].UniqueID
 		p.StatsInfo().ColNDVs[id] = childProfile.ColNDVs[id]
 	}
@@ -424,11 +422,6 @@ func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][
 		result = append(result, p.OrderBy[i].Col)
 	}
 	return [][]*expression.Column{result}
-}
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalWindow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalWindow(p, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.

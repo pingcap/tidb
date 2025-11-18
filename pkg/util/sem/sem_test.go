@@ -17,6 +17,7 @@ package sem
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/assert"
@@ -25,10 +26,10 @@ import (
 func TestInvisibleSchema(t *testing.T) {
 	assert := assert.New(t)
 
-	assert.True(IsInvisibleSchema(metricsSchema))
+	assert.True(IsInvisibleSchema(metadef.MetricSchemaName.L))
 	assert.True(IsInvisibleSchema("METRICS_ScHEma"))
 	assert.False(IsInvisibleSchema("mysql"))
-	assert.False(IsInvisibleSchema(informationSchema))
+	assert.False(IsInvisibleSchema(metadef.InformationSchemaName.L))
 	assert.False(IsInvisibleSchema("Bogusname"))
 }
 
@@ -46,14 +47,14 @@ func TestIsInvisibleTable(t *testing.T) {
 		assert.True(IsInvisibleTable(mysql.SystemDB, tbl))
 	}
 	for _, tbl := range infoSchemaTbls {
-		assert.True(IsInvisibleTable(informationSchema, tbl))
+		assert.True(IsInvisibleTable(metadef.InformationSchemaName.L, tbl))
 	}
 	for _, tbl := range perfSChemaTbls {
-		assert.True(IsInvisibleTable(performanceSchema, tbl))
+		assert.True(IsInvisibleTable(metadef.PerformanceSchemaName.L, tbl))
 	}
 
-	assert.True(IsInvisibleTable(metricsSchema, "acdc"))
-	assert.True(IsInvisibleTable(metricsSchema, "fdsgfd"))
+	assert.True(IsInvisibleTable(metadef.MetricSchemaName.L, "acdc"))
+	assert.True(IsInvisibleTable(metadef.MetricSchemaName.L, "fdsgfd"))
 	assert.False(IsInvisibleTable("test", "t1"))
 }
 
@@ -102,6 +103,14 @@ func TestIsInvisibleSysVar(t *testing.T) {
 	assert.True(IsInvisibleSysVar(vardef.TiDBRowFormatVersion))
 	assert.True(IsInvisibleSysVar(vardef.TiDBRedactLog))
 	assert.True(IsInvisibleSysVar(vardef.TiDBTopSQLMaxTimeSeriesCount))
-	assert.True(IsInvisibleSysVar(vardef.TiDBTopSQLMaxTimeSeriesCount))
+	assert.True(IsInvisibleSysVar(vardef.TiDBServiceScope))
+	assert.True(IsInvisibleSysVar(vardef.TiDBCloudStorageURI))
+	assert.True(IsInvisibleSysVar(vardef.TiDBStmtSummaryMaxStmtCount))
+	assert.True(IsInvisibleSysVar(vardef.TiDBServerMemoryLimit))
+	assert.True(IsInvisibleSysVar(vardef.TiDBServerMemoryLimitGCTrigger))
+	assert.True(IsInvisibleSysVar(vardef.TiDBInstancePlanCacheMaxMemSize))
+	assert.True(IsInvisibleSysVar(vardef.TiDBStatsCacheMemQuota))
+	assert.True(IsInvisibleSysVar(vardef.TiDBMemQuotaBindingCache))
+	assert.True(IsInvisibleSysVar(vardef.TiDBSchemaCacheSize))
 	assert.True(IsInvisibleSysVar(tidbAuditRetractLog))
 }

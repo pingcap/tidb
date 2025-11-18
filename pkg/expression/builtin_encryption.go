@@ -838,10 +838,7 @@ func (c *compressFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 	srcLen := args[0].GetType(ctx.GetEvalCtx()).GetFlen()
-	compressBound := srcLen + (srcLen >> 12) + (srcLen >> 14) + (srcLen >> 25) + 13
-	if compressBound > mysql.MaxBlobWidth {
-		compressBound = mysql.MaxBlobWidth
-	}
+	compressBound := min(srcLen+(srcLen>>12)+(srcLen>>14)+(srcLen>>25)+13, mysql.MaxBlobWidth)
 	bf.tp.SetFlen(compressBound)
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinCompressSig{bf}

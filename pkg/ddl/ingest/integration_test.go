@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -43,10 +44,14 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 		tk.MustExec("admin check table t;")
 		rows := tk.MustQuery(fmt.Sprintf("admin show ddl jobs %d;", n)).Rows()
 		require.Len(t, rows, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			//nolint: forcetypeassert
 			jobTp := rows[i][12].(string)
-			require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+			if kerneltype.IsClassic() {
+				require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+			} else {
+				require.Equal(t, jobTp, "")
+			}
 		}
 	}
 	tk.MustExec("create table t (a int, b int, c int as (b+10), d int as (b+c), primary key (a) clustered);")
@@ -81,6 +86,9 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 }
 
 func TestIngestError(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -89,7 +97,7 @@ func TestIngestError(t *testing.T) {
 
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
 	tk.MustExec("create table t (a int primary key, b int);")
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
 	tk.MustQuery("split table t between (0) and (50000) regions 5;").Check(testkit.Rows("4 1"))
@@ -101,11 +109,15 @@ func TestIngestError(t *testing.T) {
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
 	jobTp := rows[0][12].(string)
-	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	} else {
+		require.Equal(t, jobTp, "")
+	}
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int primary key, b int);")
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
 	tk.MustQuery("split table t between (0) and (50000) regions 5;").Check(testkit.Rows("4 1"))
@@ -117,10 +129,17 @@ func TestIngestError(t *testing.T) {
 	rows = tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
 	jobTp = rows[0][12].(string)
-	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	} else {
+		require.Equal(t, jobTp, "")
+	}
 }
 
 func TestAddIndexIngestPanic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -148,6 +167,9 @@ func TestAddIndexIngestPanic(t *testing.T) {
 }
 
 func TestAddIndexSetInternalSessions(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -205,6 +227,36 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	cnt := ingest.LitDiskRoot.Count()
 	require.Equal(t, 0, cnt)
+}
+
+func TestAddIndexGetChunkCancel(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := range 100 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	tk.MustExec("split table t between (0) and (1000000) regions 10;")
+	jobID := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if jobID == 0 && job.Type == model.ActionAddIndex {
+			jobID = job.ID
+		}
+	})
+	cancelled := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeGetChunk", func() {
+		if !cancelled {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobID))
+			cancelled = true
+		}
+	})
+	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
+	require.True(t, cancelled)
+	tk.MustExec("admin check table t;")
 }
 
 func TestIngestPartitionRowCount(t *testing.T) {
@@ -307,7 +359,7 @@ func TestAddIndexIngestMultiSchemaChange(t *testing.T) {
 		partition p0 values less than (10),
 		partition p1 values less than (20),
 		partition p2 values less than MAXVALUE);`)
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		insertSQL := fmt.Sprintf("insert into t (a, b) values (%d, %d);", i, i)
 		tk.MustExec(insertSQL)
 	}
@@ -374,6 +426,9 @@ func TestMultiSchemaAddIndexMerge(t *testing.T) {
 }
 
 func TestAddIndexIngestJobWriteConflict(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
@@ -407,13 +462,16 @@ func TestAddIndexIngestJobWriteConflict(t *testing.T) {
 }
 
 func TestAddIndexIngestPartitionCheckpoint(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_enable_dist_task = off;")
 	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 4;")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		insertSQL := fmt.Sprintf("insert into t values (%d, %d)", i, i)
 		tk.MustExec(insertSQL)
 	}
@@ -512,13 +570,15 @@ func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 	var i atomic.Int32
 	i.Store(3)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		tk2 := testkit.NewTestKit(t, store)
-		tmp := i.Add(1)
-		_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
-		assert.Nil(t, err)
+		if job.State != model.JobStateSynced {
+			tk2 := testkit.NewTestKit(t, store)
+			tmp := i.Add(1)
+			_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
+			assert.Nil(t, err)
 
-		_, err = tk2.Exec(fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1))
-		assert.Nil(t, err)
+			_, err = tk2.Exec(fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1))
+			assert.Nil(t, err)
+		}
 	})
 	tk.MustExec("alter table t add unique index idx(b) global")
 	rsGlobalIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
@@ -538,4 +598,122 @@ func TestAddIndexValidateRangesFailed(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/validateAndFillRangesErr", "2*return")
 	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
+}
+
+func TestIndexChangeWithModifyColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (b int, c varchar(100) collate utf8mb4_unicode_ci)")
+	tk.MustExec("insert t values (1, 'aa'), (2, 'bb'), (3, 'cc');")
+
+	tkddl := testkit.NewTestKit(t, store)
+	tkddl.MustExec("use test")
+
+	var checkErr error
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	runModifyColumn := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateNone:
+			if runModifyColumn {
+				return
+			}
+			runModifyColumn = true
+			go func() {
+				_, checkErr = tkddl.Exec("alter table t modify column c varchar(120) default 'aaaaa' collate utf8mb4_general_ci first;")
+				wg.Done()
+			}()
+		default:
+			return
+		}
+	})
+
+	tk.MustExec("alter table t add index idx(c);")
+	wg.Wait()
+	require.ErrorContains(t, checkErr, "when index is defined")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t;")
+}
+
+func TestModifyColumnWithMultipleIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	testcases := []struct {
+		caseName        string
+		enableDistTask  string
+		enableFastReorg string
+	}{
+		{"txn", "off", "off"},
+		{"local ingest", "off", "on"},
+		{"dxf ingest", "on", "on"},
+	}
+	createTableSQL := `CREATE TABLE t (
+		a int(11) DEFAULT NULL,
+		b varchar(10) DEFAULT NULL,
+		c decimal(10,2) DEFAULT NULL,
+		KEY idx1 (a),
+		UNIQUE KEY idx2 (a),
+		KEY idx3 (a,b),
+		KEY idx4 (a,b,c)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`
+	for _, tc := range testcases {
+		t.Run(tc.caseName, func(t *testing.T) {
+			if kerneltype.IsNextGen() && tc.enableDistTask == "off" {
+				t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+			}
+			if kerneltype.IsClassic() {
+				tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
+				tk.MustExec(fmt.Sprintf("set global tidb_ddl_enable_fast_reorg = %s;", tc.enableFastReorg))
+			}
+			tk.MustExec("DROP TABLE IF EXISTS t")
+			tk.MustExec(createTableSQL)
+			tk.MustExec("insert into t values(19,1,1),(17,2,2)")
+			tk.MustExec("admin check table t;")
+			tk.MustExec("alter table t modify a bit(5) not null")
+			tk.MustExec("admin check table t;")
+		})
+	}
+}
+
+func TestModifyColumnWithIndexWithDefaultValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	testcases := []struct {
+		caseName        string
+		enableDistTask  string
+		enableFastReorg string
+	}{
+		{"txn", "off", "off"},
+		{"local ingest", "off", "on"},
+		{"dxf ingest", "on", "on"},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.caseName, func(t *testing.T) {
+			if kerneltype.IsNextGen() && tc.enableDistTask == "off" {
+				t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+			}
+			if kerneltype.IsClassic() {
+				tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
+				tk.MustExec(fmt.Sprintf("set global tidb_ddl_enable_fast_reorg = %s;", tc.enableFastReorg))
+			}
+			tk.MustExec("drop table if exists t1")
+			tk.MustExec("create table t1 (c int(10), c1 datetime default (date_format(now(),'%Y-%m-%d')));")
+			tk.MustExec("insert into t1(c) values (1), (2);")
+			tk.MustExec("alter table t1 add index idx(c1);")
+			tk.MustExec("insert into t1 values (3, default);")
+			tk.MustExec("alter table t1 modify column c1 varchar(30) default 'xx';")
+			tk.MustExec("alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));")
+			tk.MustExec("insert into t1 values (5, default);")
+			tk.MustExec("alter table t1 drop index idx;")
+		})
+	}
 }

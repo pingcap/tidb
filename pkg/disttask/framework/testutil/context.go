@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -131,7 +132,7 @@ func (c *TestDXFContext) init(nodeNum, cpuCount int, reduceCheckInterval bool) {
 	c.TaskMgr = taskManager
 	c.MockCtrl = ctrl
 
-	for i := 0; i < nodeNum; i++ {
+	for range nodeNum {
 		c.ScaleOutBy(c.getNodeID(), false)
 	}
 	c.electIfNeeded()
@@ -160,7 +161,7 @@ func (c *TestDXFContext) recycleNodeID(id string) {
 
 // ScaleOut scales out a tidb node, and elect owner if required.
 func (c *TestDXFContext) ScaleOut(nodeNum int) {
-	for i := 0; i < nodeNum; i++ {
+	for range nodeNum {
 		c.ScaleOutBy(c.getNodeID(), false)
 	}
 	c.electIfNeeded()
@@ -169,13 +170,13 @@ func (c *TestDXFContext) ScaleOut(nodeNum int) {
 // ScaleOutBy scales out a tidb node by id, and set it as owner if required.
 func (c *TestDXFContext) ScaleOutBy(id string, owner bool) {
 	c.T.Logf("scale out node of id = %s, owner = %t", id, owner)
-	exeMgr, err := taskexecutor.NewManager(c.Ctx, id, c.TaskMgr, proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB))
+	exeMgr, err := taskexecutor.NewManager(c.Ctx, c.Store, id, c.TaskMgr, proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB))
 	require.NoError(c.T, err)
 	require.NoError(c.T, exeMgr.InitMeta())
 	require.NoError(c.T, exeMgr.Start())
 	var schMgr *scheduler.Manager
 	if owner {
-		schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, id, proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB))
+		schMgr = scheduler.NewManager(c.Ctx, c.Store, c.TaskMgr, id, proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB))
 		schMgr.Start()
 	}
 	node := &tidbNode{
@@ -208,7 +209,7 @@ func (c *TestDXFContext) updateLiveExecIDs() {
 
 // ScaleIn scales in some last added tidb nodes, elect new owner if required.
 func (c *TestDXFContext) ScaleIn(nodeNum int) {
-	for i := 0; i < nodeNum; i++ {
+	for range nodeNum {
 		c.mu.RLock()
 		if len(c.mu.nodes) == 0 {
 			c.mu.RUnlock()
@@ -231,7 +232,7 @@ func (c *TestDXFContext) ScaleInBy(id string) {
 		return
 	}
 	node := c.mu.nodes[idx]
-	c.mu.nodes = append(c.mu.nodes[:idx], c.mu.nodes[idx+1:]...)
+	c.mu.nodes = slices.Delete(c.mu.nodes, idx, idx+1)
 	c.mu.nodeIndices = make(map[string]int, len(c.mu.nodes))
 	c.mu.ownerIndices = make(map[string]int, len(c.mu.nodes))
 	for i, n := range c.mu.nodes {
@@ -305,8 +306,7 @@ func (c *TestDXFContext) GetRandNodeIDs(limit int) map[string]struct{} {
 	if len(c.mu.nodes) == 0 {
 		return nil
 	}
-	cloneSlice := make([]*tidbNode, len(c.mu.nodes))
-	copy(cloneSlice, c.mu.nodes)
+	cloneSlice := slices.Clone(c.mu.nodes)
 	rand.Shuffle(len(cloneSlice), func(i, j int) {
 		cloneSlice[i], cloneSlice[j] = cloneSlice[j], cloneSlice[i]
 	})
@@ -315,7 +315,7 @@ func (c *TestDXFContext) GetRandNodeIDs(limit int) map[string]struct{} {
 		limit = len(c.mu.nodes)
 	}
 	ids := make(map[string]struct{}, limit)
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		ids[cloneSlice[i].id] = struct{}{}
 	}
 	return ids
@@ -358,7 +358,7 @@ func (c *TestDXFContext) electIfNeeded() {
 	ownerNode := c.mu.nodes[newOwnerIdx]
 	c.mu.ownerIndices[ownerNode.id] = newOwnerIdx
 	nodeRes := proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB)
-	ownerNode.schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, ownerNode.id, nodeRes)
+	ownerNode.schMgr = scheduler.NewManager(c.Ctx, c.Store, c.TaskMgr, ownerNode.id, nodeRes)
 	ownerNode.schMgr.Start()
 	ownerNode.owner = true
 	c.mu.Unlock()
@@ -425,6 +425,7 @@ func getTaskStepKey(id int64, step proto.Step) string {
 func ReduceCheckInterval(t testing.TB) {
 	schedulerMgrCheckIntervalBak := scheduler.CheckTaskRunningInterval
 	schedulerCheckIntervalBak := scheduler.CheckTaskFinishedInterval
+	cleanUpIntervalBak := scheduler.DefaultCleanUpInterval
 	taskCheckIntervalBak := taskexecutor.TaskCheckInterval
 	checkIntervalBak := taskexecutor.SubtaskCheckInterval
 	maxIntervalBak := taskexecutor.MaxSubtaskCheckInterval
@@ -432,12 +433,14 @@ func ReduceCheckInterval(t testing.TB) {
 	t.Cleanup(func() {
 		scheduler.CheckTaskRunningInterval = schedulerMgrCheckIntervalBak
 		scheduler.CheckTaskFinishedInterval = schedulerCheckIntervalBak
+		scheduler.DefaultCleanUpInterval = cleanUpIntervalBak
 		taskexecutor.TaskCheckInterval = taskCheckIntervalBak
 		taskexecutor.SubtaskCheckInterval = checkIntervalBak
 		taskexecutor.MaxSubtaskCheckInterval = maxIntervalBak
 		taskexecutor.DetectParamModifyInterval = detectModifyIntBak
 	})
 	scheduler.CheckTaskRunningInterval, scheduler.CheckTaskFinishedInterval = 100*time.Millisecond, 100*time.Millisecond
+	scheduler.DefaultCleanUpInterval = 200 * time.Millisecond
 	taskexecutor.TaskCheckInterval, taskexecutor.MaxSubtaskCheckInterval, taskexecutor.SubtaskCheckInterval =
 		10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond
 	taskexecutor.DetectParamModifyInterval = 10 * time.Millisecond

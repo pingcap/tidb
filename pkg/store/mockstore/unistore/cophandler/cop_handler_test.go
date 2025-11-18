@@ -20,6 +20,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/badger"
@@ -104,7 +105,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 	}
 	colInfos := make([]*tipb.ColumnInfo, 3)
 	colTypeMap := map[int64]*types.FieldType{}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		colInfos[i] = &tipb.ColumnInfo{
 			ColumnId:  colIds[i],
 			Tp:        int32(colTypes[i].GetType()),
@@ -115,7 +116,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 	rows := map[int64][]types.Datum{}
 	encodedTestKVDatas := make([]*encodedTestKVData, keyNumber)
 	encoder := &rowcodec.Encoder{Enable: true}
-	for i := 0; i < keyNumber; i++ {
+	for i := range keyNumber {
 		datum := types.MakeDatums(i, "abc", 10.0)
 		rows[int64(i)] = datum
 		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx.TimeZone(), datum, colIds, nil, nil, nil, encoder)
@@ -135,8 +136,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 
 func getTestPointRange(tableID int64, handle int64) kv.KeyRange {
 	startKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(handle))
-	endKey := make([]byte, len(startKey))
-	copy(endKey, startKey)
+	endKey := slices.Clone(startKey)
 	convertToPrefixNext(endKey)
 	return kv.KeyRange{
 		StartKey: startKey,
@@ -157,7 +157,7 @@ func convertToPrefixNext(key []byte) []byte {
 		}
 		key[i] = 0
 	}
-	for i := 0; i < len(key); i++ {
+	for i := range key {
 		key[i] = 255
 	}
 	return append(key, 0)
@@ -166,15 +166,7 @@ func convertToPrefixNext(key []byte) []byte {
 // return whether these two keys are equal.
 func isPrefixNext(key []byte, expected []byte) bool {
 	key = convertToPrefixNext(key)
-	if len(key) != len(expected) {
-		return false
-	}
-	for i := 0; i < len(key); i++ {
-		if key[i] != expected[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(key, expected)
 }
 
 // return a dag context according to dagReq and key ranges.
@@ -411,7 +403,7 @@ func TestMppExecutor(t *testing.T) {
 
 	dagCtx := newDagContext(t, store, []kv.KeyRange{getTestPointRange(tableID, 1)},
 		dagRequest, dagRequestStartTs)
-	_, _, _, rowCount, _, err := buildAndRunMPPExecutor(dagCtx, dagRequest, 0)
+	_, _, _, _, rowCount, _, err := buildAndRunMPPExecutor(dagCtx, dagRequest, 0)
 	require.Equal(t, rowCount[0], int64(1))
 	require.NoError(t, err)
 }
@@ -615,7 +607,7 @@ func BenchmarkExecutors(b *testing.B) {
 			// })
 			b.Run(fmt.Sprintf("(row=%d, limit=%d)", row, lim), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
-					_, _, _, _, _, err := buildAndRunMPPExecutor(dagCtx, dagReq, 0)
+					_, _, _, _, _, _, err := buildAndRunMPPExecutor(dagCtx, dagReq, 0)
 					if err != nil {
 						b.Fatal(err)
 					}

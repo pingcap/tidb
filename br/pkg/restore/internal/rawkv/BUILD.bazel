@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/restore/utils",
+        "//pkg/metrics",
         "//pkg/util/hack",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//config",
@@ -20,6 +21,7 @@ go_test(
     timeout = "short",
     srcs = ["rawkv_client_test.go"],
     flaky = True,
+    shard_count = 2,
     deps = [
         ":rawkv",
         "//br/pkg/errors",

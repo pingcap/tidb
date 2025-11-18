@@ -112,7 +112,11 @@ func (h subscriber) handle(
 			}
 		}
 	case model.ActionModifyColumn:
-		newTableInfo, modifiedColumnInfo := change.GetModifyColumnInfo()
+		newTableInfo, modifiedColumnInfo, analyzed := change.GetModifyColumnInfo()
+		// since tidb_stats_update_during_ddl will do analyze in ddl, skip col init here.
+		if analyzed {
+			return nil
+		}
 		ids, err := getPhysicalIDs(sctx, newTableInfo)
 		if err != nil {
 			return errors.Trace(err)
@@ -316,7 +320,7 @@ func (h subscriber) delayedDeleteStats4PhysicalID(
 	sctx sessionctx.Context,
 	id int64,
 ) error {
-	startTS, err2 := storage.UpdateStatsMetaVersion(ctx, sctx, id)
+	startTS, err2 := storage.UpdateStatsMetaVerAndLastHistUpdateVer(ctx, sctx, id)
 	if err2 != nil {
 		return errors.Trace(err2)
 	}
@@ -418,6 +422,10 @@ func updateGlobalTableStats4DropPartition(
 	))
 }
 
+const (
+	schemaNotFound = "Not Found"
+)
+
 func updateGlobalTableStats4ExchangePartition(
 	ctx context.Context,
 	sctx sessionctx.Context,
@@ -452,10 +460,13 @@ func updateGlobalTableStats4ExchangePartition(
 	}
 
 	// Update the global stats.
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+	globalTableSchemaName := schemaNotFound
 	globalTableSchema, ok := infoschema.SchemaByTable(is, globalTableInfo)
-	if !ok {
-		return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
+	if ok {
+		globalTableSchemaName = globalTableSchema.Name.O
+	} else {
+		logutil.StatsSampleLogger().Info("Schema not found for table, it may have been dropped", zap.Int64("tableID", globalTableInfo.ID))
 	}
 	if err = updateStatsWithCountDeltaAndModifyCountDelta(
 		ctx,
@@ -463,7 +474,7 @@ func updateGlobalTableStats4ExchangePartition(
 		globalTableInfo.ID, countDelta, modifyCountDelta,
 	); err != nil {
 		fields := exchangePartitionLogFields(
-			globalTableSchema.Name.O,
+			globalTableSchemaName,
 			globalTableInfo,
 			originalPartInfo.Definitions[0],
 			originalTableInfo,
@@ -483,7 +494,7 @@ func updateGlobalTableStats4ExchangePartition(
 	logutil.StatsLogger().Info(
 		"Update global stats after exchange partition",
 		exchangePartitionLogFields(
-			globalTableSchema.Name.O,
+			globalTableSchemaName,
 			globalTableInfo,
 			originalPartInfo.Definitions[0],
 			originalTableInfo,
@@ -565,10 +576,13 @@ func updateGlobalTableStats4TruncatePartition(
 		return nil
 	}
 
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+	globalTableSchemaName := schemaNotFound
 	globalTableSchema, ok := infoschema.SchemaByTable(is, globalTableInfo)
-	if !ok {
-		return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
+	if ok {
+		globalTableSchemaName = globalTableSchema.Name.O
+	} else {
+		logutil.StatsSampleLogger().Info("Schema not found for table, it may have been dropped", zap.Int64("tableID", globalTableInfo.ID))
 	}
 	lockedTables, err := lockstats.QueryLockedTables(ctx, sctx)
 	if err != nil {
@@ -600,7 +614,7 @@ func updateGlobalTableStats4TruncatePartition(
 	)
 	if err != nil {
 		fields := truncatePartitionsLogFields(
-			globalTableSchema,
+			globalTableSchemaName,
 			globalTableInfo,
 			partitionIDs,
 			partitionNames,
@@ -618,7 +632,7 @@ func updateGlobalTableStats4TruncatePartition(
 
 	logutil.StatsLogger().Info("Update global stats after truncate partition",
 		truncatePartitionsLogFields(
-			globalTableSchema,
+			globalTableSchemaName,
 			globalTableInfo,
 			partitionIDs,
 			partitionNames,
@@ -632,7 +646,7 @@ func updateGlobalTableStats4TruncatePartition(
 }
 
 func truncatePartitionsLogFields(
-	globalTableSchema *model.DBInfo,
+	globalTableSchemaName string,
 	globalTableInfo *model.TableInfo,
 	partitionIDs []int64,
 	partitionNames []string,
@@ -642,7 +656,7 @@ func truncatePartitionsLogFields(
 	isLocked bool,
 ) []zap.Field {
 	return []zap.Field{
-		zap.String("schema", globalTableSchema.Name.O),
+		zap.String("schema", globalTableSchemaName),
 		zap.Int64("tableID", globalTableInfo.ID),
 		zap.String("tableName", globalTableInfo.Name.O),
 		zap.Int64s("partitionIDs", partitionIDs),
