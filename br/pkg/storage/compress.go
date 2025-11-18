@@ -39,6 +39,7 @@ func (w *withCompression) Create(ctx context.Context, name string, o *WriterOpti
 	if bw, ok := writer.(*bufferedWriter); ok {
 		writer = bw.writer
 	}
+	// the external storage will do access recording, so no need to pass it again.
 	compressedWriter := newBufferedWriter(writer, hardcodedS3ChunkSize, w.compressType, nil)
 	return compressedWriter, nil
 }
