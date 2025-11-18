@@ -295,7 +295,9 @@ type RestoreConfig struct {
 	WaitTiflashReady bool `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
 
 	// PITR-related fields for blocklist creation
-	piTRTaskInfo        *PiTRTaskInfo              `json:"-" toml:"-"`
+	// RestoreStartTS is the timestamp when the restore operation began (before any table creation).
+	// This is used for blocklist files to accurately mark when tables were created.
+	RestoreStartTS      uint64                          `json:"-" toml:"-"`
 	tableMappingManager *stream.TableMappingManager `json:"-" toml:"-"`
 
 	// for ebs-based restore
@@ -962,13 +964,12 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			log.Warn("tableMappingManager is nil, blocklist will contain no IDs")
 		}
 
-		// Get restore target timestamp
-		var restoreTargetTs uint64
-		if cfg.piTRTaskInfo != nil {
-			restoreTargetTs = cfg.piTRTaskInfo.RestoreTS
+		restoreStartTs := cfg.RestoreStartTS
+		if restoreStartTs == 0 {
+			log.Warn("restoreStartTS is not set, skip building blocklist")
+			return
 		}
-
-		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreTargetTs, cfg.RewriteTS, downstreamTableIds, downstreamDbIds)
+		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreStartTs, cfg.RewriteTS, downstreamTableIds, downstreamDbIds)
 		if err != nil {
 			restoreErr = err
 			return
@@ -980,8 +981,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 		log.Info("save the log restore table IDs blocklist into log backup storage",
 			zap.Int("downstreamTableCount", len(downstreamTableIds)),
-			zap.Int("downstreamDbCount", len(downstreamDbIds)),
-			zap.Uint64("restoreTargetTs", restoreTargetTs))
+			zap.Int("downstreamDbCount", len(downstreamDbIds)))
 		if err = logTaskStorage.WriteFile(c, filename, data); err != nil {
 			restoreErr = err
 			return
