@@ -165,14 +165,14 @@ func unmarshalLogRestoreTableIDsBlocklistFile(data []byte) (*LogRestoreTableIDsB
 func fastWalkLogRestoreTableIDsBlocklistFile(
 	ctx context.Context,
 	s storage.ExternalStorage,
-	filterOutFn func(restoreCommitTs, restoreTargetTs uint64) bool,
-	executionFn func(ctx context.Context, filename string, restoreCommitTs, restoreTargetTs, rewriteTs uint64, tableIds, dbIds []int64) error,
+	filterOutFn func(restoreCommitTs, restoreStartTs uint64) bool,
+	executionFn func(ctx context.Context, filename string, restoreCommitTs, restoreStartTs, rewriteTs uint64, tableIds, dbIds []int64) error,
 ) error {
 	filenames := make([]string, 0)
 	if err := s.WalkDir(ctx, &storage.WalkOption{SubDir: logRestoreTableIDBlocklistFilePrefix}, func(path string, _ int64) error {
-		restoreCommitTs, restoreTargetTs, parsed := parseLogRestoreTableIDsBlocklistFileName(path)
+		restoreCommitTs, restoreStartTs, parsed := parseLogRestoreTableIDsBlocklistFileName(path)
 		if parsed {
-			if filterOutFn(restoreCommitTs, restoreTargetTs) {
+			if filterOutFn(restoreCommitTs, restoreStartTs) {
 				return nil
 			}
 		}
@@ -218,14 +218,14 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 	checkDBIdlost func(dbId int64) bool,
 	cleanError func(rewriteTs uint64),
 ) error {
-	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, restoreTargetTs uint64) bool {
+	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, restoreStartTs uint64) bool {
 		// Skip if this restore's commit time is after our start time
-		// and the restored time is before last restore target time.
-		if startTs >= restoreCommitTs || restoredTs < restoreTargetTs {
+		// or the restored time is before last restore start time.
+		if startTs >= restoreCommitTs || restoredTs < restoreStartTs {
 			return true
 		}
 		return false
-	}, func(_ context.Context, _ string, restoreCommitTs, restoreTargetTs, rewriteTs uint64, tableIds, dbIds []int64) error {
+	}, func(_ context.Context, _ string, restoreCommitTs, restoreStartTs, rewriteTs uint64, tableIds, dbIds []int64) error {
 		for _, tableId := range tableIds {
 			if tracker.ContainsTableId(tableId) || tracker.ContainsPartitionId(tableId) {
 				return errors.Errorf(
