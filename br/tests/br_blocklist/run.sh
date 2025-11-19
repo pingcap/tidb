@@ -75,7 +75,7 @@ echo "✓ test_db prepared: t1 has 3 rows, t2 has 2 rows"
 # Record T1 timestamp
 echo ">>> Waiting for log backup checkpoint to advance..."
 wait_log_checkpoint_advance "$TASK_NAME"
-T1=$(( $(date +%s%3N) << 18 ))
+T1=$LATEST_CHECKPOINT_TS
 echo "✓ T1 timestamp: $T1 (data state: t1=3 rows, t2=2 rows)"
 
 # ==================== T2: Insert additional data ====================
@@ -100,7 +100,7 @@ echo "✓ test_db updated: t1 has 5 rows, t2 has 4 rows"
 # Record T2 timestamp
 echo ">>> Waiting for log backup checkpoint to advance..."
 wait_log_checkpoint_advance "$TASK_NAME"
-T2=$(( $(date +%s%3N) << 18 ))
+T2=$LATEST_CHECKPOINT_TS
 echo "✓ T2 timestamp: $T2 (data state: t1=5 rows, t2=4 rows)"
 
 # Drop test tables before first restore
@@ -165,7 +165,7 @@ echo "✓ Data prepared: test_db.t1 has 5 rows (IDs: 1,2,3,6,7), test_db.t2 has 
 # Record T3 timestamp
 echo ">>> Waiting for log backup checkpoint to advance..."
 wait_log_checkpoint_advance "$TASK_NAME"
-T3=$(( $(date +%s%3N) << 18 ))
+T3=$LATEST_CHECKPOINT_TS
 echo "✓ T3 timestamp: $T3 (first PITR completed, new data inserted)"
 echo ">>> Note: Blocklist contains RestoreStartTs ≤ T3"
 
@@ -236,11 +236,20 @@ echo "=========================================="
 echo ">>> Objective: Verify blocklist blocks restore when tables don't exist in snapshot"
 echo ">>> T3 = $T3 (first PITR completion time)"
 
-# Get T4 by waiting for checkpoint to advance after T3
-echo ">>> Waiting for checkpoint to advance after T3 to get T4..."
+# Drop all databases FIRST
+echo ""
+echo ">>> Dropping all databases..."
+run_sql "DROP DATABASE test_db;"
+run_sql "DROP DATABASE initial_db;"
+echo "✓ Databases dropped"
+
+# Wait for checkpoint to advance AFTER the drop operations
+echo ">>> Waiting for checkpoint to advance after database drop..."
 wait_log_checkpoint_advance "$TASK_NAME"
-T4=$(( $(date +%s%3N) << 18 ))
-echo ">>> T4 = $T4 (after T3, within log backup range)"
+
+# Use the checkpoint ts as T4 (guaranteed to be within log backup range)
+T4=$LATEST_CHECKPOINT_TS
+echo ">>> T4 = $T4 (checkpoint ts from log backup)"
 
 echo ">>> Blocklist check logic:"
 echo ">>>   - restoredTs=$T4 > RestoreStartTs (≤T3=$T3)"
@@ -248,13 +257,6 @@ echo ">>>   - startTs=snapshot_ts < RestoreCommitTs (from blocklist)"
 echo ">>>   - Snapshot doesn't contain test_db"
 echo ">>>   - Log backup contains operations on test_db"
 echo ">>>   - Expected: BLOCKED (conflict detected)"
-
-# Drop all databases before test
-echo ""
-echo ">>> Dropping all databases for test..."
-run_sql "DROP DATABASE test_db;"
-run_sql "DROP DATABASE initial_db;"
-echo "✓ Databases dropped"
 
 # Attempt to restore to T4
 echo ""
