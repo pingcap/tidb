@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -746,8 +745,7 @@ func getRangeSplitter(
 	rangeGroupSize := totalSize / instanceCnt
 	rangeGroupKeys := int64(math.MaxInt64)
 
-	var regionSplitSize = int64(config.SplitRegionSize)
-	var regionSplitKeys = int64(config.SplitRegionKeys)
+	regionSplitSize, regionSplitKeys := handle.GetDefaultRegionSplitConfig()
 	if store != nil {
 		pdCli := store.GetPDClient()
 		tls, err := ingest.NewDDLTLS()
