@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -671,7 +672,7 @@ func getActualEndKey(
 		// and IndexMergeTmpWorker should still be finished in a bounded time.
 		return rangeEnd
 	}
-	if bfTp == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+	if bfTp == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
 		// Ingest worker uses coprocessor to read table data. It is fast enough,
 		// we don't need to get the actual end key of this range.
 		return rangeEnd
@@ -740,8 +741,8 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		return errors.Trace(err)
 	}
 	job := reorgInfo.Job
-	opCtx, cancel := NewLocalOperatorCtx(ctx, job.ID)
-	defer cancel()
+	wctx := NewLocalWorkerCtx(ctx, job.ID)
+	defer wctx.Cancel()
 
 	idxCnt := len(reorgInfo.elements)
 	indexIDs := make([]int64, 0, idxCnt)
@@ -774,7 +775,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		err error
 	)
 	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false, 0)
+		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, hasUnique, false, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -812,7 +813,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	}
 	importConc := job.ReorgMeta.GetConcurrency()
 	pipe, err := NewAddIndexIngestPipeline(
-		opCtx,
+		wctx,
 		dc.store,
 		sessPool,
 		bcCtx,
@@ -830,7 +831,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	if err != nil {
 		return err
 	}
-	err = executeAndClosePipeline(opCtx, pipe, reorgInfo, bcCtx, avgRowSize)
+	err = executeAndClosePipeline(wctx, pipe, reorgInfo, bcCtx, avgRowSize)
 	if err != nil {
 		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
 		if err1 != nil {
@@ -883,7 +884,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 	}
 }
 
-func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, reorgInfo *reorgInfo, bcCtx ingest.BackendCtx, avgRowSize int) error {
+func executeAndClosePipeline(ctx *workerpool.Context, pipe *operator.AsyncPipeline, reorgInfo *reorgInfo, bcCtx ingest.BackendCtx, avgRowSize int) error {
 	err := pipe.Execute()
 	if err != nil {
 		return err
@@ -976,7 +977,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(reorgInfo.Job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
 		}
 	})
-	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
 		return dc.addIndexWithLocalIngest(ctx, sessPool, t, reorgInfo)
 	}
 

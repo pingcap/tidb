@@ -2641,7 +2641,7 @@ func checkETCDNameSpace(t *testing.T, dom *domain.Domain, isHasPrefix bool) {
 	}
 
 	// Put key value into etcd.
-	_, err := dom.EtcdClient().Put(context.Background(), testKeyWithoutPrefix, testVal)
+	_, err := dom.GetEtcdClient().Put(context.Background(), testKeyWithoutPrefix, testVal)
 	require.NoError(t, err)
 
 	// Use expectTestKey to get the key from etcd.

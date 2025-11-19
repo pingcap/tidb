@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -76,7 +77,7 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
 	e.metric = metrics.RegisterLightningCommonMetricsForDDL(e.job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, e.metric)
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, false, e.taskConcurrency)
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, hasUniqueIndex(e.indexes), false, e.taskConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -93,8 +94,18 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
-	e.summary.Reset()
-	sm, err := decodeBackfillSubTaskMeta(ctx, e.cloudStoreURI, subtask.Meta)
+	accessRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.cloudStoreURI)
+	if err != nil {
+		return err
+	}
+	meterRec := e.GetMeterRecorder()
+	defer func() {
+		objStore.Close()
+		e.summary.MergeObjStoreRequests(&accessRec.Requests)
+		meterRec.MergeObjStoreAccess(accessRec)
+	}()
+
+	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -102,6 +113,10 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if localBackend == nil {
 		return errors.Errorf("local backend not found")
 	}
+
+	localBackend.SetCollector(&ingestCollector{
+		meterRec: meterRec,
+	})
 
 	currentIdx, idxID, err := getIndexInfoAndID(sm.EleIDs, e.indexes)
 	if err != nil {
@@ -122,7 +137,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			StorageURI:    e.cloudStoreURI,
+			ExtStore:      objStore,
 			DataFiles:     sm.DataFiles,
 			StatFiles:     sm.StatFiles,
 			StartKey:      all.StartKey,
@@ -134,11 +149,6 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			CheckHotspot:  true,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
 			OnDup:         engineapi.OnDuplicateKeyError,
-			OnReaderClose: func(summary *external.ReaderSummary) {
-				e.summary.GetReqCnt.Add(summary.GetRequestCount)
-				metering.NewRecorder(e.store, metering.TaskTypeAddIndex, subtask.TaskID).
-					RecordGetRequestCount(summary.GetRequestCount)
-			},
 		},
 		TS: sm.TS,
 	}, engineUUID)
@@ -168,6 +178,15 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	return kv.ErrKeyExists
 }
 
+func hasUniqueIndex(idxs []*model.IndexInfo) bool {
+	for _, idx := range idxs {
+		if idx.Unique {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	if e.backendCtx != nil {
@@ -183,16 +202,32 @@ func (e *cloudImportExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return e.summary
 }
 
+// ResetSummary resets the summary stored in the executor.
+func (e *cloudImportExecutor) ResetSummary() {
+	e.summary.Reset()
+}
+
 // TaskMetaModified changes the max write speed for ingest
-func (*cloudImportExecutor) TaskMetaModified(_ context.Context, _ []byte) error {
+func (*cloudImportExecutor) TaskMetaModified(context.Context, []byte) error {
 	// Will be added in the future PR
 	return nil
 }
 
 // ResourceModified change the concurrency for ingest
-func (*cloudImportExecutor) ResourceModified(_ context.Context, _ *proto.StepResource) error {
+func (*cloudImportExecutor) ResourceModified(context.Context, *proto.StepResource) error {
 	// Will be added in the future PR
 	return nil
+}
+
+type ingestCollector struct {
+	execute.NoopCollector
+	meterRec *metering.Recorder
+}
+
+func (c *ingestCollector) Processed(bytes, _ int64) {
+	// since the region job might be retried, this value might be larger than
+	// the total KV size.
+	c.meterRec.IncClusterWriteBytes(uint64(bytes))
 }
 
 func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *model.IndexInfo, idxID int64, err error) {

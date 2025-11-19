@@ -627,14 +627,15 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		leaderPeerMetas = nil
 	})
 
-	// if there is not leader currently, we don't forward the stage to wrote and let caller
+	// if there is no leader currently, we don't forward the stage to wrote and let caller
 	// handle the retry.
 	if len(leaderPeerMetas) == 0 {
 		tidblogutil.Logger(ctx).Warn("write to tikv no leader",
 			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
-		return nil, common.ErrNoLeader.GenWithStackByArgs(region.Id, leaderID)
+		return nil, errors.Annotatef(errdef.ErrNoLeader.GenWithStackByArgs(region.Id),
+			"write to tikv with no leader returned, expected leader id %d", leaderID)
 	}
 
 	takeTime := time.Since(begin)

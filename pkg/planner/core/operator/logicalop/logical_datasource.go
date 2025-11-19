@@ -89,7 +89,8 @@ type DataSource struct {
 	UnMutableHandleCols util.HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
-	TblCols []*expression.Column
+	TblCols     []*expression.Column
+	TblColsByID map[int64]*expression.Column
 	// CommonHandleCols and CommonHandleLens save the info of primary key which is the clustered index.
 	CommonHandleCols []*expression.Column
 	CommonHandleLens []int
@@ -692,4 +693,11 @@ func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column,
 		}
 	}
 	return false
+}
+
+// AppendTableCol appends a column to the original columns of the table before pruning,
+// accessed through ds.TblCols and ds.TblColsByID.
+func (ds *DataSource) AppendTableCol(col *expression.Column) {
+	ds.TblCols = append(ds.TblCols, col)
+	ds.TblColsByID[col.ID] = col
 }

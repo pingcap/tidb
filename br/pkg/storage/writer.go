@@ -10,6 +10,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"go.uber.org/zap"
 )
 
@@ -41,17 +42,6 @@ type flusher interface {
 type emptyFlusher struct{}
 
 func (*emptyFlusher) Flush() error {
-	return nil
-}
-
-type callbackFlusher struct {
-	onFlush func()
-}
-
-func (f *callbackFlusher) Flush() error {
-	if f.onFlush != nil {
-		f.onFlush()
-	}
 	return nil
 }
 
@@ -191,12 +181,18 @@ func newSimpleCompressBuffer(chunkSize int, compressType CompressType) *simpleCo
 }
 
 type bufferedWriter struct {
-	buf     interceptBuffer
-	writer  ExternalFileWriter
-	onFlush func()
+	buf       interceptBuffer
+	writer    ExternalFileWriter
+	accessRec *recording.AccessStats
 }
 
 func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
+	n, err := u.write0(ctx, p)
+	u.accessRec.RecWrite(n)
+	return n, errors.Trace(err)
+}
+
+func (u *bufferedWriter) write0(ctx context.Context, p []byte) (int, error) {
 	bytesWritten := 0
 	for u.buf.Len()+len(p) > u.buf.Cap() {
 		// We won't fit p in this chunk
@@ -234,9 +230,6 @@ func (u *bufferedWriter) uploadChunk(ctx context.Context) error {
 	}
 	b := u.buf.Bytes()
 	u.buf.Reset()
-	if u.onFlush != nil {
-		u.onFlush()
-	}
 	_, err := u.writer.Write(ctx, b)
 	return errors.Trace(err)
 }
@@ -256,11 +249,11 @@ func NewUploaderWriter(writer ExternalFileWriter, chunkSize int, compressType Co
 }
 
 // newBufferedWriter is used to build a buffered writer.
-func newBufferedWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType, onFlush func()) *bufferedWriter {
+func newBufferedWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType, accessRec *recording.AccessStats) *bufferedWriter {
 	return &bufferedWriter{
-		writer:  writer,
-		buf:     newInterceptBuffer(chunkSize, compressType),
-		onFlush: onFlush,
+		writer:    writer,
+		buf:       newInterceptBuffer(chunkSize, compressType),
+		accessRec: accessRec,
 	}
 }
 

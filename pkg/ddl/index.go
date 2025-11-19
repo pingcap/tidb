@@ -48,6 +48,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -61,7 +63,9 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -96,6 +100,14 @@ const (
 )
 
 var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
+
+// DefaultCumulativeTimeout is the default cumulative timeout for analyze operation.
+// exported for testing.
+var DefaultCumulativeTimeout = 1 * time.Minute
+
+// DefaultAnalyzeCheckInterval is the interval for checking analyze status.
+// exported for testing.
+var DefaultAnalyzeCheckInterval = 10 * time.Second
 
 func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
@@ -398,6 +410,16 @@ func BuildIndexInfo(
 			idxInfo.Tp = indexOption.Tp
 		}
 		idxInfo.Global = indexOption.Global
+
+		conditionString, err := CheckAndBuildIndexConditionString(tblInfo, indexOption.Condition)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxInfo.ConditionExprString = conditionString
+		idxInfo.AffectColumn, err = buildAffectColumn(idxInfo, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	} else {
 		// Use btree as default index type.
 		idxInfo.Tp = ast.IndexTypeBtree
@@ -669,7 +691,7 @@ func onAlterIndexVisibility(jobCtx *jobContext, job *model.Job) (ver int64, _ er
 
 func setIndexVisibility(tblInfo *model.TableInfo, name ast.CIStr, invisible bool) {
 	for _, idx := range tblInfo.Indices {
-		if idx.Name.L == name.L || (isTempIndex(idx, tblInfo) && getChangingIndexOriginName(idx) == name.O) {
+		if idx.Name.L == name.L || getChangingIndexOriginName(idx) == name.O {
 			idx.Invisible = invisible
 		}
 	}
@@ -1083,6 +1105,16 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (v
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+		// The condition in the index option is not marshaled, so we need to set it here.
+		if len(arg.ConditionString) > 0 {
+			indexInfo.ConditionExprString = arg.ConditionString
+			// As we've updated the `ConditionExprString`, we need to rebuild the AffectColumn.
+			indexInfo.AffectColumn, err = buildAffectColumn(indexInfo, tblInfo)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
 		allIndexInfos = append(allIndexInfos, indexInfo)
 	}
 
@@ -1092,21 +1124,10 @@ SwitchIndexState:
 	switch allIndexInfos[0].State {
 	case model.StateNone:
 		// none -> delete only
-		var reorgTp model.ReorgType
-		reorgTp, err = pickBackfillType(job)
+		err = initForReorgIndexes(w, job, allIndexInfos)
 		if err != nil {
-			if !isRetryableJobError(err, job.ErrorCount) {
-				job.State = model.JobStateCancelled
-			}
+			job.State = model.JobStateCancelled
 			return ver, err
-		}
-		loadCloudStorageURI(w, job)
-		if reorgTp.NeedMergeProcess() {
-			// Increase telemetryAddIndexIngestUsage
-			telemetryAddIndexIngestUsage.Inc()
-			for _, indexInfo := range allIndexInfos {
-				indexInfo.BackfillState = model.BackfillStateRunning
-			}
 		}
 		err = preSplitIndexRegions(jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos, job.ReorgMeta, args)
 		if err != nil {
@@ -1163,7 +1184,7 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		switch job.AnalyzeState {
+		switch job.ReorgMeta.AnalyzeState {
 		case model.AnalyzeStateNone:
 			// reorg the index data.
 			var done bool
@@ -1172,19 +1193,28 @@ SwitchIndexState:
 				return ver, err
 			}
 			if checkAnalyzeNecessary(job, allIndexInfos, tblInfo) {
-				job.AnalyzeState = model.AnalyzeStateRunning
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 			} else {
-				job.AnalyzeState = model.AnalyzeStateSkipped
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateRunning:
 			// after all old index data are reorged. re-analyze it.
-			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			if done {
-				job.AnalyzeState = model.AnalyzeStateDone
+			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			failpoint.InjectCall("analyzeTableDone", job)
+			if done || timedOut || failed {
+				if done {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				}
+				if timedOut {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
+				}
+				if failed {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
+				}
 				checkAndMarkNonRevertible(job)
 			}
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped:
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			// Set column index flag.
 			for _, indexInfo := range allIndexInfos {
 				AddIndexColumnFlag(tblInfo, indexInfo)
@@ -1230,7 +1260,8 @@ SwitchIndexState:
 			}
 			job.FillFinishedArgs(a)
 
-			addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos, job.AnalyzeState == model.AnalyzeStateDone)
+			analyzed := job.ReorgMeta.AnalyzeState == model.AnalyzeStateDone
+			addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos, analyzed)
 			err2 := asyncNotifyEvent(jobCtx, addIndexEvent, job, noSubJob, w.sess)
 			if err2 != nil {
 				return ver, errors.Trace(err2)
@@ -1250,15 +1281,184 @@ SwitchIndexState:
 	return ver, errors.Trace(err)
 }
 
-func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) bool {
+func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo) error {
+	if len(idxInfos) == 0 {
+		return nil
+	}
+	reorgTp, err := pickBackfillType(job)
+	if err != nil {
+		return err
+	}
+	// Partial Index is not supported without fast reorg.
+	for _, indexInfo := range idxInfos {
+		if (reorgTp == model.ReorgTypeTxn || reorgTp == model.ReorgTypeTxnMerge) && indexInfo.HasCondition() {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg is not supported")
+		}
+	}
+	loadCloudStorageURI(w, job)
+	if reorgTp.NeedMergeProcess() {
+		// Increase telemetryAddIndexIngestUsage
+		telemetryAddIndexIngestUsage.Inc()
+		for _, indexInfo := range idxInfos {
+			indexInfo.BackfillState = model.BackfillStateRunning
+		}
+	}
+	return nil
+}
+
+type analyzeStatus int
+
+const (
+	analyzeUnknown analyzeStatus = iota
+	analyzeRunning
+	analyzeFinished
+	analyzeFailed
+)
+
+// queryAnalyzeStatusSince queries `analyze_jobs` for the specified table
+// and start_time >= startTS. It returns one of analyzeStatus values. If the
+// sessPool cannot provide a session or the query fails, it returns
+// analyzeUnknown and a nil error so the caller may decide to proceed with
+// starting ANALYZE.
+func (w *worker) queryAnalyzeStatusSince(startTS uint64, dbName, tblName string) (analyzeStatus, error) {
+	sessCtx, err := w.sessPool.Get()
+	if err != nil {
+		return analyzeUnknown, err
+	}
+	defer w.sessPool.Put(sessCtx)
+
+	startTimeStr := time.Now().UTC().Format(time.DateTime)
+	if startTS > 0 {
+		startTimeStr = model.TSConvert2Time(startTS).UTC().Format(time.DateTime)
+	}
+	kctx := kv.WithInternalSourceType(w.ctx, kv.InternalTxnStats)
+
+	// set session time zone to UTC to match the time format in `startTimeStr`
+	originalTimeZone := sessCtx.GetSessionVars().TimeZone
+	sessCtx.GetSessionVars().TimeZone = time.UTC
+	defer func() {
+		sessCtx.GetSessionVars().TimeZone = originalTimeZone
+	}()
+	exec := sessCtx.GetRestrictedSQLExecutor()
+	rows, _, chkErr := exec.ExecRestrictedSQL(kctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		"SELECT state FROM mysql.analyze_jobs WHERE table_schema = %? AND table_name = %? AND start_time >= %?", dbName, tblName, startTimeStr)
+	if chkErr != nil {
+		return analyzeUnknown, chkErr
+	}
+	if len(rows) == 0 {
+		return analyzeUnknown, nil
+	}
+
+	for _, r := range rows {
+		var state string
+		if !r.IsNull(0) {
+			state = r.GetString(0)
+		}
+		switch {
+		case strings.EqualFold(state, "running"):
+			return analyzeRunning, nil
+		case strings.EqualFold(state, "failed"):
+			return analyzeFailed, nil
+		case strings.EqualFold(state, "finished"):
+			return analyzeFinished, nil
+		default:
+			// unknown state: continue checking other rows
+		}
+	}
+	// If no recognizable state found, treat as unknown so caller may attempt to start ANALYZE.
+	return analyzeUnknown, nil
+}
+
+// analyzeStatusDecision encapsulates the decision logic after observing
+// the analyze status for a table. It returns three booleans:
+//
+//	done: whether the caller should consider analyze finished (true) and continue DDL;
+//	timedOut: whether the analyze has exceeded cumulative timeout and caller should proceed with timeout handling;
+//	failed: whether the analyze has failed;
+//	proceed: whether the caller should proceed to start ANALYZE locally (true for unknown status).
+func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, status analyzeStatus, cumulativeTimeout time.Duration) (done, timedOut, failed, proceed bool) {
+	switch status {
+	case analyzeFinished:
+		logutil.DDLLogger().Info("analyze already finished by other owner", zap.Int64("jobID", job.ID), zap.String("db", dbName), zap.String("table", tblName))
+		w.ddlCtx.clearAnalyzeStartTime(job.ID)
+		w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+		return true, false, false, false
+	case analyzeFailed:
+		logutil.DDLLogger().Warn("analyze previously failed on another owner, continue finishing DDL", zap.Int64("jobID", job.ID), zap.String("db", dbName), zap.String("table", tblName))
+		w.ddlCtx.clearAnalyzeStartTime(job.ID)
+		w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+		return true, false, true, false
+	case analyzeRunning:
+		// If analyze is running, respect cumulative timeout. If expired, return timeout to let caller proceed.
+		if start, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); ok {
+			if time.Since(start) > cumulativeTimeout {
+				logutil.DDLLogger().Warn("analyze table is running but exceeded cumulative timeout, proceeding to finish DDL", zap.Int64("jobID", job.ID), zap.Duration("elapsed", time.Since(start)))
+				w.ddlCtx.clearAnalyzeStartTime(job.ID)
+				w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+				return false, true, false, false
+			}
+		} else {
+			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
+		}
+		select {
+		case <-w.ctx.Done():
+			logutil.DDLLogger().Info("analyze table after create index context done", zap.Int64("jobID", job.ID), zap.Error(w.ctx.Err()))
+			w.ddlCtx.clearAnalyzeStartTime(job.ID)
+			w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+			return true, false, false, false
+		case <-time.After(DefaultAnalyzeCheckInterval):
+			return false, false, false, false
+		}
+	default:
+		// analyzeUnknown: caller should proceed to start ANALYZE locally.
+		return false, false, false, true
+	}
+}
+
+// analyzeTableAfterCreateIndex analyzes the table after creating index.
+func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) (done, timedOut, failed bool) {
 	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
 	if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.NeedAnalyze {
 		// If the job is a multi-schema-change job,
 		// we only analyze the table once after all schema changes are done.
-		return true
+		return true, false, false
 	}
+
+	cumulativeTimeout, found := w.ddlCtx.getAnalyzeCumulativeTimeout(job.ID)
+	if !found {
+		cumulativeTimeout = DefaultCumulativeTimeout
+		if job.RealStartTS != 0 {
+			addStart := model.TSConvert2Time(job.RealStartTS)
+			elapsed := time.Since(addStart)
+			if elapsed*2 > cumulativeTimeout {
+				cumulativeTimeout = elapsed * 2
+			}
+		}
+		w.ddlCtx.setAnalyzeCumulativeTimeout(job.ID, cumulativeTimeout)
+	}
+
 	if doneCh == nil {
-		doneCh = make(chan struct{})
+		status, err := w.queryAnalyzeStatusSince(job.StartTS, dbName, tblName)
+		if err != nil {
+			logutil.DDLLogger().Warn("query analyze status failed", zap.Int64("jobID", job.ID), zap.Error(err))
+			status = analyzeUnknown
+		}
+
+		done, timedOut, failed, proceed := w.analyzeStatusDecision(job, dbName, tblName, status, cumulativeTimeout)
+		if done || timedOut || failed {
+			return done, timedOut, failed
+		}
+		if !proceed {
+			// We decided not to proceed to start ANALYZE locally (i.e. it's running and we waited),
+			// so simply return and retry later.
+			return false, false, false
+		}
+
+		if _, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); !ok {
+			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
+		}
+
+		doneCh = make(chan error)
 		eg := util.NewErrorGroupWithRecover()
 		eg.Go(func() error {
 			sessCtx, err := w.sessPool.Get()
@@ -1280,7 +1480,9 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 			if err != nil {
 				return err
 			}
+			failpoint.InjectCall("beforeAnalyzeTable")
 			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
+			failpoint.InjectCall("afterAnalyzeTable", &err)
 			if err != nil {
 				logutil.DDLLogger().Warn("analyze table failed",
 					zap.Int64("jobID", job.ID),
@@ -1289,22 +1491,43 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 					zap.Error(err),
 					zap.Stack("stack"))
 				// We can continue to finish the job even if analyze table failed.
+				doneCh <- err
 			}
 			return nil
 		})
 		w.ddlCtx.setAnalyzeDoneCh(job.ID, doneCh)
 	}
 	select {
-	case <-doneCh:
+	case err := <-doneCh:
 		logutil.DDLLogger().Info("analyze table after create index done", zap.Int64("jobID", job.ID))
-		return true
+		w.ddlCtx.clearAnalyzeStartTime(job.ID)
+		w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+		return true, false, err != nil
 	case <-w.ctx.Done():
 		logutil.DDLLogger().Info("analyze table after create index context done",
 			zap.Int64("jobID", job.ID), zap.Error(w.ctx.Err()))
-		return true
-	case <-time.After(10 * time.Second):
-		logutil.DDLLogger().Info("analyze table after create index timeout check", zap.Int64("jobID", job.ID))
-		return false
+		w.ddlCtx.clearAnalyzeStartTime(job.ID)
+		w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+		return true, false, false
+	case <-time.After(DefaultAnalyzeCheckInterval):
+		failpoint.Inject("mockAnalyzeTimeout", func(val failpoint.Value) {
+			if v, ok := val.(int); ok {
+				cumulativeTimeout = time.Duration(v) * time.Millisecond
+			}
+		})
+		if start, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); ok {
+			if time.Since(start) > cumulativeTimeout {
+				logutil.DDLLogger().Warn("analyze table after create index exceed cumulative timeout, proceeding to finish DDL",
+					zap.Int64("jobID", job.ID), zap.Duration("elapsed", time.Since(start)))
+				// Do not persist job here. Let the caller mark AnalyzeStateTimeout and persist.
+				w.ddlCtx.clearAnalyzeStartTime(job.ID)
+				w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+				return false, true, false
+			}
+		} else {
+			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
+		}
+		return false, false, false
 	}
 }
 
@@ -1498,15 +1721,15 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 	}
 	if ingest.LitInitialized {
 		if job.ReorgMeta.UseCloudStorage {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			return model.ReorgTypeLitMerge, nil
+			job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
+			return model.ReorgTypeIngest, nil
 		}
 		if err := ingest.LitDiskRoot.PreCheckUsage(); err != nil {
 			logutil.DDLIngestLogger().Info("ingest backfill is not available", zap.Error(err))
 			return model.ReorgTypeNone, err
 		}
-		job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-		return model.ReorgTypeLitMerge, nil
+		job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
+		return model.ReorgTypeIngest, nil
 	}
 	// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 	logutil.DDLLogger().Info("fallback to txn-merge backfill process",
@@ -1549,10 +1772,10 @@ func doReorgWorkForCreateIndex(
 		if !skipReorg {
 			logutil.DDLLogger().Info("index backfill state running",
 				zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
-				zap.Bool("ingest mode", reorgTp == model.ReorgTypeLitMerge),
+				zap.Bool("ingest mode", reorgTp == model.ReorgTypeIngest),
 				zap.String("index", allIndexInfos[0].Name.O))
 			switch reorgTp {
-			case model.ReorgTypeLitMerge:
+			case model.ReorgTypeIngest:
 				if job.ReorgMeta.IsDistReorg {
 					done, ver, err = runIngestReorgJobDist(w, jobCtx, job, tbl, allIndexInfos)
 				} else {
@@ -2068,20 +2291,16 @@ func newAddIndexTxnWorker(
 	}
 
 	allIndexes := make([]table.Index, 0, len(elements))
-	if job.Type == model.ActionModifyColumn {
-		// For modify column with indexes, we only need to add the index one by one.
-		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, currElement.ID)
-		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-		allIndexes = append(allIndexes, index)
-	} else {
-		for _, elem := range elements {
-			if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
-				continue
-			}
-			indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
-			index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-			allIndexes = append(allIndexes, index)
+	for _, elem := range elements {
+		if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
+			continue
 		}
+		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
+		index, err := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		if err != nil {
+			return nil, err
+		}
+		allIndexes = append(allIndexes, index)
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
@@ -2209,7 +2428,11 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			if err != nil {
 				return false, err
 			}
+
 			for _, index := range w.indexes {
+				if index.Meta().HasCondition() {
+					return false, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg")
+				}
 				idxRecord, err1 := w.getIndexRecord(index.Meta(), handle, recordKey)
 				if err1 != nil {
 					return false, errors.Trace(err1)
@@ -2360,6 +2583,7 @@ func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
 	indexes []table.Index,
+	indexConditionCheckers []func(row chunk.Row) (bool, error),
 	copCtx copr.CopContext,
 	loc *time.Location,
 	errCtx errctx.Context,
@@ -2401,6 +2625,7 @@ func writeChunk(
 	if restore {
 		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
 	}
+
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf := ExtractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 		if restore {
@@ -2414,6 +2639,18 @@ func writeChunk(
 			return 0, totalBytes, errors.Trace(err)
 		}
 		for i, index := range indexes {
+			// If the `IndexRecordChunk.conditionPushed` is true and we have only 1 index, the `indexConditionCheckers`
+			// will not be initialized.
+			if index.Meta().HasCondition() && indexConditionCheckers != nil {
+				ok, err := indexConditionCheckers[i](row)
+				if err != nil {
+					return 0, 0, errors.Trace(err)
+				}
+				if !ok {
+					continue
+				}
+			}
+
 			idxID := index.Meta().ID
 			idxDataBuf = ExtractDatumByOffsets(ectx,
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
@@ -2595,7 +2832,7 @@ func (w *worker) addTableIndex(
 	reorgInfo *reorgInfo,
 ) error {
 	ctx := jobCtx.stepCtx
-	if reorgInfo.ReorgMeta.IsDistReorg && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+	if reorgInfo.ReorgMeta.IsDistReorg && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
 		err := w.executeDistTask(jobCtx, t, reorgInfo)
 		if err != nil {
 			return err
@@ -2674,7 +2911,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if backendCtx == nil {
 				if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true, 0)
+					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true, true, 0)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -2700,10 +2937,8 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 
 // TaskKeyBuilder is used to build task key for the backfill job.
 type TaskKeyBuilder struct {
-	keyspace       string
 	multiSchemaSeq int32
 	mergeTempIdx   bool
-	jobID          int64
 }
 
 // NewTaskKeyBuilder creates a new TaskKeyBuilder.
@@ -2883,24 +3118,12 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			select {
 			case <-done:
 				w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
-				return nil
+				err := w.checkRunnableOrHandlePauseOrCanceled(stepCtx, taskKey)
+				return errors.Trace(err)
 			case <-checkFinishTk.C:
-				if err = w.isReorgRunnable(stepCtx, true); err != nil {
-					if dbterror.ErrPausedDDLJob.Equal(err) {
-						if err = handle.PauseTask(w.workCtx, taskKey); err != nil {
-							logutil.DDLLogger().Error("pause task error", zap.String("task_key", taskKey), zap.Error(err))
-							continue
-						}
-						failpoint.InjectCall("syncDDLTaskPause")
-					}
-					if !dbterror.ErrCancelledDDLJob.Equal(err) {
-						return errors.Trace(err)
-					}
-					if err = handle.CancelTask(w.workCtx, taskKey); err != nil {
-						logutil.DDLLogger().Error("cancel task error", zap.String("task_key", taskKey), zap.Error(err))
-						// continue to cancel task.
-						continue
-					}
+				err := w.checkRunnableOrHandlePauseOrCanceled(stepCtx, taskKey)
+				if err != nil {
+					return errors.Trace(err)
 				}
 			case <-updateRowCntTk.C:
 				w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
@@ -2916,6 +3139,26 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 	err = g.Wait()
 	return err
+}
+
+func (w *worker) checkRunnableOrHandlePauseOrCanceled(stepCtx context.Context, taskKey string) (err error) {
+	if err = w.isReorgRunnable(stepCtx, true); err != nil {
+		if dbterror.ErrPausedDDLJob.Equal(err) {
+			if err = handle.PauseTask(w.workCtx, taskKey); err != nil {
+				logutil.DDLLogger().Warn("pause task error", zap.String("task_key", taskKey), zap.Error(err))
+				return nil
+			}
+			failpoint.InjectCall("syncDDLTaskPause")
+		}
+		if !dbterror.ErrCancelledDDLJob.Equal(err) {
+			return errors.Trace(err)
+		}
+		if err = handle.CancelTask(w.workCtx, taskKey); err != nil {
+			logutil.DDLLogger().Warn("cancel task error", zap.String("task_key", taskKey), zap.Error(err))
+			return nil
+		}
+	}
+	return nil
 }
 
 // Note: we can achieve the same effect by calling ModifyTaskByID directly inside
@@ -3364,13 +3607,52 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
+		lockCtx := new(kv.LockCtx)
+		evalCtx := w.exprCtx.GetEvalCtx()
+		loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 		n := len(w.indexes)
+		globalIndexKeys := make([]kv.Key, 0, len(idxRecords))
+		allKeys := make([]kv.Key, 0, len(idxRecords))
+		for i, idxRecord := range idxRecords {
+			key, distinct, err := w.indexes[i%n].GenIndexKey(ec, loc, idxRecord.vals, idxRecord.handle, nil)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if distinct {
+				globalIndexKeys = append(globalIndexKeys, key)
+			}
+			allKeys = append(allKeys, key)
+		}
+
+		var found map[string][]byte
+		found, err = txn.BatchGet(ctx, globalIndexKeys)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++
+			if val, ok := found[string(allKeys[i])]; ok {
+				// Only delete if it is from the partition it was read from.
+				handle, errPart := tablecodec.DecodeHandleInIndexValue(val)
+				if errPart != nil {
+					return errors.Trace(errPart)
+				}
+				if partHandle, ok := handle.(kv.PartitionHandle); ok {
+					if partHandle.PartitionID != handleRange.physicalTable.GetPhysicalID() {
+						continue
+					}
+				}
+				// Lock the global index entry, to prevent deleting something that is concurrently added.
+				err = txn.LockKeys(ctx, lockCtx, allKeys[i])
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
 			// we fetch records row by row, so records will belong to
 			// index[0], index[1] ... index[n-1], index[0], index[1] ...
 			// respectively. So indexes[i%n] is the index of idxRecords[i].
-			err := w.indexes[i%n].Delete(w.tblCtx, txn, idxRecord.vals, idxRecord.handle)
+			err = w.indexes[i%n].Delete(w.tblCtx, txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -3510,9 +3792,13 @@ func isColumnarIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool
 	return false
 }
 
+// isTempIndex checks whether the index is a temp index created by modify column.
+// There are two types of temp index:
+// 1. The index contains a temp column that is newly added, indicated by ChangeStateInfo
+// 2. The index contains a old column changing its type in place, indicated by UsingChangingType
 func isTempIndex(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
 	for _, idxCol := range idxInfo.Columns {
-		if tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil {
+		if idxCol.UseChangingType || tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil {
 			return true
 		}
 	}
@@ -3555,4 +3841,237 @@ func renameHiddenColumns(tblInfo *model.TableInfo, from, to ast.CIStr) {
 			col.Name.O = strings.Replace(col.Name.O, from.O, to.O, 1)
 		}
 	}
+}
+
+// CheckAndBuildIndexConditionString validates whether the given expression is compatible with
+// the table schema and returns a string representation of the expression.
+func CheckAndBuildIndexConditionString(tblInfo *model.TableInfo, indexConditionExpr ast.ExprNode) (string, error) {
+	if indexConditionExpr == nil {
+		return "", nil
+	}
+
+	// Be careful, in `CREATE TABLE` statement, the `tblInfo.Partition` is always nil here. We have to
+	// check it in `buildTablePartitionInfo` again.
+	if tblInfo.Partition != nil {
+		return "", dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+			"partial index on partitioned table is not supported")
+	}
+
+	// check partial index condition expression
+	err := checkIndexCondition(tblInfo, indexConditionExpr)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+	sb.Reset()
+	err = indexConditionExpr.Restore(restoreCtx)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	return sb.String(), nil
+}
+
+func checkIndexCondition(tblInfo *model.TableInfo, indexCondition ast.ExprNode) error {
+	// Only the following expressions are supported:
+	// 1. column IS NULL
+	// 2. column IS NOT NULL
+	// 3. column = / != / > / < / >= / <= const
+	// The column must be a visible column in the table, and the const must be a literal value with
+	// the same type as the column.
+	// The column must **NOT** be a generated column. We can loosen this restriction in the future.
+	//
+	// TODO: support more expressions in the future.
+	if indexCondition == nil {
+		return nil
+	}
+
+	switch cond := indexCondition.(type) {
+	case *ast.IsNullExpr:
+		// `IS NULL` and `IS NOT NULL` are both in this branch.
+		columnName, ok := cond.Expr.(*ast.ColumnNameExpr)
+		if !ok {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+				"partial index condition must include a column name in the IS NULL expression")
+		}
+		columnInfo := model.FindColumnInfo(tblInfo.Columns, columnName.Name.Name.L)
+		if columnInfo == nil {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+				fmt.Sprintf("column name %s referenced in partial index condition is not found in table",
+					columnName.Name.Name.L))
+		}
+		if columnInfo.IsGenerated() {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+				fmt.Sprintf("generated column %s cannot be used in partial index condition", columnName.Name.Name.L))
+		}
+
+		return nil
+	case *ast.BinaryOperationExpr:
+		if cond.Op != opcode.EQ && cond.Op != opcode.NE && cond.Op != opcode.GT &&
+			cond.Op != opcode.LT && cond.Op != opcode.GE && cond.Op != opcode.LE {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+				fmt.Sprintf("binary operation %s is not supported", cond.Op.String()))
+		}
+
+		var columnName *ast.ColumnNameExpr
+		var anotherSide ast.ExprNode
+		columnName, ok := cond.L.(*ast.ColumnNameExpr)
+		if !ok {
+			// maybe the right side is a column name
+			columnName, ok = cond.R.(*ast.ColumnNameExpr)
+			if !ok {
+				return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+					"partial index condition must include a column name in the binary operation")
+			}
+
+			anotherSide = cond.L
+		} else {
+			anotherSide = cond.R
+		}
+		columnInfo := model.FindColumnInfo(tblInfo.Columns, columnName.Name.Name.L)
+		if columnInfo == nil {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+				fmt.Sprintf("column name `%s` referenced in partial index condition is not found in table",
+					columnName.Name.Name.L))
+		}
+		if columnInfo.IsGenerated() {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+				fmt.Sprintf("generated column %s cannot be used in partial index condition", columnName.Name.Name.L))
+		}
+
+		// The another side must be a literal value, and it must have the same type as the column.
+		constantExpr, ok := anotherSide.(ast.ValueExpr)
+		if !ok {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+				"partial index condition must include a literal value on the other side of the binary operation")
+		}
+		// Reference `types.DefaultTypeForValue`, they are all possible types for literal values.
+		// However, this switch-case still includes more types than the ones we have in that function
+		// to avoid breaking in the future.
+		//
+		// Accept tiny type conversion as the type of the literal value is too limited. We shouldn't
+		// force the user to use such a limited range of types.
+		//
+		// It'll allow precision / length difference in most of the cases.
+		switch constantExpr.GetType().GetType() {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
+			mysql.TypeInt24, mysql.TypeBit, mysql.TypeYear:
+			// the target column must be an integer type or enum or set
+			if columnInfo.GetType() != mysql.TypeTiny &&
+				columnInfo.GetType() != mysql.TypeShort &&
+				columnInfo.GetType() != mysql.TypeLong &&
+				columnInfo.GetType() != mysql.TypeLonglong &&
+				columnInfo.GetType() != mysql.TypeInt24 &&
+				columnInfo.GetType() != mysql.TypeBit &&
+				columnInfo.GetType() != mysql.TypeYear &&
+				columnInfo.GetType() != mysql.TypeEnum &&
+				columnInfo.GetType() != mysql.TypeSet {
+				return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+					fmt.Sprintf("the type %s of the column `%s` in partial index condition is not compatible with the literal value type %s",
+						columnInfo.FieldType.String(), columnName.Name.Name.L, constantExpr.GetType().String()))
+			}
+			return nil
+		case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+			// the target column must be either a float or double type
+			// TODO: consider whether need to support decimal type in this branch
+			if columnInfo.GetType() != mysql.TypeFloat &&
+				columnInfo.GetType() != mysql.TypeDouble &&
+				columnInfo.GetType() != mysql.TypeNewDecimal {
+				return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+					fmt.Sprintf("the type %s of the column `%s` in partial index condition is not compatible with the literal value type %s",
+						columnInfo.FieldType.String(), columnName.Name.Name.L, constantExpr.GetType().String()))
+			}
+			return nil
+		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
+			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+			if types.IsString(columnInfo.GetType()) {
+				// check the collation of the column and the literal value
+				if columnInfo.FieldType.GetCharset() != constantExpr.GetType().GetCharset() {
+					return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+						fmt.Sprintf("the charset %s of the column `%s` in partial index condition is not compatible with the literal value charset %s",
+							columnInfo.FieldType.GetCharset(), columnName.Name.Name.L, constantExpr.GetType().GetCharset()))
+				}
+
+				return nil
+			}
+
+			// Allow to compare a datetime type column with a string literal, because we don't have a datetime literal.
+			// This branch will allow users to use datetime columns in index condition.
+			if columnInfo.GetType() == mysql.TypeTimestamp ||
+				columnInfo.GetType() == mysql.TypeDate ||
+				columnInfo.GetType() == mysql.TypeDuration ||
+				columnInfo.GetType() == mysql.TypeNewDate ||
+				columnInfo.GetType() == mysql.TypeDatetime {
+				return nil
+			}
+
+			// ENUM and SET are also allowed for string literal.
+			if columnInfo.GetType() == mysql.TypeEnum || columnInfo.GetType() == mysql.TypeSet {
+				return nil
+			}
+
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+				fmt.Sprintf("the type %s of the column `%s` in partial index condition is not compatible with the literal value type %s",
+					columnInfo.FieldType.String(), columnName.Name.Name.L, constantExpr.GetType().String()))
+		case mysql.TypeNull:
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+				"= NULL is not supported in partial index condition because it is always false")
+		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration, mysql.TypeNewDate,
+			mysql.TypeDatetime, mysql.TypeJSON, mysql.TypeEnum, mysql.TypeSet:
+			// The `DATE '2025-07-28'` is actually a `cast` function, so they are also not supported yet.
+			intest.Assert(false, "should never generate literal values of these types")
+
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+				fmt.Sprintf("the type %s of the literal value in partial index condition is not supported",
+					constantExpr.GetType().String()))
+		default:
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+				fmt.Sprintf("the type %s of the literal value in partial index condition is not supported",
+					constantExpr.GetType().String()))
+		}
+	default:
+		return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+			"the kind of partial index condition is not supported")
+	}
+}
+
+func buildAffectColumn(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) ([]*model.IndexColumn, error) {
+	ectx := exprstatic.NewExprContext()
+
+	// Build affect column for partial index.
+	if idxInfo.HasCondition() {
+		cols, err := tables.ExtractColumnsFromCondition(ectx, idxInfo, tblInfo, true)
+		if err != nil {
+			return nil, err
+		}
+		return tables.DedupIndexColumns(cols), nil
+	}
+
+	return nil, nil
+}
+
+// buildIndexConditionChecker builds an expression for evaluating the index condition based on
+// the given columns.
+func buildIndexConditionChecker(copCtx copr.CopContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) (func(row chunk.Row) (bool, error), error) {
+	schema, names := copCtx.GetBase().GetSchemaAndNames()
+
+	exprCtx := copCtx.GetBase().ExprCtx
+	expr, err := expression.ParseSimpleExpr(exprCtx, idxInfo.ConditionExprString, expression.WithInputSchemaAndNames(schema, names, tblInfo))
+	if err != nil {
+		return nil, err
+	}
+
+	return func(row chunk.Row) (bool, error) {
+		datum, isNull, err := expr.EvalInt(exprCtx.GetEvalCtx(), row)
+		if err != nil {
+			return false, err
+		}
+		// If the result is NULL, it usually means the original column itself is NULL.
+		// In this case, we should refuse to consider the index for partial index condition.
+		return datum > 0 && !isNull, nil
+	}, nil
 }
