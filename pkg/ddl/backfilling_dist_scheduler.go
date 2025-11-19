@@ -347,9 +347,9 @@ func CalculateRegionBatch(totalRegionCnt int, nodeCnt int, useLocalDisk bool) in
 	}
 	avgTasksPerInstance := (totalRegionCnt + nodeCnt - 1) / nodeCnt // ceiling
 	if useLocalDisk {
-		regionBatch = avgTasksPerInstance
-		// Special handling for small table, in this case, we want to do it on one node. 100 region data is about 10GiB.
-		regionBatch = min(max(100, regionBatch), totalRegionCnt)
+		// Special handling for small table, in this case, we want to do it on
+		// one node. 100 region data is about 10GiB.
+		regionBatch = min(max(100, avgTasksPerInstance), totalRegionCnt)
 	} else {
 		// For cloud storage, each subtask should contain no more than 4000 regions.
 		regionBatch = min(4000, avgTasksPerInstance)
