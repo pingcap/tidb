@@ -469,41 +469,9 @@ func BuildHistAndTopN(
 		}
 		// case 2, meet a different value: counting for the "current" is complete
 		sampleNDV++
-<<<<<<< HEAD
-		// case 2-1, do not add a count of 1 if we're sampling
-		if curCnt == 1 && sampleFactor > 1 && allowPruning {
-			cur, curCnt = sampleBytes, 1
-			continue
-		}
-		// case 2-2, now topn is empty: append the "current" count directly
-		if len(topNList) == 0 {
-			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
-			cur, curCnt = sampleBytes, 1
-			continue
-		}
-		// case 2-3, now topn is full, and the "current" count is less than the least count in the topn: no need to insert the "current"
-		if len(topNList) >= numTopN && uint64(curCnt) <= topNList[len(topNList)-1].Count {
-			cur, curCnt = sampleBytes, 1
-			continue
-		}
-		// case 2-4, now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
-		j := len(topNList)
-		for ; j > 0; j-- {
-			if uint64(curCnt) < topNList[j-1].Count {
-				break
-			}
-		}
-		topNList = append(topNList, TopNMeta{})
-		copy(topNList[j+1:], topNList[j:])
-		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
-		if len(topNList) > numTopN {
-			topNList = topNList[:numTopN]
-		}
-=======
 		// process the completed value using bounded min-heap with range tracking
 		processTopNValue(boundedMinHeap, cur, curCnt, curStartIdx, i-1, numTopN, allowPruning, sampleFactor, false)
 
->>>>>>> b75bdd1257e (stats: optimize build topn and histogram (#63285))
 		cur, curCnt = sampleBytes, 1
 		curStartIdx = i // new value group starts at current index
 	}
@@ -552,62 +520,8 @@ func BuildHistAndTopN(
 
 	haveAllNDV := sampleNDV == lenTopN && lenTopN > 0
 
-<<<<<<< HEAD
-	// Step2: exclude TopN from samples if the NDV is larger than the number of topN items.
-	lenSamples := int64(len(samples))
-	if lenTopN > 0 && !haveAllNDV && lenSamples > 0 && numBuckets > 0 {
-		for i := int64(0); i < lenSamples; i++ {
-			sampleBytes, err := getComparedBytes(samples[i].Value)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			// For debugging invalid sample data.
-			var (
-				foundTwice      bool
-				firstTimeSample types.Datum
-			)
-			for j := 0; j < len(topNList); j++ {
-				if bytes.Equal(sampleBytes, topNList[j].Encoded) {
-					// This should never happen, but we met this panic before, so we add this check here.
-					// See: https://github.com/pingcap/tidb/issues/35948
-					if foundTwice {
-						datumString, err := firstTimeSample.ToString()
-						if err != nil {
-							statslogutil.StatsLogger().Error("try to convert datum to string failed", zap.Error(err))
-						}
-
-						statslogutil.StatsLogger().Warn(
-							"invalid sample data",
-							zap.Bool("isColumn", isColumn),
-							zap.Int64("columnID", id),
-							zap.String("datum", datumString),
-							zap.Binary("sampleBytes", sampleBytes),
-							zap.Binary("topNBytes", topNList[j].Encoded),
-						)
-						// NOTE: if we don't return here, we may meet panic in the following code.
-						// The i may decrease to a negative value.
-						// We haven't fix the issue here, because we don't know how to
-						// remove the invalid sample data from the samples.
-						break
-					}
-					// First time to find the same value in topN: need to record the sample data for debugging.
-					firstTimeSample = samples[i].Value
-					// Found the same value in topn: need to skip over this value in samples.
-					copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
-					samples = samples[:uint64(len(samples))-topNList[j].Count]
-					lenSamples = int64(len(samples))
-					i--
-					foundTwice = true
-					continue
-				}
-			}
-		}
-	}
-
-=======
 	// Step2: calculate adjusted parameters for histogram
 	// The histogram will be built with reduced count and NDV to account for TopN values
->>>>>>> b75bdd1257e (stats: optimize build topn and histogram (#63285))
 	var topNTotalCount uint64
 	var topNSampleCount int64
 	for i := range topn.TopN {
@@ -621,11 +535,6 @@ func BuildHistAndTopN(
 		return hg, topn, nil
 	}
 
-<<<<<<< HEAD
-	// Step3: build histogram with the rest samples
-	if lenSamples > 0 {
-		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-lenTopN, int64(numBuckets), memTracker)
-=======
 	// Step3: build histogram excluding TopN values
 	samplesExcludingTopN := sampleNum - topNSampleCount
 	if samplesExcludingTopN > 0 {
@@ -642,7 +551,6 @@ func BuildHistAndTopN(
 
 		_, err = buildHist(sc, hg, samples, count-int64(topNTotalCount), remainingNDV,
 			int64(numBuckets), memTracker, samplesExcludingTopN, rangeChecker)
->>>>>>> b75bdd1257e (stats: optimize build topn and histogram (#63285))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -661,13 +569,8 @@ func pruneTopNItem(topns []TopNWithRange, ndv, nullCount, sampleRows, totalRows 
 	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth
 	// storing later.
 	sumCount := uint64(0)
-<<<<<<< HEAD
-	for i := 0; i < len(topns)-1; i++ {
-		sumCount += topns[i].Count
-=======
 	for i := range len(topns) - 1 {
 		sumCount += topns[i].TopNMeta.Count
->>>>>>> b75bdd1257e (stats: optimize build topn and histogram (#63285))
 	}
 	topNNum := len(topns)
 	for topNNum > 0 {
