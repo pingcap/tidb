@@ -62,6 +62,7 @@ func IsSystemDB(dbLowerName string) bool {
 	return dbLowerName == mysql.SystemDB
 }
 
+// IsBRRelatedDB checks whether dbOriginName is a temporary database created by BR.
 func IsBRRelatedDB(dbOriginName string) bool {
 	return strings.HasPrefix(dbOriginName, temporaryDBNamePrefix)
 }

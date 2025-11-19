@@ -417,7 +417,7 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 	} else if l.loadForBR {
 		// only load system databases
 		allSchemas = make([]*model.DBInfo, 0, 6)
-		m.IterDatabases(func(dbInfo *model.DBInfo) error {
+		err := m.IterDatabases(func(dbInfo *model.DBInfo) error {
 			if metadef.IsSystemDB(dbInfo.Name.L) {
 				allSchemas = append(allSchemas, dbInfo)
 			}
@@ -426,6 +426,9 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 			}
 			return nil
 		})
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		allSchemas, err = m.ListDatabases()
 		if err != nil {

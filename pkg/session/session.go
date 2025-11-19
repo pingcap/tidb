@@ -4289,11 +4289,12 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domap.Get(store)
 }
 
-// GetDomain gets the associated domain for BR.
+// GetDomainForBR gets the associated domain for BR.
 func GetDomainForBR(store kv.Storage) (*domain.Domain, error) {
 	return domap.GetForBR(store)
 }
 
+// getStartMode gets the start mode according to the bootstrap version.
 func getStartMode(ver int64) ddl.StartMode {
 	if ver == notBootstrapped {
 		return ddl.Bootstrap

@@ -2622,7 +2622,7 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 	t.Cleanup(func() {
 		ddl.CloseOwnerManager(mockStore)
 	})
-	dom, err := domap.getWithEtcdClient(mockStore, etcdClient)
+	dom, err := domap.getWithEtcdClient(mockStore, etcdClient, false)
 	require.NoError(t, err)
 	defer dom.Close()
 

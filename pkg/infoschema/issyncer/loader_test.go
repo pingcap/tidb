@@ -33,7 +33,7 @@ import (
 func TestLoadFromTS(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
-	l := newLoader(store, infoschema.NewCache(nil, 1), nil)
+	l := newLoader(store, infoschema.NewCache(nil, 1), nil, false)
 	ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
 	require.NoError(t, err)
 	is, hitCache, oldSchemaVersion, changes, err := l.LoadWithTS(ver.Ver, false)
@@ -70,7 +70,7 @@ func TestLoadFromTS(t *testing.T) {
 	}))
 	ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
 	require.NoError(t, err)
-	l = newLoader(store, infoschema.NewCache(nil, 1), nil)
+	l = newLoader(store, infoschema.NewCache(nil, 1), nil, false)
 	is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
 	require.NoError(t, err)
 	allSchemas = is.AllSchemas()
@@ -217,7 +217,7 @@ func (testStoreWithKS) GetKeyspace() string {
 }
 
 func TestLoaderSkipLoadingDiff(t *testing.T) {
-	syncer := New(nil, nil, 0, nil, nil)
+	syncer := New(nil, nil, 0, nil, nil, false)
 	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{}))
 	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{TableID: 100}))
 	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{OldTableID: 100}))
@@ -236,4 +236,104 @@ func TestLoaderSkipLoadingDiff(t *testing.T) {
 	require.False(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{OldTableID: metadef.ReservedGlobalIDUpperBound}))
 	require.False(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound,
 		OldTableID: metadef.ReservedGlobalIDUpperBound}))
+}
+
+func TestLoadForBR(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+
+	ctx := tidbkv.WithInternalSourceType(context.Background(), tidbkv.InternalTxnAdmin)
+
+	// Create multiple databases: system database, BR-related database, and user database
+	require.NoError(t, tidbkv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn tidbkv.Transaction) error {
+		mu := meta.NewMutator(txn)
+		// Create mysql (system database)
+		require.NoError(t, mu.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr(mysql.SystemDB)}))
+		require.NoError(t, mu.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t1"), State: model.StatePublic}))
+
+		// Create a BR-related temporary database
+		require.NoError(t, mu.CreateDatabase(&model.DBInfo{ID: 2, Name: ast.NewCIStr("__TiDB_BR_Temporary_test")}))
+		require.NoError(t, mu.CreateTableOrView(2, &model.TableInfo{ID: 2, Name: ast.NewCIStr("t2"), State: model.StatePublic}))
+
+		// Create a regular user database
+		require.NoError(t, mu.CreateDatabase(&model.DBInfo{ID: 3, Name: ast.NewCIStr("userdb")}))
+		require.NoError(t, mu.CreateTableOrView(3, &model.TableInfo{ID: 3, Name: ast.NewCIStr("t3"), State: model.StatePublic}))
+
+		schVer, err := mu.GenSchemaVersion()
+		require.NoError(t, err)
+		require.NoError(t, mu.SetSchemaDiff(&model.SchemaDiff{
+			Version:  schVer,
+			Type:     model.ActionCreateTable,
+			SchemaID: 3,
+			TableID:  3,
+		}))
+		return nil
+	}))
+
+	ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
+	require.NoError(t, err)
+
+	// Test with loadForBR = true
+	loaderForBR := newLoader(store, infoschema.NewCache(nil, 1), nil, true)
+	is, hitCache, oldSchemaVersion, changes, err := loaderForBR.LoadWithTS(ver.Ver, false)
+	require.NoError(t, err)
+	require.False(t, hitCache)
+	require.Zero(t, oldSchemaVersion)
+	require.Nil(t, changes)
+
+	// Verify only system databases and BR-related databases are loaded
+	allSchemas := is.AllSchemas()
+	schemaNames := make(map[string]bool)
+	for _, schema := range allSchemas {
+		schemaNames[schema.Name.L] = true
+	}
+
+	// Should include system database
+	require.True(t, schemaNames[mysql.SystemDB], "system database should be loaded")
+	// Should include BR-related database
+	require.True(t, schemaNames["__tidb_br_temporary_test"], "BR-related database should be loaded")
+	// Should NOT include user database
+	require.False(t, schemaNames["userdb"], "user database should NOT be loaded for BR")
+	// Should include memory schemas
+	require.True(t, schemaNames["information_schema"], "information_schema should be loaded")
+	require.True(t, schemaNames["metrics_schema"], "metrics_schema should be loaded")
+
+	// Verify tables in system database
+	tbls, err := is.SchemaTableInfos(ctx, ast.NewCIStr(mysql.SystemDB))
+	require.NoError(t, err)
+	require.Len(t, tbls, 1)
+	require.Equal(t, "t1", tbls[0].Name.L)
+
+	// Verify tables in BR-related database
+	tbls, err = is.SchemaTableInfos(ctx, ast.NewCIStr("__TiDB_BR_Temporary_test"))
+	require.NoError(t, err)
+	require.Len(t, tbls, 1)
+	require.Equal(t, "t2", tbls[0].Name.L)
+
+	// Verify user database is not accessible
+	tbls, err = is.SchemaTableInfos(ctx, ast.NewCIStr("userdb"))
+	require.NoError(t, err)
+	require.Len(t, tbls, 0)
+
+	// Test with loadForBR = false for comparison
+	loaderNormal := newLoader(store, infoschema.NewCache(nil, 1), nil, false)
+	isNormal, hitCache, oldSchemaVersion, changes, err := loaderNormal.LoadWithTS(ver.Ver, false)
+	require.NoError(t, err)
+	require.False(t, hitCache)
+	require.Zero(t, oldSchemaVersion)
+	require.Nil(t, changes)
+
+	// Verify all databases are loaded when loadForBR is false
+	allSchemasNormal := isNormal.AllSchemas()
+	schemaNamesNormal := make(map[string]bool)
+	for _, schema := range allSchemasNormal {
+		schemaNamesNormal[schema.Name.L] = true
+	}
+
+	// Should include all databases
+	require.True(t, schemaNamesNormal[mysql.SystemDB], "system database should be loaded")
+	require.True(t, schemaNamesNormal["__tidb_br_temporary_test"], "BR-related database should be loaded")
+	require.True(t, schemaNamesNormal["userdb"], "user database should be loaded")
+	require.True(t, schemaNamesNormal["information_schema"], "information_schema should be loaded")
+	require.True(t, schemaNamesNormal["metrics_schema"], "metrics_schema should be loaded")
 }
