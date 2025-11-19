@@ -128,6 +128,7 @@ func (c *DevDebugConfig) Validate(b *strings.Builder) error {
 	b.WriteString(".dev_debug")
 	switch c.Type {
 	case "execute_internal_trace_missing":
+	case "send_request_trace_id_missing":
 	default:
 		return fmt.Errorf("wrong dump_trigger.suspicious_event.dev_debug.type")
 	}
