@@ -326,6 +326,9 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	if err != nil {
 		return nil, nil, 0, err
 	}
+	if sessVars.MaxEstimatedCost != 0.0 && cost > sessVars.MaxEstimatedCost {
+		return nil, nil, 0, errors.New(fmt.Sprintf("cascades optimize estimated cost too large to execute (%g > %g tidb_max_estimated_cost)", cost, sessVars.MaxEstimatedCost))
+	}
 
 	finalPlan := postOptimize(ctx, sctx, physical)
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
@@ -1082,7 +1085,8 @@ func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 }
 
 func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost float64, err error) {
-	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+	sessVars := logic.SCtx().GetSessionVars().GetSessionVars()
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
@@ -1097,26 +1101,31 @@ func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost floa
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
+	sessVars.StmtCtx.TaskMapBakTS = 0
 	t, err := physicalop.FindBestTask(logic, prop)
 	if err != nil {
 		return nil, 0, err
 	}
 	if t.Invalid() {
 		errMsg := "Can't find a proper physical plan for this query"
-		if config.GetGlobalConfig().DisaggregatedTiFlash && !logic.SCtx().GetSessionVars().IsMPPAllowed() {
+		if config.GetGlobalConfig().DisaggregatedTiFlash && !sessVars.IsMPPAllowed() {
 			errMsg += ": cop and batchCop are not allowed in disaggregated tiflash mode, you should turn on tidb_allow_mpp switch"
 		}
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
 
 	// collect the warnings from task.
-	logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.(*physicalop.RootTask).Warnings.GetWarnings())
+	sessVars.StmtCtx.AppendWarnings(t.(*physicalop.RootTask).Warnings.GetWarnings())
 
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
 	cost, err = getPlanCost(t.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
+	if sessVars.MaxEstimatedCost != 0.0 {
+		if cost > sessVars.MaxEstimatedCost {
+			return nil, cost, errors.New(fmt.Sprintf("optimizer cost exceeds tidb_max_estimated_cost: %g > %g", cost, sessVars.MaxEstimatedCost))
+		}
+	}
 	return t.Plan(), cost, err
 }
 
