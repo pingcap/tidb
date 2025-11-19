@@ -228,6 +228,8 @@ const (
 	StmtLifecycle
 	// StmtPlan traces statement plan digest and optimization.
 	StmtPlan
+	// DevDebug traces development/debugging events.
+	DevDebug
 	// KvRequest traces client-go kv request and responses
 	KvRequest
 	// UnknownClient is the fallback category for unmapped client-go trace events.
@@ -285,6 +287,8 @@ func getCategoryName(category TraceCategory) string {
 		return "stmt_lifecycle"
 	case StmtPlan:
 		return "stmt_plan"
+	case DevDebug:
+		return "dev_debug"
 	case KvRequest:
 		return "kv_request"
 	case UnknownClient:

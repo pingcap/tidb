@@ -1834,14 +1834,10 @@ func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, rpcCtx *
 	}, nil
 }
 
-func regionErrorDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
-	return config.Event.Type == "region_error"
-}
-
 func getRegionError(ctx context.Context, resp interface{ GetRegionError() *errorpb.Error }) *errorpb.Error {
 	err := resp.GetRegionError()
 	if err != nil {
-		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event", regionErrorDumpTriggerCheck)
+		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event", "region_error")
 		return err
 	}
 	return nil
