@@ -14,21 +14,43 @@
 
 package aggfuncs_test
 
-import "testing"
+import (
+	"math/rand"
+	"testing"
 
-// _ AggFunc = (*countPartialWithDistinct4Int)(nil)
-// _ AggFunc = (*countPartialWithDistinct4Real)(nil)
-// _ AggFunc = (*countPartialWithDistinct4Decimal)(nil)
-// _ AggFunc = (*countPartialWithDistinct4Duration)(nil)
-// _ AggFunc = (*countPartialWithDistinct4String)(nil)
-// _ AggFunc = (*countPartialWithDistinct)(nil)
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+)
 
-// _ AggFunc = (*countOriginalWithDistinct4Int)(nil)
-// _ AggFunc = (*countOriginalWithDistinct4Real)(nil)
-// _ AggFunc = (*countOriginalWithDistinct4Decimal)(nil)
-// _ AggFunc = (*countOriginalWithDistinct4Duration)(nil)
-// _ AggFunc = (*countOriginalWithDistinct4String)(nil)
-// _ AggFunc = (*countOriginalWithDistinct)(nil)
+// TODO consider empty input
+// TODO consider some values are null
+// TODO consider all values are null
+
+// _ AggFunc = (*countPartialWithDistinct)(nil) // TODO test it
+
 func TestParallelCountDistinct4Int(t *testing.T) {
+	dataTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeNewDecimal), types.NewFieldType(mysql.TypeVarString), types.NewFieldType(mysql.TypeDuration)}
+	for range 100 {
+		var testCase *parallelDistinctAggTestCase
+		randNum := rand.Intn(100)
+		if randNum < 10 {
+			// Empty input
+			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, dataTypes[rand.Intn(len(dataTypes))], 0, 0, false, false)
+		} else if randNum < 20 {
+			// Some input are null
+			rowNum := rand.Intn(10000) + 1
+			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, dataTypes[rand.Intn(len(dataTypes))], rowNum, rand.Intn(rowNum), true, false)
+		} else if randNum < 30 {
+			// All input are null
+			rowNum := rand.Intn(10000) + 1
+			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, dataTypes[rand.Intn(len(dataTypes))], rowNum, rand.Intn(rowNum), true, true)
+		} else {
+			// All input are not null
+			rowNum := rand.Intn(10000) + 1
+			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, dataTypes[rand.Intn(len(dataTypes))], rowNum, rand.Intn(rowNum), false, false)
+		}
 
+		testParallelDistinctAggFunc(t, *testCase, false)
+	}
 }
