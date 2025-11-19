@@ -637,11 +637,11 @@ func SubTestHistogramProtoConversion() func(*testing.T) {
 }
 
 func TestPruneTopN(t *testing.T) {
-	var topnIn, topnOut []TopNMeta
+	var topnIn, topnOut []TopNWithRange
 	var totalNDV, nullCnt, sampleRows, totalRows int64
 
 	// case 1
-	topnIn := []TopNWithRange{{TopNMeta: TopNMeta{[]byte{1}, 100_000}}}
+	topnIn = []TopNWithRange{{TopNMeta: TopNMeta{[]byte{1}, 100_000}}}
 	totalNDV = 2
 	nullCnt = 0
 	sampleRows = 100_010
