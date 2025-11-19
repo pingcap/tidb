@@ -109,7 +109,6 @@ type Sink interface {
 // FlightRecorder defines the flight recorder interface.
 type FlightRecorder interface {
 	Sink
-	MarkDump()
 }
 
 type sinkKeyType struct{}

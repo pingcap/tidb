@@ -25,6 +25,12 @@ import (
 )
 
 func TestTraceControlExtractor(t *testing.T) {
+	var conf FlightRecorderConfig
+	conf.Initialize()
+	require.NoError(t, StartLogFlightRecorder(&conf))
+	fr := GetFlightRecorder()
+	defer fr.Close()
+
 	// Test with nil context (no sink)
 	t.Run("NoSink", func(t *testing.T) {
 		oldCategories := tracing.GetEnabledCategories()
@@ -57,7 +63,8 @@ func TestTraceControlExtractor(t *testing.T) {
 	// Test with keep=true
 	t.Run("KeepTrue", func(t *testing.T) {
 		tr := NewTrace()
-		tr.MarkDump() // This sets keep=true
+		// This sets keep=true
+		tr.bits = GetFlightRecorder().truthTable[0]
 		ctx := tracing.WithFlightRecorder(context.Background(), tr)
 
 		// Save old categories and restore after test
@@ -126,7 +133,8 @@ func TestTraceControlExtractor(t *testing.T) {
 	// Test multiple categories
 	t.Run("MultipleCategoriesAndKeep", func(t *testing.T) {
 		tr := NewTrace()
-		tr.MarkDump() // Set keep=true
+		// Set keep=true
+		tr.bits = GetFlightRecorder().truthTable[0]
 		ctx := tracing.WithFlightRecorder(context.Background(), tr)
 
 		// Save old categories and restore after test
@@ -169,7 +177,7 @@ func TestTraceControlExtractor(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				tr.MarkDump()
+				tr.markBits(1)
 			}()
 		}
 
