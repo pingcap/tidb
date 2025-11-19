@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	costpkg "github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -99,7 +100,7 @@ func ImplementMemoAndCost(rootGroup *memo.Group) (plan base.PhysicalPlan, cost f
 	if err = task.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = utilfuncp.GetPlanCost(task.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
+	cost, err = costpkg.GetPlanCost(task.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
 	return task.Plan(), cost, err
 }
 

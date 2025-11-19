@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -158,7 +159,18 @@ func (p *PhysicalCTE) MemoryUsage() (sum int64) {
 
 // GetPlanCostVer2 implements PhysicalPlan interface.
 func (p *PhysicalCTE) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalCTE(p, taskType, option)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	inputRows := cost.GetCardinality(p, option.CostFlag)
+	cpuFactor := cost.GetTaskCPUFactorVer2(p, taskType)
+
+	projCost := cost.FilterCostVer2(option, inputRows, expression.Column2Exprs(p.Schema().Columns), cpuFactor)
+
+	p.PlanCostVer2 = projCost
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
 }
 
 // AccessObject implements DataAccesser interface.

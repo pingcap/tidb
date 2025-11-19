@@ -23,11 +23,14 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
@@ -117,8 +120,61 @@ func (p *PhysicalSort) GetPlanCostVer1(taskType property.TaskType, option *costu
 }
 
 // GetPlanCostVer2 calculates the cost of the PhysicalSort plan for a given task type and options, returning a CostVer2 object.
+// it returns the plan-cost of this sub-plan, which is:
+// plan-cost = child-cost + sort-cpu-cost + sort-mem-cost + sort-disk-cost
+// sort-cpu-cost = rows * log2(rows) * len(sort-items) * cpu-factor
+// if no spill:
+// 1. sort-mem-cost = rows * row-size * mem-factor
+// 2. sort-disk-cost = 0
+// else if spill:
+// 1. sort-mem-cost = mem-quota * mem-factor
+// 2. sort-disk-cost = rows * row-size * disk-factor
 func (p *PhysicalSort) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalSort(p, taskType, option, isChildOfINL...)
+	intest.Assert(p != nil)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	rows := max(cost.MinNumRows, cost.GetCardinality(p.Children()[0], option.CostFlag))
+	rowSize := max(cost.MinRowSize, cost.GetAvgRowSize(p.StatsInfo(), p.Schema().Columns))
+	cpuFactor := cost.GetTaskCPUFactorVer2(p, taskType)
+	memFactor := cost.GetTaskMemFactorVer2(p, taskType)
+	diskFactor := cost.DefaultVer2Factors.TiDBDisk
+	oomUseTmpStorage := vardef.EnableTmpStorageOnOOM.Load()
+	memQuota := p.SCtx().GetSessionVars().MemTracker.GetBytesLimit()
+	spill := taskType == property.RootTaskType && // only TiDB can spill
+		oomUseTmpStorage && // spill is enabled
+		memQuota > 0 && // mem-quota is set
+		rowSize*rows > float64(memQuota) // exceed the mem-quota
+
+	sortCPUCost := cost.OrderCostVer2(option, rows, rows, p.ByItems, cpuFactor)
+
+	var sortMemCost, sortDiskCost costusage.CostVer2
+	if !spill {
+		sortMemCost = costusage.NewCostVer2(option, memFactor,
+			rows*rowSize*memFactor.Value,
+			func() string { return fmt.Sprintf("sortMem(%v*%v*%v)", rows, rowSize, memFactor) })
+		sortDiskCost = costusage.ZeroCostVer2
+	} else {
+		sortMemCost = costusage.NewCostVer2(option, memFactor,
+			float64(memQuota)*memFactor.Value,
+			func() string { return fmt.Sprintf("sortMem(%v*%v)", memQuota, memFactor) })
+		sortDiskCost = costusage.NewCostVer2(option, diskFactor,
+			rows*rowSize*diskFactor.Value,
+			func() string { return fmt.Sprintf("sortDisk(%v*%v*%v)", rows, rowSize, diskFactor) })
+	}
+
+	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option, isChildOfINL...)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	p.PlanCostVer2 = costusage.SumCostVer2(childCost, sortCPUCost, sortMemCost, sortDiskCost)
+	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().SortCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptSortCostFactor)
+	return p.PlanCostVer2, nil
 }
 
 // ToPB converts the PhysicalSort operator to a Protocol Buffer representation.

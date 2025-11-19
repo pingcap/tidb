@@ -15,6 +15,7 @@
 package physicalop
 
 import (
+	"fmt"
 	"maps"
 	"strconv"
 	"strings"
@@ -23,15 +24,18 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -265,11 +269,80 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer1(taskType property.TaskType,
 }
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-// plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost
-// probe-cost = probe-child-cost * build-rows
+// plan-cost = index-side-cost + (table-side-cost + double-read-cost) / double-read-concurrency
+// index-side-cost = (index-child-cost + index-net-cost) / dist-concurrency # same with IndexReader
+// table-side-cost = (table-child-cost + table-net-cost) / dist-concurrency # same with TableReader
+// double-read-cost = double-read-request-cost + double-read-cpu-cost
+// double-read-request-cost = double-read-tasks * request-factor
+// double-read-cpu-cost = index-rows * cpu-factor
+// double-read-tasks = index-rows / batch-size * task-per-batch # task-per-batch is a magic number now
 func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType,
 	option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalIndexLookUpReader(p, taskType, option, args...)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	indexRows := cost.GetCardinality(p.IndexPlan, option.CostFlag)
+	tableRows := cost.GetCardinality(p.TablePlan, option.CostFlag)
+
+	if p.PushedLimit != nil { // consider pushed down limit clause
+		indexRows = min(indexRows, float64(p.PushedLimit.Count)) // rows returned from the index side
+		tableRows = min(tableRows, float64(p.PushedLimit.Count)) // rows to scan on the table side
+	}
+
+	indexRowSize := cardinality.GetAvgRowSize(p.SCtx(), GetTblStats(p.IndexPlan), p.IndexPlan.Schema().Columns, true, false)
+	tableRowSize := cardinality.GetAvgRowSize(p.SCtx(), GetTblStats(p.TablePlan), p.TablePlan.Schema().Columns, false, false)
+	cpuFactor := cost.GetTaskCPUFactorVer2(p, taskType)
+	netFactor := cost.GetTaskNetFactorVer2(isTemporaryTable(p), isMppNet(p), isTiFlashNet(p))
+	requestFactor := cost.GetTaskRequestFactorVer2(isTemporaryTable(p))
+	distConcurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
+	doubleReadConcurrency := float64(p.SCtx().GetSessionVars().IndexLookupConcurrency())
+
+	// index-side
+	indexNetCost := cost.NetCostVer2(option, indexRows, indexRowSize, netFactor)
+	indexChildCost, err := p.IndexPlan.GetPlanCostVer2(property.CopMultiReadTaskType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+	indexSideCost := costusage.DivCostVer2(costusage.SumCostVer2(indexNetCost, indexChildCost), distConcurrency)
+
+	// table-side
+	tableNetCost := cost.NetCostVer2(option, tableRows, tableRowSize, netFactor)
+	// set the isChildOfINL signal.
+	tableChildCost, err := p.TablePlan.GetPlanCostVer2(property.CopMultiReadTaskType, option, true)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+	tableSideCost := costusage.DivCostVer2(costusage.SumCostVer2(tableNetCost, tableChildCost), distConcurrency)
+
+	doubleReadRows := indexRows
+	doubleReadCPUCost := costusage.NewCostVer2(option, cpuFactor,
+		indexRows*cpuFactor.Value,
+		func() string { return fmt.Sprintf("double-read-cpu(%v*%v)", doubleReadRows, cpuFactor) })
+	batchSize := float64(p.SCtx().GetSessionVars().IndexLookupSize)
+	taskPerBatch := 32.0 // TODO: remove this magic number
+	doubleReadTasks := doubleReadRows / batchSize * taskPerBatch
+	doubleReadRequestCost := cost.DoubleReadCostVer2(option, doubleReadTasks, requestFactor)
+	doubleReadCost := costusage.SumCostVer2(doubleReadCPUCost, doubleReadRequestCost)
+
+	p.PlanCostVer2 = costusage.SumCostVer2(indexSideCost, costusage.DivCostVer2(costusage.SumCostVer2(tableSideCost, doubleReadCost), doubleReadConcurrency))
+
+	if p.SCtx().GetSessionVars().EnablePaging && p.ExpectedCnt > 0 && p.ExpectedCnt <= paging.Threshold {
+		// if the expectCnt is below the paging threshold, using paging API
+		p.Paging = true // TODO: move this operation from cost model to physical optimization
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 0.6)
+	}
+
+	p.PlanCostInit = true
+	if p.PushedLimit != nil && tableRows <= float64(p.PushedLimit.Count) {
+		// Multiply by limit cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().LimitCostFactor)
+		p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptLimitCostFactor)
+	}
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexLookupCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexLookupCostFactor)
+	return p.PlanCostVer2, nil
 }
 
 // BuildIndexLookUpTask builds a index look up task from a cop task.

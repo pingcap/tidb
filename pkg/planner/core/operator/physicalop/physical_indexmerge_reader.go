@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -139,8 +141,69 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer1(taskType property.TaskType, o
 }
 
 // GetPlanCostVer2 implements PhysicalPlan cost v2 for IndexMergeReader.
+// it returns the plan-cost of this sub-plan, which is:
+// plan-cost = table-side-cost + sum(index-side-cost)
+// index-side-cost = (index-child-cost + index-net-cost) / dist-concurrency # same with IndexReader
+// table-side-cost = (table-child-cost + table-net-cost) / dist-concurrency # same with TableReader
 func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalIndexMergeReader(p, taskType, option, args...)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	netFactor := cost.GetTaskNetFactorVer2(isTemporaryTable(p), isMppNet(p), isTiFlashNet(p))
+	distConcurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
+
+	var tableSideCost costusage.CostVer2
+	if tablePath := p.TablePlan; tablePath != nil {
+		rows := cost.GetCardinality(tablePath, option.CostFlag)
+		rowSize := cost.GetAvgRowSize(tablePath.StatsInfo(), tablePath.Schema().Columns)
+
+		tableNetCost := cost.NetCostVer2(option, rows, rowSize, netFactor)
+		tableChildCost, err := tablePath.GetPlanCostVer2(taskType, option, true)
+		if err != nil {
+			return costusage.ZeroCostVer2, err
+		}
+		tableSideCost = costusage.DivCostVer2(costusage.SumCostVer2(tableNetCost, tableChildCost), distConcurrency)
+	}
+
+	indexSideCost := make([]costusage.CostVer2, 0, len(p.PartialPlansRaw))
+	for _, indexPath := range p.PartialPlansRaw {
+		rows := cost.GetCardinality(indexPath, option.CostFlag)
+		rowSize := cost.GetAvgRowSize(indexPath.StatsInfo(), indexPath.Schema().Columns)
+
+		indexNetCost := cost.NetCostVer2(option, rows, rowSize, netFactor)
+		indexChildCost, err := indexPath.GetPlanCostVer2(taskType, option)
+		if err != nil {
+			return costusage.ZeroCostVer2, err
+		}
+		indexSideCost = append(indexSideCost,
+			costusage.DivCostVer2(costusage.SumCostVer2(indexNetCost, indexChildCost), distConcurrency))
+	}
+	sumIndexSideCost := costusage.SumCostVer2(indexSideCost...)
+
+	p.PlanCostVer2 = costusage.SumCostVer2(tableSideCost, sumIndexSideCost)
+	// give a bias to pushDown limit, since it will get the same cost with NON_PUSH_DOWN_LIMIT case via expect count.
+	// push down limit case may reduce cop request consumption if any in some cases.
+	//
+	// for index merge intersection case, if we want to attach limit to table/index side, we should enumerate double-read-cop task type.
+	// otherwise, the entire index-merge-reader will be encapsulated as root task, and limit can only be put outside of that.
+	// while, since limit doesn't contain any physical cost, the expected cnt has already pushed down as a kind of physical property.
+	// that means the 2 physical tree format:
+	// 		limit -> index merge reader
+	// 		index-merger-reader(with embedded limit)
+	// will have the same cost, actually if limit are more close to the fetch side, the fewer rows that table plan need to read.
+	// todo: refine the cost computation out from cost model.
+	if p.PushedLimit != nil {
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 0.99)
+		// Multiply by limit cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().LimitCostFactor)
+		p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptLimitCostFactor)
+	}
+	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexMergeCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexMergeCostFactor)
+	return p.PlanCostVer2, nil
 }
 
 // MemoryUsage return the memory usage of PhysicalIndexMergeReader

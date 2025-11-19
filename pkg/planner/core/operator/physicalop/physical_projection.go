@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -165,8 +166,31 @@ func (p *PhysicalProjection) GetPlanCostVer1(taskType property.TaskType, option 
 }
 
 // GetPlanCostVer2 implements PhysicalPlan interface.
+// getPlanCostVer24PhysicalProjection returns the plan-cost of this sub-plan, which is:
+// plan-cost = child-cost + proj-cost / concurrency
+// proj-cost = input-rows * len(expressions) * cpu-factor
 func (p *PhysicalProjection) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalProjection(p, taskType, option, isChildOfINL...)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	inputRows := cost.GetCardinality(p.Children()[0], option.CostFlag)
+	cpuFactor := cost.GetTaskCPUFactorVer2(p, taskType)
+	concurrency := float64(p.SCtx().GetSessionVars().ProjectionConcurrency())
+	if concurrency == 0 {
+		concurrency = 1 // un-parallel execution
+	}
+
+	projCost := cost.FilterCostVer2(option, inputRows, p.Exprs, cpuFactor)
+
+	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option, isChildOfINL...)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	p.PlanCostVer2 = costusage.SumCostVer2(childCost, costusage.DivCostVer2(projCost, concurrency))
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
 }
 
 // ToPB implements PhysicalPlan ToPB interface.

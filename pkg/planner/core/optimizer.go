@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"github.com/pingcap/tidb/pkg/planner/cascades/impl"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	costpkg "github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -1112,7 +1113,7 @@ func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost floa
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = getPlanCost(t.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
+	cost, err = costpkg.GetPlanCost(t.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
 	return t.Plan(), cost, err
 }
 

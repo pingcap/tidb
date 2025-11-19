@@ -845,3 +845,11 @@ func (*baseSingleGroupJoinOrderSolver) calcJoinCumCost(join base.LogicalPlan, lN
 func (*JoinReOrderSolver) Name() string {
 	return "join_reorder"
 }
+
+func cols2Exprs(cols []*expression.Column) []expression.Expression {
+	exprs := make([]expression.Expression, 0, len(cols))
+	for _, c := range cols {
+		exprs = append(exprs, c)
+	}
+	return exprs
+}

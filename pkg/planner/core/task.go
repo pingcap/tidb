@@ -34,9 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -220,19 +218,6 @@ func attach2Task4PhysicalIndexJoin(pp base.PhysicalPlan, tasks ...base.Task) bas
 		return indexJoinAttach2TaskV2(p, tasks...)
 	}
 	return indexJoinAttach2TaskV1(p, tasks...)
-}
-
-// RowSize for cost model ver2 is simplified, always use this function to calculate row size.
-func getAvgRowSize(stats *property.StatsInfo, cols []*expression.Column) (size float64) {
-	if stats.HistColl != nil {
-		size = max(cardinality.GetAvgRowSizeDataInDiskByRows(stats.HistColl, cols), 0)
-	} else {
-		// Estimate using just the type info.
-		for _, col := range cols {
-			size += max(float64(chunk.EstimateTypeWidth(col.GetStaticType())), 0)
-		}
-	}
-	return
 }
 
 // attach2Task4PhysicalHashJoin implements PhysicalPlan interface.
@@ -586,40 +571,6 @@ func attach2Task4PhysicalMergeJoin(pp base.PhysicalPlan, tasks ...base.Task) bas
 	t.SetPlan(p)
 	t.Warnings.CopyFrom(&rTask.(*physicalop.RootTask).Warnings, &lTask.(*physicalop.RootTask).Warnings)
 	return t
-}
-
-func extractRows(p base.PhysicalPlan) float64 {
-	f := float64(0)
-	for _, c := range p.Children() {
-		if len(c.Children()) != 0 {
-			f += extractRows(c)
-		} else {
-			f += c.StatsInfo().RowCount
-		}
-	}
-	return f
-}
-
-// calcPagingCost calculates the cost for paging processing which may increase the seekCnt and reduce scanned rows.
-func calcPagingCost(ctx base.PlanContext, indexPlan base.PhysicalPlan, expectCnt uint64) float64 {
-	sessVars := ctx.GetSessionVars()
-	indexRows := indexPlan.StatsCount()
-	sourceRows := extractRows(indexPlan)
-	// with paging, the scanned rows is always less than or equal to source rows.
-	if uint64(sourceRows) < expectCnt {
-		expectCnt = uint64(sourceRows)
-	}
-	seekCnt := paging.CalculateSeekCnt(expectCnt)
-	indexSelectivity := float64(1)
-	if sourceRows > indexRows {
-		indexSelectivity = indexRows / sourceRows
-	}
-	pagingCst := seekCnt*sessVars.GetSeekFactor(nil) + float64(expectCnt)*sessVars.GetCPUFactor()
-	pagingCst *= indexSelectivity
-
-	// we want the diff between idxCst and pagingCst here,
-	// however, the idxCst does not contain seekFactor, so a seekFactor needs to be removed
-	return math.Max(pagingCst-sessVars.GetSeekFactor(nil), 0)
 }
 
 // attach2Task4PhysicalLimit attach limit to different cases.
@@ -2109,21 +2060,4 @@ func attach2Task4PhysicalSequence(pp base.PhysicalPlan, tasks ...base.Task) base
 	}
 	mppTask.Warnings.CopyFrom(tmpWarnings...)
 	return mppTask
-}
-
-func collectRowSizeFromMPPPlan(mppPlan base.PhysicalPlan) (rowSize float64) {
-	if mppPlan != nil && mppPlan.StatsInfo() != nil && mppPlan.StatsInfo().HistColl != nil {
-		return cardinality.GetAvgRowSize(mppPlan.SCtx(), mppPlan.StatsInfo().HistColl, mppPlan.Schema().Columns, false, false)
-	}
-	return 1 // use 1 as lower-bound for safety
-}
-
-func accumulateNetSeekCost4MPP(p base.PhysicalPlan) (cost float64) {
-	if ts, ok := p.(*physicalop.PhysicalTableScan); ok {
-		return float64(len(ts.Ranges)) * float64(len(ts.Columns)) * ts.SCtx().GetSessionVars().GetSeekFactor(ts.Table)
-	}
-	for _, c := range p.Children() {
-		cost += accumulateNetSeekCost4MPP(c)
-	}
-	return
 }

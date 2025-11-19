@@ -330,3 +330,62 @@ func expandVirtualColumn(schema *expression.Schema, copyColumn []*model.ColumnIn
 	}
 	return copyColumn
 }
+
+func isMppNet(p base.PhysicalPlan) bool {
+	if _, ok := p.(*PhysicalExchangeReceiver); ok { // TiFlash MPP
+		return true
+	}
+	return false
+}
+
+func isTiFlashNet(p base.PhysicalPlan) bool {
+	if tblReader, ok := p.(*PhysicalTableReader); ok {
+		if _, isMPP := tblReader.TablePlan.(*PhysicalExchangeSender); isMPP { // TiDB to TiFlash with mpp protocol
+			return true
+		}
+	}
+	return false
+}
+
+// isDescScan return whether it's desc scan of underlying ops.
+func isDescScan(p base.PhysicalPlan) bool {
+	var desc bool
+	if indexScan, ok := p.(*PhysicalIndexScan); ok {
+		desc = indexScan.Desc
+	}
+	if tableScan, ok := p.(*PhysicalTableScan); ok {
+		desc = tableScan.Desc
+	}
+	return desc
+}
+
+// isTemporaryTable checks whether the plan underlying table is a temporary table.
+func isTemporaryTable(p base.PhysicalPlan) bool {
+	tbl := getTableInfo(p)
+	return tbl != nil && tbl.TempTableType != model.TempTableNone
+}
+
+func getTableInfo(p base.PhysicalPlan) *model.TableInfo {
+	switch x := p.(type) {
+	case *PhysicalIndexReader:
+		return getTableInfo(x.IndexPlan)
+	case *PhysicalTableReader:
+		return getTableInfo(x.TablePlan)
+	case *PhysicalIndexLookUpReader:
+		return getTableInfo(x.TablePlan)
+	case *PhysicalIndexMergeReader:
+		if x.TablePlan != nil {
+			return getTableInfo(x.TablePlan)
+		}
+		return getTableInfo(x.PartialPlansRaw[0])
+	case *PhysicalTableScan:
+		return x.Table
+	case *PhysicalIndexScan:
+		return x.Table
+	default:
+		if len(x.Children()) == 0 {
+			return nil
+		}
+		return getTableInfo(x.Children()[0])
+	}
+}

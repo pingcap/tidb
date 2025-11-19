@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -126,8 +128,32 @@ func (p *PhysicalIndexReader) GetPlanCostVer1(taskType property.TaskType, option
 }
 
 // GetPlanCostVer2 implements PhysicalPlan cost v2 for IndexMergeReader.
+// it returns the plan-cost of this sub-plan, which is:
+// plan-cost = (child-cost + net-cost) / concurrency
+// net-cost = rows * row-size * net-factor
 func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PhysicalIndexReader(p, taskType, option, args...)
+	if p.PlanCostInit && !cost.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	rows := cost.GetCardinality(p.IndexPlan, option.CostFlag)
+	rowSize := cost.GetAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	netFactor := cost.GetTaskNetFactorVer2(isTemporaryTable(p), isMppNet(p), isTiFlashNet(p))
+	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
+
+	netCost := cost.NetCostVer2(option, rows, rowSize, netFactor)
+
+	childCost, err := p.IndexPlan.GetPlanCostVer2(property.CopSingleReadTaskType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCost, netCost), concurrency)
+	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexReaderCostFactor)
+	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexReaderCostFactor)
+	return p.PlanCostVer2, nil
 }
 
 // LoadTableStats preloads the stats data for the physical table

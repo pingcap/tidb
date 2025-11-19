@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/impl"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	costpkg "github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
@@ -497,15 +497,15 @@ func getTaskPlanCost(t base.Task) (float64, bool, error) {
 			taskType = property.CopMultiReadTaskType
 			// keep compatible with the old cost interface, for CopMultiReadTask, the cost is idxCost + tblCost.
 			if !cop.IndexPlanFinished { // only consider index cost in this case
-				idxCost, err := getPlanCost(cop.IndexPlan, taskType, costusage.NewDefaultPlanCostOption())
+				idxCost, err := costpkg.GetPlanCost(cop.IndexPlan, taskType, costusage.NewDefaultPlanCostOption())
 				return idxCost, false, err
 			}
 			// consider both sides
-			idxCost, err := getPlanCost(cop.IndexPlan, taskType, costusage.NewDefaultPlanCostOption())
+			idxCost, err := costpkg.GetPlanCost(cop.IndexPlan, taskType, costusage.NewDefaultPlanCostOption())
 			if err != nil {
 				return 0, false, err
 			}
-			tblCost, err := getPlanCost(cop.TablePlan, taskType, costusage.NewDefaultPlanCostOption())
+			tblCost, err := costpkg.GetPlanCost(cop.TablePlan, taskType, costusage.NewDefaultPlanCostOption())
 			if err != nil {
 				return 0, false, err
 			}
@@ -531,7 +531,7 @@ func getTaskPlanCost(t base.Task) (float64, bool, error) {
 		// cost about table plan.
 		if cop.IndexPlanFinished && len(cop.IdxMergePartPlans) != 0 {
 			for _, partialScan := range cop.IdxMergePartPlans {
-				partialCost, err := getPlanCost(partialScan, taskType, costusage.NewDefaultPlanCostOption())
+				partialCost, err := costpkg.GetPlanCost(partialScan, taskType, costusage.NewDefaultPlanCostOption())
 				if err != nil {
 					return 0, false, err
 				}
@@ -549,7 +549,7 @@ func getTaskPlanCost(t base.Task) (float64, bool, error) {
 		cost := 0.0
 		copTsk := t.(*physicalop.CopTask)
 		for _, partialScan := range copTsk.IdxMergePartPlans {
-			partialCost, err := getPlanCost(partialScan, taskType, costusage.NewDefaultPlanCostOption())
+			partialCost, err := costpkg.GetPlanCost(partialScan, taskType, costusage.NewDefaultPlanCostOption())
 			if err != nil {
 				return 0, false, err
 			}
@@ -557,7 +557,7 @@ func getTaskPlanCost(t base.Task) (float64, bool, error) {
 		}
 		return cost, false, nil
 	}
-	cost, err := getPlanCost(t.Plan(), taskType, costusage.NewDefaultPlanCostOption())
+	cost, err := costpkg.GetPlanCost(t.Plan(), taskType, costusage.NewDefaultPlanCostOption())
 	return cost + indexPartialCost, false, err
 }
 
@@ -2003,7 +2003,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	}
 	totalRowCount := path.CountAfterAccess
 	// Add an arbitrary tolerance factor to account for comparison with floating point
-	if (prop.ExpectedCnt + cost.ToleranceFactor) < ds.StatsInfo().RowCount {
+	if (prop.ExpectedCnt + costpkg.ToleranceFactor) < ds.StatsInfo().RowCount {
 		totalRowCount *= prop.ExpectedCnt / ds.StatsInfo().RowCount
 	}
 	ts, remainingFilters2, moreColumn, err := physicalop.BuildIndexMergeTableScan(ds, path.TableFilters, totalRowCount, candidate.matchPropResult == property.PropMatched)
@@ -2079,7 +2079,7 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, ts.FilterCondition, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = cost.SelectionFactor
+			selectivity = costpkg.SelectionFactor
 		}
 		tablePlan = physicalop.PhysicalSelection{Conditions: ts.FilterCondition}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), selectivity*rowCount), ds.QueryBlockOffset())
 		tablePlan.SetChildren(ts)
@@ -2291,7 +2291,7 @@ func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, 
 			selectivity, _, err := cardinality.Selectivity(is.SCtx(), copTask.TblColHists, tableConds, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-				selectivity = cost.SelectionFactor
+				selectivity = costpkg.SelectionFactor
 			}
 			tableSel.SetStats(copTask.Plan().StatsInfo().Scale(is.SCtx().GetSessionVars(), selectivity))
 		}
@@ -2740,7 +2740,7 @@ func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, 
 			selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.TblColHists, sel.Conditions, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-				selectivity = cost.SelectionFactor
+				selectivity = costpkg.SelectionFactor
 			}
 			sel.SetStats(ts.StatsInfo().Scale(ts.SCtx().GetSessionVars(), selectivity))
 		}
