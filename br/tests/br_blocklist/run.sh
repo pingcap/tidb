@@ -14,8 +14,16 @@ echo ""
 # Restart services
 restart_services || { echo "Failed to restart services"; exit 1; }
 
-# ==================== T0: Prepare initial data and create snapshot backup ====================
-echo ">>> T0: Preparing initial data and creating snapshot backup..."
+# ==================== T0: Start log backup and prepare initial data ====================
+echo ">>> T0: Starting log backup and preparing initial data..."
+
+# Start log backup FIRST
+LOG_DIR="local://$TEST_DIR/$PREFIX/log"
+run_br log start --task-name "$TASK_NAME" -s "$LOG_DIR" --pd "$PD_ADDR"
+echo "✓ Log backup started to $LOG_DIR"
+sleep 2
+
+# Prepare initial data
 run_sql "CREATE DATABASE initial_db;"
 run_sql "CREATE TABLE initial_db.t0 (id INT PRIMARY KEY);"
 run_sql "INSERT INTO initial_db.t0 VALUES (1);"
@@ -28,17 +36,12 @@ if [ "$t0_count" != "1" ]; then
 fi
 echo "✓ T0 initial data prepared"
 
-# Create full snapshot backup
+# Create full snapshot backup (after log backup started)
 SNAPSHOT_DIR="local://$TEST_DIR/$PREFIX/full"
 run_br backup full -s "$SNAPSHOT_DIR" --pd "$PD_ADDR" \
     --log-file "$TEST_DIR/backup_full.log"
 echo "✓ Snapshot backup completed at $SNAPSHOT_DIR"
-
-# Start log backup
-LOG_DIR="local://$TEST_DIR/$PREFIX/log"
-run_br log start --task-name "$TASK_NAME" -s "$LOG_DIR" --pd "$PD_ADDR"
-echo "✓ Log backup started to $LOG_DIR"
-sleep 2
+sleep 1
 
 # ==================== T1: Create test tables ====================
 echo ""
