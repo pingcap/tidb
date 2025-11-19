@@ -25,7 +25,6 @@ go_library(
         "//br/pkg/metautil",
         "//br/pkg/pdutil",
         "//br/pkg/storage",
-        "//br/pkg/storage/recording",
         "//br/pkg/stream",
         "//br/pkg/task",
         "//br/pkg/utils",

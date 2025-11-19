@@ -480,7 +480,7 @@ func TestS3Range(t *testing.T) {
 func TestWriteNoError(t *testing.T) {
 	accessRec := &recording.AccessStats{}
 	s := createS3SuiteWithRec(t, accessRec)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	putCall := s.s3.EXPECT().
 		PutObject(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -513,7 +513,7 @@ func TestWriteNoError(t *testing.T) {
 func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 	accessRec := &recording.AccessStats{}
 	s := createS3SuiteWithRec(t, accessRec)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	s.s3.EXPECT().
 		CreateMultipartUpload(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -535,7 +535,7 @@ func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 func TestReadNoError(t *testing.T) {
 	accessRec := &recording.AccessStats{}
 	s := createS3SuiteWithRec(t, accessRec)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	s.s3.EXPECT().
 		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
