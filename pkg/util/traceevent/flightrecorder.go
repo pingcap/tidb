@@ -30,7 +30,7 @@ import (
 
 // Trace implements Sink interface
 type Trace struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	events []Event
 	keep   bool
 	rand32 uint32
@@ -216,9 +216,10 @@ type FlightRecorderConfig struct {
 }
 
 // Initialize initializes the default flight recorder configuration.
-// It will dump all the events.
+// It will dump all the events, but excludes TiKV write/read details by default
+// to avoid excessive overhead.
 func (c *FlightRecorderConfig) Initialize() {
-	c.EnabledCategories = []string{"*"}
+	c.EnabledCategories = []string{"-", "tikv_write_details", "tikv_read_details"}
 	c.DumpTrigger.Type = "sampling"
 	c.DumpTrigger.Sampling = 1
 }
@@ -295,6 +296,9 @@ func (r *HTTPFlightRecorder) Close() {
 	globalHTTPFlightRecorder.Store(nil)
 }
 
+// collect sends events to the HTTP flight recorder channel.
+// The caller must pass a cloned slice to avoid data races; this function
+// does not clone the slice to avoid redundant allocations.
 func (r *HTTPFlightRecorder) collect(ctx context.Context, events []Event) {
 	if r.ch == nil {
 		// Used by log flight recorder
@@ -306,7 +310,7 @@ func (r *HTTPFlightRecorder) collect(ctx context.Context, events []Event) {
 
 	// Used by http flight recorder
 	select {
-	case r.ch <- slices.Clone(events):
+	case r.ch <- events:
 	default:
 	}
 }
@@ -341,18 +345,28 @@ const maxEvents = 4096
 func (r *Trace) DiscardOrFlush(ctx context.Context) {
 	sink := globalHTTPFlightRecorder.Load()
 	if sink != nil {
-		if r.keep {
-			sink.collect(ctx, r.events)
-		}
-		if sink.Config.DumpTrigger.Type == "sampling" {
+		// Read phase: use RLock to safely read keep flag and clone events.
+		// We must clone while holding the lock to avoid data races where
+		// concurrent Record() or DiscardOrFlush() calls might modify the
+		// backing array after we release RLock.
+		r.mu.RLock()
+		shouldFlush := r.keep
+		eventsToFlush := slices.Clone(r.events) // Deep copy to avoid data race
+		r.mu.RUnlock()
+
+		// Process without holding any lock
+		if shouldFlush {
+			sink.collect(ctx, eventsToFlush)
+		} else if sink.Config.DumpTrigger.Type == "sampling" {
 			sink.counter++
 			if sink.counter >= sink.Config.DumpTrigger.Sampling {
-				sink.collect(ctx, r.events)
+				sink.collect(ctx, eventsToFlush)
 				sink.counter = 0
 			}
 		}
 	}
 	newRand := rand.Uint32()
+	// Write phase: use Lock for cleanup
 	r.mu.Lock()
 	r.keep = false
 	if len(r.events) > maxEvents {
