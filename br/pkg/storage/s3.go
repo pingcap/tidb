@@ -92,8 +92,9 @@ var WriteBufferSize = 5 * 1024 * 1024
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `ExternalStorage` interface.
 type S3Storage struct {
-	svc     S3API
-	options *backuppb.S3
+	svc       S3API
+	options   *backuppb.S3
+	accessRec *recording.AccessStats
 }
 
 func (*S3Storage) MarkStrongConsistency() {
@@ -320,10 +321,11 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 }
 
 // NewS3StorageForTest creates a new S3Storage for testing only.
-func NewS3StorageForTest(svc S3API, options *backuppb.S3) *S3Storage {
+func NewS3StorageForTest(svc S3API, options *backuppb.S3, accessRec *recording.AccessStats) *S3Storage {
 	return &S3Storage{
-		svc:     svc,
-		options: options,
+		svc:       svc,
+		options:   options,
+		accessRec: accessRec,
 	}
 }
 
@@ -473,7 +475,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		cfg.Credentials = assumeRoleProvider
 	}
 
-	if reqRec := recording.GetRequests(ctx); reqRec != nil {
+	if opts.AccessRecording != nil {
 		s3Opts = append(s3Opts, func(o *s3.Options) {
 			o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
 				return stack.Finalize.Add(middleware.FinalizeMiddlewareFunc(
@@ -484,7 +486,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 
 						// Record the request if we have an HTTP request
 						if req, ok := input.Request.(*smithyhttp.Request); ok {
-							reqRec.Rec(req.Request)
+							opts.AccessRecording.RecRequest(req.Request)
 						}
 
 						return output, metadata, err
@@ -581,8 +583,9 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 
 	// Create final S3Storage instance
 	s3Storage := &S3Storage{
-		svc:     client,
-		options: &qs,
+		svc:       client,
+		options:   &qs,
+		accessRec: opts.AccessRecording,
 	}
 
 	// Check object lock status if requested
@@ -724,6 +727,7 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 	err = waiter.Wait(ctx, hinput, 30*time.Second)
+	rs.accessRec.RecWrite(len(data))
 	return errors.Trace(err)
 }
 
@@ -754,6 +758,7 @@ func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) 
 			}
 			continue
 		}
+		rs.accessRec.RecRead(len(data))
 		return data, nil
 	}
 }
@@ -1149,6 +1154,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		n, err = r.reader.Read(p[:maxCnt])
 	}
 
+	r.storage.accessRec.RecRead(n)
 	r.pos += int64(n)
 	return
 }
@@ -1316,7 +1322,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, rs.accessRec)
 	return uploaderWriter, nil
 }
 

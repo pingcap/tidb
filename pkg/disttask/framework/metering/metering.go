@@ -237,19 +237,20 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 	startTime := time.Now()
 	currData := m.scrapeCurrData()
 	items := m.calculateDataItems(currData)
+	logger := m.logger.With(zap.Int64("timestamp", ts))
 	if len(items) == 0 {
-		m.logger.Info("no metering data to flush", zap.Duration("duration", time.Since(startTime)))
+		logger.Info("no metering data to flush", zap.Int("recorder-count", len(currData)),
+			zap.Duration("duration", time.Since(startTime)))
 		m.onSuccessFlush(currData)
 		return
 	}
 
 	if err := m.writeMeterData(ctx, ts, items); err != nil {
-		m.logger.Warn("failed to write metering data",
-			zap.Error(err),
+		logger.Warn("failed to write metering data", zap.Error(err),
 			zap.Duration("duration", time.Since(startTime)),
 			zap.Any("data", items))
 	} else {
-		m.logger.Info("succeed to write metering data",
+		logger.Info("succeed to write metering data",
 			zap.Duration("duration", time.Since(startTime)),
 			zap.Any("data", items))
 		m.onSuccessFlush(currData)

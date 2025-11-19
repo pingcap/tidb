@@ -298,6 +298,6 @@ func NewS3WithBucketAndPrefix(t *testing.T, bucketName, prefixName string) (*sto
 		Acl:          "acl",
 		Sse:          "sse",
 		StorageClass: "sc",
-	})
+	}, nil)
 	return st, ts.Close
 }
