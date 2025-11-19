@@ -93,9 +93,7 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 		if isSingleTableQuery {
 			// Separate column stats from index stats
 			histNeededColumnsOnly := make([]model.StatsLoadItem, 0, len(histNeededColumns))
-			for _, item := range histNeededColumns {
-				histNeededColumnsOnly = append(histNeededColumnsOnly, item)
-			}
+			histNeededColumnsOnly = append(histNeededColumnsOnly, histNeededColumns...)
 
 			histNeededIndicesOnly := make([]model.StatsLoadItem, 0, len(histNeededIndices))
 			for idx := range histNeededIndices {
