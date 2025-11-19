@@ -126,7 +126,10 @@ func sendMeterOnCleanUp(ctx context.Context, task *proto.Task, logger *zap.Logge
 			indexKVSize += ckSum.Size
 		}
 	}
-	// we always use the subtask update time as the metering time.
+	// in case of network errors, write might success, but return error, and we
+	// will retry sending metering data in next cleanup, to avoid duplicated data,
+	// we always use the subtask update time as the metering time and let the SDK
+	// overwrite existing file.
 	ts := subtask.UpdateTime.Truncate(time.Minute).Unix()
 	item := metering.GetBaseMeterItem(task.ID, task.Keyspace, task.Type.String())
 	item["row_count"] = rowCount
