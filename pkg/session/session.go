@@ -4357,7 +4357,7 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		upgrade(s)
 	case ddl.Normal:
 		// We need to init MDL variable before start the domain to prevent potential stuck issue
-		// after upgrade. See https://github.com/pingcap/tidb/issues/64539.
+		// when upgrade is skipped. See https://github.com/pingcap/tidb/issues/64539.
 		if err := InitMDLVariable(store); err != nil {
 			logutil.BgLogger().Fatal("[normal] init metadata lock failed", zap.Error(err))
 		}
