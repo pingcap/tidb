@@ -3943,32 +3943,6 @@ func InitMDLVariableForBootstrap(store kv.Storage) error {
 	return nil
 }
 
-// InitTiDBSchemaCacheSize initializes the tidb schema cache size.
-func InitTiDBSchemaCacheSize(store kv.Storage) error {
-	var (
-		isNull bool
-		size   uint64
-		err    error
-	)
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		size, isNull, err = t.GetSchemaCacheSize()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
-			size = vardef.DefTiDBSchemaCacheSize
-			return t.SetSchemaCacheSize(size)
-		}
-		return nil
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	vardef.SchemaCacheSize.Store(size)
-	return nil
-}
-
 // InitMDLVariableForUpgrade initializes the metadata lock variable.
 func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
 	isNull := false
@@ -4014,6 +3988,32 @@ func InitMDLVariable(store kv.Storage) error {
 	})
 	vardef.SetEnableMDL(enable)
 	return err
+}
+
+// InitTiDBSchemaCacheSize initializes the tidb schema cache size.
+func InitTiDBSchemaCacheSize(store kv.Storage) error {
+	var (
+		isNull bool
+		size   uint64
+		err    error
+	)
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
+		t := meta.NewMutator(txn)
+		size, isNull, err = t.GetSchemaCacheSize()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isNull {
+			size = vardef.DefTiDBSchemaCacheSize
+			return t.SetSchemaCacheSize(size)
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	vardef.SchemaCacheSize.Store(size)
+	return nil
 }
 
 // BootstrapSession bootstrap session and domain.
@@ -4355,6 +4355,12 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		// to let the older owner have time to notice that it's already retired.
 		time.Sleep(owner.WaitTimeOnForceOwner)
 		upgrade(s)
+	case ddl.Normal:
+		// We need to init MDL variable before start the domain to prevent potential stuck issue
+		// after upgrade. See https://github.com/pingcap/tidb/issues/64539.
+		if err := InitMDLVariable(store); err != nil {
+			logutil.BgLogger().Fatal("[normal] init metadata lock failed", zap.Error(err))
+		}
 	}
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
