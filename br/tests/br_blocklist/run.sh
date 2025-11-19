@@ -5,6 +5,10 @@ set -eu
 PREFIX="blocklist_backup"
 TASK_NAME="br_blocklist"
 
+# Source test utilities for checkpoint wait function
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+. "$CUR/../br_test_utils.sh"
+
 echo "=========================================="
 echo "BR Blocklist Integration Test"
 echo "=========================================="
@@ -23,6 +27,13 @@ run_br log start --task-name "$TASK_NAME" -s "$LOG_DIR" --pd "$PD_ADDR"
 echo "✓ Log backup started to $LOG_DIR"
 sleep 2
 
+# Create full snapshot backup (after log backup started)
+SNAPSHOT_DIR="local://$TEST_DIR/$PREFIX/full"
+run_br backup full -s "$SNAPSHOT_DIR" --pd "$PD_ADDR" \
+    --log-file "$TEST_DIR/backup_full.log"
+echo "✓ Snapshot backup completed at $SNAPSHOT_DIR"
+sleep 1
+
 # Prepare initial data
 run_sql "CREATE DATABASE initial_db;"
 run_sql "CREATE TABLE initial_db.t0 (id INT PRIMARY KEY);"
@@ -35,13 +46,6 @@ if [ "$t0_count" != "1" ]; then
     exit 1
 fi
 echo "✓ T0 initial data prepared"
-
-# Create full snapshot backup (after log backup started)
-SNAPSHOT_DIR="local://$TEST_DIR/$PREFIX/full"
-run_br backup full -s "$SNAPSHOT_DIR" --pd "$PD_ADDR" \
-    --log-file "$TEST_DIR/backup_full.log"
-echo "✓ Snapshot backup completed at $SNAPSHOT_DIR"
-sleep 1
 
 # ==================== T1: Create test tables ====================
 echo ""
@@ -68,8 +72,9 @@ echo "✓ T1 data prepared: test_db.t1 has 3 rows, test_db.t2 has 2 rows"
 # ==================== T2: Record first restore target timestamp ====================
 echo ""
 echo ">>> T2: Recording first restore target timestamp..."
-sleep 1  # Ensure log backup has recorded T1 data
-T2=$(run_pd_ctl -u https://$PD_ADDR tso | grep -oE '[0-9]+' | head -1)
+echo ">>> Waiting for log backup checkpoint to advance..."
+wait_log_checkpoint_advance "$TASK_NAME"
+T2=$(( $(date +%s%3N) << 18 ))
 echo "✓ T2 timestamp: $T2 (data state: t1=3 rows, t2=2 rows)"
 
 # ==================== T3: Insert additional data ====================
@@ -92,8 +97,9 @@ fi
 echo "✓ T3 data prepared: test_db.t1 has 5 rows, test_db.t2 has 4 rows"
 
 # Record T3 timestamp
-sleep 1  # Ensure log backup has recorded new data
-T3=$(run_pd_ctl -u https://$PD_ADDR tso | grep -oE '[0-9]+' | head -1)
+echo ">>> Waiting for log backup checkpoint to advance..."
+wait_log_checkpoint_advance "$TASK_NAME"
+T3=$(( $(date +%s%3N) << 18 ))
 echo "✓ T3 timestamp: $T3 (data state: t1=5 rows, t2=4 rows)"
 
 # ==================== T4: Drop test tables ====================
@@ -139,7 +145,9 @@ echo "✓ Blocklist file generated (R*_S*.meta format)"
 # ==================== T7: Record timestamp after first PITR completion ====================
 echo ""
 echo ">>> T7: Recording timestamp after first PITR completion..."
-T7=$(run_pd_ctl -u https://$PD_ADDR tso | grep -oE '[0-9]+' | head -1)
+echo ">>> Waiting for log backup checkpoint to advance..."
+wait_log_checkpoint_advance "$TASK_NAME"
+T7=$(( $(date +%s%3N) << 18 ))
 echo "✓ T7 timestamp: $T7 (first PITR completed)"
 echo ">>> Note: Blocklist contains RestoreStartTs ≤ T7"
 
