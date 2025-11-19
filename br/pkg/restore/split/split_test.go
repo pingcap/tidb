@@ -741,6 +741,17 @@ func TestPaginateScanRegion2(t *testing.T) {
 	regions, err = PaginateScanRegion(ctx, mockClient, rk(1), rk(10), 3)
 	require.NoError(t, err)
 	checkRegions(t, 1, 10, regions)
+
+	// Case 3: must leader is false, and the first try paginate try is failed
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: true, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+		{allowFollowerHandle: true, caseRegion: newCaseRegion([]uint64{4, 5})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{4, 5, 6})},
+	}
+	regions, err = PaginateScanRegion(ctx, mockClient, rk(1), rk(6), 3)
+	require.NoError(t, err)
+	checkRegions(t, 1, 6, regions)
 }
 
 func TestRegionConsistency(t *testing.T) {
