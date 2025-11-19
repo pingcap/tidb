@@ -85,7 +85,7 @@ func (w *regionJobBaseWorker) run(ctx context.Context) error {
 			if job.region != nil && job.region.Region != nil {
 				peers = job.region.Region.GetPeers()
 			}
-			failpoint.InjectCall("beforeExecuteRegionJob", ctx)
+			failpoint.Call(_curpkg_("beforeExecuteRegionJob"), ctx)
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
 			err := w.runJob(ctx, job)
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
@@ -260,10 +260,9 @@ type blkStoreRegionJobWorker struct {
 }
 
 func (w *blkStoreRegionJobWorker) preRunJob(ctx context.Context, job *regionJob) error {
-	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
-		failpoint.Return(
-			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("WriteToTiKVNotEnoughDiskSpace")); _err_ == nil {
+		return errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again")
+	}
 	if w.checkTiKVSpace {
 		for _, peer := range job.region.Region.GetPeers() {
 			store, err := w.pdHTTPCli.GetStore(ctx, peer.StoreId)

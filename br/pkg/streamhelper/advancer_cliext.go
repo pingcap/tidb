@@ -185,10 +185,10 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 		for {
 			select {
 			case resp, ok := <-taskCh:
-				failpoint.Inject("advancer_close_channel", func() {
+				if _, _err_ := failpoint.Eval(_curpkg_("advancer_close_channel")); _err_ == nil {
 					// We cannot really close the channel, just simulating it.
 					ok = false
-				})
+				}
 				if !ok {
 					ch <- errorEvent(io.EOF)
 					return
@@ -197,10 +197,10 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 					return
 				}
 			case resp, ok := <-pauseCh:
-				failpoint.Inject("advancer_close_pause_channel", func() {
+				if _, _err_ := failpoint.Eval(_curpkg_("advancer_close_pause_channel")); _err_ == nil {
 					// We cannot really close the channel, just simulating it.
 					ok = false
-				})
+				}
 				if !ok {
 					ch <- errorEvent(io.EOF)
 					return

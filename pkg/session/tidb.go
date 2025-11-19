@@ -190,9 +190,9 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
-	failpoint.Inject("finishStmtError", func() {
-		failpoint.Return(errors.New("occur an error after finishStmt"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("finishStmtError")); _err_ == nil {
+		return errors.New("occur an error after finishStmt")
+	}
 	sessVars := se.sessionVars
 	if !sql.IsReadOnly(sessVars) {
 		// All the history should be added here.

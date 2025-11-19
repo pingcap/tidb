@@ -541,11 +541,11 @@ func (c *localMppCoordinator) dispatchAll(ctx context.Context) {
 		c.mu.Unlock()
 		c.wg.Add(1)
 		boMaxSleep := copr.CopNextMaxBackoff
-		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
+		if value, _err_ := failpoint.Eval(_curpkg_("ReduceCopNextMaxBackoff")); _err_ == nil {
 			if value.(bool) {
 				boMaxSleep = 2
 			}
-		})
+		}
 		bo := backoff.NewBackoffer(ctx, boMaxSleep)
 		go func(mppTask *kv.MPPDispatchRequest) {
 			defer func() {
@@ -573,11 +573,11 @@ func (c *localMppCoordinator) sendToRespCh(resp *mppResponse) (exit bool) {
 	}()
 	if c.memTracker != nil {
 		respSize := resp.MemSize()
-		failpoint.Inject("testMPPOOMPanic", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("testMPPOOMPanic")); _err_ == nil {
 			if val.(bool) && respSize != 0 {
 				respSize = 1 << 30
 			}
-		})
+		}
 		c.memTracker.Consume(respSize)
 		defer c.memTracker.Consume(-respSize)
 	}
@@ -629,14 +629,14 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 		c.sendError(errors.New(rpcResp.Error.Msg))
 		return
 	}
-	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mppNonRootTaskError")); _err_ == nil {
 		if val.(bool) && !req.IsRoot {
 			time.Sleep(1 * time.Second)
 			atomic.CompareAndSwapUint32(&c.dispatchFailed, 0, 1)
 			c.sendError(derr.ErrTiFlashServerTimeout)
 			return
 		}
-	})
+	}
 	if !req.IsRoot {
 		return
 	}
@@ -953,11 +953,11 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 			return nil, nil, errors.Trace(err)
 		}
 	}
-	failpoint.Inject("checkTotalMPPTasks", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkTotalMPPTasks")); _err_ == nil {
 		if val.(int) != len(c.mppReqs) {
-			failpoint.Return(nil, nil, errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(c.mppReqs)))
+			return nil, nil, errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(c.mppReqs))
 		}
-	})
+	}
 
 	ctx = distsql.WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx.KvExecCounter)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]

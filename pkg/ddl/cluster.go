@@ -93,10 +93,10 @@ func recoverPDSchedule(ctx context.Context, pdScheduleParam map[string]any) erro
 func getStoreGlobalMinSafeTS(s kv.Storage) time.Time {
 	minSafeTS := s.GetMinSafeTS(kv.GlobalTxnScope)
 	// Inject mocked SafeTS for test.
-	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectSafeTS")); _err_ == nil {
 		injectTS := val.(int)
 		minSafeTS = uint64(injectTS)
-	})
+	}
 	return oracle.GetTimeFromTS(minSafeTS)
 }
 
@@ -114,10 +114,10 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	}
 
 	flashbackGetMinSafeTimeTimeout := time.Minute
-	failpoint.Inject("changeFlashbackGetMinSafeTimeTimeout", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("changeFlashbackGetMinSafeTimeTimeout")); _err_ == nil {
 		t := val.(int)
 		flashbackGetMinSafeTimeTimeout = time.Duration(t)
-	})
+	}
 
 	start := time.Now()
 	minSafeTime := getStoreGlobalMinSafeTS(sctx.GetStore())
@@ -502,14 +502,14 @@ func SendPrepareFlashbackToVersionRPC(
 		if err != nil {
 			return taskStat, err
 		}
-		failpoint.Inject("mockPrepareMeetsEpochNotMatch", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockPrepareMeetsEpochNotMatch")); _err_ == nil {
 			if val.(bool) && bo.ErrorsNum() == 0 {
 				regionErr = &errorpb.Error{
 					Message:       "stale epoch",
 					EpochNotMatch: &errorpb.EpochNotMatch{},
 				}
 			}
-		})
+		}
 		if regionErr != nil {
 			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
 			if err != nil {
@@ -669,11 +669,11 @@ func splitRegionsByKeyRanges(ctx context.Context, store kv.Storage, keyRanges []
 // 4. phase 2, send flashback RPC, do flashback jobs.
 func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	inFlashbackTest := false
-	failpoint.Inject("mockFlashbackTest", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockFlashbackTest")); _err_ == nil {
 		if val.(bool) {
 			inFlashbackTest = true
 		}
-	})
+	}
 	// TODO: Support flashback in unistore.
 	if jobCtx.store.Name() != "TiKV" && !inFlashbackTest {
 		job.State = model.JobStateCancelled

@@ -211,9 +211,9 @@ func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMerg
 		parentMemTracker:      e.memTracker,
 		nextColCompareFilters: e.LastColHelper,
 	}
-	failpoint.Inject("testIssue18068", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("testIssue18068")); _err_ == nil {
 		omw.batchSize = 1
-	})
+	}
 	return omw
 }
 
@@ -316,7 +316,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 			omw.pushToChan(ctx, task, omw.resultCh)
 			return
 		}
-		failpoint.Inject("mockIndexMergeJoinOOMPanic", nil)
+		failpoint.Eval(_curpkg_("mockIndexMergeJoinOOMPanic"))
 		if task == nil {
 			return
 		}

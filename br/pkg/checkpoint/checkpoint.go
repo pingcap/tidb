@@ -435,7 +435,7 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 	tickDurationForLock,
 	retryDuration time.Duration,
 ) {
-	failpoint.Inject("checkpoint-more-quickly-flush", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("checkpoint-more-quickly-flush")); _err_ == nil {
 		tickDurationForChecksum = 1 * time.Second
 		tickDurationForFlush = 3 * time.Second
 		if tickDurationForLock > 0 {
@@ -446,7 +446,7 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 			zap.Duration("checksum", tickDurationForChecksum),
 			zap.Duration("lock", tickDurationForLock),
 		)
-	})
+	}
 	r.wg.Add(1)
 	checkpointLoop := func(ctx context.Context) {
 		defer r.wg.Done()
@@ -549,9 +549,9 @@ func (r *CheckpointRunner[K, V]) doChecksumFlush(ctx context.Context, checksumIt
 		return errors.Trace(err)
 	}
 
-	failpoint.Inject("failed-after-checkpoint-flushes-checksum", func(_ failpoint.Value) {
-		failpoint.Return(errors.Errorf("failpoint: failed after checkpoint flushes checksum"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("failed-after-checkpoint-flushes-checksum")); _err_ == nil {
+		return errors.Errorf("failpoint: failed after checkpoint flushes checksum")
+	}
 	return nil
 }
 
@@ -603,9 +603,9 @@ func (r *CheckpointRunner[K, V]) doFlush(ctx context.Context, meta map[K]*RangeG
 		}
 	}
 
-	failpoint.Inject("failed-after-checkpoint-flushes", func(_ failpoint.Value) {
-		failpoint.Return(errors.Errorf("failpoint: failed after checkpoint flushes"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("failed-after-checkpoint-flushes")); _err_ == nil {
+		return errors.Errorf("failpoint: failed after checkpoint flushes")
+	}
 	return nil
 }
 

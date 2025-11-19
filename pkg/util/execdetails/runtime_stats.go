@@ -219,14 +219,14 @@ func (crs *CopRuntimeStats) GetActRows() int64 {
 
 // GetTasks return total tasks of CopRuntimeStats
 func (crs *CopRuntimeStats) GetTasks() int32 {
-	return int32(crs.stats.procTimes.size)
+	return int32(crs.stats.procTimes.size.Load())
 }
 
 var zeroTimeDetail = util.TimeDetail{}
 
 func (crs *CopRuntimeStats) String() string {
 	procTimes := crs.stats.procTimes
-	totalTasks := procTimes.size
+	totalTasks := procTimes.size.Load()
 	isTiFlashCop := crs.storeType == kv.TiFlash
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	{
@@ -276,7 +276,7 @@ func (crs *CopRuntimeStats) String() string {
 			buf.WriteString(", iters:")
 			buf.WriteString(strconv.Itoa(int(crs.stats.loop)))
 			buf.WriteString(", tasks:")
-			buf.WriteString(strconv.Itoa(totalTasks))
+			buf.WriteString(strconv.Itoa(int(totalTasks)))
 			printTiFlashSpecificInfo()
 		}
 	}

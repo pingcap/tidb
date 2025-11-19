@@ -291,12 +291,12 @@ func GetRuntimeInfoForJob(
 	currentTime := time.Now()
 	timeRange := execute.SubtaskSpeedUpdateInterval
 
-	failpoint.Inject("mockSpeedDuration", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockSpeedDuration")); _err_ == nil {
 		if v, ok := val.(int); ok {
 			currentTime = time.Unix(1000, int64(v*1000000))
 			timeRange = time.Millisecond * time.Duration(v)
 		}
-	})
+	}
 
 	ri.Speed = 0
 	for _, s := range summaries {

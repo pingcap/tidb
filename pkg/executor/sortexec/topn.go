@@ -627,14 +627,14 @@ func (e *TopNExec) GetInMemoryThenSpillFlagForTest() bool {
 }
 
 func injectTopNRandomFail(triggerFactor int32) {
-	failpoint.Inject("TopNRandomFail", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("TopNRandomFail")); _err_ == nil {
 		if val.(bool) {
 			randNum := rand.Int31n(10000)
 			if randNum < triggerFactor {
 				panic("panic is triggered by random fail")
 			}
 		}
-	})
+	}
 }
 
 // InitTopNExecForTest initializes TopN executors, only for test.

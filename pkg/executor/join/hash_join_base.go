@@ -167,7 +167,7 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 		}
 		probeSideResult := probeSideResource.chk
 		err := exec.Next(ctx, fetcher.ProbeSideExec, probeSideResult)
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		if err != nil {
 			hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{
 				err: err,
@@ -184,11 +184,11 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 		}
 
 		if !hasWaitedForBuild {
-			failpoint.Inject("issue30289", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("issue30289")); _err_ == nil {
 				if val.(bool) {
 					probeSideResult.Reset()
 				}
-			})
+			}
 			skipProbe, buildSuccess := wait4BuildSide(isBuildEmpty, checkSpill, canSkipIfBuildEmpty, needScanAfterProbeDone, hashJoinCtx)
 			fetcher.buildSuccess = buildSuccess
 			if skipProbe {
@@ -283,15 +283,15 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 	}()
 
 	var err error
-	failpoint.Inject("issue30289", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("issue30289")); _err_ == nil {
 		if val.(bool) {
 			err = errors.Errorf("issue30289 build return error")
 			errCh <- errors.Trace(err)
 			return
 		}
-	})
+	}
 
-	failpoint.Inject("issue42662_1", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("issue42662_1")); _err_ == nil {
 		if val.(bool) {
 			if hashJoinCtx.SessCtx.GetSessionVars().ConnectionID != 0 {
 				// consume 170MB memory, this sql should be tracked into MemoryTop1Tracker
@@ -299,14 +299,14 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 			}
 			return
 		}
-	})
+	}
 
 	sessVars := hashJoinCtx.SessCtx.GetSessionVars()
-	failpoint.Inject("issue51998", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("issue51998")); _err_ == nil {
 		if val.(bool) {
 			time.Sleep(2 * time.Second)
 		}
-	})
+	}
 
 	for {
 		err := checkAndSpillRowTableIfNeeded(fetcherAndWorkerSyncer, spillHelper)
@@ -331,12 +331,12 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 		chk := hashJoinCtx.ChunkAllocPool.Alloc(w.BuildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
 		err = exec.Next(ctx, w.BuildSideExec, chk)
 
-		failpoint.Inject("issue51998", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("issue51998")); _err_ == nil {
 			if val.(bool) {
 				hasError = true
 				err = errors.Errorf("issue51998 build return error")
 			}
-		})
+		}
 
 		if err != nil {
 			hasError = true
@@ -344,8 +344,8 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 			return
 		}
 
-		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("errorFetchBuildSideRowsMockOOMPanic"))
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 
 		if chk.NumRows() == 0 {
 			return

@@ -1115,11 +1115,11 @@ func buildIndexJoinInner2TableScan(
 		lastColMng = indexJoinResult.lastColManager
 	}
 	joins = make([]base.PhysicalPlan, 0, 3)
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoin")); _err_ == nil {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
-			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng))
+			return constructIndexHashJoin(p, prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng)
 		}
-	})
+	}
 	joins = append(joins, constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, lastColMng, true)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
@@ -1166,11 +1166,11 @@ func buildIndexJoinInner2IndexScan(
 		}
 	}
 	innerTask := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoin")); _err_ == nil {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL && innerTask != nil {
-			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager))
+			return constructIndexHashJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager)
 		}
-	})
+	}
 	if innerTask != nil {
 		joins = append(joins, constructIndexJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager, true)...)
 		// We can reuse the `innerTask` here since index nested loop hash join
@@ -2592,11 +2592,11 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 	}
 
 	// set preferredBuildIndex for test
-	failpoint.Inject("mockPreferredBuildIndex", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockPreferredBuildIndex")); _err_ == nil {
 		if !p.SCtx().GetSessionVars().InRestrictedSQL {
 			preferredBuildIndex = val.(int)
 		}
-	})
+	}
 
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenProps := make([]*property.PhysicalProperty, 2)
@@ -2677,12 +2677,12 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 // If the hint is not figured, we will pick all candidates.
 func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoin")); _err_ == nil {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
 			indexJoins, _ := tryToGetIndexJoin(p, prop)
-			failpoint.Return(indexJoins, true, nil)
+			return indexJoins, true, nil
 		}
-	})
+	}
 
 	if !isJoinHintSupportedInMPPMode(p.PreferJoinType) {
 		if hasMPPJoinHints(p.PreferJoinType) {
@@ -2749,7 +2749,7 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 			indexJoins := tryToEnumerateIndexJoin(super, prop)
 			joins = append(joins, indexJoins...)
 
-			failpoint.Inject("MockOnlyEnableIndexHashJoinV2", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoinV2")); _err_ == nil {
 				if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
 					indexHashJoin := make([]base.PhysicalPlan, 0, len(indexJoins))
 					for _, one := range indexJoins {
@@ -2757,9 +2757,9 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 							indexHashJoin = append(indexHashJoin, one)
 						}
 					}
-					failpoint.Return(indexHashJoin, true, nil)
+					return indexHashJoin, true, nil
 				}
-			})
+			}
 		} else {
 			indexJoins, forced := tryToGetIndexJoin(p, prop)
 			if forced {

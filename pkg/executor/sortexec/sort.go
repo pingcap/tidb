@@ -625,28 +625,28 @@ func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 			return err
 		}
 
-		failpoint.Inject("unholdSyncLock", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("unholdSyncLock")); _err_ == nil {
 			if val.(bool) {
 				// Ensure that spill can get `syncLock`.
 				time.Sleep(1 * time.Millisecond)
 			}
-		})
+		}
 	}
 
-	failpoint.Inject("waitForSpill", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("waitForSpill")); _err_ == nil {
 		if val.(bool) {
 			// Ensure that spill is triggered before returning data.
 			time.Sleep(50 * time.Millisecond)
 		}
-	})
+	}
 
-	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("SignalCheckpointForSort")); _err_ == nil {
 		if val.(bool) {
 			if e.Ctx().GetSessionVars().ConnectionID == 123456 {
 				e.Ctx().GetSessionVars().MemTracker.Killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
 			}
 		}
-	})
+	}
 
 	err = e.handleCurrentPartitionBeforeExit()
 	if err != nil {
@@ -710,13 +710,13 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 			e.Parallel.resultChannel <- rowWithError{err: err}
 		}
 
-		failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("SignalCheckpointForSort")); _err_ == nil {
 			if val.(bool) {
 				if e.Ctx().GetSessionVars().ConnectionID == 123456 {
 					e.Ctx().GetSessionVars().MemTracker.Killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
 				}
 			}
-		})
+		}
 
 		// We must place it after the spill as workers will process its received
 		// chunks after channel is closed and this will cause data race.
@@ -763,14 +763,14 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 
 func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) error {
 	var err error
-	failpoint.Inject("ParallelSortRandomFail", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("ParallelSortRandomFail")); _err_ == nil {
 		if val.(bool) {
 			randNum := rand.Int31n(10000)
 			if randNum < 500 {
 				err = errors.NewNoStackError("return error by random failpoint")
 			}
 		}
-	})
+	}
 	if err != nil {
 		return err
 	}

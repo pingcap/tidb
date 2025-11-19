@@ -220,12 +220,12 @@ func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 	if sessVars.IsReplicaReadClosestAdaptive() {
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), p.GetAvgRowSize()))
 	}
-	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertPointReplicaOption")); _err_ == nil {
 		assertScope := val.(string)
 		if e.Ctx().GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != e.readReplicaScope {
 			panic("point get replica option fail")
 		}
-	})
+	}
 
 	if e.RuntimeStats() != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
@@ -377,14 +377,14 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			// 2. Session B create an UPDATE query to update the record that will be obtained in step 1
 			// 3. Then point get retrieve data from backend after step 2 finished
 			// 4. Check the result
-			failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step1", func() {
+			if _, _err_ := failpoint.EvalContext(ctx, _curpkg_("pointGetRepeatableReadTest-step1")); _err_ == nil {
 				if ch, ok := ctx.Value("pointGetRepeatableReadTest").(chan struct{}); ok {
 					// Make `UPDATE` continue
 					close(ch)
 				}
 				// Wait `UPDATE` finished
-				failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
-			})
+				failpoint.EvalContext(ctx, _curpkg_("pointGetRepeatableReadTest-step2"))
+			}
 			if e.idxInfo.Global {
 				_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(e.handleVal).PartitionID)
 				if err != nil {

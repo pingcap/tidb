@@ -470,13 +470,13 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		if e.stats != nil {
 			e.stats.readFile += time.Since(startTime)
 		}
-		failpoint.Inject("mockReadSlowLogSlow", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockReadSlowLogSlow")); _err_ == nil {
 			if val.(bool) {
 				signals := ctx.Value(signalsKey{}).([]chan int)
 				signals[0] <- 1
 				<-signals[1]
 			}
-		})
+		}
 		for i := range logs {
 			log := logs[i]
 			t := slowLogTask{}
@@ -653,11 +653,11 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 		}
 	}()
 	e.memConsume(logSize)
-	failpoint.Inject("errorMockParseSlowLogPanic", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("errorMockParseSlowLogPanic")); _err_ == nil {
 		if val.(bool) {
 			panic("panic test")
 		}
-	})
+	}
 	var row []types.Datum
 	user := ""
 	tz := sctx.GetSessionVars().Location()

@@ -76,9 +76,9 @@ func (p *pool) Get() (resource pools.Resource, err error) {
 	}
 
 	// Put the internal session to the map of Manager
-	failpoint.Inject("mockSessionPoolReturnError", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockSessionPoolReturnError")); _err_ == nil {
 		err = errors.New("mockSessionPoolReturnError")
-	})
+	}
 
 	if err == nil && p.getCallback != nil {
 		p.getCallback(resource)

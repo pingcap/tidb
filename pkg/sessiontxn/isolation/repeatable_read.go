@@ -115,9 +115,9 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
 
-	failpoint.Inject("RequestTsoFromPD", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("RequestTsoFromPD")); _err_ == nil {
 		sessiontxn.TsoRequestCountInc(sctx)
-	})
+	}
 
 	// Because the ForUpdateTS is used for the snapshot for reading data in DML.
 	// We can avoid allocating a global TSO here to speed it up by using the local TSO.

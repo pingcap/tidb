@@ -739,9 +739,9 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency g
 
 	startTime := time.Now()
 
-	failpoint.Inject("mockRunGCJobFail", func() {
-		failpoint.Return(errors.New("mock failure of runGCJoB"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockRunGCJobFail")); _err_ == nil {
+		return errors.New("mock failure of runGCJoB")
+	}
 	metrics.GCWorkerCounter.WithLabelValues("run_job").Inc()
 
 	// ----------*--------------------*--------------------> time
@@ -867,9 +867,9 @@ func (w *GCWorker) deleteRanges(
 		} else {
 			err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		}
-		failpoint.Inject("ignoreDeleteRangeFailed", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("ignoreDeleteRangeFailed")); _err_ == nil {
 			err = nil
-		})
+		}
 
 		if err != nil {
 			logutil.Logger(ctx).Warn("delete range failed on range", zap.String("category", "gc worker"),
@@ -1220,9 +1220,9 @@ func (w *GCWorker) resolveLocks(
 
 	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 		scanLimit := uint32(tikv.GCScanLockLimit)
-		failpoint.Inject("lowScanLockLimit", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("lowScanLockLimit")); _err_ == nil {
 			scanLimit = 3
-		})
+		}
 		return tikv.ResolveLocksForRange(ctx, w.regionLockResolver, txnSafePoint, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, scanLimit)
 	}
 
@@ -1239,18 +1239,18 @@ func (w *GCWorker) resolveLocks(
 
 	// Failpoint to override the batch size for faster test
 	loadKeyspacesBatchSize := uint32(loadAllKeyspacesForUnifiedGCBatchSize)
-	failpoint.Inject("overrideLoadKeyspacesBatchSize", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("overrideLoadKeyspacesBatchSize")); _err_ == nil {
 		v, ok := val.(int)
 		if !ok {
 			panic(fmt.Sprintf("invalid argument for failpoint overrideLoadKeyspacesBatchSize: expected integer, got %T: %v", val, val))
 		}
 		loadKeyspacesBatchSize = uint32(v)
-	})
+	}
 
 	// Counter for tests to check how many batches was done during resolving locks.
 	loadKeyspacesBatchCount := 0
 	defer func() {
-		failpoint.InjectCall("getLoadKeyspacesBatchCount", loadKeyspacesBatchCount)
+		failpoint.Call(_curpkg_("getLoadKeyspacesBatchCount"), loadKeyspacesBatchCount)
 	}()
 
 	if isNullKeyspace {
@@ -1667,7 +1667,7 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 	dr util.DelRangeTask, gcPlacementRuleCache *sync.Map) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
-	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("mockHistoryJobForGC")); _err_ == nil {
 		mockJ := &model.Job{
 			Version: model.GetJobVerInUse(),
 			ID:      dr.JobID,
@@ -1686,7 +1686,7 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 		if err1 != nil {
 			return
 		}
-	})
+	}
 	if historyJob == nil {
 		historyJob, err = ddl.GetHistoryJobByID(se, dr.JobID)
 		if err != nil {
@@ -1767,7 +1767,7 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
-	failpoint.Inject("mockHistoryJob", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("mockHistoryJob")); _err_ == nil {
 		mockJ := &model.Job{
 			Version: model.GetJobVerInUse(),
 			ID:      dr.JobID,
@@ -1784,7 +1784,7 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 		if err1 = historyJob.Decode(bytes); err1 != nil {
 			return
 		}
-	})
+	}
 	if historyJob == nil {
 		se := createSession(w.store)
 		historyJob, err = ddl.GetHistoryJobByID(se, dr.JobID)

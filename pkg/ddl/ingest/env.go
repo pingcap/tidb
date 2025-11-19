@@ -71,11 +71,11 @@ func InitGlobalLightningEnv(path string) (ok bool) {
 	} else {
 		memTotal = memTotal / 2
 	}
-	failpoint.Inject("setMemTotalInMB", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("setMemTotalInMB")); _err_ == nil {
 		//nolint: forcetypeassert
 		i := val.(int)
 		memTotal = uint64(i) * size.MB
-	})
+	}
 	LitMemRoot = NewMemRootImpl(int64(memTotal))
 	LitDiskRoot = NewDiskRootImpl(path)
 	LitDiskRoot.UpdateUsage()

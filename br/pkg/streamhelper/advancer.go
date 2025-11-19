@@ -142,9 +142,9 @@ func (c *checkpoint) equal(o *checkpoint) bool {
 // we should try to resolve lock for the range
 // to keep the RPO in 5 min.
 func (c *checkpoint) needResolveLocks() bool {
-	failpoint.Inject("NeedResolveLocks", func(val failpoint.Value) {
-		failpoint.Return(val.(bool))
-	})
+	if val, _err_ := failpoint.Eval(_curpkg_("NeedResolveLocks")); _err_ == nil {
+		return val.(bool)
+	}
 	return time.Since(c.resolveLockTime) > 3*time.Minute
 }
 
@@ -538,7 +538,7 @@ func (c *CheckpointAdvancer) SpawnSubscriptionHandler(ctx context.Context) {
 				if !ok {
 					return
 				}
-				failpoint.Inject("subscription-handler-loop", func() {})
+				failpoint.Eval(_curpkg_("subscription-handler-loop"))
 				c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
 					if vsf == nil {
 						log.Warn("Span tree not found, perhaps stale event of removed tasks.",
@@ -561,7 +561,7 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 	if c.subscriber == nil {
 		return nil
 	}
-	failpoint.Inject("get_subscriber", nil)
+	failpoint.Eval(_curpkg_("get_subscriber"))
 	if err := c.subscriber.UpdateStoreTopology(ctx); err != nil {
 		log.Warn("Error when updating store topology.",
 			zap.String("category", "log backup advancer"), logutil.ShortError(err))
@@ -705,7 +705,7 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 	// run in another goroutine
 	// do not block main tick here
 	go func() {
-		failpoint.Inject("AsyncResolveLocks", func() {})
+		failpoint.Eval(_curpkg_("AsyncResolveLocks"))
 		maxTs := uint64(0)
 		for _, t := range targets {
 			maxTs = max(maxTs, t.Value)

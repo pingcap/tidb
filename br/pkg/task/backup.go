@@ -646,7 +646,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	progressCallBack := func(callBackUnit backup.ProgressUnit) {
 		if progressUnit == callBackUnit {
 			updateCh.Inc()
-			failpoint.Inject("progress-call-back", func(v failpoint.Value) {
+			if v, _err_ := failpoint.Eval(_curpkg_("progress-call-back")); _err_ == nil {
 				log.Info("failpoint progress-call-back injected")
 				atomic.AddUint64(&progressCount, 1)
 				if fileName, ok := v.(string); ok {
@@ -660,7 +660,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 						log.Warn("failed to write data to file", zap.Error(err))
 					}
 				}
-			})
+			}
 		}
 	}
 
@@ -684,7 +684,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}()
 	}
 
-	failpoint.Inject("s3-outage-during-writing-file", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("s3-outage-during-writing-file")); _err_ == nil {
 		log.Info("failpoint s3-outage-during-writing-file injected, " +
 			"process will sleep for 5s and notify the shell to kill s3 service.")
 		if sigFile, ok := v.(string); ok {
@@ -697,7 +697,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			}
 		}
 		time.Sleep(5 * time.Second)
-	})
+	}
 
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
 	checksumMap, err := client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.RangeLimit, cfg.ReplicaReadLabel, metawriter, progressCallBack)
@@ -766,11 +766,11 @@ func getProgressCountOfRanges(
 	if len(ranges) > 1000 {
 		return len(ranges), backup.UnitRange, nil
 	}
-	failpoint.Inject("progress-call-back", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("progress-call-back")); _err_ == nil {
 		if len(ranges) > 100 {
-			failpoint.Return(len(ranges), backup.UnitRange, nil)
+			return len(ranges), backup.UnitRange, nil
 		}
-	})
+	}
 	// The number of regions need to backup
 	approximateRegions := 0
 	for _, r := range ranges {

@@ -128,7 +128,7 @@ func (mgr *StoreManager) PDClient() pd.Client {
 }
 
 func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-	failpoint.Inject("hint-get-backup-client", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("hint-get-backup-client")); _err_ == nil {
 		log.Info("failpoint hint-get-backup-client injected, "+
 			"process will notify the shell.", zap.Uint64("store", storeID))
 		if sigFile, ok := v.(string); ok {
@@ -141,7 +141,7 @@ func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) 
 			}
 		}
 		time.Sleep(3 * time.Second)
-	})
+	}
 	store, err := mgr.pdClient.GetStore(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)

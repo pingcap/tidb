@@ -460,9 +460,9 @@ func (e *Engine) LoadIngestData(
 	}
 	// try to make every worker busy for each batch
 	rangeBatchSize := e.workerConcurrency
-	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("LoadIngestDataBatchSize")); _err_ == nil {
 		rangeBatchSize = val.(int)
-	})
+	}
 	logutil.Logger(ctx).Info("load ingest data", zap.Int("batchSize", rangeBatchSize))
 	for start := 0; start < len(e.jobKeys)-1; start += rangeBatchSize {
 		// want to generate N ranges, so we need N+1 keys

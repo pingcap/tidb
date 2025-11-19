@@ -269,9 +269,9 @@ func (cc *clientConn) authSwitchRequest(ctx context.Context, plugin string) ([]b
 			clientPlugin = authPluginImpl.Name
 		}
 	}
-	failpoint.Inject("FakeAuthSwitch", func() {
-		failpoint.Return([]byte(clientPlugin), nil)
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("FakeAuthSwitch")); _err_ == nil {
+		return []byte(clientPlugin), nil
+	}
 	enclen := 1 + len(clientPlugin) + 1 + len(cc.salt) + 1
 	data := cc.alloc.AllocWithLen(4, enclen)
 	data = append(data, mysql.AuthSwitchRequest) // switch request
@@ -502,11 +502,11 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
-	failpoint.Inject("FakeClientConn", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("FakeClientConn")); _err_ == nil {
 		if cc.pkt == nil {
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 	if cc.getCtx() != nil {
 		cc.ctx.GetSessionVars().OutPacketBytes.Add(uint64(len(data)))
 	}
@@ -880,10 +880,10 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 		logutil.Logger(ctx).Warn("Failed to get authentication method for user",
 			zap.String("user", cc.user), zap.String("host", host))
 	}
-	failpoint.Inject("FakeUser", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("FakeUser")); _err_ == nil {
 		//nolint:forcetypeassert
 		userplugin = val.(string)
-	})
+	}
 	if userplugin == mysql.AuthSocket {
 		if !cc.isUnixSocket {
 			return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
@@ -1538,11 +1538,11 @@ func (cc *clientConn) flush(ctx context.Context) error {
 			}
 		}
 	}()
-	failpoint.Inject("FakeClientConn", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("FakeClientConn")); _err_ == nil {
 		if cc.pkt == nil {
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 	return cc.pkt.Flush()
 }
 
@@ -2364,21 +2364,21 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
 	for {
-		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
+		if value, _err_ := failpoint.Eval(_curpkg_("fetchNextErr")); _err_ == nil {
 			//nolint:forcetypeassert
 			switch value.(string) {
 			case "firstNext":
-				failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
+				return firstNext, storeerr.ErrTiFlashServerTimeout
 			case "secondNext":
 				if !firstNext {
-					failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
+					return firstNext, storeerr.ErrTiFlashServerTimeout
 				}
 			case "secondNextAndRetConflict":
 				if !firstNext && validNextCount > 1 {
-					failpoint.Return(firstNext, kv.ErrWriteConflict)
+					return firstNext, kv.ErrWriteConflict
 				}
 			}
-		})
+		}
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
 		if err != nil {
@@ -2578,9 +2578,9 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		Capability: cc.capability,
 	}
 	if fakeResp.AuthPlugin != "" {
-		failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
-			failpoint.Return(errors.Errorf("%v", val))
-		})
+		if val, _err_ := failpoint.Eval(_curpkg_("ChangeUserAuthSwitch")); _err_ == nil {
+			return errors.Errorf("%v", val)
+		}
 		newpass, err := cc.checkAuthPlugin(ctx, fakeResp)
 		if err != nil {
 			return err

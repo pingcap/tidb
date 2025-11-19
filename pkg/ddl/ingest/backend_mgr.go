@@ -128,9 +128,9 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	)
 	intest.Assert(job.ReorgMeta != nil)
 
-	failpoint.Inject("beforeCreateLocalBackend", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("beforeCreateLocalBackend")); _err_ == nil {
 		ResignOwnerForTest.Store(true)
-	})
+	}
 
 	//nolint: forcetypeassert
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
@@ -175,7 +175,7 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 		var nilMgr *CheckpointManager
 		fpCpOp = nilMgr // typed-nil that implements CheckpointOperator
 	}
-	failpoint.InjectCall("mockNewBackendContext", b.job, fpCpOp, &mockBackend)
+	failpoint.Call(_curpkg_("mockNewBackendContext"), b.job, fpCpOp, &mockBackend)
 	if mockBackend != nil {
 		BackendCounterForTest.Inc()
 		return mockBackend, nil

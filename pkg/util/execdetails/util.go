@@ -19,6 +19,7 @@ import (
 	"context"
 	"math"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/influxdata/tdigest"
@@ -80,7 +81,7 @@ func (d DurationWithAddr) GetFloat64() float64 { return float64(d.D) }
 // Percentile is a struct to calculate the percentile of a series of values.
 type Percentile[valueType canGetFloat64] struct {
 	values   []valueType
-	size     int
+	size     atomic.Int32
 	isSorted bool
 
 	minVal valueType
@@ -93,7 +94,7 @@ type Percentile[valueType canGetFloat64] struct {
 func (p *Percentile[valueType]) Add(value valueType) {
 	p.isSorted = false
 	p.sumVal += value.GetFloat64()
-	p.size++
+	p.size.Add(1)
 	if p.dt == nil && len(p.values) == 0 {
 		p.minVal = value
 		p.maxVal = value
@@ -153,7 +154,7 @@ func (p *Percentile[valueType]) MergePercentile(p2 *Percentile[valueType]) {
 		return
 	}
 	p.sumVal += p2.sumVal
-	p.size += p2.size
+	p.size.Add(p2.size.Load())
 	if p.dt == nil {
 		p.dt = tdigest.New()
 		for _, v := range p.values {
@@ -166,7 +167,7 @@ func (p *Percentile[valueType]) MergePercentile(p2 *Percentile[valueType]) {
 
 // Size returns the size of the values.
 func (p *Percentile[valueType]) Size() int {
-	return p.size
+	return int(p.size.Load())
 }
 
 // Sum returns the sum of the values.

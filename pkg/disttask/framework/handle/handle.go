@@ -103,7 +103,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, ke
 		return nil, err
 	}
 
-	failpoint.InjectCall("afterDXFTaskSubmitted")
+	failpoint.Call(_curpkg_("afterDXFTaskSubmitted"))
 
 	NotifyTaskChange()
 	return task, nil

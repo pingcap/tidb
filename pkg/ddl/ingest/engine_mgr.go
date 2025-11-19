@@ -129,9 +129,9 @@ func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
 				if err != nil {
 					return errors.Trace(err)
 				}
-				failpoint.Inject("mockCollectRemoteDuplicateRowsFailed", func(_ failpoint.Value) {
-					failpoint.Return(context.DeadlineExceeded)
-				})
+				if _, _err_ := failpoint.Eval(_curpkg_("mockCollectRemoteDuplicateRowsFailed")); _err_ == nil {
+					return context.DeadlineExceeded
+				}
 			}
 		}
 	}

@@ -2079,9 +2079,9 @@ func (b *builtinJSONSchemaValidSig) evalInt(ctx EvalContext, row chunk.Row) (res
 
 	if b.args[0].ConstLevel() >= ConstOnlyInContext {
 		schema, err = b.schemaCache.getOrInitCache(ctx, func() (jsonschema.Schema, error) {
-			failpoint.Inject("jsonSchemaValidDisableCacheRefresh", func() {
-				failpoint.Return(jsonschema.Schema{}, errors.New("Cache refresh disabled by failpoint"))
-			})
+			if _, _err_ := failpoint.Eval(_curpkg_("jsonSchemaValidDisableCacheRefresh")); _err_ == nil {
+				return jsonschema.Schema{}, errors.New("Cache refresh disabled by failpoint")
+			}
 			dataBin, err := schemaData.MarshalJSON()
 			if err != nil {
 				return jsonschema.Schema{}, err

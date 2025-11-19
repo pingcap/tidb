@@ -306,9 +306,9 @@ func (s *Syncer) SyncLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			failpoint.Inject("disableOnTickReload", func() {
-				failpoint.Continue()
-			})
+			if _, _err_ := failpoint.Eval(_curpkg_("disableOnTickReload")); _err_ == nil {
+				continue
+			}
 			err := s.Reload()
 			if err != nil {
 				s.logger.Error("reload schema in loop failed", zap.Error(err))
@@ -405,11 +405,11 @@ func (s *Syncer) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (s *Syncer) Reload() error {
-	failpoint.Inject("ErrorMockReloadFailed", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("ErrorMockReloadFailed")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(errors.New("mock reload failed"))
+			return errors.New("mock reload failed")
 		}
-	})
+	}
 
 	// Lock here for only once at the same time.
 	s.m.Lock()
