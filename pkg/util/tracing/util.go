@@ -172,10 +172,6 @@ func StartRegion(ctx context.Context, regionType string) Region {
 // enabledCategories stores the currently enabled category mask.
 var enabledCategories atomic.Uint64
 
-func init() {
-	enabledCategories.Store(uint64(AllCategories))
-}
-
 // Enable enables trace events for the specified categories.
 func Enable(categories TraceCategory) {
 	for {
@@ -241,11 +237,26 @@ const (
 	UnknownClient
 	// General is used by tracing API
 	General
+	// TiKVRequest maps to client-go's FlagTiKVCategoryRequest.
+	// Controls request-level tracing in TiKV.
+	TiKVRequest
+	// TiKVWriteDetails maps to client-go's FlagTiKVCategoryWriteDetails.
+	// Controls detailed write operation tracing in TiKV.
+	TiKVWriteDetails
+	// TiKVReadDetails maps to client-go's FlagTiKVCategoryReadDetails.
+	// Controls detailed read operation tracing in TiKV.
+	TiKVReadDetails
 	traceCategorySentinel
 )
 
 // AllCategories can be used to enable every known trace category.
 const AllCategories = traceCategorySentinel - 1
+
+const defaultEnabledCategories = AllCategories &^ (TiKVWriteDetails | TiKVReadDetails)
+
+func init() {
+	enabledCategories.Store(uint64(defaultEnabledCategories))
+}
 
 // String returns the string representation of a TraceCategory.
 func (c TraceCategory) String() string {
@@ -281,6 +292,12 @@ func getCategoryName(category TraceCategory) string {
 		return "unknown_client"
 	case General:
 		return "general"
+	case TiKVRequest:
+		return "tikv_request"
+	case TiKVWriteDetails:
+		return "tikv_write_details"
+	case TiKVReadDetails:
+		return "tikv_read_details"
 	default:
 		return "unknown(" + strconv.FormatUint(uint64(category), 10) + ")"
 	}
@@ -305,6 +322,10 @@ const (
 )
 
 // Event represents a traced event.
+// INVARIANT: Event.Fields must be treated as immutable once created, as the
+// underlying array may be shared across multiple goroutines (e.g., flight
+// recorder, log sink, context-specific sinks). Modifications to Fields must
+// allocate a new slice to avoid data races.
 type Event struct {
 	Timestamp time.Time
 	Name      string
