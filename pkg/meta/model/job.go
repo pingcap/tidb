@@ -834,6 +834,9 @@ func (job *Job) CheckInvolvingSchemaInfo() error {
 		if info.Database != InvolvingNone || info.Table != InvolvingNone {
 			involvedObjTypes++
 		}
+		if involvedObjTypes != 1 {
+			return errors.New("InvolvingSchemaInfo must involve only one type of object among database/table, placement policy, resource group")
+		}
 		if info.Policy == InvolvingNone && info.ResourceGroup == InvolvingNone {
 			if info.Database == InvolvingNone || info.Table == InvolvingNone {
 				// when operating on schema or table, schema and table
@@ -841,9 +844,6 @@ func (job *Job) CheckInvolvingSchemaInfo() error {
 			} else if info.Database == InvolvingAll && info.Table != InvolvingAll {
 				return errors.New("DDL job operating on all databases, must not set table name in InvolvingSchemaInfo")
 			}
-		}
-		if involvedObjTypes != 1 {
-			return errors.New("InvolvingSchemaInfo must involve only one type of object among database/table, placement policy, resource group")
 		}
 	}
 	return nil

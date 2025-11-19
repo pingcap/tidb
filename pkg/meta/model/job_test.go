@@ -312,7 +312,7 @@ func TestJobCheckInvolvingSchemaInfo(t *testing.T) {
 		errStr string
 	}{
 		// cases without explicit InvolvingSchemaInfo
-		{job: &Job{SchemaName: "", TableName: ""}, errStr: "must have non-empty name set"},
+		{job: &Job{SchemaName: "", TableName: ""}, errStr: "must involve only one type of object"},
 		{job: &Job{SchemaName: "", TableName: "t1"}, errStr: "must have non-empty name set"},
 		{job: &Job{SchemaName: "", TableName: "*"}, errStr: "must have non-empty name set"},
 		// GetInvolvingSchemaInfo will convert this into test.* automatically.
@@ -334,7 +334,7 @@ func TestJobCheckInvolvingSchemaInfo(t *testing.T) {
 		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "d", ResourceGroup: "r"}}}, errStr: "must involve only one type of object"},
 		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Policy: "p", Database: "d", ResourceGroup: "r"}}}, errStr: "must involve only one type of object"},
 
-		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "", Table: ""}}}, errStr: "must have non-empty name set"},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "", Table: ""}}}, errStr: "must involve only one type of object"},
 		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "", Table: "t"}}}, errStr: "must have non-empty name set"},
 		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "", Table: "*"}}}, errStr: "must have non-empty name set"},
 
