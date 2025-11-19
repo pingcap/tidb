@@ -84,11 +84,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 38,
-=======
     shard_count = 43,
->>>>>>> b75bdd1257e (stats: optimize build topn and histogram (#63285))
     deps = [
         "//pkg/config",
         "//pkg/meta/model",
