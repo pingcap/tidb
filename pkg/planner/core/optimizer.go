@@ -326,8 +326,14 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	if sessVars.MaxEstimatedCost != 0.0 && cost > sessVars.MaxEstimatedCost {
-		return nil, nil, 0, errors.New(fmt.Sprintf("cascades optimize estimated cost too large to execute (%g > %g tidb_max_estimated_cost)", cost, sessVars.MaxEstimatedCost))
+	if sessVars.MaxEstimatedCost != 0.0 &&
+		!sessVars.InRestrictedSQL && // Allow internal queries!
+		cost > sessVars.MaxEstimatedCost {
+		// Still allow EXPLAIN, unless EXPLAIN ANALYZE
+		if !sessVars.StmtCtx.InExplainStmt ||
+			sessVars.StmtCtx.InExplainAnalyzeStmt {
+			return nil, nil, cost, errors.New(fmt.Sprintf("optimizer cost exceeds tidb_max_estimated_cost: %g > %g", cost, sessVars.MaxEstimatedCost))
+		}
 	}
 
 	finalPlan := postOptimize(ctx, sctx, physical)
@@ -1121,8 +1127,12 @@ func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost floa
 		return nil, 0, err
 	}
 	cost, err = getPlanCost(t.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
-	if sessVars.MaxEstimatedCost != 0.0 {
-		if cost > sessVars.MaxEstimatedCost {
+	if sessVars.MaxEstimatedCost != 0.0 &&
+		!sessVars.InRestrictedSQL && // Allow internal queries!
+		cost > sessVars.MaxEstimatedCost {
+		// Still allow EXPLAIN, unless EXPLAIN ANALYZE
+		if !sessVars.StmtCtx.InExplainStmt ||
+			sessVars.StmtCtx.InExplainAnalyzeStmt {
 			return nil, cost, errors.New(fmt.Sprintf("optimizer cost exceeds tidb_max_estimated_cost: %g > %g", cost, sessVars.MaxEstimatedCost))
 		}
 	}
