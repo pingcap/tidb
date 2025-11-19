@@ -66,9 +66,7 @@ echo "✓ T1 data prepared: test_db.t1 has 3 rows, test_db.t2 has 2 rows"
 echo ""
 echo ">>> T2: Recording first restore target timestamp..."
 sleep 1  # Ensure log backup has recorded T1 data
-T2=$(run_br validate decode \
-    --field="end-version" \
-    --storage="$LOG_DIR" | tail -n1)
+T2=$(run_pd_ctl -u https://$PD_ADDR tso | grep -oE '[0-9]+' | head -1)
 echo "✓ T2 timestamp: $T2 (data state: t1=3 rows, t2=2 rows)"
 
 # ==================== T3: Insert additional data ====================
@@ -92,9 +90,7 @@ echo "✓ T3 data prepared: test_db.t1 has 5 rows, test_db.t2 has 4 rows"
 
 # Record T3 timestamp
 sleep 1  # Ensure log backup has recorded new data
-T3=$(run_br validate decode \
-    --field="end-version" \
-    --storage="$LOG_DIR" | tail -n1)
+T3=$(run_pd_ctl -u https://$PD_ADDR tso | grep -oE '[0-9]+' | head -1)
 echo "✓ T3 timestamp: $T3 (data state: t1=5 rows, t2=4 rows)"
 
 # ==================== T4: Drop test tables ====================
@@ -140,9 +136,7 @@ echo "✓ Blocklist file generated (R*_S*.meta format)"
 # ==================== T7: Record timestamp after first PITR completion ====================
 echo ""
 echo ">>> T7: Recording timestamp after first PITR completion..."
-T7=$(run_br validate decode \
-    --field="end-version" \
-    --storage="$LOG_DIR" | tail -n1)
+T7=$(run_pd_ctl -u https://$PD_ADDR tso | grep -oE '[0-9]+' | head -1)
 echo "✓ T7 timestamp: $T7 (first PITR completed)"
 echo ">>> Note: Blocklist contains RestoreStartTs ≤ T7"
 
