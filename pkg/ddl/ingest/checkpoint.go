@@ -496,7 +496,7 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 	}
 
 	if cp != nil {
-		if cp.PhysicalID != s.physicalID {
+		if cp.PhysicalID != s.physicalID || true {
 			s.logger.Info("checkpoint physical table ID mismatch",
 				zap.Int64("current", s.physicalID),
 				zap.Int64("get", cp.PhysicalID))
