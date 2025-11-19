@@ -351,23 +351,28 @@ func GetScheduleTuneFactors(ctx context.Context, keyspace string) (*schstatus.Tu
 
 // NewObjStoreWithRecording creates an object storage for global sort with
 // request recording.
-func NewObjStoreWithRecording(ctx context.Context, uri string) (*recording.Requests, extstorage.ExternalStorage, error) {
-	reqRec := &recording.Requests{}
-	ctx2 := recording.WithRequests(ctx, reqRec)
-	store, err := NewObjStore(ctx2, uri)
+func NewObjStoreWithRecording(ctx context.Context, uri string) (*recording.AccessStats, extstorage.ExternalStorage, error) {
+	rec := &recording.AccessStats{}
+	store, err := newObjStore(ctx, uri, &extstorage.ExternalStorageOptions{
+		AccessRecording: rec,
+	})
 	if err != nil {
 		return nil, nil, err
 	}
-	return reqRec, store, nil
+	return rec, store, nil
 }
 
 // NewObjStore creates an object storage for global sort.
 func NewObjStore(ctx context.Context, uri string) (extstorage.ExternalStorage, error) {
+	return newObjStore(ctx, uri, nil)
+}
+
+func newObjStore(ctx context.Context, uri string, opts *extstorage.ExternalStorageOptions) (extstorage.ExternalStorage, error) {
 	storeBackend, err := extstorage.ParseBackend(uri, nil)
 	if err != nil {
 		return nil, err
 	}
-	store, err := extstorage.NewWithDefaultOpt(ctx, storeBackend)
+	store, err := extstorage.New(ctx, storeBackend, opts)
 	if err != nil {
 		return nil, err
 	}

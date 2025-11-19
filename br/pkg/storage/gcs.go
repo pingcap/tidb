@@ -117,6 +117,7 @@ type GCSStorage struct {
 	handles      []*storage.BucketHandle
 	clients      []*storage.Client
 	clientCancel context.CancelFunc
+	accessRec    *recording.AccessStats
 }
 
 // CopyFrom implements Copier.
@@ -205,6 +206,7 @@ func (s *GCSStorage) WriteFile(ctx context.Context, name string, data []byte) er
 	if err != nil {
 		return errors.Trace(err)
 	}
+	s.accessRec.RecWrite(len(data))
 	return wc.Close()
 }
 
@@ -228,6 +230,7 @@ func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 		b = make([]byte, size)
 		_, err = io.ReadFull(rc, b)
 	}
+	s.accessRec.RecRead(len(b))
 	return b, errors.Trace(err)
 }
 
@@ -345,7 +348,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		wc := s.GetBucketHandle().Object(object).NewWriter(ctx)
 		wc.StorageClass = s.gcs.StorageClass
 		wc.PredefinedACL = s.gcs.PredefinedAcl
-		return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
+		return newFlushStorageWriter(wc, &emptyFlusher{}, wc, s.accessRec), nil
 	}
 	uri := s.objectName(name)
 	// 5MB is the minimum part size for GCS.
@@ -354,8 +357,9 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
-	bw := newBufferedWriter(fw, int(partSize), NoCompression)
+	fw := newFlushStorageWriter(w, &emptyFlusher{}, w, s.accessRec)
+	// we already pass the accessRec to flushStorageWriter.
+	bw := newBufferedWriter(fw, int(partSize), NoCompression, nil)
 	return bw, nil
 }
 
@@ -423,14 +427,14 @@ skipHandleCred:
 	}
 
 	httpClient := opts.HTTPClient
-	if reqRec := recording.GetRequests(ctx); reqRec != nil {
+	if opts.AccessRecording != nil {
 		if httpClient == nil {
 			transport, _ := http.DefaultTransport.(*http.Transport)
 			httpClient = &http.Client{Transport: transport.Clone()}
 		}
 		httpClient.Transport = &roundTripperWrapper{
 			RoundTripper: httpClient.Transport,
-			requestsRec:  reqRec,
+			accessRec:    opts.AccessRecording,
 		}
 	}
 	if httpClient != nil {
@@ -460,6 +464,7 @@ skipHandleCred:
 		idx:       atomic.NewInt64(0),
 		clientCnt: gcsClientCnt,
 		clientOps: clientOps,
+		accessRec: opts.AccessRecording,
 	}
 	if err := ret.Reset(ctx); err != nil {
 		return nil, errors.Trace(err)
@@ -632,6 +637,7 @@ func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 		}
 	}
 	n, err = r.reader.Read(p)
+	r.storage.accessRec.RecRead(n)
 	r.pos += int64(n)
 	return n, err
 }
@@ -700,10 +706,10 @@ func (r *gcsObjectReader) GetFileSize() (int64, error) {
 
 type roundTripperWrapper struct {
 	http.RoundTripper
-	requestsRec *recording.Requests
+	accessRec *recording.AccessStats
 }
 
 func (rt *roundTripperWrapper) RoundTrip(req *http.Request) (*http.Response, error) {
-	rt.requestsRec.Rec(req)
+	rt.accessRec.RecRequest(req)
 	return rt.RoundTripper.RoundTrip(req)
 }
