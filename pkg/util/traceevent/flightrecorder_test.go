@@ -174,8 +174,8 @@ func testFlightRecorderConfigGoodCase(t *testing.T) {
 		err := json.Unmarshal([]byte(testcase.conf), &value)
 		require.NoError(t, err, idx)
 
-		// validate success
-		res, err := value.Validate()
+		// compile success
+		res, err := value.Compile()
 		require.NoError(t, err, idx)
 
 		// result expected
@@ -249,7 +249,7 @@ func testFlightRecorderConfigBadCase(t *testing.T) {
 		}
 		require.NoError(t, err, idx)
 
-		_, err = value.Validate()
+		_, err = value.Compile()
 		if badcase.errkind == 2 {
 			require.Error(t, err, idx)
 			continue

@@ -44,7 +44,7 @@ var globalHTTPFlightRecorder atomic.Pointer[HTTPFlightRecorder]
 type HTTPFlightRecorder struct {
 	ch                   chan<- []Event
 	oldEnabledCategories TraceCategory
-	counter              int // used when dump trigger config is sampling
+	counter              atomic.Int64 // used when dump trigger config is sampling
 	Config               *FlightRecorderConfig
 	dumpTriggerConfigCompiled
 }
@@ -60,8 +60,8 @@ type UserCommandConfig struct {
 	Table      string `json:"table"`
 }
 
-// Validate validates the UserCommandConfig.
-func (c *UserCommandConfig) validate(b *strings.Builder, mapping *dumpTriggerConfigCompiled, conf *DumpTriggerConfig) (uint64, error) {
+// compile compiles the UserCommandConfig.
+func (c *UserCommandConfig) compile(b *strings.Builder, mapping *dumpTriggerConfigCompiled, conf *DumpTriggerConfig) (uint64, error) {
 	if c == nil {
 		return 0, fmt.Errorf("dump_trigger.user_command missing")
 	}
@@ -122,8 +122,8 @@ type SuspiciousEventConfig struct {
 	// RegionError
 }
 
-// Validate validates the suspicious event configuration.
-func (c *SuspiciousEventConfig) validate(b *strings.Builder, mapping *dumpTriggerConfigCompiled, conf *DumpTriggerConfig) (uint64, error) {
+// compile compiles the suspicious event configuration.
+func (c *SuspiciousEventConfig) compile(b *strings.Builder, mapping *dumpTriggerConfigCompiled, conf *DumpTriggerConfig) (uint64, error) {
 	if c == nil {
 		return 0, fmt.Errorf("dump_trigger.suspicious_event missing")
 	}
@@ -150,16 +150,16 @@ type DumpTriggerConfig struct {
 	Type string `json:"type"`
 	// sampling = n means every n events will be sampled.
 	// For example, sampling = 1000 means 1/1000 sampling rate.
-	Sampling    int                    `json:"sampling,omitempty"`
+	Sampling    int64                  `json:"sampling,omitempty"`
 	Event       *SuspiciousEventConfig `json:"suspicious_event,omitempty"`
 	UserCommand *UserCommandConfig     `json:"user_command,omitempty"`
 	And         []DumpTriggerConfig    `json:"and,omitempty"`
 	Or          []DumpTriggerConfig    `json:"or,omitempty"`
 }
 
-// Validate validates the DumpTriggerConfig.
-// When validate successfully, it returns nil, strings.Builder will contain the canonical name of the trigger.
-func (c *DumpTriggerConfig) Validate(b *strings.Builder, mapping *dumpTriggerConfigCompiled) ([]uint64, error) {
+// Compile compiles the DumpTriggerConfig.
+// When compile successfully, it returns nil, strings.Builder will contain the canonical name of the trigger.
+func (c *DumpTriggerConfig) Compile(b *strings.Builder, mapping *dumpTriggerConfigCompiled) ([]uint64, error) {
 	if c == nil {
 		return nil, fmt.Errorf("dump_trigger missing")
 	}
@@ -176,13 +176,13 @@ func (c *DumpTriggerConfig) Validate(b *strings.Builder, mapping *dumpTriggerCon
 		}
 		return []uint64{res}, nil
 	case "suspicious_event":
-		ret, err := c.Event.validate(b, mapping, c)
+		ret, err := c.Event.compile(b, mapping, c)
 		if err != nil {
 			return nil, err
 		}
 		return []uint64{ret}, nil
 	case "user_command":
-		ret, err := c.UserCommand.validate(b, mapping, c)
+		ret, err := c.UserCommand.compile(b, mapping, c)
 		if err != nil {
 			return nil, err
 		}
@@ -194,7 +194,7 @@ func (c *DumpTriggerConfig) Validate(b *strings.Builder, mapping *dumpTriggerCon
 		var ret []uint64
 		for _, and := range c.And {
 			var buf strings.Builder
-			tmp, err := and.Validate(&buf, mapping)
+			tmp, err := and.Compile(&buf, mapping)
 			if err != nil {
 				return nil, err
 			}
@@ -208,7 +208,7 @@ func (c *DumpTriggerConfig) Validate(b *strings.Builder, mapping *dumpTriggerCon
 		var ret []uint64
 		for _, or := range c.Or {
 			var buf strings.Builder
-			tmp, err := or.Validate(&buf, mapping)
+			tmp, err := or.Compile(&buf, mapping)
 			if err != nil {
 				return nil, err
 			}
@@ -249,7 +249,7 @@ func (c *DumpTriggerConfig) Validate(b *strings.Builder, mapping *dumpTriggerCon
 // 1011 & 1011 => 1011, the second check pass, it is an OR condition
 // So this sequence satisfies the condition.
 type dumpTriggerConfigCompiled struct {
-	// nameMapping mapes a dump trigger canonical name to a bit representation
+	// nameMapping maps a dump trigger canonical name to a bit representation
 	nameMapping map[string]int
 	configRef   []*DumpTriggerConfig
 	// short cut for checking combinations of AND and OR conditions
@@ -262,6 +262,9 @@ func (c *dumpTriggerConfigCompiled) addTrigger(canonicalName string, config *Dum
 		return 0, fmt.Errorf("duplicate trigger name: %s", canonicalName)
 	}
 	idx := len(c.nameMapping)
+	if idx >= 64 {
+		return 0, fmt.Errorf("too many triggers")
+	}
 	c.nameMapping[canonicalName] = idx
 	c.configRef = append(c.configRef, config)
 	return 1 << idx, nil
@@ -293,7 +296,7 @@ func truthTableForAnd1(x uint64, xs []uint64) []uint64 {
 }
 
 func truthTableForOr(x, y []uint64) []uint64 {
-	// not doing any deduplication because duplicate trigger condition is not allowed by validate
+	// not doing any deduplication because duplicate trigger condition is not allowed by compile
 	return append(x, y...)
 }
 
@@ -312,13 +315,15 @@ func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, che
 	if flightRecorder == nil {
 		return
 	}
-	// Sink should always be set, it should be a Trace object
+	// Sink should always be set, and it should be a Trace object
+	// TODO: For background job and internal session, it might be missing?
 	sink := tracing.GetSink(ctx)
 	if sink == nil {
 		return
 	}
 	trace, ok := sink.(*Trace)
 	if !ok {
+		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger assertion fails, sink should be a Trace object")
 		return
 	}
 	idx, ok := flightRecorder.dumpTriggerConfigCompiled.nameMapping[triggerName]
@@ -370,13 +375,13 @@ func (c *FlightRecorderConfig) Initialize() {
 	c.DumpTrigger.Sampling = 1
 }
 
-// Validate validates the flight recorder configuration.
-func (c *FlightRecorderConfig) Validate() (dumpTriggerConfigCompiled, error) {
+// Compile compiles the flight recorder configuration.
+func (c *FlightRecorderConfig) Compile() (dumpTriggerConfigCompiled, error) {
 	var b strings.Builder
 	result := dumpTriggerConfigCompiled{
 		nameMapping: make(map[string]int),
 	}
-	truthTable, err := c.DumpTrigger.Validate(&b, &result)
+	truthTable, err := c.DumpTrigger.Compile(&b, &result)
 	if err != nil {
 		return result, err
 	}
@@ -408,7 +413,7 @@ func parseCategories(categories []string) TraceCategory {
 }
 
 func newHTTPFlightRecorder(config *FlightRecorderConfig) (*HTTPFlightRecorder, error) {
-	compiled, err := config.Validate()
+	compiled, err := config.Compile()
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +440,7 @@ func StartHTTPFlightRecorder(ch chan<- []Event, config *FlightRecorderConfig) (*
 		return nil, err
 	}
 	ret.ch = ch
-	return ret, err
+	return ret, nil
 }
 
 // StartLogFlightRecorder starts the flight recorder that sink to log.
@@ -501,9 +506,9 @@ func (r *Trace) markBits(idx int) {
 const maxEvents = 4096
 
 func (r *HTTPFlightRecorder) checkSampling(conf *DumpTriggerConfig) bool {
-	r.counter++
-	if r.counter >= conf.Sampling {
-		r.counter = 0
+	v := r.counter.Add(1)
+	if v >= conf.Sampling {
+		r.counter.Store(0)
 		return true
 	}
 	return false
