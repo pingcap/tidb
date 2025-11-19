@@ -839,7 +839,6 @@ func (job *Job) CheckInvolvingSchemaInfo() error {
 		}
 		if info.Policy == InvolvingNone && info.ResourceGroup == InvolvingNone {
 			if info.Database == InvolvingNone || info.Table == InvolvingNone {
-				// when operating on schema or table, schema and table
 				return errors.New("DDL job operating on schema or table, must have non-empty name set in InvolvingSchemaInfo")
 			} else if info.Database == InvolvingAll && info.Table != InvolvingAll {
 				return errors.New("DDL job operating on all databases, must not set table name in InvolvingSchemaInfo")
