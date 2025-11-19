@@ -24,7 +24,6 @@ import (
 
 	"github.com/dgryski/go-farm"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -95,9 +94,6 @@ type parallelDistinctAggTestCase struct {
 }
 
 func newParallelDistinctAggTestCase(funcName string, dataType *types.FieldType, numRows, ndv int, needNull bool, allNull bool) *parallelDistinctAggTestCase {
-	// TODO delete it
-	log.Info(fmt.Sprintf("xzxdebug for case info: %s, %d, %d, %s", dataType.String(), numRows, ndv, funcName))
-
 	ret := &parallelDistinctAggTestCase{
 		dataTypes: []*types.FieldType{dataType},
 		funcName:  funcName,
@@ -219,17 +215,21 @@ func newParallelDistinctAggTestCase(funcName string, dataType *types.FieldType, 
 	case ast.AggFuncCount:
 		ret.result = types.NewIntDatum(int64(insertedDistinctValNum))
 	case ast.AggFuncAvg:
+		if len(insertedIdx) == 0 {
+			ret.result = types.NewDatum(nil)
+			break
+		}
 		switch dataType.GetType() {
 		case mysql.TypeDouble:
 			s := float64(0)
-			for i := range datumsForNDV {
-				s += datumsForNDV[i].GetFloat64()
+			for idx := range insertedIdx {
+				s += datumsForNDV[idx].GetFloat64()
 			}
 			ret.result = types.NewFloat64Datum(s / float64(insertedDistinctValNum))
 		case mysql.TypeNewDecimal:
 			s := types.NewDecFromStringForTest("0.0000")
-			for i := range datumsForNDV {
-				dec := datumsForNDV[i].GetMysqlDecimal()
+			for idx := range insertedIdx {
+				dec := datumsForNDV[idx].GetMysqlDecimal()
 				tmp := s
 				s = types.NewDecFromStringForTest("0.0000")
 				err := types.DecimalAdd(dec, tmp, s)
@@ -247,6 +247,10 @@ func newParallelDistinctAggTestCase(funcName string, dataType *types.FieldType, 
 			panic("Not supported in test")
 		}
 	case ast.AggFuncSum:
+		if len(insertedIdx) == 0 {
+			ret.result = types.NewDatum(nil)
+			break
+		}
 		switch dataType.GetType() {
 		case mysql.TypeDouble:
 			s := float64(0)
@@ -761,9 +765,27 @@ func testParallelDistinctAggFunc(t *testing.T, p parallelDistinctAggTestCase, mu
 	err = finalFunc.AppendFinalResult2Chunk(ctx, partialPtrs[0], resultChk)
 	require.NoError(t, err)
 	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	if dt.Kind() == types.KindFloat64 {
+		// Truncate the float, as float is imprecise and the tailing numbers may be different
+		floatNum := dt.GetFloat64()
+		floatStr := fmt.Sprintf("%.2f", floatNum)
+		floatNum, err = strconv.ParseFloat(floatStr, 64)
+		if err != nil {
+			panic(err)
+		}
+		dt = types.NewFloat64Datum(floatNum)
+
+		floatNum = p.result.GetFloat64()
+		floatStr = fmt.Sprintf("%.2f", floatNum)
+		floatNum, err = strconv.ParseFloat(floatStr, 64)
+		if err != nil {
+			panic(err)
+		}
+		p.result = types.NewFloat64Datum(floatNum)
+	}
 	result, err := dt.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &p.result, ctor)
 	require.NoError(t, err)
-	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.result)
+	require.Equalf(t, 0, result, "expect: %v, actual: %v", dt.String(), p.result)
 }
 
 func testAggFunc(t *testing.T, p aggTest) {

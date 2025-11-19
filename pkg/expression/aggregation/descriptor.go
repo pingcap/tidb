@@ -172,10 +172,12 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 			Index:   ordinal[0],
 			RetType: types.NewFieldType(mysql.TypeLonglong),
 		})
-		args = append(args, &expression.Column{
-			Index:   ordinal[1],
-			RetType: a.RetTp,
-		})
+		if !a.HasDistinct {
+			args = append(args, &expression.Column{
+				Index:   ordinal[1],
+				RetType: a.RetTp,
+			})
+		}
 		finalAggDesc.Args = args
 	case ast.AggFuncApproxCountDistinct:
 		args := make([]expression.Expression, 0, 1)
