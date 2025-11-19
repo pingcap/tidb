@@ -1993,6 +1993,4 @@ func TestTiDBMaxEstimatedCostVar(t *testing.T) {
 	val, err = mock.GetGlobalSysVar(vardef.TiDBMaxEstimatedCost)
 	require.NoError(t, err)
 	require.Equal(t, "0", val)
-
-	// set DEFAULT
 }

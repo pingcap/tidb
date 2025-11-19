@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -293,6 +294,19 @@ func doOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic b
 	return VolcanoOptimize(ctx, sctx, flag, logic)
 }
 
+func checkMaxEstimatedCost(sessVars *variable.SessionVars, cost float64) error {
+	if sessVars.MaxEstimatedCost != 0.0 &&
+		!sessVars.InRestrictedSQL && // Allow internal queries!
+		cost > sessVars.MaxEstimatedCost {
+		// Still allow EXPLAIN, unless EXPLAIN ANALYZE
+		if !sessVars.StmtCtx.InExplainStmt ||
+			sessVars.StmtCtx.InExplainAnalyzeStmt {
+			return plannererrors.ErrMaxEstimatedCostExceeded.FastGenByArgs(cost, sessVars.MaxEstimatedCost)
+		}
+	}
+	return nil
+}
+
 // CascadesOptimize includes: normalization, cascadesOptimize, and physicalOptimize.
 func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
@@ -322,14 +336,9 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	if sessVars.MaxEstimatedCost != 0.0 &&
-		!sessVars.InRestrictedSQL && // Allow internal queries!
-		cost > sessVars.MaxEstimatedCost {
-		// Still allow EXPLAIN, unless EXPLAIN ANALYZE
-		if !sessVars.StmtCtx.InExplainStmt ||
-			sessVars.StmtCtx.InExplainAnalyzeStmt {
-			return nil, nil, cost, plannererrors.ErrMaxEstimatedCostExceeded.FastGenByArgs(cost, sessVars.MaxEstimatedCost)
-		}
+	err = checkMaxEstimatedCost(sessVars, cost)
+	if err != nil {
+		return nil, nil, cost, err
 	}
 
 	finalPlan := postOptimize(ctx, sctx, physical)
@@ -1087,7 +1096,7 @@ func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 }
 
 func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost float64, err error) {
-	sessVars := logic.SCtx().GetSessionVars().GetSessionVars()
+	sessVars := logic.SCtx().GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
@@ -1123,14 +1132,9 @@ func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost floa
 		return nil, 0, err
 	}
 	cost, err = getPlanCost(t.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
-	if sessVars.MaxEstimatedCost != 0.0 &&
-		!sessVars.InRestrictedSQL && // Allow internal queries!
-		cost > sessVars.MaxEstimatedCost {
-		// Still allow EXPLAIN, unless EXPLAIN ANALYZE
-		if !sessVars.StmtCtx.InExplainStmt ||
-			sessVars.StmtCtx.InExplainAnalyzeStmt {
-			return nil, cost, plannererrors.ErrMaxEstimatedCostExceeded.FastGenByArgs(cost, sessVars.MaxEstimatedCost)
-		}
+	err = checkMaxEstimatedCost(sessVars, cost)
+	if err != nil {
+		return nil, cost, err
 	}
 	return t.Plan(), cost, err
 }
