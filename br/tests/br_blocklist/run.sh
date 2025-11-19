@@ -5,6 +5,10 @@ set -eu
 PREFIX="blocklist_backup"
 TASK_NAME="br_blocklist"
 
+# Disable encryption validation for this test
+# Log backup doesn't support the same encryption parameters as snapshot backup
+export ENABLE_ENCRYPTION_CHECK=false
+
 # Source test utilities for checkpoint wait function
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$CUR/../br_test_utils.sh"
@@ -18,8 +22,9 @@ echo ""
 # Restart services
 restart_services || { echo "Failed to restart services"; exit 1; }
 
-# ==================== T0: Start log backup and prepare initial data ====================
-echo ">>> T0: Starting log backup and preparing initial data..."
+# ==================== T1: Start log backup and prepare test data ====================
+echo ""
+echo ">>> T1: Starting log backup and preparing test data..."
 
 # Start log backup FIRST
 LOG_DIR="local://$TEST_DIR/$PREFIX/log"
@@ -39,24 +44,22 @@ run_sql "CREATE DATABASE initial_db;"
 run_sql "CREATE TABLE initial_db.t0 (id INT PRIMARY KEY);"
 run_sql "INSERT INTO initial_db.t0 VALUES (1);"
 
-# Verify T0 data
+# Verify initial_db data
 t0_count=$(run_sql "SELECT COUNT(*) FROM initial_db.t0;" | tail -n1 | awk '{print $NF}')
 if [ "$t0_count" != "1" ]; then
     echo "ERROR: Expected 1 row in initial_db.t0, got $t0_count"
     exit 1
 fi
-echo "✓ T0 initial data prepared"
+echo "✓ initial_db prepared"
 
-# ==================== T1: Create test tables ====================
-echo ""
-echo ">>> T1: Creating test tables..."
+# Create test tables and insert data
 run_sql "CREATE DATABASE test_db;"
 run_sql "CREATE TABLE test_db.t1 (id INT PRIMARY KEY);"
 run_sql "INSERT INTO test_db.t1 VALUES (1), (2), (3);"
 run_sql "CREATE TABLE test_db.t2 (id INT PRIMARY KEY);"
 run_sql "INSERT INTO test_db.t2 VALUES (10), (20);"
 
-# Verify T1 data
+# Verify test_db data
 t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1 | awk '{print $NF}')
 t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1 | awk '{print $NF}')
 if [ "$t1_count" != "3" ]; then
@@ -67,23 +70,21 @@ if [ "$t2_count" != "2" ]; then
     echo "ERROR: Expected 2 rows in test_db.t2, got $t2_count"
     exit 1
 fi
-echo "✓ T1 data prepared: test_db.t1 has 3 rows, test_db.t2 has 2 rows"
+echo "✓ test_db prepared: t1 has 3 rows, t2 has 2 rows"
 
-# ==================== T2: Record first restore target timestamp ====================
-echo ""
-echo ">>> T2: Recording first restore target timestamp..."
+# Record T1 timestamp
 echo ">>> Waiting for log backup checkpoint to advance..."
 wait_log_checkpoint_advance "$TASK_NAME"
-T2=$(( $(date +%s%3N) << 18 ))
-echo "✓ T2 timestamp: $T2 (data state: t1=3 rows, t2=2 rows)"
+T1=$(( $(date +%s%3N) << 18 ))
+echo "✓ T1 timestamp: $T1 (data state: t1=3 rows, t2=2 rows)"
 
-# ==================== T3: Insert additional data ====================
+# ==================== T2: Insert additional data ====================
 echo ""
-echo ">>> T3: Inserting additional data..."
+echo ">>> T2: Inserting additional data..."
 run_sql "INSERT INTO test_db.t1 VALUES (4), (5);"
 run_sql "INSERT INTO test_db.t2 VALUES (30), (40);"
 
-# Verify T3 data
+# Verify T2 data
 t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1 | awk '{print $NF}')
 t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1 | awk '{print $NF}')
 if [ "$t1_count" != "5" ]; then
@@ -94,42 +95,42 @@ if [ "$t2_count" != "4" ]; then
     echo "ERROR: Expected 4 rows in test_db.t2, got $t2_count"
     exit 1
 fi
-echo "✓ T3 data prepared: test_db.t1 has 5 rows, test_db.t2 has 4 rows"
+echo "✓ test_db updated: t1 has 5 rows, t2 has 4 rows"
 
-# Record T3 timestamp
+# Record T2 timestamp
 echo ">>> Waiting for log backup checkpoint to advance..."
 wait_log_checkpoint_advance "$TASK_NAME"
-T3=$(( $(date +%s%3N) << 18 ))
-echo "✓ T3 timestamp: $T3 (data state: t1=5 rows, t2=4 rows)"
+T2=$(( $(date +%s%3N) << 18 ))
+echo "✓ T2 timestamp: $T2 (data state: t1=5 rows, t2=4 rows)"
 
-# ==================== T4: Drop test tables ====================
+# Drop test tables before first restore
 echo ""
-echo ">>> T4: Dropping test tables before restore..."
+echo ">>> Dropping test tables before restore..."
 run_sql "DROP DATABASE test_db;"
 run_sql "DROP DATABASE initial_db;"
-echo "✓ test_db dropped"
+echo "✓ Databases dropped"
 
-# ==================== T6: First PITR restore to T2 ====================
+# ==================== T3: First PITR restore to T1 ====================
 echo ""
-echo ">>> T6: First PITR restore to T2..."
+echo ">>> T3: First PITR restore to T1..."
 echo ">>> This will create blocklist with RestoreStartTs captured from PD"
 run_br restore point \
     --pd "$PD_ADDR" \
     -s "$LOG_DIR" \
     --full-backup-storage "$SNAPSHOT_DIR" \
-    --restored-ts "$T2" \
-    --log-file "$TEST_DIR/restore_t2.log"
-echo "✓ First PITR completed (restored to T2)"
+    --restored-ts "$T1" \
+    --log-file "$TEST_DIR/restore_t1.log"
+echo "✓ First PITR completed (restored to T1)"
 
 # Verify first PITR data correctness
 t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1 | awk '{print $NF}')
 t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1 | awk '{print $NF}')
 if [ "$t1_count" != "3" ]; then
-    echo "ERROR: Expected 3 rows in test_db.t1 at T2, got $t1_count"
+    echo "ERROR: Expected 3 rows in test_db.t1 at T1, got $t1_count"
     exit 1
 fi
 if [ "$t2_count" != "2" ]; then
-    echo "ERROR: Expected 2 rows in test_db.t2 at T2, got $t2_count"
+    echo "ERROR: Expected 2 rows in test_db.t2 at T1, got $t2_count"
     exit 1
 fi
 echo "✓ First PITR data verification passed (t1: 3 rows, t2: 2 rows)"
@@ -143,64 +144,80 @@ if [ "$blocklist_count" != "1" ]; then
 fi
 echo "✓ Blocklist file generated (R*_S*.meta format)"
 
-# ==================== T7: Record timestamp after first PITR completion ====================
-echo ""
-echo ">>> T7: Recording timestamp after first PITR completion..."
+# Insert new data after first PITR to create time separation
+echo ">>> Inserting new data to create time separation..."
+run_sql "INSERT INTO test_db.t1 VALUES (6), (7);"
+run_sql "INSERT INTO test_db.t2 VALUES (50), (60);"
+
+# Verify data after insertion
+t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1 | awk '{print $NF}')
+t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1 | awk '{print $NF}')
+if [ "$t1_count" != "5" ]; then
+    echo "ERROR: Expected 5 rows in test_db.t1 after insertion, got $t1_count"
+    exit 1
+fi
+if [ "$t2_count" != "4" ]; then
+    echo "ERROR: Expected 4 rows in test_db.t2 after insertion, got $t2_count"
+    exit 1
+fi
+echo "✓ Data prepared: test_db.t1 has 5 rows (IDs: 1,2,3,6,7), test_db.t2 has 4 rows"
+
+# Record T3 timestamp
 echo ">>> Waiting for log backup checkpoint to advance..."
 wait_log_checkpoint_advance "$TASK_NAME"
-T7=$(( $(date +%s%3N) << 18 ))
-echo "✓ T7 timestamp: $T7 (first PITR completed)"
-echo ">>> Note: Blocklist contains RestoreStartTs ≤ T7"
+T3=$(( $(date +%s%3N) << 18 ))
+echo "✓ T3 timestamp: $T3 (first PITR completed, new data inserted)"
+echo ">>> Note: Blocklist contains RestoreStartTs ≤ T3"
 
-# ==================== TEST 1: Restore to T3 (should succeed) ====================
+# ==================== TEST 1: Restore to T2 (should succeed) ====================
 echo ""
 echo "=========================================="
-echo "TEST 1: Restore to T3 (Different Time)"
+echo "TEST 1: Restore to T2 (Different Time)"
 echo "=========================================="
 echo ">>> Objective: Verify blocklist doesn't block valid restore to different historical time"
-echo ">>> T2 = $T2 (first PITR target: t1=3 rows)"
-echo ">>> T3 = $T3 (second PITR target: t1=5 rows)"
+echo ">>> T1 = $T1 (first PITR target: t1=3 rows, t2=2 rows)"
+echo ">>> T2 = $T2 (second PITR target: t1=5 rows, t2=4 rows)"
 echo ">>> Blocklist check logic:"
-echo ">>>   - restoredTs=$T3 < RestoreStartTs (≤T7=$T7)"
-echo ">>>   - Expected: SUCCESS (tables didn't exist at T3)"
+echo ">>>   - restoredTs=$T2 < RestoreStartTs (≤T3=$T3)"
+echo ">>>   - Expected: SUCCESS (tables didn't exist at T2 in snapshot)"
 
-# T8: Drop all databases
+# Drop all databases for test
 echo ""
-echo ">>> T8: Dropping all databases for test..."
+echo ">>> Dropping all databases for test..."
 run_sql "DROP DATABASE test_db;"
 run_sql "DROP DATABASE initial_db;"
 echo "✓ Databases dropped"
 
-# T9: Restore to T3
+# Restore to T2
 echo ""
-echo ">>> T9: Restoring to T3..."
+echo ">>> Restoring to T2..."
 run_br restore point \
     --pd "$PD_ADDR" \
     -s "$LOG_DIR" \
     --full-backup-storage "$SNAPSHOT_DIR" \
-    --restored-ts "$T3" \
-    --log-file "$TEST_DIR/restore_t3.log"
-echo "✓ Restore to T3 completed"
+    --restored-ts "$T2" \
+    --log-file "$TEST_DIR/restore_t2.log"
+echo "✓ Restore to T2 completed"
 
-# Verify data correctness: should be T3 data (5 rows), not T2 data (3 rows)
+# Verify data correctness: should be T2 data (5 rows), not T1 data (3 rows)
 t1_count=$(run_sql "SELECT COUNT(*) FROM test_db.t1;" | tail -n1 | awk '{print $NF}')
 t2_count=$(run_sql "SELECT COUNT(*) FROM test_db.t2;" | tail -n1 | awk '{print $NF}')
 
 if [ "$t1_count" != "5" ]; then
-    echo "ERROR: Expected 5 rows in test_db.t1 at T3, got $t1_count"
+    echo "ERROR: Expected 5 rows in test_db.t1 at T2, got $t1_count"
     echo "ERROR: This indicates blocklist incorrectly blocked the restore"
     exit 1
 fi
 
 if [ "$t2_count" != "4" ]; then
-    echo "ERROR: Expected 4 rows in test_db.t2 at T3, got $t2_count"
+    echo "ERROR: Expected 4 rows in test_db.t2 at T2, got $t2_count"
     exit 1
 fi
 
 echo "✓ Data verification passed: t1 has 5 rows (not 3!), t2 has 4 rows (not 2!)"
 echo "✓ Comparison:"
-echo "    First PITR  (to T2): t1=3 rows, t2=2 rows"
-echo "    Second PITR (to T3): t1=5 rows, t2=4 rows"
+echo "    First PITR  (to T1): t1=3 rows, t2=2 rows"
+echo "    Second PITR (to T2): t1=5 rows, t2=4 rows"
 echo "✓✓✓ TEST 1 PASSED: Restored to different time with correct data ✓✓✓"
 
 # Verify second blocklist file generation
@@ -211,26 +228,24 @@ if [ "$blocklist_count" != "2" ]; then
 fi
 echo "✓ Second blocklist file generated"
 
-# ==================== TEST 2: Restore to T7+5s (should be blocked) ====================
+# ==================== TEST 2: Restore to T4 (should be blocked) ====================
 echo ""
 echo "=========================================="
-echo "TEST 2: Restore to T7+5s (Should Be Blocked)"
+echo "TEST 2: Restore to T4 (Should Be Blocked)"
 echo "=========================================="
 echo ">>> Objective: Verify blocklist blocks restore when tables don't exist in snapshot"
-echo ">>> T7 = $T7 (first PITR completion time)"
+echo ">>> T3 = $T3 (first PITR completion time)"
 
-# Calculate T7 + 5 seconds TSO
-# TSO format: (physical_ms << 18) | logical
-# 5 seconds = 5000 ms
-DELTA_MS=5000
-SHIFT=18
-T10=$(( T7 + (DELTA_MS << SHIFT) ))
-echo ">>> T10 = $T10 (T7 + 5 seconds)"
+# Get T4 by waiting for checkpoint to advance after T3
+echo ">>> Waiting for checkpoint to advance after T3 to get T4..."
+wait_log_checkpoint_advance "$TASK_NAME"
+T4=$(( $(date +%s%3N) << 18 ))
+echo ">>> T4 = $T4 (after T3, within log backup range)"
 
 echo ">>> Blocklist check logic:"
-echo ">>>   - restoredTs=$T10 > RestoreStartTs (≤T7=$T7)"
-echo ">>>   - startTs=T0 < RestoreCommitTs (from blocklist)"
-echo ">>>   - Snapshot (T0) doesn't contain test_db"
+echo ">>>   - restoredTs=$T4 > RestoreStartTs (≤T3=$T3)"
+echo ">>>   - startTs=snapshot_ts < RestoreCommitTs (from blocklist)"
+echo ">>>   - Snapshot doesn't contain test_db"
 echo ">>>   - Log backup contains operations on test_db"
 echo ">>>   - Expected: BLOCKED (conflict detected)"
 
@@ -241,26 +256,26 @@ run_sql "DROP DATABASE test_db;"
 run_sql "DROP DATABASE initial_db;"
 echo "✓ Databases dropped"
 
-# T10: Attempt to restore to T7+5s
+# Attempt to restore to T4
 echo ""
-echo ">>> T10: Attempting restore to T7+5s (should be blocked)..."
+echo ">>> Attempting restore to T4 (should be blocked)..."
 run_br restore point \
     --pd "$PD_ADDR" \
     -s "$LOG_DIR" \
     --full-backup-storage "$SNAPSHOT_DIR" \
-    --restored-ts "$T10" \
-    --log-file "$TEST_DIR/restore_t10_blocked.log" 2>&1 | tee "$TEST_DIR/restore_t10_output.log" || true
+    --restored-ts "$T4" \
+    --log-file "$TEST_DIR/restore_t4_blocked.log" 2>&1 | tee "$TEST_DIR/restore_t4_output.log" || true
 
 # Check if correctly blocked
-if grep -q "because it is log restored" "$TEST_DIR/restore_t10_output.log"; then
-    echo "✓ Restore to T10 correctly blocked by blocklist"
+if grep -q "because it is log restored" "$TEST_DIR/restore_t4_output.log"; then
+    echo "✓ Restore to T4 correctly blocked by blocklist"
 
     # Verify error message contains table names
-    if grep -qE "test_db|t1|t2" "$TEST_DIR/restore_t10_output.log"; then
+    if grep -qE "test_db|t1|t2" "$TEST_DIR/restore_t4_output.log"; then
         echo "✓ Error message contains blocked table/database names"
     else
         echo "WARNING: Error message does not contain specific table names"
-        cat "$TEST_DIR/restore_t10_output.log"
+        cat "$TEST_DIR/restore_t4_output.log"
     fi
 
     echo "✓✓✓ TEST 2 PASSED: Forward restore blocked correctly ✓✓✓"
@@ -271,10 +286,10 @@ else
     if [ "$test_db_exists" == "0" ]; then
         echo "ERROR: Restore failed but not due to blocklist"
         echo "Expected blocklist error but got:"
-        cat "$TEST_DIR/restore_t10_output.log"
+        cat "$TEST_DIR/restore_t4_output.log"
         exit 1
     else
-        echo "ERROR: Restore to T10 succeeded when it should have been blocked"
+        echo "ERROR: Restore to T4 succeeded when it should have been blocked"
         echo "Database test_db exists when it shouldn't"
         exit 1
     fi
@@ -285,9 +300,9 @@ echo ""
 echo "=========================================="
 echo "All Tests Passed!"
 echo "=========================================="
-echo "✓ TEST 1: Restore to different historical time (T3) succeeded"
-echo "           - Verified data difference: T2(3 rows) vs T3(5 rows)"
-echo "✓ TEST 2: Restore to future time (T7+5s) blocked by blocklist"
+echo "✓ TEST 1: Restore to different historical time (T2) succeeded"
+echo "           - Verified data difference: T1(3 rows) vs T2(5 rows)"
+echo "✓ TEST 2: Restore to future time (T4 > T3) blocked by blocklist"
 echo ""
 
 echo ">>> Blocklist files summary:"
