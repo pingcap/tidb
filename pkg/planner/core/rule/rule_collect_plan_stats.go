@@ -116,13 +116,11 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 			for _, item := range histNeededColumnsOnly {
 				asyncload.AsyncLoadHistogramNeededItems.Insert(item.TableItemID, item.FullLoad)
 			}
-
 			return plan, planChanged, nil
-		} else {
-			// Multi-table query: sync load everything as before
-			err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
-			return plan, planChanged, err
 		}
+		// Multi-table query: sync load everything as before
+		err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
+		return plan, planChanged, err
 	}
 	// We are loading some unnecessary items here since the static pruning hasn't happened yet.
 	// It's not easy to solve the problem and the static pruning is being deprecated, so we just leave it here.
