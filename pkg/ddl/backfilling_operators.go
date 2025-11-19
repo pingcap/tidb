@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/session"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -117,7 +119,7 @@ func NewAddIndexIngestPipeline(
 		indexes = append(indexes, index)
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
-	copCtx, err := NewReorgCopContext(reorgMeta, tbl.Meta(), idxInfos, reqSrc)
+	copCtx, err := NewReorgCopContext(reorgMeta, tbl.Meta(), tbl.GetPhysicalID(), idxInfos, reqSrc)
 	if err != nil {
 		return nil, err
 	}
@@ -129,9 +131,10 @@ func NewAddIndexIngestPipeline(
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, backendCtx)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
 		reorgMeta.GetBatchSize(), reorgMeta, backendCtx, collector)
+	barrier := ddlutil.NewBarrier()
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool,
-		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta)
-	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, collector)
+		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, backendCtx, barrier)
+	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, collector, barrier)
 
 	operator.Compose(srcOp, scanOp)
 	operator.Compose(scanOp, ingestOp)
@@ -175,7 +178,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		indexes = append(indexes, index)
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
-	copCtx, err := NewReorgCopContext(reorgMeta, tbl.Meta(), idxInfos, reqSrc)
+	copCtx, err := NewReorgCopContext(reorgMeta, tbl.Meta(), tbl.GetPhysicalID(), idxInfos, reqSrc)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +201,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		tbl, indexes, extStore, srcChkPool, writerCnt,
 		onClose, memSizePerIndex, reorgMeta, tikvCodec,
 	)
-	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, collector)
+	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, collector, nil)
 
 	operator.Compose(srcOp, scanOp)
 	operator.Compose(scanOp, writeOp)
@@ -246,13 +249,15 @@ func (t TableScanTask) String() string {
 		t.ID, hex.EncodeToString(t.Start), hex.EncodeToString(t.End))
 }
 
-// IndexRecordChunk contains one of the chunk read from corresponding TableScanTask.
+// IndexRecordChunk contains one chunk read from the table scan.
+// prevTailKey = last row key (inclusive) of the previous chunk for range stitching.
 type IndexRecordChunk struct {
-	ctx   *workerpool.Context
-	ID    int
-	Chunk *chunk.Chunk
-	Err   error
-	Done  bool
+	ctx         *workerpool.Context
+	ID          int
+	Chunk       *chunk.Chunk
+	Err         error
+	Done        bool
+	prevTailKey kv.Key
 
 	// tableScanRowCount is the number of rows scanned by the corresponding TableScanTask.
 	// If the index is a partial index, the number of rows in the Chunk may be less than tableScanRowCount.
@@ -349,34 +354,43 @@ func (src *TableScanTaskSource) generateTasks() error {
 		// All table data are done.
 		return nil
 	}
-	for {
-		kvRanges, err := loadTableRanges(
-			src.ctx,
-			src.tbl.GetPhysicalID(),
-			src.store,
-			startKey,
-			src.endKey,
-			nil,
-			backfillTaskChanSize,
-		)
-		if err != nil {
-			return err
-		}
-		if len(kvRanges) == 0 {
-			break
-		}
-
-		batchTasks := src.getBatchTableScanTask(kvRanges, taskIDAlloc)
-		for _, task := range batchTasks {
-			select {
-			case <-src.ctx.Done():
-				return src.ctx.Err()
-			case src.sink.Channel() <- task:
+	var ranges []kv.KeyRange
+	if src.cpOp != nil {
+		ranges = src.cpOp.FilterUnimportedRanges([]kv.KeyRange{{StartKey: startKey, EndKey: src.endKey}})
+	} else {
+		ranges = []kv.KeyRange{{StartKey: startKey, EndKey: src.endKey}}
+	}
+	for _, r := range ranges {
+		startKey := r.StartKey
+		for {
+			kvRanges, err := loadTableRanges(
+				src.ctx,
+				src.tbl.GetPhysicalID(),
+				src.store,
+				startKey,
+				r.EndKey,
+				nil,
+				backfillTaskChanSize,
+			)
+			if err != nil {
+				return err
 			}
-		}
-		startKey = kvRanges[len(kvRanges)-1].EndKey
-		if startKey.Cmp(src.endKey) >= 0 {
-			break
+			if len(kvRanges) == 0 {
+				break
+			}
+
+			batchTasks := src.getBatchTableScanTask(kvRanges, taskIDAlloc)
+			for _, task := range batchTasks {
+				select {
+				case <-src.ctx.Done():
+					return src.ctx.Err()
+				case src.sink.Channel() <- task:
+				}
+			}
+			startKey = kvRanges[len(kvRanges)-1].EndKey
+			if startKey.Cmp(r.EndKey) >= 0 {
+				break
+			}
 		}
 	}
 	return nil
@@ -523,6 +537,26 @@ func (w *tableScanWorker) newDistSQLCtx() (*distsqlctx.DistSQLContext, error) {
 	)
 }
 
+func (w *tableScanWorker) lastRecordKeyFromChunk(copCtx copr.CopContext, chk *chunk.Chunk) (kv.Key, bool) {
+	c := copCtx.GetBase()
+	ectx := c.ExprCtx.GetEvalCtx()
+	n := chk.NumRows()
+	if n == 0 {
+		return nil, false
+	}
+	row := chk.GetRow(n - 1)
+
+	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
+	handleDataBuf = ExtractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
+	sc := w.se.GetSessionVars().StmtCtx
+	h, err := BuildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, sc.TimeZone(), sc.ErrCtx())
+	if err != nil {
+		return nil, false
+	}
+	prefix := tablecodec.GenTableRecordPrefix(c.PhysicalID)
+	return tablecodec.EncodeRecordKey(prefix, h), true
+}
+
 func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) error {
 	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.Stringer("task", task))
@@ -555,11 +589,9 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		if err != nil {
 			return err
 		}
-		if w.cpOp != nil {
-			w.cpOp.AddChunk(task.ID, task.End)
-		}
 		var done bool
 		var lastTableScanRowCount int64
+		prevTailKey := task.Start
 		for !done {
 			failpoint.InjectCall("beforeGetChunk")
 			srcChk := w.getChunk()
@@ -573,18 +605,15 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			execDetails = kvutil.ExecDetails{}
 
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
-			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed})
+			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, prevTailKey: prevTailKey, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed})
 			lastTableScanRowCount = tableScanRowCount
+			prevTailKey, _ = w.lastRecordKeyFromChunk(w.copCtx, srcChk)
 		}
 		return rs.Close()
 	})
 
-	for i, idxResult := range idxResults {
+	for _, idxResult := range idxResults {
 		sender(idxResult)
-		if w.cpOp != nil {
-			done := i == len(idxResults)-1
-			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), done)
-		}
 		w.totalCount.Add(idxResult.tableScanRowCount)
 	}
 
@@ -697,9 +726,16 @@ func (o *WriteExternalStoreOperator) Close() error {
 
 // IndexWriteResult contains the result of writing index records to ingest engine.
 type IndexWriteResult struct {
-	ID     int
-	RowCnt int
-	Bytes  int // Bytes means the written index kv size of this result.
+	ID          int
+	RowCnt      int
+	Bytes       int
+	KVRange     kv.KeyRange
+	prevTailKey kv.Key
+}
+
+// chunkProgressRecorder is a narrow dependency the worker needs for checkpointing.
+type chunkProgressRecorder interface {
+	FinishChunk(kv.KeyRange, int, kv.Key)
 }
 
 // IndexIngestOperator writes index records to ingest engine.
@@ -718,6 +754,8 @@ func NewIndexIngestOperator(
 	srcChunkPool *sync.Pool,
 	concurrency int,
 	reorgMeta *model.DDLReorgMeta,
+	recorder chunkProgressRecorder,
+	barrier *ddlutil.Barrier,
 ) *IndexIngestOperator {
 	writerCfg := getLocalWriterConfig(len(indexes), concurrency)
 
@@ -740,16 +778,17 @@ func NewIndexIngestOperator(
 			}
 
 			w := &indexIngestWorker{
-				ctx:     ctx,
-				tbl:     tbl,
-				indexes: indexes,
-				copCtx:  copCtx,
-
+				ctx:          ctx,
+				tbl:          tbl,
+				indexes:      indexes,
+				copCtx:       copCtx,
 				se:           nil,
 				sessPool:     sessPool,
 				writers:      writers,
 				srcChunkPool: srcChunkPool,
 				reorgMeta:    reorgMeta,
+				barrier:      barrier,
+				recorder:     recorder,
 			}
 			err := w.initIndexConditionCheckers()
 			if err != nil {
@@ -781,37 +820,66 @@ type indexIngestWorker struct {
 	srcChunkPool *sync.Pool
 	// only available in global sort
 	totalCount *atomic.Int64
+
+	barrier  *ddlutil.Barrier
+	recorder chunkProgressRecorder
 }
 
 func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) error {
-	defer func() {
+	// Enter barrier to serialize with PauseAndWait while writing a chunk.
+	var entered bool
+	if w.barrier != nil {
+		w.barrier.Enter()
+		entered = true
+	}
+
+	recycleChunk := func() {
 		if ck.Chunk != nil {
 			w.srcChunkPool.Put(ck.Chunk)
+			ck.Chunk = nil
 		}
-	}()
+	}
+	exitBarrier := func() {
+		if entered {
+			w.barrier.Exit()
+			entered = false
+		}
+	}
+
 	failpoint.InjectCall("mockIndexIngestWorkerFault")
 
 	result := IndexWriteResult{
 		ID: ck.ID,
 	}
 	if err := w.initSessCtx(); err != nil {
+		recycleChunk()
+		exitBarrier()
 		return err
 	}
 	// TODO: find a place to display the added count
-	_, bytes, err := w.WriteChunk(&ck)
+	_, bytes, kvRange, err := w.WriteChunk(&ck)
 	if err != nil {
+		recycleChunk()
+		exitBarrier()
 		return err
 	}
 	scannedCount := ck.tableScanRowCount
-	if scannedCount == 0 {
-		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", ck.ID))
-		return nil
-	}
 	if w.totalCount != nil {
 		w.totalCount.Add(scannedCount)
 	}
 	result.RowCnt = int(ck.tableScanRowCount)
 	result.Bytes = bytes
+	result.KVRange = kvRange
+	result.prevTailKey = ck.prevTailKey
+
+	// FinishChunk (checkpoint) while still inside barrier so pause sees a consistent state.
+	if w.recorder != nil {
+		w.recorder.FinishChunk(result.KVRange, result.RowCnt, result.prevTailKey)
+	}
+
+	recycleChunk()
+	exitBarrier()
+
 	if ResultCounterForTest != nil {
 		ResultCounterForTest.Add(1)
 	}
@@ -877,9 +945,9 @@ func (w *indexIngestWorker) Close() error {
 }
 
 // WriteChunk will write index records to lightning engine.
-func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes int, err error) {
+func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes int, kvRange kv.KeyRange, err error) {
 	failpoint.Inject("mockWriteLocalError", func(_ failpoint.Value) {
-		failpoint.Return(0, 0, errors.New("mock write local error"))
+		failpoint.Return(0, 0, kv.KeyRange{}, errors.New("mock write local error"))
 	})
 	failpoint.InjectCall("writeLocalExec", rs.Done)
 
@@ -893,12 +961,12 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes i
 		// skip running the checker in TiDB side.
 		indexConditionCheckers = nil
 	}
-	cnt, kvBytes, err := writeChunk(w.ctx, w.writers, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
+	cnt, kvBytes, kvRange, err := writeChunk(w.ctx, w.writers, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
 	if err != nil || cnt == 0 {
-		return 0, 0, err
+		return 0, 0, kv.KeyRange{}, err
 	}
 	logSlowOperations(time.Since(oprStartTime), "writeChunk", 3000)
-	return cnt, kvBytes, nil
+	return cnt, kvBytes, kvRange, nil
 }
 
 type indexWriteResultSink struct {
@@ -911,6 +979,8 @@ type indexWriteResultSink struct {
 
 	errGroup errgroup.Group
 	source   operator.DataChannel[IndexWriteResult]
+
+	barrier *ddlutil.Barrier
 }
 
 func newIndexWriteResultSink(
@@ -919,6 +989,7 @@ func newIndexWriteResultSink(
 	tbl table.PhysicalTable,
 	indexes []table.Index,
 	collector execute.Collector,
+	barrier *ddlutil.Barrier,
 ) *indexWriteResultSink {
 	return &indexWriteResultSink{
 		ctx:        ctx,
@@ -927,6 +998,7 @@ func newIndexWriteResultSink(
 		indexes:    indexes,
 		errGroup:   errgroup.Group{},
 		collector:  collector,
+		barrier:    barrier,
 	}
 }
 
@@ -946,27 +1018,53 @@ func (s *indexWriteResultSink) collectResult() error {
 			return s.ctx.Err()
 		case rs, ok := <-s.source.Channel():
 			if !ok {
-				err := s.flush()
-				if err != nil {
-					s.ctx.OnError(err)
-				}
-				if s.backendCtx != nil { // for local sort only
-					total := s.backendCtx.TotalKeyCount()
-					if total > 0 {
-						if lc, ok := s.collector.(*localRowCntCollector); ok {
-							lc.SetTotal(total)
-						}
+				if s.backendCtx != nil && s.barrier != nil {
+					if err := s.barrier.PauseAndWait(s.ctx); err != nil {
+						s.ctx.OnError(err)
+						return err
 					}
 				}
-				return err
-			}
-			s.collector.Processed(int64(rs.Bytes), int64(rs.RowCnt))
-			if s.backendCtx != nil { // for local sort only
-				err := s.backendCtx.IngestIfQuotaExceeded(s.ctx, rs.ID, rs.RowCnt)
+				err := s.flush()
 				if err != nil {
 					s.ctx.OnError(err)
 					return err
 				}
+				if s.backendCtx != nil { // for local sort only
+					total := s.backendCtx.TotalKeyCount()
+					if total > 0 {
+						if lc, ok2 := s.collector.(*localRowCntCollector); ok2 {
+							lc.SetTotal(total)
+						}
+					}
+				}
+				if s.backendCtx != nil && s.barrier != nil {
+					s.barrier.Resume()
+				}
+				return err
+			}
+			s.collector.Processed(int64(rs.Bytes), int64(rs.RowCnt))
+
+			if s.backendCtx == nil {
+				continue
+			}
+			// global sort
+			if s.barrier == nil {
+				if err := s.backendCtx.IngestIfQuotaExceeded(s.ctx); err != nil {
+					s.ctx.OnError(err)
+					return err
+				}
+				continue
+			}
+			// local sort
+			if err := s.barrier.PauseAndWait(s.ctx); err != nil {
+				s.ctx.OnError(err)
+				return err
+			}
+			err := s.backendCtx.IngestIfQuotaExceeded(s.ctx)
+			s.barrier.Resume()
+			if err != nil {
+				s.ctx.OnError(err)
+				return err
 			}
 		}
 	}

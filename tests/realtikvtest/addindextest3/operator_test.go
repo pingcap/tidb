@@ -176,7 +176,7 @@ func TestBackfillOperators(t *testing.T) {
 		reorgMeta := ddl.NewDDLReorgMeta(tk.Session())
 		ingestOp := ddl.NewIndexIngestOperator(
 			wctx, copCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine},
-			srcChkPool, 3, reorgMeta)
+			srcChkPool, 3, reorgMeta, bcCtx, nil)
 		sink := testutil.NewOperatorTestSink[ddl.IndexWriteResult]()
 
 		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
@@ -380,7 +380,7 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 	tblInfo := tbl.Meta()
 	idxInfo = tblInfo.FindIndexByName("idx")
 	sctx := tk.Session()
-	copCtx, err = ddl.NewReorgCopContext(ddl.NewDDLReorgMeta(sctx), tblInfo, []*model.IndexInfo{idxInfo}, "")
+	copCtx, err = ddl.NewReorgCopContext(ddl.NewDDLReorgMeta(sctx), tblInfo, tblInfo.ID, []*model.IndexInfo{idxInfo}, "")
 	require.NoError(t, err)
 	require.IsType(t, copCtx, &copr.CopContextSingleIndex{})
 	return tbl, idxInfo, start, end, copCtx
@@ -450,7 +450,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		defer bcCtx.Close()
 		mockEngine := ingest.NewMockEngineInfo(nil)
 		ingestOp := ddl.NewIndexIngestOperator(wctx, copCtx, sessPool, pTbl, []table.Index{index},
-			[]ingest.Engine{mockEngine}, nil, 2, nil)
+			[]ingest.Engine{mockEngine}, nil, 2, nil, bcCtx, nil)
 
 		ingestOp.Open()
 		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(2))

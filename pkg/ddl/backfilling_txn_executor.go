@@ -122,6 +122,7 @@ func (b *txnBackfillExecutor) resultChan() <-chan *backfillResult {
 func NewReorgCopContext(
 	reorgMeta *model.DDLReorgMeta,
 	tblInfo *model.TableInfo,
+	physicalID int64,
 	allIdxInfo []*model.IndexInfo,
 	requestSource string,
 ) (copr.CopContext, error) {
@@ -140,6 +141,7 @@ func NewReorgCopContext(
 		exprCtx,
 		pushDownFlags,
 		tblInfo,
+		physicalID,
 		allIdxInfo,
 		requestSource,
 	)
