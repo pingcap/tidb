@@ -871,8 +871,8 @@ github.com/tenntenn/text/transform v0.0.0-20200319021203-7eef512accb3 h1:f+jULpR
 github.com/tenntenn/text/transform v0.0.0-20200319021203-7eef512accb3/go.mod h1:ON8b8w4BN/kE1EOhwT0o+d62W65a6aPw1nouo9LMgyY=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
-github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20251119085952-b147034a8659 h1:5Q+qDi/Bunh1bYguXHSh8doIbCvYnwncgGIb/rUkB24=
-github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20251119085952-b147034a8659/go.mod h1:ZLHQiuG/o3JHzMuE7dT2GnGCf+SPxUNbcr6farUsU18=
+github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20251119122352-647fceb7683f h1:pjSXyGNgo7Lx7wV6hEnlI89Fi6tVMLlXAn3zm9TP6n8=
+github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20251119122352-647fceb7683f/go.mod h1:ZLHQiuG/o3JHzMuE7dT2GnGCf+SPxUNbcr6farUsU18=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
 github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=
