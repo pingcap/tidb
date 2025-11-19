@@ -104,8 +104,9 @@ echo "✓ T3 timestamp: $T3 (data state: t1=5 rows, t2=4 rows)"
 
 # ==================== T4: Drop test tables ====================
 echo ""
-echo ">>> T4: Dropping test tables to simulate data loss..."
+echo ">>> T4: Dropping test tables before restore..."
 run_sql "DROP DATABASE test_db;"
+run_sql "DROP DATABASE initial_db;"
 echo "✓ test_db dropped"
 
 # ==================== T6: First PITR restore to T2 ====================
