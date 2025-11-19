@@ -360,29 +360,47 @@ alter schema read_only read only 0;
 set @a = 1;
 execute stmt_select using @a;
 execute stmt_select using @a;
-select @@last_plan_from_cache; # should be 1
+# should be 1
+select @@last_plan_from_cache;
 # read only 0 -> 1, can't use plan cache
 alter schema read_only read only 1;
 execute stmt_select using @a;
-select @@last_plan_from_cache; # should be 0
+# should be 0
+select @@last_plan_from_cache;
+execute stmt_select using @a;
+# should be 1
+select @@last_plan_from_cache;
 # read only 1 -> 0, can use plan cache
 alter schema read_only read only 0;
 execute stmt_select using @a;
-select @@last_plan_from_cache; # should be 0
+# should be 0
+select @@last_plan_from_cache;
+execute stmt_select using @a;
+# should be 1
+select @@last_plan_from_cache;
 
 ## test non-prepared plan cache
 SET tidb_enable_non_prepared_plan_cache = ON;
 select * from read_only.t1 where a = 1;
 select * from read_only.t1 where a = 1;
-SELECT @@last_plan_from_cache; # should be 1
+# should be 1
+SELECT @@last_plan_from_cache;
 # read only 0 -> 1, can't use plan cache
 alter schema read_only read only 1;
 select * from read_only.t1 where a = 1;
-SELECT @@last_plan_from_cache; # should be 0
+# should be 0
+SELECT @@last_plan_from_cache;
+select * from read_only.t1 where a = 1;
+# should be 1
+SELECT @@last_plan_from_cache;
 # read only 1 -> 0, can use plan cache
 alter schema read_only read only 0;
 select * from read_only.t1 where a = 1;
-SELECT @@last_plan_from_cache; # should be 0
+# should be 0
+SELECT @@last_plan_from_cache;
+select * from read_only.t1 where a = 1;
+# should be 1
+SELECT @@last_plan_from_cache;
 SET tidb_enable_non_prepared_plan_cache = OFF;
 
 ## test create binding in read only mode

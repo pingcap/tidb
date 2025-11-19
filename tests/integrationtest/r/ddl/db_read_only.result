@@ -350,42 +350,62 @@ execute stmt_select using @a;
 a	b
 execute stmt_select using @a;
 a	b
-select @@last_plan_from_cache; # should be 1
+select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
 alter schema read_only read only 1;
 execute stmt_select using @a;
 a	b
-select @@last_plan_from_cache; # should be 0
+select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
+execute stmt_select using @a;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
 alter schema read_only read only 0;
 execute stmt_select using @a;
 a	b
-select @@last_plan_from_cache; # should be 0
+select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
+execute stmt_select using @a;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
 SET tidb_enable_non_prepared_plan_cache = ON;
 select * from read_only.t1 where a = 1;
 a	b
 select * from read_only.t1 where a = 1;
 a	b
-SELECT @@last_plan_from_cache; # should be 1
+SELECT @@last_plan_from_cache;
 @@last_plan_from_cache
 1
 alter schema read_only read only 1;
 select * from read_only.t1 where a = 1;
 a	b
-SELECT @@last_plan_from_cache; # should be 0
+SELECT @@last_plan_from_cache;
 @@last_plan_from_cache
 0
+select * from read_only.t1 where a = 1;
+a	b
+SELECT @@last_plan_from_cache;
+@@last_plan_from_cache
+1
 alter schema read_only read only 0;
 select * from read_only.t1 where a = 1;
 a	b
-SELECT @@last_plan_from_cache; # should be 0
-SET tidb_enable_non_prepared_plan_cache = OFF;
+SELECT @@last_plan_from_cache;
 @@last_plan_from_cache
 0
+select * from read_only.t1 where a = 1;
+a	b
+SELECT @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+SET tidb_enable_non_prepared_plan_cache = OFF;
 alter schema read_only read only 1;
 create binding for select * from t1 where b = 1 using select /*+ use_index(t1, idx_b) */ * from t1 where b = 1;
 create binding for update t1 set b = 2 where a = 1 using update /*+ use_index(t1, idx_b) */ t1 set b = 2 where a = 1;
