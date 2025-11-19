@@ -427,8 +427,9 @@ func CalculateRegionBatch(totalRegionCnt int, nodeCnt int, useLocalDisk bool) in
 	})
 	var regionBatch int
 	if useLocalDisk {
-		// We want to avoid too may partial imports when using local disk. So we limit the node count to 3 so that
-		// at most 3 partial imports if disk space is enough.
+		// We want to avoid too may partial imports when using local disk. So we
+		// limit the node count to 3 so that at most 3 partial imports if disk
+		// space is enough.
 		nodeCnt = min(3, nodeCnt)
 	}
 	avgTasksPerInstance := (totalRegionCnt + nodeCnt - 1) / nodeCnt // ceiling
