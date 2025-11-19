@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -42,7 +42,7 @@ func TestPredicateUsage_FirstTouchCreatesRow(t *testing.T) {
 
 	// resolve table and column IDs
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableID := tbl.Meta().ID
 	colAID := tbl.Meta().Columns[0].ID
@@ -68,7 +68,7 @@ func TestPredicateUsage_NoBumpWithinThrottle(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().DumpColStatsUsageToKV())
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableID := tbl.Meta().ID
 	colAID := tbl.Meta().Columns[0].ID
@@ -100,7 +100,7 @@ func TestPredicateUsage_BumpAfterOldStoredValue(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().DumpColStatsUsageToKV())
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableID := tbl.Meta().ID
 	colAID := tbl.Meta().Columns[0].ID
@@ -180,7 +180,7 @@ func TestDumpColStatsUsageWriter_ConcurrentMultiTables(t *testing.T) {
 	tableIDs := make([]int64, 0, tableCount)
 	allCols := make([][]int64, 0, tableCount)
 	for i := 1; i <= tableCount; i++ {
-		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(fmt.Sprintf("t%d", i)))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%d", i)))
 		require.NoError(t, err)
 		tid := tbl.Meta().ID
 		tableIDs = append(tableIDs, tid)
