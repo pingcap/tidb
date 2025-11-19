@@ -510,7 +510,8 @@ func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-
+	_, err = newTxn(ctx)
+	require.NoError(t, err)
 	rows := [][]types.Datum{row, newRow}
 
 	i = 0
@@ -533,7 +534,7 @@ func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	txn, err = newTxn(ctx)
+	_, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	i = 0
