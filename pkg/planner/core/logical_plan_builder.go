@@ -3669,16 +3669,6 @@ func (b *PlanBuilder) addAliasName(ctx context.Context, selectStmt *ast.SelectSt
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) {
-	var sb strings.Builder
-	ctx := format.NewRestoreCtx(0, &sb)
-	if err := hint.Restore(ctx); err != nil {
-		return
-	}
-	b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-		fmt.Sprintf("Hint %s is inapplicable. Please specify the table names in the arguments.", sb.String()))
-}
-
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	sessionVars := b.ctx.GetSessionVars()

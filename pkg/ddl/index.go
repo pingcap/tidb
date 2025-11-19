@@ -2937,10 +2937,8 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 
 // TaskKeyBuilder is used to build task key for the backfill job.
 type TaskKeyBuilder struct {
-	keyspace       string
 	multiSchemaSeq int32
 	mergeTempIdx   bool
-	jobID          int64
 }
 
 // NewTaskKeyBuilder creates a new TaskKeyBuilder.
