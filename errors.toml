@@ -2756,6 +2756,11 @@ error = '''
 '%s' is unsupported on cache tables.
 '''
 
+["planner:8266"]
+error = '''
+Optimizer cost exceeds tidb_max_estimated_cost: %g > %g
+'''
+
 ["privilege:1045"]
 error = '''
 Access denied for user '%-.48s'@'%-.255s' (using password: %s)

@@ -328,7 +328,7 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 		// Still allow EXPLAIN, unless EXPLAIN ANALYZE
 		if !sessVars.StmtCtx.InExplainStmt ||
 			sessVars.StmtCtx.InExplainAnalyzeStmt {
-			return nil, nil, cost, errors.New(fmt.Sprintf("optimizer cost exceeds tidb_max_estimated_cost: %g > %g", cost, sessVars.MaxEstimatedCost))
+			return nil, nil, cost, plannererrors.ErrMaxEstimatedCostExceeded.FastGenByArgs(cost, sessVars.MaxEstimatedCost)
 		}
 	}
 
@@ -1129,7 +1129,7 @@ func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost floa
 		// Still allow EXPLAIN, unless EXPLAIN ANALYZE
 		if !sessVars.StmtCtx.InExplainStmt ||
 			sessVars.StmtCtx.InExplainAnalyzeStmt {
-			return nil, cost, errors.New(fmt.Sprintf("optimizer cost exceeds tidb_max_estimated_cost: %g > %g", cost, sessVars.MaxEstimatedCost))
+			return nil, cost, plannererrors.ErrMaxEstimatedCostExceeded.FastGenByArgs(cost, sessVars.MaxEstimatedCost)
 		}
 	}
 	return t.Plan(), cost, err
