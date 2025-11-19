@@ -43,6 +43,7 @@ import (
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/table"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -53,13 +54,14 @@ import (
 
 type readIndexStepExecutor struct {
 	taskexecutor.BaseStepExecutor
-	store    kv.Storage
-	etcdCli  *clientv3.Client
-	sessPool *sess.Pool
-	job      *model.Job
-	indexes  []*model.IndexInfo
-	ptbl     table.PhysicalTable
-	jc       *ReorgContext
+	store        kv.Storage
+	etcdCli      *clientv3.Client
+	sessPool     *sess.Pool
+	job          *model.Job
+	indexes      []*model.IndexInfo
+	ptbl         table.PhysicalTable
+	jc           *ReorgContext
+	ownerManager owner.Manager
 
 	avgRowSize      int
 	cloudStorageURI string
@@ -83,7 +85,7 @@ type readIndexSummary struct {
 func newReadIndexExecutor(
 	store kv.Storage,
 	sessPool *sess.Pool,
-	etcdCli *clientv3.Client,
+	ddlObj *ddl,
 	job *model.Job,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
@@ -93,7 +95,8 @@ func newReadIndexExecutor(
 ) (*readIndexStepExecutor, error) {
 	return &readIndexStepExecutor{
 		store:           store,
-		etcdCli:         etcdCli,
+		etcdCli:         ddlObj.etcdCli,
+		ownerManager:    ddlObj.ownerManager,
 		sessPool:        sessPool,
 		job:             job,
 		indexes:         indexes,
@@ -246,6 +249,10 @@ func (r *readIndexStepExecutor) ResetSummary() {
 
 func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
+	// For owner node, the cleanup is done when the job is finished.
+	if !r.ownerManager.IsOwner() {
+		metrics.CleanupAllMetricsForJob(r.job.ID)
+	}
 	if r.backend != nil {
 		r.backend.Close()
 	}

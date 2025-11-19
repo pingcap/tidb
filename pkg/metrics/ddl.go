@@ -330,9 +330,9 @@ func GetBackfillProgressByLabel(id int64, label, schemaName, tableName, colOrIdx
 	}
 
 	if _, ok := cleanupFuncs[id][lv]; !ok {
-		logutil.BgLogger().Debug("add backfill progress gauge metric", zap.Int64("jobID", id), zap.String("label", lv))
+		logutil.BgLogger().Info("add backfill progress gauge metric", zap.Int64("jobID", id), zap.String("label", lv))
 		cleanupFuncs[id][lv] = func() {
-			logutil.BgLogger().Debug("cleanup backfill progress gauge metric", zap.Int64("jobID", id), zap.String("label", lv))
+			logutil.BgLogger().Info("cleanup backfill progress gauge metric", zap.Int64("jobID", id), zap.String("label", lv))
 			BackfillProgressGauge.DeleteLabelValues(lv)
 		}
 	}
