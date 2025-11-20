@@ -166,7 +166,7 @@ func newParallelDistinctAggTestCase(funcName string, dataTypes []*types.FieldTyp
 	case mysql.TypeVarString:
 		dataGenFunc = func() types.Datum {
 			for {
-				newVal := generateRandomString(rand.Intn(5)) // TODO revoked to 100
+				newVal := generateRandomString(rand.Intn(100))
 				_, ok := stringDatums[newVal]
 				if ok {
 					continue
@@ -209,17 +209,17 @@ func newParallelDistinctAggTestCase(funcName string, dataTypes []*types.FieldTyp
 	insertedIdxs := make(map[int]struct{})
 	nullValProportion := rand.Intn(9) + 1
 	for range numRows {
+		chkIdx := rand.Intn(srcChkNum)
 		if allNull || (needNull && rand.Intn(10) < nullValProportion) {
 			nilDatum := types.NewDatum(nil)
-			testCase.srcChks[rand.Intn(srcChkNum)].AppendDatum(0, &nilDatum)
+			testCase.srcChks[chkIdx].AppendDatum(0, &nilDatum)
 			if hasMultiArgs {
-				testCase.srcChks[rand.Intn(srcChkNum)].AppendDatum(1, &nilDatum)
+				testCase.srcChks[chkIdx].AppendDatum(1, &nilDatum)
 			}
 			continue
 		}
 
 		idx := rand.Intn(ndv)
-		chkIdx := rand.Intn(srcChkNum)
 		testCase.srcChks[chkIdx].AppendDatum(0, &datumsForNDV[idx][0])
 		if hasMultiArgs {
 			testCase.srcChks[chkIdx].AppendDatum(1, &datumsForNDV[idx][1])
@@ -767,6 +767,7 @@ func testParallelDistinctAggFunc(t *testing.T, p parallelDistinctAggTestCase, mu
 
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+		ctx.ExprContext.SetGroupConcatMaxLenForTest(1000000) // Do not truncate
 	}
 	desc, err := aggregation.NewAggFuncDesc(ctx, p.funcName, args, true)
 	require.NoError(t, err)
@@ -774,6 +775,10 @@ func testParallelDistinctAggFunc(t *testing.T, p parallelDistinctAggTestCase, mu
 	partialDesc, finalDesc := desc.Split([]int{0, 1})
 	partialFunc := aggfuncs.Build(ctx, partialDesc, 0)
 	finalFunc := aggfuncs.Build(ctx, finalDesc, 0)
+
+	if p.funcName == ast.AggFuncGroupConcat {
+		
+	}
 
 	ctor := collate.GetCollator(finalDesc.RetTp.GetCollate())
 

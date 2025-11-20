@@ -17,13 +17,11 @@ package aggfuncs
 import (
 	"bytes"
 	"container/heap"
-	"fmt"
 	"sort"
 	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -76,7 +74,7 @@ func (e *baseGroupConcat4String) UpdatePartialResult(sctx AggFuncUpdateContext, 
 
 func (e *baseGroupConcat4String) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4GroupConcat)(pr)
-	
+
 	if p.buffer == nil {
 		chk.AppendNull(e.ordinal)
 		return nil
@@ -102,6 +100,36 @@ func (e *baseGroupConcat4String) truncatePartialResultIfNeed(ctx AggFuncUpdateCo
 		buffer.Truncate(int(e.maxLen))
 		return e.handleTruncateError(ctx)
 	}
+	return nil
+}
+
+type baseGroupConcatDistinct4String struct {
+	baseGroupConcat4String
+}
+
+func (e *baseGroupConcatDistinct4String) AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4GroupConcatDistinct)(pr)
+
+	if len(p.valSet.Data) == 0 {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+
+	for _, val := range p.valSet.Data {
+		if p.buffer == nil {
+			p.buffer = &bytes.Buffer{}
+		} else {
+			p.buffer.WriteString(e.sep)
+		}
+		p.buffer.WriteString(val)
+	}
+
+	err := e.truncatePartialResultIfNeed(sctx, p.buffer)
+	if err != nil {
+		return err
+	}
+
+	chk.AppendString(e.ordinal, p.buffer.String())
 	return nil
 }
 
@@ -227,7 +255,7 @@ type partialResult4GroupConcatDistinct struct {
 }
 
 type groupPartialConcatDistinct struct {
-	baseGroupConcat4String
+	baseGroupConcatDistinct4String
 }
 
 func (e *groupPartialConcatDistinct) MergePartialResult(sctx AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
@@ -241,7 +269,6 @@ func (e *groupPartialConcatDistinct) MergePartialResult(sctx AggFuncUpdateContex
 			continue
 		}
 
-		log.Info(fmt.Sprintf("Merge: %s", val))
 		memDelta += d.valSet.Insert(key, val)
 		memDelta += int64(len(e.sep) + len(key) + len(val))
 	}
@@ -253,7 +280,7 @@ func (e *groupPartialConcatDistinct) MergePartialResult(sctx AggFuncUpdateContex
 }
 
 type groupOriginalConcatDistinct struct {
-	baseGroupConcat4String
+	baseGroupConcatDistinct4String
 }
 
 func (*groupOriginalConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -310,24 +337,12 @@ func (e *groupOriginalConcatDistinct) UpdatePartialResult(sctx AggFuncUpdateCont
 		if p.valSet.Exist(joinedVal) {
 			continue
 		}
-		log.Info(fmt.Sprintf("Update, insert: %s", p.valsBuf.String()))
 		valStr := p.valsBuf.String()
 		memDelta += p.valSet.Insert(joinedVal, valStr)
 		memDelta += int64(len(joinedVal))
 		memDelta += int64(len(valStr))
-		// // write separator
-		// if p.buffer == nil {
-		// 	p.buffer = &bytes.Buffer{}
-		// 	memDelta += DefBytesBufferSize
-		// } else {
-		// 	p.buffer.WriteString(e.sep)
-		// }
-		// // write values
-		// p.buffer.WriteString(p.valsBuf.String())
 	}
-	// if p.buffer != nil {
-	// 	return memDelta, e.truncatePartialResultIfNeed(sctx, p.buffer) // TODO move it to `Append`
-	// }
+
 	return memDelta, nil
 }
 

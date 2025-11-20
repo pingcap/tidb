@@ -107,25 +107,24 @@ func TestParallelDistinctGroupConcat(t *testing.T) {
 	dataTypes := []*types.FieldType{types.NewFieldType(mysql.TypeVarString), types.NewFieldType(mysql.TypeVarString)}
 	for range 10 {
 		var testCase *parallelDistinctAggTestCase
-		// randNum := rand.Intn(100)
-		// if randNum < 10 {
-		// 	// Empty input
-		// 	testCase = newParallelDistinctAggTestCase(ast.AggFuncGroupConcat, dataTypes, 0, 0, false, false)
-		// } else if randNum < 20 {
-		// 	// Some input are null
-		// 	rowNum := rand.Intn(10) + 1 // TODO revoked to 100
-		// 	testCase = newParallelDistinctAggTestCase(ast.AggFuncGroupConcat, dataTypes, rowNum, rand.Intn(rowNum)+1, true, false)
-		// } else if randNum < 30 {
-		// 	// All input are null
-		// 	rowNum := rand.Intn(10) + 1 // TODO revoked to 100
-		// 	testCase = newParallelDistinctAggTestCase(ast.AggFuncGroupConcat, dataTypes, rowNum, rand.Intn(rowNum)+1, true, true)
-		// } else {
-		// 	// All input are not null
-		// 	rowNum := rand.Intn(10) + 1 // TODO revoked to 100
-		// 	testCase = newParallelDistinctAggTestCase(ast.AggFuncGroupConcat, dataTypes, rowNum, rand.Intn(rowNum)+1, false, false)
-		// }
+		randNum := rand.Intn(100)
+		if randNum < 10 {
+			// Empty input
+			testCase = newParallelDistinctAggTestCase(ast.AggFuncGroupConcat, dataTypes, 0, 0, false, false)
+		} else if randNum < 20 {
+			// Some input are null
+			rowNum := rand.Intn(100) + 1
+			testCase = newParallelDistinctAggTestCase(ast.AggFuncGroupConcat, dataTypes, rowNum, rand.Intn(rowNum)+1, true, false)
+		} else if randNum < 30 {
+			// All input are null
+			rowNum := rand.Intn(100) + 1
+			testCase = newParallelDistinctAggTestCase(ast.AggFuncGroupConcat, dataTypes, rowNum, rand.Intn(rowNum)+1, true, true)
+		} else {
+			// All input are not null
+			rowNum := rand.Intn(100) + 1
+			testCase = newParallelDistinctAggTestCase(ast.AggFuncGroupConcat, dataTypes, rowNum, rand.Intn(rowNum)+1, false, false)
+		}
 
-		testCase = newParallelDistinctAggTestCase(ast.AggFuncGroupConcat, dataTypes, 10, 5, false, false)
 		testParallelDistinctAggFunc(t, *testCase, true)
 	}
 }

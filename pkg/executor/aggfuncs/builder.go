@@ -545,9 +545,9 @@ func buildGroupConcat(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncD
 			}
 			switch aggFuncDesc.Mode {
 			case aggregation.CompleteMode, aggregation.Partial1Mode:
-				return &groupOriginalConcatDistinct{base}
+				return &groupOriginalConcatDistinct{baseGroupConcatDistinct4String{base}}
 			case aggregation.FinalMode, aggregation.Partial2Mode:
-				return &groupPartialConcatDistinct{base}
+				return &groupPartialConcatDistinct{baseGroupConcatDistinct4String{base}}
 			default:
 				return nil
 			}
