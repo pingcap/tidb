@@ -89,8 +89,8 @@ func BatchGetToGetOptions(options []BatchGetOption) []GetOption {
 	return tikvstore.BatchGetToGetOptions(options)
 }
 
-// WithRequireCommitTS is used to indicate that the returned value should contain commit ts.
-func WithRequireCommitTS() tikvstore.GetOrBatchGetOption {
+// WithReturnCommitTS is used to indicate that the returned value should contain commit ts.
+func WithReturnCommitTS() tikvstore.GetOrBatchGetOption {
 	return tikvstore.WithRequireCommitTS()
 }
 
@@ -100,7 +100,7 @@ type Getter interface {
 	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
 	// The returned ValueEntry contains both value and some extra meta such as `CommitTS`.
 	// The `CommitTS` is 0 by default, indicating that the commit timestamp is unknown,
-	// if you need it, please set the option `WithRequireCommitTS`.
+	// if you need it, please set the option `WithReturnCommitTS`.
 	Get(ctx context.Context, k Key, options ...GetOption) (ValueEntry, error)
 }
 
@@ -312,7 +312,7 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	// The returned ValueEntry contains both value and some extra meta such as `CommitTS`.
 	// The `CommitTS` is 0 by default, indicating that the commit timestamp is unknown,
-	// if you need it, please set the option `WithRequireCommitTS`.
+	// if you need it, please set the option `WithReturnCommitTS`.
 	BatchGet(ctx context.Context, keys []Key, options ...BatchGetOption) (map[string]ValueEntry, error)
 	IsPessimistic() bool
 	// CacheTableInfo caches the index name.
@@ -726,7 +726,7 @@ type BatchGetter interface {
 	// BatchGet gets a batch of values.
 	// The returned ValueEntry contains both value and some extra meta such as `CommitTS`.
 	// The `CommitTS` is 0 by default, indicating that the commit timestamp is unknown,
-	// if you need it, please set the option `WithRequireCommitTS`.
+	// if you need it, please set the option `WithReturnCommitTS`.
 	BatchGet(ctx context.Context, keys []Key, options ...BatchGetOption) (map[string]ValueEntry, error)
 }
 

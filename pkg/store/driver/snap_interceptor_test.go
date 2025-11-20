@@ -178,7 +178,7 @@ func TestSnapshotWitInterceptor(t *testing.T) {
 	require.Equal(t, []any{"OnGet", ctx, k, false}, mockInterceptor.spy)
 
 	// Test for Get with option
-	entry, err = snap.Get(ctx, k, kv.WithRequireCommitTS())
+	entry, err = snap.Get(ctx, k, kv.WithReturnCommitTS())
 	require.NoError(t, err)
 	validCommitTS(t, entry.CommitTS)
 	commitTS := entry.CommitTS
@@ -202,7 +202,7 @@ func TestSnapshotWitInterceptor(t *testing.T) {
 	require.Equal(t, []any{"OnBatchGet", ctx, keys, false}, mockInterceptor.spy)
 
 	// Test for BatchGet with option
-	result, err = snap.BatchGet(ctx, keys, kv.WithRequireCommitTS())
+	result, err = snap.BatchGet(ctx, keys, kv.WithReturnCommitTS())
 	require.NoError(t, err)
 	require.Equal(t, map[string]kv.ValueEntry{
 		"k2": kv.NewValueEntry([]byte("v2"), commitTS),

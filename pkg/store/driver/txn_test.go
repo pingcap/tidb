@@ -70,8 +70,8 @@ func TestTxnGet(t *testing.T) {
 	entry, err := txn.Get(context.Background(), kv.Key("k1"))
 	require.NoError(t, err)
 	require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), entry)
-	// should return the CommitTS for option WithRequireCommitTS
-	entry, err = txn.Get(context.Background(), kv.Key("k1"), kv.WithRequireCommitTS())
+	// should return the CommitTS for option WithReturnCommitTS
+	entry, err = txn.Get(context.Background(), kv.Key("k1"), kv.WithReturnCommitTS())
 	require.NoError(t, err)
 	require.Equal(t, []byte("v1"), entry.Value)
 	validCommitTS(t, entry.CommitTS)
@@ -85,7 +85,7 @@ func TestTxnGet(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, kv.NewValueEntry([]byte("v1+"), 0), entry)
 	// dirty data's commitTS should be 0
-	entry, err = txn.Get(context.Background(), kv.Key("k1"), kv.WithRequireCommitTS())
+	entry, err = txn.Get(context.Background(), kv.Key("k1"), kv.WithReturnCommitTS())
 	require.NoError(t, err)
 	require.Equal(t, kv.NewValueEntry([]byte("v1+"), 0), entry)
 
@@ -111,8 +111,8 @@ func TestTxnGet(t *testing.T) {
 	require.Equal(t, kv.ValueEntry{}, entry)
 	require.True(t, kv.ErrNotExist.Equal(err))
 
-	// should return kv.ErrNotExist if not exist (WithRequireCommitTS specified)
-	entry, err = txn.Get(context.Background(), kv.Key("k1"), kv.WithRequireCommitTS())
+	// should return kv.ErrNotExist if not exist (WithReturnCommitTS specified)
+	entry, err = txn.Get(context.Background(), kv.Key("k1"), kv.WithReturnCommitTS())
 	require.Equal(t, kv.ValueEntry{}, entry)
 	require.True(t, kv.ErrNotExist.Equal(err))
 
@@ -149,7 +149,7 @@ func TestTxnBatchGet(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get the snapshot commit ts
-	entry, err := txn.Get(context.Background(), kv.Key("k1"), kv.WithRequireCommitTS())
+	entry, err := txn.Get(context.Background(), kv.Key("k1"), kv.WithReturnCommitTS())
 	require.NoError(t, err)
 	validCommitTS(t, entry.CommitTS)
 	commitTS := entry.CommitTS
@@ -162,8 +162,8 @@ func TestTxnBatchGet(t *testing.T) {
 	require.Equal(t, kv.NewValueEntry([]byte("v2"), 0), result["k2"])
 	require.Equal(t, kv.NewValueEntry([]byte("v3"), 0), result["k3"])
 
-	// Test BatchGet from snapshot with WithRequireCommitTS option
-	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k2"), kv.Key("k3"), kv.Key("kn")}, kv.WithRequireCommitTS())
+	// Test BatchGet from snapshot with WithReturnCommitTS option
+	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k2"), kv.Key("k3"), kv.Key("kn")}, kv.WithReturnCommitTS())
 	require.NoError(t, err)
 	require.Equal(t, 3, len(result))
 	require.Equal(t, kv.NewValueEntry([]byte("v1"), commitTS), result["k1"])
@@ -192,8 +192,8 @@ func TestTxnBatchGet(t *testing.T) {
 	require.Equal(t, kv.NewValueEntry([]byte("v1+"), 0), result["k1"])
 	require.Equal(t, kv.NewValueEntry([]byte("v4+"), 0), result["k4"])
 
-	// test WithRequireCommitTS option
-	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k2"), kv.Key("k3"), kv.Key("k4")}, kv.WithRequireCommitTS())
+	// test WithReturnCommitTS option
+	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k2"), kv.Key("k3"), kv.Key("k4")}, kv.WithReturnCommitTS())
 	require.Equal(t, 3, len(result))
 	require.Equal(t, kv.NewValueEntry([]byte("v1+"), 0), result["k1"])
 	require.Equal(t, kv.NewValueEntry([]byte("v3"), commitTS), result["k3"])

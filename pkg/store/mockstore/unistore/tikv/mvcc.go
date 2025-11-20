@@ -1826,7 +1826,7 @@ func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]b
 func (store *MVCCStore) GetPair(reqCtx *requestCtx, key []byte, version uint64) (*kvrpcpb.KvPair, error) {
 	if reqCtx.isSnapshotIsolation() {
 		committedLocks := reqCtx.rpcCtx.CommittedLocks
-		if reqCtx.needCommitTS {
+		if reqCtx.returnCommitTS {
 			// set committedLocks to nil if commitTS is needed to make sure all KvPair has CommitTS
 			committedLocks = nil
 		}
@@ -1852,7 +1852,7 @@ func (store *MVCCStore) GetPair(reqCtx *requestCtx, key []byte, version uint64) 
 	}
 
 	var commitTS uint64
-	if reqCtx.needCommitTS && len(userMeta) > 0 {
+	if reqCtx.returnCommitTS && len(userMeta) > 0 {
 		commitTS = userMeta.CommitTS()
 	}
 	return &kvrpcpb.KvPair{
@@ -1869,7 +1869,7 @@ func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint
 	if reqCtx.isSnapshotIsolation() {
 		remain = make([][]byte, 0, len(keys))
 		committedLocks := reqCtx.rpcCtx.CommittedLocks
-		if reqCtx.needCommitTS {
+		if reqCtx.returnCommitTS {
 			// set committedLocks to nil if commitTS is needed to make sure all KvPair has CommitTS
 			committedLocks = nil
 		}
@@ -1902,7 +1902,7 @@ func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint
 	batchGetFunc := func(key, value []byte, userMeta mvcc.DBUserMeta, err error) {
 		if len(value) != 0 {
 			var commitTS uint64
-			if reqCtx.needCommitTS && err == nil {
+			if reqCtx.returnCommitTS && err == nil {
 				commitTS = userMeta.CommitTS()
 			}
 			pairs = append(pairs, &kvrpcpb.KvPair{

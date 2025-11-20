@@ -54,7 +54,7 @@ func TestBufferBatchGetter(t *testing.T) {
 	require.Equal(t, kv.NewValueEntry([]byte("d"), 0), result[string(kd)])
 
 	// test commit ts option
-	result, err = batchGetter.BatchGet(context.Background(), []kv.Key{ka, kb, kc, kd, []byte("xx")}, kv.WithRequireCommitTS())
+	result, err = batchGetter.BatchGet(context.Background(), []kv.Key{ka, kb, kc, kd, []byte("xx")}, kv.WithReturnCommitTS())
 	require.NoError(t, err)
 	require.Len(t, result, 3)
 	require.Equal(t, kv.NewValueEntry([]byte("a2"), 3000+'a'), result[string(ka)])

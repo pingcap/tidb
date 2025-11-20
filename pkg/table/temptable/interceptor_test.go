@@ -435,7 +435,7 @@ func TestInterceptorOnGet(t *testing.T) {
 		var commitTS uint64
 		if requireCommitTS {
 			commitTS = mockCommitTS
-			entry, err = inter.OnGet(ctx, snap, c.Key, kv.WithRequireCommitTS())
+			entry, err = inter.OnGet(ctx, snap, c.Key, kv.WithReturnCommitTS())
 		} else {
 			entry, err = inter.OnGet(ctx, snap, c.Key)
 		}
@@ -491,7 +491,7 @@ func TestInterceptorOnGet(t *testing.T) {
 		var entry kv.ValueEntry
 		var err error
 		if requireCommitTS {
-			entry, err = interceptor.OnGet(ctx, snap, c.Key, kv.WithRequireCommitTS())
+			entry, err = interceptor.OnGet(ctx, snap, c.Key, kv.WithReturnCommitTS())
 		} else {
 			entry, err = interceptor.OnGet(ctx, snap, c.Key)
 		}
@@ -903,7 +903,7 @@ func TestInterceptorOnBatchGet(t *testing.T) {
 		var result map[string]kv.ValueEntry
 		var err error
 		if requireCommitTS {
-			result, err = inter.OnBatchGet(ctx, snap, c.keys, kv.WithRequireCommitTS())
+			result, err = inter.OnBatchGet(ctx, snap, c.keys, kv.WithReturnCommitTS())
 		} else {
 			result, err = inter.OnBatchGet(ctx, snap, c.keys)
 		}

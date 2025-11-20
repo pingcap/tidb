@@ -114,7 +114,7 @@ type requestCtx struct {
 	onePCCommitTS    uint64
 	regionManager    RegionManager
 	pdClient         pd.Client
-	needCommitTS     bool
+	returnCommitTS   bool
 }
 
 func newRequestCtx(svr *Server, ctx *kvrpcpb.Context, method string) (*requestCtx, error) {
@@ -212,7 +212,7 @@ func (svr *Server) KvGet(ctx context.Context, req *kvrpcpb.GetRequest) (*kvrpcpb
 	if reqCtx.regErr != nil {
 		return &kvrpcpb.GetResponse{RegionError: reqCtx.regErr}, nil
 	}
-	reqCtx.needCommitTS = req.NeedCommitTs
+	reqCtx.returnCommitTS = req.NeedCommitTs
 	pair, err := svr.mvccStore.GetPair(reqCtx, req.Key, req.Version)
 	if err != nil {
 		return &kvrpcpb.GetResponse{
@@ -519,7 +519,7 @@ func (svr *Server) KvBatchGet(ctx context.Context, req *kvrpcpb.BatchGetRequest)
 	if reqCtx.regErr != nil {
 		return &kvrpcpb.BatchGetResponse{RegionError: reqCtx.regErr}, nil
 	}
-	reqCtx.needCommitTS = req.NeedCommitTs
+	reqCtx.returnCommitTS = req.NeedCommitTs
 	pairs := svr.mvccStore.BatchGet(reqCtx, req.Keys, req.GetVersion())
 	return &kvrpcpb.BatchGetResponse{
 		Pairs: pairs,

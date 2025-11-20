@@ -525,12 +525,10 @@ type PessimisticLockCacheGetter struct {
 // Get implements the kv.Getter interface.
 func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
 	var getOptions tikv.GetOptions
-	if len(options) > 0 {
-		getOptions.Apply(options)
-	}
+	getOptions.Apply(options)
 
 	if getOptions.RequireCommitTS() {
-		return kv.ValueEntry{}, errors.New("WithRequireCommitTS option is not supported for pessimistic lock cache getter")
+		return kv.ValueEntry{}, errors.New("WithReturnCommitTS option is not supported for pessimistic lock cache getter")
 	}
 
 	val, ok := getter.txnCtx.GetKeyInPessimisticLockCache(key)
@@ -548,12 +546,10 @@ type cacheBatchGetter struct {
 
 func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
 	var getOptions tikv.BatchGetOptions
-	if len(options) > 0 {
-		getOptions.Apply(options)
-	}
+	getOptions.Apply(options)
 
 	if getOptions.RequireCommitTS() {
-		return nil, errors.New("WithRequireCommitTS option is not supported for pessimistic lock cache getter")
+		return nil, errors.New("WithReturnCommitTS option is not supported for pessimistic lock cache getter")
 	}
 
 	cacheDB := b.ctx.GetStore().GetMemCache()
