@@ -1,0 +1,1919 @@
+drop table if exists t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15;
+create table t1 (
+id bigint primary key,
+a int,
+b varchar(50),
+c decimal(10,2),
+index idx_a(a)
+) PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (1000),
+PARTITION p1 VALUES LESS THAN (2000),
+PARTITION p2 VALUES LESS THAN MAXVALUE
+);
+create table t2 (
+id tinyint primary key,
+a int,
+b int,
+index idx_a(a)
+);
+create table t3 (
+id int,
+year_val int,
+a int,
+b int,
+primary key(id, year_val),
+index idx_a(a)
+) PARTITION BY LIST (year_val) (
+PARTITION p2023 VALUES IN (2023),
+PARTITION p2024 VALUES IN (2024),
+PARTITION p_future VALUES IN (2025, 2026, 2027)
+);
+create table t4 (
+id1 int,
+id2 varchar(20),
+a int,
+b int,
+primary key(id1, id2) CLUSTERED,
+index idx_a(a)
+) PARTITION BY HASH (id1) PARTITIONS 3;
+create table t5 (
+id1 int,
+id2 varchar(20),
+a int,
+b int,
+primary key(id1, id2) NONCLUSTERED,
+index idx_a(a)
+) PARTITION BY RANGE (id1) (
+PARTITION p0 VALUES LESS THAN (100),
+PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+create table t6 (
+id int primary key,
+a datetime,
+b bigint,
+c double,
+index idx_b(b)
+) PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (1000),
+PARTITION p1 VALUES LESS THAN (2000),
+PARTITION p2 VALUES LESS THAN MAXVALUE
+);
+create table t7 (
+id int primary key,
+a int,
+b int,
+generated_col int generated always as (a + b) stored,
+index idx_generated(generated_col)
+);
+create table t8 (
+id1 int,
+id2 varchar(10),
+a int,
+b int,
+primary key(id1, id2) CLUSTERED,
+index idx_a(a)
+) PARTITION BY HASH (id1) PARTITIONS 4;
+create table t9 (
+id int,
+year_val int,
+a int,
+b int,
+primary key(id, year_val),
+index idx_a(a)
+) PARTITION BY RANGE (year_val) (
+PARTITION p2023 VALUES LESS THAN (2024),
+PARTITION p2024 VALUES LESS THAN (2025),
+PARTITION p2025 VALUES LESS THAN MAXVALUE
+);
+create table t10 (
+id int primary key,
+date_val date,
+a int,
+b int,
+index idx_a(a)
+) PARTITION BY RANGE (id) (
+PARTITION p_old VALUES LESS THAN (1000),
+PARTITION p_new VALUES LESS THAN MAXVALUE
+);
+create table t11 (
+id bigint primary key,
+a int,
+b int,
+index idx_a(a)
+) PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (1000),
+PARTITION p1 VALUES LESS THAN (2000),
+PARTITION p2 VALUES LESS THAN MAXVALUE
+);
+create table t12 (
+id int primary key,
+a int,
+b int,
+index idx_a(a)
+) PARTITION BY RANGE (id) (
+PARTITION p_negative VALUES LESS THAN (0),
+PARTITION p_zero VALUES LESS THAN (1),
+PARTITION p_positive VALUES LESS THAN MAXVALUE
+);
+create table t13 (
+id mediumint primary key,
+a int,
+b int,
+index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 8;
+create table t14 (
+id smallint primary key,
+a int,
+b int,
+index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 6;
+create table t15 (
+id boolean primary key,
+a int,
+b int,
+c int,
+index idx_a(a),
+index idx_b(b),
+index idx_c(c)
+);
+insert into t1 values
+(500, 100, 'test1', 123.45),
+(1500, 200, 'test2', 234.56),
+(2500, 300, 'test3', 345.67);
+insert into t2 (id, a, b) values
+(1, 100, 200),
+(2, 300, 400),
+(3, 500, 600);
+insert into t3 values
+(1, 2023, 100, 200),
+(2, 2024, 300, 400),
+(3, 2025, 500, 600);
+insert into t4 values
+(1, 'aa', 100, 200),
+(2, 'bb', 300, 400),
+(3, 'cc', 500, 600);
+insert into t5 values
+(50, 'xx', 100, 200),
+(150, 'yy', 300, 400),
+(250, 'zz', 500, 600);
+insert into t6 values
+(500, '2024-01-01 10:00:00', 1000000, 123.45),
+(1500, '2024-02-01 10:00:00', 1500000, 234.56),
+(2500, '2024-03-01 10:00:00', 2500000, 345.67);
+insert into t7 (id, a, b) values
+(1, 10, 20),
+(2, 30, 40),
+(3, 50, 60);
+insert into t8 values
+(1, 'a', 100, 200),
+(2, 'b', 300, 400),
+(3, 'c', 500, 600);
+insert into t9 values
+(1, 2023, 100, 200),
+(2, 2024, 300, 400),
+(3, 2025, 500, 600);
+insert into t10 values
+(1, '2023-06-15', 100, 200),
+(2, '2024-06-15', 300, 400),
+(3, '2024-12-31', 500, 600);
+insert into t11 values
+(500, 100, 200),
+(1500, 300, 400),
+(2500, 500, 600);
+insert into t12 values
+(-50, 100, 200),
+(0, 300, 400),
+(50, 500, 600);
+insert into t13 (id, a, b) values
+(100, 100, 200),
+(200, 300, 400),
+(300, 500, 600);
+insert into t14 values
+(50, 100, 200),
+(150, 300, 400),
+(250, 500, 600);
+insert into t15 values
+(true, 100, 200, 300),
+(false, 400, 500, 600);
+explain select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > 150;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t1, index:idx_a(a)	range:(150,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > 150;
+id	a	b	c
+1500	200	test2	234.56
+2500	300	test3	345.67
+explain
+select /*+ index_lookup_pushdown(t2, idx_a) */ * from t2 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t2, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t2, idx_a) */ * from t2 where a > 200;
+id	a	b
+2	300	400
+3	500	600
+explain
+select /*+ index_lookup_pushdown(t3, idx_a) */ * from t3 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t3, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t3, idx_a) */ * from t3 where a > 200;
+id	year_val	a	b
+2	2024	300	400
+3	2025	500	600
+explain
+select /*+ index_lookup_pushdown(t4, idx_a) */ * from t4 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1 2]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t4, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t4, idx_a) */ * from t4 where a > 200;
+id1	id2	a	b
+2	bb	300	400
+3	cc	500	600
+explain select /*+ index_lookup_pushdown(t5, idx_a) */ * from t5 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t5, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t5	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t5	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t5, idx_a) */ * from t5 where a > 200;
+id1	id2	a	b
+150	yy	300	400
+250	zz	500	600
+explain select /*+ index_lookup_pushdown(t8, idx_a) */ * from t8 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1 2]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t8, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t8	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t8	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t8, idx_a) */ * from t8 where a > 200;
+id1	id2	a	b
+2	b	300	400
+3	c	500	600
+explain
+select /*+ index_lookup_pushdown(t6, idx_b) */ * from t6 where b > 1200000;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t6, index:idx_b(b)	range:(1200000,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t6	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t6	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t6, idx_b) */ * from t6 where b > 1200000;
+id	a	b	c
+1500	2024-02-01 10:00:00	1500000	234.56
+2500	2024-03-01 10:00:00	2500000	345.67
+explain select /*+ index_lookup_pushdown(t9, idx_a) */ * from t9 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t9, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t9	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t9	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t9, idx_a) */ * from t9 where a > 200;
+id	year_val	a	b
+2	2024	300	400
+3	2025	500	600
+explain select /*+ index_lookup_pushdown(t10, idx_a) */ * from t10 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t10, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t10	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t10	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t10, idx_a) */ * from t10 where a > 200;
+id	date_val	a	b
+2	2024-06-15	300	400
+3	2024-12-31	500	600
+explain select /*+ index_lookup_pushdown(t11, idx_a) */ * from t11 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t11, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t11	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t11	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t11, idx_a) */ * from t11 where a > 200;
+id	a	b
+1500	300	400
+2500	500	600
+explain select /*+ index_lookup_pushdown(t12, idx_a) */ * from t12 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t12, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t12	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t12	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t12, idx_a) */ * from t12 where a > 200;
+id	a	b
+0	300	400
+50	500	600
+explain select /*+ index_lookup_pushdown(t13, idx_a) */ * from t13 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t13, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t13	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t13	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t13, idx_a) */ * from t13 where a > 200;
+id	a	b
+200	300	400
+300	500	600
+explain select /*+ index_lookup_pushdown(t14, idx_a) */ * from t14 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t14, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t14	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t14	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t14, idx_a) */ * from t14 where a > 200;
+id	a	b
+150	300	400
+250	500	600
+explain select /*+ index_lookup_pushdown(t7, idx_generated) */ * from t7 where generated_col > 50;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t7, index:idx_generated(generated_col)	range:(50,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t7	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t7, idx_generated) */ * from t7 where generated_col > 50;
+id	a	b	generated_col
+2	30	40	70
+3	50	60	110
+explain select /*+ index_lookup_pushdown(t15, idx_a) */ * from t15 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t15, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t15	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t15	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t15, idx_a) */ * from t15 where a > 200;
+id	a	b	c
+0	400	500	600
+explain select /*+ index_lookup_pushdown(t15, idx_b) */ * from t15 where b > 400;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t15, index:idx_b(b)	range:(400,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t15	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t15	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t15, idx_b) */ * from t15 where b > 400;
+id	a	b	c
+0	400	500	600
+explain select /*+ index_lookup_pushdown(t15, idx_c) */ * from t15 where c > 600;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t15, index:idx_c(c)	range:(600,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t15	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t15	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t15, idx_c) */ * from t15 where c > 600;
+id	a	b	c
+explain select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > 100 limit 1;
+id	estRows	task	access object	operator info
+IndexLookUp_16	1.00	root	partition:all	limit embedded(offset:0, count:1)
+├─LocalIndexLookUp_18(Build)	1.00	cop[tikv]		index handle offsets:[1]
+│ ├─Limit_15(Build)	1.00	cop[tikv]		offset:0, count:1
+│ │ └─IndexRangeScan_13	1.00	cop[tikv]	table:t1, index:idx_a(a)	range:(100,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_17(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > 100 limit 1;
+id	a	b	c
+1500	200	test2	234.56
+explain select /*+ index_lookup_pushdown(t2, idx_a) */ * from t2 where a > 100 limit 1, 1;
+id	estRows	task	access object	operator info
+IndexLookUp_16	1.00	root		limit embedded(offset:1, count:1)
+├─LocalIndexLookUp_18(Build)	2.00	cop[tikv]		index handle offsets:[1]
+│ ├─Limit_15(Build)	2.00	cop[tikv]		offset:0, count:2
+│ │ └─IndexRangeScan_13	2.00	cop[tikv]	table:t2, index:idx_a(a)	range:(100,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_17(Probe)	2.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t2, idx_a) */ * from t2 where a > 100 limit 1, 1;
+id	a	b
+3	500	600
+explain select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > 100 and b like 'test%' and c > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_9	27.78	root	partition:all	
+├─Selection_10(Build)	27.78	cop[tikv]		gt(executor__index_lookup_pushdown3.t1.c, 200), like(executor__index_lookup_pushdown3.t1.b, "test%", 92)
+│ └─LocalIndexLookUp_12	3333.33	cop[tikv]		index handle offsets:[1]
+│   ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t1, index:idx_a(a)	range:(100,+inf], keep order:false, stats:pseudo
+│   └─TableRowIDScan_11(Probe)	3333.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_8(Probe)	0.00	cop[tikv]		gt(executor__index_lookup_pushdown3.t1.c, 200), like(executor__index_lookup_pushdown3.t1.b, "test%", 92)
+  └─TableRowIDScan_7	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > 100 and b like 'test%' and c > 200;
+id	a	b	c
+1500	200	test2	234.56
+2500	300	test3	345.67
+explain select /*+ index_lookup_pushdown(t4, idx_a) */ * from t4 where a > 200 and (id1 = 1 or id1 = 2);
+id	estRows	task	access object	operator info
+IndexLookUp_9	83.33	root	partition:p1,p2	
+├─LocalIndexLookUp_11(Build)	83.33	cop[tikv]		index handle offsets:[1 2]
+│ ├─Selection_8(Build)	83.33	cop[tikv]		or(eq(executor__index_lookup_pushdown3.t4.id1, 1), eq(executor__index_lookup_pushdown3.t4.id1, 2))
+│ │ └─IndexRangeScan_6	3333.33	cop[tikv]	table:t4, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_10(Probe)	83.33	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t4, idx_a) */ * from t4 where a > 200 and (id1 = 1 or id1 = 2);
+id1	id2	a	b
+2	bb	300	400
+explain select /*+ index_lookup_pushdown(t1, idx_a) agg_to_cop() */ count(*), avg(a) from t1 where a > 100;
+id	estRows	task	access object	operator info
+HashAgg_14	1.00	root		funcs:count(Column#7)->Column#5, funcs:avg(Column#8, Column#9)->Column#6
+└─IndexReader_15	1.00	root	partition:all	index:HashAgg_7
+  └─HashAgg_7	1.00	cop[tikv]		funcs:count(1)->Column#7, funcs:count(executor__index_lookup_pushdown3.t1.a)->Column#8, funcs:sum(executor__index_lookup_pushdown3.t1.a)->Column#9
+    └─IndexRangeScan_13	3333.33	cop[tikv]	table:t1, index:idx_a(a)	range:(100,+inf], keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, idx_a) agg_to_cop() */ count(*), avg(a) from t1 where a > 100;
+count(*)	avg(a)
+2	250.0000
+explain select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > (select avg(a) from t1) limit 2;
+id	estRows	task	access object	operator info
+IndexLookUp_48	2.00	root	partition:all	limit embedded(offset:0, count:2)
+├─LocalIndexLookUp_50(Build)	2.00	cop[tikv]		index handle offsets:[1]
+│ ├─Limit_47(Build)	2.00	cop[tikv]		offset:0, count:2
+│ │ └─IndexRangeScan_45	2.00	cop[tikv]	table:t1, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_49(Probe)	2.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_46(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery_33	N/A	root		Output: ScalarQueryCol#14
+└─MaxOneRow_7	1.00	root		
+  └─HashAgg_18	1.00	root		funcs:avg(Column#10, Column#11)->Column#9
+    └─IndexReader_19	1.00	root	partition:all	index:HashAgg_10
+      └─HashAgg_10	1.00	cop[tikv]		funcs:count(executor__index_lookup_pushdown3.t1.a)->Column#10, funcs:sum(executor__index_lookup_pushdown3.t1.a)->Column#11
+        └─IndexFullScan_17	10000.00	cop[tikv]	table:t1, index:idx_a(a)	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > (select avg(a) from t1) limit 2;
+id	a	b	c
+2500	300	test3	345.67
+create table join_table (
+a int,
+d int,
+index idx_join_a(a)
+);
+insert into join_table values (100, 1000), (300, 3000), (500, 5000), (700, 7000);
+explain select /*+ index_lookup_pushdown(t1, idx_a) */ t1.*, j.d from t1 join join_table j on t1.a = j.a where t1.a > 100;
+id	estRows	task	access object	operator info
+IndexHashJoin_23	4166.67	root		inner join, inner:IndexLookUp_46, outer key:executor__index_lookup_pushdown3.join_table.a, inner key:executor__index_lookup_pushdown3.t1.a, equal cond:eq(executor__index_lookup_pushdown3.join_table.a, executor__index_lookup_pushdown3.t1.a)
+├─TableReader_49(Build)	3333.33	root		data:Selection_48
+│ └─Selection_48	3333.33	cop[tikv]		gt(executor__index_lookup_pushdown3.join_table.a, 100), not(isnull(executor__index_lookup_pushdown3.join_table.a))
+│   └─TableFullScan_47	10000.00	cop[tikv]	table:j	keep order:false, stats:pseudo
+└─IndexLookUp_46(Probe)	4166.67	root	partition:all	
+  ├─Selection_45(Build)	4166.67	cop[tikv]		gt(executor__index_lookup_pushdown3.t1.a, 100), not(isnull(executor__index_lookup_pushdown3.t1.a))
+  │ └─IndexRangeScan_43	12500.00	cop[tikv]	table:t1, index:idx_a(a)	range: decided by [eq(executor__index_lookup_pushdown3.t1.a, executor__index_lookup_pushdown3.join_table.a)], keep order:false, stats:pseudo
+  └─TableRowIDScan_44(Probe)	4166.67	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.
+select /*+ index_lookup_pushdown(t1, idx_a) */ t1.*, j.d from t1 join join_table j on t1.a = j.a where t1.a > 100;
+id	a	b	c	d
+2500	300	test3	345.67	3000
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.
+create table common_handle_no_partition (
+id1 int,
+id2 varchar(20),
+a int,
+primary key(id1, id2) CLUSTERED,
+index idx_a(a)
+);
+insert into common_handle_no_partition values (1, 'test', 100), (2, 'test2', 200);
+explain select /*+ index_lookup_pushdown(common_handle_no_partition, idx_a) */ * from common_handle_no_partition where a > 150;
+id	estRows	task	access object	operator info
+IndexReader_7	3333.33	root		index:IndexRangeScan_6
+└─IndexRangeScan_6	3333.33	cop[tikv]	table:common_handle_no_partition, index:idx_a(a)	range:(150,+inf], keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(common_handle_no_partition, idx_a) */ * from common_handle_no_partition where a > 150;
+id1	id2	a
+2	test2	200
+insert into t1 values (3500, NULL, NULL, NULL);
+explain select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a is null;
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t1, index:idx_a(a)	range:[NULL,NULL], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a is null;
+id	a	b	c
+3500	NULL	NULL	NULL
+insert into t6 values (9999, '2024-12-31 23:59:59', 9999999999, 99999.99);
+explain select /*+ index_lookup_pushdown(t6, idx_b) */ * from t6 where b > 5000000000;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:t6, index:idx_b(b)	range:(5000000000,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:t6	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t6	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(t6, idx_b) */ * from t6 where b > 5000000000;
+id	a	b	c
+9999	2024-12-31 23:59:59	9999999999	99999.99
+drop table join_table, common_handle_no_partition;
+drop table if exists ct1, ct2, ct3, ct4, ct5, ct6, ct7, ct8, ct9, ct10, ct11, ct12, ct13, ct14, ct15;
+Level	Code	Message
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct1'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct10'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct11'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct12'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct13'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct14'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct15'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct2'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct3'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct4'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct5'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct6'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct7'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct8'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.ct9'
+create table ct1 (
+id int primary key,
+a varchar(50) character set utf8mb4 collate utf8mb4_unicode_ci,
+b int,
+index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 3;
+create table ct2 (
+id int primary key,
+a varchar(50) character set utf8mb4 collate utf8mb4_general_ci,
+b int,
+index idx_a(a)
+) PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (1000),
+PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+create table ct3 (
+id int primary key,
+a varchar(50) character set utf8mb4 collate utf8mb4_general_ci,
+b int,
+index idx_a(a)
+);
+create table ct4 (
+id int primary key,
+a varchar(50) character set binary collate binary,
+b int,
+index idx_a(a)
+) PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (1000),
+PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+create table ct5 (
+id int primary key,
+id_str varchar(50) character set utf8mb4 collate utf8mb4_unicode_ci,
+a int,
+b int,
+index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 3;
+create table ct6 (
+id int primary key,
+id_str varchar(50) character set utf8mb4 collate utf8mb4_general_ci,
+a int,
+b int,
+index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 3;
+create table ct7 (
+id int primary key,
+id_str varchar(50) character set utf8mb4 collate utf8mb4_bin,
+a int,
+b int,
+index idx_a(a)
+) PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (1000),
+PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+create table ct8 (
+id1 int,
+id2 varchar(30) character set utf8mb4 collate utf8mb4_unicode_ci,
+a int,
+b int,
+primary key(id1, id2) CLUSTERED,
+index idx_a(a)
+) PARTITION BY HASH (id1) PARTITIONS 4;
+create table ct9 (
+id1 int,
+id2 varchar(30) character set utf8mb4 collate utf8mb4_general_ci,
+a int,
+b int,
+primary key(id1, id2) CLUSTERED,
+index idx_a(a)
+) PARTITION BY RANGE (id1) (
+PARTITION p0 VALUES LESS THAN (500),
+PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+create table ct10 (
+id int primary key,
+a datetime,
+b timestamp,
+c time,
+d date,
+e int,
+index idx_a(a),
+index idx_b(b),
+index idx_e(e)
+);
+insert into ct1 values
+(1, '测试字符串1', 100),
+(2, 'test string 2', 200),
+(3, 'ÁÉÍÓÚ', 300),
+(4, 'äöüß', 400);
+insert into ct2 values
+(1, 'café résumé', 100),
+(2, 'naïve façade', 200),
+(3, 'piñata señor', 300);
+insert into ct3 values
+(1, 'ASCII text', 100),
+(2, 'Hello World', 200),
+(3, '123456789', 300);
+insert into ct4 values
+(1, 'binary\x00data', 100),
+(2, 'raw\xff\xfe\xfd', 200),
+(3, 'exact\x01\x02\x03', 300);
+insert into ct5 (id, id_str, a, b) values
+(1, '键值1', 100, 200),
+(2, '键值2', 300, 400),
+(3, '测试主键', 500, 600);
+insert into ct6 (id, id_str, a, b) values
+(1, '键值1', 100, 200),
+(2, '鍵值2', 300, 400),
+(3, 'test_key', 500, 600);
+insert into ct7 (id, id_str, a, b) values
+(1, 'clé1', 100, 200),
+(2, 'clé2', 300, 400),
+(3, 'test_key', 500, 600);
+insert into ct8 values
+(1, '测试值1', 100, 200),
+(2, '测试值2', 300, 400),
+(3, 'test_value', 500, 600);
+insert into ct9 values
+(1, 'café_test', 100, 200),
+(2, 'naïve_test', 300, 400),
+(3, 'señor_test', 500, 600);
+insert into ct10 values
+(1, '2024-01-01 10:00:00', '2024-01-01 10:00:00', '10:00:00', '2024-01-01', 100),
+(2, '2024-06-15 15:30:00', '2024-06-15 15:30:00', '15:30:00', '2024-06-15', 200),
+(3, '2024-12-31 23:59:59', '2024-12-31 23:59:59', '23:59:59', '2024-12-31', 300);
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a > 'test';
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct1, index:idx_a(a)	range:("\x10\x02\x0e\x8b\x0f\xea\x10\x02",+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a > 'test';
+id	a	b
+1	测试字符串1	100
+2	test string 2	200
+explain select /*+ index_lookup_pushdown(ct2, idx_a) */ * from ct2 where a like 'ca%';
+id	estRows	task	access object	operator info
+IndexLookUp_9	250.00	root	partition:all	
+├─LocalIndexLookUp_11(Build)	250.00	cop[tikv]		index handle offsets:[1]
+│ ├─Selection_8(Build)	250.00	cop[tikv]		like(executor__index_lookup_pushdown3.ct2.a, "ca%", 92)
+│ │ └─IndexRangeScan_6	250.00	cop[tikv]	table:ct2, index:idx_a(a)	range:["\x00C\x00A","\x00C\x00B"), keep order:false, stats:pseudo
+│ └─TableRowIDScan_10(Probe)	250.00	cop[tikv]	table:ct2	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct2, idx_a) */ * from ct2 where a like 'ca%';
+id	a	b
+1	café résumé	100
+explain select /*+ index_lookup_pushdown(ct3, idx_a) */ * from ct3 where a = 'ASCII text';
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root		
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:ct3, index:idx_a(a)	range:["\x00A\x00S\x00C\x00I\x00I\x00 \x00T\x00E\x00X\x00T","\x00A\x00S\x00C\x00I\x00I\x00 \x00T\x00E\x00X\x00T"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:ct3	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct3	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct3, idx_a) */ * from ct3 where a = 'ASCII text';
+id	a	b
+1	ASCII text	100
+explain select /*+ index_lookup_pushdown(ct4, idx_a) */ * from ct4 where a = 'binary\x00data';
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:ct4, index:idx_a(a)	range:["binaryx00data","binaryx00data"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:ct4	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct4	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct4, idx_a) */ * from ct4 where a = 'binary\x00data';
+id	a	b
+1	binaryx00data	100
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a = 'TEST STRING 2';
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:ct1, index:idx_a(a)	range:["\x10\x02\x0e\x8b\x0f\xea\x10\x02\x02\t\x0f\xea\x10\x02\x0f\xc0\x0e\xfb\x0fd\x0e\xc1\x02\t\x0e+","\x10\x02\x0e\x8b\x0f\xea\x10\x02\x02\t\x0f\xea\x10\x02\x0f\xc0\x0e\xfb\x0fd\x0e\xc1\x02\t\x0e+"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a = 'TEST STRING 2';
+id	a	b
+2	test string 2	200
+explain select /*+ index_lookup_pushdown(ct5, idx_a) */ * from ct5 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct5, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct5	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct5	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct5, idx_a) */ * from ct5 where a > 200;
+id	id_str	a	b
+3	测试主键	500	600
+2	键值2	300	400
+explain select /*+ index_lookup_pushdown(ct6, idx_a) */ * from ct6 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct6, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct6	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct6	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct6, idx_a) */ * from ct6 where a > 200;
+id	id_str	a	b
+3	test_key	500	600
+2	鍵值2	300	400
+explain select /*+ index_lookup_pushdown(ct7, idx_a) */ * from ct7 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct7, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct7	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct7	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct7, idx_a) */ * from ct7 where a > 200;
+id	id_str	a	b
+2	clé2	300	400
+3	test_key	500	600
+explain select /*+ index_lookup_pushdown(ct8, idx_a) */ * from ct8 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1 2]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct8, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct8	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct8	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct8, idx_a) */ * from ct8 where a > 200;
+id1	id2	a	b
+2	测试值2	300	400
+3	test_value	500	600
+explain select /*+ index_lookup_pushdown(ct9, idx_a) */ * from ct9 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1 2]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct9, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct9	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct9	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct9, idx_a) */ * from ct9 where a > 200;
+id1	id2	a	b
+2	naïve_test	300	400
+3	señor_test	500	600
+set time_zone = '+00:00';
+explain select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct10, index:idx_a(a)	range:(2024-06-01 00:00:00,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct10	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct10	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+id	a	b	c	d	e
+2	2024-06-15 15:30:00	2024-06-15 07:30:00	15:30:00	2024-06-15	200
+3	2024-12-31 23:59:59	2024-12-31 15:59:59	23:59:59	2024-12-31	300
+set time_zone = '+08:00';
+explain select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct10, index:idx_a(a)	range:(2024-06-01 00:00:00,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct10	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct10	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+id	a	b	c	d	e
+2	2024-06-15 15:30:00	2024-06-15 15:30:00	15:30:00	2024-06-15	200
+3	2024-12-31 23:59:59	2024-12-31 23:59:59	23:59:59	2024-12-31	300
+set time_zone = '-05:00';
+explain select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct10, index:idx_a(a)	range:(2024-06-01 00:00:00,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct10	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct10	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+id	a	b	c	d	e
+2	2024-06-15 15:30:00	2024-06-15 02:30:00	15:30:00	2024-06-15	200
+3	2024-12-31 23:59:59	2024-12-31 10:59:59	23:59:59	2024-12-31	300
+set time_zone = '+00:00';
+explain select /*+ index_lookup_pushdown(ct10, idx_b) */ * from ct10 where b > '2024-06-01 00:00:00';
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct10, index:idx_b(b)	range:(2024-06-01 00:00:00,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct10	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct10	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct10, idx_b) */ * from ct10 where b > '2024-06-01 00:00:00';
+id	a	b	c	d	e
+2	2024-06-15 15:30:00	2024-06-15 07:30:00	15:30:00	2024-06-15	200
+3	2024-12-31 23:59:59	2024-12-31 15:59:59	23:59:59	2024-12-31	300
+set time_zone = '+08:00';
+explain select /*+ index_lookup_pushdown(ct10, idx_b) */ * from ct10 where b > '2024-06-01 00:00:00';
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct10, index:idx_b(b)	range:(2024-06-01 00:00:00,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct10	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct10	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct10, idx_b) */ * from ct10 where b > '2024-06-01 00:00:00';
+id	a	b	c	d	e
+2	2024-06-15 15:30:00	2024-06-15 15:30:00	15:30:00	2024-06-15	200
+3	2024-12-31 23:59:59	2024-12-31 23:59:59	23:59:59	2024-12-31	300
+set @@session.time_zone = 'SYSTEM';
+explain select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-01-01 00:00:00';
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct10, index:idx_a(a)	range:(2024-01-01 00:00:00,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct10	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct10	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-01-01 00:00:00';
+id	a	b	c	d	e
+1	2024-01-01 10:00:00	2024-01-01 10:00:00	10:00:00	2024-01-01	100
+2	2024-06-15 15:30:00	2024-06-15 15:30:00	15:30:00	2024-06-15	200
+3	2024-12-31 23:59:59	2024-12-31 23:59:59	23:59:59	2024-12-31	300
+set time_zone = '+00:00';
+set collation_connection = 'utf8mb4_unicode_ci';
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a like '测试%';
+id	estRows	task	access object	operator info
+IndexLookUp_9	250.00	root	partition:all	
+├─LocalIndexLookUp_11(Build)	250.00	cop[tikv]		index handle offsets:[1]
+│ ├─Selection_8(Build)	250.00	cop[tikv]		like(executor__index_lookup_pushdown3.ct1.a, "测试%", 92)
+│ │ └─IndexRangeScan_6	250.00	cop[tikv]	table:ct1, index:idx_a(a)	range:["\xfb@\xedK\xfbA\x8b\xd5","\xfb@\xedK\xfbA\x8b\xd6"), keep order:false, stats:pseudo
+│ └─TableRowIDScan_10(Probe)	250.00	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a like '测试%';
+id	a	b
+1	测试字符串1	100
+set collation_connection = 'utf8mb4_general_ci';
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a like '测试%';
+id	estRows	task	access object	operator info
+IndexLookUp_9	250.00	root	partition:all	
+├─LocalIndexLookUp_11(Build)	250.00	cop[tikv]		index handle offsets:[1]
+│ ├─Selection_8(Build)	250.00	cop[tikv]		like(executor__index_lookup_pushdown3.ct1.a, "测试%", 92)
+│ │ └─IndexRangeScan_6	250.00	cop[tikv]	table:ct1, index:idx_a(a)	range:["\xfb@\xedK\xfbA\x8b\xd5","\xfb@\xedK\xfbA\x8b\xd6"), keep order:false, stats:pseudo
+│ └─TableRowIDScan_10(Probe)	250.00	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a like '测试%';
+id	a	b
+1	测试字符串1	100
+set collation_connection = 'utf8mb4_bin';
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a like '测试%';
+id	estRows	task	access object	operator info
+IndexLookUp_9	250.00	root	partition:all	
+├─LocalIndexLookUp_11(Build)	250.00	cop[tikv]		index handle offsets:[1]
+│ ├─Selection_8(Build)	250.00	cop[tikv]		like(executor__index_lookup_pushdown3.ct1.a, "测试%", 92)
+│ │ └─IndexRangeScan_6	250.00	cop[tikv]	table:ct1, index:idx_a(a)	range:["\xfb@\xedK\xfbA\x8b\xd5","\xfb@\xedK\xfbA\x8b\xd6"), keep order:false, stats:pseudo
+│ └─TableRowIDScan_10(Probe)	250.00	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a like '测试%';
+id	a	b
+1	测试字符串1	100
+set collation_connection = 'utf8mb4_unicode_ci';
+create table ct11 (
+id int primary key,
+a varchar(50) character set utf8mb4 collate utf8mb4_bin,
+b int,
+index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 3;
+insert into ct11 values (1, 'CaseSensitive', 100), (2, 'casesensitive', 200);
+explain select /*+ index_lookup_pushdown(ct11, idx_a) */ * from ct11 where a = 'CaseSensitive';
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:ct11, index:idx_a(a)	range:["CaseSensitive","CaseSensitive"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:ct11	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct11	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct11, idx_a) */ * from ct11 where a = 'CaseSensitive';
+id	a	b
+1	CaseSensitive	100
+explain select /*+ index_lookup_pushdown(ct11, idx_a) */ * from ct11 where a = 'casesensitive';
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:ct11, index:idx_a(a)	range:["casesensitive","casesensitive"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:ct11	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct11	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct11, idx_a) */ * from ct11 where a = 'casesensitive';
+id	a	b
+2	casesensitive	200
+create table ct12 (
+id int primary key,
+a varbinary(100),
+b int,
+index idx_a(a)
+) PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (1000),
+PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+insert into ct12 values
+(1, x'48656c6c6f20576f726c64', 100),
+(2, x'4368696e6573652074657374', 200),
+(3, x'00ff00ff00ff', 300);
+explain select /*+ index_lookup_pushdown(ct12, idx_a) */ * from ct12 where a = x'48656c6c6f20576f726c64';
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:ct12, index:idx_a(a)	range:["Hello World","Hello World"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:ct12	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct12	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct12, idx_a) */ * from ct12 where a = x'48656c6c6f20576f726c64';
+id	a	b
+1	Hello World	100
+create table ct13 (
+id int primary key,
+a json,
+b int,
+index idx_a((cast(a as char(255) charset utf8mb4)))
+) PARTITION BY HASH (id) PARTITIONS 3;
+insert into ct13 values
+(1, '{"key": "测试", "value": 100}', 100),
+(2, '{"key": "test", "value": 200}', 200),
+(3, '{"key": "café", "value": 300}', 300);
+explain select /*+ index_lookup_pushdown(ct13, idx_a) */ * from ct13 where cast(a as char(255) charset utf8mb4) like '%测试%';
+id	estRows	task	access object	operator info
+Projection_4	8000.00	root		executor__index_lookup_pushdown3.ct13.id, executor__index_lookup_pushdown3.ct13.a, executor__index_lookup_pushdown3.ct13.b
+└─IndexLookUp_10	8000.00	root	partition:all	
+  ├─LocalIndexLookUp_12(Build)	8000.00	cop[tikv]		index handle offsets:[1]
+  │ ├─Selection_9(Build)	8000.00	cop[tikv]		like(cast(executor__index_lookup_pushdown3.ct13.a, var_string(255)), "%测试%", 92)
+  │ │ └─IndexFullScan_7	10000.00	cop[tikv]	table:ct13, index:idx_a(cast(`a` as char(255)))	keep order:false, stats:pseudo
+  │ └─TableRowIDScan_11(Probe)	8000.00	cop[tikv]	table:ct13	keep order:false, stats:pseudo
+  └─TableRowIDScan_8(Probe)	0.00	cop[tikv]	table:ct13	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct13, idx_a) */ * from ct13 where cast(a as char(255) charset utf8mb4) like '%测试%';
+id	a	b
+1	{"key": "测试", "value": 100}	100
+create table ct14 (
+id int primary key,
+a enum('small', 'medium', 'large') character set utf8mb4,
+b set('red', 'green', 'blue') character set utf8mb4,
+c int,
+index idx_a(a),
+index idx_b(b)
+) PARTITION BY HASH (id) PARTITIONS 3;
+insert into ct14 values
+(1, 'medium', 'red,blue', 100),
+(2, 'large', 'green,blue', 200),
+(3, 'small', 'red,green', 300);
+explain select /*+ index_lookup_pushdown(ct14, idx_a) */ * from ct14 where a = 'medium';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root	partition:all	
+├─LocalIndexLookUp_9(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:ct14, index:idx_a(a)	range:["medium","medium"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10.00	cop[tikv]	table:ct14	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:ct14	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1105	Expression about 'executor__index_lookup_pushdown3.ct14.a' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.
+Warning	1105	Expression about 'executor__index_lookup_pushdown3.ct14.b' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.
+select /*+ index_lookup_pushdown(ct14, idx_a) */ * from ct14 where a = 'medium';
+id	a	b	c
+1	medium	red,blue	100
+explain select /*+ index_lookup_pushdown(ct14, idx_b) */ * from ct14 where b = 'red,blue';
+id	estRows	task	access object	operator info
+Selection_5	8000.00	root		eq(executor__index_lookup_pushdown3.ct14.b, "red,blue")
+└─IndexLookUp_8	10000.00	root	partition:all	
+  ├─LocalIndexLookUp_10(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+  │ ├─IndexFullScan_6(Build)	10000.00	cop[tikv]	table:ct14, index:idx_b(b)	keep order:false, stats:pseudo
+  │ └─TableRowIDScan_9(Probe)	10000.00	cop[tikv]	table:ct14	keep order:false, stats:pseudo
+  └─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct14	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1105	Expression about 'executor__index_lookup_pushdown3.ct14.a' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.
+Warning	1105	Expression about 'executor__index_lookup_pushdown3.ct14.b' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.
+Warning	1105	Expression about 'executor__index_lookup_pushdown3.ct14.b' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.
+select /*+ index_lookup_pushdown(ct14, idx_b) */ * from ct14 where b = 'red,blue';
+id	a	b	c
+1	medium	red,blue	100
+create table ct15 (
+id int primary key,
+a varchar(50) character set utf8mb4 collate utf8mb4_general_ci,
+b varchar(50) character set utf8mb4 collate utf8mb4_general_ci,
+c int,
+index idx_a(a),
+index idx_b(b)
+) PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (1000),
+PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+insert into ct15 values
+(1, '测试', 'café', 100),
+(2, 'test', 'résumé', 200),
+(3, 'ÁÉÍÓÚ', 'naïve', 300);
+explain select /*+ index_lookup_pushdown(ct15, idx_a) */ * from ct15 where a = '测试';
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:ct15, index:idx_a(a)	range:["mK\x8b\xd5","mK\x8b\xd5"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:ct15	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct15	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct15, idx_a) */ * from ct15 where a = '测试';
+id	a	b	c
+1	测试	café	100
+explain select /*+ index_lookup_pushdown(ct15, idx_b) */ * from ct15 where b = 'café';
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:ct15, index:idx_b(b)	range:["\x00C\x00A\x00F\x00E","\x00C\x00A\x00F\x00E"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:ct15	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct15	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct15, idx_b) */ * from ct15 where b = 'café';
+id	a	b	c
+1	测试	café	100
+insert into ct1 values (5, NULL, 500);
+insert into ct2 values (4, NULL, 400);
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a is null;
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:ct1, index:idx_a(a)	range:[NULL,NULL], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a is null;
+id	a	b
+5	NULL	500
+explain select /*+ index_lookup_pushdown(ct2, idx_a) */ * from ct2 where a is null;
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:ct2, index:idx_a(a)	range:[NULL,NULL], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:ct2	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct2, idx_a) */ * from ct2 where a is null;
+id	a	b
+4	NULL	400
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a > 't' limit 2;
+id	estRows	task	access object	operator info
+IndexLookUp_16	2.00	root	partition:all	limit embedded(offset:0, count:2)
+├─LocalIndexLookUp_18(Build)	2.00	cop[tikv]		index handle offsets:[1]
+│ ├─Limit_15(Build)	2.00	cop[tikv]		offset:0, count:2
+│ │ └─IndexRangeScan_13	2.00	cop[tikv]	table:ct1, index:idx_a(a)	range:("\x10\x02",+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_17(Probe)	2.00	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+└─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:ct1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a > 't' limit 2;
+id	a	b
+1	测试字符串1	100
+2	test string 2	200
+explain select /*+ index_lookup_pushdown(ct1, idx_a) agg_to_cop() */ count(*), max(a) from ct1 where a > 'test';
+id	estRows	task	access object	operator info
+HashAgg_14	1.00	root		funcs:count(Column#6)->Column#4, funcs:max(Column#7)->Column#5
+└─IndexReader_15	1.00	root	partition:all	index:HashAgg_7
+  └─HashAgg_7	1.00	cop[tikv]		funcs:count(1)->Column#6, funcs:max(executor__index_lookup_pushdown3.ct1.a)->Column#7
+    └─IndexRangeScan_13	3333.33	cop[tikv]	table:ct1, index:idx_a(a)	range:("\x10\x02\x0e\x8b\x0f\xea\x10\x02",+inf], keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(ct1, idx_a) agg_to_cop() */ count(*), max(a) from ct1 where a > 'test';
+count(*)	max(a)
+2	测试字符串1
+drop table if exists pt1, pt2, pt3, pt4, pt5, pt6, pt7, pt8, pt9, pt10, pt11;
+Level	Code	Message
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pt1'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pt10'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pt11'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pt2'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pt3'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pt4'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pt5'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pt6'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pt7'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pt8'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pt9'
+create table pt1 (
+id bigint primary key,
+a int,
+b bigint,
+c varchar(100),
+index idx_a(a),
+index idx_b(b),
+index idx_c(c)
+) PARTITION BY HASH (id) PARTITIONS 16;
+create table pt2 (
+id int primary key,
+a int,
+b int,
+index idx_a(a)
+) PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (100),
+PARTITION p1 VALUES LESS THAN (200),
+PARTITION p2 VALUES LESS THAN (300),
+PARTITION p3 VALUES LESS THAN (400),
+PARTITION p4 VALUES LESS THAN (500),
+PARTITION p5 VALUES LESS THAN MAXVALUE
+);
+create table pt3 (
+id int primary key,
+key_str varchar(32),
+a json,
+b decimal(20,10),
+c blob,
+index idx_a((cast(a as char(255)))),
+index idx_b(b)
+) PARTITION BY HASH (id) PARTITIONS 8;
+create table pt4 (
+id1 int,
+id2 decimal(15,5),
+id3 varchar(36),
+a int,
+b int,
+primary key(id1, id2, id3) CLUSTERED,
+index idx_a(a)
+) PARTITION BY HASH (id1) PARTITIONS 4;
+create table pt5 (
+id int primary key,
+a int,
+b int,
+c int,
+d int,
+gen_sum int generated always as (a + b + c + d) stored,
+gen_concat varchar(100) generated always as (concat(a, '-', b)) stored,
+gen_cond int generated always as (case when a > 50 then 1 else 0 end) stored,
+index idx_sum(gen_sum),
+index idx_concat(gen_concat),
+index idx_cond(gen_cond)
+) PARTITION BY HASH (id) PARTITIONS 6;
+create table pt6 (
+id int primary key,
+a int,
+b int,
+c int,
+d int,
+e int,
+f int,
+index idx_a(a),
+index idx_b(b),
+index idx_c(c),
+index idx_d(d),
+index idx_e(e),
+index idx_f(f),
+index idx_ab(a, b),
+index idx_cd(c, d)
+) PARTITION BY HASH (id) PARTITIONS 8;
+create table pt7 (
+id int primary key,
+a int,
+b int,
+virt_dbl int generated always as (a * 2) virtual,
+virt_sum int generated always as (a + b) virtual,
+index idx_virt_dbl(virt_dbl),
+index idx_virt_sum(virt_sum)
+) PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (1000),
+PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+insert into pt1 values
+(1000000001, 100, 1000001, 'test_string_1'),
+(1000000002, 200, 2000002, 'test_string_2'),
+(1000000003, 300, 3000003, 'test_string_3'),
+(1000000004, 400, 4000004, 'test_string_4'),
+(1000000005, 500, 5000005, 'test_string_5');
+insert into pt2 values
+(50, 1000, 2000), (150, 1100, 2100), (250, 1200, 2200), (350, 1300, 2300), (450, 1400, 2400),
+(55, 1001, 2001), (155, 1101, 2101), (255, 1201, 2201), (355, 1301, 2301), (455, 1401, 2401);
+insert into pt3 (id, key_str, a, b, c) values
+(1, 'binary_key_001', '{"name": "test1", "value": 100}', 123456789.123456789, 'binary_data_1'),
+(2, 'binary_key_002', '{"name": "test2", "value": 200}', 234567890.234567890, 'binary_data_2'),
+(3, 'binary_key_003', '{"name": "test3", "value": 300}', 345678901.345678901, 'binary_data_3');
+insert into pt4 values
+(1, 100.12345, 'uuid-1111-1111', 100, 200),
+(2, 200.23456, 'uuid-2222-2222', 300, 400),
+(3, 300.34567, 'uuid-3333-3333', 500, 600);
+insert into pt5 (id, a, b, c, d) values
+(1, 10, 20, 30, 40),
+(2, 50, 60, 70, 80),
+(3, 90, 100, 110, 120);
+insert into pt6 values
+(1, 10, 20, 30, 40, 50, 60),
+(2, 15, 25, 35, 45, 55, 65),
+(3, 20, 30, 40, 50, 60, 70),
+(4, 25, 35, 45, 55, 65, 75),
+(5, 30, 40, 50, 60, 70, 80);
+insert into pt7 (id, a, b) values
+(1, 25, 75),
+(2, 50, 150),
+(3, 75, 225),
+(4, 100, 300);
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:pt1, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 200;
+id	a	b	c
+1000000003	300	3000003	test_string_3
+1000000004	400	4000004	test_string_4
+1000000005	500	5000005	test_string_5
+explain select /*+ index_lookup_pushdown(pt1, idx_b) */ * from pt1 where b > 3000000;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:pt1, index:idx_b(b)	range:(3000000,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt1, idx_b) */ * from pt1 where b > 3000000;
+id	a	b	c
+1000000003	300	3000003	test_string_3
+1000000004	400	4000004	test_string_4
+1000000005	500	5000005	test_string_5
+explain select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a > 1200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:pt2, index:idx_a(a)	range:(1200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:pt2	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a > 1200;
+id	a	b
+255	1201	2201
+350	1300	2300
+355	1301	2301
+450	1400	2400
+455	1401	2401
+explain select /*+ index_lookup_pushdown(pt3, idx_a) */ * from pt3 where cast(a as char(255)) like '%test2%';
+id	estRows	task	access object	operator info
+IndexLookUp_9	8000.00	root	partition:all	
+├─Selection_10(Build)	8000.00	cop[tikv]		like(cast(executor__index_lookup_pushdown3.pt3.a, var_string(255)), "%test2%", 92)
+│ └─LocalIndexLookUp_12	10000.00	cop[tikv]		index handle offsets:[1]
+│   ├─IndexFullScan_6(Build)	10000.00	cop[tikv]	table:pt3, index:idx_a(cast(`a` as char(255)))	keep order:false, stats:pseudo
+│   └─TableRowIDScan_11(Probe)	10000.00	cop[tikv]	table:pt3	keep order:false, stats:pseudo
+└─Selection_8(Probe)	0.00	cop[tikv]		like(cast(executor__index_lookup_pushdown3.pt3.a, var_string(255)), "%test2%", 92)
+  └─TableRowIDScan_7	0.00	cop[tikv]	table:pt3	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt3, idx_a) */ * from pt3 where cast(a as char(255)) like '%test2%';
+id	key_str	a	b	c
+2	binary_key_002	{"name": "test2", "value": 200}	234567890.2345678900	binary_data_2
+explain select /*+ index_lookup_pushdown(pt3, idx_b) */ * from pt3 where b > 200000000;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:pt3, index:idx_b(b)	range:(200000000.0000000000,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:pt3	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt3	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt3, idx_b) */ * from pt3 where b > 200000000;
+id	key_str	a	b	c
+2	binary_key_002	{"name": "test2", "value": 200}	234567890.2345678900	binary_data_2
+3	binary_key_003	{"name": "test3", "value": 300}	345678901.3456789010	binary_data_3
+explain select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 300;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1 2 3]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:pt4, index:idx_a(a)	range:(300,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:pt4	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt4	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 300;
+id1	id2	id3	a	b
+3	300.34567	uuid-3333-3333	500	600
+explain select /*+ index_lookup_pushdown(pt5, idx_sum) */ * from pt5 where gen_sum > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:pt5, index:idx_sum(gen_sum)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:pt5	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt5	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt5, idx_sum) */ * from pt5 where gen_sum > 200;
+id	a	b	c	d	gen_sum	gen_concat	gen_cond
+2	50	60	70	80	260	50-60	0
+3	90	100	110	120	420	90-100	1
+explain select /*+ index_lookup_pushdown(pt5, idx_concat) */ * from pt5 where gen_concat = '50-60';
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:pt5, index:idx_concat(gen_concat)	range:["50-60","50-60"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:pt5	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt5	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt5, idx_concat) */ * from pt5 where gen_concat = '50-60';
+id	a	b	c	d	gen_sum	gen_concat	gen_cond
+2	50	60	70	80	260	50-60	0
+explain select /*+ index_lookup_pushdown(pt5, idx_cond) */ * from pt5 where gen_cond = 1;
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:pt5, index:idx_cond(gen_cond)	range:[1,1], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:pt5	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt5	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt5, idx_cond) */ * from pt5 where gen_cond = 1;
+id	a	b	c	d	gen_sum	gen_concat	gen_cond
+3	90	100	110	120	420	90-100	1
+explain select /*+ index_lookup_pushdown(pt7, idx_virt_dbl) */ * from pt7 where virt_dbl > 100;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:pt7, index:idx_virt_dbl(virt_dbl)	range:(100,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:pt7	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt7	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt7, idx_virt_dbl) */ * from pt7 where virt_dbl > 100;
+id	a	b	virt_dbl	virt_sum
+3	75	225	NULL	NULL
+4	100	300	NULL	NULL
+explain select /*+ index_lookup_pushdown(pt7, idx_virt_sum) */ * from pt7 where virt_sum > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:pt7, index:idx_virt_sum(virt_sum)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:pt7	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt7	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt7, idx_virt_sum) */ * from pt7 where virt_sum > 200;
+id	a	b	virt_dbl	virt_sum
+3	75	225	NULL	NULL
+4	100	300	NULL	NULL
+explain select /*+ index_lookup_pushdown(pt6, idx_a) */ * from pt6 where a > 15;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:pt6, index:idx_a(a)	range:(15,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:pt6	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt6	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt6, idx_a) */ * from pt6 where a > 15;
+id	a	b	c	d	e	f
+3	20	30	40	50	60	70
+4	25	35	45	55	65	75
+5	30	40	50	60	70	80
+explain select /*+ index_lookup_pushdown(pt6, idx_ab) */ * from pt6 where a > 15 and b < 40;
+id	estRows	task	access object	operator info
+IndexLookUp_9	1107.78	root	partition:all	
+├─LocalIndexLookUp_11(Build)	1107.78	cop[tikv]		index handle offsets:[2]
+│ ├─Selection_8(Build)	1107.78	cop[tikv]		lt(executor__index_lookup_pushdown3.pt6.b, 40)
+│ │ └─IndexRangeScan_6	3333.33	cop[tikv]	table:pt6, index:idx_ab(a, b)	range:(15,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_10(Probe)	1107.78	cop[tikv]	table:pt6	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt6	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt6, idx_ab) */ * from pt6 where a > 15 and b < 40;
+id	a	b	c	d	e	f
+3	20	30	40	50	60	70
+4	25	35	45	55	65	75
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 100 limit 2;
+id	estRows	task	access object	operator info
+IndexLookUp_16	2.00	root	partition:all	limit embedded(offset:0, count:2)
+├─LocalIndexLookUp_18(Build)	2.00	cop[tikv]		index handle offsets:[1]
+│ ├─Limit_15(Build)	2.00	cop[tikv]		offset:0, count:2
+│ │ └─IndexRangeScan_13	2.00	cop[tikv]	table:pt1, index:idx_a(a)	range:(100,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_17(Probe)	2.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+└─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 100 limit 2;
+id	a	b	c
+1000000002	200	2000002	test_string_2
+1000000003	300	3000003	test_string_3
+explain select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a > 1100 limit 1, 3;
+id	estRows	task	access object	operator info
+IndexLookUp_16	3.00	root	partition:all	limit embedded(offset:1, count:3)
+├─LocalIndexLookUp_18(Build)	4.00	cop[tikv]		index handle offsets:[1]
+│ ├─Limit_15(Build)	4.00	cop[tikv]		offset:0, count:4
+│ │ └─IndexRangeScan_13	4.00	cop[tikv]	table:pt2, index:idx_a(a)	range:(1100,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_17(Probe)	4.00	cop[tikv]	table:pt2	keep order:false, stats:pseudo
+└─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:pt2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a > 1100 limit 1, 3;
+id	a	b
+250	1200	2200
+255	1201	2201
+350	1300	2300
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 200 and b < 4000000 and c like 'test_string%';
+id	estRows	task	access object	operator info
+IndexLookUp_9	27.69	root	partition:all	
+├─Selection_10(Build)	27.69	cop[tikv]		like(executor__index_lookup_pushdown3.pt1.c, "test_string%", 92), lt(executor__index_lookup_pushdown3.pt1.b, 4000000)
+│ └─LocalIndexLookUp_12	3333.33	cop[tikv]		index handle offsets:[1]
+│   ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:pt1, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│   └─TableRowIDScan_11(Probe)	3333.33	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+└─Selection_8(Probe)	0.00	cop[tikv]		like(executor__index_lookup_pushdown3.pt1.c, "test_string%", 92), lt(executor__index_lookup_pushdown3.pt1.b, 4000000)
+  └─TableRowIDScan_7	0.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 200 and b < 4000000 and c like 'test_string%';
+id	a	b	c
+1000000003	300	3000003	test_string_3
+explain select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 200 and (id1 = 2 or id3 = 'uuid-3333-3333');
+id	estRows	task	access object	operator info
+IndexLookUp_9	6.66	root	partition:all	
+├─LocalIndexLookUp_11(Build)	6.66	cop[tikv]		index handle offsets:[1 2 3]
+│ ├─Selection_8(Build)	6.66	cop[tikv]		or(eq(executor__index_lookup_pushdown3.pt4.id1, 2), eq(executor__index_lookup_pushdown3.pt4.id3, "uuid-3333-3333"))
+│ │ └─IndexRangeScan_6	3333.33	cop[tikv]	table:pt4, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_10(Probe)	6.66	cop[tikv]	table:pt4	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt4	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 200 and (id1 = 2 or id3 = 'uuid-3333-3333');
+id1	id2	id3	a	b
+2	200.23456	uuid-2222-2222	300	400
+3	300.34567	uuid-3333-3333	500	600
+explain select /*+ index_lookup_pushdown(pt1, idx_a) agg_to_cop() */ count(*), avg(a), max(b) from pt1 where a > 200;
+id	estRows	task	access object	operator info
+HashAgg_15	1.00	root		funcs:count(Column#9)->Column#5, funcs:avg(Column#10, Column#11)->Column#6, funcs:max(Column#12)->Column#7
+└─IndexLookUp_16	1.00	root	partition:all	
+  ├─HashAgg_17(Build)	1.00	cop[tikv]		funcs:count(1)->Column#9, funcs:count(executor__index_lookup_pushdown3.pt1.a)->Column#10, funcs:sum(executor__index_lookup_pushdown3.pt1.a)->Column#11, funcs:max(executor__index_lookup_pushdown3.pt1.b)->Column#12
+  │ └─LocalIndexLookUp_19	3333.33	cop[tikv]		index handle offsets:[1]
+  │   ├─IndexRangeScan_13(Build)	3333.33	cop[tikv]	table:pt1, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+  │   └─TableRowIDScan_18(Probe)	3333.33	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+  └─HashAgg_8(Probe)	0.00	cop[tikv]		funcs:count(1)->Column#9, funcs:count(executor__index_lookup_pushdown3.pt1.a)->Column#10, funcs:sum(executor__index_lookup_pushdown3.pt1.a)->Column#11, funcs:max(executor__index_lookup_pushdown3.pt1.b)->Column#12
+    └─TableRowIDScan_14	0.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt1, idx_a) agg_to_cop() */ count(*), avg(a), max(b) from pt1 where a > 200;
+count(*)	avg(a)	max(b)
+3	400.0000	5000005
+explain select /*+ index_lookup_pushdown(pt5, idx_sum) agg_to_cop() */ sum(gen_sum), count(*) from pt5 where gen_sum > 100;
+id	estRows	task	access object	operator info
+HashAgg_14	1.00	root		funcs:sum(Column#11)->Column#9, funcs:count(Column#12)->Column#10
+└─IndexReader_15	1.00	root	partition:all	index:HashAgg_7
+  └─HashAgg_7	1.00	cop[tikv]		funcs:sum(executor__index_lookup_pushdown3.pt5.gen_sum)->Column#11, funcs:count(1)->Column#12
+    └─IndexRangeScan_13	3333.33	cop[tikv]	table:pt5, index:idx_sum(gen_sum)	range:(100,+inf], keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt5, idx_sum) agg_to_cop() */ sum(gen_sum), count(*) from pt5 where gen_sum > 100;
+sum(gen_sum)	count(*)
+680	2
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > (select avg(a) from pt1) limit 2;
+id	estRows	task	access object	operator info
+IndexLookUp_48	2.00	root	partition:all	limit embedded(offset:0, count:2)
+├─LocalIndexLookUp_50(Build)	2.00	cop[tikv]		index handle offsets:[1]
+│ ├─Limit_47(Build)	2.00	cop[tikv]		offset:0, count:2
+│ │ └─IndexRangeScan_45	2.00	cop[tikv]	table:pt1, index:idx_a(a)	range:(300,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_49(Probe)	2.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+└─TableRowIDScan_46(Probe)	0.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+ScalarSubQuery_33	N/A	root		Output: ScalarQueryCol#14
+└─MaxOneRow_7	1.00	root		
+  └─HashAgg_18	1.00	root		funcs:avg(Column#10, Column#11)->Column#9
+    └─IndexReader_19	1.00	root	partition:all	index:HashAgg_10
+      └─HashAgg_10	1.00	cop[tikv]		funcs:count(executor__index_lookup_pushdown3.pt1.a)->Column#10, funcs:sum(executor__index_lookup_pushdown3.pt1.a)->Column#11
+        └─IndexFullScan_17	10000.00	cop[tikv]	table:pt1, index:idx_a(a)	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > (select avg(a) from pt1) limit 2;
+id	a	b	c
+1000000004	400	4000004	test_string_4
+1000000005	500	5000005	test_string_5
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a in (200, 300, 500);
+id	estRows	task	access object	operator info
+IndexLookUp_8	30.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	30.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	30.00	cop[tikv]	table:pt1, index:idx_a(a)	range:[200,200], [300,300], [500,500], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	30.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a in (200, 300, 500);
+id	a	b	c
+1000000002	200	2000002	test_string_2
+1000000003	300	3000003	test_string_3
+1000000005	500	5000005	test_string_5
+explain select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a in (1100, 1200, 1300, 1400);
+id	estRows	task	access object	operator info
+IndexLookUp_8	40.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	40.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	40.00	cop[tikv]	table:pt2, index:idx_a(a)	range:[1100,1100], [1200,1200], [1300,1300], [1400,1400], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	40.00	cop[tikv]	table:pt2	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a in (1100, 1200, 1300, 1400);
+id	a	b
+150	1100	2100
+250	1200	2200
+350	1300	2300
+450	1400	2400
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a between 200 and 400;
+id	estRows	task	access object	operator info
+IndexLookUp_8	250.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	250.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	250.00	cop[tikv]	table:pt1, index:idx_a(a)	range:[200,400], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	250.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a between 200 and 400;
+id	a	b	c
+1000000002	200	2000002	test_string_2
+1000000003	300	3000003	test_string_3
+1000000004	400	4000004	test_string_4
+explain select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a between 1100 and 1300;
+id	estRows	task	access object	operator info
+IndexLookUp_8	250.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	250.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	250.00	cop[tikv]	table:pt2, index:idx_a(a)	range:[1100,1300], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	250.00	cop[tikv]	table:pt2	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a between 1100 and 1300;
+id	a	b
+150	1100	2100
+155	1101	2101
+250	1200	2200
+255	1201	2201
+350	1300	2300
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where abs(a - 300) < 50;
+id	estRows	task	access object	operator info
+IndexLookUp_9	8000.00	root	partition:all	
+├─LocalIndexLookUp_11(Build)	8000.00	cop[tikv]		index handle offsets:[1]
+│ ├─Selection_8(Build)	8000.00	cop[tikv]		lt(abs(minus(executor__index_lookup_pushdown3.pt1.a, 300)), 50)
+│ │ └─IndexFullScan_6	10000.00	cop[tikv]	table:pt1, index:idx_a(a)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_10(Probe)	8000.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where abs(a - 300) < 50;
+id	a	b	c
+1000000003	300	3000003	test_string_3
+explain select /*+ index_lookup_pushdown(pt3, idx_b) */ * from pt3 where round(b, 5) > 234567890;
+id	estRows	task	access object	operator info
+Selection_11	8000.00	root		gt(round(executor__index_lookup_pushdown3.pt3.b, 5), 234567890)
+└─IndexLookUp_8	10000.00	root	partition:all	
+  ├─LocalIndexLookUp_10(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+  │ ├─IndexFullScan_6(Build)	10000.00	cop[tikv]	table:pt3, index:idx_b(b)	keep order:false, stats:pseudo
+  │ └─TableRowIDScan_9(Probe)	10000.00	cop[tikv]	table:pt3	keep order:false, stats:pseudo
+  └─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt3	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1105	Scalar function 'round'(signature: RoundWithFracDec, return type: decimal(20,5)) is not supported to push down to tikv now.
+select /*+ index_lookup_pushdown(pt3, idx_b) */ * from pt3 where round(b, 5) > 234567890;
+id	key_str	a	b	c
+2	binary_key_002	{"name": "test2", "value": 200}	234567890.2345678900	binary_data_2
+3	binary_key_003	{"name": "test3", "value": 300}	345678901.3456789010	binary_data_3
+create table join_table1 (
+id int primary key,
+a int,
+value varchar(50),
+index idx_a(a)
+);
+create table join_table2 (
+id int primary key,
+a int,
+info varchar(50),
+index idx_a(a)
+);
+insert into join_table1 values (1, 100, 'value1'), (2, 200, 'value2'), (3, 300, 'value3');
+insert into join_table2 values (1, 100, 'info1'), (2, 200, 'info2'), (4, 400, 'info4');
+explain select /*+ index_lookup_pushdown(join_table1, idx_a) */ j1.*, j2.info
+from join_table1 j1 join join_table2 j2 on j1.a = j2.a
+where j1.a > 150;
+id	estRows	task	access object	operator info
+HashJoin_24	4166.67	root		inner join, equal:[eq(executor__index_lookup_pushdown3.join_table1.a, executor__index_lookup_pushdown3.join_table2.a)]
+├─TableReader_49(Build)	3333.33	root		data:Selection_48
+│ └─Selection_48	3333.33	cop[tikv]		gt(executor__index_lookup_pushdown3.join_table2.a, 150), not(isnull(executor__index_lookup_pushdown3.join_table2.a))
+│   └─TableFullScan_47	10000.00	cop[tikv]	table:j2	keep order:false, stats:pseudo
+└─TableReader_35(Probe)	3333.33	root		data:Selection_34
+  └─Selection_34	3333.33	cop[tikv]		gt(executor__index_lookup_pushdown3.join_table1.a, 150), not(isnull(executor__index_lookup_pushdown3.join_table1.a))
+    └─TableFullScan_33	10000.00	cop[tikv]	table:j1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	index_lookup_pushdown(executor__index_lookup_pushdown3.join_table1, idx_a) is inapplicable, check whether the table(executor__index_lookup_pushdown3.join_table1) exists
+select /*+ index_lookup_pushdown(join_table1, idx_a) */ j1.*, j2.info
+from join_table1 j1 join join_table2 j2 on j1.a = j2.a
+where j1.a > 150;
+id	a	value	info
+2	200	value2	info2
+Level	Code	Message
+Warning	1815	index_lookup_pushdown(executor__index_lookup_pushdown3.join_table1, idx_a) is inapplicable, check whether the table(executor__index_lookup_pushdown3.join_table1) exists
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ id, a, b from pt1 where a > 200
+union
+select /*+ index_lookup_pushdown(pt2, idx_a) */ id, a, b from pt2 where a > 1200;
+id	estRows	task	access object	operator info
+HashAgg_13	5333.33	root		group by:Column#10, Column#8, Column#9, funcs:firstrow(Column#8)->Column#8, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10
+└─Union_17	6666.67	root		
+  ├─IndexLookUp_23	3333.33	root	partition:all	
+  │ ├─LocalIndexLookUp_25(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+  │ │ ├─IndexRangeScan_21(Build)	3333.33	cop[tikv]	table:pt1, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+  │ │ └─TableRowIDScan_24(Probe)	3333.33	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+  │ └─TableRowIDScan_22(Probe)	0.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+  └─Projection_26	3333.33	root		cast(executor__index_lookup_pushdown3.pt2.id, bigint BINARY)->Column#8, executor__index_lookup_pushdown3.pt2.a->Column#9, cast(executor__index_lookup_pushdown3.pt2.b, bigint BINARY)->Column#10
+    └─IndexLookUp_30	3333.33	root	partition:all	
+      ├─LocalIndexLookUp_32(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+      │ ├─IndexRangeScan_28(Build)	3333.33	cop[tikv]	table:pt2, index:idx_a(a)	range:(1200,+inf], keep order:false, stats:pseudo
+      │ └─TableRowIDScan_31(Probe)	3333.33	cop[tikv]	table:pt2	keep order:false, stats:pseudo
+      └─TableRowIDScan_29(Probe)	0.00	cop[tikv]	table:pt2	keep order:false, stats:pseudo
+(select /*+ index_lookup_pushdown(pt1, idx_a) */ id, a, b from pt1 where a > 200)
+union
+(select /*+ index_lookup_pushdown(pt2, idx_a) */ id, a, b from pt2 where a > 1200);
+id	a	b
+1000000003	300	3000003
+1000000004	400	4000004
+1000000005	500	5000005
+255	1201	2201
+350	1300	2300
+355	1301	2301
+450	1400	2400
+455	1401	2401
+insert into pt1 values (1000000006, NULL, NULL, NULL);
+insert into pt5 (id, a, b, c, d) values (4, NULL, NULL, NULL, NULL);
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a is null;
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:pt1, index:idx_a(a)	range:[NULL,NULL], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a is null;
+id	a	b	c
+1000000006	NULL	NULL	NULL
+explain select /*+ index_lookup_pushdown(pt5, idx_sum) */ * from pt5 where gen_sum is null;
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:pt5, index:idx_sum(gen_sum)	range:[NULL,NULL], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:pt5	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt5	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt5, idx_sum) */ * from pt5 where gen_sum is null;
+id	a	b	c	d	gen_sum	gen_concat	gen_cond
+4	NULL	NULL	NULL	NULL	NULL	NULL	0
+create table pt11 (
+id int primary key,
+a int,
+b int,
+index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 8;
+insert into pt11 values
+(1, 1, 10), (2, 2, 20), (3, 3, 30), (4, 4, 40), (5, 5, 50);
+explain select /*+ index_lookup_pushdown(pt11, idx_a) */ * from pt11 where a > 3;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root	partition:all	
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:pt11, index:idx_a(a)	range:(3,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:pt11	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt11	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pt11, idx_a) */ * from pt11 where a > 3;
+id	a	b
+4	4	40
+5	5	50
+set @@tx_isolation='READ-COMMITTED';
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 100;
+id	estRows	task	access object	operator info
+TableReader_8	3333.33	root	partition:all	data:Selection_7
+└─Selection_7	3333.33	cop[tikv]		gt(executor__index_lookup_pushdown3.pt1.a, 100)
+  └─TableFullScan_6	10000.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, transaction isolation level is not REPEATABLE-READ
+set @@tx_isolation='REPEATABLE-READ';
+set @@tidb_replica_read='follower';
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 100;
+id	estRows	task	access object	operator info
+TableReader_8	3333.33	root	partition:all	data:Selection_7
+└─Selection_7	3333.33	cop[tikv]		gt(executor__index_lookup_pushdown3.pt1.a, 100)
+  └─TableFullScan_6	10000.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
+set @@tidb_replica_read='leader';
+prepare stmt1 from 'select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > ?';
+set @val = 200;
+execute stmt1 using @val;
+id	a	b	c
+1000000003	300	3000003	test_string_3
+1000000004	400	4000004	test_string_4
+1000000005	500	5000005	test_string_5
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @val = 300;
+execute stmt1 using @val;
+id	a	b	c
+1000000004	400	4000004	test_string_4
+1000000005	500	5000005	test_string_5
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare stmt1;
+drop table if exists pk1, pk2, pk3, pk4, pk5, pk6;
+Level	Code	Message
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pk1'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pk2'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pk3'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pk4'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pk5'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.pk6'
+create table pk1 (
+id float(7,4) primary key,
+a int,
+b int,
+index idx_a(a)
+);
+insert into pk1 values (123.4567, 100, 200), (234.5678, 300, 400), (345.6789, 500, 600);
+select /*+ index_lookup_pushdown(pk1, idx_a) */ * from pk1 where a > 200;
+id	a	b
+234.5678	300	400
+345.6789	500	600
+create table pk2 (
+id smallint primary key,
+a int,
+b int,
+index idx_a(a)
+);
+insert into pk2 values (500, 100, 200), (15000, 300, 400), (25000, 500, 600);
+select /*+ index_lookup_pushdown(pk2, idx_a) */ * from pk2 where a > 200;
+id	a	b
+15000	300	400
+25000	500	600
+create table pk3 (
+id mediumint primary key,
+a int,
+b int,
+index idx_a(a)
+);
+insert into pk3 values (0, 100, 200), (1, 300, 400), (2, 500, 600);
+select /*+ index_lookup_pushdown(pk3, idx_a) */ * from pk3 where a > 200;
+id	a	b
+1	300	400
+2	500	600
+create table pk4 (
+id time primary key,
+a int,
+b int,
+index idx_a(a)
+);
+insert into pk4 values ('10:30:00', 100, 200), ('15:45:30', 300, 400), ('20:15:45', 500, 600);
+select /*+ index_lookup_pushdown(pk4, idx_a) */ * from pk4 where a > 200;
+id	a	b
+15:45:30	300	400
+20:15:45	500	600
+create table pk5 (
+id year primary key,
+a int,
+b int,
+index idx_a(a)
+) PARTITION BY RANGE (id) (
+PARTITION p2020 VALUES LESS THAN (2021),
+PARTITION p2025 VALUES LESS THAN (2026),
+PARTITION p_future VALUES LESS THAN MAXVALUE
+);
+Level	Code	Message
+Warning	1681	The ZEROFILL attribute is deprecated and will be removed in a future release. Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.
+insert into pk5 values (2020, 100, 200), (2024, 300, 400), (2026, 500, 600);
+select /*+ index_lookup_pushdown(pk5, idx_a) */ * from pk5 where a > 200;
+id	a	b
+2024	300	400
+2026	500	600
+create table pk6 (
+id bit(8) primary key,
+a int,
+b int,
+index idx_a(a)
+);
+insert into pk6 values (b'10010101', 100, 200), (b'01101010', 300, 400), (b'11110000', 500, 600);
+select /*+ index_lookup_pushdown(pk6, idx_a) */ * from pk6 where a > 200;
+id	a	b
+j	300	400
+�	500	600
+create table pk6_decimal (
+id decimal(10,2) primary key,
+a int,
+b int,
+index idx_a(a)
+);
+insert into pk6_decimal values (123.45, 100, 200), (234.56, 300, 400), (345.67, 500, 600);
+select /*+ index_lookup_pushdown(pk6_decimal, idx_a) */ * from pk6_decimal where a > 200;
+id	a	b
+234.56	300	400
+345.67	500	600
+create table pk6_float (
+id float(7,4) primary key,
+a int,
+b int,
+index idx_a(a)
+);
+insert into pk6_float values (123.4567, 100, 200), (234.5678, 300, 400), (345.6789, 500, 600);
+select /*+ index_lookup_pushdown(pk6_float, idx_a) */ * from pk6_float where a > 200;
+id	a	b
+234.5678	300	400
+345.6789	500	600
+create table pk7 (
+id1 int,
+id2 decimal(5,2),
+id3 varchar(10),
+a int,
+b int,
+primary key(id1, id2, id3),
+index idx_a(a)
+) PARTITION BY HASH (id1) PARTITIONS 4;
+insert into pk7 values (1, 100.50, 'abc', 100, 200), (2, 200.75, 'def', 300, 400), (3, 300.25, 'ghi', 500, 600);
+select /*+ index_lookup_pushdown(pk7, idx_a) */ * from pk7 where a > 200;
+id1	id2	id3	a	b
+2	200.75	def	300	400
+3	300.25	ghi	500	600
+drop table if exists tz1, tz2, tz3, tz4, tz5;
+Level	Code	Message
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.tz1'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.tz2'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.tz3'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.tz4'
+Note	1051	Unknown table 'executor__index_lookup_pushdown3.tz5'
+create table tz1 (
+id timestamp(6) primary key,
+a int,
+b int,
+c varchar(100),
+index idx_a(a)
+);
+insert into tz1 values
+('2024-06-15 10:30:00', 100, 200, 'UTC data'),
+('2024-12-15 15:45:00', 300, 400, 'UTC data'),
+('2025-06-15 20:15:00', 500, 600, 'UTC data');
+set time_zone = '+00:00';
+select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where a > 200;
+id	a	b	c
+2024-12-15 15:45:00.000000	300	400	UTC data
+2025-06-15 20:15:00.000000	500	600	UTC data
+explain select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:tz1, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:tz1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:tz1	keep order:false, stats:pseudo
+set time_zone = '+08:00';
+select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where a > 200;
+id	a	b	c
+2024-12-15 23:45:00.000000	300	400	UTC data
+2025-06-16 04:15:00.000000	500	600	UTC data
+set time_zone = '-05:00';
+select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where a > 200;
+id	a	b	c
+2024-12-15 10:45:00.000000	300	400	UTC data
+2025-06-15 15:15:00.000000	500	600	UTC data
+set time_zone = '+00:00';
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > '2024-06-01';
+id	a	b	c
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: '2024-06-01'
+Warning	1292	Truncated incorrect DOUBLE value: '2024-06-01'
+set time_zone = '+08:00';
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > '2024-06-01';
+id	a	b	c
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: '2024-06-01'
+Warning	1292	Truncated incorrect DOUBLE value: '2024-06-01'
+create table tz2 (
+id datetime primary key,
+a int,
+b int,
+c varchar(100),
+index idx_a(a)
+);
+insert into tz2 values
+('2024-01-15 10:30:00', 100, 200, 'datetime_1'),
+('2024-06-15 15:45:30', 300, 400, 'datetime_2'),
+('2024-12-15 20:15:45', 500, 600, 'datetime_3');
+select /*+ index_lookup_pushdown(tz2, idx_a) */ * from tz2 where a > 200;
+id	a	b	c
+2024-06-15 15:45:30	300	400	datetime_2
+2024-12-15 20:15:45	500	600	datetime_3
+explain select /*+ index_lookup_pushdown(tz2, idx_a) */ * from tz2 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:tz2, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:tz2	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:tz2	keep order:false, stats:pseudo
+create table tz3 (
+id1 int,
+id2 timestamp(6),
+a int,
+b int,
+primary key(id1, id2) CLUSTERED,
+index idx_a(a)
+);
+insert into tz3 values
+(1, '2024-01-01 12:00:00', 100, 200),
+(2, '2024-06-01 18:00:00', 300, 400),
+(3, '2024-12-01 00:00:00', 500, 600);
+select /*+ index_lookup_pushdown(tz3, idx_a) */ * from tz3 where a > 200;
+id1	id2	a	b
+2	2024-06-01 18:00:00.000000	300	400
+3	2024-12-01 00:00:00.000000	500	600
+explain select /*+ index_lookup_pushdown(tz3, idx_a) */ * from tz3 where a > 200;
+id	estRows	task	access object	operator info
+IndexLookUp_8	3333.33	root		
+├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1 2]
+│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:tz3, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:tz3	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:tz3	keep order:false, stats:pseudo
+create table tz4 (
+id bigint primary key,
+created_at timestamp(6),
+updated_at timestamp(6),
+a int,
+b int,
+index idx_created(created_at),
+index idx_updated(updated_at),
+index idx_a(a)
+);
+insert into tz4 values
+(1000, '2024-01-01 12:00:00', '2024-01-01 12:00:00', 100, 200),
+(2000, '2024-06-01 15:30:00', '2024-06-01 15:30:00', 300, 400),
+(3000, '2024-12-01 18:45:00', '2024-12-01 18:45:00', 500, 600);
+select /*+ index_lookup_pushdown(tz4, idx_created) */ id, created_at, a, b from tz4 where a > 200;
+id	created_at	a	b
+2000	2024-06-01 15:30:00.000000	300	400
+3000	2024-12-01 18:45:00.000000	500	600
+select /*+ index_lookup_pushdown(tz4, idx_a) */ * from tz4 where a > 200;
+id	created_at	updated_at	a	b
+2000	2024-06-01 15:30:00.000000	2024-06-01 15:30:00.000000	300	400
+3000	2024-12-01 18:45:00.000000	2024-12-01 18:45:00.000000	500	600
+create table tz5 (
+id datetime primary key,
+a int,
+b int,
+index idx_a(a)
+);
+insert into tz5 (id, a, b) values
+('2023-06-15 10:30:00', 100, 200),
+('2024-06-15 15:45:30', 300, 400),
+('2025-06-15 20:15:45', 500, 600);
+select /*+ index_lookup_pushdown(tz5, idx_a) */ * from tz5 where a > 200;
+id	a	b
+2024-06-15 15:45:30	300	400
+2025-06-15 20:15:45	500	600
+set time_zone = '+00:00';
+select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where id = '2024-06-15 10:30:00';
+id	a	b	c
+2024-06-15 10:30:00.000000	100	200	UTC data
+set time_zone = '+08:00';
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where id = '2024-06-15 10:30:00';
+id	a	b	c
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: '2024-06-15 10:30:00'
+Warning	1292	Truncated incorrect DOUBLE value: '2024-06-15 10:30:00'
+set time_zone = '+00:00';
+select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where id >= '2024-06-15 10:30:00' and id <= '2024-12-31 23:59:59';
+id	a	b	c
+2024-06-15 10:30:00.000000	100	200	UTC data
+2024-12-15 15:45:00.000000	300	400	UTC data
+set time_zone = '+08:00';
+select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where id >= '2024-06-15 10:30:00' and id <= '2024-12-31 23:59:59';
+id	a	b	c
+2024-06-15 18:30:00.000000	100	200	UTC data
+2024-12-15 23:45:00.000000	300	400	UTC data
+set time_zone = '+00:00';
+drop table join_table1, join_table2;

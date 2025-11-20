@@ -1,0 +1,1318 @@
+drop table if exists t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15;
+--enable_warnings
+
+# Test 1: RANGE partition with different primary key types
+create table t1 (
+    id bigint primary key,
+    a int,
+    b varchar(50),
+    c decimal(10,2),
+    index idx_a(a)
+) PARTITION BY RANGE (id) (
+    PARTITION p0 VALUES LESS THAN (1000),
+    PARTITION p1 VALUES LESS THAN (2000),
+    PARTITION p2 VALUES LESS THAN MAXVALUE
+);
+
+# Test 2: HASH partition with TINYINT primary key
+create table t2 (
+    id tinyint primary key,
+    a int,
+    b int,
+    index idx_a(a)
+);
+
+# Test 3: LIST partition with composite primary key
+create table t3 (
+    id int,
+    year_val int,
+    a int,
+    b int,
+    primary key(id, year_val),
+    index idx_a(a)
+) PARTITION BY LIST (year_val) (
+    PARTITION p2023 VALUES IN (2023),
+    PARTITION p2024 VALUES IN (2024),
+    PARTITION p_future VALUES IN (2025, 2026, 2027)
+);
+
+# Test 4: Composite primary key with partitioning (common handle scenario)
+create table t4 (
+    id1 int,
+    id2 varchar(20),
+    a int,
+    b int,
+    primary key(id1, id2) CLUSTERED,
+    index idx_a(a)
+) PARTITION BY HASH (id1) PARTITIONS 3;
+
+# Test 5: Non-clustered composite primary key with partition
+create table t5 (
+    id1 int,
+    id2 varchar(20),
+    a int,
+    b int,
+    primary key(id1, id2) NONCLUSTERED,
+    index idx_a(a)
+) PARTITION BY RANGE (id1) (
+    PARTITION p0 VALUES LESS THAN (100),
+    PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+
+# Test 6: Multiple data types with RANGE partition
+create table t6 (
+    id int primary key,
+    a datetime,
+    b bigint,
+    c double,
+    index idx_b(b)
+) PARTITION BY RANGE (id) (
+    PARTITION p0 VALUES LESS THAN (1000),
+    PARTITION p1 VALUES LESS THAN (2000),
+    PARTITION p2 VALUES LESS THAN MAXVALUE
+);
+
+# Test 7: Partition table with generated column
+create table t7 (
+    id int primary key,
+    a int,
+    b int,
+    generated_col int generated always as (a + b) stored,
+    index idx_generated(generated_col)
+);
+
+# Test 8: Simple partition with common handle
+create table t8 (
+    id1 int,
+    id2 varchar(10),
+    a int,
+    b int,
+    primary key(id1, id2) CLUSTERED,
+    index idx_a(a)
+) PARTITION BY HASH (id1) PARTITIONS 4;
+
+# Test 9: Year-based range partition with composite primary key
+create table t9 (
+    id int,
+    year_val int,
+    a int,
+    b int,
+    primary key(id, year_val),
+    index idx_a(a)
+) PARTITION BY RANGE (year_val) (
+    PARTITION p2023 VALUES LESS THAN (2024),
+    PARTITION p2024 VALUES LESS THAN (2025),
+    PARTITION p2025 VALUES LESS THAN MAXVALUE
+);
+
+# Test 10: RANGE partition with date column
+create table t10 (
+    id int primary key,
+    date_val date,
+    a int,
+    b int,
+    index idx_a(a)
+) PARTITION BY RANGE (id) (
+    PARTITION p_old VALUES LESS THAN (1000),
+    PARTITION p_new VALUES LESS THAN MAXVALUE
+);
+
+# Test 11: BIGINT primary key with partition
+create table t11 (
+    id bigint primary key,
+    a int,
+    b int,
+    index idx_a(a)
+) PARTITION BY RANGE (id) (
+    PARTITION p0 VALUES LESS THAN (1000),
+    PARTITION p1 VALUES LESS THAN (2000),
+    PARTITION p2 VALUES LESS THAN MAXVALUE
+);
+
+# Test 12: Negative values in partition keys
+create table t12 (
+    id int primary key,
+    a int,
+    b int,
+    index idx_a(a)
+) PARTITION BY RANGE (id) (
+    PARTITION p_negative VALUES LESS THAN (0),
+    PARTITION p_zero VALUES LESS THAN (1),
+    PARTITION p_positive VALUES LESS THAN MAXVALUE
+);
+
+# Test 13: MEDIUMINT primary key with hash partition
+create table t13 (
+    id mediumint primary key,
+    a int,
+    b int,
+    index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 8;
+
+# Test 14: SMALLINT primary key with partition
+create table t14 (
+    id smallint primary key,
+    a int,
+    b int,
+    index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 6;
+
+# Test 15: BOOLEAN primary key with partition
+create table t15 (
+    id boolean primary key,
+    a int,
+    b int,
+    c int,
+    index idx_a(a),
+    index idx_b(b),
+    index idx_c(c)
+);
+
+# Insert test data for each table
+insert into t1 values
+    (500, 100, 'test1', 123.45),
+    (1500, 200, 'test2', 234.56),
+    (2500, 300, 'test3', 345.67);
+
+insert into t2 (id, a, b) values
+    (1, 100, 200),
+    (2, 300, 400),
+    (3, 500, 600);
+
+insert into t3 values
+    (1, 2023, 100, 200),
+    (2, 2024, 300, 400),
+    (3, 2025, 500, 600);
+
+insert into t4 values
+    (1, 'aa', 100, 200),
+    (2, 'bb', 300, 400),
+    (3, 'cc', 500, 600);
+
+insert into t5 values
+    (50, 'xx', 100, 200),
+    (150, 'yy', 300, 400),
+    (250, 'zz', 500, 600);
+
+insert into t6 values
+    (500, '2024-01-01 10:00:00', 1000000, 123.45),
+    (1500, '2024-02-01 10:00:00', 1500000, 234.56),
+    (2500, '2024-03-01 10:00:00', 2500000, 345.67);
+
+insert into t7 (id, a, b) values
+    (1, 10, 20),
+    (2, 30, 40),
+    (3, 50, 60);
+
+insert into t8 values
+    (1, 'a', 100, 200),
+    (2, 'b', 300, 400),
+    (3, 'c', 500, 600);
+
+insert into t9 values
+    (1, 2023, 100, 200),
+    (2, 2024, 300, 400),
+    (3, 2025, 500, 600);
+
+insert into t10 values
+    (1, '2023-06-15', 100, 200),
+    (2, '2024-06-15', 300, 400),
+    (3, '2024-12-31', 500, 600);
+
+insert into t11 values
+    (500, 100, 200),
+    (1500, 300, 400),
+    (2500, 500, 600);
+
+insert into t12 values
+    (-50, 100, 200),
+    (0, 300, 400),
+    (50, 500, 600);
+
+insert into t13 (id, a, b) values
+    (100, 100, 200),
+    (200, 300, 400),
+    (300, 500, 600);
+
+insert into t14 values
+    (50, 100, 200),
+    (150, 300, 400),
+    (250, 500, 600);
+
+insert into t15 values
+    (true, 100, 200, 300),
+    (false, 400, 500, 600);
+
+# Test basic index lookup pushdown for each table
+explain select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > 150;
+--sorted_result
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > 150;
+
+explain
+select /*+ index_lookup_pushdown(t2, idx_a) */ * from t2 where a > 200;
+--sorted_result
+select /*+ index_lookup_pushdown(t2, idx_a) */ * from t2 where a > 200;
+
+explain
+select /*+ index_lookup_pushdown(t3, idx_a) */ * from t3 where a > 200;
+--sorted_result
+select /*+ index_lookup_pushdown(t3, idx_a) */ * from t3 where a > 200;
+
+# Test composite primary key scenarios (common handle)
+explain
+select /*+ index_lookup_pushdown(t4, idx_a) */ * from t4 where a > 200;
+--sorted_result
+select /*+ index_lookup_pushdown(t4, idx_a) */ * from t4 where a > 200;
+
+explain select /*+ index_lookup_pushdown(t5, idx_a) */ * from t5 where a > 200;
+select /*+ index_lookup_pushdown(t5, idx_a) */ * from t5 where a > 200;
+
+explain select /*+ index_lookup_pushdown(t8, idx_a) */ * from t8 where a > 200;
+select /*+ index_lookup_pushdown(t8, idx_a) */ * from t8 where a > 200;
+
+# Test with different data types in primary key
+explain
+select /*+ index_lookup_pushdown(t6, idx_b) */ * from t6 where b > 1200000;
+--sorted_result
+select /*+ index_lookup_pushdown(t6, idx_b) */ * from t6 where b > 1200000;
+
+explain select /*+ index_lookup_pushdown(t9, idx_a) */ * from t9 where a > 200;
+select /*+ index_lookup_pushdown(t9, idx_a) */ * from t9 where a > 200;
+
+explain select /*+ index_lookup_pushdown(t10, idx_a) */ * from t10 where a > 200;
+select /*+ index_lookup_pushdown(t10, idx_a) */ * from t10 where a > 200;
+
+explain select /*+ index_lookup_pushdown(t11, idx_a) */ * from t11 where a > 200;
+select /*+ index_lookup_pushdown(t11, idx_a) */ * from t11 where a > 200;
+
+explain select /*+ index_lookup_pushdown(t12, idx_a) */ * from t12 where a > 200;
+select /*+ index_lookup_pushdown(t12, idx_a) */ * from t12 where a > 200;
+
+explain select /*+ index_lookup_pushdown(t13, idx_a) */ * from t13 where a > 200;
+select /*+ index_lookup_pushdown(t13, idx_a) */ * from t13 where a > 200;
+
+explain select /*+ index_lookup_pushdown(t14, idx_a) */ * from t14 where a > 200;
+select /*+ index_lookup_pushdown(t14, idx_a) */ * from t14 where a > 200;
+
+# Test generated column index
+explain select /*+ index_lookup_pushdown(t7, idx_generated) */ * from t7 where generated_col > 50;
+select /*+ index_lookup_pushdown(t7, idx_generated) */ * from t7 where generated_col > 50;
+
+# Test multiple index selection
+explain select /*+ index_lookup_pushdown(t15, idx_a) */ * from t15 where a > 200;
+select /*+ index_lookup_pushdown(t15, idx_a) */ * from t15 where a > 200;
+
+explain select /*+ index_lookup_pushdown(t15, idx_b) */ * from t15 where b > 400;
+select /*+ index_lookup_pushdown(t15, idx_b) */ * from t15 where b > 400;
+
+explain select /*+ index_lookup_pushdown(t15, idx_c) */ * from t15 where c > 600;
+select /*+ index_lookup_pushdown(t15, idx_c) */ * from t15 where c > 600;
+
+# Test with LIMIT and OFFSET
+explain select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > 100 limit 1;
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > 100 limit 1;
+
+explain select /*+ index_lookup_pushdown(t2, idx_a) */ * from t2 where a > 100 limit 1, 1;
+select /*+ index_lookup_pushdown(t2, idx_a) */ * from t2 where a > 100 limit 1, 1;
+
+# Test with complex WHERE conditions
+explain select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > 100 and b like 'test%' and c > 200;
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > 100 and b like 'test%' and c > 200;
+
+explain select /*+ index_lookup_pushdown(t4, idx_a) */ * from t4 where a > 200 and (id1 = 1 or id1 = 2);
+select /*+ index_lookup_pushdown(t4, idx_a) */ * from t4 where a > 200 and (id1 = 1 or id1 = 2);
+
+# Test with aggregation
+explain select /*+ index_lookup_pushdown(t1, idx_a) agg_to_cop() */ count(*), avg(a) from t1 where a > 100;
+select /*+ index_lookup_pushdown(t1, idx_a) agg_to_cop() */ count(*), avg(a) from t1 where a > 100;
+
+# Test with subqueries
+explain select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > (select avg(a) from t1) limit 2;
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > (select avg(a) from t1) limit 2;
+
+# Test with JOIN operations
+create table join_table (
+    a int,
+    d int,
+    index idx_join_a(a)
+);
+
+insert into join_table values (100, 1000), (300, 3000), (500, 5000), (700, 7000);
+
+explain select /*+ index_lookup_pushdown(t1, idx_a) */ t1.*, j.d from t1 join join_table j on t1.a = j.a where t1.a > 100;
+select /*+ index_lookup_pushdown(t1, idx_a) */ t1.*, j.d from t1 join join_table j on t1.a = j.a where t1.a > 100;
+
+# Test negative edge cases
+## Test that common handle without partition is not supported
+create table common_handle_no_partition (
+    id1 int,
+    id2 varchar(20),
+    a int,
+    primary key(id1, id2) CLUSTERED,
+    index idx_a(a)
+);
+
+insert into common_handle_no_partition values (1, 'test', 100), (2, 'test2', 200);
+
+explain select /*+ index_lookup_pushdown(common_handle_no_partition, idx_a) */ * from common_handle_no_partition where a > 150;
+select /*+ index_lookup_pushdown(common_handle_no_partition, idx_a) */ * from common_handle_no_partition where a > 150;
+
+# Test with NULL values
+insert into t1 values (3500, NULL, NULL, NULL);
+explain select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a is null;
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a is null;
+
+# Test edge case with maximum values
+insert into t6 values (9999, '2024-12-31 23:59:59', 9999999999, 99999.99);
+explain select /*+ index_lookup_pushdown(t6, idx_b) */ * from t6 where b > 5000000000;
+select /*+ index_lookup_pushdown(t6, idx_b) */ * from t6 where b > 5000000000;
+
+# Cleanup temporary tables
+drop table join_table, common_handle_no_partition;
+
+# ============================================================================
+# CHARSET, COLLATION, AND TIMEZONE TESTS
+# ============================================================================
+
+drop table if exists ct1, ct2, ct3, ct4, ct5, ct6, ct7, ct8, ct9, ct10, ct11, ct12, ct13, ct14, ct15;
+
+# Test 1: Different charset and collation scenarios
+create table ct1 (
+    id int primary key,
+    a varchar(50) character set utf8mb4 collate utf8mb4_unicode_ci,
+    b int,
+    index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 3;
+
+create table ct2 (
+    id int primary key,
+    a varchar(50) character set utf8mb4 collate utf8mb4_general_ci,
+    b int,
+    index idx_a(a)
+) PARTITION BY RANGE (id) (
+    PARTITION p0 VALUES LESS THAN (1000),
+    PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+
+create table ct3 (
+    id int primary key,
+    a varchar(50) character set utf8mb4 collate utf8mb4_general_ci,
+    b int,
+    index idx_a(a)
+);
+
+create table ct4 (
+    id int primary key,
+    a varchar(50) character set binary collate binary,
+    b int,
+    index idx_a(a)
+) PARTITION BY RANGE (id) (
+    PARTITION p0 VALUES LESS THAN (1000),
+    PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+
+# Test 2: Different charset in primary key
+create table ct5 (
+    id int primary key,
+    id_str varchar(50) character set utf8mb4 collate utf8mb4_unicode_ci,
+    a int,
+    b int,
+    index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 3;
+
+create table ct6 (
+    id int primary key,
+    id_str varchar(50) character set utf8mb4 collate utf8mb4_general_ci,
+    a int,
+    b int,
+    index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 3;
+
+create table ct7 (
+    id int primary key,
+    id_str varchar(50) character set utf8mb4 collate utf8mb4_bin,
+    a int,
+    b int,
+    index idx_a(a)
+) PARTITION BY RANGE (id) (
+    PARTITION p0 VALUES LESS THAN (1000),
+    PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+
+# Test 3: Composite primary key with different charset
+create table ct8 (
+    id1 int,
+    id2 varchar(30) character set utf8mb4 collate utf8mb4_unicode_ci,
+    a int,
+    b int,
+    primary key(id1, id2) CLUSTERED,
+    index idx_a(a)
+) PARTITION BY HASH (id1) PARTITIONS 4;
+
+create table ct9 (
+    id1 int,
+    id2 varchar(30) character set utf8mb4 collate utf8mb4_general_ci,
+    a int,
+    b int,
+    primary key(id1, id2) CLUSTERED,
+    index idx_a(a)
+) PARTITION BY RANGE (id1) (
+    PARTITION p0 VALUES LESS THAN (500),
+    PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+
+# Test 4: Timezone sensitive columns
+create table ct10 (
+    id int primary key,
+    a datetime,
+    b timestamp,
+    c time,
+    d date,
+    e int,
+    index idx_a(a),
+    index idx_b(b),
+    index idx_e(e)
+);
+
+# Insert test data with various charset and timezone scenarios
+insert into ct1 values
+    (1, '测试字符串1', 100),
+    (2, 'test string 2', 200),
+    (3, 'ÁÉÍÓÚ', 300),
+    (4, 'äöüß', 400);
+
+insert into ct2 values
+    (1, 'café résumé', 100),
+    (2, 'naïve façade', 200),
+    (3, 'piñata señor', 300);
+
+insert into ct3 values
+    (1, 'ASCII text', 100),
+    (2, 'Hello World', 200),
+    (3, '123456789', 300);
+
+insert into ct4 values
+    (1, 'binary\x00data', 100),
+    (2, 'raw\xff\xfe\xfd', 200),
+    (3, 'exact\x01\x02\x03', 300);
+
+insert into ct5 (id, id_str, a, b) values
+    (1, '键值1', 100, 200),
+    (2, '键值2', 300, 400),
+    (3, '测试主键', 500, 600);
+
+insert into ct6 (id, id_str, a, b) values
+    (1, '键值1', 100, 200),
+    (2, '鍵值2', 300, 400),
+    (3, 'test_key', 500, 600);
+
+insert into ct7 (id, id_str, a, b) values
+    (1, 'clé1', 100, 200),
+    (2, 'clé2', 300, 400),
+    (3, 'test_key', 500, 600);
+
+insert into ct8 values
+    (1, '测试值1', 100, 200),
+    (2, '测试值2', 300, 400),
+    (3, 'test_value', 500, 600);
+
+insert into ct9 values
+    (1, 'café_test', 100, 200),
+    (2, 'naïve_test', 300, 400),
+    (3, 'señor_test', 500, 600);
+
+# Test with different timezone contexts
+insert into ct10 values
+    (1, '2024-01-01 10:00:00', '2024-01-01 10:00:00', '10:00:00', '2024-01-01', 100),
+    (2, '2024-06-15 15:30:00', '2024-06-15 15:30:00', '15:30:00', '2024-06-15', 200),
+    (3, '2024-12-31 23:59:59', '2024-12-31 23:59:59', '23:59:59', '2024-12-31', 300);
+
+# Test basic index lookup pushdown with different charset scenarios
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a > 'test';
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a > 'test';
+
+explain select /*+ index_lookup_pushdown(ct2, idx_a) */ * from ct2 where a like 'ca%';
+select /*+ index_lookup_pushdown(ct2, idx_a) */ * from ct2 where a like 'ca%';
+
+explain select /*+ index_lookup_pushdown(ct3, idx_a) */ * from ct3 where a = 'ASCII text';
+select /*+ index_lookup_pushdown(ct3, idx_a) */ * from ct3 where a = 'ASCII text';
+
+explain select /*+ index_lookup_pushdown(ct4, idx_a) */ * from ct4 where a = 'binary\x00data';
+select /*+ index_lookup_pushdown(ct4, idx_a) */ * from ct4 where a = 'binary\x00data';
+
+# Test case-insensitive collation scenarios
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a = 'TEST STRING 2';
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a = 'TEST STRING 2';
+
+# Test with primary key charset scenarios
+explain select /*+ index_lookup_pushdown(ct5, idx_a) */ * from ct5 where a > 200;
+select /*+ index_lookup_pushdown(ct5, idx_a) */ * from ct5 where a > 200;
+
+explain select /*+ index_lookup_pushdown(ct6, idx_a) */ * from ct6 where a > 200;
+select /*+ index_lookup_pushdown(ct6, idx_a) */ * from ct6 where a > 200;
+
+explain select /*+ index_lookup_pushdown(ct7, idx_a) */ * from ct7 where a > 200;
+select /*+ index_lookup_pushdown(ct7, idx_a) */ * from ct7 where a > 200;
+
+# Test composite primary key with charset
+explain select /*+ index_lookup_pushdown(ct8, idx_a) */ * from ct8 where a > 200;
+select /*+ index_lookup_pushdown(ct8, idx_a) */ * from ct8 where a > 200;
+
+explain select /*+ index_lookup_pushdown(ct9, idx_a) */ * from ct9 where a > 200;
+select /*+ index_lookup_pushdown(ct9, idx_a) */ * from ct9 where a > 200;
+
+# Test timezone scenarios with different settings
+set time_zone = '+00:00';
+explain select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+
+set time_zone = '+08:00';
+explain select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+
+set time_zone = '-05:00';
+explain select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+
+# Test timestamp column (timezone-sensitive)
+set time_zone = '+00:00';
+explain select /*+ index_lookup_pushdown(ct10, idx_b) */ * from ct10 where b > '2024-06-01 00:00:00';
+select /*+ index_lookup_pushdown(ct10, idx_b) */ * from ct10 where b > '2024-06-01 00:00:00';
+
+set time_zone = '+08:00';
+explain select /*+ index_lookup_pushdown(ct10, idx_b) */ * from ct10 where b > '2024-06-01 00:00:00';
+select /*+ index_lookup_pushdown(ct10, idx_b) */ * from ct10 where b > '2024-06-01 00:00:00';
+
+# Test with system timezone changes
+set @@session.time_zone = 'SYSTEM';
+explain select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-01-01 00:00:00';
+select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-01-01 00:00:00';
+
+# Reset timezone
+set time_zone = '+00:00';
+
+# Test with different session collation settings
+set collation_connection = 'utf8mb4_unicode_ci';
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a like '测试%';
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a like '测试%';
+
+set collation_connection = 'utf8mb4_general_ci';
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a like '测试%';
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a like '测试%';
+
+set collation_connection = 'utf8mb4_bin';
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a like '测试%';
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a like '测试%';
+
+# Reset collation
+set collation_connection = 'utf8mb4_unicode_ci';
+
+# Test case sensitivity with different collations
+create table ct11 (
+    id int primary key,
+    a varchar(50) character set utf8mb4 collate utf8mb4_bin,
+    b int,
+    index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 3;
+
+insert into ct11 values (1, 'CaseSensitive', 100), (2, 'casesensitive', 200);
+
+explain select /*+ index_lookup_pushdown(ct11, idx_a) */ * from ct11 where a = 'CaseSensitive';
+select /*+ index_lookup_pushdown(ct11, idx_a) */ * from ct11 where a = 'CaseSensitive';
+
+explain select /*+ index_lookup_pushdown(ct11, idx_a) */ * from ct11 where a = 'casesensitive';
+select /*+ index_lookup_pushdown(ct11, idx_a) */ * from ct11 where a = 'casesensitive';
+
+# Test with binary data and special characters
+create table ct12 (
+    id int primary key,
+    a varbinary(100),
+    b int,
+    index idx_a(a)
+) PARTITION BY RANGE (id) (
+    PARTITION p0 VALUES LESS THAN (1000),
+    PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+
+insert into ct12 values
+    (1, x'48656c6c6f20576f726c64', 100),
+    (2, x'4368696e6573652074657374', 200),
+    (3, x'00ff00ff00ff', 300);
+
+explain select /*+ index_lookup_pushdown(ct12, idx_a) */ * from ct12 where a = x'48656c6c6f20576f726c64';
+select /*+ index_lookup_pushdown(ct12, idx_a) */ * from ct12 where a = x'48656c6c6f20576f726c64';
+
+# Test with JSON data (JSON columns have binary charset)
+create table ct13 (
+    id int primary key,
+    a json,
+    b int,
+    index idx_a((cast(a as char(255) charset utf8mb4)))
+) PARTITION BY HASH (id) PARTITIONS 3;
+
+insert into ct13 values
+    (1, '{"key": "测试", "value": 100}', 100),
+    (2, '{"key": "test", "value": 200}', 200),
+    (3, '{"key": "café", "value": 300}', 300);
+
+explain select /*+ index_lookup_pushdown(ct13, idx_a) */ * from ct13 where cast(a as char(255) charset utf8mb4) like '%测试%';
+select /*+ index_lookup_pushdown(ct13, idx_a) */ * from ct13 where cast(a as char(255) charset utf8mb4) like '%测试%';
+
+# Test with ENUM and SET types
+create table ct14 (
+    id int primary key,
+    a enum('small', 'medium', 'large') character set utf8mb4,
+    b set('red', 'green', 'blue') character set utf8mb4,
+    c int,
+    index idx_a(a),
+    index idx_b(b)
+) PARTITION BY HASH (id) PARTITIONS 3;
+
+insert into ct14 values
+    (1, 'medium', 'red,blue', 100),
+    (2, 'large', 'green,blue', 200),
+    (3, 'small', 'red,green', 300);
+
+explain select /*+ index_lookup_pushdown(ct14, idx_a) */ * from ct14 where a = 'medium';
+select /*+ index_lookup_pushdown(ct14, idx_a) */ * from ct14 where a = 'medium';
+
+explain select /*+ index_lookup_pushdown(ct14, idx_b) */ * from ct14 where b = 'red,blue';
+select /*+ index_lookup_pushdown(ct14, idx_b) */ * from ct14 where b = 'red,blue';
+
+# Test complex charset mixing
+create table ct15 (
+    id int primary key,
+    a varchar(50) character set utf8mb4 collate utf8mb4_general_ci,
+    b varchar(50) character set utf8mb4 collate utf8mb4_general_ci,
+    c int,
+    index idx_a(a),
+    index idx_b(b)
+) PARTITION BY RANGE (id) (
+    PARTITION p0 VALUES LESS THAN (1000),
+    PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+
+insert into ct15 values
+    (1, '测试', 'café', 100),
+    (2, 'test', 'résumé', 200),
+    (3, 'ÁÉÍÓÚ', 'naïve', 300);
+
+explain select /*+ index_lookup_pushdown(ct15, idx_a) */ * from ct15 where a = '测试';
+select /*+ index_lookup_pushdown(ct15, idx_a) */ * from ct15 where a = '测试';
+
+explain select /*+ index_lookup_pushdown(ct15, idx_b) */ * from ct15 where b = 'café';
+select /*+ index_lookup_pushdown(ct15, idx_b) */ * from ct15 where b = 'café';
+
+# Test with NULL values and charset
+insert into ct1 values (5, NULL, 500);
+insert into ct2 values (4, NULL, 400);
+
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a is null;
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a is null;
+
+explain select /*+ index_lookup_pushdown(ct2, idx_a) */ * from ct2 where a is null;
+select /*+ index_lookup_pushdown(ct2, idx_a) */ * from ct2 where a is null;
+
+# Test LIMIT with charset scenarios
+explain select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a > 't' limit 2;
+select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a > 't' limit 2;
+
+# Test aggregation with charset
+explain select /*+ index_lookup_pushdown(ct1, idx_a) agg_to_cop() */ count(*), max(a) from ct1 where a > 'test';
+select /*+ index_lookup_pushdown(ct1, idx_a) agg_to_cop() */ count(*), max(a) from ct1 where a > 'test';
+
+# ============================================================================
+# COMPLEX SCENARIOS AND PERFORMANCE TESTS
+# ============================================================================
+
+drop table if exists pt1, pt2, pt3, pt4, pt5, pt6, pt7, pt8, pt9, pt10, pt11;
+
+# Test 1: Large partition counts and performance scenarios
+create table pt1 (
+    id bigint primary key,
+    a int,
+    b bigint,
+    c varchar(100),
+    index idx_a(a),
+    index idx_b(b),
+    index idx_c(c)
+) PARTITION BY HASH (id) PARTITIONS 16;
+
+create table pt2 (
+    id int primary key,
+    a int,
+    b int,
+    index idx_a(a)
+) PARTITION BY RANGE (id) (
+    PARTITION p0 VALUES LESS THAN (100),
+    PARTITION p1 VALUES LESS THAN (200),
+    PARTITION p2 VALUES LESS THAN (300),
+    PARTITION p3 VALUES LESS THAN (400),
+    PARTITION p4 VALUES LESS THAN (500),
+    PARTITION p5 VALUES LESS THAN MAXVALUE
+);
+
+# Test 2: Complex data types in primary key and indexed columns
+create table pt3 (
+    id int primary key,
+    key_str varchar(32),
+    a json,
+    b decimal(20,10),
+    c blob,
+    index idx_a((cast(a as char(255)))),
+    index idx_b(b)
+) PARTITION BY HASH (id) PARTITIONS 8;
+
+create table pt4 (
+    id1 int,
+    id2 decimal(15,5),
+    id3 varchar(36),
+    a int,
+    b int,
+    primary key(id1, id2, id3) CLUSTERED,
+    index idx_a(a)
+) PARTITION BY HASH (id1) PARTITIONS 4;
+
+# Test 3: Generated columns with complex expressions
+create table pt5 (
+    id int primary key,
+    a int,
+    b int,
+    c int,
+    d int,
+    gen_sum int generated always as (a + b + c + d) stored,
+    gen_concat varchar(100) generated always as (concat(a, '-', b)) stored,
+    gen_cond int generated always as (case when a > 50 then 1 else 0 end) stored,
+    index idx_sum(gen_sum),
+    index idx_concat(gen_concat),
+    index idx_cond(gen_cond)
+) PARTITION BY HASH (id) PARTITIONS 6;
+
+# Test 4: Table with many indexes
+create table pt6 (
+    id int primary key,
+    a int,
+    b int,
+    c int,
+    d int,
+    e int,
+    f int,
+    index idx_a(a),
+    index idx_b(b),
+    index idx_c(c),
+    index idx_d(d),
+    index idx_e(e),
+    index idx_f(f),
+    index idx_ab(a, b),
+    index idx_cd(c, d)
+) PARTITION BY HASH (id) PARTITIONS 8;
+
+# Test 5: Virtual generated columns
+create table pt7 (
+    id int primary key,
+    a int,
+    b int,
+    virt_dbl int generated always as (a * 2) virtual,
+    virt_sum int generated always as (a + b) virtual,
+    index idx_virt_dbl(virt_dbl),
+    index idx_virt_sum(virt_sum)
+) PARTITION BY RANGE (id) (
+    PARTITION p0 VALUES LESS THAN (1000),
+    PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+
+# Insert comprehensive test data
+insert into pt1 values
+    (1000000001, 100, 1000001, 'test_string_1'),
+    (1000000002, 200, 2000002, 'test_string_2'),
+    (1000000003, 300, 3000003, 'test_string_3'),
+    (1000000004, 400, 4000004, 'test_string_4'),
+    (1000000005, 500, 5000005, 'test_string_5');
+
+insert into pt2 values
+    (50, 1000, 2000), (150, 1100, 2100), (250, 1200, 2200), (350, 1300, 2300), (450, 1400, 2400),
+    (55, 1001, 2001), (155, 1101, 2101), (255, 1201, 2201), (355, 1301, 2301), (455, 1401, 2401);
+
+insert into pt3 (id, key_str, a, b, c) values
+    (1, 'binary_key_001', '{"name": "test1", "value": 100}', 123456789.123456789, 'binary_data_1'),
+    (2, 'binary_key_002', '{"name": "test2", "value": 200}', 234567890.234567890, 'binary_data_2'),
+    (3, 'binary_key_003', '{"name": "test3", "value": 300}', 345678901.345678901, 'binary_data_3');
+
+insert into pt4 values
+    (1, 100.12345, 'uuid-1111-1111', 100, 200),
+    (2, 200.23456, 'uuid-2222-2222', 300, 400),
+    (3, 300.34567, 'uuid-3333-3333', 500, 600);
+
+insert into pt5 (id, a, b, c, d) values
+    (1, 10, 20, 30, 40),
+    (2, 50, 60, 70, 80),
+    (3, 90, 100, 110, 120);
+
+insert into pt6 values
+    (1, 10, 20, 30, 40, 50, 60),
+    (2, 15, 25, 35, 45, 55, 65),
+    (3, 20, 30, 40, 50, 60, 70),
+    (4, 25, 35, 45, 55, 65, 75),
+    (5, 30, 40, 50, 60, 70, 80);
+
+insert into pt7 (id, a, b) values
+    (1, 25, 75),
+    (2, 50, 150),
+    (3, 75, 225),
+    (4, 100, 300);
+
+# Test basic scenarios with complex data types
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 200;
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 200;
+
+explain select /*+ index_lookup_pushdown(pt1, idx_b) */ * from pt1 where b > 3000000;
+select /*+ index_lookup_pushdown(pt1, idx_b) */ * from pt1 where b > 3000000;
+
+# Test with many range partitions
+explain select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a > 1200;
+select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a > 1200;
+
+# Test with complex data types
+explain select /*+ index_lookup_pushdown(pt3, idx_a) */ * from pt3 where cast(a as char(255)) like '%test2%';
+select /*+ index_lookup_pushdown(pt3, idx_a) */ * from pt3 where cast(a as char(255)) like '%test2%';
+
+explain select /*+ index_lookup_pushdown(pt3, idx_b) */ * from pt3 where b > 200000000;
+select /*+ index_lookup_pushdown(pt3, idx_b) */ * from pt3 where b > 200000000;
+
+# Test composite primary key with multiple columns
+explain select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 300;
+select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 300;
+
+# Test generated columns
+explain select /*+ index_lookup_pushdown(pt5, idx_sum) */ * from pt5 where gen_sum > 200;
+select /*+ index_lookup_pushdown(pt5, idx_sum) */ * from pt5 where gen_sum > 200;
+
+explain select /*+ index_lookup_pushdown(pt5, idx_concat) */ * from pt5 where gen_concat = '50-60';
+select /*+ index_lookup_pushdown(pt5, idx_concat) */ * from pt5 where gen_concat = '50-60';
+
+explain select /*+ index_lookup_pushdown(pt5, idx_cond) */ * from pt5 where gen_cond = 1;
+select /*+ index_lookup_pushdown(pt5, idx_cond) */ * from pt5 where gen_cond = 1;
+
+# Test virtual generated columns
+explain select /*+ index_lookup_pushdown(pt7, idx_virt_dbl) */ * from pt7 where virt_dbl > 100;
+select /*+ index_lookup_pushdown(pt7, idx_virt_dbl) */ * from pt7 where virt_dbl > 100;
+
+explain select /*+ index_lookup_pushdown(pt7, idx_virt_sum) */ * from pt7 where virt_sum > 200;
+select /*+ index_lookup_pushdown(pt7, idx_virt_sum) */ * from pt7 where virt_sum > 200;
+
+# Test table with many indexes
+explain select /*+ index_lookup_pushdown(pt6, idx_a) */ * from pt6 where a > 15;
+select /*+ index_lookup_pushdown(pt6, idx_a) */ * from pt6 where a > 15;
+
+explain select /*+ index_lookup_pushdown(pt6, idx_ab) */ * from pt6 where a > 15 and b < 40;
+select /*+ index_lookup_pushdown(pt6, idx_ab) */ * from pt6 where a > 15 and b < 40;
+
+# Test with LIMIT and OFFSET
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 100 limit 2;
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 100 limit 2;
+
+explain select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a > 1100 limit 1, 3;
+select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a > 1100 limit 1, 3;
+
+# Test complex WHERE conditions
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 200 and b < 4000000 and c like 'test_string%';
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 200 and b < 4000000 and c like 'test_string%';
+
+explain select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 200 and (id1 = 2 or id3 = 'uuid-3333-3333');
+select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 200 and (id1 = 2 or id3 = 'uuid-3333-3333');
+
+# Test with aggregation
+explain select /*+ index_lookup_pushdown(pt1, idx_a) agg_to_cop() */ count(*), avg(a), max(b) from pt1 where a > 200;
+select /*+ index_lookup_pushdown(pt1, idx_a) agg_to_cop() */ count(*), avg(a), max(b) from pt1 where a > 200;
+
+explain select /*+ index_lookup_pushdown(pt5, idx_sum) agg_to_cop() */ sum(gen_sum), count(*) from pt5 where gen_sum > 100;
+select /*+ index_lookup_pushdown(pt5, idx_sum) agg_to_cop() */ sum(gen_sum), count(*) from pt5 where gen_sum > 100;
+
+# Test with subqueries
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > (select avg(a) from pt1) limit 2;
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > (select avg(a) from pt1) limit 2;
+
+# Test with IN clauses
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a in (200, 300, 500);
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a in (200, 300, 500);
+
+explain select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a in (1100, 1200, 1300, 1400);
+select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a in (1100, 1200, 1300, 1400);
+
+# Test with BETWEEN
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a between 200 and 400;
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a between 200 and 400;
+
+explain select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a between 1100 and 1300;
+select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a between 1100 and 1300;
+
+# Test with functions on indexed columns
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where abs(a - 300) < 50;
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where abs(a - 300) < 50;
+
+explain select /*+ index_lookup_pushdown(pt3, idx_b) */ * from pt3 where round(b, 5) > 234567890;
+select /*+ index_lookup_pushdown(pt3, idx_b) */ * from pt3 where round(b, 5) > 234567890;
+
+# Test with JOIN operations
+create table join_table1 (
+    id int primary key,
+    a int,
+    value varchar(50),
+    index idx_a(a)
+);
+
+create table join_table2 (
+    id int primary key,
+    a int,
+    info varchar(50),
+    index idx_a(a)
+);
+
+insert into join_table1 values (1, 100, 'value1'), (2, 200, 'value2'), (3, 300, 'value3');
+insert into join_table2 values (1, 100, 'info1'), (2, 200, 'info2'), (4, 400, 'info4');
+
+explain select /*+ index_lookup_pushdown(join_table1, idx_a) */ j1.*, j2.info
+from join_table1 j1 join join_table2 j2 on j1.a = j2.a
+where j1.a > 150;
+select /*+ index_lookup_pushdown(join_table1, idx_a) */ j1.*, j2.info
+from join_table1 j1 join join_table2 j2 on j1.a = j2.a
+where j1.a > 150;
+
+# Test with UNION
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ id, a, b from pt1 where a > 200
+union
+select /*+ index_lookup_pushdown(pt2, idx_a) */ id, a, b from pt2 where a > 1200;
+--sorted_result
+(select /*+ index_lookup_pushdown(pt1, idx_a) */ id, a, b from pt1 where a > 200)
+union
+(select /*+ index_lookup_pushdown(pt2, idx_a) */ id, a, b from pt2 where a > 1200);
+
+# Test with NULL values
+insert into pt1 values (1000000006, NULL, NULL, NULL);
+insert into pt5 (id, a, b, c, d) values (4, NULL, NULL, NULL, NULL);
+
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a is null;
+select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a is null;
+
+explain select /*+ index_lookup_pushdown(pt5, idx_sum) */ * from pt5 where gen_sum is null;
+select /*+ index_lookup_pushdown(pt5, idx_sum) */ * from pt5 where gen_sum is null;
+
+# Test with very large datasets (performance)
+# Simplified table due to index consistency issues
+create table pt11 (
+    id int primary key,
+    a int,
+    b int,
+    index idx_a(a)
+) PARTITION BY HASH (id) PARTITIONS 8;
+
+insert into pt11 values
+    (1, 1, 10), (2, 2, 20), (3, 3, 30), (4, 4, 40), (5, 5, 50);
+
+explain select /*+ index_lookup_pushdown(pt11, idx_a) */ * from pt11 where a > 3;
+--sorted_result
+select /*+ index_lookup_pushdown(pt11, idx_a) */ * from pt11 where a > 3;
+
+# Test with different isolation levels (should only work with repeatable-read)
+set @@tx_isolation='READ-COMMITTED';
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 100;
+set @@tx_isolation='REPEATABLE-READ';
+
+# Test with different replica read settings (should only work with leader)
+set @@tidb_replica_read='follower';
+explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 100;
+set @@tidb_replica_read='leader';
+
+# Test with plan cache
+prepare stmt1 from 'select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > ?';
+set @val = 200;
+execute stmt1 using @val;
+select @@last_plan_from_cache;
+
+set @val = 300;
+execute stmt1 using @val;
+select @@last_plan_from_cache;
+
+deallocate prepare stmt1;
+
+# Cleanup all temporary tables
+# ============================================================================
+# ADDITIONAL PRIMARY KEY TYPE TESTS
+# ============================================================================
+
+drop table if exists pk1, pk2, pk3, pk4, pk5, pk6;
+
+# Test with FLOAT primary key (non-partitioned)
+create table pk1 (
+    id float(7,4) primary key,
+    a int,
+    b int,
+    index idx_a(a)
+);
+
+insert into pk1 values (123.4567, 100, 200), (234.5678, 300, 400), (345.6789, 500, 600);
+
+--sorted_result
+select /*+ index_lookup_pushdown(pk1, idx_a) */ * from pk1 where a > 200;
+
+# Test with SMALLINT primary key
+create table pk2 (
+    id smallint primary key,
+    a int,
+    b int,
+    index idx_a(a)
+);
+
+insert into pk2 values (500, 100, 200), (15000, 300, 400), (25000, 500, 600);
+
+--sorted_result
+select /*+ index_lookup_pushdown(pk2, idx_a) */ * from pk2 where a > 200;
+
+# Test with MEDIUMINT primary key
+create table pk3 (
+    id mediumint primary key,
+    a int,
+    b int,
+    index idx_a(a)
+);
+
+insert into pk3 values (0, 100, 200), (1, 300, 400), (2, 500, 600);
+
+--sorted_result
+select /*+ index_lookup_pushdown(pk3, idx_a) */ * from pk3 where a > 200;
+
+# Test with TIME primary key (non-partitioned - TIME cannot be reliably partitioned)
+create table pk4 (
+    id time primary key,
+    a int,
+    b int,
+    index idx_a(a)
+);
+
+insert into pk4 values ('10:30:00', 100, 200), ('15:45:30', 300, 400), ('20:15:45', 500, 600);
+
+--sorted_result
+select /*+ index_lookup_pushdown(pk4, idx_a) */ * from pk4 where a > 200;
+
+# Test with YEAR primary key
+create table pk5 (
+    id year primary key,
+    a int,
+    b int,
+    index idx_a(a)
+) PARTITION BY RANGE (id) (
+    PARTITION p2020 VALUES LESS THAN (2021),
+    PARTITION p2025 VALUES LESS THAN (2026),
+    PARTITION p_future VALUES LESS THAN MAXVALUE
+);
+
+insert into pk5 values (2020, 100, 200), (2024, 300, 400), (2026, 500, 600);
+
+--sorted_result
+select /*+ index_lookup_pushdown(pk5, idx_a) */ * from pk5 where a > 200;
+
+# Test with BIT primary key (non-partitioned - BIT cannot be partitioned)
+create table pk6 (
+    id bit(8) primary key,
+    a int,
+    b int,
+    index idx_a(a)
+);
+
+insert into pk6 values (b'10010101', 100, 200), (b'01101010', 300, 400), (b'11110000', 500, 600);
+
+--sorted_result
+select /*+ index_lookup_pushdown(pk6, idx_a) */ * from pk6 where a > 200;
+
+# Test with DECIMAL primary key (non-partitioned - DECIMAL cannot be partitioned)
+create table pk6_decimal (
+    id decimal(10,2) primary key,
+    a int,
+    b int,
+    index idx_a(a)
+);
+
+insert into pk6_decimal values (123.45, 100, 200), (234.56, 300, 400), (345.67, 500, 600);
+
+--sorted_result
+select /*+ index_lookup_pushdown(pk6_decimal, idx_a) */ * from pk6_decimal where a > 200;
+
+# Test with FLOAT primary key (non-partitioned - FLOAT cannot be reliably partitioned)
+create table pk6_float (
+    id float(7,4) primary key,
+    a int,
+    b int,
+    index idx_a(a)
+);
+
+insert into pk6_float values (123.4567, 100, 200), (234.5678, 300, 400), (345.6789, 500, 600);
+
+--sorted_result
+select /*+ index_lookup_pushdown(pk6_float, idx_a) */ * from pk6_float where a > 200;
+
+# Test composite primary key with different data types
+create table pk7 (
+    id1 int,
+    id2 decimal(5,2),
+    id3 varchar(10),
+    a int,
+    b int,
+    primary key(id1, id2, id3),
+    index idx_a(a)
+) PARTITION BY HASH (id1) PARTITIONS 4;
+
+insert into pk7 values (1, 100.50, 'abc', 100, 200), (2, 200.75, 'def', 300, 400), (3, 300.25, 'ghi', 500, 600);
+
+--sorted_result
+select /*+ index_lookup_pushdown(pk7, idx_a) */ * from pk7 where a > 200;
+
+# ============================================================================
+# TIMESTAMP AND DATETIME PRIMARY KEY TESTS WITH TIMEZONE
+# ============================================================================
+
+drop table if exists tz1, tz2, tz3, tz4, tz5;
+
+# Test 1: TIMESTAMP primary key with different timezone settings
+create table tz1 (
+    id timestamp(6) primary key,
+    a int,
+    b int,
+    c varchar(100),
+    index idx_a(a)
+);
+
+# Insert test data
+insert into tz1 values
+    ('2024-06-15 10:30:00', 100, 200, 'UTC data'),
+    ('2024-12-15 15:45:00', 300, 400, 'UTC data'),
+    ('2025-06-15 20:15:00', 500, 600, 'UTC data');
+
+# Test with UTC timezone
+set time_zone = '+00:00';
+--sorted_result
+select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where a > 200;
+
+explain select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where a > 200;
+
+# Test with Beijing timezone
+set time_zone = '+08:00';
+--sorted_result
+select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where a > 200;
+
+# Test with New York timezone
+set time_zone = '-05:00';
+--sorted_result
+select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where a > 200;
+
+# Test timestamp range queries with different timezones
+set time_zone = '+00:00';
+--sorted_result
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > '2024-06-01';
+
+set time_zone = '+08:00';
+--sorted_result
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where a > '2024-06-01';
+
+# Test 2: DATETIME primary key with partitioning
+create table tz2 (
+    id datetime primary key,
+    a int,
+    b int,
+    c varchar(100),
+    index idx_a(a)
+);
+
+insert into tz2 values
+    ('2024-01-15 10:30:00', 100, 200, 'datetime_1'),
+    ('2024-06-15 15:45:30', 300, 400, 'datetime_2'),
+    ('2024-12-15 20:15:45', 500, 600, 'datetime_3');
+
+# Test datetime queries with timezone
+--sorted_result
+select /*+ index_lookup_pushdown(tz2, idx_a) */ * from tz2 where a > 200;
+
+explain select /*+ index_lookup_pushdown(tz2, idx_a) */ * from tz2 where a > 200;
+
+# Test 3: Composite primary key with timestamp column
+create table tz3 (
+    id1 int,
+    id2 timestamp(6),
+    a int,
+    b int,
+    primary key(id1, id2) CLUSTERED,
+    index idx_a(a)
+);
+
+insert into tz3 values
+    (1, '2024-01-01 12:00:00', 100, 200),
+    (2, '2024-06-01 18:00:00', 300, 400),
+    (3, '2024-12-01 00:00:00', 500, 600);
+
+--sorted_result
+select /*+ index_lookup_pushdown(tz3, idx_a) */ * from tz3 where a > 200;
+
+explain select /*+ index_lookup_pushdown(tz3, idx_a) */ * from tz3 where a > 200;
+
+# Test 4: Multiple timestamp columns for testing timezone effects
+create table tz4 (
+    id bigint primary key,
+    created_at timestamp(6),
+    updated_at timestamp(6),
+    a int,
+    b int,
+    index idx_created(created_at),
+    index idx_updated(updated_at),
+    index idx_a(a)
+);
+
+insert into tz4 values
+    (1000, '2024-01-01 12:00:00', '2024-01-01 12:00:00', 100, 200),
+    (2000, '2024-06-01 15:30:00', '2024-06-01 15:30:00', 300, 400),
+    (3000, '2024-12-01 18:45:00', '2024-12-01 18:45:00', 500, 600);
+
+# Test with automatic timestamp fields
+--sorted_result
+select /*+ index_lookup_pushdown(tz4, idx_created) */ id, created_at, a, b from tz4 where a > 200;
+
+--sorted_result
+select /*+ index_lookup_pushdown(tz4, idx_a) */ * from tz4 where a > 200;
+
+# Test 5: Non-partitioned datetime table for comparison
+create table tz5 (
+    id datetime primary key,
+    a int,
+    b int,
+    index idx_a(a)
+);
+
+insert into tz5 (id, a, b) values
+    ('2023-06-15 10:30:00', 100, 200),
+    ('2024-06-15 15:45:30', 300, 400),
+    ('2025-06-15 20:15:45', 500, 600);
+
+--sorted_result
+select /*+ index_lookup_pushdown(tz5, idx_a) */ * from tz5 where a > 200;
+
+# Test timezone effects on primary key lookups
+set time_zone = '+00:00';
+--sorted_result
+select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where id = '2024-06-15 10:30:00';
+
+set time_zone = '+08:00';
+--sorted_result
+select /*+ index_lookup_pushdown(t1, idx_a) */ * from t1 where id = '2024-06-15 10:30:00';
+
+# Test timestamp comparisons across timezones
+set time_zone = '+00:00';
+--sorted_result
+select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where id >= '2024-06-15 10:30:00' and id <= '2024-12-31 23:59:59';
+
+set time_zone = '+08:00';
+--sorted_result
+select /*+ index_lookup_pushdown(tz1, idx_a) */ * from tz1 where id >= '2024-06-15 10:30:00' and id <= '2024-12-31 23:59:59';
+
+# Reset timezone
+set time_zone = '+00:00';
+
+# Cleanup all temporary tables
+drop table join_table1, join_table2;
