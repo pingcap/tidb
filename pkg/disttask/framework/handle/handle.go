@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	goerrors "errors"
+	"fmt"
 	"path"
 	"strconv"
 	"time"
@@ -414,7 +415,9 @@ func SendRowAndSizeMeterData(ctx context.Context, task *proto.Task, rows int64,
 		item["data_kv_bytes"] = dataKVSize
 	}
 	item["index_kv_bytes"] = indexKVSize
-	if err := metering.WriteMeterData(ctx, ts, []map[string]any{item}); err != nil {
+	// same as above reason, we use the task ID as the uuid, and we also need to
+	// send different file as the metering service itself to avoid overwrite.
+	if err := metering.WriteMeterData(ctx, ts, fmt.Sprintf("%s_%d", task.Type, task.ID), []map[string]any{item}); err != nil {
 		return errors.Trace(err)
 	}
 	logger.Info("succeed to send size and row metering data", zap.Any("data", item),

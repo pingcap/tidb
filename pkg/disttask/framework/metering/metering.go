@@ -73,12 +73,14 @@ func UnregisterRecorder(taskID int64) {
 }
 
 // WriteMeterData writes the metering data.
-func WriteMeterData(ctx context.Context, ts int64, items []map[string]any) error {
+// ts+category+uuid uniquely identifies a metering data file, the SDK also use the
+// shared-pool-id in the file name, but for each meter writer, it's the same.
+func WriteMeterData(ctx context.Context, ts int64, uuid string, items []map[string]any) error {
 	meter := meteringInstance.Load()
 	if kerneltype.IsClassic() || meter == nil {
 		return nil
 	}
-	return meter.WriteMeterData(ctx, ts, items)
+	return meter.WriteMeterData(ctx, ts, uuid, items)
 }
 
 // SetMetering sets the metering instance for dxf.
@@ -260,7 +262,8 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 		return
 	}
 
-	if err := m.WriteMeterData(ctx, ts, items); err != nil {
+	// each metering background loop sends data with the same uuid.
+	if err := m.WriteMeterData(ctx, ts, m.uuid, items); err != nil {
 		logger.Warn("failed to write metering data", zap.Error(err),
 			zap.Duration("duration", time.Since(startTime)),
 			zap.Any("data", items))
@@ -273,10 +276,10 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 }
 
 // WriteMeterData writes the metering data.
-func (m *Meter) WriteMeterData(ctx context.Context, ts int64, items []map[string]any) error {
+func (m *Meter) WriteMeterData(ctx context.Context, ts int64, uuid string, items []map[string]any) error {
 	failpoint.InjectCall("forceTSAtMinuteBoundary", &ts)
 	meteringData := &common.MeteringData{
-		SelfID:    m.uuid,
+		SelfID:    uuid,
 		Timestamp: ts,
 		Category:  category,
 		Data:      items,
