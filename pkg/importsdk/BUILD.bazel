@@ -2,7 +2,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "importsdk",
-    srcs = ["sdk.go"],
+    srcs = [
+        "config.go",
+        "errors.go",
+        "job.go",
+        "path.go",
+        "sdk.go",
+        "table.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/importsdk",
     visibility = ["//visibility:public"],
     deps = [
@@ -18,10 +25,15 @@ go_library(
 go_test(
     name = "importsdk_test",
     timeout = "short",
-    srcs = ["sdk_test.go"],
+    srcs = [
+        "job_test.go",
+        "path_test.go",
+        "sdk_test.go",
+        "table_test.go",
+    ],
     embed = [":importsdk"],
     flaky = True,
-    shard_count = 9,
+    shard_count = 15,
     deps = [
         "//pkg/lightning/config",
         "//pkg/lightning/log",
