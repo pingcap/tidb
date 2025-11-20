@@ -297,7 +297,7 @@ type RestoreConfig struct {
 	// PITR-related fields for blocklist creation
 	// RestoreStartTS is the timestamp when the restore operation began (before any table creation).
 	// This is used for blocklist files to accurately mark when tables were created.
-	RestoreStartTS      uint64                          `json:"-" toml:"-"`
+	RestoreStartTS      uint64                      `json:"-" toml:"-"`
 	tableMappingManager *stream.TableMappingManager `json:"-" toml:"-"`
 
 	// for ebs-based restore
