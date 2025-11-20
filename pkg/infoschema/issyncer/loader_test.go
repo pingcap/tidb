@@ -238,6 +238,88 @@ func TestLoaderSkipLoadingDiff(t *testing.T) {
 		OldTableID: metadef.ReservedGlobalIDUpperBound}))
 }
 
+func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+
+	ctx := tidbkv.WithInternalSourceType(context.Background(), tidbkv.InternalTxnAdmin)
+
+	// Create databases: system database, BR-related database, and user database
+	require.NoError(t, tidbkv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn tidbkv.Transaction) error {
+		mu := meta.NewMutator(txn)
+		// Create mysql (system database) with ID 1
+		require.NoError(t, mu.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr(mysql.SystemDB)}))
+		// Create BR-related database with ID 2
+		require.NoError(t, mu.CreateDatabase(&model.DBInfo{ID: 2, Name: ast.NewCIStr("__TiDB_BR_Temporary_test")}))
+		// Create user database with ID 3
+		require.NoError(t, mu.CreateDatabase(&model.DBInfo{ID: 3, Name: ast.NewCIStr("userdb")}))
+		return nil
+	}))
+
+	ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
+	require.NoError(t, err)
+
+	// Create loader for BR
+	loaderForBR := newLoader(store, infoschema.NewCache(nil, 1), nil, true)
+	require.True(t, loaderForBR.forBRBackup)
+
+	// Load initial schema to populate the cache
+	_, _, _, _, err = loaderForBR.LoadWithTS(ver.Ver, false)
+	require.NoError(t, err)
+
+	// Test case 1: Schema diff for system database - should NOT skip
+	systemDiff := &model.SchemaDiff{
+		SchemaID: 1, // mysql system database
+		TableID:  10,
+	}
+	require.False(t, loaderForBR.skipLoadingDiff(systemDiff), "should NOT skip diff for system database")
+
+	// Test case 2: Schema diff for BR-related database - should NOT skip
+	brDiff := &model.SchemaDiff{
+		SchemaID: 2, // BR-related database
+		TableID:  20,
+	}
+	require.False(t, loaderForBR.skipLoadingDiff(brDiff), "should NOT skip diff for BR-related database")
+
+	// Test case 3: Schema diff for user database - should skip
+	userDiff := &model.SchemaDiff{
+		SchemaID: 3, // user database
+		TableID:  30,
+	}
+	require.True(t, loaderForBR.skipLoadingDiff(userDiff), "should skip diff for user database")
+
+	// Test case 4: Schema diff with OldSchemaID for system database - should NOT skip
+	oldSystemDiff := &model.SchemaDiff{
+		OldSchemaID: 1, // mysql system database
+		SchemaID:    3, // user database
+		TableID:     40,
+	}
+	require.False(t, loaderForBR.skipLoadingDiff(oldSystemDiff), "should NOT skip diff when OldSchemaID is system database")
+
+	// Test case 5: Schema diff with OldSchemaID for BR-related database - should NOT skip
+	oldBRDiff := &model.SchemaDiff{
+		OldSchemaID: 2, // BR-related database
+		SchemaID:    3, // user database
+		TableID:     50,
+	}
+	require.False(t, loaderForBR.skipLoadingDiff(oldBRDiff), "should NOT skip diff when OldSchemaID is BR-related database")
+
+	// Test case 6: Schema diff with both SchemaID and OldSchemaID as user databases - should skip
+	userToUserDiff := &model.SchemaDiff{
+		OldSchemaID: 3, // user database
+		SchemaID:    3, // user database
+		TableID:     60,
+	}
+	require.True(t, loaderForBR.skipLoadingDiff(userToUserDiff), "should skip diff when both SchemaID and OldSchemaID are user databases")
+
+	// Test case 7: Schema diff with non-existent SchemaID - should skip
+	nonExistentDiff := &model.SchemaDiff{
+		SchemaID: 999, // non-existent database
+		TableID:  70,
+	}
+	require.True(t, loaderForBR.skipLoadingDiff(nonExistentDiff), "should skip diff for non-existent database")
+}
+
 func TestLoadForBR(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)

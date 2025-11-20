@@ -96,18 +96,19 @@ type Loader struct {
 	// CachedTable need internal session to access some system tables, such as
 	// mysql.table_cache_meta
 	sysExecutorFactory func() (pools.Resource, error)
-	loadForBR          bool
+	// forBRBackup makes the loader load BR related and system tables only.
+	forBRBackup bool
 }
 
 func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn, loadForBR bool) *Loader {
 	mode := LoadModeAuto
 	return &Loader{
-		mode:      mode,
-		store:     store,
-		infoCache: infoCache,
-		deferFn:   deferFn,
-		loadForBR: loadForBR,
-		logger:    logutil.BgLogger().With(zap.Stringer("mode", mode)),
+		mode:        mode,
+		store:       store,
+		infoCache:   infoCache,
+		deferFn:     deferFn,
+		forBRBackup: loadForBR,
+		logger:      logutil.BgLogger().With(zap.Stringer("mode", mode)),
 	}
 }
 
@@ -291,6 +292,16 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 }
 
 func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
+	if l.forBRBackup {
+		is := l.infoCache.GetLatest()
+		oldName, oldOK := is.SchemaByID(diff.OldSchemaID)
+		newName, newOK := is.SchemaByID(diff.SchemaID)
+		oldNameIsSysOrBRRel := oldOK && (metadef.IsSystemDB(oldName.Name.L) || metadef.IsBRRelatedDB(oldName.Name.O))
+		newNameIsSysOrBRRel := newOK && (metadef.IsSystemDB(newName.Name.L) || metadef.IsBRRelatedDB(newName.Name.O))
+
+		return !(oldNameIsSysOrBRRel || newNameIsSysOrBRRel)
+	}
+
 	if !l.crossKS {
 		return false
 	}
@@ -414,7 +425,7 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 			return nil, errors.New("system database not found")
 		}
 		allSchemas = []*model.DBInfo{dbInfo}
-	} else if l.loadForBR {
+	} else if l.forBRBackup {
 		// only load system databases
 		allSchemas = make([]*model.DBInfo, 0, 6)
 		err := m.IterDatabases(func(dbInfo *model.DBInfo) error {

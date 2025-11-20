@@ -48,12 +48,21 @@ func New() Glue {
 	}
 }
 
+type TiDBGlueDDLMode int
+
+const (
+	ModeFullLoad = iota
+	ModeLoadSysTables
+)
+
 // Glue is an implementation of glue.Glue using a new TiDB session.
 type Glue struct {
 	glue.StdIOGlue
 
 	tikvGlue      gluetikv.Glue
 	startDomainMu *sync.Mutex
+
+	Mode TiDBGlueDDLMode
 }
 
 func WrapSession(se sessionapi.Session) glue.Session {
@@ -64,14 +73,21 @@ type tidbSession struct {
 	se sessionapi.Session
 }
 
+func (g Glue) getDomainInner(store kv.Storage) (*domain.Domain, error) {
+	if g.Mode == ModeFullLoad {
+		return session.GetDomain(store)
+	}
+	return session.GetDomainForBR(store)
+}
+
 // GetDomain implements glue.Glue.
 func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
-	existDom, _ := session.GetDomainForBR(nil)
+	existDom, _ := g.getDomainInner(nil)
 	if err := g.startDomainAsNeeded(store); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	dom, err := session.GetDomainForBR(store)
+	dom, err := g.getDomainInner(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -104,14 +120,14 @@ func (g Glue) CreateSession(store kv.Storage) (glue.Session, error) {
 func (g Glue) startDomainAsNeeded(store kv.Storage) error {
 	g.startDomainMu.Lock()
 	defer g.startDomainMu.Unlock()
-	existDom, _ := session.GetDomainForBR(nil)
+	existDom, _ := g.getDomainInner(nil)
 	if existDom != nil {
 		return nil
 	}
 	if err := ddl.StartOwnerManager(context.Background(), store); err != nil {
 		return errors.Trace(err)
 	}
-	dom, err := session.GetDomainForBR(store)
+	dom, err := g.getDomainInner(store)
 	if err != nil {
 		return err
 	}
@@ -164,7 +180,7 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 		log.Info("one shot session closed")
 	}()
 	// dom will be created during create session.
-	dom, err := session.GetDomainForBR(store)
+	dom, err := g.getDomainInner(store)
 	if err != nil {
 		return errors.Trace(err)
 	}

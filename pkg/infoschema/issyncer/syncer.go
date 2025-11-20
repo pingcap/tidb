@@ -197,6 +197,18 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 }
 
 func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}) bool {
+	if s.loader.forBRBackup {
+		is := s.InfoSchema()
+		for id := range tableIDs {
+			name, ok := is.SchemaByID(id)
+			isSysOrBRRel := ok && (metadef.IsSystemDB(name.Name.L) || metadef.IsBRRelatedDB(name.Name.O))
+			if !isSysOrBRRel {
+				return false
+			}
+		}
+		return true
+	}
+
 	if !s.crossKS {
 		return false
 	}
@@ -296,10 +308,6 @@ func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 func (s *Syncer) SyncLoop(ctx context.Context) {
 	defer util.Recover(metrics.LabelDomain, "SyncLoop", nil, true)
 
-	if s.loader.loadForBR {
-		s.logger.Warn("This syncer is opened for BR. Sync loop won't be started.")
-		return
-	}
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
 	ticker := time.NewTicker(s.schemaLease / 2)
