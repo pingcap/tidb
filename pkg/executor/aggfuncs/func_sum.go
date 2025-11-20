@@ -27,7 +27,7 @@ import (
 
 const (
 	pointerSize = int64(unsafe.Sizeof(&types.MyDecimal{}))
-	
+
 	// DefPartialResult4SumFloat64Size is the size of partialResult4SumFloat64
 	DefPartialResult4SumFloat64Size = int64(unsafe.Sizeof(partialResult4SumFloat64{}))
 	// DefPartialResult4SumDecimalSize is the size of partialResult4SumDecimal
@@ -461,14 +461,14 @@ func (*sum4OriginalDistinct4Decimal) AllocPartialResult() (pr PartialResult, mem
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
 	setSize := int64(0)
-	p.valSet, setSize = set.NewStringToStringSetWithMemoryUsage()
+	p.valSet, setSize = set.NewStringToDecimalSetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize + setSize
 }
 
 func (*sum4OriginalDistinct4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	p.isNull = true
-	p.valSet, _ = set.NewStringToStringSetWithMemoryUsage()
+	p.valSet, _ = set.NewStringToDecimalSetWithMemoryUsage()
 }
 
 func (e *sum4OriginalDistinct4Decimal) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {

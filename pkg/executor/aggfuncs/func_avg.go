@@ -317,7 +317,7 @@ type avgOriginal4DistinctDecimal struct {
 }
 
 func (*avgOriginal4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	valSet, setSize := set.NewStringToStringSetWithMemoryUsage()
+	valSet, setSize := set.NewStringToDecimalSetWithMemoryUsage()
 	p := &partialResult4AvgDistinctDecimal{
 		valSet: valSet,
 	}
@@ -328,7 +328,7 @@ func (*avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	p.sum = *types.NewDecFromInt(0)
 	p.count = int64(0)
-	p.valSet, _ = set.NewStringToStringSetWithMemoryUsage()
+	p.valSet, _ = set.NewStringToDecimalSetWithMemoryUsage()
 }
 
 func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {

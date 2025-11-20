@@ -20,7 +20,52 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-// StringToDecimalSetWithMemoryUsage is a string set with memory usage.
+// StringToStringSetWithMemoryUsage is a string-string set with memory usage.
+type StringToStringSetWithMemoryUsage struct {
+	Data   map[string]string
+	bInMap int64
+
+	// For tracking large memory usage in time.
+	// If tracker is non-nil, memDelta will track immediately and reset to 0. Otherwise, memDelta will return and lazy track.
+	tracker *memory.Tracker
+}
+
+// NewStringToStringSetWithMemoryUsage builds a string set.
+func NewStringToStringSetWithMemoryUsage() (setWithMemoryUsage StringToStringSetWithMemoryUsage, memDelta int64) {
+	setWithMemoryUsage = StringToStringSetWithMemoryUsage{
+		Data:   make(map[string]string),
+		bInMap: 0,
+	}
+	memDelta = hack.DefBucketMemoryUsageForMapStringToString * (1 << setWithMemoryUsage.bInMap)
+	return setWithMemoryUsage, memDelta
+}
+
+// Exist checks if key has been in the set
+func (s *StringToStringSetWithMemoryUsage) Exist(key string) bool {
+	_, ok := s.Data[key]
+	return ok
+}
+
+// Insert inserts `val` into `s` and return memDelta.
+func (s *StringToStringSetWithMemoryUsage) Insert(key string, val string) (memDelta int64) {
+	s.Data[key] = val
+	if len(s.Data) > (1<<s.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		memDelta = hack.DefBucketMemoryUsageForMapStringToString * (1 << s.bInMap)
+		s.bInMap++
+		if s.tracker != nil {
+			s.tracker.Consume(memDelta)
+			memDelta = 0
+		}
+	}
+	return memDelta
+}
+
+// SetTracker sets memory tracker for StringToStringMapWithMemoryUsage
+func (s *StringToStringSetWithMemoryUsage) SetTracker(t *memory.Tracker) {
+	s.tracker = t
+}
+
+// StringToDecimalSetWithMemoryUsage is a string-decimal set with memory usage.
 type StringToDecimalSetWithMemoryUsage struct {
 	Data   map[string]*types.MyDecimal
 	bInMap int64
@@ -30,8 +75,8 @@ type StringToDecimalSetWithMemoryUsage struct {
 	tracker *memory.Tracker
 }
 
-// NewStringToStringSetWithMemoryUsage builds a string set.
-func NewStringToStringSetWithMemoryUsage() (setWithMemoryUsage StringToDecimalSetWithMemoryUsage, memDelta int64) {
+// NewStringToDecimalSetWithMemoryUsage builds a string set.
+func NewStringToDecimalSetWithMemoryUsage() (setWithMemoryUsage StringToDecimalSetWithMemoryUsage, memDelta int64) {
 	setWithMemoryUsage = StringToDecimalSetWithMemoryUsage{
 		Data:   make(map[string]*types.MyDecimal),
 		bInMap: 0,
@@ -50,7 +95,7 @@ func (s *StringToDecimalSetWithMemoryUsage) Exist(key string) bool {
 func (s *StringToDecimalSetWithMemoryUsage) Insert(key string, val *types.MyDecimal) (memDelta int64) {
 	s.Data[key] = val
 	if len(s.Data) > (1<<s.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-		memDelta = hack.DefBucketMemoryUsageForSetString * (1 << s.bInMap)
+		memDelta = hack.DefBucketMemoryUsageForMapStringToDecimal * (1 << s.bInMap)
 		s.bInMap++
 		if s.tracker != nil {
 			s.tracker.Consume(memDelta)
@@ -60,7 +105,7 @@ func (s *StringToDecimalSetWithMemoryUsage) Insert(key string, val *types.MyDeci
 	return memDelta
 }
 
-// SetTracker sets memory tracker for StringToStringMapWithMemoryUsage
+// SetTracker sets memory tracker for StringToDecimalMapWithMemoryUsage
 func (s *StringToDecimalSetWithMemoryUsage) SetTracker(t *memory.Tracker) {
 	s.tracker = t
 }

@@ -17,11 +17,13 @@ package aggfuncs
 import (
 	"bytes"
 	"container/heap"
+	"fmt"
 	"sort"
 	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -74,6 +76,7 @@ func (e *baseGroupConcat4String) UpdatePartialResult(sctx AggFuncUpdateContext, 
 
 func (e *baseGroupConcat4String) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4GroupConcat)(pr)
+	
 	if p.buffer == nil {
 		chk.AppendNull(e.ordinal)
 		return nil
@@ -219,7 +222,7 @@ func (e *groupConcat) GetTruncated() *int32 {
 
 type partialResult4GroupConcatDistinct struct {
 	basePartialResult4GroupConcat
-	valSet            set.StringSetWithMemoryUsage
+	valSet            set.StringToStringSetWithMemoryUsage
 	encodeBytesBuffer []byte
 }
 
@@ -230,28 +233,23 @@ type groupPartialConcatDistinct struct {
 func (e *groupPartialConcatDistinct) MergePartialResult(sctx AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
 	s, d := (*partialResult4GroupConcatDistinct)(src), (*partialResult4GroupConcatDistinct)(dst)
-	if s.buffer == nil {
-		return 0, nil
-	}
-	if d.buffer == nil {
-		d.buffer = s.buffer
-		return 0, nil
-	}
 
-	bufCapBefore := d.buffer.Cap()
-	for val := range s.valSet.StringSet {
-		if d.valSet.StringSet.Exist(val) {
+	// TODO handle memDelta
+	// bufCapBefore := d.buffer.Cap()
+	for key, val := range s.valSet.Data {
+		if d.valSet.Exist(key) {
 			continue
 		}
 
-		d.buffer.WriteString(e.sep)
-		d.buffer.WriteString(val)
-		memDelta += int64(len(e.sep) + len(val))
-		memDelta += d.valSet.Insert(val)
+		log.Info(fmt.Sprintf("Merge: %s", val))
+		memDelta += d.valSet.Insert(key, val)
+		memDelta += int64(len(e.sep) + len(key) + len(val))
 	}
 
-	memDelta -= int64(d.buffer.Cap() + bufCapBefore + s.buffer.Cap())
-	return memDelta, e.truncatePartialResultIfNeed(sctx, d.buffer)
+	// TODO handle memDelta
+	// memDelta -= int64(d.buffer.Cap() + bufCapBefore + s.buffer.Cap())
+	// return memDelta, e.truncatePartialResultIfNeed(sctx, d.buffer)
+	return memDelta, nil
 }
 
 type groupOriginalConcatDistinct struct {
@@ -262,14 +260,14 @@ func (*groupOriginalConcatDistinct) AllocPartialResult() (pr PartialResult, memD
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
 	setSize := int64(0)
-	p.valSet, setSize = set.NewStringSetWithMemoryUsage()
+	p.valSet, setSize = set.NewStringToStringSetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize + DefBytesBufferSize + setSize
 }
 
 func (*groupOriginalConcatDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	p.buffer = nil
-	p.valSet, _ = set.NewStringSetWithMemoryUsage()
+	p.valSet, _ = set.NewStringToStringSetWithMemoryUsage()
 }
 
 func (e *groupOriginalConcatDistinct) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -312,21 +310,24 @@ func (e *groupOriginalConcatDistinct) UpdatePartialResult(sctx AggFuncUpdateCont
 		if p.valSet.Exist(joinedVal) {
 			continue
 		}
-		memDelta += p.valSet.Insert(joinedVal)
+		log.Info(fmt.Sprintf("Update, insert: %s", p.valsBuf.String()))
+		valStr := p.valsBuf.String()
+		memDelta += p.valSet.Insert(joinedVal, valStr)
 		memDelta += int64(len(joinedVal))
-		// write separator
-		if p.buffer == nil {
-			p.buffer = &bytes.Buffer{}
-			memDelta += DefBytesBufferSize
-		} else {
-			p.buffer.WriteString(e.sep)
-		}
-		// write values
-		p.buffer.WriteString(p.valsBuf.String())
+		memDelta += int64(len(valStr))
+		// // write separator
+		// if p.buffer == nil {
+		// 	p.buffer = &bytes.Buffer{}
+		// 	memDelta += DefBytesBufferSize
+		// } else {
+		// 	p.buffer.WriteString(e.sep)
+		// }
+		// // write values
+		// p.buffer.WriteString(p.valsBuf.String())
 	}
-	if p.buffer != nil {
-		return memDelta, e.truncatePartialResultIfNeed(sctx, p.buffer)
-	}
+	// if p.buffer != nil {
+	// 	return memDelta, e.truncatePartialResultIfNeed(sctx, p.buffer) // TODO move it to `Append`
+	// }
 	return memDelta, nil
 }
 

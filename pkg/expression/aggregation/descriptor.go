@@ -189,6 +189,7 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 	default:
 		// TODO refine it
 		if a.HasDistinct {
+			// TODO can we delete it? It seems that it's useless.
 			finalAggDesc.Args = partialAggDesc.Args
 		} else {
 			args := make([]expression.Expression, 0, 1)
