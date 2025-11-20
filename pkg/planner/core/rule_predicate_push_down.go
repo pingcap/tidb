@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
@@ -41,9 +40,9 @@ type exprPrefixAdder struct {
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (*PPDSolver) Optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*PPDSolver) Optimize(_ context.Context, lp base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	_, p, err := lp.PredicatePushDown(nil, opt)
+	_, p, err := lp.PredicatePushDown(nil)
 	return p, planChanged, err
 }
 

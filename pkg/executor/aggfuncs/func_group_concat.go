@@ -259,7 +259,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx AggFuncUpdateContext, row
 			if isNull {
 				break
 			}
-			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].Key(v))
+			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].ImmutableKey(v))
 			p.valsBuf.WriteString(v)
 		}
 		if isNull {
@@ -592,7 +592,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx AggFuncUpdateContext
 			if isNull {
 				break
 			}
-			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].Key(v))
+			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].ImmutableKey(v))
 			buffer.WriteString(v)
 		}
 		if isNull {

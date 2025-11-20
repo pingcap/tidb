@@ -87,7 +87,17 @@ const (
 
 // Next implements the Executor Next interface.
 // It will collect all the sample task and run them concurrently.
-func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
+	defer func() {
+		// NOTE: auto-analyze always runs with InRestrictedSQL set to true.
+		if !e.Ctx().GetSessionVars().InRestrictedSQL {
+			if err != nil {
+				metrics.ManualAnalyzeCounter.WithLabelValues("failed").Inc()
+				return
+			}
+			metrics.ManualAnalyzeCounter.WithLabelValues("succ").Inc()
+		}
+	}()
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	sessionVars := e.Ctx().GetSessionVars()
@@ -498,7 +508,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	defer func() {
 		if r := recover(); r != nil {
-			statslogutil.StatsLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			statslogutil.StatsLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			// If errExitCh is closed, it means the whole analyze task is aborted. So we do not need to send the result to resultsCh.
 			err := getAnalyzePanicErr(r)
@@ -508,7 +518,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 				Job: task.job,
 			}:
 			case <-e.errExitCh:
-				statslogutil.StatsErrVerboseLogger().Error("analyze worker exits because the whole analyze task is aborted", zap.Error(err))
+				statslogutil.StatsErrVerboseLogger().Warn("analyze worker exits because the whole analyze task is aborted", zap.Error(err))
 			}
 		}
 	}()

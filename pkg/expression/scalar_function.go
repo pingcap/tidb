@@ -380,13 +380,34 @@ func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 	if !ok {
 		return false
 	}
+	// If they are the same object, they must be equal.
+	if sf == fun {
+		return true
+	}
 	if sf.FuncName.L != fun.FuncName.L {
 		return false
 	}
 	if !sf.RetType.Equal(fun.RetType) {
 		return false
 	}
+	if sf.hashcode != nil && fun.hashcode != nil {
+		if intest.InTest {
+			assertCheckHashCode(sf)
+			assertCheckHashCode(fun)
+		}
+		return bytes.Equal(sf.hashcode, fun.hashcode)
+	}
 	return sf.Function.equal(ctx, fun.Function)
+}
+
+func assertCheckHashCode(sf *ScalarFunction) {
+	intest.Assert(intest.InTest)
+	copyhashcode := make([]byte, len(sf.hashcode))
+	copy(copyhashcode, sf.hashcode)
+	// avoid data race in the plan cache
+	s := sf.Clone().(*ScalarFunction)
+	ReHashCode(s)
+	intest.Assert(bytes.Equal(s.hashcode, copyhashcode), "HashCode should not change after ReHashCode is called")
 }
 
 // IsCorrelated implements Expression interface.
@@ -559,10 +580,7 @@ func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (typ
 func (sf *ScalarFunction) HashCode() []byte {
 	if len(sf.hashcode) > 0 {
 		if intest.InTest {
-			copyhashcode := make([]byte, len(sf.hashcode))
-			copy(copyhashcode, sf.hashcode)
-			ReHashCode(sf)
-			intest.Assert(bytes.Equal(sf.hashcode, copyhashcode), "HashCode should not change after ReHashCode is called")
+			assertCheckHashCode(sf)
 		}
 		return sf.hashcode
 	}
