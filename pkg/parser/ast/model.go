@@ -213,6 +213,8 @@ func (t IndexType) String() string {
 		return "INVERTED"
 	case IndexTypeFulltext:
 		return "FULLTEXT"
+	case IndexTypeHybrid:
+		return "HYBRID"
 	default:
 		return ""
 	}
@@ -233,6 +235,7 @@ const (
 	// It will be rewritten into IndexTypeVector after preprocessor phase.
 	IndexTypeHNSW
 	IndexTypeFulltext
+	IndexTypeHybrid
 )
 
 // ReferOptionType is the type for refer options.

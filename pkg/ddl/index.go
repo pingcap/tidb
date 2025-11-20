@@ -390,6 +390,12 @@ func BuildIndexInfo(
 			return nil, errors.Trace(err)
 		}
 		idxInfo.FullTextInfo = ftsInfo
+	case model.ColumnarIndexTypeHybrid:
+		hybridInfo, err := buildHybridInfoWithCheck(indexPartSpecifications, indexOption, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxInfo.HybridInfo = hybridInfo
 	}
 
 	var err error
@@ -427,6 +433,701 @@ func BuildIndexInfo(
 	}
 
 	return idxInfo, nil
+}
+
+type hybridIndexParameter struct {
+	FullText []hybridFullTextSpec   `json:"fulltext"`
+	Vector   []hybridVectorSpec     `json:"vector"`
+	Inverted hybridInvertedSpecList `json:"inverted"`
+	Sort     *hybridSortSpec        `json:"sort"`
+}
+
+type hybridFullTextSpec struct {
+	Columns   stringList                   `json:"columns"`
+	IndexInfo *hybridFullTextIndexInfoSpec `json:"index_info"`
+}
+
+type hybridVectorSpec struct {
+	Columns   stringList                 `json:"columns"`
+	IndexInfo *hybridVectorIndexInfoSpec `json:"index_info"`
+}
+
+type hybridVectorIndexInfoSpec struct {
+	DistanceMetric string            `json:"distance_metric"`
+	Dimension      *uint64           `json:"dimension"`
+	Options        map[string]string `json:"options"`
+}
+
+type hybridInvertedSpec struct {
+	Columns stringList      `json:"columns"`
+	Params  map[string]any  `json:"params"`
+	Sort    *hybridSortSpec `json:"sort"`
+}
+
+type hybridInvertedSpecList []*hybridInvertedSpec
+
+type hybridSortSpec struct {
+	Columns    stringList `json:"columns"`
+	Directions []string   `json:"directions"`
+	Order      []string   `json:"order"`
+}
+
+type stringList []string
+
+func (s *stringList) UnmarshalJSON(data []byte) error {
+	dataStr := strings.TrimSpace(string(data))
+	if len(dataStr) == 0 || dataStr == "null" {
+		*s = nil
+		return nil
+	}
+	if dataStr[0] == '"' {
+		var v string
+		if err := json.Unmarshal(data, &v); err != nil {
+			return errors.Trace(err)
+		}
+		v = strings.TrimSpace(v)
+		if v == "" {
+			*s = []string{}
+		} else {
+			*s = []string{v}
+		}
+		return nil
+	}
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err != nil {
+		return errors.Trace(err)
+	}
+	result := make([]string, 0, len(arr))
+	for _, str := range arr {
+		result = append(result, strings.TrimSpace(str))
+	}
+	*s = result
+	return nil
+}
+
+type hybridFullTextIndexInfoSpec struct {
+	Analyzer     *hybridFullTextAnalyzerSpec  `json:"analyzer"`
+	Tokenizer    *hybridFullTextTokenizerSpec `json:"tokenizer"`
+	TokenFilters []string                     `json:"token_filter"`
+}
+
+func (s *hybridFullTextIndexInfoSpec) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || strings.TrimSpace(string(data)) == "null" {
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return errors.Trace(err)
+	}
+	for k, v := range raw {
+		switch strings.ToLower(k) {
+		case "analyzer":
+			var analyzer hybridFullTextAnalyzerSpec
+			if err := json.Unmarshal(v, &analyzer); err != nil {
+				return errors.Trace(err)
+			}
+			s.Analyzer = &analyzer
+		case "tokenizer":
+			var tokenizer hybridFullTextTokenizerSpec
+			if err := json.Unmarshal(v, &tokenizer); err != nil {
+				return errors.Trace(err)
+			}
+			s.Tokenizer = &tokenizer
+		case "token_filter":
+			var list stringList
+			if err := json.Unmarshal(v, &list); err != nil {
+				return errors.Trace(err)
+			}
+			s.TokenFilters = list
+		default:
+			// Ignore unknown fields for forward compatibility.
+		}
+	}
+	return nil
+}
+
+func (s *hybridFullTextIndexInfoSpec) toModel() *model.HybridFulltextIndexInfo {
+	if s == nil {
+		return nil
+	}
+	info := &model.HybridFulltextIndexInfo{}
+	if s.Analyzer != nil {
+		info.Analyzer = s.Analyzer.toModel()
+	}
+	if s.Tokenizer != nil {
+		info.Tokenizer = s.Tokenizer.toModel()
+	}
+	if len(s.TokenFilters) > 0 {
+		info.TokenFilters = append([]string(nil), s.TokenFilters...)
+	}
+	return info
+}
+
+type hybridFullTextAnalyzerSpec struct {
+	Type   string
+	Params map[string]any
+}
+
+func (s *hybridFullTextAnalyzerSpec) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return errors.Trace(err)
+	}
+	for k, v := range raw {
+		if strings.EqualFold(k, "type") {
+			if err := json.Unmarshal(v, &s.Type); err != nil {
+				return errors.Trace(err)
+			}
+			s.Type = strings.TrimSpace(s.Type)
+			continue
+		}
+		if s.Params == nil {
+			s.Params = make(map[string]any)
+		}
+		val, err := decodeJSONToInterface(v)
+		if err != nil {
+			return err
+		}
+		s.Params[k] = val
+	}
+	return nil
+}
+
+func (s *hybridFullTextAnalyzerSpec) toModel() *model.HybridFulltextAnalyzer {
+	if s == nil {
+		return nil
+	}
+	cfg := &model.HybridFulltextAnalyzer{Type: s.Type}
+	if len(s.Params) > 0 {
+		cfg.Params = cloneInterfaceMap(s.Params)
+	}
+	return cfg
+}
+
+type hybridFullTextTokenizerSpec struct {
+	Type    string
+	Options map[string]any
+}
+
+func (s *hybridFullTextTokenizerSpec) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return errors.Trace(err)
+	}
+	for k, v := range raw {
+		if strings.EqualFold(k, "type") {
+			if err := json.Unmarshal(v, &s.Type); err != nil {
+				return errors.Trace(err)
+			}
+			s.Type = strings.TrimSpace(s.Type)
+			continue
+		}
+		if s.Options == nil {
+			s.Options = make(map[string]any)
+		}
+		val, err := decodeJSONToInterface(v)
+		if err != nil {
+			return err
+		}
+		s.Options[k] = val
+	}
+	return nil
+}
+
+func (s *hybridFullTextTokenizerSpec) toModel() *model.HybridFulltextTokenizer {
+	if s == nil {
+		return nil
+	}
+	cfg := &model.HybridFulltextTokenizer{Type: s.Type}
+	if len(s.Options) > 0 {
+		cfg.Options = cloneInterfaceMap(s.Options)
+	}
+	return cfg
+}
+
+func (s *hybridVectorIndexInfoSpec) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || strings.EqualFold(trimmed, "null") {
+		return nil
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return errors.Trace(err)
+	}
+
+	for k, v := range raw {
+		switch strings.ToLower(k) {
+		case "distance_metric":
+			var metric string
+			if err := json.Unmarshal(v, &metric); err != nil {
+				return errors.Trace(err)
+			}
+			metric = strings.TrimSpace(metric)
+			if metric != "" {
+				s.DistanceMetric = metric
+			}
+		case "dimension":
+			dim, err := parseHybridVectorDimension(v)
+			if err != nil {
+				return err
+			}
+			s.Dimension = dim
+		case "options":
+			opts, err := parseHybridVectorOptions(v)
+			if err != nil {
+				return err
+			}
+			if len(opts) > 0 {
+				if s.Options == nil {
+					s.Options = make(map[string]string, len(opts))
+				}
+				for optKey, optVal := range opts {
+					s.Options[optKey] = optVal
+				}
+			}
+		default:
+			val, err := decodeJSONToInterface(v)
+			if err != nil {
+				return err
+			}
+			strVal, err := hybridVectorOptionValueToString(val)
+			if err != nil {
+				return err
+			}
+			if s.Options == nil {
+				s.Options = make(map[string]string)
+			}
+			s.Options[k] = strVal
+		}
+	}
+
+	return nil
+}
+
+func (s *hybridVectorIndexInfoSpec) toModel() *model.HybridVectorIndexInfo {
+	if s == nil {
+		return nil
+	}
+	info := &model.HybridVectorIndexInfo{}
+	if strings.TrimSpace(s.DistanceMetric) != "" {
+		info.DistanceMetric = strings.ToUpper(strings.TrimSpace(s.DistanceMetric))
+	}
+	if s.Dimension != nil {
+		dim := *s.Dimension
+		info.Dimension = &dim
+	}
+	if len(s.Options) > 0 {
+		info.Options = make(map[string]string, len(s.Options))
+		for k, v := range s.Options {
+			info.Options[k] = v
+		}
+	}
+	return info
+}
+
+func (s *hybridInvertedSpec) UnmarshalJSON(data []byte) error {
+	dataStr := strings.TrimSpace(string(data))
+	if len(dataStr) == 0 || dataStr == "null" {
+		return nil
+	}
+	if dataStr[0] == '"' {
+		var v string
+		if err := json.Unmarshal(data, &v); err != nil {
+			return errors.Trace(err)
+		}
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index inverted component must specify explicit columns")
+	}
+	type rawSpec struct {
+		Columns json.RawMessage            `json:"columns"`
+		Params  map[string]json.RawMessage `json:"params"`
+		Sort    *hybridSortSpec            `json:"sort"`
+	}
+	var raw rawSpec
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return errors.Trace(err)
+	}
+	if len(raw.Columns) > 0 {
+		var list stringList
+		if err := json.Unmarshal(raw.Columns, &list); err != nil {
+			return errors.Trace(err)
+		}
+		s.Columns = list
+	}
+	if len(raw.Params) > 0 {
+		s.Params = make(map[string]any, len(raw.Params))
+		for k, v := range raw.Params {
+			val, err := decodeJSONToInterface(v)
+			if err != nil {
+				return err
+			}
+			s.Params[k] = val
+		}
+	}
+	if raw.Sort != nil {
+		s.Sort = raw.Sort
+	}
+	return nil
+}
+
+func (l *hybridInvertedSpecList) UnmarshalJSON(data []byte) error {
+	dataStr := strings.TrimSpace(string(data))
+	if len(dataStr) == 0 || dataStr == "null" {
+		*l = nil
+		return nil
+	}
+	if dataStr[0] == '{' {
+		var spec hybridInvertedSpec
+		if err := json.Unmarshal(data, &spec); err != nil {
+			return errors.Trace(err)
+		}
+		*l = []*hybridInvertedSpec{&spec}
+		return nil
+	}
+	if dataStr[0] == '[' {
+		var list []*hybridInvertedSpec
+		if err := json.Unmarshal(data, &list); err != nil {
+			return errors.Trace(err)
+		}
+		*l = list
+		return nil
+	}
+	return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index inverted component must be an object or array")
+}
+
+func decodeJSONToInterface(data json.RawMessage) (any, error) {
+	if data == nil {
+		return nil, nil
+	}
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return value, nil
+}
+
+func parseHybridVectorDimension(raw json.RawMessage) (*uint64, error) {
+	val, err := decodeJSONToInterface(raw)
+	if err != nil {
+		return nil, err
+	}
+	switch v := val.(type) {
+	case nil:
+		return nil, nil
+	case float64:
+		if v < 0 {
+			return nil, errors.Trace(errors.Errorf("hybrid vector index dimension must be non-negative, got %v", v))
+		}
+		asStr := strconv.FormatFloat(v, 'f', -1, 64)
+		parsed, err := strconv.ParseUint(asStr, 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if float64(parsed) != v {
+			return nil, errors.Trace(errors.Errorf("hybrid vector index dimension must be an integer, got %v", v))
+		}
+		dim := parsed
+		return &dim, nil
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return nil, nil
+		}
+		parsed, err := strconv.ParseUint(trimmed, 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		dim := parsed
+		return &dim, nil
+	default:
+		return nil, errors.Trace(errors.Errorf("hybrid vector index dimension must be numeric, got %T", v))
+	}
+}
+
+func parseHybridVectorOptions(raw json.RawMessage) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || strings.EqualFold(trimmed, "null") {
+		return nil, nil
+	}
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &rawMap); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rawMap) == 0 {
+		return nil, nil
+	}
+	opts := make(map[string]string, len(rawMap))
+	for key, value := range rawMap {
+		val, err := decodeJSONToInterface(value)
+		if err != nil {
+			return nil, err
+		}
+		strVal, err := hybridVectorOptionValueToString(val)
+		if err != nil {
+			return nil, err
+		}
+		opts[key] = strVal
+	}
+	return opts, nil
+}
+
+func hybridVectorOptionValueToString(val any) (string, error) {
+	switch v := val.(type) {
+	case nil:
+		return "", nil
+	case string:
+		return strings.TrimSpace(v), nil
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64), nil
+	case bool:
+		return strconv.FormatBool(v), nil
+	default:
+		bytes, err := json.Marshal(v)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		return string(bytes), nil
+	}
+}
+
+func cloneInterfaceMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = deepCloneInterface(v)
+	}
+	return dst
+}
+
+func deepCloneInterface(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return cloneInterfaceMap(val)
+	case []any:
+		if len(val) == 0 {
+			return []any{}
+		}
+		res := make([]any, len(val))
+		for i, elem := range val {
+			res[i] = deepCloneInterface(elem)
+		}
+		return res
+	case json.RawMessage:
+		if val == nil {
+			return json.RawMessage(nil)
+		}
+		return append(json.RawMessage(nil), val...)
+	default:
+		return val
+	}
+}
+
+func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption,
+	tblInfo *model.TableInfo) (*model.HybridIndexInfo, error) {
+	if indexOption == nil || strings.TrimSpace(indexOption.TiCIParameter) == "" {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index must specify PARAMETER option")
+	}
+	paramLiteral := strings.TrimSpace(indexOption.TiCIParameter)
+	if unquoted, err := types.UnquoteString(paramLiteral); err == nil {
+		paramLiteral = unquoted
+	}
+	var param hybridIndexParameter
+	if err := json.Unmarshal([]byte(paramLiteral), &param); err != nil {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("invalid HYBRID index PARAMETER: %v", err))
+	}
+	if len(param.FullText) == 0 && len(param.Vector) == 0 && len(param.Inverted) == 0 {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index PARAMETER must define at least one component")
+	}
+
+	indexColumns := make(map[string]*model.ColumnInfo, len(indexPartSpecifications))
+	for _, idxPart := range indexPartSpecifications {
+		if idxPart.Column == nil {
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index only supports column references")
+		}
+		if idxPart.Length != types.UnspecifiedLength {
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index does not support prefix length")
+		}
+		if idxPart.Desc {
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index does not support DESC order")
+		}
+		colInfo := findColumnByName(idxPart.Column.Name.L, tblInfo)
+		if colInfo == nil {
+			return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name, tblInfo.Name)
+		}
+		indexColumns[idxPart.Column.Name.L] = colInfo
+	}
+
+	resolveColumn := func(name string) (*model.ColumnInfo, error) {
+		lowered := strings.ToLower(strings.TrimSpace(name))
+		if lowered == "" {
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index PARAMETER contains empty column name")
+		}
+		if colInfo, ok := indexColumns[lowered]; ok {
+			return colInfo, nil
+		}
+		if findColumnByName(lowered, tblInfo) == nil {
+			return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(name, tblInfo.Name)
+		}
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("column '%s' referenced in HYBRID index PARAMETER must appear in index definition", name))
+	}
+
+	info := &model.HybridIndexInfo{}
+	makeIndexColumn := func(colInfo *model.ColumnInfo) *model.IndexColumn {
+		return &model.IndexColumn{
+			Name:   colInfo.Name,
+			Offset: colInfo.Offset,
+			Length: types.UnspecifiedLength,
+		}
+	}
+
+	if len(param.FullText) > 0 {
+		info.FullText = make([]*model.HybridFullTextSpec, 0, len(param.FullText))
+		for i, spec := range param.FullText {
+			if len(spec.Columns) == 0 {
+				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index fulltext component %d must specify columns", i+1))
+			}
+			columns := make([]*model.IndexColumn, 0, len(spec.Columns))
+			for _, colName := range spec.Columns {
+				colInfo, err := resolveColumn(colName)
+				if err != nil {
+					return nil, err
+				}
+				if !types.IsString(colInfo.FieldType.GetType()) {
+					return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index fulltext column '%s' must be of string type", colInfo.Name.O))
+				}
+				columns = append(columns, makeIndexColumn(colInfo))
+			}
+			component := &model.HybridFullTextSpec{Columns: columns}
+			if spec.IndexInfo != nil {
+				component.IndexInfo = spec.IndexInfo.toModel()
+			}
+			info.FullText = append(info.FullText, component)
+		}
+	}
+
+	if len(param.Vector) > 0 {
+		info.Vector = make([]*model.HybridVectorSpec, 0, len(param.Vector))
+		for i, spec := range param.Vector {
+			if len(spec.Columns) == 0 {
+				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index vector component %d must specify columns", i+1))
+			}
+			columns := make([]*model.IndexColumn, 0, len(spec.Columns))
+			for _, colName := range spec.Columns {
+				colInfo, err := resolveColumn(colName)
+				if err != nil {
+					return nil, err
+				}
+				if colInfo.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
+					return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index vector column '%s' must be of VECTOR type", colInfo.Name.O))
+				}
+				columns = append(columns, makeIndexColumn(colInfo))
+			}
+			component := &model.HybridVectorSpec{Columns: columns}
+			if spec.IndexInfo != nil {
+				component.IndexInfo = spec.IndexInfo.toModel()
+			}
+			info.Vector = append(info.Vector, component)
+		}
+	}
+
+	var sortSpec *hybridSortSpec
+	if param.Sort != nil {
+		sortSpec = param.Sort
+	}
+
+	if len(param.Inverted) > 0 {
+		info.Inverted = make([]*model.HybridInvertedSpec, 0, len(param.Inverted))
+		for i, spec := range param.Inverted {
+			if len(spec.Columns) == 0 {
+				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index inverted component %d must specify columns", i+1))
+			}
+			component := &model.HybridInvertedSpec{}
+			component.Columns = make([]*model.IndexColumn, 0, len(spec.Columns))
+			for _, colName := range spec.Columns {
+				colInfo, err := resolveColumn(colName)
+				if err != nil {
+					return nil, err
+				}
+				component.Columns = append(component.Columns, makeIndexColumn(colInfo))
+			}
+			if len(spec.Params) > 0 {
+				component.Params = cloneInterfaceMap(spec.Params)
+			}
+			if spec.Sort != nil {
+				if sortSpec != nil {
+					return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index sort can only be specified once")
+				}
+				sortSpec = spec.Sort
+			}
+			info.Inverted = append(info.Inverted, component)
+		}
+	}
+
+	if sortSpec != nil {
+		sortInfo, err := buildHybridSortSpec(sortSpec, resolveColumn)
+		if err != nil {
+			return nil, err
+		}
+		info.Sort = sortInfo
+	}
+
+	return info, nil
+}
+
+func buildHybridSortSpec(spec *hybridSortSpec, resolveColumn func(string) (*model.ColumnInfo, error)) (*model.HybridSortSpec, error) {
+	if spec == nil {
+		return nil, nil
+	}
+	if len(spec.Columns) == 0 {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index sort must specify columns")
+	}
+	columns := make([]*model.IndexColumn, 0, len(spec.Columns))
+	for _, colName := range spec.Columns {
+		colInfo, err := resolveColumn(colName)
+		if err != nil {
+			return nil, err
+		}
+		columns = append(columns, &model.IndexColumn{
+			Name:   colInfo.Name,
+			Offset: colInfo.Offset,
+			Length: types.UnspecifiedLength,
+		})
+	}
+	orders := spec.Order
+	if len(orders) == 0 && len(spec.Directions) > 0 {
+		orders = spec.Directions
+	}
+	if len(orders) != 0 && len(orders) != len(columns) {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index sort order length mismatch")
+	}
+	normalized := make([]bool, len(columns))
+	for i := range columns {
+		direction := "asc"
+		raw := "asc"
+		if len(orders) > 0 {
+			raw = orders[i]
+			direction = strings.TrimSpace(strings.ToLower(raw))
+			if direction == "" {
+				direction = "asc"
+			}
+		}
+		if direction != "asc" && direction != "desc" {
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index sort order '%s' is invalid", raw))
+		}
+		normalized[i] = direction != "desc"
+	}
+	return &model.HybridSortSpec{
+		Columns: columns,
+		IsAsc:   normalized,
+	}, nil
 }
 
 func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification,
@@ -953,6 +1654,112 @@ func onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver int64, err e
 
 	return ver, errors.Trace(err)
 }
+
+func onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	if job.IsRollingback() {
+		ver, err = onDropIndex(jobCtx, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+
+	schemaID := job.SchemaID
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if err := checkTableTypeForFulltextIndex(tblInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	args, err := model.GetModifyIndexArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	a := args.IndexArgs[0]
+	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, model.ColumnarIndexTypeHybrid, false, a)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	originalState := indexInfo.State
+	switch indexInfo.State {
+	case model.StateNone:
+		indexInfo.State = model.StateDeleteOnly
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, err
+		}
+		job.SchemaState = model.StateDeleteOnly
+	case model.StateDeleteOnly:
+		indexInfo.State = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
+	case model.StateWriteOnly:
+		indexInfo.State = model.StateWriteReorganization
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SnapshotVer = 0
+		job.SchemaState = model.StateWriteReorganization
+	case model.StateWriteReorganization:
+		tbl, err := getTable(jobCtx.getAutoIDRequirement(), schemaID, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		if job.IsCancelling() {
+			return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, dbterror.ErrCancelledDDLJob)
+		}
+
+		if job.SnapshotVer == 0 {
+			currVer, err := getValidCurrentVersion(jobCtx.store)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			err = tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName)
+			if err != nil {
+				if !isRetryableJobError(err, job.ErrorCount) {
+					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+				}
+				return ver, errors.Trace(err)
+			}
+			job.SnapshotVer = currVer.Ver
+			return ver, nil
+		}
+
+		indexInfo.State = model.StatePublic
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		finishedArgs := &model.ModifyIndexArgs{
+			IndexArgs:    []*model.IndexArg{{IndexID: indexInfo.ID}},
+			PartitionIDs: getPartitionIDs(tblInfo),
+			OpType:       model.OpAddIndex,
+		}
+		job.FillFinishedArgs(finishedArgs)
+
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		logutil.DDLLogger().Info("[ddl] run add hybrid index job done",
+			zap.Int64("ver", ver),
+			zap.String("charset", job.Charset),
+			zap.String("collation", job.Collate))
+	default:
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+	}
+
+	return ver, errors.Trace(err)
+}
+
 func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
