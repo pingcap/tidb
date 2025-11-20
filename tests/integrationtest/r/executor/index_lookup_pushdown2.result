@@ -1,10 +1,12 @@
 drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
 create table t1(a int, b int, c int, d int, primary key(a, b) CLUSTERED, index i(c));
 create table t2(a varchar(10), b int, c int, d int, primary key(b, a) CLUSTERED, index i(c));
-create table t3(a varchar(10), b int, c int, d int, primary key(b, a) CLUSTERED, index i(c)) partition by hash (b) partitions 3;;
+create table t3(a varchar(10), b int, c int, d int, primary key(b, a) CLUSTERED, index i(c)) partition by hash (b) partitions 3;
+create table t4(a varchar(10), b int, c int, d int, primary key(b, a) CLUSTERED, index i(c) global) partition by hash (b) partitions 3;
 insert into t1 values (1,2,3,4), (5,6,7,8);
 insert into t2 values ('a',2,3,4), ('b',6,7,8);
 insert into t3 values ('a',2,3,4), ('b',6,7,8);
+insert into t4 values ('a',2,3,4), ('b',6,7,8);
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
 id	estRows	task	access object	operator info
 IndexLookUp_7	10000.00	root		
@@ -68,3 +70,29 @@ b	6	8
 select /*+ index_lookup_pushdown(t3, i) */ a, b, d from t3 limit 1;
 a	b	d
 b	6	8
+explain select /*+ index_lookup_pushdown(t4, i) */ a, b, d from t4 use index(i);
+id	estRows	task	access object	operator info
+IndexLookUp_8	10000.00	root	partition:all	
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t4, index:i(c)	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, partition table is not supported with global index
+explain select /*+ index_lookup_pushdown(t4, i) */ a, b, d from t4 use index(i) limit 1;
+id	estRows	task	access object	operator info
+IndexLookUp_16	1.00	root	partition:all	limit embedded(offset:0, count:1)
+├─Limit_15(Build)	1.00	cop[tikv]		offset:0, count:1
+│ └─IndexFullScan_12	1.00	cop[tikv]	table:t4, index:i(c)	keep order:false, stats:pseudo
+└─TableRowIDScan_13(Probe)	1.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, partition table is not supported with global index
+select /*+ index_lookup_pushdown(t4, i) */ a, b, d from t4 use index(i);
+a	b	d
+a	2	4
+b	6	8
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, partition table is not supported with global index
+select /*+ index_lookup_pushdown(t4, i) */ a, b, d from t4 use index(i) limit 1;
+a	b	d
+a	2	4
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, partition table is not supported with global index
