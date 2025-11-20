@@ -197,6 +197,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		ctx, copCtx, sessPool, taskID, subtaskID,
 		tbl, indexes, extStore, srcChkPool, writerCnt,
 		onClose, memSizePerIndex, reorgMeta, tikvCodec,
+		collector,
 	)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, collector)
 
@@ -632,6 +633,7 @@ func NewWriteExternalStoreOperator(
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
 	tikvCodec tikv.Codec,
+	collector execute.Collector,
 ) *WriteExternalStoreOperator {
 	onDuplicateKey := engineapi.OnDuplicateKeyError
 	failpoint.Inject("ignoreReadIndexDupKey", func() {
@@ -671,6 +673,7 @@ func NewWriteExternalStoreOperator(
 				srcChunkPool: srcChunkPool,
 				reorgMeta:    reorgMeta,
 				totalCount:   totalCount,
+				collector:    collector,
 			}
 			err := w.initIndexConditionCheckers()
 			if err != nil {
