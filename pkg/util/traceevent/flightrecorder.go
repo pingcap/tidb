@@ -130,8 +130,10 @@ type DevDebugConfig struct {
 }
 
 const (
+	// DevDebugTypeExecuteInternalTraceMissing is the type for execute internal trace missing.
 	DevDebugTypeExecuteInternalTraceMissing = "execute_internal_trace_missing"
-	DevDebugTypeSendRequestTraceIDMissing   = "send_request_trace_id_missing"
+	// DevDebugTypeSendRequestTraceIDMissing is the type for send request trace id missing.
+	DevDebugTypeSendRequestTraceIDMissing = "send_request_trace_id_missing"
 )
 
 // compile validates the development debugging configuration.
