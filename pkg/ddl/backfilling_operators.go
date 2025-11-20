@@ -803,19 +803,21 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 		return err
 	}
 	scannedCount := ck.tableScanRowCount
-	if scannedCount == 0 {
+	if scannedCount > 0 || bytes > 0 {
+		if w.totalCount != nil {
+			w.totalCount.Add(scannedCount)
+		}
+		result.RowCnt = int(scannedCount)
+		result.Bytes = bytes
+		if ResultCounterForTest != nil {
+			ResultCounterForTest.Add(1)
+		}
+		send(result)
+	} else {
+		// seems coprocessor has cache, ck.tableScanRowCount is calculated from
+		// dist-sql runtime stat, it may be 0, but there are still KV data written.
 		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", ck.ID))
-		return nil
 	}
-	if w.totalCount != nil {
-		w.totalCount.Add(scannedCount)
-	}
-	result.RowCnt = int(ck.tableScanRowCount)
-	result.Bytes = bytes
-	if ResultCounterForTest != nil {
-		ResultCounterForTest.Add(1)
-	}
-	send(result)
 	return nil
 }
 
