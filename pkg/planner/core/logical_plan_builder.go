@@ -5681,7 +5681,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		if isCTE(tblW) {
 			continue
 		}
-		tblDbMap[tbl.Name.L] = tblW.DBInfo.Name.L
+		tblDbMap[tbl.Name.L] = tblW.DBInfo.Name.O
 	}
 
 	allAssignments := append(list, virtualAssignments...)
@@ -5767,7 +5767,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			b.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan.UnionWith(cols)
 		}
 		newList = append(newList, &expression.Assignment{Col: col, ColName: name.ColName, Expr: newExpr})
-		dbName := name.DBName.L
+		dbName := name.DBName.O
 		// To solve issue#10028, we need to get database name by the table alias name.
 		if dbNameTmp, ok := tblDbMap[name.TblName.L]; ok {
 			dbName = dbNameTmp

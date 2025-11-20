@@ -18,6 +18,7 @@ import (
 	"context"
 	math2 "math"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -720,7 +721,7 @@ func indexIsAvailableByHints(
 		}
 		// The table name matching logic from getPossibleAccessPaths()
 		if h.Tables[0].TableName.L == tblAlias &&
-			(hintDBName.L == dbName || hintDBName.L == "*") {
+			(hintDBName.L == strings.ToLower(dbName) || hintDBName.L == "*") {
 			combinedHints = append(combinedHints, &ast.IndexHint{
 				IndexNames: h.Indexes,
 				HintType:   hintType,
