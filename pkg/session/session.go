@@ -1859,7 +1859,7 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) 
 				zap.String("sql", sql),
 				zap.Stack("stack"))
 			traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.dev_debug", func(config *traceevent.DumpTriggerConfig) bool {
-				return config.Event.DevDebug.Type == "execute_internal_trace_missing"
+				return config.Event.DevDebug.Type == traceevent.DevDebugTypeExecuteInternalTraceMissing
 			})
 		}
 	}

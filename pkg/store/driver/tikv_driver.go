@@ -469,7 +469,7 @@ func (c *injectTraceClient) SendRequest(ctx context.Context, addr string, req *t
 		source.SessionAlias = info.SessionAlias
 	}
 	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.dev_debug", func(config *traceevent.DumpTriggerConfig) bool {
-		return config.Event.DevDebug.Type == "send_request_trace_id_missing"
+		return config.Event.DevDebug.Type == traceevent.DevDebugTypeSendRequestTraceIDMissing
 	})
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
