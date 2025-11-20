@@ -428,7 +428,7 @@ func BuildHistAndTopN(
 	sampleFactor := float64(count) / float64(sampleNum)
 	// If a numTopn value other than default is passed in, we assume it's a value that the user wants us to honor
 	allowPruning := true
-	if numTopN != DefaultTopNValue {
+	if numTopN < DefaultTopNValue {
 		allowPruning = false
 	}
 
