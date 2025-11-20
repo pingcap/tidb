@@ -148,7 +148,7 @@ We need to provide a wrapper for the current memdb.
 
 We can mitigate the performance degeneration caused by O(NlogN) complexity of memdb.
 
-At any moment we allow at most 1 memdb to be in the process of flushing. Consider the following operation sequence. It may not be a TiDB case, but we don't want to add more dependency on how TiDB uses it. The final result is expected to be `(x, 2)`. But if there are multiple memdbs flushing concurrently, the handling of the mutations may be totally reversed(`put(x, 2) -> del(x) -> put(x, 1)`) . The final result becoms `(x, 1)`.
+At any moment we allow at most 1 memdb to be in the process of flushing. Consider the following operation sequence. It may not be a TiDB case, but we don't want to add more dependency on how TiDB uses it. The final result is expected to be `(x, 2)`. But if there are multiple memdbs flushing concurrently, the handling of the mutations may be totally reversed(`put(x, 2) -> del(x) -> put(x, 1)`) . The final result becomes `(x, 1)`.
 
 ```Prolog
 put(x, 1)
@@ -215,7 +215,7 @@ We choose option 2 for its simplicity and more predictable delivery.
 
 The interface remains unchanged. Users of the new mem buffer see no difference between normal and large transactions.
 
-After every write opertion to memdb, trigger a check to start flush. The check condition can be based on the number of keys in current memdb, or the current total size of memdb.
+After every write operation to memdb, trigger a check to start flush. The check condition can be based on the number of keys in current memdb, or the current total size of memdb.
 
 If the mutable memdb becomes too large and the last flush has not finished, the write is blocked until the last flush finishes.
 
@@ -343,7 +343,7 @@ A read request meets a lock written by the large txn.
 
 - read_ts < start_ts of the large txn, ignore lock
 - read_ts >= start_ts of the large txn. Similar to old large transactions, it calls `check_txn_status` on the PK, trying to push its `min_commit_ts` so that `min_commit_ts` > `read_ts` of the read request. If `min_commit_ts` is successfully pushed, the read request can ignore the lock.
-  - If `min_commit_ts` is continuously pushed, the large txn may have difficuly in committing. It is also bad practice to have read-write conflict.
+  - If `min_commit_ts` is continuously pushed, the large txn may have difficulty in committing. It is also bad practice to have read-write conflict.
 
 **Large-read x normal write**
 

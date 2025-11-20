@@ -91,12 +91,10 @@ func TestFileChunkProcess(t *testing.T) {
 			Table:  table,
 			Logger: logger,
 		},
-		&importer.TableImporter{
-			LoadDataController: &importer.LoadDataController{
-				ASTArgs:       &importer.ASTArgs{},
-				InsertColumns: table.VisibleCols(),
-				FieldMappings: fieldMappings,
-			},
+		&importer.LoadDataController{
+			ASTArgs:       &importer.ASTArgs{},
+			InsertColumns: table.VisibleCols(),
+			FieldMappings: fieldMappings,
 		},
 	)
 	require.NoError(t, err)
@@ -121,10 +119,10 @@ func TestFileChunkProcess(t *testing.T) {
 		defer func() {
 			tidbmetrics.UnregisterImportMetrics(metrics)
 		}()
-		bak := importer.MinDeliverRowCnt
-		importer.MinDeliverRowCnt = 2
+		bak := importer.DefaultMinDeliverRowCnt
+		importer.DefaultMinDeliverRowCnt = 2
 		defer func() {
-			importer.MinDeliverRowCnt = bak
+			importer.DefaultMinDeliverRowCnt = bak
 		}()
 
 		dataWriter := mock.NewMockEngineWriter(ctrl)
@@ -161,7 +159,8 @@ func TestFileChunkProcess(t *testing.T) {
 		require.EqualValues(t, 3, checksumDataKVCnt)
 		require.EqualValues(t, 6, checksumIndexKVCnt)
 		require.EqualValues(t, 3, collector.Rows.Load())
-		require.EqualValues(t, len(sourceData), collector.Bytes.Load())
+		require.EqualValues(t, len(sourceData), collector.ReadBytes.Load())
+		require.EqualValues(t, int64(348), collector.Bytes.Load())
 		require.Equal(t, float64(len(sourceData)), metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored)))
 		require.Equal(t, float64(3), metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")))
 		require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowEncodeSecondsHistogram).Histogram.SampleCount)
@@ -170,7 +169,7 @@ func TestFileChunkProcess(t *testing.T) {
 
 	t.Run("encode error", func(t *testing.T) {
 		fileName := path.Join(tempDir, "test.csv")
-		sourceData := []byte(`1,2,3\n4,aa,6\n7,8,9\n`)
+		sourceData := []byte("1,2,3\n4,aa,6\n7,8,9\n")
 		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
 		csvParser := getCSVParser(ctx, t, fileName)
 		defer func() {
@@ -189,7 +188,10 @@ func TestFileChunkProcess(t *testing.T) {
 			csvParser, encoder, nil,
 			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
 		)
-		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
+		err2 := processor.Process(ctx)
+		require.ErrorIs(t, err2, common.ErrEncodeKV)
+		require.ErrorContains(t, err2, "encoding 2-th data row in this chunk")
+		require.ErrorContains(t, err2, "at offset 6")
 		require.True(t, ctrl.Satisfied())
 	})
 

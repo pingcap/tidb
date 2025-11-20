@@ -155,7 +155,7 @@
               }
             ],
             "Plan": [
-              "HashJoin_24 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+              "HashJoin_24 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
               "├─IndexLookUp_47(Build) 99.90 root  ",
               "│ ├─IndexRangeScan_45(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
               "│ └─TableRowIDScan_46(Probe) 99.90 cop[tikv] table:t2 keep order:false, stats:pseudo",
@@ -175,7 +175,7 @@
               }
             ],
             "Plan": [
-              "HashJoin_24 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+              "HashJoin_24 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
               "├─IndexLookUp_47(Build) 99.90 root  ",
               "│ ├─IndexRangeScan_45(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
               "│ └─TableRowIDScan_46(Probe) 99.90 cop[tikv] table:t2 keep order:false, stats:pseudo",
@@ -197,7 +197,7 @@
               }
             ],
             "Plan": [
-              "HashJoin_24 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+              "HashJoin_24 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
               "├─IndexLookUp_47(Build) 99.90 root  ",
               "│ ├─IndexRangeScan_45(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[0 -inf,0 +inf], keep order:false, stats:pseudo",
               "│ └─TableRowIDScan_46(Probe) 99.90 cop[tikv] table:t2 keep order:false, stats:pseudo",

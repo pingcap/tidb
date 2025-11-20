@@ -1029,6 +1029,30 @@ func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 	}
 }
 
+func TestInfoSchemaExcludeNonPublicColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_state_test")
+	tk.MustExec("create table t_state_test (a bigint, b bigint, c bigint);")
+
+	tk2 := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorgWorkForModifyColumn", func() {
+		// Query information_schema.columns
+		rows := tk2.MustQuery("select COLUMN_NAME from information_schema.columns where table_schema='test' and table_name='t_state_test'").Sort().Rows()
+		// Collect column names
+		names := make([]string, 0, len(rows))
+		for _, r := range rows {
+			names = append(names, strings.ToLower(r[0].(string)))
+		}
+		// Assert temporary changing columns are not visible
+		require.ElementsMatch(t, []string{"a", "b", "c"}, names)
+	})
+
+	// Trigger the ALTER that will reorganize the table
+	tk.MustExec("alter table t_state_test modify column a int;")
+}
+
 func TestIndexUsageWithData(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1202,7 +1226,7 @@ func TestKeyspaceMeta(t *testing.T) {
 		Config: cfg,
 	}
 
-	store := testkit.CreateMockStore(t, mockstore.WithKeyspaceMeta(keyspaceMeta))
+	store := testkit.CreateMockStore(t, mockstore.WithCurrentKeyspaceMeta(keyspaceMeta))
 	tk := testkit.NewTestKit(t, store)
 
 	rows := tk.MustQuery("select * from information_schema.keyspace_meta").Rows()

@@ -860,6 +860,9 @@ var tableProcesslistCols = []columnInfo{
 	{name: "INFO", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: "DIGEST", tp: mysql.TypeVarchar, size: 64, deflt: ""},
 	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "MEM_ARBITRATION", tp: mysql.TypeDouble, size: 22},
+	{name: "MEM_WAIT_ARBITRATE_START", tp: mysql.TypeVarchar, size: 32},
+	{name: "MEM_WAIT_ARBITRATE_BYTES", tp: mysql.TypeLonglong, size: 21},
 	{name: "DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
@@ -883,6 +886,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "CLUSTERED", tp: mysql.TypeVarchar, size: 64},
 	{name: "IS_GLOBAL", tp: mysql.TypeLonglong, size: 21},
+	{name: "PREDICATE", tp: mysql.TypeVarchar, size: 1024},
 }
 
 var slowQueryCols = []columnInfo{
@@ -941,6 +945,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogCopWaitMax, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogCopWaitAddr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogMemMax, tp: mysql.TypeLonglong, size: 20},
+	{name: variable.SlowLogMemArbitration, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogDiskMax, tp: mysql.TypeLonglong, size: 20},
 	{name: variable.SlowLogKVTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogPDTotal, tp: mysql.TypeDouble, size: 22},
@@ -1381,6 +1386,8 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.BackoffTypesStr, tp: mysql.TypeVarchar, size: 1024, comment: "Types of errors and the number of retries for each type"},
 	{name: stmtsummary.AvgMemStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average memory(byte) used"},
 	{name: stmtsummary.MaxMemStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max memory(byte) used"},
+	{name: stmtsummary.AvgMemArbitrationStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of memory arbitration"},
+	{name: stmtsummary.MaxMemArbitrationStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of memory arbitration"},
 	{name: stmtsummary.AvgDiskStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average disk space(byte) used"},
 	{name: stmtsummary.MaxDiskStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max disk space(byte) used"},
 	{name: stmtsummary.AvgKvTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of TiKV used"},
@@ -1414,7 +1421,7 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.MaxRequestUnitWriteStr, tp: mysql.TypeDouble, flag: mysql.NotNullFlag | mysql.UnsignedFlag, size: 22, comment: "Max write request-unit cost of these statements"},
 	{name: stmtsummary.AvgRequestUnitWriteStr, tp: mysql.TypeDouble, flag: mysql.NotNullFlag | mysql.UnsignedFlag, size: 22, comment: "Average write request-unit cost of these statements"},
 	{name: stmtsummary.MaxQueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of waiting for available request-units"},
-	{name: stmtsummary.AvgQueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of waiting for available request-units"},
+	{name: stmtsummary.AvgQueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of waiting for available request-units"},
 	{name: stmtsummary.ResourceGroupName, tp: mysql.TypeVarchar, size: 64, comment: "Bind resource group name"},
 	{name: stmtsummary.PlanCacheUnqualifiedStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times that these statements are not supported by the plan cache"},
 	{name: stmtsummary.PlanCacheUnqualifiedLastReasonStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
@@ -1442,6 +1449,7 @@ var tableTiDBStatementsStatsCols = []columnInfo{
 	{name: stmtsummary.ErrorsStr, tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Sum of errors"},
 	{name: stmtsummary.WarningsStr, tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Sum of warnings"},
 	{name: stmtsummary.MemStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total memory(byte) used"},
+	{name: stmtsummary.MemArbitrationStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total time of memory arbitration"},
 	{name: stmtsummary.DiskStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total disk space(byte) used"},
 	{name: stmtsummary.TotalTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Sum latency of these statements"},
 	{name: stmtsummary.ParseTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total latency of parsing"},
@@ -2232,21 +2240,15 @@ func getEtcdMembers(ctx sessionctx.Context) ([]string, error) {
 }
 
 func isTiFlashStore(store *metapb.Store) bool {
-	for _, label := range store.Labels {
-		if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(store.Labels, func(label *metapb.StoreLabel) bool {
+		return label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash
+	})
 }
 
 func isTiFlashWriteNode(store *metapb.Store) bool {
-	for _, label := range store.Labels {
-		if label.GetKey() == placement.EngineRoleLabelKey && label.GetValue() == placement.EngineRoleLabelWrite {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(store.Labels, func(label *metapb.StoreLabel) bool {
+		return label.GetKey() == placement.EngineRoleLabelKey && label.GetValue() == placement.EngineRoleLabelWrite
+	})
 }
 
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
@@ -2883,4 +2885,25 @@ func FilterClusterServerInfo(serversInfo []ServerInfo, nodeTypes, addresses set.
 		filterServers = append(filterServers, srv)
 	}
 	return filterServers
+}
+
+// GetDataFromStatusByConn is getting the per-connection status for `performance_schema.status_by_connection`
+func GetDataFromStatusByConn(sctx sessionctx.Context) ([][]types.Datum, error) {
+	sm := sctx.GetSessionManager()
+	if sm == nil {
+		return nil, nil
+	}
+	statusVars := sm.GetStatusVars()
+	rows := make([][]types.Datum, 0, 2*len(statusVars))
+	for pid, svar := range statusVars {
+		for varkey, varval := range svar {
+			row := types.MakeDatums(
+				pid,
+				varkey,
+				varval,
+			)
+			rows = append(rows, row)
+		}
+	}
+	return rows, nil
 }

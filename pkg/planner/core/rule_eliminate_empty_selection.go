@@ -19,29 +19,27 @@ import (
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // EmptySelectionEliminator is a logical optimization rule that removes empty selections
 type EmptySelectionEliminator struct{}
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (e *EmptySelectionEliminator) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (e *EmptySelectionEliminator) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	return e.recursivePlan(p, opt), planChanged, nil
+	return e.recursivePlan(p), planChanged, nil
 }
 
-func (e *EmptySelectionEliminator) recursivePlan(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (e *EmptySelectionEliminator) recursivePlan(p base.LogicalPlan) base.LogicalPlan {
 	for idx, child := range p.Children() {
 		// The selection may be useless, check and remove it.
 		if sel, ok := child.(*logicalop.LogicalSelection); ok {
 			if len(sel.Conditions) == 0 {
 				p.SetChild(idx, sel.Children()[0])
-				appendRemoveSelectionTraceStep(p, sel, opt)
 			}
-			e.recursivePlan(sel.Children()[0], opt)
+			e.recursivePlan(sel.Children()[0])
 		} else {
-			e.recursivePlan(child, opt)
+			e.recursivePlan(child)
 		}
 	}
 	return p

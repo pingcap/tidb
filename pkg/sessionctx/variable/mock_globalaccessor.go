@@ -90,6 +90,18 @@ func (m *MockGlobalAccessor) SetGlobalSysVar(ctx context.Context, name string, v
 	return nil
 }
 
+// SetInstanceSysVar implements GlobalVarAccessor.SetInstanceSysVar interface.
+func (m *MockGlobalAccessor) SetInstanceSysVar(ctx context.Context, name string, value string) (err error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	if value, err = sv.Validate(m.SessionVars, value, vardef.ScopeGlobal); err != nil {
+		return err
+	}
+	return sv.SetGlobalFromHook(ctx, m.SessionVars, value, false)
+}
+
 // SetGlobalSysVarOnly implements GlobalVarAccessor.SetGlobalSysVarOnly interface.
 func (m *MockGlobalAccessor) SetGlobalSysVarOnly(ctx context.Context, name string, value string, _ bool) error {
 	sv := GetSysVar(name)

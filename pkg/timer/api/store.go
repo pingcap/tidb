@@ -47,11 +47,6 @@ func NewOptionalVal[T any](val T) (o OptionalVal[T]) {
 func (*OptionalVal[T]) optionalVal() {}
 
 // Present indicates whether the field value is set.
-func (o *OptionalVal[T]) internalPresent() bool {
-	return o.present
-}
-
-// Present indicates whether the field value is set.
 func (o *OptionalVal[T]) Present() bool {
 	return o.present
 }

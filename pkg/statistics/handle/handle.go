@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	pkgutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -70,12 +69,6 @@ type Handle struct {
 
 	// LeaseGetter is used to get stats lease.
 	util.LeaseGetter
-
-	// initStatsCtx is a context specifically used for initStats.
-	// It's not designed for concurrent use, so avoid using it in such scenarios.
-	// Currently, it's only utilized within initStats, which is exclusively used during bootstrap.
-	// Since bootstrap is a one-time operation, using this context remains safe.
-	initStatsCtx sessionctx.Context
 
 	// TableInfoGetter is used to fetch table meta info.
 	util.TableInfoGetter
@@ -125,9 +118,8 @@ func (h *Handle) Clear() {
 // NewHandle creates a Handle for update stats.
 func NewHandle(
 	ctx context.Context,
-	initStatsCtx sessionctx.Context,
 	lease time.Duration,
-	pool pkgutil.DestroyableSessionPool,
+	pool syssession.Pool,
 	tracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
 	autoAnalyzeProcIDGetter func() uint64,
@@ -141,7 +133,6 @@ func NewHandle(
 	handle.StatsGC = storage.NewStatsGC(handle)
 	handle.StatsReadWriter = storage.NewStatsReadWriter(handle)
 
-	handle.initStatsCtx = initStatsCtx
 	statsCache, err := cache.NewStatsCacheImpl(handle)
 	if err != nil {
 		return nil, err
@@ -174,8 +165,8 @@ func NewHandle(
 // physicalTableID can be a table ID or partition ID.
 func (h *Handle) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table {
 	tblStats, found := h.getStatsByPhysicalID(physicalTableID, tblInfo)
-	intest.Assert(tblStats != nil, "stats shoud not be nil")
-	intest.Assert(found, "stats shoud not be nil")
+	intest.Assert(tblStats != nil, "stats should not be nil")
+	intest.Assert(found, "stats should not be nil")
 	return tblStats
 }
 
@@ -216,7 +207,7 @@ func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.Tabl
 // FlushStats flushes the cached stats update into store.
 func (h *Handle) FlushStats() {
 	if err := h.DumpStatsDeltaToKV(true); err != nil {
-		statslogutil.StatsLogger().Error("dump stats delta fail", zap.Error(err))
+		statslogutil.StatsLogger().Warn("dump stats delta fail", zap.Error(err))
 	}
 }
 

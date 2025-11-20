@@ -16,8 +16,6 @@ package importinto
 
 import (
 	"context"
-	"os"
-	"path"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -35,24 +33,13 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
-	"go.uber.org/zap"
 )
 
 func TestEncodeAndSortOperator(t *testing.T) {
-	bak := os.Stdout
-	logFileName := path.Join(t.TempDir(), "test.log")
-	file, err := os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	require.NoError(t, err)
-	os.Stdout = file
-	t.Cleanup(func() {
-		require.NoError(t, os.Stdout.Close())
-		os.Stdout = bak
-	})
-	logger := zap.NewExample()
-
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	executor := mock.NewMockMiniTaskExecutor(ctrl)
@@ -78,11 +65,12 @@ func TestEncodeAndSortOperator(t *testing.T) {
 				},
 			},
 		},
-		logger: logger,
 	}
 
+	execute.SetFrameworkInfo(executorForParam, &proto.Task{TaskBase: proto.TaskBase{ID: 1}}, nil, nil, nil)
+	wctx := workerpool.NewContext(context.Background())
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, nil, 3, 1)
+	op := newEncodeAndSortOperator(wctx, executorForParam, nil, nil, 3, 1)
 	op.SetSource(source)
 	require.NoError(t, op.Open())
 	require.Greater(t, len(op.String()), 0)
@@ -92,17 +80,19 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	executor.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(mockErr)
 	source.Channel() <- &importStepMinimalTask{}
 	require.Eventually(t, func() bool {
-		return op.hasError()
+		return wctx.OperatorErr() != nil
 	}, 3*time.Second, 300*time.Millisecond)
-	require.Equal(t, mockErr, op.firstErr.Load())
+	require.Equal(t, mockErr, wctx.OperatorErr())
 	// should not block
-	<-op.ctx.Done()
-	require.ErrorIs(t, op.Close(), mockErr)
+	<-wctx.Done()
+	require.NoError(t, op.Close())
+	require.ErrorIs(t, wctx.OperatorErr(), mockErr)
 
 	// cancel on error and log other errors
 	mockErr2 := errors.New("mock err 2")
+	wctx = workerpool.NewContext(context.Background())
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, nil, 2, 2)
+	op = newEncodeAndSortOperator(wctx, executorForParam, nil, nil, 2, 2)
 	op.SetSource(source)
 	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
 	executor2 := mock.NewMockMiniTaskExecutor(ctrl)
@@ -122,27 +112,27 @@ func TestEncodeAndSortOperator(t *testing.T) {
 			wg.Wait()
 			return mockErr2
 		})
+	var err2 error
 	executor2.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(context.Context, backend.EngineWriter, backend.EngineWriter, execute.Collector) error {
 			wg.Done()
 			wg.Wait()
 			// wait error in executor1 has been processed
 			require.Eventually(t, func() bool {
-				return op.hasError()
+				return wctx.OperatorErr() != nil
 			}, 3*time.Second, 300*time.Millisecond)
-			return errors.New("mock error should be logged")
+			err2 = errors.New("mock error from executor2")
+			return err2
 		})
 	require.NoError(t, op.Open())
 	// send 2 tasks
 	source.Channel() <- &importStepMinimalTask{}
 	source.Channel() <- &importStepMinimalTask{}
 	// should not block
-	<-op.ctx.Done()
-	require.ErrorIs(t, op.Close(), mockErr2)
-	require.NoError(t, os.Stdout.Sync())
-	content, err := os.ReadFile(logFileName)
-	require.NoError(t, err)
-	require.Contains(t, string(content), "mock error should be logged")
+	<-wctx.Done()
+	require.NoError(t, op.Close())
+	require.ErrorIs(t, wctx.OperatorErr(), mockErr2)
+	require.Equal(t, err2.Error(), "mock error from executor2")
 }
 
 func TestGetWriterMemorySizeLimit(t *testing.T) {
@@ -219,11 +209,11 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 			require.NoError(t, err)
 			info.State = model.StatePublic
 
-			require.Equal(t, c.numOfIndexGenKV, getNumOfIndexGenKV(info), c.createSQL)
-			indicesGenKV := getIndicesGenKV(info)
+			require.Equal(t, c.numOfIndexGenKV, importer.GetNumOfIndexGenKV(info), c.createSQL)
+			indicesGenKV := importer.GetIndicesGenKV(info)
 			var ukCountGenKV int
 			for _, g := range indicesGenKV {
-				if g.unique {
+				if g.Unique {
 					ukCountGenKV++
 				}
 			}

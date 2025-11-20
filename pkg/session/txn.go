@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -454,6 +455,8 @@ func (txn *LazyTxn) Rollback() error {
 	txn.mu.Unlock()
 	// mockSlowRollback is used to mock a rollback which takes a long time
 	failpoint.Inject("mockSlowRollback", func(_ failpoint.Value) {})
+	// When rolling back a txn, swap with a dummy hook to avoid operations on an invalid memory tracker.
+	txn.SetMemoryFootprintChangeHook(func(uint64) {})
 	return txn.Transaction.Rollback()
 }
 
@@ -650,6 +653,11 @@ func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	}
 
 	if tablecodec.IsTempIndexKey(k) {
+		// We force DMLs to lock all temporary index keys in next-gen, because
+		// next-gen enforces conflict check on all keys, including non-unique index keys.
+		if kerneltype.IsNextGen() {
+			return true
+		}
 		tmpVal, err := tablecodec.DecodeTempIndexValue(v)
 		if err != nil {
 			logutil.BgLogger().Warn("decode temp index value failed", zap.Error(err))

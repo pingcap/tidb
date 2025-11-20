@@ -41,7 +41,7 @@ func genConfig(
 	ctx context.Context,
 	jobSortPath string,
 	memRoot MemRoot,
-	unique bool,
+	checkDup bool,
 	resourceGroup string,
 	keyspace string,
 	concurrency int,
@@ -78,7 +78,7 @@ func genConfig(
 		cfg.WorkerConcurrency = int(ImporterRangeConcurrencyForTest.Load()) * 2
 	}
 	adjustImportMemory(ctx, memRoot, cfg)
-	if unique && !globalSort {
+	if checkDup && !globalSort {
 		cfg.DupeDetectEnabled = true
 		cfg.DuplicateDetectOpt = common.DupDetectOpt{ReportErrOnDup: true}
 	}

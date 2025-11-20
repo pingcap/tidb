@@ -2103,9 +2103,7 @@ format(NULL, 4)	format(12332.2, NULL)
 NULL	NULL
 select format(12332.2, 2,'es_EC');
 format(12332.2, 2,'es_EC')
-12,332.20
-Level	Code	Message
-Warning	1649	Unknown locale: 'es_EC'
+12.332,20
 select field(1, 2, 1), field(1, 0, NULL), field(1, NULL, 2, 1), field(NULL, 1, 2, NULL);
 field(1, 2, 1)	field(1, 0, NULL)	field(1, NULL, 2, 1)	field(NULL, 1, 2, NULL)
 2	0	3	0

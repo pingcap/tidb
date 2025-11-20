@@ -292,7 +292,7 @@ type ImplSort struct {
 // Match implements ImplementationRule match interface.
 func (*ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	ls := expr.ExprNode.(*logicalop.LogicalSort)
-	return plannercore.MatchItems(prop, ls.ByItems)
+	return physicalop.MatchItems(prop, ls.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -300,7 +300,7 @@ func (*ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (m
 // generate a PhysicalSort.
 func (*ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	ls := expr.ExprNode.(*logicalop.LogicalSort)
-	if newProp, canUseNominal := plannercore.GetPropByOrderByItems(ls.ByItems); canUseNominal {
+	if newProp, canUseNominal := physicalop.GetPropByOrderByItems(ls.ByItems); canUseNominal {
 		newProp.ExpectedCnt = reqProp.ExpectedCnt
 		ns := physicalop.NominalSort{}.Init(
 			ls.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(ls.SCtx().GetSessionVars(), reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
@@ -378,7 +378,7 @@ func (*ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (m
 	if expr.Group.EngineType != pattern.EngineTiDB {
 		return prop.IsSortItemEmpty()
 	}
-	return plannercore.MatchItems(prop, topN.ByItems)
+	return physicalop.MatchItems(prop, topN.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -408,8 +408,8 @@ type ImplTopNAsLimit struct {
 // Match implements ImplementationRule Match interface.
 func (*ImplTopNAsLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	topN := expr.ExprNode.(*logicalop.LogicalTopN)
-	_, canUseLimit := plannercore.GetPropByOrderByItems(topN.ByItems)
-	return canUseLimit && plannercore.MatchItems(prop, topN.ByItems)
+	_, canUseLimit := physicalop.GetPropByOrderByItems(topN.ByItems)
+	return canUseLimit && physicalop.MatchItems(prop, topN.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.

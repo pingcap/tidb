@@ -330,11 +330,11 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			children = append(children, fmt.Sprintf("Table(%s)", strings.Join(colNames, ", ")))
 		}
 		str = str + strings.Join(children, ",") + "}"
-	case *Update:
+	case *physicalop.Update:
 		str = fmt.Sprintf("%s->Update", ToString(x.SelectPlan))
-	case *Delete:
+	case *physicalop.Delete:
 		str = fmt.Sprintf("%s->Delete", ToString(x.SelectPlan))
-	case *Insert:
+	case *physicalop.Insert:
 		str = "Insert"
 		if x.SelectPlan != nil {
 			str = fmt.Sprintf("%s->Insert", ToString(x.SelectPlan))

@@ -31,9 +31,9 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 	}
 	nodeTp := h.TypeSelect
 	switch flat.Main[0].Origin.(type) {
-	case *Update:
+	case *physicalop.Update:
 		nodeTp = h.TypeUpdate
-	case *Delete:
+	case *physicalop.Delete:
 		nodeTp = h.TypeDelete
 	}
 	var hints []*ast.TableOptimizerHint

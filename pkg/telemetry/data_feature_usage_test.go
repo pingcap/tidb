@@ -569,7 +569,6 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 		tk.MustExec("set global tidb_enable_metadata_lock = 1")
 	}
 
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
 	allow := vardef.EnableFastReorg.Load()
 	require.Equal(t, true, allow)
 	usage, err = telemetry.GetFeatureUsage(tk.Session())

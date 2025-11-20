@@ -61,8 +61,10 @@ type ColumnInfo struct {
 	GeneratedStored     bool                `json:"generated_stored"`
 	Dependences         map[string]struct{} `json:"dependences"`
 	FieldType           types.FieldType     `json:"type"`
-	State               SchemaState         `json:"state"`
-	Comment             string              `json:"comment"`
+	// ChangingFieldType is used to store the new type of modify column.
+	ChangingFieldType *types.FieldType `json:"changing_type,omitempty"`
+	State             SchemaState      `json:"state"`
+	Comment           string           `json:"comment"`
 	// A hidden column is used internally(expression index) and are not accessible by users.
 	Hidden           bool `json:"hidden"`
 	*ChangeStateInfo `json:"change_state_info"`

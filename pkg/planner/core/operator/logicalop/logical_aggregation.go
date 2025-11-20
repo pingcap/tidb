@@ -29,9 +29,6 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -87,15 +84,15 @@ func (la *LogicalAggregation) ExplainInfo() string {
 // ReplaceExprColumns implements base.Plan.<5th> interface.
 func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, agg := range la.AggFuncs {
-		for _, aggExpr := range agg.Args {
-			ruleutil.ResolveExprAndReplace(aggExpr, replace)
+		for i, aggExpr := range agg.Args {
+			agg.Args[i] = ruleutil.ResolveExprAndReplace(aggExpr, replace)
 		}
-		for _, orderExpr := range agg.OrderByItems {
-			ruleutil.ResolveExprAndReplace(orderExpr.Expr, replace)
+		for i, orderExpr := range agg.OrderByItems {
+			agg.OrderByItems[i].Expr = ruleutil.ResolveExprAndReplace(orderExpr.Expr, replace)
 		}
 	}
-	for _, gbyItem := range la.GroupByItems {
-		ruleutil.ResolveExprAndReplace(gbyItem, replace)
+	for i, gbyItem := range la.GroupByItems {
+		la.GroupByItems[i] = ruleutil.ResolveExprAndReplace(gbyItem, replace)
 	}
 }
 
@@ -106,14 +103,14 @@ func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	condsToPush, ret := la.splitCondForAggregation(predicates)
-	_, _, err := la.BaseLogicalPlan.PredicatePushDown(condsToPush, opt)
+	_, _, err := la.BaseLogicalPlan.PredicatePushDown(condsToPush)
 	return ret, la, err
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	child := la.Children()[0]
 	used := expression.GetUsedList(la.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, la.Schema())
 	prunedColumns := make([]*expression.Column, 0)
@@ -135,13 +132,11 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 			allRemainFirstRow = false
 		}
 	}
-	logicaltrace.AppendColumnPruneTraceStep(la, prunedColumns, opt)
-	logicaltrace.AppendFunctionPruneTraceStep(la, prunedFunctions, opt)
 	selfUsedCols := make([]*expression.Column, 0, 5)
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = append(selfUsedCols, expression.ExtractColumnsFromExpressions(aggrFunc.Args, nil)...)
 		var cols []*expression.Column
-		aggrFunc.OrderByItems, cols = pruneByItems(la, aggrFunc.OrderByItems, opt)
+		aggrFunc.OrderByItems, cols = pruneByItems(la, aggrFunc.OrderByItems)
 		selfUsedCols = append(selfUsedCols, cols...)
 	}
 	if len(la.AggFuncs) == 0 || (!allFirstRow && allRemainFirstRow) {
@@ -183,9 +178,8 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 			la.GroupByItems = []expression.Expression{expression.NewOne()}
 		}
 	}
-	logicaltrace.AppendGroupByItemsPruneTraceStep(la, prunedGroupByItems, opt)
 	var err error
-	la.Children()[0], err = child.PruneColumns(selfUsedCols, opt)
+	la.Children()[0], err = child.PruneColumns(selfUsedCols)
 	if err != nil {
 		return nil, err
 	}
@@ -290,11 +284,6 @@ func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, ch
 	}
 	la.PossibleProperties = resultProperties
 	return resultProperties
-}
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (la *LogicalAggregation) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalAggregation(la, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.

@@ -685,36 +685,6 @@ func TestRegionConsistency(t *testing.T) {
 				},
 			},
 		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("c")),
-			codec.EncodeBytes([]byte{}, []byte("e")),
-			"region 6's leader's store id is 0(.*?)",
-			[]*RegionInfo{
-				{
-					Leader: &metapb.Peer{
-						Id:      6,
-						StoreId: 0,
-					},
-					Region: &metapb.Region{
-						Id:          6,
-						StartKey:    codec.EncodeBytes([]byte{}, []byte("c")),
-						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
-						RegionEpoch: nil,
-					},
-				},
-				{
-					Leader: &metapb.Peer{
-						Id:      6,
-						StoreId: 0,
-					},
-					Region: &metapb.Region{
-						Id:       8,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("d")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("e")),
-					},
-				},
-			},
-		},
 	}
 	for _, ca := range cases {
 		err := checkRegionConsistency(ca.startKey, ca.endKey, ca.regions)

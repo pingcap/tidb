@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -43,6 +43,52 @@ type PhysicalProjection struct {
 	// for the expressions of Projection which is child of Union operator.
 	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
 	AvoidColumnEvaluator bool
+}
+
+// ExhaustPhysicalPlans4LogicalProjection will be called by LogicalLimit in logicalOp pkg.
+func ExhaustPhysicalPlans4LogicalProjection(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalProjection](super)
+	var childSchema *expression.Schema
+	if ge != nil {
+		_, childSchema = ge.GetChildStatsAndSchema()
+	} else {
+		_, childSchema = p.GetChildStatsAndSchema()
+	}
+	newProp, ok := p.TryToGetChildProp(prop)
+	if !ok {
+		return nil, true, nil
+	}
+	newProps := []*property.PhysicalProperty{newProp}
+	// generate a mpp task candidate if mpp mode is allowed
+	ctx := p.SCtx()
+	pushDownCtx := util.GetPushDownCtx(ctx)
+	// lift the recursive check of canPushToCop(tiFlash)
+	if newProp.TaskTp != property.MppTaskType && ctx.GetSessionVars().IsMPPAllowed() &&
+		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiFlash) {
+		mppProp := newProp.CloneEssentialFields()
+		mppProp.TaskTp = property.MppTaskType
+		newProps = append(newProps, mppProp)
+	}
+	// lift the recursive check of canPushToCop(tikv)
+	if newProp.TaskTp != property.CopSingleReadTaskType && ctx.GetSessionVars().AllowProjectionPushDown &&
+		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) &&
+		expression.ProjectionBenefitsFromPushedDown(p.Exprs, childSchema.Len()) {
+		copProp := newProp.CloneEssentialFields()
+		copProp.TaskTp = property.CopSingleReadTaskType
+		newProps = append(newProps, copProp)
+	}
+
+	ret := make([]base.PhysicalPlan, 0, len(newProps))
+	newProps = admitIndexJoinProps(newProps, prop)
+	for _, newProp := range newProps {
+		proj := PhysicalProjection{
+			Exprs:            p.Exprs,
+			CalculateNoDelay: p.CalculateNoDelay,
+		}.Init(ctx, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), newProp)
+		proj.SetSchema(p.Schema())
+		ret = append(ret, proj)
+	}
+	return ret, true, nil
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -114,25 +160,12 @@ func (p *PhysicalProjection) ExplainNormalizedInfo() string {
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalProjection) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalProjection) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalProjection(p, taskType, option)
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalProjection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalProjection)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.Exprs = utilfuncp.CloneExpressionsForPlanCache(p.Exprs, nil)
-	return cloned, true
-}
-
 // GetPlanCostVer2 implements PhysicalPlan interface.
-func (p *PhysicalProjection) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+func (p *PhysicalProjection) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalProjection(p, taskType, option, isChildOfINL...)
 }
 

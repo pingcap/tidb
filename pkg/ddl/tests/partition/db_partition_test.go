@@ -78,6 +78,7 @@ func checkGlobalIndexCleanUpDone(t *testing.T, ctx sessionctx.Context, tblInfo *
 		segs := tablecodec.SplitIndexValue(it.Value())
 		require.NotNil(t, segs.PartitionID)
 		_, pi, err := codec.DecodeInt(segs.PartitionID)
+		logutil.DDLLogger().Info("checkGlobalIndexCleanUpDone jobs", zap.String("key", it.Key().String()), zap.Int64("PartID", pi))
 		require.NoError(t, err)
 		require.NotEqual(t, pid, pi)
 		cnt++
@@ -1488,14 +1489,14 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	idxInfo := tt.Meta().FindIndexByName("idx_b")
 	require.NotNil(t, idxInfo)
 	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
-	require.Equal(t, 3, cnt)
+	require.Equal(t, 4, cnt)
 
 	idxInfo = tt.Meta().FindIndexByName("idx_c")
 	require.NotNil(t, idxInfo)
 	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
-	require.Equal(t, 3, cnt)
-	tk.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
-	tk.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+	require.Equal(t, 4, cnt)
+	tk.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows("15"))
+	tk.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows("15"))
 	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
 	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
 }
@@ -3765,4 +3766,48 @@ func TestTruncateNumberOfPhases(t *testing.T) {
 	tk.MustExec(`alter table t truncate partition p1`)
 	dom.Reload()
 	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
+}
+
+// Test for issue 64176.
+func TestExchangeTiDBRowID(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, primary key (a) nonclustered)`)
+	tk.MustExec(`create table tp (a int, b int, primary key (a) nonclustered) partition by hash (a) partitions 2`)
+
+	tk.MustExec(`insert into t values (2,2),(4,4),(6,6)`)
+	tk.MustExec(`insert into tp values (2,2),(4,4),(6,6)`)
+	tk.MustExec(`insert into t select a + 8, b + 8 from t`)
+
+	tk.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows(""+
+		"10 10 4",
+		"12 12 5",
+		"14 14 6",
+		"2 2 1",
+		"4 4 2",
+		"6 6 3"))
+	tk.MustQuery(`select *, _tidb_rowid from tp`).Sort().Check(testkit.Rows(""+
+		"2 2 1",
+		"4 4 2",
+		"6 6 3"))
+
+	tk.MustExec(`alter table tp exchange partition p0 with table t`)
+	tk.MustExec(`insert into t values (8,8)`)
+	// This failed before, since it will use _tidb_rowid = 4
+	tk.MustExec(`insert into tp values (8,8)`)
+
+	tk.MustQuery(`select *, _tidb_rowid from tp`).Sort().Check(testkit.Rows(""+
+		"10 10 4",
+		"12 12 5",
+		"14 14 6",
+		"2 2 1",
+		"4 4 2",
+		"6 6 3",
+		"8 8 30001"))
+	tk.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows(""+
+		"2 2 1",
+		"4 4 2",
+		"6 6 3",
+		"8 8 30001"))
 }

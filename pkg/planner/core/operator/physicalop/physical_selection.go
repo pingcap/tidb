@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -49,6 +49,34 @@ type PhysicalSelection struct {
 	// True: Used for RuntimeFilter
 	// False: Only for normal conditions
 	// hasRFConditions bool
+}
+
+// ExhaustPhysicalPlans4LogicalSelection will be called by LogicalSelection in logicalOp pkg.
+func ExhaustPhysicalPlans4LogicalSelection(p *logicalop.LogicalSelection, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	newProps := make([]*property.PhysicalProperty, 0, 2)
+	childProp := prop.CloneEssentialFields()
+	newProps = append(newProps, childProp)
+	// we lift the p.CanPushDown(kv.TiFlash) check here, which may depend on the children.
+	canPushDownToTiFlash := !expression.ContainVirtualColumn(p.Conditions) &&
+		expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Conditions, kv.TiFlash)
+
+	if prop.TaskTp != property.MppTaskType &&
+		p.SCtx().GetSessionVars().IsMPPAllowed() &&
+		canPushDownToTiFlash {
+		childPropMpp := prop.CloneEssentialFields()
+		childPropMpp.TaskTp = property.MppTaskType
+		newProps = append(newProps, childPropMpp)
+	}
+
+	ret := make([]base.PhysicalPlan, 0, len(newProps))
+	newProps = admitIndexJoinProps(newProps, prop)
+	for _, newProp := range newProps {
+		sel := PhysicalSelection{
+			Conditions: p.Conditions,
+		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), newProp)
+		ret = append(ret, sel)
+	}
+	return ret, true, nil
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -111,21 +139,8 @@ func (p PhysicalSelection) Init(ctx base.PlanContext, stats *property.StatsInfo,
 	return &p
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalSelection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalSelection)
-	*cloned = *p
-	basePlan, baseOK := p.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalPlan = *basePlan
-	cloned.Conditions = utilfuncp.CloneExpressionsForPlanCache(p.Conditions, nil)
-	return cloned, true
-}
-
 // GetPlanCostVer2 implements the base.PhysicalPlan interface.
-func (p *PhysicalSelection) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+func (p *PhysicalSelection) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalSelection(p, taskType, option, isChildOfINL...)
 }
 
@@ -140,7 +155,7 @@ func (p *PhysicalSelection) Attach2Task(tasks ...base.Task) base.Task {
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalSelection) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalSelection) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalSelection(p, taskType, option)
 }
 

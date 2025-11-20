@@ -77,10 +77,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 26,
+    shard_count = 28,
     deps = [
         ":ingest",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/ingest/testutil",
         "//pkg/ddl/session",
         "//pkg/ddl/testutil",

@@ -483,7 +483,13 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 
 // LockKeys locks the keys for pessimistic transaction.
 func LockKeys(ctx context.Context, sctx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
-	txnCtx := sctx.GetSessionVars().TxnCtx
+	sessVars := sctx.GetSessionVars()
+
+	if err := checkMaxExecutionTimeExceeded(sctx); err != nil {
+		return err
+	}
+
+	txnCtx := sessVars.TxnCtx
 	lctx, err := newLockCtx(sctx, lockWaitTime, len(keys))
 	if err != nil {
 		return err

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
@@ -15,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func newRange(start, end []byte) *rtree.Range {
@@ -323,7 +325,27 @@ func encodeTableRecord(prefix kv.Key, rowID uint64) []byte {
 	return tablecodec.EncodeRecordKey(prefix, kv.IntHandle(rowID))
 }
 
-func TestRangeTreeMerge(t *testing.T) {
+func makeEncodeKeyspacedTableRecord(keyspace uint32) func(prefix kv.Key, rowID uint64) []byte {
+	codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Id:   keyspace,
+		Name: "test",
+	})
+	if err != nil {
+		panic(err)
+	}
+	return func(prefix kv.Key, rowID uint64) []byte {
+		return codec.EncodeKey(tablecodec.EncodeRecordKey(prefix, kv.IntHandle(rowID)))
+	}
+}
+
+func TestRangeTreeMerge(t0 *testing.T) {
+	t0.Run("default-keyspace", func(t *testing.T) { testRangeTreeMerge(t, encodeTableRecord) })
+	t0.Run("keyspaced", func(t *testing.T) {
+		testRangeTreeMerge(t, makeEncodeKeyspacedTableRecord(1))
+	})
+}
+
+func testRangeTreeMerge(t *testing.T, encodeTableRecord func(kv.Key, uint64) []byte) {
 	rangeTree := rtree.NewRangeStatsTree()
 	tablePrefix := tablecodec.GenTableRecordPrefix(1)
 	for i := uint64(0); i < 10000; i += 1 {

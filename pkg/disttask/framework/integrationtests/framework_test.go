@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -326,4 +327,15 @@ func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
 	scope := handle.GetTargetScope()
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", scope, 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
+}
+
+func TestDXFAlwaysEnabledOnNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("This test is only for next-gen TiDB")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_enable_dist_task").Equal(testkit.Rows("1"))
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_enable_dist_task=0"),
+		"setting tidb_enable_dist_task is not supported in the next generation of TiDB")
 }

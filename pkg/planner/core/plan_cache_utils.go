@@ -485,11 +485,11 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	switch x := v.Plan.(type) {
 	case base.PhysicalPlan:
 		sum = x.MemoryUsage()
-	case *Insert:
+	case *physicalop.Insert:
 		sum = x.MemoryUsage()
-	case *Update:
+	case *physicalop.Update:
 		sum = x.MemoryUsage()
-	case *Delete:
+	case *physicalop.Delete:
 		sum = x.MemoryUsage()
 	default:
 		sum = unKnownMemoryUsage

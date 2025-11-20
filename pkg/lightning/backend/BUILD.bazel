@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/lightning/backend",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/storage",
         "//pkg/ingestor/engineapi",
         "//pkg/lightning/backend/encode",
         "//pkg/lightning/checkpoints",

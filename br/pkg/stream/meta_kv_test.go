@@ -121,6 +121,73 @@ func TestWriteCFValueWithShortValue(t *testing.T) {
 	require.True(t, bytes.Equal(data, buff))
 }
 
+func TestWriteCFValueShortValueOverflow(t *testing.T) {
+	var (
+		ts uint64 = 400036290571534337
+	)
+
+	// Test case 1: vlen indicates more data than available
+	buff := make([]byte, 0, 9)
+	buff = append(buff, WriteTypePut)
+	buff = codec.EncodeUvarint(buff, ts)
+	buff = append(buff, flagShortValuePrefix)
+	buff = append(buff, byte(10)) // vlen=10, but only have 0 bytes following
+	// Not adding the actual short value data to trigger the overflow protection
+
+	v := new(RawWriteCFValue)
+	err := v.ParseFrom(buff)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "insufficient data for short value")
+	require.Contains(t, err.Error(), "need 12 bytes but only have")
+
+	// Test case 2: vlen indicates more data than partially available
+	buff2 := make([]byte, 0, 9)
+	buff2 = append(buff2, WriteTypePut)
+	buff2 = codec.EncodeUvarint(buff2, ts)
+	buff2 = append(buff2, flagShortValuePrefix)
+	buff2 = append(buff2, byte(10))           // vlen=10
+	buff2 = append(buff2, []byte("short")...) // Only 5 bytes, but need 10
+
+	v2 := new(RawWriteCFValue)
+	err2 := v2.ParseFrom(buff2)
+	require.Error(t, err2)
+	require.Contains(t, err2.Error(), "insufficient data for short value")
+	require.Contains(t, err2.Error(), "need 12 bytes but only have 7")
+
+	// Test case 3: Edge case with vlen=255 (max byte value)
+	buff3 := make([]byte, 0, 9)
+	buff3 = append(buff3, WriteTypePut)
+	buff3 = codec.EncodeUvarint(buff3, ts)
+	buff3 = append(buff3, flagShortValuePrefix)
+	buff3 = append(buff3, byte(255))         // vlen=255
+	buff3 = append(buff3, []byte("test")...) // Only 4 bytes, but need 255
+
+	v3 := new(RawWriteCFValue)
+	err3 := v3.ParseFrom(buff3)
+	require.Error(t, err3)
+	require.Contains(t, err3.Error(), "insufficient data for short value")
+	require.Contains(t, err3.Error(), "need 257 bytes but only have 6")
+
+	// Test case 4: vlen=255 with sufficient data (should succeed)
+	buff4 := make([]byte, 0, 300)
+	buff4 = append(buff4, WriteTypePut)
+	buff4 = codec.EncodeUvarint(buff4, ts)
+	buff4 = append(buff4, flagShortValuePrefix)
+	buff4 = append(buff4, byte(255)) // vlen=255
+	largeValue := make([]byte, 255)
+	for i := range largeValue {
+		largeValue[i] = byte(i % 256)
+	}
+	buff4 = append(buff4, largeValue...) // Exactly 255 bytes as required
+
+	v4 := new(RawWriteCFValue)
+	err4 := v4.ParseFrom(buff4)
+	require.NoError(t, err4)
+	require.True(t, v4.HasShortValue())
+	require.Equal(t, len(v4.GetShortValue()), 255)
+	require.True(t, bytes.Equal(v4.GetShortValue(), largeValue))
+}
+
 func TestWriteCFValueWithRollback(t *testing.T) {
 	var (
 		ts                          uint64 = 400036290571534337

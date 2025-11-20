@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -564,16 +563,6 @@ func testInconsistentEstimation(t *testing.T, testKit *testkit.TestKit, dom *dom
 }
 
 func TestInconsistentEstimation(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("Please run TestInconsistentEstimationForNextGen under the next-gen mode")
-	}
-	testkit.RunTestUnderCascadesWithDomain(t, testInconsistentEstimation)
-}
-
-func TestInconsistentEstimationForNextGen(t *testing.T) {
-	if !kerneltype.IsNextGen() {
-		t.Skip("Please run TestInconsistentEstimation under the non next-gen mode")
-	}
 	testkit.RunTestUnderCascadesWithDomain(t, testInconsistentEstimation)
 }
 

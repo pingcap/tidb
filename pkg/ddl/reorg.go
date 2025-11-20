@@ -400,8 +400,7 @@ func (w *worker) runReorgJob(
 				logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
 					zap.Int64("prevTS", res.ownerTS),
 					zap.Int64("curTS", curTS))
-				jobCtx.reorgTimeoutOccurred = true
-				return dbterror.ErrWaitReorgTimeout
+				return jobCtx.genReorgTimeoutErr()
 			}
 			// Since job is cancelled，we don't care about its partial counts.
 			// TODO(lance6716): should we also do for paused job?
@@ -440,14 +439,14 @@ func (w *worker) runReorgJob(
 			w.mergeWarningsIntoJob(job)
 
 			rc.resetWarnings()
-			jobCtx.reorgTimeoutOccurred = true
-			return dbterror.ErrWaitReorgTimeout
+			failpoint.InjectCall("onRunReorgJobTimeout")
+			return jobCtx.genReorgTimeoutErr()
 		}
 	}
 }
 
 func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *model.Job, reorgInfo *reorgInfo) error {
-	if job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge {
+	if job.ReorgMeta.ReorgTp != model.ReorgTypeIngest {
 		// Only used for the ingest mode job.
 		return nil
 	}
@@ -481,6 +480,9 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 func extractElemIDs(r *reorgInfo) []int64 {
 	elemIDs := make([]int64, 0, len(r.elements))
 	for _, elem := range r.elements {
+		if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
+			continue
+		}
 		elemIDs = append(elemIDs, elem.ID)
 	}
 	return elemIDs
@@ -636,6 +638,21 @@ func (r *reorgInfo) String() string {
 		"First:" + strconv.FormatBool(r.first) + "," +
 		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10) + "," +
 		"Ingest mode:" + strconv.FormatBool(isEnabled)
+}
+
+// UpdateConfigFromSysTbl updates the reorg config from system table.
+func (r *reorgInfo) UpdateConfigFromSysTbl(ctx context.Context) {
+	latestJob, err := r.jobCtx.sysTblMgr.GetJobByID(ctx, r.ID)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to get latest job from system table",
+			zap.Int64("jobID", r.ID), zap.Error(err))
+		return
+	}
+	if latestJob.State == model.JobStateRunning && latestJob.IsAlterable() {
+		r.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrency())
+		r.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSize())
+		r.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeed())
+	}
 }
 
 func constructOneRowTableScanPB(

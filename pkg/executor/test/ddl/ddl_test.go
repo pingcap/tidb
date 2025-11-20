@@ -825,6 +825,9 @@ func TestSetDDLReorgMaxWriteSpeed(t *testing.T) {
 }
 
 func TestLoadDDLDistributeVars(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

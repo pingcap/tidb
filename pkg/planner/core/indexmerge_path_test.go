@@ -83,7 +83,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	idxCols, ok := core.PrepareIdxColsAndUnwrapArrayType(
 		tbl.Meta(),
 		tbl.Meta().FindIndexByName("a_domains_b"),
-		ds.TblCols,
+		ds.TblColsByID,
 		true,
 	)
 	require.True(t, ok)

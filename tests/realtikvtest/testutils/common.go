@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -91,7 +92,9 @@ func InitTest(t *testing.T) *SuiteContext {
 	tk.MustExec("drop database if exists addindex;")
 	tk.MustExec("create database addindex;")
 	tk.MustExec("use addindex;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
 
 	ctx := newSuiteContext(t, tk, store)
 	createTable(tk)

@@ -464,7 +464,7 @@ func TestRenameTableArgs(t *testing.T) {
 	}
 }
 
-func TestGetRenameTablesArgs(t *testing.T) {
+func TestRenameTablesArgs(t *testing.T) {
 	inArgs := &RenameTablesArgs{
 		RenameTableInfos: []*RenameTableArgs{
 			{OldSchemaID: 1, OldSchemaName: ast.CIStr{O: "db1", L: "db1"},
@@ -483,6 +483,16 @@ func TestGetRenameTablesArgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, inArgs.RenameTableInfos[0], args.RenameTableInfos[0])
 		require.Equal(t, inArgs.RenameTableInfos[1], args.RenameTableInfos[1])
+
+		if v == JobVersion1 {
+			// Mock the job is executed in old version TiDB, where the last arg is truncated.
+			j2.args = j2.args[:len(j2.args)-1]
+			bytes, err := j2.Encode(true)
+			require.NoError(t, err)
+			require.NoError(t, j2.Decode(bytes))
+			_, err = GetRenameTablesArgs(j2)
+			require.NoError(t, err)
+		}
 	}
 }
 
@@ -735,6 +745,26 @@ func TestGetSetTiFlashReplicaArgs(t *testing.T) {
 		args, err := GetSetTiFlashReplicaArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
+		require.Equal(t, inArgs.ResetAvailable, false)
+	}
+	// With the `ResetAvailable` field
+	inArgsWithReset := &SetTiFlashReplicaArgs{
+		TiflashReplica: ast.TiFlashReplicaSpec{
+			Count:  3,
+			Labels: []string{"TiFlash1", "TiFlash2", "TiFlash3"},
+			Hypo:   true,
+		},
+		ResetAvailable: true,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j3 := &Job{}
+		require.NoError(t, j3.Decode(getJobBytes(t, inArgsWithReset, v, ActionSetTiFlashReplica)))
+		args, err := GetSetTiFlashReplicaArgs(j3)
+		require.NoError(t, err)
+		require.Equal(t, inArgsWithReset.TiflashReplica, args.TiflashReplica)
+		if v == JobVersion2 {
+			require.Equal(t, inArgsWithReset.ResetAvailable, true)
+		}
 	}
 }
 

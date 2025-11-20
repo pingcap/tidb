@@ -298,11 +298,12 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─HashJoin 10.00 root  CARTESIAN inner join`,
-		`  ├─Point_Get(Build) 1.00 root table:t2, index:idx_a(a) `, // use idx_a
-		`  └─TableReader(Probe) 10.00 root  data:TableRangeScan`,
-		`    └─TableRangeScan 10.00 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo`))
+		`Projection 1.25 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─MergeJoin 1.25 root  inner join, left key:test.t2.a, right key:test.t1.a`,
+		`  ├─TableReader(Build) 10.00 root  data:TableRangeScan`,
+		`  │ └─TableRangeScan 10.00 cop[tikv] table:t1 range:[1,1], keep order:true, stats:pseudo`,
+		`  └─Selection(Probe) 1.00 root  1`,
+		`    └─Point_Get 1.00 root table:t2, index:idx_a(a) `))
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
@@ -311,11 +312,12 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─HashJoin 10.00 root  CARTESIAN inner join`,
-		`  ├─Point_Get(Build) 1.00 root table:t2, index:idx_a(a) `,
-		`  └─TableReader(Probe) 10.00 root  data:TableRangeScan`,
-		`    └─TableRangeScan 10.00 cop[tikv] table:t1 range:[2,2], keep order:false, stats:pseudo`))
+		`Projection 1.25 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─MergeJoin 1.25 root  inner join, left key:test.t2.a, right key:test.t1.a`,
+		`  ├─TableReader(Build) 10.00 root  data:TableRangeScan`,
+		`  │ └─TableRangeScan 10.00 cop[tikv] table:t1 range:[2,2], keep order:true, stats:pseudo`,
+		`  └─Selection(Probe) 1.00 root  1`,
+		`    └─Point_Get 1.00 root table:t2, index:idx_a(a) `))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
@@ -497,8 +499,8 @@ func TestIssue28259(t *testing.T) {
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
-	// Plan cache skipped due to OR simplification
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	// Plan cache should not be skipped because the OR simplification has not been performed.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*sessmgr.ProcessInfo{tkProcess}

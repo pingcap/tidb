@@ -110,6 +110,7 @@ func newByteReader(
 	}
 	r.curBuf = [][]byte{r.smallBuf}
 	r.logger = logutil.Logger(r.ctx)
+	// When the storage reader is open, a GET request has been made.
 	return r, r.reload()
 }
 

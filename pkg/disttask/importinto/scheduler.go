@@ -17,6 +17,7 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -51,6 +53,11 @@ import (
 )
 
 const (
+	// warningIndexCount is the threshold to log warning for too many indexes on
+	// the target table, it's known to be slow to import in this case.
+	// the value if chosen as most tables have less than 32 indexes, we can adjust
+	// it later if needed.
+	warningIndexCount      = 32
 	registerTaskTTL        = 10 * time.Minute
 	refreshTaskTTLInterval = 3 * time.Minute
 	registerTimeout        = 5 * time.Second
@@ -70,6 +77,7 @@ type taskInfo struct {
 	// initialized lazily in register()
 	etcdClient   *clientv3.Client
 	taskRegister utils.TaskRegister
+	logger       *zap.Logger
 }
 
 func (t *taskInfo) register(ctx context.Context) {
@@ -80,7 +88,7 @@ func (t *taskInfo) register(ctx context.Context) {
 	if time.Since(t.lastRegisterTime) < refreshTaskTTLInterval {
 		return
 	}
-	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
+	logger := t.logger
 	if t.taskRegister == nil {
 		client, err := store.NewEtcdCli(t.store)
 		if err != nil {
@@ -104,7 +112,7 @@ func (t *taskInfo) register(ctx context.Context) {
 }
 
 func (t *taskInfo) close(ctx context.Context) {
-	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
+	logger := t.logger
 	if t.taskRegister != nil {
 		timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
 		defer cancel()
@@ -241,7 +249,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 		return
 	}
 
-	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
+	logger := sch.GetLogger()
 	// TODO: use the TLS object from TiDB server
 	tidbCfg := tidb.GetGlobalConfig()
 	tls, err := util.NewTLSConfig(
@@ -260,7 +268,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 }
 
 func (sch *importScheduler) registerTask(ctx context.Context, task *proto.Task) {
-	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.store, taskID: task.ID})
+	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.store, taskID: task.ID, logger: sch.GetLogger()})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
@@ -287,18 +295,17 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		// available.
 		nodeCnt = task.MaxNodeCount
 	}
-	logger := logutil.BgLogger().With(
-		zap.Stringer("type", task.Type),
-		zap.Int64("task-id", task.ID),
-		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
-		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
-		zap.Int("node-count", nodeCnt),
-	)
 	taskMeta := &TaskMeta{}
 	err = json.Unmarshal(task.Meta, taskMeta)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	logger := sch.GetLogger().With(
+		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
+		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
+		zap.Int("node-count", nodeCnt),
+		zap.Int64("table-id", taskMeta.Plan.TableInfo.ID),
+	)
 	logger.Info("on next subtasks batch")
 
 	previousSubtaskMetas := make(map[proto.Step][][]byte, 1)
@@ -313,6 +320,9 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		}
 		if err = sch.startJob(ctx, logger, taskMeta, jobStep); err != nil {
 			return nil, err
+		}
+		if importer.GetNumOfIndexGenKV(taskMeta.Plan.TableInfo) > warningIndexCount {
+			dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventTooManyIdx).Inc()
 		}
 	case proto.ImportStepMergeSort:
 		sortAndEncodeMeta, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
@@ -373,7 +383,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		Store:                sch.store,
 		ThreadCnt:            task.Concurrency,
 	}
-	logicalPlan := &LogicalPlan{}
+	logicalPlan := &LogicalPlan{Logger: logger}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {
 		return nil, err
 	}
@@ -391,16 +401,15 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	}
 
 	logger.Info("generate subtasks", zap.Int("subtask-count", len(metaBytes)))
+	if nextStep == proto.ImportStepMergeSort && len(metaBytes) > 0 {
+		dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventMergeSort).Inc()
+	}
 	return metaBytes, nil
 }
 
 // OnDone implements scheduler.Extension interface.
 func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
-	logger := logutil.BgLogger().With(
-		zap.Stringer("type", task.Type),
-		zap.Int64("task-id", task.ID),
-		zap.String("step", proto.Step2Str(task.Type, task.Step)),
-	)
+	logger := sch.GetLogger().With(zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	logger.Info("task done", zap.Stringer("state", task.State), zap.Error(task.Error))
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(task.Meta, taskMeta)

@@ -16,6 +16,7 @@ package physicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -52,4 +53,16 @@ func (p *PhysicalMaxOneRow) MemoryUsage() (sum int64) {
 	}
 
 	return p.BasePhysicalPlan.MemoryUsage()
+}
+
+// ExhaustPhysicalPlans4LogicalMaxOneRow generates PhysicalMaxOneRow plan from LogicalMaxOneRow.
+func ExhaustPhysicalPlans4LogicalMaxOneRow(p *logicalop.LogicalMaxOneRow, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	if !prop.IsSortItemEmpty() || prop.IsFlashProp() {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
+		return nil, true, nil
+	}
+	mor := PhysicalMaxOneRow{}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(),
+		&property.PhysicalProperty{
+			ExpectedCnt: 2, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown})
+	return []base.PhysicalPlan{mor}, true, nil
 }

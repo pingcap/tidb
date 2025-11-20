@@ -347,7 +347,7 @@ func TestIndexJoin31494(t *testing.T) {
 		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
 		require.Error(t, err)
-		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
+		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err) || err.Error() == "context canceled")
 	}
 }
 
@@ -790,7 +790,7 @@ func TestIssue60926(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/issue60926", "panic")
 	tk.MustExec("set tidb_hash_join_version=legacy")
 
-	join.IsChildCloseCalledForTest = false
+	join.IsChildCloseCalledForTest.Store(false)
 	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
-	require.True(t, join.IsChildCloseCalledForTest)
+	require.True(t, join.IsChildCloseCalledForTest.Load())
 }

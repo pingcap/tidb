@@ -15,22 +15,151 @@
 package physicalop
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	util2 "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 // PhysicalStreamAgg is stream operator of aggregate.
 type PhysicalStreamAgg struct {
 	BasePhysicalAgg
+}
+
+func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	if prop.IsFlashProp() {
+		return nil
+	}
+	if prop.IndexJoinProp != nil {
+		// since this stream agg is in the inner side of an index join, the
+		// enforced sort operator couldn't be built by executor layer now.
+		return nil
+	}
+	_, desc := prop.AllSameOrder()
+	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	enforcedAggs := make([]base.PhysicalPlan, 0, len(allTaskTypes))
+	childProp := &property.PhysicalProperty{
+		ExpectedCnt:    math.Max(prop.ExpectedCnt*la.InputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
+		CanAddEnforcer: true,
+		SortItems:      property.SortItemsFromCols(la.GetGroupByCols(), desc),
+		NoCopPushDown:  prop.NoCopPushDown,
+	}
+	if !prop.IsPrefix(childProp) {
+		// empty
+		return enforcedAggs
+	}
+	childProp = admitIndexJoinProp(childProp, prop)
+	if childProp == nil {
+		// empty
+		return enforcedAggs
+	}
+	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	// only admit special types for index join prop
+	taskTypes = admitIndexJoinTypes(taskTypes, prop)
+	for _, taskTp := range taskTypes {
+		copiedChildProperty := new(property.PhysicalProperty)
+		*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
+		copiedChildProperty.TaskTp = taskTp
+
+		newGbyItems := make([]expression.Expression, len(la.GroupByItems))
+		copy(newGbyItems, la.GroupByItems)
+		newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
+		copy(newAggFuncs, la.AggFuncs)
+
+		agg := BasePhysicalAgg{
+			GroupByItems: newGbyItems,
+			AggFuncs:     newAggFuncs,
+		}
+		streamAgg := agg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), copiedChildProperty)
+		enforcedAggs = append(enforcedAggs, streamAgg)
+	}
+	return enforcedAggs
+}
+
+func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	la := lp.(*logicalop.LogicalAggregation)
+	// TODO: support CopTiFlash task type in stream agg
+	if prop.IsFlashProp() {
+		return nil
+	}
+	all, desc := prop.AllSameOrder()
+	if !all {
+		return nil
+	}
+
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.Mode == aggregation.FinalMode {
+			return nil
+		}
+	}
+	// group by a + b is not interested in any order.
+	groupByCols := la.GetGroupByCols()
+	if len(groupByCols) != len(la.GroupByItems) {
+		return nil
+	}
+
+	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	streamAggs := make([]base.PhysicalPlan, 0, len(la.PossibleProperties)*(len(allTaskTypes)-1)+len(allTaskTypes))
+	childProp := &property.PhysicalProperty{
+		ExpectedCnt:   math.Max(prop.ExpectedCnt*la.InputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
+		NoCopPushDown: prop.NoCopPushDown,
+	}
+	childProp = admitIndexJoinProp(childProp, prop)
+	if childProp == nil {
+		return nil
+	}
+	for _, possibleChildProperty := range la.PossibleProperties {
+		childProp.SortItems = property.SortItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)
+		if !prop.IsPrefix(childProp) {
+			continue
+		}
+		// The table read of "CopDoubleReadTaskType" can't promises the sort
+		// property that the stream aggregation required, no need to consider.
+		taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType}
+		// aggregation has a special case that it can be pushed down to TiKV which is indicated by the prop.NoCopPushDown
+		if prop.NoCopPushDown {
+			taskTypes = []property.TaskType{property.RootTaskType}
+		}
+		if la.HasDistinct() && la.SCtx().GetSessionVars().AllowDistinctAggPushDown && !la.DistinctArgsMeetsProperty() {
+			// if distinct agg push down is allowed, while the distinct args doesn't meet the required property, continue
+			// to next possible property check.
+			continue
+		}
+		taskTypes = admitIndexJoinTypes(taskTypes, prop)
+		for _, taskTp := range taskTypes {
+			copiedChildProperty := new(property.PhysicalProperty)
+			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
+			copiedChildProperty.TaskTp = taskTp
+
+			newGbyItems := make([]expression.Expression, len(la.GroupByItems))
+			copy(newGbyItems, la.GroupByItems)
+			newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
+			copy(newAggFuncs, la.AggFuncs)
+
+			baseAgg := &BasePhysicalAgg{
+				GroupByItems: newGbyItems,
+				AggFuncs:     newAggFuncs,
+			}
+			streamAgg := baseAgg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), copiedChildProperty)
+			streamAggs = append(streamAggs, streamAgg)
+		}
+	}
+	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
+	// because we can't trust possibleChildProperty completely.
+	if (la.PreferAggType & h.PreferStreamAgg) > 0 {
+		streamAggs = append(streamAggs, getEnforcedStreamAggs(la, prop)...)
+	}
+	return streamAggs
 }
 
 // GetPointer return inner base physical agg.
@@ -96,25 +225,13 @@ func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool, costFlag uin
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalStreamAgg) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalStreamAgg) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalStreamAgg(p, taskType, option)
 }
 
 // GetPlanCostVer2 implements the physical plan interface.
-func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalStreamAgg(p, taskType, option, isChildOfINL...)
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalStreamAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalStreamAgg)
-	*cloned = *p
-	basePlan, baseOK := p.BasePhysicalAgg.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalAgg = *basePlan
-	return cloned, true
 }
 
 // Attach2Task implements PhysicalPlan interface.

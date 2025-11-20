@@ -14,7 +14,6 @@ go_library(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
-        "//pkg/parser/terror",
         "//pkg/resourcegroup",
         "//pkg/statistics/handle/usage/indexusage",
         "//pkg/types",

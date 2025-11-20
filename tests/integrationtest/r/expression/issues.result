@@ -3186,7 +3186,7 @@ id	task	access object	operator info
 Projection	root		test.ast.i, Column#32
 └─HashAgg	root		group by:Column#35, funcs:group_concat(Column#34 order by Column#34 separator "; ")->Column#32, funcs:firstrow(Column#35)->test.ast.i
   └─Projection	root		case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#34, test.ast.i->Column#35
-    └─HashJoin	root		CARTESIAN inner join
+    └─HashJoin	root		inner join, equal:[eq(test.ast.i, test.acc.m)]
       ├─TableReader(Build)	root		data:Selection
       │ └─Selection	cop[tikv]		eq(test.ast.i, "astp2019121731703151")
       │   └─TableFullScan	cop[tikv]	table:a	keep order:false, stats:pseudo

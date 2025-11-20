@@ -19,6 +19,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config/kerneltype",
+        "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/charset",
@@ -28,6 +29,7 @@ go_library(
         "//pkg/parser/types",
         "//pkg/planner/cascades/base",
         "//pkg/sessionctx/vardef",
+        "//pkg/types",
         "//pkg/util/intest",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",

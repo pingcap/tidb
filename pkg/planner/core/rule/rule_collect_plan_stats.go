@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
@@ -39,7 +38,7 @@ import (
 type CollectPredicateColumnsPoint struct{}
 
 // Optimize implements LogicalOptRule.<0th> interface.
-func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL ||
 		(plan.SCtx().GetSessionVars().InternalSQLScanUserTable && plan.SCtx().GetSessionVars().InRestrictedSQL), "CollectPredicateColumnsPoint should not be called in restricted SQL mode")
@@ -223,7 +222,7 @@ func (CollectPredicateColumnsPoint) Name() string {
 type SyncWaitStatsLoadPoint struct{}
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
-func (SyncWaitStatsLoadPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (SyncWaitStatsLoadPoint) Optimize(_ context.Context, plan base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL ||
 		(plan.SCtx().GetSessionVars().InRestrictedSQL && plan.SCtx().GetSessionVars().InternalSQLScanUserTable), "SyncWaitStatsLoadPoint should not be called in restricted SQL mode")

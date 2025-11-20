@@ -29,42 +29,42 @@
       {
         "Start": 900,
         "End": 950,
-        "Count": 67
+        "Count": 13
       },
       {
         "Start": 950,
         "End": 1000,
-        "Count": 62
+        "Count": 13
       },
       {
         "Start": 1000,
         "End": 1050,
-        "Count": 57
+        "Count": 13
       },
       {
         "Start": 1050,
         "End": 1100,
-        "Count": 52
+        "Count": 13
       },
       {
         "Start": 1150,
         "End": 1200,
-        "Count": 41
+        "Count": 13
       },
       {
         "Start": 1200,
         "End": 1300,
-        "Count": 59
+        "Count": 13
       },
       {
         "Start": 1300,
         "End": 1400,
-        "Count": 38
+        "Count": 13
       },
       {
         "Start": 1400,
         "End": 1500,
-        "Count": 18
+        "Count": 13
       },
       {
         "Start": 1500,
@@ -79,12 +79,12 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 873
+        "Count": 763
       },
       {
         "Start": 900,
         "End": 1500,
-        "Count": 381
+        "Count": 13
       },
       {
         "Start": 300,
@@ -94,17 +94,17 @@
       {
         "Start": 200,
         "End": 300,
-        "Count": 122
+        "Count": 13
       },
       {
         "Start": 100,
         "End": 200,
-        "Count": 101
+        "Count": 13
       },
       {
         "Start": 200,
         "End": 400,
-        "Count": 872
+        "Count": 763
       },
       {
         "Start": 200,
@@ -114,17 +114,17 @@
       {
         "Start": 0,
         "End": 100,
-        "Count": 80
+        "Count": 13
       },
       {
         "Start": -100,
         "End": 100,
-        "Count": 132
+        "Count": 13
       },
       {
         "Start": -100,
         "End": 0,
-        "Count": 60
+        "Count": 13
       }
     ]
   },
@@ -812,104 +812,104 @@
       {
         "SQL": "explain format = 'brief' select * from t where a <= 300",
         "Result": [
-          "TableReader 191.04 root partition:p0 data:Selection",
-          "└─Selection 191.04 cop[tikv]  le(test.t.a, 300)",
+          "TableReader 8.33 root partition:p0 data:Selection",
+          "└─Selection 8.33 cop[tikv]  le(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a < 300",
         "Result": [
-          "TableReader 187.71 root partition:p0 data:Selection",
-          "└─Selection 187.71 cop[tikv]  lt(test.t.a, 300)",
+          "TableReader 5.00 root partition:p0 data:Selection",
+          "└─Selection 5.00 cop[tikv]  lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 500",
         "Result": [
-          "TableReader 857.71 root partition:p0,p1 data:Selection",
-          "└─Selection 857.71 cop[tikv]  le(test.t.a, 500)",
+          "TableReader 675.00 root partition:p0,p1 data:Selection",
+          "└─Selection 675.00 cop[tikv]  le(test.t.a, 500)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a >= 300 and a <= 900",
         "Result": [
-          "TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
+          "TableReader 1338.33 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 1338.33 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a >= 900",
         "Result": [
-          "TableReader 249.17 root partition:p3,p4 data:Selection",
-          "└─Selection 249.17 cop[tikv]  ge(test.t.a, 900)",
+          "TableReader 5.00 root partition:p3,p4 data:Selection",
+          "└─Selection 5.00 cop[tikv]  ge(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900",
         "Result": [
-          "TableReader 249.17 root partition:p3,p4 data:Selection",
-          "└─Selection 249.17 cop[tikv]  gt(test.t.a, 900)",
+          "TableReader 5.00 root partition:p3,p4 data:Selection",
+          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a >= 300",
         "Result": [
-          "TableReader 2000.00 root partition:all data:Selection",
-          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
+          "TableReader 1338.33 root partition:all data:Selection",
+          "└─Selection 1338.33 cop[tikv]  ge(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 900",
         "Result": [
-          "TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "└─Selection 2000.00 cop[tikv]  le(test.t.a, 900)",
+          "TableReader 1338.33 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 1338.33 cop[tikv]  le(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
         "Result": [
-          "TableReader 407.20 root partition:p3 data:Selection",
-          "└─Selection 407.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
+          "TableReader 335.00 root partition:p3 data:Selection",
+          "└─Selection 335.00 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1000",
         "Result": [
-          "TableReader 76.37 root partition:p3 data:Selection",
-          "└─Selection 76.37 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
+          "TableReader 5.00 root partition:p3 data:Selection",
+          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1100",
         "Result": [
-          "TableReader 138.80 root partition:p3,p4 data:Selection",
-          "└─Selection 138.80 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
+          "TableReader 5.00 root partition:p3,p4 data:Selection",
+          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 200 and a < 300",
         "Result": [
-          "TableReader 76.50 root partition:p0 data:Selection",
-          "└─Selection 76.50 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
+          "TableReader 5.00 root partition:p0 data:Selection",
+          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 100 and a < 300",
         "Result": [
-          "TableReader 139.07 root partition:p0 data:Selection",
-          "└─Selection 139.07 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
+          "TableReader 5.00 root partition:p0 data:Selection",
+          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       }
@@ -1628,7 +1628,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 50
+                            "Result": {
+                              "Est": 50,
+                              "MaxEst": 50,
+                              "MinEst": 50
+                            }
                           }
                         ]
                       },
@@ -1642,7 +1646,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 50
+                    "Result": {
+                      "Est": 50,
+                      "MaxEst": 50,
+                      "MinEst": 50
+                    }
                   }
                 ]
               },
@@ -1717,7 +1725,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -1731,7 +1743,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 1
+                    "Result": {
+                      "Est": 1,
+                      "MaxEst": 1,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -1807,7 +1823,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 50
+                                        "Result": {
+                                          "Est": 50,
+                                          "MaxEst": 50,
+                                          "MinEst": 50
+                                        }
                                       }
                                     ]
                                   },
@@ -1877,7 +1897,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -2040,7 +2064,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -2185,7 +2213,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 50
+                            "Result": {
+                              "Est": 50,
+                              "MaxEst": 50,
+                              "MinEst": 50
+                            }
                           }
                         ]
                       },
@@ -2199,7 +2231,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 51.67785234899329
+                    "Result": {
+                      "Est": 51.67785234899329,
+                      "MaxEst": 51.67785234899329,
+                      "MinEst": 51.67785234899329
+                    }
                   }
                 ]
               },
@@ -2280,7 +2316,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -2294,7 +2334,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 1.0335570469798658
+                    "Result": {
+                      "Est": 1.0335570469798658,
+                      "MaxEst": 1.0335570469798658,
+                      "MinEst": 1.0335570469798658
+                    }
                   }
                 ]
               },
@@ -2626,6 +2670,21 @@
                             "realtimeRowCount": 3080
                           },
                           {
+                            "commonPrefix": 0,
+                            "lScalar": -1.7976931348623157e+308,
+                            "rScalar": -1500,
+                            "unsigned": false
+                          },
+                          {
+                            "avgRowCount": 0,
+                            "boundL": -7000,
+                            "boundR": 11000,
+                            "histL": -1000,
+                            "histR": 5000,
+                            "lPercent": 0.8402777777777778,
+                            "rPercent": 0
+                          },
+                          {
                             "Result": 1.539230384807596
                           }
                         ]
@@ -2640,7 +2699,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 1.539230384807596
+                    "Result": {
+                      "Est": 1.539230384807596,
+                      "MaxEst": 30.8,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -2715,7 +2778,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -2764,7 +2831,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -2778,7 +2849,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 2
+                    "Result": {
+                      "Est": 2,
+                      "MaxEst": 2,
+                      "MinEst": 2
+                    }
                   }
                 ]
               },
@@ -2910,6 +2985,21 @@
                                 "realtimeRowCount": 3080
                               },
                               {
+                                "commonPrefix": 0,
+                                "lScalar": 72057594037927940,
+                                "rScalar": 252201579132747780,
+                                "unsigned": false
+                              },
+                              {
+                                "avgRowCount": 0,
+                                "boundL": 252201579132747740,
+                                "boundR": 252201579132747840,
+                                "histL": 252201579132747780,
+                                "histR": 252201579132747800,
+                                "lPercent": 1,
+                                "rPercent": 0
+                              },
+                              {
                                 "Result": 1.539230384807596
                               }
                             ]
@@ -3008,7 +3098,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 50
+                                        "Result": {
+                                          "Est": 50,
+                                          "MaxEst": 50,
+                                          "MinEst": 50
+                                        }
                                       }
                                     ]
                                   },
@@ -3057,7 +3151,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3106,7 +3204,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3155,7 +3257,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3254,7 +3360,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 50
+                                        "Result": {
+                                          "Est": 50,
+                                          "MaxEst": 50,
+                                          "MinEst": 50
+                                        }
                                       }
                                     ]
                                   },
@@ -3303,7 +3413,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3352,7 +3466,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3401,7 +3519,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3634,7 +3756,7 @@
                             "unsigned": false
                           },
                           {
-                            "avgRowCount": 154.37797031265498,
+                            "avgRowCount": 0,
                             "boundL": -2997,
                             "boundR": 2997,
                             "histL": -999,
@@ -3643,13 +3765,13 @@
                             "rPercent": 0
                           },
                           {
-                            "Result": 154.37797031265498
+                            "Result": 1
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 154.37797031265498,
+                          "RowCount": 1,
                           "Type": "Range"
                         }
                       }
@@ -3657,7 +3779,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 154.37797031265498
+                    "Result": {
+                      "Est": 1,
+                      "MaxEst": 1100,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -3818,7 +3944,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 50
+                            "Result": {
+                              "Est": 50,
+                              "MaxEst": 50,
+                              "MinEst": 50
+                            }
                           }
                         ]
                       },
@@ -3832,7 +3962,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 2.713087248322148
+                    "Result": {
+                      "Est": 2.713087248322148,
+                      "MaxEst": 2.713087248322148,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -3965,7 +4099,7 @@
                             "unsigned": false
                           },
                           {
-                            "avgRowCount": 154.37797031265498,
+                            "avgRowCount": 0,
                             "boundL": -2997,
                             "boundR": 2997,
                             "histL": -999,
@@ -3974,13 +4108,13 @@
                             "rPercent": 0
                           },
                           {
-                            "Result": 154.37797031265498
+                            "Result": 1
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 154.37797031265498,
+                          "RowCount": 1,
                           "Type": "Range"
                         }
                       }
@@ -3988,7 +4122,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 154.37797031265498
+                    "Result": 1
                   }
                 ]
               },
@@ -4141,7 +4275,7 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0.05012271763397889,
+                "Selectivity": 0.0003246753246753247,
                 "partial cover": false
               },
               {
@@ -4233,8 +4367,8 @@
       {
         "Query": "explain format = 'brief' select a, b from t where a = 1 and b = 1",
         "Result": [
-          "IndexReader 20.32 root  index:IndexRangeScan",
-          "└─IndexRangeScan 20.32 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1,1 1], keep order:false"
+          "IndexReader 18.29 root  index:IndexRangeScan",
+          "└─IndexRangeScan 18.29 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1,1 1], keep order:false"
         ]
       }
     ]

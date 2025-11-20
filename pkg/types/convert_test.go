@@ -920,32 +920,45 @@ func TestGetValidInt(t *testing.T) {
 
 func TestGetValidFloat(t *testing.T) {
 	tests := []struct {
-		origin string
-		valid  string
+		origin    string
+		valid     string
+		cast      bool
+		expectErr bool // Truncated incorrect DOUBLE value: %s, etc
 	}{
-		{"-100", "-100"},
-		{"1abc", "1"},
-		{"-1-1", "-1"},
-		{"+1+1", "+1"},
-		{"123..34", "123."},
-		{"123.23E-10", "123.23E-10"},
-		{"1.1e1.3", "1.1e1"},
-		{"11e1.3", "11e1"},
-		{"1.1e-13a", "1.1e-13"},
-		{"1.", "1."},
-		{".1", ".1"},
-		{"", "0"},
-		{"123e+", "123"},
-		{"123.e", "123."},
-		{"0-123", "0"},
-		{"9-3", "9"},
-		{"1001001\\u0000\\u0000\\u0000", "1001001"},
+		{"-100", "-100", false, false},
+		{"1abc", "1", false, true},
+		{"-1-1", "-1", false, true},
+		{"+1+1", "+1", false, true},
+		{"123..34", "123.", false, true},
+		{"123.23E-10", "123.23E-10", false, false},
+		{"1.1e1.3", "1.1e1", false, true},
+		{"11e1.3", "11e1", false, true},
+		{"1.1e-13a", "1.1e-13", false, true},
+		{"1.", "1.", false, false},
+		{".1", ".1", false, false},
+		{"", "0", false, true},
+		{"", "0", true, false},
+		{"123e+", "123", false, true},
+		{"0-123", "0", false, true},
+		{"9-3", "9", false, true},
+		{"1001001\u0000\u0000\u0000", "1001001", false, false},
+		{"5e", "5", false, false},
+		{"+.e", "0", false, true},
+		{"1e5e", "1e5", false, true},
+		{"e", "0", false, true},
+		{"e123", "0", false, true},
+		{"e+", "0", false, true},
 	}
 	ctx := DefaultStmtNoWarningContext
 	for _, tt := range tests {
-		prefix, _ := getValidFloatPrefix(ctx, tt.origin, false)
-		require.Equal(t, tt.valid, prefix)
-		_, err := strconv.ParseFloat(prefix, 64)
+		prefix, err := getValidFloatPrefix(ctx, tt.origin, tt.cast)
+		if tt.expectErr {
+			require.Error(t, err, tt.origin)
+		} else {
+			require.NoError(t, err, tt.origin)
+		}
+		require.Equal(t, tt.valid, prefix, "getValidFloatPrefix(ctx, \"%s\", %v)", tt.origin, tt.cast)
+		_, err = strconv.ParseFloat(prefix, 64)
 		require.NoError(t, err)
 	}
 

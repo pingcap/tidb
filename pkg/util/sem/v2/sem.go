@@ -16,6 +16,7 @@ package sem
 
 import (
 	"strings"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -26,11 +27,14 @@ import (
 )
 
 var (
-	sem *semImpl
+	// in normal code path, sem is not changed after initialization, but during
+	// UT, we have to change it multiple times, so we use atomic.Pointer here.
+	globalSem atomic.Pointer[semImpl]
 )
 
 // IsInvisibleSchema checks if a database is hidden under SEM rules.
 func IsInvisibleSchema(dbName string) bool {
+	sem := globalSem.Load()
 	if sem == nil {
 		return false
 	}
@@ -39,6 +43,7 @@ func IsInvisibleSchema(dbName string) bool {
 
 // IsInvisibleTable checks if a table is hidden in a specific database under SEM rules.
 func IsInvisibleTable(dbLowerName, tblLowerName string) bool {
+	sem := globalSem.Load()
 	if sem == nil {
 		return false
 	}
@@ -47,6 +52,7 @@ func IsInvisibleTable(dbLowerName, tblLowerName string) bool {
 
 // IsRestrictedPrivilege checks if a privilege is restricted under SEM rules.
 func IsRestrictedPrivilege(privilege string) bool {
+	sem := globalSem.Load()
 	if sem == nil {
 		return false
 	}
@@ -55,6 +61,7 @@ func IsRestrictedPrivilege(privilege string) bool {
 
 // IsInvisibleSysVar checks if a system variable is hidden under SEM rules.
 func IsInvisibleSysVar(varName string) bool {
+	sem := globalSem.Load()
 	if sem == nil {
 		return false
 	}
@@ -63,6 +70,7 @@ func IsInvisibleSysVar(varName string) bool {
 
 // IsReadOnlyVariable checks if a system variable is read-only under SEM rules.
 func IsReadOnlyVariable(varName string) bool {
+	sem := globalSem.Load()
 	if sem == nil {
 		return false
 	}
@@ -71,6 +79,7 @@ func IsReadOnlyVariable(varName string) bool {
 
 // IsInvisibleStatusVar checks if a status variable is restricted under SEM rules.
 func IsInvisibleStatusVar(varName string) bool {
+	sem := globalSem.Load()
 	if sem == nil {
 		return false
 	}
@@ -79,6 +88,7 @@ func IsInvisibleStatusVar(varName string) bool {
 
 // IsRestrictedSQL checks if a SQL statement is restricted under SEM rules.
 func IsRestrictedSQL(stmt ast.StmtNode) bool {
+	sem := globalSem.Load()
 	if sem == nil {
 		return false
 	}
@@ -87,19 +97,29 @@ func IsRestrictedSQL(stmt ast.StmtNode) bool {
 
 // Enable enables SEM.
 func Enable(configPath string) error {
+	sem := globalSem.Load()
 	intest.Assert(sem == nil, "SEM is already enabled")
 
 	semConfig, err := parseSEMConfigFromFile(configPath)
 	if err != nil {
 		return err
 	}
-	err = validateSEMConfig(semConfig)
+	return EnableBy(semConfig)
+}
+
+// EnableBy enables SEM by the given configuration.
+// we add this to simplify testing.
+func EnableBy(semConfig *Config) error {
+	sem := globalSem.Load()
+	intest.Assert(sem == nil, "SEM is already enabled")
+	err := validateSEMConfig(semConfig)
 	if err != nil {
 		return err
 	}
 
 	sem = buildSEMFromConfig(semConfig)
 	sem.overrideRestrictedVariable()
+	globalSem.Store(sem)
 
 	// set the system variable to indicate SEM is configured by the config file.
 	variable.SetSysVar(vardef.TiDBEnableEnhancedSecurity, "CONFIG")
@@ -112,7 +132,13 @@ func Enable(configPath string) error {
 
 // IsEnabled checks if Security Enhanced Mode (SEM) is enabled
 func IsEnabled() bool {
-	return sem != nil
+	return globalSem.Load() != nil
+}
+
+// Disable disables SEM.
+func Disable() {
+	globalSem.Store(nil)
+	variable.SetSysVar(vardef.TiDBEnableEnhancedSecurity, vardef.Off)
 }
 
 type semImpl struct {

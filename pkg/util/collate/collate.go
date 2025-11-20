@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"slices"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -60,6 +61,9 @@ type Collator interface {
 	Compare(a, b string) int
 	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
 	Key(str string) []byte
+	// ImmutableKey is the same as Key except that the returned key should not be changed by future calls.
+	// It can avoid memory allocation and copy in some collations. The caller should not modify the returned value.
+	ImmutableKey(str string) []byte
 	// KeyWithoutTrimRightSpace returns the collate key for str. The difference with Key is str will not be trimed.
 	KeyWithoutTrimRightSpace(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.
@@ -357,6 +361,36 @@ func CollationToProto(c string) int32 {
 		zap.String("default collation", mysql.DefaultCollationName),
 	)
 	return v
+}
+
+func compareCommon(a, b string, keyFunc func(rune) uint32) int {
+	a = truncateTailingSpace(a)
+	b = truncateTailingSpace(b)
+
+	r1, r2 := rune(0), rune(0)
+	ai, bi := 0, 0
+	r1Len, r2Len := 0, 0
+	for ai < len(a) && bi < len(b) {
+		r1, r1Len = utf8.DecodeRuneInString(a[ai:])
+		r2, r2Len = utf8.DecodeRuneInString(b[bi:])
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+		invalid1 := r1 == utf8.RuneError && r1Len == 1
+		invalid2 := r2 == utf8.RuneError && r2Len == 1
+		if invalid1 || invalid2 {
+			return 0
+		}
+
+		ai += r1Len
+		bi += r2Len
+
+		cmp := cmp.Compare(keyFunc(r1), keyFunc(r2))
+		if cmp != 0 {
+			return cmp
+		}
+	}
+	return cmp.Compare(len(a)-ai, len(b)-bi)
 }
 
 // CanUseRawMemAsKey returns true if current collator can use the original raw memory as the key

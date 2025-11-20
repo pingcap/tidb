@@ -32,6 +32,7 @@ go_library(
         "//br/pkg/errors",
         "//br/pkg/logutil",
         "//br/pkg/summary",
+        "//pkg/config/kerneltype",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta",

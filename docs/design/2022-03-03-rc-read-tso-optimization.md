@@ -10,7 +10,7 @@ For the `read-committed` isolation level, each read request in a single transact
 If the workload is a read-heavy one whose read QPS is significantly higher than writes or there're few read-write conflicts, fetching ts each time will increase the query lantecy.
 
 The new ts itself is used to ensure the most recent data will be returned, if the data version does not change frequently then it's unnecessary to fetch a new timestamp every time.
-The ts fetching could be processed in an optimistic way that ts fetching happens only when a more recent data version is encoutered, this saves the cost of many unncessary ts fetching.
+The ts fetching could be processed in an optimistic way that ts fetching happens only when a more recent data version is encoutered, this saves the cost of many unnecessary ts fetching.
 
 ## Detailed Design
 

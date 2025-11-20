@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -250,4 +251,61 @@ func (p *PhysicalExpand) toPBV2(ctx *base.BuildPBContext, storeType kv.StoreType
 func (p *PhysicalExpand) Attach2Task(tasks ...base.Task) base.Task {
 	// for cycle import dependency, we need to ensure that the PhysicalExpand is attached to the task
 	return utilfuncp.Attach2Task4PhysicalExpand(p, tasks...)
+}
+
+// ExhaustPhysicalPlans4LogicalExpand generates PhysicalExpand plan from LogicalExpand.
+func ExhaustPhysicalPlans4LogicalExpand(p *logicalop.LogicalExpand, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
+	if !prop.IsSortItemEmpty() {
+		// false, meaning we can add a sort enforcer.
+		return nil, false, nil
+	}
+	// when TiDB Expand execution is introduced: we can deal with two kind of physical plans.
+	// RootTaskType means expand should be run at TiDB node.
+	//	(RootTaskType is the default option, we can also generate a mpp candidate for it)
+	// MPPTaskType means expand should be run at TiFlash node.
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
+		return nil, true, nil
+	}
+	// now Expand mode can only be executed on TiFlash node.
+	// Upper layer shouldn't expect any mpp partition from an Expand operator.
+	// todo: data output from Expand operator should keep the origin data mpp partition.
+	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
+		return nil, true, nil
+	}
+	var physicalExpands []base.PhysicalPlan
+	// for property.RootTaskType and property.MppTaskType with no partition option, we can give an MPP Expand.
+	// we just remove whether subtree can be pushed to tiFlash check, and left child handle itself.
+	if p.SCtx().GetSessionVars().IsMPPAllowed() {
+		mppProp := prop.CloneEssentialFields()
+		mppProp.TaskTp = property.MppTaskType
+		expand := PhysicalExpand{
+			GroupingSets:          p.RollupGroupingSets,
+			LevelExprs:            p.LevelExprs,
+			ExtraGroupingColNames: p.ExtraGroupingColNames,
+		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), mppProp)
+		expand.SetSchema(p.Schema())
+		physicalExpands = append(physicalExpands, expand)
+		// when the MppTaskType is required, we can return the physical plan directly.
+		if prop.TaskTp == property.MppTaskType {
+			return physicalExpands, true, nil
+		}
+	}
+	// for property.RootTaskType, we can give a TiDB Expand.
+	{
+		taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.MppTaskType, property.RootTaskType}
+		for _, taskType := range taskTypes {
+			// require cop task type for children.F
+			tidbProp := prop.CloneEssentialFields()
+			tidbProp.TaskTp = taskType
+			expand := PhysicalExpand{
+				GroupingSets:          p.RollupGroupingSets,
+				LevelExprs:            p.LevelExprs,
+				ExtraGroupingColNames: p.ExtraGroupingColNames,
+			}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), tidbProp)
+			expand.SetSchema(p.Schema())
+			physicalExpands = append(physicalExpands, expand)
+		}
+	}
+	return physicalExpands, true, nil
 }

@@ -1094,11 +1094,13 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 		return ver, errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
+	// Check the validity of the replica count. For example, not exceeding the tiflash store count.
 	err = w.checkTiFlashReplicaCount(replicaInfo.Count)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
 	// We should check this first, in order to avoid creating redundant DDL jobs.
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		logutil.DDLLogger().Info("Set TiFlash replica pd rule for partitioned table", zap.Int64("tableID", tblInfo.ID))
@@ -1119,11 +1121,21 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 		}
 	}
 
-	available := false
-	if tblInfo.TiFlashReplica != nil {
-		available = tblInfo.TiFlashReplica.Available
-	}
 	if replicaInfo.Count > 0 {
+		available := false
+		if args.ResetAvailable {
+			// Reset the available field to false. This is required when fixing the placement rules after native BR.
+			// Because the `available` field may be true after native BR restore, but the user should wait before
+			// TiFlash peers are rebuilt.
+			available = false
+		} else if tblInfo.TiFlashReplica != nil {
+			// If there is already TiFlash replica info, we should keep the Available field.
+			// For example, during the process of increasing the number of TiFlash replicas from 2 to 3,
+			// or decreasing it from 3 to 2, if the `available` field of the original TiFlash replica
+			// is already `True`, its value remains unchanged. In this case, the optimizer can still choose
+			// to route queries to TiFlash for execution, avoiding any impact on service continuity.
+			available = tblInfo.TiFlashReplica.Available
+		}
 		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count:          replicaInfo.Count,
 			LocationLabels: replicaInfo.Labels,

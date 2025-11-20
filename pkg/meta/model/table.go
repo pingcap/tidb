@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
@@ -425,6 +426,13 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 				idxCol.Offset = newOffset
 			}
 		}
+
+		for _, affectedCol := range idx.AffectColumn {
+			newOffset, ok := updatedOffsets[affectedCol.Offset]
+			if ok {
+				affectedCol.Offset = newOffset
+			}
+		}
 	}
 
 	// Reconstruct the dependency column offsets.
@@ -579,6 +587,22 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 		}
 	}
 	return nil
+}
+
+// GetIdxChangingFieldType gets the field type of index column.
+// Since both old/new type may coexist in one column during modify column,
+// we need to get the correct type for index column.
+func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
+	if idxCol.UseChangingType && col.ChangingFieldType != nil {
+		return col.ChangingFieldType
+	}
+	return &col.FieldType
+}
+
+// ColumnNeedRestoredData checks whether a single index column needs restored data.
+func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
+	col := colInfos[idxCol.Offset]
+	return types.NeedRestoredData(GetIdxChangingFieldType(idxCol, col))
 }
 
 // TableNameInfo provides meta data describing a table name info.

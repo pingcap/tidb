@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -263,18 +262,6 @@ func (p *PhysicalMergeJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	return cloned, nil
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalMergeJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalMergeJoin)
-	*cloned = *p
-	basePlan, baseOK := p.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalJoin = *basePlan
-	return cloned, true
-}
-
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalMergeJoin(p, tasks...)
@@ -286,13 +273,13 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalMergeJoin) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalMergeJoin) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalMergeJoin(p, taskType, option)
 }
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = left-child-cost + right-child-cost + filter-cost + group-cost
-func (p *PhysicalMergeJoin) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func (p *PhysicalMergeJoin) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalMergeJoin(p, taskType, option)
 }
 

@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // PushDownTopNOptimizer pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
@@ -26,9 +25,9 @@ type PushDownTopNOptimizer struct {
 }
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
-func (*PushDownTopNOptimizer) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*PushDownTopNOptimizer) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	return p.PushDownTopN(nil, opt), planChanged, nil
+	return p.PushDownTopN(nil), planChanged, nil
 }
 
 // Name implements the base.LogicalOptRule.<1st> interface.

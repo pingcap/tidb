@@ -68,11 +68,11 @@ func (s *basePropConstSolver) getColID(col *Column) int {
 	return s.colMapper[col.UniqueID]
 }
 
-func (s *basePropConstSolver) insertCols(cols ...*Column) {
-	for _, col := range cols {
-		_, ok := s.colMapper[col.UniqueID]
+func (s *basePropConstSolver) insertCols(cols map[int64]*Column) {
+	for uniqueID, col := range cols {
+		_, ok := s.colMapper[uniqueID]
 		if !ok {
-			s.colMapper[col.UniqueID] = len(s.colMapper)
+			s.colMapper[uniqueID] = len(s.colMapper)
 			s.columns = append(s.columns, col)
 		}
 	}
@@ -264,13 +264,14 @@ func newPropConstSolver() PropagateConstantSolver {
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
-func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, schema1, schema2 *Schema,
+func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext,
+	keepJoinKey bool, schema1, schema2 *Schema,
 	vaildExprFunc VaildConstantPropagationExpressionFuncType, conditions []Expression) []Expression {
 	s.ctx = ctx
 	s.vaildExprFunc = vaildExprFunc
 	s.schema1 = schema1
 	s.schema2 = schema2
-	return s.solve(conditions)
+	return s.solve(keepJoinKey, conditions)
 }
 
 // Clear clears the solver and returns it to the pool.
@@ -370,18 +371,26 @@ func (s *propConstSolver) propagateColumnEQ() {
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
 					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
-					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
-						continue
+					if isConstant(newExpr) || s.vaildExprFunc == nil || s.vaildExprFunc(newExpr) {
+						s.conditions = append(s.conditions, newExpr)
 					}
-					s.conditions = append(s.conditions, newExpr)
 				}
+				// Why do we need to replace colj with coli again?
+				// Consider the case: col1 = col3
+				// Join Schema: left schema: {col1,col2}, right schema: {col3,col4}
+				// Conditions: col1 in (col3, col4)
+				//
+				// because the order of columns in equaility relation is not guaranteed,
+				// We may replace col3 with col1 first, it cannot push down the condition to the child.
+				// because two columns are from different side.
+				// But if we replace col1 with col3, it can be pushed down.
+				// So we need to try both directions.
 				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
 					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
-					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
-						continue
+					if isConstant(newExpr) || s.vaildExprFunc == nil || s.vaildExprFunc(newExpr) {
+						s.conditions = append(s.conditions, newExpr)
 					}
-					s.conditions = append(s.conditions, newExpr)
 				}
 			}
 		}
@@ -460,12 +469,15 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 	return
 }
 
-func (s *propConstSolver) solve(conditions []Expression) []Expression {
-	s.conditions = slices.Grow(s.conditions, len(conditions))
-	for _, cond := range conditions {
-		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
-		s.insertCols(ExtractColumns(cond)...)
+func (s *propConstSolver) solve(keepJoinKey bool, conditions []Expression) []Expression {
+	var joinKeys []Expression
+	if keepJoinKey {
+		// keep join keys in the results since they are crucial for join optimization like join reorder
+		// and index join selection. (#63314, #60076)
+		joinKeys = cloneJoinKeys(conditions, s.schema1, s.schema2)
 	}
+	s.conditions = slices.Grow(s.conditions, len(conditions))
+	s.extractColumns(conditions)
 	if len(s.columns) > MaxPropagateColsCnt {
 		logutil.BgLogger().Warn("too many columns in a single CNF",
 			zap.Int("numCols", len(s.columns)),
@@ -476,12 +488,19 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.conditions...)
+	s.conditions = append(s.conditions, joinKeys...)
 	s.conditions = RemoveDupExprs(s.conditions)
 	return slices.Clone(s.conditions)
 }
 
+func (s *propConstSolver) extractColumns(conditions []Expression) {
+	mp := GetUniqueIDToColumnMap()
+	defer PutUniqueIDToColumnMap(mp)
+	s.conditions = s.extractColumnsInternal(mp, s.conditions, conditions)
+}
+
 // PropagateConstantForJoin propagate constants for inner joins.
-func PropagateConstantForJoin(ctx exprctx.ExprContext, schema1, schema2 *Schema,
+func PropagateConstantForJoin(ctx exprctx.ExprContext, keepJoinKey bool, schema1, schema2 *Schema,
 	filter VaildConstantPropagationExpressionFuncType, conditions ...Expression) []Expression {
 	if len(conditions) == 0 {
 		return conditions
@@ -490,7 +509,7 @@ func PropagateConstantForJoin(ctx exprctx.ExprContext, schema1, schema2 *Schema,
 	defer func() {
 		solver.Clear()
 	}()
-	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), schema1, schema2, filter, conditions)
+	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), keepJoinKey, schema1, schema2, filter, conditions)
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
@@ -503,7 +522,7 @@ func PropagateConstant(ctx exprctx.ExprContext, filter VaildConstantPropagationE
 	defer func() {
 		solver.Clear()
 	}()
-	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), nil, nil, filter, conditions)
+	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), false, nil, nil, filter, conditions)
 }
 
 var propOuterJoinConstSolverPool = sync.Pool{
@@ -613,6 +632,16 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 		return con, true
 	}
 	return nil, false
+}
+
+func (s *basePropConstSolver) extractColumnsInternal(mp map[int64]*Column, splitConds []Expression, conds []Expression) []Expression {
+	for _, cond := range conds {
+		splitConds = append(splitConds, SplitCNFItems(cond)...)
+		ExtractColumnsMapFromExpressionsWithReusedMap(mp, nil, cond)
+		s.insertCols(mp)
+		clear(mp)
+	}
+	return splitConds
 }
 
 // pickEQCondsOnOuterCol picks constant equal expression from specified conditions.
@@ -825,15 +854,14 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 	}
 }
 
-func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
-	for _, cond := range joinConds {
-		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
-		s.insertCols(ExtractColumns(cond)...)
+func (s *propOuterJoinConstSolver) solve(keepJoinKey bool, joinConds, filterConds []Expression) ([]Expression, []Expression) {
+	var joinKeys []Expression
+	if keepJoinKey {
+		// keep join keys in the results since they are crucial for join optimization like join reorder
+		// and index join selection. (#63314, #60076)
+		joinKeys = cloneJoinKeys(joinConds, s.outerSchema, s.innerSchema)
 	}
-	for _, cond := range filterConds {
-		s.filterConds = append(s.filterConds, SplitCNFItems(cond)...)
-		s.insertCols(ExtractColumns(cond)...)
-	}
+	s.extractColumns(joinConds, filterConds)
 	if len(s.columns) > MaxPropagateColsCnt {
 		logutil.BgLogger().Warn("too many columns",
 			zap.Int("numCols", len(s.columns)),
@@ -844,8 +872,16 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.joinConds...)
+	s.joinConds = RemoveDupExprs(append(s.joinConds, joinKeys...))
 	s.filterConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.filterConds...)
 	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
+}
+
+func (s *propOuterJoinConstSolver) extractColumns(joinConds, filterConds []Expression) {
+	mp := GetUniqueIDToColumnMap()
+	defer PutUniqueIDToColumnMap(mp)
+	s.joinConds = s.extractColumnsInternal(mp, s.joinConds, joinConds)
+	s.filterConds = s.extractColumnsInternal(mp, s.filterConds, filterConds)
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
@@ -869,7 +905,7 @@ func propagateConstantDNF(ctx exprctx.ExprContext, filter VaildConstantPropagati
 // conditions based on this column equal condition and `outerCol` related
 // expressions in join conditions and filter conditions;
 func PropConstForOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
-	outerSchema, innerSchema *Schema, nullSensitive bool,
+	outerSchema, innerSchema *Schema, keepJoinKey, nullSensitive bool,
 	vaildExprFunc VaildConstantPropagationExpressionFuncType) ([]Expression, []Expression) {
 	solver := newPropOuterJoinConstSolver()
 	defer func() {
@@ -880,13 +916,43 @@ func PropConstForOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Exp
 	solver.nullSensitive = nullSensitive
 	solver.ctx = ctx
 	solver.vaildExprFunc = vaildExprFunc
-	return solver.solve(joinConds, filterConds)
+	return solver.solve(keepJoinKey, joinConds, filterConds)
 }
 
 // PropagateConstantSolver is a constant propagate solver.
 type PropagateConstantSolver interface {
 	PropagateConstant(ctx exprctx.ExprContext,
-		schema1, schema2 *Schema,
+		keepJoinKey bool, schema1, schema2 *Schema,
 		filter VaildConstantPropagationExpressionFuncType, conditions []Expression) []Expression
 	Clear()
+}
+
+// cloneJoinKeys clones all join keys like `t1.col = t2.col` in these expressions.
+// schema1 and schema2 are used to identify join keys.
+func cloneJoinKeys(exprs []Expression, schema1, schema2 *Schema) (joinKeys []Expression) {
+	if schema1 == nil || schema2 == nil {
+		return nil
+	}
+	for _, expr := range exprs {
+		if isJoinKey(expr, schema1, schema2) {
+			joinKeys = append(joinKeys, expr.Clone())
+		}
+	}
+	return
+}
+
+// isJoinKey returns true if this expression could be a join key like `t1.col = t2.col`.
+func isJoinKey(expr Expression, schema1, schema2 *Schema) bool {
+	binop, ok := expr.(*ScalarFunction)
+	if !ok || binop.FuncName.L != ast.EQ {
+		return false
+	}
+	col1, lOK := binop.GetArgs()[0].(*Column)
+	col2, rOK := binop.GetArgs()[1].(*Column)
+	if !lOK || !rOK {
+		return false
+	}
+	// from different tables
+	return (schema1.Contains(col1) && schema2.Contains(col2)) ||
+		(schema1.Contains(col2) && schema2.Contains(col1))
 }

@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
 )
@@ -99,12 +98,6 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 			if vars.SelectLimit != math2.MaxUint64 && p != nil {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("sql_select_limit is set, so point get plan is not activated"))
 				p = nil
-			}
-			if vars.StmtCtx.EnableOptimizeTrace && p != nil {
-				if vars.StmtCtx.OptimizeTracer == nil {
-					vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
-				}
-				vars.StmtCtx.OptimizeTracer.SetFastPlan(p.BuildPlanTrace())
 			}
 		}()
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
@@ -1222,11 +1215,11 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 		return nil
 	}
 	handleCols := buildHandleCols(dbName, tbl, pointPlan)
-	updatePlan := Update{
+	updatePlan := physicalop.Update{
 		SelectPlan:  pointPlan,
 		OrderedList: orderedList,
-		TblColPosInfos: TblColPosInfoSlice{
-			TblColPosInfo{
+		TblColPosInfos: physicalop.TblColPosInfoSlice{
+			physicalop.TblColPosInfo{
 				TblID:      tbl.ID,
 				Start:      0,
 				End:        pointPlan.Schema().Len(),
@@ -1240,7 +1233,7 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	updatePlan.SetOutputNames(pointPlan.OutputNames())
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(context.Background(), tbl.ID)
-	updatePlan.tblID2Table = map[int64]table.Table{
+	updatePlan.TblID2Table = map[int64]table.Table{
 		tbl.ID: t,
 	}
 	if tbl.GetPartitionInfo() != nil {
@@ -1263,7 +1256,7 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 			updatePlan.PartitionedTable = append(updatePlan.PartitionedTable, pt)
 		}
 	}
-	err := updatePlan.buildOnUpdateFKTriggers(ctx, is, updatePlan.tblID2Table)
+	err := updatePlan.BuildOnUpdateFKTriggers(ctx, is, updatePlan.TblID2Table)
 	if err != nil {
 		return nil
 	}
@@ -1284,7 +1277,7 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 			Col:     col,
 			ColName: plan.OutputNames()[idx].ColName,
 		}
-		defaultExpr := extractDefaultExpr(assign.Expr)
+		defaultExpr := physicalop.ExtractDefaultExpr(assign.Expr)
 		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
 		}
@@ -1360,13 +1353,13 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if err != nil {
 		return nil
 	}
-	delPlan := Delete{
+	delPlan := physicalop.Delete{
 		SelectPlan:     pointPlan,
-		TblColPosInfos: []TblColPosInfo{colPosInfo},
+		TblColPosInfos: []physicalop.TblColPosInfo{colPosInfo},
 		IgnoreErr:      ignoreErr,
 	}.Init(ctx)
 	tblID2Table := map[int64]table.Table{tbl.ID: t}
-	err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
+	err = delPlan.BuildOnDeleteFKTriggers(ctx, is, tblID2Table)
 	if err != nil {
 		return nil
 	}

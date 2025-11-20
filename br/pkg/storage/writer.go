@@ -10,6 +10,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"go.uber.org/zap"
 )
 
@@ -180,11 +181,18 @@ func newSimpleCompressBuffer(chunkSize int, compressType CompressType) *simpleCo
 }
 
 type bufferedWriter struct {
-	buf    interceptBuffer
-	writer ExternalFileWriter
+	buf       interceptBuffer
+	writer    ExternalFileWriter
+	accessRec *recording.AccessStats
 }
 
 func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
+	n, err := u.write0(ctx, p)
+	u.accessRec.RecWrite(n)
+	return n, errors.Trace(err)
+}
+
+func (u *bufferedWriter) write0(ctx context.Context, p []byte) (int, error) {
 	bytesWritten := 0
 	for u.buf.Len()+len(p) > u.buf.Cap() {
 		// We won't fit p in this chunk
@@ -237,14 +245,15 @@ func (u *bufferedWriter) Close(ctx context.Context) error {
 
 // NewUploaderWriter wraps the Writer interface over an uploader.
 func NewUploaderWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType) ExternalFileWriter {
-	return newBufferedWriter(writer, chunkSize, compressType)
+	return newBufferedWriter(writer, chunkSize, compressType, nil)
 }
 
 // newBufferedWriter is used to build a buffered writer.
-func newBufferedWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType) *bufferedWriter {
+func newBufferedWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType, accessRec *recording.AccessStats) *bufferedWriter {
 	return &bufferedWriter{
-		writer: writer,
-		buf:    newInterceptBuffer(chunkSize, compressType),
+		writer:    writer,
+		buf:       newInterceptBuffer(chunkSize, compressType),
+		accessRec: accessRec,
 	}
 }
 

@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -64,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pwdValidator "github.com/pingcap/tidb/pkg/util/password-validation"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
@@ -2729,12 +2731,133 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 }
 
 func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	intest.AssertFunc(func() bool {
+		for _, obj := range s.RefreshObjects {
+			switch obj.RefreshObjectScope {
+			case ast.RefreshObjectScopeDatabase, ast.RefreshObjectScopeTable:
+				if obj.DBName.L == "" {
+					return false
+				}
+			}
+		}
+		return true
+	}, "Refresh stats broadcast requires database-qualified names")
+	// Note: Restore the statement to a SQL string so we can broadcast fully qualified
+	// table names to every instance. For example, `REFRESH STATS tbl` executed in
+	// database `db` must be sent as `REFRESH STATS db.tbl`; otherwise a peer without
+	// that current database would skip the table.
+	sql, err := restoreRefreshStatsSQL(s)
+	if err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to format refresh stats statement", zap.Error(err))
+		return err
+	}
 	if e.IsFromRemote {
-		// TODO: do the real refresh stats
-		statslogutil.StatsLogger().Info("Refresh stats from remote", zap.String("sql", s.Text()))
+		if err := e.executeRefreshStatsOnCurrentInstance(ctx, s); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to refresh stats from remote", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		statslogutil.StatsLogger().Info("Successfully refreshed statistics from remote", zap.String("sql", sql))
 		return nil
 	}
-	return broadcast(ctx, e.Ctx(), s.Text())
+	if s.IsClusterWide {
+		if err := broadcast(ctx, e.Ctx(), sql); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to broadcast refresh stats command", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
+		return nil
+	}
+	if err := e.executeRefreshStatsOnCurrentInstance(ctx, s); err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to refresh stats on the current instance", zap.String("sql", sql), zap.Error(err))
+		return err
+	}
+	statslogutil.StatsLogger().Info("Successfully refreshed statistics on the current instance", zap.String("sql", sql))
+	return nil
+}
+
+func restoreRefreshStatsSQL(s *ast.RefreshStatsStmt) (string, error) {
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := s.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
+func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	intest.Assert(len(s.RefreshObjects) > 0, "RefreshObjects should not be empty")
+	intest.AssertFunc(func() bool {
+		origCount := len(s.RefreshObjects)
+		s.Dedup()
+		return origCount == len(s.RefreshObjects)
+	}, "RefreshObjects should be deduplicated in the building phase")
+	tableIDs := make([]int64, 0, len(s.RefreshObjects))
+	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].RefreshObjectScope == ast.RefreshObjectScopeGlobal
+	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
+	if !isGlobalScope {
+		for _, refreshObject := range s.RefreshObjects {
+			switch refreshObject.RefreshObjectScope {
+			case ast.RefreshObjectScopeDatabase:
+				exists := is.SchemaExists(refreshObject.DBName)
+				if !exists {
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(refreshObject.DBName))
+					statslogutil.StatsLogger().Warn("Failed to find database when refreshing stats", zap.String("db", refreshObject.DBName.O))
+					continue
+				}
+				tables, err := is.SchemaTableInfos(ctx, refreshObject.DBName)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if len(tables) == 0 {
+					// Note: We do not warn about databases without tables because we cannot issue a warning
+					// for every such database when refreshing with `REFRESH STATS *.*`.(Technically, we can, but no point to do so.)
+					// Instead, we simply log the information to remain consistent across all cases.
+					statslogutil.StatsLogger().Info("No table in the database when refreshing stats", zap.String("db", refreshObject.DBName.O))
+					continue
+				}
+				for _, table := range tables {
+					tableIDs = append(tableIDs, table.ID)
+				}
+			case ast.RefreshObjectScopeTable:
+				table, err := is.TableInfoByName(refreshObject.DBName, refreshObject.TableName)
+				if err != nil {
+					if infoschema.ErrTableNotExists.Equal(err) {
+						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(refreshObject.DBName, refreshObject.TableName))
+						statslogutil.StatsLogger().Warn("Failed to find table when refreshing stats", zap.String("db", refreshObject.DBName.O), zap.String("table", refreshObject.TableName.O))
+						continue
+					}
+					return errors.Trace(err)
+				}
+				if table == nil {
+					intest.Assert(false, "Table should not be nil here")
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(refreshObject.DBName, refreshObject.TableName))
+					statslogutil.StatsLogger().Warn("Failed to find table when refreshing stats", zap.String("db", refreshObject.DBName.O), zap.String("table", refreshObject.TableName.O))
+					continue
+				}
+				tableIDs = append(tableIDs, table.ID)
+			default:
+				intest.Assert(false, "No other scopes should be here")
+			}
+		}
+		// If all specified databases or tables do not exist, we do nothing.
+		if len(tableIDs) == 0 {
+			statslogutil.StatsLogger().Info("No valid database or table to refresh stats")
+			return nil
+		}
+	}
+	// Note: tableIDs is empty means to refresh all tables.
+	h := domain.GetDomain(e.Ctx()).StatsHandle()
+	if s.RefreshMode != nil {
+		if *s.RefreshMode == ast.RefreshStatsModeLite {
+			return h.InitStatsLite(ctx, tableIDs...)
+		}
+		return h.InitStats(ctx, is, tableIDs...)
+	}
+	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
+	if liteInitStats {
+		return h.InitStatsLite(ctx, tableIDs...)
+	}
+	return h.InitStats(ctx, is, tableIDs...)
 }
 
 func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
@@ -2777,11 +2900,16 @@ func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
 	defer func() {
 		_ = resp.Close()
 	}()
-	if _, err := resp.Next(ctx); err != nil {
-		return errors.Trace(err)
+	for {
+		subset, err := resp.Next(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if subset == nil {
+			break // all remote tasks finished cleanly
+		}
 	}
 
-	logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
 	return nil
 }
 

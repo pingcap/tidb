@@ -174,9 +174,30 @@ func commonPrefixLength(strs ...[]byte) int {
 
 func convertBytesToScalar(value []byte) float64 {
 	// Bytes type is viewed as a base-256 value, so we only consider at most 8 bytes.
-	var buf [8]byte
-	copy(buf[:], value)
-	return float64(binary.BigEndian.Uint64(buf[:]))
+	switch len(value) {
+	case 0:
+		return 0
+	case 1:
+		return float64(uint64(value[0]) << 56)
+	case 2:
+		return float64(uint64(value[1])<<48 | uint64(value[0])<<56)
+	case 3:
+		return float64(uint64(value[2])<<40 | uint64(value[1])<<48 | uint64(value[0])<<56)
+	case 4:
+		return float64(
+			uint64(value[3])<<32 | uint64(value[2])<<40 | uint64(value[1])<<48 | uint64(value[0])<<56)
+	case 5:
+		return float64(uint64(value[4])<<24 |
+			uint64(value[3])<<32 | uint64(value[2])<<40 | uint64(value[1])<<48 | uint64(value[0])<<56)
+	case 6:
+		return float64(uint64(value[5])<<16 | uint64(value[4])<<24 |
+			uint64(value[3])<<32 | uint64(value[2])<<40 | uint64(value[1])<<48 | uint64(value[0])<<56)
+	case 7:
+		return float64(uint64(value[6])<<8 | uint64(value[5])<<16 | uint64(value[4])<<24 |
+			uint64(value[3])<<32 | uint64(value[2])<<40 | uint64(value[1])<<48 | uint64(value[0])<<56)
+	default:
+		return float64(binary.BigEndian.Uint64(value))
+	}
 }
 
 func calcFraction4Datums(lower, upper, value *types.Datum) float64 {

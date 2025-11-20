@@ -72,7 +72,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 
 		// Save table info and sub-jobs for rolling back.
 		var tblInfo *model.TableInfo
-		tblInfo, err = metaMut.GetTable(job.SchemaID, job.TableID)
+		tblInfo, err = GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 		if err != nil {
 			return ver, err
 		}
@@ -365,6 +365,17 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	mergedSubJob.JobArgs = newAddIndexesArgs
 	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs
+}
+
+// setNeedAnalyze sets NeedAnalyze for the last sub-job that can do embedded analyze.
+func setNeedAnalyze(info *model.MultiSchemaInfo) {
+	for i := len(info.SubJobs) - 1; i >= 0; i-- {
+		subJob := info.SubJobs[i]
+		if subJob.CanEmbeddedAnalyze() {
+			subJob.NeedAnalyze = true
+			break
+		}
+	}
 }
 
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {
