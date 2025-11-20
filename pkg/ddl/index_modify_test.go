@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	failpoint "github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -1253,6 +1254,48 @@ func TestCreateTableWithColumnarIndex(t *testing.T) {
 	// a columnar index with invisible
 	tk.MustContainErrMsg("create table t(a int, b int, c int, columnar index idx(b) using inverted INVISIBLE)",
 		"[ddl:8200]INVISIBLE can not be used in INVERTED INDEX")
+}
+
+func TestHybridIndexOnPartitionedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess"))
+	}()
+
+	tk.MustExec("drop table if exists pt_create, pt_alter;")
+	tk.MustExec(`create table pt_create(a int, b text, v vector(3))
+partition by range (a) (
+        partition p0 values less than (10),
+        partition p1 values less than (20)
+);`)
+	tk.MustExec(`create columnar index idx_hybrid on pt_create(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}]}'`)
+	tbl := external.GetTableByName(t, tk, "test", "pt_create")
+	idx := tbl.Meta().FindIndexByName("idx_hybrid")
+	require.NotNil(t, idx)
+	require.Equal(t, ast.IndexTypeHybrid, idx.Tp)
+	require.NotNil(t, idx.HybridInfo)
+	require.Len(t, idx.HybridInfo.FullText, 1)
+	require.Len(t, idx.HybridInfo.Vector, 1)
+
+	tk.MustExec(`create table pt_alter(a int, b text, v vector(3))
+partition by range (a) (
+        partition p0 values less than (5),
+        partition p1 values less than (15)
+);`)
+	tk.MustExec(`alter table pt_alter add columnar index idx_hybrid_alter(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}]}'`)
+	tbl = external.GetTableByName(t, tk, "test", "pt_alter")
+	idx = tbl.Meta().FindIndexByName("idx_hybrid_alter")
+	require.NotNil(t, idx)
+	require.Equal(t, ast.IndexTypeHybrid, idx.Tp)
+	require.NotNil(t, idx.HybridInfo)
+	require.Len(t, idx.HybridInfo.FullText, 1)
+	require.Len(t, idx.HybridInfo.Vector, 1)
 }
 
 func TestAddVectorIndexSimple(t *testing.T) {
