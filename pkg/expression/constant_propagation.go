@@ -177,7 +177,7 @@ func replaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expression) (E
 	case ast.In:
 		if src.GetType(ctx.GetEvalCtx()).EvalType() == types.ETString || tgt.GetType(ctx.GetEvalCtx()).EvalType() == types.ETString {
 			if src.GetType(ctx.GetEvalCtx()).GetCollate() != sf.GetType(ctx.GetEvalCtx()).GetCollate() ||
-				src.GetType(ctx.GetEvalCtx()).GetCollate() != sf.GetType(ctx.GetEvalCtx()).GetCollate() {
+				tgt.GetType(ctx.GetEvalCtx()).GetCollate() != sf.GetType(ctx.GetEvalCtx()).GetCollate() {
 				// It is duo to ```CheckAndDeriveCollationFromExprs``` in the ```deriveCollation```.
 				// If we have an expression a in (b,c,d) with each column which has difference collation, the expression's
 				// return type is decided by ```CheckAndDeriveCollationFromExprs```. it will get diffence return type.
