@@ -803,10 +803,7 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 		return err
 	}
 	scannedCount := ck.tableScanRowCount
-	if scannedCount == 0 {
-		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", ck.ID))
-		return nil
-	}
+	logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", ck.ID))
 	if w.totalCount != nil {
 		w.totalCount.Add(scannedCount)
 	}
