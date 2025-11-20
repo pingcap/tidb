@@ -222,17 +222,6 @@ func (b *mppExecBuilder) buildIndexLookUp(pb *tipb.IndexLookUp) (*indexLookUpExe
 	for _, col := range tblScanPB.Columns {
 		fieldTypes = append(fieldTypes, fieldTypeFromPBColumn(col))
 	}
-	isCommonHandle := true
-	if len(pb.IndexHandleOffsets) == 1 {
-		offset := pb.IndexHandleOffsets[0]
-		fts := indexScanChild.getFieldTypes()
-		switch fts[offset].GetType() {
-		case mysql.TypeLong, mysql.TypeLonglong,
-			mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
-			isCommonHandle = false
-		}
-	}
-	indexScanChild.getFieldTypes()[0].GetType()
 	indexLookUp := &indexLookUpExec{
 		baseMPPExec: baseMPPExec{
 			sctx:       b.sctx,
@@ -250,7 +239,7 @@ func (b *mppExecBuilder) buildIndexLookUp(pb *tipb.IndexLookUp) (*indexLookUpExe
 		},
 		indexHandleOffsets:  pb.IndexHandleOffsets,
 		tblScanPB:           tblScanPB,
-		isCommonHandle:      isCommonHandle,
+		isCommonHandle:      len(tblScanPB.PrimaryColumnIds) > 0,
 		extraReaderProvider: b.dbReader.ExtraDbReaderProvider,
 		buildTableScan: func(reader *dbreader.DBReader, ranges []kv.KeyRange) (*tableScanExec, error) {
 			copRanges := make([]*coprocessor.KeyRange, len(ranges))
