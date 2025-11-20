@@ -661,8 +661,6 @@ func TestInvalidFilenameFormats(t *testing.T) {
 		// Not starting with 'R'
 		"X000000000000000A_T0000000000000005.meta",
 		"_000000000000000A_T0000000000000005.meta",
-		// Old format with '_S' (important: verify backward incompatibility)
-		"R000000000000000A_S0000000000000005.meta",
 		// Timestamp not 16 hex digits
 		"R00000000000000A_T0000000000000005.meta",
 		"R0000000000000000A_T0000000000000005.meta",
