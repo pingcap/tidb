@@ -365,6 +365,9 @@ func (s *CheckpointManager) FinishChunk(taskID int, delta int) {
 	}
 	cp.writtenKeys += delta
 	cp.chunksFinished++
+	if cp.chunksFinished == cp.chunksTotal {
+		s.logger.Info("finish a index ingest task", zap.Int("id", taskID), zap.Int("totalKeys", cp.totalKeys), zap.Int("writtenKeys", cp.writtenKeys))
+	}
 	s.mu.Unlock()
 }
 
