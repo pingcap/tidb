@@ -624,7 +624,7 @@ type sampleChecker struct {
 	expect  int64
 }
 
-func (r *sampleChecker) checkSampling(val any) bool {
+func (r *sampleChecker) checkSampling(_ any) bool {
 	v := r.counter.Add(1)
 	if v >= r.expect {
 		r.counter.Store(0)
