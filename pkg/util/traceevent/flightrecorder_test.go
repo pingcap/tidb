@@ -99,17 +99,72 @@ func testFlightRecorderConfigGoodCase(t *testing.T) {
 	}`
 	name7 := "dump_trigger.suspicious_event"
 
+	conf8 := `{
+  "enabled_categories": ["*"],
+  "dump_trigger": {
+    "type": "and",
+    "and": [
+      {
+        "type": "user_command",
+        "user_command": {
+          "type": "stmt_label",
+          "stmt_label": "Select"
+        }
+      },
+      {
+        "type": "suspicious_event",
+        "suspicious_event": {
+          "type": "resolve_lock"
+        }
+      }
+    ]
+  }
+}`
+
+	conf9 := `{
+  "enabled_categories": ["*"],
+  "dump_trigger": {
+    "type": "or",
+    "or": [
+      {
+        "type": "and",
+        "and": [
+          {
+            "type": "user_command",
+            "user_command": {
+              "type": "stmt_label",
+              "stmt_label": "Insert"
+            }
+          },
+          {
+            "type": "suspicious_event",
+            "suspicious_event": {
+              "type": "query_fail"
+            }
+          }
+        ]
+      },
+      {
+        "type": "sampling",
+        "sampling": 10
+      }
+    ]
+  }
+}`
+
 	testcases := []struct {
-		conf string
-		name string
+		conf   string
+		result map[string]int
 	}{
-		{conf1, name1},
-		{conf2, name2},
-		{conf3, name3},
-		{conf4, name4},
-		{conf5, name5},
-		{conf6, name6},
-		{conf7, name7},
+		{conf1, map[string]int{name1: 0}},
+		{conf2, map[string]int{name2: 0}},
+		{conf3, map[string]int{name3: 0}},
+		{conf4, map[string]int{name4: 0}},
+		{conf5, map[string]int{name5: 0}},
+		{conf6, map[string]int{name6: 0}},
+		{conf7, map[string]int{name7: 0}},
+		{conf8, map[string]int{"dump_trigger.user_command.stmt_label": 0, "dump_trigger.suspicious_event": 1}},
+		{conf9, map[string]int{"dump_trigger.user_command.stmt_label": 0, "dump_trigger.suspicious_event": 1, "dump_trigger.sampling": 2}},
 	}
 
 	var b strings.Builder
@@ -119,12 +174,12 @@ func testFlightRecorderConfigGoodCase(t *testing.T) {
 		err := json.Unmarshal([]byte(testcase.conf), &value)
 		require.NoError(t, err, idx)
 
-		// validate success
-		err = value.Validate(&b)
+		// compile success
+		res, err := value.Compile()
 		require.NoError(t, err, idx)
 
 		// result expected
-		require.Equal(t, b.String(), testcase.name, idx)
+		require.Equal(t, res.nameMapping, testcase.result, idx)
 
 		b.Reset()
 	}
@@ -153,7 +208,28 @@ func testFlightRecorderConfigBadCase(t *testing.T) {
 	}
 	}
 	}`
-
+	badcaseDuplicated := `{
+  "enabled_categories": [
+    "*"
+  ],
+  "dump_trigger": {
+    "type": "and",
+    "and": [
+      {
+        "type": "suspicious_event",
+        "suspicious_event": {
+          "type": "slow_query"
+        }
+      },
+      {
+        "type": "suspicious_event",
+        "suspicious_event": {
+          "type": "query_fail"
+        }
+      }
+    ]
+  }
+}`
 	badcases := []struct {
 		conf    string
 		errkind int
@@ -161,6 +237,7 @@ func testFlightRecorderConfigBadCase(t *testing.T) {
 		{badcaseJSONDecode, 1},
 		{badcaseValidate, 2},
 		{badcaseValidate1, 2},
+		{badcaseDuplicated, 2},
 	}
 	var b strings.Builder
 	for idx, badcase := range badcases {
@@ -172,7 +249,7 @@ func testFlightRecorderConfigBadCase(t *testing.T) {
 		}
 		require.NoError(t, err, idx)
 
-		err = value.Validate(&b)
+		_, err = value.Compile()
 		if badcase.errkind == 2 {
 			require.Error(t, err, idx)
 			continue
@@ -203,4 +280,67 @@ func TestParseTraceCategory(t *testing.T) {
 		categories := parseCategories(testcase.input)
 		require.Equal(t, testcase.expect, categories, idx)
 	}
+}
+
+func TestAndOrCombination(t *testing.T) {
+	compiled := dumpTriggerConfigCompiled{
+		nameMapping: make(map[string]int),
+	}
+	A, err := compiled.addTrigger("A", nil)
+	require.NoError(t, err)
+	B, err := compiled.addTrigger("B", nil)
+	require.NoError(t, err)
+	C, err := compiled.addTrigger("C", nil)
+	require.NoError(t, err)
+	D, err := compiled.addTrigger("D", nil)
+	require.NoError(t, err)
+
+	truthTable := truthTableForAnd([]uint64{A}, []uint64{B, C})
+	require.False(t, checkTruthTable(A, truthTable))
+	require.False(t, checkTruthTable(D, truthTable))
+	require.True(t, checkTruthTable(A|B, truthTable))
+	require.True(t, checkTruthTable(A|C, truthTable))
+	require.False(t, checkTruthTable(B|C, truthTable))
+
+	truthTable = truthTableForAnd([]uint64{A | B}, []uint64{C})
+	require.False(t, checkTruthTable(A, truthTable))
+	require.False(t, checkTruthTable(D, truthTable))
+	require.False(t, checkTruthTable(A|B, truthTable))
+	require.False(t, checkTruthTable(A|C, truthTable))
+	require.False(t, checkTruthTable(B|C, truthTable))
+	require.True(t, checkTruthTable(A|B|C, truthTable))
+	require.True(t, checkTruthTable(A|B|C|D, truthTable))
+
+	truthTable = truthTableForAnd([]uint64{A, B}, []uint64{C, D})
+	require.False(t, checkTruthTable(A, truthTable))
+	require.False(t, checkTruthTable(B, truthTable))
+	require.False(t, checkTruthTable(C, truthTable))
+	require.False(t, checkTruthTable(D, truthTable))
+	require.False(t, checkTruthTable(A|B, truthTable))
+	require.False(t, checkTruthTable(C|D, truthTable))
+	require.True(t, checkTruthTable(A|C, truthTable))
+	require.True(t, checkTruthTable(B|C, truthTable))
+	require.True(t, checkTruthTable(B|D, truthTable))
+	require.True(t, checkTruthTable(B|C|D, truthTable))
+	require.True(t, checkTruthTable(A|B|C|D, truthTable))
+
+	truthTable = truthTableForOr([]uint64{A, B}, []uint64{C | D})
+	require.True(t, checkTruthTable(A, truthTable))
+	require.True(t, checkTruthTable(B, truthTable))
+	require.False(t, checkTruthTable(C, truthTable))
+	require.False(t, checkTruthTable(D, truthTable))
+	require.True(t, checkTruthTable(A|D, truthTable))
+	require.True(t, checkTruthTable(A|B, truthTable))
+
+	truthTable = truthTableForOr([]uint64{A | C}, []uint64{B | D})
+	require.False(t, checkTruthTable(A, truthTable))
+	require.False(t, checkTruthTable(B, truthTable))
+	require.False(t, checkTruthTable(C, truthTable))
+	require.False(t, checkTruthTable(D, truthTable))
+	require.False(t, checkTruthTable(A|D, truthTable))
+	require.True(t, checkTruthTable(A|C, truthTable))
+	require.False(t, checkTruthTable(B|C, truthTable))
+	require.True(t, checkTruthTable(B|D, truthTable))
+	require.False(t, checkTruthTable(C|D, truthTable))
+	require.True(t, checkTruthTable(A|C|D, truthTable))
 }
