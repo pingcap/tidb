@@ -173,6 +173,8 @@ var (
 		maxWriteSpeedOption:   {},
 		cloudStorageURIOption: {},
 		threadOption:          {},
+		checksumTableOption:   {},
+		recordErrorsOption:    {},
 	}
 
 	disallowedOptionsForSEM = map[string]struct{}{
