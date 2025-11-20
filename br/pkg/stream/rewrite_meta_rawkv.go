@@ -68,7 +68,7 @@ type SchemasReplace struct {
 	setRestoreTableMode   bool
 
 	// track deleted tables, maps dbID -> tableIDs
-	deletedTables map[int64]map[int64]struct{}
+	deletedTables map[UpstreamID]map[UpstreamID]struct{}
 }
 
 // NewTableReplace creates a TableReplace struct.
@@ -121,7 +121,7 @@ func NewSchemasReplace(
 		TiflashRecorder:     tiflashRecorder,
 		RewriteTS:           restoreTS,
 		setRestoreTableMode: setRestoreTableMode,
-		deletedTables:       make(map[int64]map[int64]struct{}),
+		deletedTables:       make(map[UpstreamID]map[UpstreamID]struct{}),
 	}
 }
 
@@ -206,14 +206,9 @@ func (sr *SchemasReplace) rewriteEntryForDB(e *kv.Entry, cf string) (*kv.Entry, 
 
 	// track deleted databases in the same structure as deleted tables
 	if r.Deleted {
-		dbReplace, exist := sr.DbReplaceMap[dbID]
-		if !exist {
-			log.Error("not able to find new db id for deleted database", zap.Int64("oldDBID", dbID))
-		} else {
-			// add deleted database with empty table set
-			if _, ok := sr.deletedTables[dbReplace.DbID]; !ok {
-				sr.deletedTables[dbReplace.DbID] = make(map[int64]struct{})
-			}
+		// add deleted database with empty table set
+		if _, ok := sr.deletedTables[dbID]; !ok {
+			sr.deletedTables[dbID] = make(map[int64]struct{})
 		}
 	}
 
@@ -356,7 +351,15 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 	}
 
 	var newTableID int64 = 0
-	newKey, err := sr.rewriteKeyForTable(e.Key, cf, meta.ParseTableKey, func(tableID int64) []byte {
+	var oldTableID int64 = 0
+	newKey, err := sr.rewriteKeyForTable(e.Key, cf, func(b []byte) (int64, error) {
+		tableID, err := meta.ParseTableKey(b)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		oldTableID = tableID
+		return tableID, nil
+	}, func(tableID int64) []byte {
 		newTableID = tableID
 		return meta.TableKey(tableID)
 	})
@@ -373,15 +376,10 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 	//       get a view of (is_delete, table_id, table_info) at the same time :(.
 	//       Maybe we can extract the rewrite part from rewriteTableInfo.
 	if result.Deleted {
-		dbReplace, exist := sr.DbReplaceMap[dbID]
-		if !exist {
-			log.Error("not able to find new db id", zap.Int64("oldDBID", dbID))
-		} else {
-			if _, ok := sr.deletedTables[dbReplace.DbID]; !ok {
-				sr.deletedTables[dbReplace.DbID] = make(map[int64]struct{})
-			}
-			sr.deletedTables[dbReplace.DbID][newTableID] = struct{}{}
+		if _, ok := sr.deletedTables[dbID]; !ok {
+			sr.deletedTables[dbID] = make(map[int64]struct{})
 		}
+		sr.deletedTables[dbID][oldTableID] = struct{}{}
 		if sr.AfterTableRewrittenFn != nil {
 			sr.AfterTableRewrittenFn(true, &model.TableInfo{ID: newTableID})
 		}
@@ -519,7 +517,7 @@ func (sr *SchemasReplace) GetIngestRecorder() *ingestrec.IngestRecorder {
 }
 
 // GetDeletedTables returns a map of dbID to a set of tableIDs that were marked as deleted
-func (sr *SchemasReplace) GetDeletedTables() map[int64]map[int64]struct{} {
+func (sr *SchemasReplace) GetDeletedTables() map[UpstreamID]map[UpstreamID]struct{} {
 	return sr.deletedTables
 }
 
