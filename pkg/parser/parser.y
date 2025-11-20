@@ -6780,8 +6780,6 @@ IndexOptionList:
 				opt1.SplitOpt = opt2.SplitOpt
 			} else if len(opt2.SecondaryEngineAttr) > 0 {
 				opt1.SecondaryEngineAttr = opt2.SecondaryEngineAttr
-			} else if opt2.Condition != nil {
-				opt1.Condition = opt2.Condition
 			}
 			$$ = opt1
 		}
@@ -6859,12 +6857,6 @@ IndexOption:
 |	"SECONDARY_ENGINE_ATTRIBUTE" EqOpt stringLit
 	{
 		$$ = &ast.IndexOption{SecondaryEngineAttr: $3}
-	}
-|	"WHERE" Expression
-	{
-		$$ = &ast.IndexOption{
-			Condition: $2.(ast.ExprNode),
-		}
 	}
 
 /*
