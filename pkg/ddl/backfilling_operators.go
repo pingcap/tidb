@@ -813,7 +813,7 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 	if w.totalCount != nil {
 		w.totalCount.Add(scannedCount)
 	}
-	result.RowCnt = int(scannedCount)
+	result.RowCnt = int(ck.tableScanRowCount)
 	if ResultCounterForTest != nil {
 		ResultCounterForTest.Add(1)
 	}
