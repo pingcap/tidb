@@ -105,10 +105,9 @@ echo "✓ T2 timestamp: $T2 (data state: t1=5 rows, t2=4 rows)"
 
 # Drop test tables before first restore
 echo ""
-echo ">>> Dropping test tables before restore..."
+echo ">>> Dropping test_db before restore..."
 run_sql "DROP DATABASE test_db;"
-run_sql "DROP DATABASE initial_db;"
-echo "✓ Databases dropped"
+echo "✓ test_db dropped"
 
 # ==================== T3: First PITR restore to T1 ====================
 echo ""
@@ -119,6 +118,7 @@ run_br restore point \
     -s "$LOG_DIR" \
     --full-backup-storage "$SNAPSHOT_DIR" \
     --restored-ts "$T1" \
+    -f "test_db.*" \
     --log-file "$TEST_DIR/restore_t1.log"
 echo "✓ First PITR completed (restored to T1)"
 
@@ -181,12 +181,11 @@ echo ">>> Blocklist check logic:"
 echo ">>>   - restoredTs=$T2 < RestoreStartTs (≤T3=$T3)"
 echo ">>>   - Expected: SUCCESS (tables didn't exist at T2 in snapshot)"
 
-# Drop all databases for test
+# Drop test_db for test
 echo ""
-echo ">>> Dropping all databases for test..."
+echo ">>> Dropping test_db for test..."
 run_sql "DROP DATABASE test_db;"
-run_sql "DROP DATABASE initial_db;"
-echo "✓ Databases dropped"
+echo "✓ test_db dropped"
 
 # Restore to T2
 echo ""
@@ -196,6 +195,7 @@ run_br restore point \
     -s "$LOG_DIR" \
     --full-backup-storage "$SNAPSHOT_DIR" \
     --restored-ts "$T2" \
+    -f "test_db.*" \
     --log-file "$TEST_DIR/restore_t2.log"
 echo "✓ Restore to T2 completed"
 
@@ -236,12 +236,11 @@ echo "=========================================="
 echo ">>> Objective: Verify blocklist blocks restore when tables don't exist in snapshot"
 echo ">>> T3 = $T3 (first PITR completion time)"
 
-# Drop all databases FIRST
+# Drop test_db FIRST
 echo ""
-echo ">>> Dropping all databases..."
+echo ">>> Dropping test_db..."
 run_sql "DROP DATABASE test_db;"
-run_sql "DROP DATABASE initial_db;"
-echo "✓ Databases dropped"
+echo "✓ test_db dropped"
 
 # Wait for checkpoint to advance AFTER the drop operations
 echo ">>> Waiting for checkpoint to advance after database drop..."
@@ -251,13 +250,6 @@ wait_log_checkpoint_advance "$TASK_NAME"
 T4=$LATEST_CHECKPOINT_TS
 echo ">>> T4 = $T4 (checkpoint ts from log backup)"
 
-echo ">>> Blocklist check logic:"
-echo ">>>   - restoredTs=$T4 > RestoreStartTs (≤T3=$T3)"
-echo ">>>   - startTs=snapshot_ts < RestoreCommitTs (from blocklist)"
-echo ">>>   - Snapshot doesn't contain test_db"
-echo ">>>   - Log backup contains operations on test_db"
-echo ">>>   - Expected: BLOCKED (conflict detected)"
-
 # Attempt to restore to T4
 echo ""
 echo ">>> Attempting restore to T4 (should be blocked)..."
@@ -266,6 +258,7 @@ run_br restore point \
     -s "$LOG_DIR" \
     --full-backup-storage "$SNAPSHOT_DIR" \
     --restored-ts "$T4" \
+    -f "test_db.*" \
     --log-file "$TEST_DIR/restore_t4_blocked.log" 2>&1 | tee "$TEST_DIR/restore_t4_output.log" || true
 
 # Check if correctly blocked
@@ -297,19 +290,78 @@ else
     fi
 fi
 
-# ==================== Test Summary ====================
+# ==================== TEST 3: Restore with filter (should succeed) ====================
 echo ""
 echo "=========================================="
-echo "All Tests Passed!"
+echo "TEST 3: Restore with Filter (Should Succeed)"
 echo "=========================================="
-echo "✓ TEST 1: Restore to different historical time (T2) succeeded"
-echo "           - Verified data difference: T1(3 rows) vs T2(5 rows)"
-echo "✓ TEST 2: Restore to future time (T4 > T3) blocked by blocklist"
+echo ">>> Objective: Verify filter and blocklist interaction"
+echo ">>> Filter should prevent blocklist checking for excluded tables"
+
+# Create table and insert data in initial_db
 echo ""
+echo ">>> Creating table in initial_db and inserting data..."
+run_sql "CREATE TABLE initial_db.t3 (id INT PRIMARY KEY);"
+run_sql "INSERT INTO initial_db.t3 VALUES (100), (200), (300);"
+
+# Verify initial_db.t3 data
+t3_count=$(run_sql "SELECT COUNT(*) FROM initial_db.t3;" | tail -n1 | awk '{print $NF}')
+if [ "$t3_count" != "3" ]; then
+    echo "ERROR: Expected 3 rows in initial_db.t3, got $t3_count"
+    exit 1
+fi
+echo "✓ initial_db.t3 prepared with 3 rows"
+
+# Record T5 timestamp
+echo ">>> Waiting for log backup checkpoint to advance..."
+wait_log_checkpoint_advance "$TASK_NAME"
+T5=$LATEST_CHECKPOINT_TS
+echo "✓ T5 timestamp: $T5 (initial_db.t3 has 3 rows)"
+
+# Drop initial_db
+echo ""
+echo ">>> Dropping initial_db..."
+run_sql "DROP DATABASE initial_db;"
+echo "✓ initial_db dropped"
+
+run_br restore point \
+    --pd "$PD_ADDR" \
+    -s "$LOG_DIR" \
+    --full-backup-storage "$SNAPSHOT_DIR" \
+    --restored-ts "$T5" \
+    -f "initial_db.*" \
+    --log-file "$TEST_DIR/restore_t5.log"
+echo "✓ Restore to T5 completed"
+
+# Verify initial_db is restored
+initial_db_exists=$(run_sql "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='initial_db';" | tail -n1 | awk '{print $NF}')
+if [ "$initial_db_exists" != "1" ]; then
+    echo "ERROR: initial_db should exist after restore"
+    exit 1
+fi
+echo "✓ initial_db restored successfully"
+
+# Verify test_db is NOT restored (filtered out)
+test_db_exists=$(run_sql "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='test_db';" | tail -n1 | awk '{print $NF}')
+if [ "$test_db_exists" != "0" ]; then
+    echo "ERROR: test_db should NOT be restored (filtered by -f initial_db.*)"
+    exit 1
+fi
+echo "✓ test_db NOT restored (correctly filtered out)"
+
+echo "✓✓✓ TEST 3 PASSED: Filter correctly prevents blocklist checking for excluded tables ✓✓✓"
+
+# Verify third blocklist file generation
+blocklist_count=$(find "$blocklist_dir" -name "R*_S*.meta" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$blocklist_count" != "3" ]; then
+    echo "ERROR: Expected 3 blocklist files after third PITR, found $blocklist_count"
+    exit 1
+fi
+echo "✓ Third blocklist file generated"
 
 echo ">>> Blocklist files summary:"
 blocklist_count=$(find "$blocklist_dir" -name "R*_S*.meta" 2>/dev/null | wc -l | tr -d ' ')
-echo "Total blocklist files: $blocklist_count"
+echo "Total blocklist files: $blocklist_count (expected 3)"
 ls -lh "$blocklist_dir" || true
 
 # ==================== Stop log backup ====================
