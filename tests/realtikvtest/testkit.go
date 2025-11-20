@@ -312,6 +312,16 @@ func UpdateTiDBConfig() {
 			conf.TiKVWorkerURL = "localhost:19000"
 			conf.KeyspaceName = keyspace.System
 			conf.Instance.TiDBServiceScope = handle.NextGenTargetScope
+			conf.MeteringStorageURI = getNextGenObjStoreURIWithArgs("metering-data", "&region=local")
 		}
 	})
+}
+
+// GetNextGenObjStoreURI returns a next-gen object store URI for testing.
+func GetNextGenObjStoreURI(path string) string {
+	return getNextGenObjStoreURIWithArgs(path, "&provider=minio")
+}
+
+func getNextGenObjStoreURIWithArgs(path string, args string) string {
+	return fmt.Sprintf("s3://next-gen-test/%s?access-key=minioadmin&secret-access-key=minioadmin&endpoint=http%%3a%%2f%%2f0.0.0.0%%3a9000%s", path, args)
 }

@@ -77,6 +77,7 @@ go_library(
     ],
     deps = [
         "//br/pkg/storage",
+        "//br/pkg/storage/recording",
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl/copr",
@@ -345,6 +346,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/parser/types",
+        "//pkg/resourcemanager/pool/workerpool",
         "//pkg/server",
         "//pkg/session",
         "//pkg/session/sessionapi",

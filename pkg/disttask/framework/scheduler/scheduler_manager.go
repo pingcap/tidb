@@ -514,7 +514,7 @@ func (sm *Manager) collectWorkerMetrics(tasks []*proto.TaskBase) {
 	slices.SortFunc(scheduledTasks, func(i, j *proto.TaskBase) int {
 		return i.Compare(j)
 	})
-	requiredNodes := handle.CalculateRequiredNodes(tasks, nodeCPU)
+	requiredNodes := handle.CalculateRequiredNodes(scheduledTasks, nodeCPU)
 	dxfmetric.WorkerCount.WithLabelValues("required").Set(float64(requiredNodes))
 	dxfmetric.WorkerCount.WithLabelValues("current").Set(float64(nodeCount))
 }

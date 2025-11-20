@@ -109,6 +109,8 @@ const (
 	// the DDL owner, to make sure all upgrade related DDLs are run on new version
 	// TiDB instance.
 	Upgrade StartMode = "upgrade"
+	// BR mode, Start DDL from br, with this mode can skip loadSystemStore in next-gen and initLogBackup.
+	BR StartMode = "br"
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -894,6 +896,11 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 		zap.Stringer("jobVersion", model.GetJobVerInUse()),
 		zap.String("startMode", string(startMode)),
 	)
+
+	d.executor.startMode = startMode
+	failpoint.Inject("mockBRStartMode", func() {
+		d.executor.startMode = BR
+	})
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool

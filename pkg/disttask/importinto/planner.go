@@ -609,8 +609,9 @@ func getRangeSplitter(
 	if err != nil {
 		logutil.Logger(ctx).Warn("fail to get region split size and keys", zap.Error(err))
 	}
-	regionSplitSize = max(regionSplitSize, int64(config.SplitRegionSize))
-	regionSplitKeys = max(regionSplitKeys, int64(config.SplitRegionKeys))
+	defRegionSplitSize, defRegionSplitKeys := handle.GetDefaultRegionSplitConfig()
+	regionSplitSize = max(regionSplitSize, defRegionSplitSize)
+	regionSplitKeys = max(regionSplitKeys, defRegionSplitKeys)
 	nodeRc := handle.GetNodeResource()
 	rangeSize, rangeKeys := external.CalRangeSize(nodeRc.TotalMem/int64(nodeRc.TotalCPU), regionSplitSize, regionSplitKeys)
 	logutil.Logger(ctx).Info("split kv range with split size and keys",

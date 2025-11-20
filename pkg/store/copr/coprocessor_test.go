@@ -38,6 +38,26 @@ func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req
 	})
 }
 
+func TestEnsureMonotonicKeyRanges(t *testing.T) {
+	ctx := context.Background()
+	ranges := NewKeyRanges([]kv.KeyRange{
+		{StartKey: []byte("b"), EndKey: []byte("d")},
+		{StartKey: []byte("a"), EndKey: []byte("b")},
+	})
+	reordered := ensureMonotonicKeyRanges(ctx, ranges)
+	require.True(t, reordered)
+	require.Equal(t, "a", string(ranges.At(0).StartKey))
+	require.Equal(t, "b", string(ranges.At(0).EndKey))
+	require.Equal(t, "b", string(ranges.At(1).StartKey))
+
+	sortedRanges := NewKeyRanges([]kv.KeyRange{
+		{StartKey: []byte("a"), EndKey: []byte("b")},
+		{StartKey: []byte("b"), EndKey: []byte("c")},
+	})
+	reordered = ensureMonotonicKeyRanges(ctx, sortedRanges)
+	require.False(t, reordered)
+}
+
 func TestBuildTasksWithoutBuckets(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->

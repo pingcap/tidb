@@ -371,18 +371,26 @@ func (s *propConstSolver) propagateColumnEQ() {
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
 					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
-					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
-						continue
+					if isConstant(newExpr) || s.vaildExprFunc == nil || s.vaildExprFunc(newExpr) {
+						s.conditions = append(s.conditions, newExpr)
 					}
-					s.conditions = append(s.conditions, newExpr)
 				}
+				// Why do we need to replace colj with coli again?
+				// Consider the case: col1 = col3
+				// Join Schema: left schema: {col1,col2}, right schema: {col3,col4}
+				// Conditions: col1 in (col3, col4)
+				//
+				// because the order of columns in equaility relation is not guaranteed,
+				// We may replace col3 with col1 first, it cannot push down the condition to the child.
+				// because two columns are from different side.
+				// But if we replace col1 with col3, it can be pushed down.
+				// So we need to try both directions.
 				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
 					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
-					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
-						continue
+					if isConstant(newExpr) || s.vaildExprFunc == nil || s.vaildExprFunc(newExpr) {
+						s.conditions = append(s.conditions, newExpr)
 					}
-					s.conditions = append(s.conditions, newExpr)
 				}
 			}
 		}

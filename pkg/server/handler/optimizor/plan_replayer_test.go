@@ -33,6 +33,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -107,6 +108,11 @@ func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.D
 }
 
 func TestDumpPlanReplayerAPI(t *testing.T) {
+	origin := config.GetGlobalConfig().TempDir
+	defer func() {
+		config.GetGlobalConfig().TempDir = origin
+	}()
+	config.GetGlobalConfig().TempDir = t.TempDir()
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
@@ -267,6 +273,11 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 }
 
 func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
+	origin := config.GetGlobalConfig().TempDir
+	defer func() {
+		config.GetGlobalConfig().TempDir = origin
+	}()
+	config.GetGlobalConfig().TempDir = t.TempDir()
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
@@ -374,6 +385,11 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 }
 
 func TestIssue43192(t *testing.T) {
+	origin := config.GetGlobalConfig().TempDir
+	defer func() {
+		config.GetGlobalConfig().TempDir = origin
+	}()
+	config.GetGlobalConfig().TempDir = t.TempDir()
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)

@@ -287,6 +287,10 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName ast.CIStr) error {
 	if err != nil {
 		return err
 	}
+	err = checkColumnReferencedByPartialCondition(tblInfo, colName)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 

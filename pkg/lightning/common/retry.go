@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	goerrors "errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -32,6 +33,8 @@ import (
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -69,6 +72,14 @@ func isRetryableFromErrorMessage(err error) bool {
 func IsRetryableError(err error) bool {
 	for _, singleError := range errors.Errors(err) {
 		if !isSingleRetryableError(singleError) {
+			// the caller might call IsRetryableError on nil, or the task is cancelled,
+			// no need to log more info in this case.
+			if singleError != nil && !goerrors.Is(singleError, context.Canceled) {
+				// we want to log its type and other info for better diagnosing and
+				// direct us to determine how to add to the retryable error list.
+				logutil.BgLogger().Info("meet un-retryable error", zap.Error(singleError),
+					zap.String("info", fmt.Sprintf("type: %T, value: %#v", singleError, singleError)))
+			}
 			return false
 		}
 	}
@@ -78,7 +89,7 @@ func IsRetryableError(err error) bool {
 var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	errdef.ErrKVEpochNotMatch.ID():  {},
 	errdef.ErrKVNotLeader.ID():      {},
-	ErrNoLeader.ID():                {},
+	errdef.ErrNoLeader.ID():         {},
 	errdef.ErrKVRegionNotFound.ID(): {},
 	// common.ErrKVServerIsBusy is a little duplication with tmysql.ErrTiKVServerBusy
 	// it's because the response of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,

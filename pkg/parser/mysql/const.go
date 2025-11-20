@@ -580,24 +580,6 @@ var CombinationSQLMode = map[string][]string{
 	"TRADITIONAL": {"STRICT_TRANS_TABLES", "STRICT_ALL_TABLES", "NO_ZERO_IN_DATE", "NO_ZERO_DATE", "ERROR_FOR_DIVISION_BY_ZERO", "NO_AUTO_CREATE_USER", "NO_ENGINE_SUBSTITUTION"},
 }
 
-// FormatFunc is the locale format function signature.
-type FormatFunc func(string, string) (string, error)
-
-// GetLocaleFormatFunction get the format function for sepcific locale.
-func GetLocaleFormatFunction(loc string) FormatFunc {
-	locale, exist := locale2FormatFunction[loc]
-	if !exist {
-		return formatNotSupport
-	}
-	return locale
-}
-
-// locale2FormatFunction is the string represent of locale format function.
-var locale2FormatFunction = map[string]FormatFunc{
-	"en_US": formatENUS,
-	"zh_CN": formatZHCN,
-}
-
 // PriorityEnum is defined for Priority const values.
 type PriorityEnum int
 

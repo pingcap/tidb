@@ -69,6 +69,7 @@ func TestIsRetryableError(t *testing.T) {
 	require.True(t, IsRetryableError(errors.Trace(&errdef.HTTPStatusError{StatusCode: http.StatusInternalServerError})))
 
 	// kv errors
+	require.True(t, IsRetryableError(errors.Annotatef(errdef.ErrNoLeader.GenWithStackByArgs(123), "when write to tikv, expected leader id %d", 111)))
 	require.True(t, IsRetryableError(errdef.ErrKVNotLeader))
 	require.True(t, IsRetryableError(errdef.ErrKVEpochNotMatch))
 	require.True(t, IsRetryableError(errdef.ErrKVServerIsBusy))

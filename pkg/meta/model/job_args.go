@@ -855,6 +855,13 @@ func (a *RenameTablesArgs) decodeV1(job *Job) error {
 		return errors.Trace(err)
 	}
 
+	// If the job is run on older TiDB versions(<=8.1), it will incorrectly remove
+	// the last arg oldTableNames.
+	// See https://github.com/pingcap/tidb/blob/293331cd9211c214f3431ff789210374378e9697/pkg/ddl/ddl_worker.go#L1442-L1447
+	if len(oldTableNames) == 0 && len(oldSchemaIDs) != 0 {
+		oldTableNames = make([]ast.CIStr, len(oldSchemaIDs))
+	}
+
 	a.RenameTableInfos = GetRenameTablesArgsFromV1(
 		oldSchemaIDs, oldSchemaNames, oldTableNames,
 		newSchemaIDs, newTableNames, tableIDs,
@@ -1371,7 +1378,7 @@ type IndexArg struct {
 	SplitOpt *IndexArgSplitOpt `json:"split_opt,omitempty"`
 
 	// ConditionString is used to store the partial index condition string for the index.
-	ConditionString string `json:"partial_condition_str,omitempty"`
+	ConditionString string `json:"condition_string,omitempty"`
 }
 
 // GetColumnarIndexType gets the real columnar index type in a backward compatibility way.

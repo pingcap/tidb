@@ -19,6 +19,8 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"go.uber.org/atomic"
 )
@@ -46,6 +48,9 @@ type StepExecutor interface {
 
 	// RealtimeSummary returns the realtime summary of the running subtask by this executor.
 	RealtimeSummary() *SubtaskSummary
+
+	// ResetSummary resets the summary of the running subtask by this executor.
+	ResetSummary()
 
 	// Cleanup is used to clean up the environment for this step.
 	// the returned error will not affect task/subtask state, it's only logged,
@@ -88,7 +93,7 @@ type Progress struct {
 }
 
 // SubtaskSummary contains the summary of a subtask.
-// It tracks the progress in terms of rows and bytes processed.
+// It tracks the runtime summary of the subtask.
 type SubtaskSummary struct {
 	// RowCnt and Bytes are updated by the collector.
 	RowCnt atomic.Int64 `json:"row_count,omitempty"`
@@ -96,15 +101,23 @@ type SubtaskSummary struct {
 	Bytes atomic.Int64 `json:"bytes,omitempty"`
 	// ReadBytes is the number of bytes that read from the source.
 	ReadBytes atomic.Int64 `json:"read_bytes,omitempty"`
+	// GetReqCnt is the number of get requests to the external storage.
+	// Note: Import-into also do GET on the source data bucket, but that's not
+	// recorded.
+	GetReqCnt atomic.Uint64 `json:"get_request_count,omitempty"`
 	// PutReqCnt is the number of put requests to the external storage.
 	PutReqCnt atomic.Uint64 `json:"put_request_count,omitempty"`
-	// GetReqCnt is the number of get requests to the external storage.
-	GetReqCnt atomic.Uint64 `json:"get_request_count,omitempty"`
 
 	// Progresses are the history of data processed, which is used to get a
 	// smoother speed for each subtask.
 	// It's updated each time we store the latest summary into subtask table.
 	Progresses []Progress `json:"progresses,omitempty"`
+}
+
+// MergeObjStoreRequests merges the recording requests into the summary.
+func (s *SubtaskSummary) MergeObjStoreRequests(reqs *recording.Requests) {
+	s.GetReqCnt.Add(reqs.Get.Load())
+	s.PutReqCnt.Add(reqs.Put.Load())
 }
 
 // Update stores the latest progress of the subtask.
@@ -238,13 +251,25 @@ type StepExecFrameworkInfo interface {
 	GetResource() *proto.StepResource
 	// SetResource sets the resource of this step executor.
 	SetResource(resource *proto.StepResource)
+	// GetMeterRecorder returns the meter recorder for the corresponding task.
+	GetMeterRecorder() *metering.Recorder
+	// GetCheckpointUpdateFunc returns the checkpoint update function
+	GetCheckpointUpdateFunc() func(context.Context, int64, any) error
+	// GetCheckpointunc returns the checkpoint get function
+	GetCheckpointFunc() func(context.Context, int64) (string, error)
 }
 
 var stepExecFrameworkInfoName = reflect.TypeFor[StepExecFrameworkInfo]().Name()
 
 type frameworkInfo struct {
-	step     proto.Step
-	resource atomic.Pointer[proto.StepResource]
+	step          proto.Step
+	meterRecorder *metering.Recorder
+	resource      atomic.Pointer[proto.StepResource]
+
+	// updateCheckpointFunc is used to update checkpoint for the current subtask
+	updateCheckpointFunc func(context.Context, int64, any) error
+	// getCheckpointFunc is used to get checkpoint for the current subtask
+	getCheckpointFunc func(context.Context, int64) (string, error)
 }
 
 var _ StepExecFrameworkInfo = (*frameworkInfo)(nil)
@@ -263,13 +288,36 @@ func (f *frameworkInfo) SetResource(resource *proto.StepResource) {
 	f.resource.Store(resource)
 }
 
+func (f *frameworkInfo) GetMeterRecorder() *metering.Recorder {
+	return f.meterRecorder
+}
+
+// GetCheckpointUpdateFunc returns the checkpoint update function
+func (f *frameworkInfo) GetCheckpointUpdateFunc() func(context.Context, int64, any) error {
+	return f.updateCheckpointFunc
+}
+
+// GetCheckpointFunc returns the checkpoint get function
+func (f *frameworkInfo) GetCheckpointFunc() func(context.Context, int64) (string, error) {
+	return f.getCheckpointFunc
+}
+
 // SetFrameworkInfo sets the framework info for the StepExecutor.
-func SetFrameworkInfo(exec StepExecutor, step proto.Step, resource *proto.StepResource) {
+func SetFrameworkInfo(
+	exec StepExecutor,
+	task *proto.Task,
+	resource *proto.StepResource,
+	updateCheckpointFunc func(context.Context, int64, any) error,
+	getCheckpointFunc func(context.Context, int64) (string, error),
+) {
 	if exec == nil {
 		return
 	}
 	toInject := &frameworkInfo{
-		step: step,
+		step:                 task.Step,
+		meterRecorder:        metering.RegisterRecorder(&task.TaskBase),
+		updateCheckpointFunc: updateCheckpointFunc,
+		getCheckpointFunc:    getCheckpointFunc,
 	}
 	toInject.resource.Store(resource)
 	// use reflection to set the framework info

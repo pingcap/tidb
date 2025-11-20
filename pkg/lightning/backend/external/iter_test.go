@@ -547,10 +547,6 @@ func (i *intReader) close() error {
 	return nil
 }
 
-func (i *intReader) getRequestCount() int64 {
-	return 0
-}
-
 func buildOpener(in [][]int, refCnt *atomic.Int64) []readerOpenerFn[myInt, *intReader] {
 	ret := make([]readerOpenerFn[myInt, *intReader], 0, len(in))
 	for _, ints := range in {

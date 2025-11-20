@@ -588,7 +588,8 @@ func TestNewIndexWithoutStats(t *testing.T) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, index idxa(a), index idxca(c,a))")
 	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")     // Disable auto analyze to control when stats are collected
+	testKit.MustExec("set @@tidb_opt_table_full_scan_cost_factor=1000") // Discourage full table scans - this is an index test
 	testKit.MustExec("insert into t values (1, 1, 1)")
 	testKit.MustExec("insert into t select mod(a,250), mod(a,10), mod(a,100) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
 	testKit.MustExec("analyze table t")

@@ -195,6 +195,7 @@ func handleAutoIncID(r autoid.Requirement, job *model.Job, tbInfo *model.TableIn
 		}
 	}
 
+	failpoint.InjectCall("handleAutoIncID")
 	return nil
 }
 
