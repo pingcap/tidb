@@ -175,8 +175,16 @@ func replaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expression) (E
 	evalCtx := ctx.GetEvalCtx()
 	switch sf.FuncName.L {
 	case ast.In:
-		if types.IsString(src.RetType.GetType()) || types.IsString(tgt.RetType.GetType()) {
-			return cond, false
+		if src.GetType(ctx.GetEvalCtx()).EvalType() == types.ETString || tgt.GetType(ctx.GetEvalCtx()).EvalType() == types.ETString {
+			if src.GetType(ctx.GetEvalCtx()).GetCollate() != sf.GetType(ctx.GetEvalCtx()).GetCollate() ||
+				src.GetType(ctx.GetEvalCtx()).GetCollate() != sf.GetType(ctx.GetEvalCtx()).GetCollate() {
+				// It is duo to ```CheckAndDeriveCollationFromExprs``` in the ```deriveCollation```.
+				// If we have an expression a in (b,c,d) with each column which has difference collation, the expression's
+				// return type is decided by ```CheckAndDeriveCollationFromExprs```. it will get diffence return type.
+				// so we must be sure that string equal condition has the same collation as the In expression's return type.
+				// then we can continue to replace condition.
+				return cond, false
+			}
 		}
 		// for 'a in (b, c, d)', if a = b or a = c or a = d, we can replace it with true
 		constTrue := false
