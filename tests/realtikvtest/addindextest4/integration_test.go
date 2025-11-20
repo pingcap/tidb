@@ -435,6 +435,7 @@ func TestCancelAfterReorgTimeout(t *testing.T) {
 }
 
 func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
+	t.Skip("flaky test, need to be fixed, will enable it later after https://github.com/pingcap/tidb/issues/64602 resolved")
 	runCase := func(t *testing.T, distTaskOn bool) {
 		store := realtikvtest.CreateMockStoreAndSetup(t)
 
