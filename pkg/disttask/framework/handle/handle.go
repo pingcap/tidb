@@ -419,6 +419,7 @@ func SendRowAndSizeMeterData(ctx context.Context, task *proto.Task, rows int64,
 	}
 	logger.Info("succeed to send size and row metering data", zap.Any("data", item),
 		zap.Duration("duration", time.Since(start)))
+	failpoint.InjectCall("afterSendRowAndSizeMeterData", item)
 	return nil
 }
 

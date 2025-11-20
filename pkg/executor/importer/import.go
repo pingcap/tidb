@@ -174,6 +174,7 @@ var (
 		cloudStorageURIOption: {},
 		threadOption:          {},
 		checksumTableOption:   {},
+		recordErrorsOption:    {},
 	}
 
 	disallowedOptionsForSEM = map[string]struct{}{
