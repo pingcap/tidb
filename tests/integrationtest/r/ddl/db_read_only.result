@@ -24,6 +24,7 @@ partition p1970 values less than (1980),
 partition p1980 values less than (1990),
 partition p1990 values less than (2000));
 create temporary table temp (a int);
+create global temporary table temp_global(a int) on commit delete rows;
 desc information_schema.schemata_extensions;
 Field	Type	Null	Key	Default	Extra
 CATALOG_NAME	varchar(64)	YES		NULL	
@@ -143,6 +144,8 @@ Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 drop table t;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 drop table temp;
+Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+drop table temp_global;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 drop view v1;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
@@ -282,6 +285,8 @@ select t1.a from t1 join t2 on t1.a= t2.a for share;
 Error 3809 (HY000): Schema 'db1' is in read only mode.
 table t1 for share;
 Error 3809 (HY000): Schema 'db1' is in read only mode.
+select * from temp for update;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
 select * from t1;
 id	a
 select * from t1 join t2 on t1.a= t2.a;
@@ -297,3 +302,130 @@ Error 3809 (HY000): Schema 'db1' is in read only mode.
 update db2.parent_3 set id_3 = 10;
 Error 3809 (HY000): Schema 'db1' is in read only mode.
 alter schema db1 read only 0;
+drop database if exists read_only;
+create database read_only;
+use read_only;
+create table t1(a int, b int, index idx_b(b));
+prepare stmt_insert from 'insert into t1 values(?, ?)';
+prepare stmt_update from 'update t1 set b = ? where a = ?';
+prepare stmt_delete from 'delete from t1 where a = ?';
+prepare stmt_select_for_update from 'select * from t1 where a = ? for update';
+prepare stmt_select from 'select * from t1 where a = ?';
+prepare stmt_truncate from 'truncate table t1';
+prepare stmt_drop_database from 'drop database read_only';
+prepare stmt_alter_database from 'alter database read_only charset gbk';
+prepare stmt_create_table from 'create table t2(a int)';
+prepare stmt_drop_table from 'drop table t2';
+prepare stmt_alter_table from 'alter table t1 add column c int';
+set @a = 1;
+set @b = 2;
+alter schema read_only read only 1;
+prepare stmt from 'insert into t1 values(?, ?)';  # different from mysql, mysql allows prepare in read only mode
+Error 3809 (HY000): Schema 'read_only' is in read only mode.
+execute stmt_insert using @a, @b; # error 3809 is wrapped by prepare/execute as 8113
+Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+execute stmt_update using @b, @a;
+Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+execute stmt_delete using @a;
+Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+execute stmt_select_for_update using @a;
+Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+execute stmt_select using @a;
+a	b
+execute stmt_truncate;
+Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+execute stmt_drop_database;
+Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+execute stmt_alter_database;
+Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+execute stmt_create_table;
+Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+execute stmt_drop_table;
+Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+execute stmt_alter_table;
+Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+alter schema read_only read only 0;
+set @a = 1;
+execute stmt_select using @a;
+a	b
+execute stmt_select using @a;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+alter schema read_only read only 1;
+execute stmt_select using @a;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt_select using @a;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+alter schema read_only read only 0;
+execute stmt_select using @a;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt_select using @a;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+SET tidb_enable_non_prepared_plan_cache = ON;
+select * from read_only.t1 where a = 1;
+a	b
+select * from read_only.t1 where a = 1;
+a	b
+SELECT @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+alter schema read_only read only 1;
+select * from read_only.t1 where a = 1;
+a	b
+SELECT @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+select * from read_only.t1 where a = 1;
+a	b
+SELECT @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+alter schema read_only read only 0;
+select * from read_only.t1 where a = 1;
+a	b
+SELECT @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+select * from read_only.t1 where a = 1;
+a	b
+SELECT @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+SET tidb_enable_non_prepared_plan_cache = OFF;
+alter schema read_only read only 1;
+create binding for select * from t1 where b = 1 using select /*+ use_index(t1, idx_b) */ * from t1 where b = 1;
+create binding for update t1 set b = 2 where a = 1 using update /*+ use_index(t1, idx_b) */ t1 set b = 2 where a = 1;
+Error 3809 (HY000): Schema 'read_only' is in read only mode.
+create binding for delete from t1 where a = 1 using delete /*+ use_index(t1, idx_b) */ from t1 where a = 1;
+Error 3809 (HY000): Schema 'read_only' is in read only mode.
+explain select * from t1 where b = 1 for update;
+Error 3809 (HY000): Schema 'read_only' is in read only mode.
+explain insert into t1 values(1, 2);
+Error 3809 (HY000): Schema 'read_only' is in read only mode.
+explain update t1 set b = 2 where a = 1;
+Error 3809 (HY000): Schema 'read_only' is in read only mode.
+explain delete from t1 where a = 1;
+Error 3809 (HY000): Schema 'read_only' is in read only mode.
+explain analyze select * from t1 where b = 1 for update;
+Error 3809 (HY000): Schema 'read_only' is in read only mode.
+explain analyze insert into t1 values(1, 2);
+Error 3809 (HY000): Schema 'read_only' is in read only mode.
+explain analyze update t1 set b = 2 where a = 1;
+Error 3809 (HY000): Schema 'read_only' is in read only mode.
+explain analyze delete from t1 where a = 1;
+Error 3809 (HY000): Schema 'read_only' is in read only mode.
+alter schema read_only read only 0;
