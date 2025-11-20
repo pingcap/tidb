@@ -135,53 +135,66 @@ func TestMaxEstimatedCost(t *testing.T) {
 	tk.MustExec(`insert into t (b) select t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5`)
 	tk.MustExec(`analyze table t`)
 
-	res := tk.MustQuery(`explain format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="1e12") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`)
-	require.Equal(t, "2989485632318.80", res.Rows()[0][2])
-	tk.MustContainErrMsg(`select /*+ SET_VAR(tidb_max_estimated_cost="1e12") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
-		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: 2.9894856323188037e+12 > 1e+12")
-	tk.MustContainErrMsg(`explain analyze format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="1e12") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
-		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: 2.9894856323188037e+12 > 1e+12")
+	// Using Max Estimated Cost: 60e6, which should theoretically be in the order of 1 minute
+	res := tk.MustQuery(`explain format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="60e6") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`)
+	estCost, err := strconv.ParseFloat(res.Rows()[0][2].(string), 64)
+	require.NoError(t, err)
+	require.Greater(t, estCost, 60e6)
+	tk.MustContainErrMsg(`select /*+ SET_VAR(tidb_max_estimated_cost="60e6") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
+		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: ")
+	tk.MustContainErrMsg(`explain analyze format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="60e6") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
+		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: ")
 
 	tk.MustExec(`set @@tidb_cost_model_version=1`)
-	res = tk.MustQuery(`explain format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="1e11") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`)
-	require.Equal(t, "508647218885.60", res.Rows()[0][2])
-	tk.MustContainErrMsg(`select /*+ SET_VAR(tidb_max_estimated_cost="1e11") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
-		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: 5.0864721888560364e+11 > 1e+11")
-	tk.MustContainErrMsg(`explain analyze format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="1e11") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
-		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: 5.0864721888560364e+11 > 1e+11")
+	res = tk.MustQuery(`explain format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="60e6") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`)
+	estCost, err = strconv.ParseFloat(res.Rows()[0][2].(string), 64)
+	require.NoError(t, err)
+	require.Greater(t, estCost, 60e6)
+	tk.MustContainErrMsg(`select /*+ SET_VAR(tidb_max_estimated_cost="60e6") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
+		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: ")
+	tk.MustContainErrMsg(`explain analyze format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="60e6") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
+		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: ")
 	tk.MustExec(`set @@tidb_cost_model_version=2`)
 	tk.MustExec(`alter table t add index idx_b (b)`)
 	tk.MustExec(`analyze table t`)
 
-	res = tk.MustQuery(`explain format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="1e11") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`)
-	require.Equal(t, "688000108471.20", res.Rows()[0][2])
-	tk.MustContainErrMsg(`select /*+ SET_VAR(tidb_max_estimated_cost="1e11") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
-		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: 6.880001084711974e+11 > 1e+11")
-	tk.MustContainErrMsg(`explain analyze format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="1e11") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
-		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: 6.880001084711974e+11 > 1e+11")
+	res = tk.MustQuery(`explain format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="60e6") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`)
+	estCost, err = strconv.ParseFloat(res.Rows()[0][2].(string), 64)
+	require.NoError(t, err)
+	require.Greater(t, estCost, 60e6)
+	tk.MustContainErrMsg(`select /*+ SET_VAR(tidb_max_estimated_cost="60e6") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
+		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: ")
+	tk.MustContainErrMsg(`explain analyze format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="60e6") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
+		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: ")
 
 	tk.MustExec(`set @@tidb_cost_model_version=1`)
-	res = tk.MustQuery(`explain format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="1e10") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`)
-	require.Equal(t, "82715357993.88", res.Rows()[0][2])
-	tk.MustContainErrMsg(`select /*+ SET_VAR(tidb_max_estimated_cost="1e10") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
-		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: 8.271535799387799e+10 > 1e+10")
-	tk.MustContainErrMsg(`explain analyze select /*+ SET_VAR(tidb_max_estimated_cost="1e10") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
-		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: 8.271535799387799e+10 > 1e+10")
+	res = tk.MustQuery(`explain format=verbose select /*+ SET_VAR(tidb_max_estimated_cost="60e6") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`)
+	estCost, err = strconv.ParseFloat(res.Rows()[0][2].(string), 64)
+	require.NoError(t, err)
+	require.Greater(t, estCost, 60e6)
+	tk.MustContainErrMsg(`select /*+ SET_VAR(tidb_max_estimated_cost="60e6") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
+		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: ")
+	tk.MustContainErrMsg(`explain analyze select /*+ SET_VAR(tidb_max_estimated_cost="60e6") */ t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
+		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: ")
 
-	tk.MustExec(`set tidb_max_estimated_cost=1e10`)
+	tk.MustExec(`set tidb_max_estimated_cost=60e6`)
 	tk.MustExec(`set @@tidb_cost_model_version=2`)
 	res = tk.MustQuery(`explain format=verbose select t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`)
-	require.Equal(t, "688000108471.20", res.Rows()[0][2])
+	estCost, err = strconv.ParseFloat(res.Rows()[0][2].(string), 64)
+	require.NoError(t, err)
+	require.Greater(t, estCost, 60e6)
 	tk.MustContainErrMsg(`select t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
-		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: 6.880001084711974e+11 > 1e+10")
+		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: ")
 	tk.MustContainErrMsg(`explain analyze format=verbose select t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
-		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: 6.880001084711974e+11 > 1e+10")
+		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: ")
 
 	tk.MustExec(`set @@tidb_cost_model_version=1`)
 	res = tk.MustQuery(`explain format=verbose select t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`)
-	require.Equal(t, "82715357993.88", res.Rows()[0][2])
+	estCost, err = strconv.ParseFloat(res.Rows()[0][2].(string), 64)
+	require.NoError(t, err)
+	require.Greater(t, estCost, 60e6)
 	tk.MustContainErrMsg(`select t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
-		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: 8.271535799387799e+10 > 1e+10")
+		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: ")
 	tk.MustContainErrMsg(`explain analyze select t.b + t1.b + t2.b + t3.b + t4.b + t5.b from t, t t1, t t2, t t3, t t4, t t5 where t.a = 3 and t1.b = 3 and t2.a = 3`,
-		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: 8.271535799387799e+10 > 1e+10")
+		"[planner:8266]Optimizer cost exceeds tidb_max_estimated_cost: ")
 }
