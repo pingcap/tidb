@@ -397,7 +397,7 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 	correlation := row.GetFloat64(8)
 	col := table.GetCol(histID)
 
-	// All the objects in the table shares the same stats version.
+	// All the objects in the table share the same stats version.
 	// Update here before processing, so it's set even if we return early.
 	if statsVer != statistics.Version0 {
 		table.StatsVer = int(statsVer)
