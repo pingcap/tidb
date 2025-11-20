@@ -175,6 +175,9 @@ func replaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expression) (E
 	evalCtx := ctx.GetEvalCtx()
 	switch sf.FuncName.L {
 	case ast.In:
+		if types.IsString(src.RetType.GetType()) || types.IsString(tgt.RetType.GetType()) {
+			return cond, false
+		}
 		// for 'a in (b, c, d)', if a = b or a = c or a = d, we can replace it with true
 		constTrue := false
 		switch {
