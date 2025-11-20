@@ -26,7 +26,6 @@ import (
 
 	"github.com/dgryski/go-farm"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -224,8 +223,6 @@ func newParallelDistinctAggTestCase(funcName string, dataTypes []*types.FieldTyp
 		if hasMultiArgs {
 			testCase.srcChks[chkIdx].AppendDatum(1, &datumsForNDV[idx][1])
 		}
-
-		log.Info(fmt.Sprintf("case insert: %s-%s", datumsForNDV[idx][0].GetString(), datumsForNDV[idx][1].GetString()))
 
 		insertedIdxs[idx] = struct{}{}
 	}
@@ -756,13 +753,16 @@ func testParallelDistinctAggFunc(t *testing.T, p parallelDistinctAggTestCase, mu
 	ctx := mock.NewContext()
 
 	var args []expression.Expression
+	var ordinal []int
 	if multiArgs {
 		args = []expression.Expression{
 			&expression.Column{RetType: p.dataTypes[0], Index: 0},
 			&expression.Column{RetType: p.dataTypes[1], Index: 1},
 		}
+		ordinal = []int{0, 1}
 	} else {
 		args = []expression.Expression{&expression.Column{RetType: p.dataTypes[0], Index: 0}}
+		ordinal = []int{0}
 	}
 
 	if p.funcName == ast.AggFuncGroupConcat {
@@ -772,13 +772,9 @@ func testParallelDistinctAggFunc(t *testing.T, p parallelDistinctAggTestCase, mu
 	desc, err := aggregation.NewAggFuncDesc(ctx, p.funcName, args, true)
 	require.NoError(t, err)
 
-	partialDesc, finalDesc := desc.Split([]int{0, 1})
+	partialDesc, finalDesc := desc.Split(ordinal)
 	partialFunc := aggfuncs.Build(ctx, partialDesc, 0)
 	finalFunc := aggfuncs.Build(ctx, finalDesc, 0)
-
-	if p.funcName == ast.AggFuncGroupConcat {
-		
-	}
 
 	ctor := collate.GetCollator(finalDesc.RetTp.GetCollate())
 

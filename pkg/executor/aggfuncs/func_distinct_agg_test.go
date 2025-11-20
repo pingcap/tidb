@@ -23,9 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-// TODO test it
-// _ AggFunc = (*countPartialWithDistinct)(nil)
-
 func TestParallelDistinctCount(t *testing.T) {
 	dataTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeNewDecimal), types.NewFieldType(mysql.TypeVarString), types.NewFieldType(mysql.TypeDuration)}
 	for range 10 {
@@ -49,6 +46,31 @@ func TestParallelDistinctCount(t *testing.T) {
 		}
 
 		testParallelDistinctAggFunc(t, *testCase, false)
+	}
+
+	// Test countPartialWithDistinct and countOriginalWithDistinct
+	dataTypes = []*types.FieldType{types.NewFieldType(mysql.TypeVarString), types.NewFieldType(mysql.TypeVarString)}
+	for range 10 {
+		var testCase *parallelDistinctAggTestCase
+		randNum := rand.Intn(100)
+		if randNum < 10 {
+			// Empty input
+			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, dataTypes, 0, 0, false, false)
+		} else if randNum < 20 {
+			// Some input are null
+			rowNum := rand.Intn(100) + 1
+			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, dataTypes, rowNum, rand.Intn(rowNum)+1, true, false)
+		} else if randNum < 30 {
+			// All input are null
+			rowNum := rand.Intn(100) + 1
+			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, dataTypes, rowNum, rand.Intn(rowNum)+1, true, true)
+		} else {
+			// All input are not null
+			rowNum := rand.Intn(100) + 1
+			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, dataTypes, rowNum, rand.Intn(rowNum)+1, false, false)
+		}
+
+		testParallelDistinctAggFunc(t, *testCase, true)
 	}
 }
 
