@@ -69,7 +69,7 @@ func newMockClient() *mockClient {
 	return &mockClient{shards: shards}
 }
 
-func (m *mockClient) ScanRanges(ctx context.Context, keyspaceID uint32, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) (ret []*ShardWithAddr, err error) {
+func (m *mockClient) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) (ret []*ShardWithAddr, err error) {
 	need := make([]bool, len(m.shards))
 
 	for _, keyRange := range keyRanges {
@@ -96,7 +96,7 @@ func (m *mockClient) Close() {
 func TestShardCache(t *testing.T) {
 	client := newMockClient()
 
-	cache := NewTiCIShardCache(client, 0)
+	cache := NewTiCIShardCache(client)
 	ctx := context.Background()
 
 	ranges := make([]kv.KeyRange, 0)
@@ -110,7 +110,7 @@ func TestShardCache(t *testing.T) {
 		EndKey:   []byte("l"),
 	})
 
-	locs, err := cache.BatchLocateKeyRanges(ctx, 0, 0, 0, ranges)
+	locs, err := cache.BatchLocateKeyRanges(ctx, 0, 0, ranges)
 	require.NoError(t, err)
 	require.Len(t, locs, 5)
 	// [a,c), [c,e), [e,g), [i,k), [k,m)
@@ -121,7 +121,7 @@ func TestShardCache(t *testing.T) {
 		StartKey: []byte("e"),
 		EndKey:   []byte("k"),
 	})
-	locs, err = cache.BatchLocateKeyRanges(ctx, 0, 0, 0, ranges)
+	locs, err = cache.BatchLocateKeyRanges(ctx, 0, 0, ranges)
 	require.NoError(t, err)
 	require.Len(t, locs, 3)
 	// [e,g), [g,i), [i,k)
@@ -138,7 +138,7 @@ func TestShardCache(t *testing.T) {
 		EndKey:   []byte("l"),
 	})
 
-	locs, err = cache.BatchLocateKeyRanges(ctx, 0, 0, 1, ranges)
+	locs, err = cache.BatchLocateKeyRanges(ctx, 0, 1, ranges)
 	require.NoError(t, err)
 	require.Len(t, locs, 5)
 	// test another indexID

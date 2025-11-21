@@ -102,7 +102,7 @@ type shardIndexMu struct {
 
 // Client is the interface for the TiCI shard cache client.
 type Client interface {
-	ScanRanges(ctx context.Context, keyspaceID uint32, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) ([]*ShardWithAddr, error)
+	ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) ([]*ShardWithAddr, error)
 	Close()
 }
 
@@ -122,8 +122,8 @@ func NewTiCIShardCacheClient(etcdClient *clientv3.Client) (*TiCIShardCacheClient
 }
 
 // ScanRanges sends a request to the TiCI shard cache service to scan ranges for a given table and index.
-func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, keyspaceID uint32, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) (ret []*ShardWithAddr, err error) {
-	infos, err := c.client.ScanRanges(ctx, keyspaceID, tableID, indexID, keyRanges, limit)
+func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) (ret []*ShardWithAddr, err error) {
+	infos, err := c.client.ScanRanges(ctx, tableID, indexID, keyRanges, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -160,16 +160,14 @@ func (c *TiCIShardCacheClient) Close() {
 
 // TiCIShardCache is a cache for TiCI shard information.
 type TiCIShardCache struct {
-	client     Client
-	mu         shardIndexMu
-	keyspaceID uint32
+	client Client
+	mu     shardIndexMu
 }
 
 // NewTiCIShardCache creates a new TiCIShardCache instance with the provided client.
-func NewTiCIShardCache(client Client, keyspaceID uint32) *TiCIShardCache {
+func NewTiCIShardCache(client Client) *TiCIShardCache {
 	return &TiCIShardCache{
-		client:     client,
-		keyspaceID: keyspaceID,
+		client: client,
 		mu: shardIndexMu{
 			shards: make(map[uint64]*ShardWithAddr),
 			sorted: make(map[int64]*SortedShards),
@@ -357,7 +355,7 @@ func (s *TiCIShardCache) BatchLoadShardsWithKeyRanges(
 	if len(keyRanges) == 0 {
 		return nil, nil
 	}
-	shards, err = s.client.ScanRanges(ctx, s.keyspaceID, tableID, indexID, keyRanges, limit)
+	shards, err = s.client.ScanRanges(ctx, tableID, indexID, keyRanges, limit)
 	if err != nil {
 		return
 	}
