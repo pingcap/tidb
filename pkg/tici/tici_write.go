@@ -315,7 +315,7 @@ func (g *DataWriterGroup) FinishPartitionUpload(
 	}
 	uri, err := fileWriter.URI()
 	if err != nil || uri == "" {
-		return errors.New(fmt.Sprintf("uri is empty or Error occurred: %v", err))
+		return fmt.Errorf("uri is empty or Error occurred: %v", err)
 	}
 
 	err = g.mgrCtx.FinishPartitionUpload(ctx, g.indexMeta.tidbTaskID, lowerBound, upperBound, uri)
