@@ -6824,13 +6824,13 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 		} else if s, ok := x.Source.(*ast.SelectStmt); ok {
 			if s.From != nil {
 				innerList := innerExtract(s.From.TableRefs, e.resolveCtx)
-				if len(innerList) > 0 {
-					innerTableName := innerList[0]
-					if x.AsName.L != "" && e.asName {
+				if x.AsName.L != "" && e.asName {
+					// When asName is true, use the alias name to represent the derived table
+					if len(innerList) > 0 {
 						newTableName := *innerList[0]
 						newTableName.Name = x.AsName
 						newTableName.Schema = ast.NewCIStr("")
-						innerTableName = &newTableName
+						e.tableNames = append(e.tableNames, &newTableName)
 						if tnW := e.resolveCtx.GetTableName(innerList[0]); tnW != nil {
 							e.resolveCtx.AddTableName(&resolve.TableNameW{
 								TableName: &newTableName,
@@ -6839,9 +6839,47 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 							})
 						}
 					}
-					// why the first inner table is used to represent the table source???
-					e.tableNames = append(e.tableNames, innerTableName)
+				} else {
+					// When asName is false, extract all physical tables from the subquery
+					e.tableNames = append(e.tableNames, innerList...)
 				}
+			}
+		} else if s, ok := x.Source.(*ast.SetOprStmt); ok {
+			// Handle UNION/UNION ALL/INTERSECT/EXCEPT
+			var innerList []*ast.TableName
+			if s.SelectList != nil {
+				for _, sel := range s.SelectList.Selects {
+					switch stmt := sel.(type) {
+					case *ast.SelectStmt:
+						if stmt.From != nil {
+							innerList = append(innerList, innerExtract(stmt.From.TableRefs, e.resolveCtx)...)
+						}
+					case *ast.SetOprSelectList:
+						// Recursively handle nested SetOprSelectList
+						nestedSetOpr := &ast.SetOprStmt{SelectList: stmt}
+						nestedList := innerExtract(nestedSetOpr, e.resolveCtx)
+						innerList = append(innerList, nestedList...)
+					}
+				}
+			}
+			if x.AsName.L != "" && e.asName {
+				// When asName is true, use the alias name to represent the derived table
+				if len(innerList) > 0 {
+					newTableName := *innerList[0]
+					newTableName.Name = x.AsName
+					newTableName.Schema = ast.NewCIStr("")
+					e.tableNames = append(e.tableNames, &newTableName)
+					if tnW := e.resolveCtx.GetTableName(innerList[0]); tnW != nil {
+						e.resolveCtx.AddTableName(&resolve.TableNameW{
+							TableName: &newTableName,
+							DBInfo:    tnW.DBInfo,
+							TableInfo: tnW.TableInfo,
+						})
+					}
+				}
+			} else {
+				// When asName is false, extract all physical tables from the set operation
+				e.tableNames = append(e.tableNames, innerList...)
 			}
 		}
 		return n, true
