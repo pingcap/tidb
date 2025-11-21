@@ -378,15 +378,10 @@ func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 	return nil
 }
 
-<<<<<<< HEAD
-func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
-	if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
-=======
 func (s *jobScheduler) loadAndDeliverJobs(ctx context.Context, se *sess.Session) error {
 	r := tracing.StartRegion(ctx, "jobScheduler.loadAndDeliverJobs")
 	defer r.End()
-	if s.workerPoolExhausted() {
->>>>>>> be3d5b4b0f4 (*: flight recorder tracing for internal sessions (#64341))
+	if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
 		return nil
 	}
 	defer s.runningJobs.resetAllPending()
@@ -449,13 +444,8 @@ func (s *jobScheduler) loadAndDeliverJobs(ctx context.Context, se *sess.Session)
 			continue
 		}
 
-<<<<<<< HEAD
-		s.deliveryJob(wk, targetPool, model.NewJobW(&job, jobBinary))
-		if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
-=======
 		s.deliveryJob(ctx, wk, targetPool, model.NewJobW(&job, jobBinary))
-		if s.workerPoolExhausted() {
->>>>>>> be3d5b4b0f4 (*: flight recorder tracing for internal sessions (#64341))
+		if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
 			break
 		}
 	}
