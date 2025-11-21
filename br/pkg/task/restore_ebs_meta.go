@@ -57,6 +57,8 @@ func DefineRestoreSnapshotFlags(command *cobra.Command) {
 	command.Flags().Bool(flagVolumeEncrypted, false, "whether encryption is enabled for the volume")
 	command.Flags().String(flagProgressFile, "progress.txt", "the file name of progress file")
 	command.Flags().String(flagTargetAZ, "", "the target AZ for restored volumes")
+	command.Flags().String(FlagStreamRestoreTS, "", "the point of restore, used for idc vol snapshot restore.\n"+
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 
 	_ = command.Flags().MarkHidden(flagFullBackupType)
 	_ = command.Flags().MarkHidden(flagPrepare)
@@ -69,6 +71,7 @@ func DefineRestoreSnapshotFlags(command *cobra.Command) {
 	_ = command.Flags().MarkHidden(flagVolumeEncrypted)
 	_ = command.Flags().MarkHidden(flagProgressFile)
 	_ = command.Flags().MarkHidden(flagTargetAZ)
+	_ = command.Flags().MarkHidden(FlagStreamRestoreTS)
 }
 
 // RunRestoreEBSMeta phase 1 of EBS based restore

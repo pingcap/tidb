@@ -3101,3 +3101,25 @@ func TestQueryWithKill(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+func TestUUIDShort(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	originConfig := config.GetGlobalConfig()
+	originConfig.Instance.ServerID = 1
+	config.StoreGlobalConfig(originConfig)
+	originServerStartupTime := variable.ServerStartupTime
+	variable.ServerStartupTime = 2333
+	defer func() {
+		variable.ServerStartupTime = originServerStartupTime
+		config.StoreGlobalConfig(originConfig)
+	}()
+	tk.MustQuery("select uuid_short()").Check(testkit.Rows("72057633179172864"))
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1),(2);")
+	tk.MustQuery("select uuid_short(), a from t;").Check(testkit.Rows("72057633179172865 1", "72057633179172866 2"))
+	tk.MustExec("create table t1 (id bigint primary key, b int);")
+	tk.MustExec("insert into t1 select uuid_short(), a from t;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("72057633179172867 1", "72057633179172868 2"))
+}

@@ -69,8 +69,9 @@ const (
 	References_priv,Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,
 	Create_role_priv,Drop_role_priv,Create_tmp_table_priv,Lock_tables_priv,Create_routine_priv,
 	Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,Repl_client_priv,Repl_slave_priv,
-	Account_locked,Plugin,Token_issuer,User_attributes,password_expired,password_last_changed,password_lifetime FROM mysql.user`
+	Account_locked,Plugin,Token_issuer,User_attributes,password_expired,password_last_changed,password_lifetime,max_user_connections FROM mysql.user`
 	sqlLoadGlobalGrantsTable = `SELECT HIGH_PRIORITY Host,User,Priv,With_Grant_Option FROM mysql.global_grants`
+	sqlLoadProcsPriv         = `SELECT HIGH_PRIORITY Host,User,Db,Routine_name,Routine_type,Grantor,Proc_priv from mysql.procs_priv`
 )
 
 func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
@@ -119,6 +120,7 @@ type UserRecord struct {
 	PasswordExpired      bool
 	PasswordLastChanged  time.Time
 	PasswordLifeTime     int64
+	MaxUserConnections   int64
 	ResourceGroup        string
 }
 
@@ -227,6 +229,17 @@ type tablesPrivRecord struct {
 	ColumnPriv mysql.PrivilegeType
 }
 
+type routinePrivRecord struct {
+	baseRecord
+
+	DB            string
+	ProcedureName string
+	Grantor       string
+	RoutineType   string
+	Timestamp     time.Time
+	RoutinePriv   mysql.PrivilegeType
+}
+
 type columnsPrivRecord struct {
 	baseRecord
 
@@ -273,14 +286,17 @@ type immutable struct {
 	globalPriv  []globalPrivRecord
 	dynamicPriv []dynamicPrivRecord
 	roleGraph   map[string]roleGraphEdgesTable
+	routinePriv []routinePrivRecord
 }
 
 type extended struct {
-	UserMap       map[string][]UserRecord // Accelerate User searching
-	Global        map[string][]globalPrivRecord
-	Dynamic       map[string][]dynamicPrivRecord
-	DBMap         map[string][]dbRecord         // Accelerate DB searching
-	TablesPrivMap map[string][]tablesPrivRecord // Accelerate TablesPriv searching
+	UserMap        map[string][]UserRecord // Accelerate User searching
+	Global         map[string][]globalPrivRecord
+	Dynamic        map[string][]dynamicPrivRecord
+	DBMap          map[string][]dbRecord          // Accelerate DB searching
+	TablesPrivMap  map[string][]tablesPrivRecord  // Accelerate TablesPriv searching
+	ColumnsPrivMap map[string][]columnsPrivRecord // Accelerate ColumnsPriv searching
+	RoutinePrivMap map[string][]routinePrivRecord
 }
 
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
@@ -409,6 +425,14 @@ func (p *MySQLPrivilege) LoadAll(ctx sqlexec.RestrictedSQLExecutor) error {
 		}
 		logutil.BgLogger().Warn("mysql.role_edges missing")
 	}
+	err = p.LoadLoadProcsPriv(ctx)
+	if err != nil {
+		if !noSuchTable(err) {
+			logutil.BgLogger().Warn("load mysql.procs_priv", zap.Error(err))
+			return errLoadPrivilege.FastGen("mysql.procs_priv")
+		}
+		logutil.BgLogger().Warn("mysql.procs_priv missing")
+	}
 	return nil
 }
 
@@ -499,6 +523,12 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 		return x.Host == y.Host && x.User == y.User &&
 			x.DB == y.DB && x.TableName == y.TableName && x.ColumnName == y.ColumnName
 	})
+	ret.buildColumnsPrivMap()
+
+	ret.routinePriv = make([]routinePrivRecord, 0, len(p.routinePriv)+len(diff.routinePriv))
+	ret.routinePriv = append(ret.routinePriv, p.routinePriv...)
+	ret.routinePriv = append(ret.routinePriv, diff.routinePriv...)
+	ret.buildProcPrivMap()
 
 	ret.defaultRoles = make([]defaultRoleRecord, 0, len(p.defaultRoles)+len(diff.defaultRoles))
 	ret.defaultRoles = append(ret.defaultRoles, p.defaultRoles...)
@@ -625,19 +655,27 @@ func compareColumnsPrivRecord(x, y columnsPrivRecord) int {
 func compareHost(x, y string) int {
 	// The more-specific, the smaller it is.
 	// The pattern '%' means “any host” and is least specific.
-	if y == `%` {
-		if x == `%` {
+	if x == "%" || y == "%" {
+		if x == "%" && y == "%" {
 			return 0
 		}
-		return -1
+		if y == `%` {
+			return -1
+		}
+		// x == '%'
+		return 1
 	}
 
 	// The empty string '' also means “any host” but sorts after '%'.
-	if y == "" {
-		if x == "" {
+	if x == `` || y == `` {
+		if x == `` && y == `` {
 			return 0
 		}
-		return -1
+		if y == "" {
+			return -1
+		}
+		// x == ``
+		return 1
 	}
 
 	// One of them end with `%`.
@@ -660,11 +698,10 @@ func compareHost(x, y string) int {
 	}
 
 	// For other case, the order is nondeterministic.
-	switch x < y {
-	case true:
-		return -1
-	case false:
+	if x > y {
 		return 1
+	} else if x < y {
+		return -1
 	}
 	return 0
 }
@@ -698,6 +735,52 @@ func (p *MySQLPrivilege) LoadGlobalGrantsTable(ctx sqlexec.RestrictedSQLExecutor
 	}
 	p.buildDynamicMap()
 	return nil
+}
+
+// LoadLoadProcsPriv loads the mysql.global_priv table from database.
+func (p *MySQLPrivilege) LoadLoadProcsPriv(ctx sqlexec.RestrictedSQLExecutor) error {
+	if err := p.loadTable(ctx, sqlLoadProcsPriv, p.decodeProcsPrivTableRow); err != nil {
+		return errors.Trace(err)
+	}
+
+	p.buildProcPrivMap()
+	return nil
+}
+
+func (p *MySQLPrivilege) decodeProcsPrivTableRow(row chunk.Row, fs []*resolve.ResultField) error {
+	var value routinePrivRecord
+	for i, f := range fs {
+		switch f.ColumnAsName.L {
+		case "db":
+			value.DB = row.GetString(i)
+		case "routine_name":
+			value.ProcedureName = row.GetString(i)
+		case "grantor":
+			value.Grantor = row.GetString(i)
+		case "proc_priv":
+			value.RoutinePriv = decodeSetToPrivilege(row.GetSet(i))
+		case "routine_type":
+			value.RoutineType = row.GetEnum(i).String()
+		default:
+			value.assignUserOrHost(row, i, f)
+		}
+	}
+	p.routinePriv = append(p.routinePriv, value)
+	return nil
+}
+
+func (p *MySQLPrivilege) buildProcPrivMap() {
+	procPrivMap := make(map[string][]routinePrivRecord, len(p.routinePriv))
+	for _, record := range p.routinePriv {
+		procPrivMap[record.User] = append(procPrivMap[record.User], record)
+	}
+	p.RoutinePrivMap = procPrivMap
+}
+
+func (record *routinePrivRecord) match(user, host, db, routineName string) bool {
+	return record.baseRecord.match(user, host) &&
+		strings.EqualFold(record.DB, db) &&
+		strings.EqualFold(record.ProcedureName, routineName)
 }
 
 // LoadDBTable loads the mysql.db table from database.
@@ -753,9 +836,21 @@ func (p *MySQLPrivilege) buildTablesPrivMap() {
 	p.TablesPrivMap = tablesPrivMap
 }
 
+func (p *MySQLPrivilege) buildColumnsPrivMap() {
+	columnsPrivMap := make(map[string][]columnsPrivRecord, len(p.columnsPriv))
+	for _, record := range p.columnsPriv {
+		columnsPrivMap[record.User] = append(columnsPrivMap[record.User], record)
+	}
+	p.ColumnsPrivMap = columnsPrivMap
+}
+
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sqlexec.RestrictedSQLExecutor) error {
-	return p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow)
+	if err := p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow); err != nil {
+		return err
+	}
+	p.buildColumnsPrivMap()
+	return nil
 }
 
 // LoadDefaultRoles loads the mysql.columns_priv table from database.
@@ -911,6 +1006,8 @@ func (p *immutable) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultField)
 				continue
 			}
 			value.PasswordLifeTime = row.GetInt64(i)
+		case f.ColumnAsName.L == "max_user_connections":
+			value.MaxUserConnections = row.GetInt64(i)
 		case f.Column.GetType() == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
@@ -1148,7 +1245,7 @@ func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
 	return record.baseRecord.match(user, host) &&
 		strings.EqualFold(record.DB, db) &&
 		strings.EqualFold(record.TableName, table) &&
-		strings.EqualFold(record.ColumnName, col)
+		(strings.EqualFold(record.ColumnName, col) || col == "*")
 }
 
 // patternMatch matches "%" the same way as ".*" in regular expression, for example,
@@ -1273,10 +1370,13 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 }
 
 func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *columnsPrivRecord {
-	for i := 0; i < len(p.columnsPriv); i++ {
-		record := &p.columnsPriv[i]
-		if record.match(user, host, db, table, column) {
-			return record
+	records, exists := p.ColumnsPrivMap[user]
+	if exists {
+		for i := 0; i < len(records); i++ {
+			record := &records[i]
+			if record.match(user, host, db, table, column) {
+				return record
+			}
 		}
 	}
 	return nil
@@ -1330,6 +1430,7 @@ func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIden
 }
 
 // RequestVerification checks whether the user have sufficient privileges to do the operation.
+// `column == "*"` means it matches ANY column in the table.
 func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType) bool {
 	if priv == mysql.UsagePriv {
 		return true
@@ -1338,7 +1439,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 	roleList := p.FindAllUserEffectiveRoles(user, host, activeRoles)
 	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
 
-	var userPriv, dbPriv, tablePriv, columnPriv mysql.PrivilegeType
+	var userPriv, dbPriv, tablePriv, columnPriv, routinePriv mysql.PrivilegeType
 	for _, r := range roleList {
 		userRecord := p.matchUser(r.Username, r.Hostname)
 		if userRecord != nil {
@@ -1364,15 +1465,14 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 		if tableRecord != nil {
 			tablePriv |= tableRecord.TablePriv
 			if column != "" {
-				columnPriv |= tableRecord.ColumnPriv
+				columnPriv |= tableRecord.TablePriv
 			}
 		}
 	}
-	if tablePriv&priv > 0 || columnPriv&priv > 0 {
+	if tablePriv&priv > 0 {
 		return true
 	}
 
-	columnPriv = 0
 	for _, r := range roleList {
 		columnRecord := p.matchColumns(r.Username, r.Hostname, db, table, column)
 		if columnRecord != nil {
@@ -1383,7 +1483,45 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 		return true
 	}
 
+	routinePriv = 0
+	for _, r := range roleList {
+		routineRecord := p.matchRoutine(r.Username, r.Hostname, db, table)
+		if routineRecord != nil {
+			routinePriv |= routineRecord.RoutinePriv
+		}
+	}
+	if routinePriv&priv > 0 {
+		return true
+	}
+
 	return priv == 0
+}
+
+// RequestProcedureVerification detect stored procedure user permissions.
+func (p *MySQLPrivilege) RequestProcedureVerification(activeRoles []*auth.RoleIdentity, user, host, db, routineName string, priv mysql.PrivilegeType) bool {
+	roleList := p.FindAllUserEffectiveRoles(user, host, activeRoles)
+	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
+	var procdurePriv mysql.PrivilegeType
+	for _, r := range roleList {
+		routineRecord := p.matchRoutine(r.Username, r.Hostname, db, routineName)
+		if routineRecord != nil {
+			procdurePriv |= routineRecord.RoutinePriv
+		}
+	}
+	return procdurePriv&priv > 0
+}
+
+func (p *MySQLPrivilege) matchRoutine(user, host, db, routineName string) *routinePrivRecord {
+	records, exists := p.RoutinePrivMap[user]
+	if exists {
+		for i := 0; i < len(records); i++ {
+			record := &records[i]
+			if record.match(user, host, db, routineName) {
+				return record
+			}
+		}
+	}
+	return nil
 }
 
 // DBIsVisible checks whether the user can see the db.
@@ -1575,6 +1713,15 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
 		gs = append(gs, s)
 	}
+	slices.Sort(gs[sortFromIdx:])
+
+	// Show procedure and function grants
+	sortFromIdx = len(gs)
+	ProcedurePrivMap, FunctionPrivMap := p.getRoutinePriv(user, host, allRoles, sqlMode)
+	gs = routinePrivToString(ProcedurePrivMap, gs, "PROCEDURE", user, host)
+	slices.Sort(gs[sortFromIdx:])
+	sortFromIdx = len(gs)
+	gs = routinePrivToString(FunctionPrivMap, gs, "FUNCTION", user, host)
 	slices.Sort(gs[sortFromIdx:])
 
 	// Show role grants.
@@ -1852,4 +1999,55 @@ func (h *Handle) Update() error {
 
 	h.priv.Store(&priv)
 	return nil
+}
+
+func (p *MySQLPrivilege) getRoutinePriv(user, host string, allRoles []*auth.RoleIdentity, sqlMode mysql.SQLMode) (map[string]mysql.PrivilegeType, map[string]mysql.PrivilegeType) {
+	procedurePrivMap := make(map[string]mysql.PrivilegeType)
+	functionPrivMap := make(map[string]mysql.PrivilegeType)
+	addPrivilege := func(recordKey string, record *routinePrivRecord) {
+		switch record.RoutineType {
+		case "PROCEDURE":
+			procedurePrivMap[recordKey] |= record.RoutinePriv
+		case "FUNCTION":
+			functionPrivMap[recordKey] |= record.RoutinePriv
+		default:
+			logutil.BgLogger().Error(fmt.Sprintf("unexpected routine type:%v", record.RoutineType))
+		}
+	}
+	for _, routinePrivs := range p.RoutinePrivMap {
+		for _, record := range routinePrivs {
+			recordKey := stringutil.Escape(record.DB, sqlMode) + "." + stringutil.Escape(record.ProcedureName, sqlMode)
+			if user == record.User && host == record.Host {
+				addPrivilege(recordKey, &record)
+			} else {
+				for _, r := range allRoles {
+					if record.baseRecord.match(r.Username, r.Hostname) {
+						addPrivilege(recordKey, &record)
+					}
+				}
+			}
+		}
+	}
+	return procedurePrivMap, functionPrivMap
+}
+
+func routinePrivToString(privMap map[string]mysql.PrivilegeType, gs []string, routineType, user, host string) []string {
+	for k, priv := range privMap {
+		g := PrivToString(priv, mysql.AllRoutinePrivs, mysql.Priv2Str)
+		if len(g) > 0 {
+			var s string
+			if (priv & mysql.GrantPriv) > 0 {
+				s = fmt.Sprintf(`GRANT %s ON %s %s TO '%s'@'%s' WITH GRANT OPTION`, g, routineType, k, user, host)
+			} else {
+				s = fmt.Sprintf(`GRANT %s ON %s %s TO '%s'@'%s'`, g, routineType, k, user, host)
+			}
+			gs = append(gs, s)
+		} else if len(g) == 0 && (priv&mysql.GrantPriv) > 0 {
+			// We have GRANT OPTION on the table, but no privilege granted.
+			// Wo we need to print a special USAGE line.
+			s := fmt.Sprintf(`GRANT USAGE ON %s %s TO '%s'@'%s' WITH GRANT OPTION`, k, routineType, user, host)
+			gs = append(gs, s)
+		}
+	}
+	return gs
 }
