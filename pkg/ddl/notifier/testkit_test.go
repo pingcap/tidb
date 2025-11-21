@@ -87,6 +87,8 @@ func TestBasicPubSub(t *testing.T) {
 	)
 
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 
 	var seenChangesMu sync.Mutex
 	seenChanges := make([]*notifier.SchemaChangeEvent, 0, 8)
@@ -158,6 +160,8 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 		nil,
 	)
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 
 	newRndFailHandler := func() (notifier.SchemaChangeHandler, *[]int64) {
 		maxFail := 5
@@ -334,6 +338,8 @@ func Test2OwnerForAShortTime(t *testing.T) {
 	)
 
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 	waitCh := make(chan struct{})
 	waitCh2 := make(chan struct{})
 
@@ -469,6 +475,8 @@ func TestBeginTwice(t *testing.T) {
 	)
 
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 
 	testHandler := func(context.Context, sessionctx.Context, *notifier.SchemaChangeEvent) error {
 		return nil
@@ -519,6 +527,8 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 		nil,
 	)
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 	// Always fails
 	failHandler := func(_ context.Context, sctx sessionctx.Context, _ *notifier.SchemaChangeEvent) error {
 		// Mock a duplicate key error
@@ -576,6 +586,8 @@ func TestCommitFailed(t *testing.T) {
 		nil,
 	)
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 	handler := func(_ context.Context, sctx sessionctx.Context, _ *notifier.SchemaChangeEvent) error {
 		// pessimistic + DDL will cause an "infoschema is changed" error at commit time.
 		_, err := sctx.GetSQLExecutor().Execute(
