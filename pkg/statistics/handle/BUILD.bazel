@@ -15,8 +15,13 @@ go_library(
         "//pkg/ddl/util",
         "//pkg/infoschema",
         "//pkg/kv",
+<<<<<<< HEAD
         "//pkg/metrics",
         "//pkg/parser/model",
+=======
+        "//pkg/meta/autoid",
+        "//pkg/meta/model",
+>>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
@@ -36,6 +41,7 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/filter",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/memory",
