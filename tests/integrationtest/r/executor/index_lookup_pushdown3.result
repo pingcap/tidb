@@ -1263,12 +1263,12 @@ TableReader_8	3333.33	root	partition:all	data:Selection_7
 └─Selection_7	3333.33	cop[tikv]		gt(executor__index_lookup_pushdown3.pt4.a, 300)
   └─TableFullScan_6	10000.00	cop[tikv]	table:pt4	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with decimal
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with some type
 select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 300;
 id1	id2	id3	a	b
 3	300.34567	uuid-3333-3333	500	600
 Level	Code	Message
-Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with decimal
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with some type
 explain select /*+ index_lookup_pushdown(pt5, idx_sum) */ * from pt5 where gen_sum > 200;
 id	estRows	task	access object	operator info
 IndexLookUp_8	3333.33	root	partition:all	
@@ -1389,13 +1389,13 @@ TableReader_8	6.66	root	partition:all	data:Selection_7
 └─Selection_7	6.66	cop[tikv]		gt(executor__index_lookup_pushdown3.pt4.a, 200), or(eq(executor__index_lookup_pushdown3.pt4.id1, 2), eq(executor__index_lookup_pushdown3.pt4.id3, "uuid-3333-3333"))
   └─TableFullScan_6	10000.00	cop[tikv]	table:pt4	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with decimal
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with some type
 select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 200 and (id1 = 2 or id3 = 'uuid-3333-3333');
 id1	id2	id3	a	b
 2	200.23456	uuid-2222-2222	300	400
 3	300.34567	uuid-3333-3333	500	600
 Level	Code	Message
-Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with decimal
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with some type
 explain select /*+ index_lookup_pushdown(pt1, idx_a) agg_to_cop() */ count(*), avg(a), max(b) from pt1 where a > 200;
 id	estRows	task	access object	operator info
 HashAgg_15	1.00	root		funcs:count(Column#9)->Column#5, funcs:avg(Column#10, Column#11)->Column#6, funcs:max(Column#12)->Column#7
@@ -1924,3 +1924,472 @@ id	a	b	c
 2024-12-15 23:45:00.000000	300	400	UTC data
 set time_zone = '+00:00';
 drop table join_table1, join_table2;
+drop table if exists pktype_tinyint, pktype_smallint, pktype_mediumint, pktype_int, pktype_bigint;
+drop table if exists pktype_boolean, pktype_date, pktype_datetime, pktype_timestamp, pktype_year;
+drop table if exists pktype_char, pktype_varchar, pktype_binary, pktype_varbinary;
+drop table if exists pktype_decimal, pktype_float, pktype_double, pktype_bit, pktype_enum;
+drop table if exists pktype_composite1, pktype_composite2;
+create table pktype_tinyint(a tinyint primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_tinyint values (1, 100, 200), (127, 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_tinyint, idx_b) */ * from pktype_tinyint use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_tinyint, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_tinyint	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_tinyint	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_tinyint, idx_b) */ * from pktype_tinyint use index (idx_b);
+a	b	c
+1	100	200
+127	300	400
+create table pktype_smallint(a smallint primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_smallint values (1, 100, 200), (32767, 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_smallint, idx_b) */ * from pktype_smallint use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_smallint, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_smallint	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_smallint	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_smallint, idx_b) */ * from pktype_smallint use index (idx_b);
+a	b	c
+1	100	200
+32767	300	400
+create table pktype_mediumint(a mediumint primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_mediumint values (1, 100, 200), (8388607, 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_mediumint, idx_b) */ * from pktype_mediumint use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_mediumint, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_mediumint	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_mediumint	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_mediumint, idx_b) */ * from pktype_mediumint use index (idx_b);
+a	b	c
+1	100	200
+8388607	300	400
+create table pktype_int(a int primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_int values (1, 100, 200), (2147483647, 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_int, idx_b) */ * from pktype_int use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_int, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_int	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_int	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_int, idx_b) */ * from pktype_int use index (idx_b);
+a	b	c
+1	100	200
+2147483647	300	400
+create table pktype_bigint(a bigint primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_bigint values (1, 100, 200), (9223372036854775807, 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_bigint, idx_b) */ * from pktype_bigint use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_bigint, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_bigint	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_bigint	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_bigint, idx_b) */ * from pktype_bigint use index (idx_b);
+a	b	c
+1	100	200
+9223372036854775807	300	400
+create table pktype_boolean(a boolean primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_boolean values (TRUE, 100, 200), (FALSE, 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_boolean, idx_b) */ * from pktype_boolean use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_boolean, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_boolean	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_boolean	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_boolean, idx_b) */ * from pktype_boolean use index (idx_b);
+a	b	c
+0	300	400
+1	100	200
+create table pktype_bit(a bit(8) primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_bit values (b'10101010', 100, 200), (b'11110000', 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_bit, idx_b) */ * from pktype_bit use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_6	10000.00	root		
+├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:pktype_bit, index:idx_b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan_5(Probe)	10000.00	cop[tikv]	table:pktype_bit	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1105	Expression about 'executor__index_lookup_pushdown3.pktype_bit.a' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with some type
+select /*+ index_lookup_pushdown(pktype_bit, idx_b) */ * from pktype_bit use index (idx_b);
+a	b	c
+�	100	200
+�	300	400
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with some type
+create table pktype_date(a date primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_date values ('2024-01-01', 100, 200), ('2024-12-31', 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_date, idx_b) */ * from pktype_date use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_date, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_date	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_date	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_date, idx_b) */ * from pktype_date use index (idx_b);
+a	b	c
+2024-01-01	100	200
+2024-12-31	300	400
+create table pktype_datetime(a datetime primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_datetime values ('2024-01-01 12:00:00', 100, 200), ('2024-12-31 23:59:59', 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_datetime, idx_b) */ * from pktype_datetime use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_datetime, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_datetime	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_datetime	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_datetime, idx_b) */ * from pktype_datetime use index (idx_b);
+a	b	c
+2024-01-01 12:00:00	100	200
+2024-12-31 23:59:59	300	400
+create table pktype_timestamp(a timestamp primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_timestamp values ('2024-01-01 12:00:00', 100, 200), ('2024-12-31 23:59:59', 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_timestamp, idx_b) */ * from pktype_timestamp use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_timestamp, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_timestamp	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_timestamp	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_timestamp, idx_b) */ * from pktype_timestamp use index (idx_b);
+a	b	c
+2024-01-01 12:00:00	100	200
+2024-12-31 23:59:59	300	400
+create table pktype_year(a year primary key CLUSTERED, b int, c int, index idx_b(b));
+Level	Code	Message
+Warning	1681	The ZEROFILL attribute is deprecated and will be removed in a future release. Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.
+insert into pktype_year values (2024, 100, 200), (2025, 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_year, idx_b) */ * from pktype_year use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_year, index:idx_b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10000.00	cop[tikv]	table:pktype_year	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with some type
+select /*+ index_lookup_pushdown(pktype_year, idx_b) */ * from pktype_year use index (idx_b);
+a	b	c
+2024	100	200
+2025	300	400
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with some type
+create table pktype_char(a char(10) primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_char values ('key001', 100, 200), ('key002', 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_char, idx_b) */ * from pktype_char use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_char, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_char	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_char	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_char, idx_b) */ * from pktype_char use index (idx_b);
+a	b	c
+key001	100	200
+key002	300	400
+create table pktype_varchar(a varchar(50) primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_varchar values ('unique_key_1', 100, 200), ('unique_key_2', 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_varchar, idx_b) */ * from pktype_varchar use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_varchar, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_varchar	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_varchar	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_varchar, idx_b) */ * from pktype_varchar use index (idx_b);
+a	b	c
+unique_key_1	100	200
+unique_key_2	300	400
+create table pktype_binary(a binary(10) primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_binary values ('binarykey1', 100, 200), ('binarykey2', 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_binary, idx_b) */ * from pktype_binary use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_binary, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_binary	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_binary	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_binary, idx_b) */ * from pktype_binary use index (idx_b);
+a	b	c
+binarykey1	100	200
+binarykey2	300	400
+create table pktype_varbinary(a varbinary(50) primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_varbinary values ('varbinary1', 100, 200), ('varbinary2', 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_varbinary, idx_b) */ * from pktype_varbinary use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_varbinary, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_varbinary	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_varbinary	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_varbinary, idx_b) */ * from pktype_varbinary use index (idx_b);
+a	b	c
+varbinary1	100	200
+varbinary2	300	400
+create table pktype_decimal(a decimal(10,2) primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_decimal values (123.45, 100, 200), (678.90, 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_decimal, idx_b) */ * from pktype_decimal use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_decimal, index:idx_b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10000.00	cop[tikv]	table:pktype_decimal	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with some type
+select /*+ index_lookup_pushdown(pktype_decimal, idx_b) */ * from pktype_decimal use index (idx_b);
+a	b	c
+123.45	100	200
+678.90	300	400
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with some type
+create table pktype_float(a float primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_float values (1.23, 100, 200), (4.56, 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_float, idx_b) */ * from pktype_float use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_float, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_float	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_float	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_float, idx_b) */ * from pktype_float use index (idx_b);
+a	b	c
+1.23	100	200
+4.56	300	400
+create table pktype_double(a double primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_double values (1.2345, 100, 200), (6.7890, 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_double, idx_b) */ * from pktype_double use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:pktype_double, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:pktype_double	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:pktype_double	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_double, idx_b) */ * from pktype_double use index (idx_b);
+a	b	c
+1.2345	100	200
+6.789	300	400
+create table pktype_enum(a enum('small', 'medium', 'large') primary key CLUSTERED, b int, c int, index idx_b(b));
+insert into pktype_enum values ('small', 100, 200), ('large', 300, 400);
+explain select /*+ index_lookup_pushdown(pktype_enum, idx_b) */ * from pktype_enum use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_6	10000.00	root		
+├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:pktype_enum, index:idx_b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan_5(Probe)	10000.00	cop[tikv]	table:pktype_enum	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1105	Expression about 'executor__index_lookup_pushdown3.pktype_enum.a' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with some type
+select /*+ index_lookup_pushdown(pktype_enum, idx_b) */ * from pktype_enum use index (idx_b);
+a	b	c
+small	100	200
+large	300	400
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with some type
+create table pktype_composite1(a int, b varchar(20), c int, primary key(a, b) CLUSTERED, index idx_c(c));
+insert into pktype_composite1 values (1, 'abc', 100), (2, 'def', 300);
+explain select /*+ index_lookup_pushdown(pktype_composite1, idx_c) */ * from pktype_composite1 use index (idx_c);
+id	estRows	task	access object	operator info
+IndexReader_6	10000.00	root		index:IndexFullScan_5
+└─IndexFullScan_5	10000.00	cop[tikv]	table:pktype_composite1, index:idx_c(c)	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_composite1, idx_c) */ * from pktype_composite1 use index (idx_c);
+a	b	c
+1	abc	100
+2	def	300
+create table pktype_composite2(a int, b datetime, c int, primary key(a, b) CLUSTERED, index idx_c(c));
+insert into pktype_composite2 values (1, '2024-01-01 12:00:00', 100), (2, '2024-12-31 23:59:59', 300);
+explain select /*+ index_lookup_pushdown(pktype_composite2, idx_c) */ * from pktype_composite2 use index (idx_c);
+id	estRows	task	access object	operator info
+IndexReader_6	10000.00	root		index:IndexFullScan_5
+└─IndexFullScan_5	10000.00	cop[tikv]	table:pktype_composite2, index:idx_c(c)	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(pktype_composite2, idx_c) */ * from pktype_composite2 use index (idx_c);
+a	b	c
+1	2024-01-01 12:00:00	100
+2	2024-12-31 23:59:59	300
+drop table pktype_tinyint, pktype_smallint, pktype_mediumint, pktype_int, pktype_bigint;
+drop table pktype_boolean, pktype_date, pktype_datetime, pktype_timestamp, pktype_year;
+drop table pktype_char, pktype_varchar, pktype_binary, pktype_varbinary;
+drop table pktype_decimal, pktype_float, pktype_double, pktype_bit, pktype_enum;
+drop table pktype_composite1, pktype_composite2;
+drop table if exists charset_utf8mb4_bin, charset_utf8mb4_general_ci, charset_utf8mb4_unicode_ci;
+drop table if exists charset_utf8_bin, charset_utf8_general_ci, charset_ascii_bin;
+drop table if exists charset_latin1_bin, charset_binary, charset_test_chinese;
+drop table if exists charset_test_japanese, charset_test_emoji, charset_test_mixed;
+create table charset_utf8mb4_bin(a varchar(100) character set utf8mb4 collate utf8mb4_bin, b int, c int, primary key(a) CLUSTERED, index idx_b(b));
+insert into charset_utf8mb4_bin values ('你好世界', 1, 2), ('🌟TiDB🚀', 3, 4);
+explain select /*+ index_lookup_pushdown(charset_utf8mb4_bin, idx_b) */ * from charset_utf8mb4_bin use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:charset_utf8mb4_bin, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:charset_utf8mb4_bin	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:charset_utf8mb4_bin	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(charset_utf8mb4_bin, idx_b)*/ * from charset_utf8mb4_bin use index (idx_b);
+a	b	c
+你好世界	1	2
+🌟TiDB🚀	3	4
+create table charset_utf8mb4_general_ci(a varchar(100) character set utf8mb4 collate utf8mb4_general_ci, b int, c int, primary key(a) CLUSTERED, index idx_b(b));
+insert into charset_utf8mb4_general_ci values ('TiDB数据库', 1, 2), ('MySQL兼容', 3, 4);
+explain select /*+ index_lookup_pushdown(charset_utf8mb4_general_ci, idx_b) */ * from charset_utf8mb4_general_ci use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:charset_utf8mb4_general_ci, index:idx_b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10000.00	cop[tikv]	table:charset_utf8mb4_general_ci	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+select /*+ index_lookup_pushdown(charset_utf8mb4_general_ci, idx_b)*/ * from charset_utf8mb4_general_ci use index (idx_b);
+a	b	c
+MySQL兼容	3	4
+TiDB数据库	1	2
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+create table charset_utf8mb4_unicode_ci(a varchar(100) character set utf8mb4 collate utf8mb4_unicode_ci, b int, c int, primary key(a) CLUSTERED, index idx_b(b));
+insert into charset_utf8mb4_unicode_ci values ('数据库系统', 1, 2), ('分布式存储', 3, 4);
+explain select /*+ index_lookup_pushdown(charset_utf8mb4_unicode_ci, idx_b) */ * from charset_utf8mb4_unicode_ci use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:charset_utf8mb4_unicode_ci, index:idx_b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10000.00	cop[tikv]	table:charset_utf8mb4_unicode_ci	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+select /*+ index_lookup_pushdown(charset_utf8mb4_unicode_ci, idx_b)*/ * from charset_utf8mb4_unicode_ci use index (idx_b);
+a	b	c
+分布式存储	3	4
+数据库系统	1	2
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+create table charset_utf8_bin(a varchar(100) character set utf8 collate utf8_bin, b int, c int, primary key(a) CLUSTERED, index idx_b(b));
+insert into charset_utf8_bin values ('中文测试', 1, 2), ('日本語', 3, 4);
+explain select /*+ index_lookup_pushdown(charset_utf8_bin, idx_b) */ * from charset_utf8_bin use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:charset_utf8_bin, index:idx_b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10000.00	cop[tikv]	table:charset_utf8_bin	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+select /*+ index_lookup_pushdown(charset_utf8_bin, idx_b)*/ * from charset_utf8_bin use index (idx_b);
+a	b	c
+中文测试	1	2
+日本語	3	4
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+create table charset_utf8_general_ci(a varchar(100) character set utf8 collate utf8_general_ci, b int, c int, primary key(a) CLUSTERED, index idx_b(b));
+insert into charset_utf8_general_ci values ('UTF8编码', 1, 2), ('字符集测试', 3, 4);
+explain select /*+ index_lookup_pushdown(charset_utf8_general_ci, idx_b) */ * from charset_utf8_general_ci use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:charset_utf8_general_ci, index:idx_b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10000.00	cop[tikv]	table:charset_utf8_general_ci	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+select /*+ index_lookup_pushdown(charset_utf8_general_ci, idx_b)*/ * from charset_utf8_general_ci use index (idx_b);
+a	b	c
+UTF8编码	1	2
+字符集测试	3	4
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+create table charset_ascii_bin(a varchar(100) character set ascii collate ascii_bin, b int, c int, primary key(a) CLUSTERED, index idx_b(b));
+insert into charset_ascii_bin values ('ASCII123', 1, 2), ('tidb_rocks', 3, 4);
+explain select /*+ index_lookup_pushdown(charset_ascii_bin, idx_b) */ * from charset_ascii_bin use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:charset_ascii_bin, index:idx_b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10000.00	cop[tikv]	table:charset_ascii_bin	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+select /*+ index_lookup_pushdown(charset_ascii_bin, idx_b)*/ * from charset_ascii_bin use index (idx_b);
+a	b	c
+ASCII123	1	2
+tidb_rocks	3	4
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+create table charset_latin1_bin(a varchar(100) character set latin1 collate latin1_bin, b int, c int, primary key(a) CLUSTERED, index idx_b(b));
+insert into charset_latin1_bin values ('café', 1, 2), ('naïve', 3, 4);
+explain select /*+ index_lookup_pushdown(charset_latin1_bin, idx_b) */ * from charset_latin1_bin use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:charset_latin1_bin, index:idx_b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10000.00	cop[tikv]	table:charset_latin1_bin	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+select /*+ index_lookup_pushdown(charset_latin1_bin, idx_b)*/ * from charset_latin1_bin use index (idx_b);
+a	b	c
+café	1	2
+naïve	3	4
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+create table charset_binary(a varchar(100) character set binary, b int, c int, primary key(a) CLUSTERED, index idx_b(b));
+insert into charset_binary values ('BINARY_DATA', 1, 2), ('RAW_BYTES', 3, 4);
+explain select /*+ index_lookup_pushdown(charset_binary, idx_b) */ * from charset_binary use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:charset_binary, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:charset_binary	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:charset_binary	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(charset_binary, idx_b)*/ * from charset_binary use index (idx_b);
+a	b	c
+BINARY_DATA	1	2
+RAW_BYTES	3	4
+create table charset_test_chinese(a varchar(100) character set utf8mb4 collate utf8mb4_bin, b int, c int, primary key(a) CLUSTERED, index idx_b(b));
+insert into charset_test_chinese values ('简体中文', 1, 2), ('繁體中文', 3, 4);
+explain select /*+ index_lookup_pushdown(charset_test_chinese, idx_b) */ * from charset_test_chinese use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:charset_test_chinese, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:charset_test_chinese	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:charset_test_chinese	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(charset_test_chinese, idx_b)*/ * from charset_test_chinese use index (idx_b);
+a	b	c
+简体中文	1	2
+繁體中文	3	4
+create table charset_test_japanese(a varchar(100) character set utf8mb4 collate utf8mb4_bin, b int, c int, primary key(a) CLUSTERED, index idx_b(b));
+insert into charset_test_japanese values ('ひらがな', 1, 2), ('カタカナ', 3, 4);
+explain select /*+ index_lookup_pushdown(charset_test_japanese, idx_b) */ * from charset_test_japanese use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:charset_test_japanese, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:charset_test_japanese	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:charset_test_japanese	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(charset_test_japanese, idx_b)*/ * from charset_test_japanese use index (idx_b);
+a	b	c
+ひらがな	1	2
+カタカナ	3	4
+create table charset_test_emoji(a varchar(100) character set utf8mb4 collate utf8mb4_bin, b int, c int, primary key(a) CLUSTERED, index idx_b(b));
+insert into charset_test_emoji values ('😀😃😄😁', 1, 2), ('🎉🎊🎈🎁', 3, 4);
+explain select /*+ index_lookup_pushdown(charset_test_emoji, idx_b) */ * from charset_test_emoji use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:charset_test_emoji, index:idx_b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:charset_test_emoji	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:charset_test_emoji	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(charset_test_emoji, idx_b)*/ * from charset_test_emoji use index (idx_b);
+a	b	c
+🎉🎊🎈🎁	3	4
+😀😃😄😁	1	2
+create table charset_test_mixed(a varchar(100) character set utf8mb4 collate utf8mb4_general_ci, b int, c int, primary key(a) CLUSTERED, index idx_b(b));
+insert into charset_test_mixed values ('Mixed123中文', 1, 2), ('Special!@#字符', 3, 4);
+explain select /*+ index_lookup_pushdown(charset_test_mixed, idx_b) */ * from charset_test_mixed use index (idx_b);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root		
+├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:charset_test_mixed, index:idx_b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10000.00	cop[tikv]	table:charset_test_mixed	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+select /*+ index_lookup_pushdown(charset_test_mixed, idx_b)*/ * from charset_test_mixed use index (idx_b);
+a	b	c
+Mixed123中文	1	2
+Special!@#字符	3	4
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
+drop table charset_utf8mb4_bin, charset_utf8mb4_general_ci, charset_utf8mb4_unicode_ci;
+drop table charset_utf8_bin, charset_utf8_general_ci;
+drop table charset_ascii_bin;
+drop table charset_latin1_bin;
+drop table charset_binary, charset_test_chinese, charset_test_japanese;
+drop table charset_test_emoji, charset_test_mixed;

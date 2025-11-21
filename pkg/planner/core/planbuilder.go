@@ -1202,7 +1202,7 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 						unSupportedReason = "common handle is not supported with non-default collation"
 					}
 				}
-			case mysql.TypeNewDecimal, mysql.TypeSet, mysql.TypeEnum:
+			case mysql.TypeNewDecimal, mysql.TypeSet, mysql.TypeEnum, mysql.TypeBit, mysql.TypeYear:
 				// see https://github.com/tikv/tikv/blob/d9384318a310e11fef7085cc294cd2452114366c/components/tidb_query_datatype/src/codec/datum.rs#L1015
 				unSupportedReason = "common handle is not supported with some type"
 			}
