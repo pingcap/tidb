@@ -46,6 +46,42 @@ func TestLFUPutGetDel(t *testing.T) {
 	require.Equal(t, 0, len(lfu.Values()))
 }
 
+func TestLFURecalculateMemoryUsage(t *testing.T) {
+	capacity := int64(10000)
+	lfu, err := NewLFU(capacity)
+	require.NoError(t, err)
+
+	// Add some tables to the cache
+	t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+	t2 := testutil.NewMockStatisticsTable(2, 2, true, false, false)
+	t3 := testutil.NewMockStatisticsTable(3, 3, true, false, false)
+
+	lfu.Put(int64(1), t1)
+	lfu.Put(int64(2), t2)
+	lfu.Put(int64(3), t3)
+	lfu.wait()
+
+	// Get initial cost
+	initialCost := lfu.Cost()
+	require.Greater(t, initialCost, int64(0))
+
+	// Recalculate memory usage
+	recalculatedCost := lfu.RecalculateMemoryUsage()
+
+	// Verify that the recalculated cost matches the initial cost
+	// (since we haven't modified the tables)
+	require.Equal(t, initialCost, recalculatedCost)
+	require.Equal(t, recalculatedCost, lfu.Cost())
+
+	// Verify that all tables are still accessible
+	_, ok1 := lfu.Get(int64(1))
+	_, ok2 := lfu.Get(int64(2))
+	_, ok3 := lfu.Get(int64(3))
+	require.True(t, ok1)
+	require.True(t, ok2)
+	require.True(t, ok3)
+}
+
 func TestLFUFreshMemUsage(t *testing.T) {
 	lfu, err := NewLFU(10000)
 	require.NoError(t, err)

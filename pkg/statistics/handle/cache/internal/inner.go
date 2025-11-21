@@ -43,4 +43,8 @@ type StatsCacheInner interface {
 	Close()
 	// TriggerEvict triggers the cache to evict some items
 	TriggerEvict()
+	// RecalculateMemoryUsage recalculates memory usage for all cached objects
+	// and returns the new total memory usage. This is useful when the actual
+	// memory usage of cached objects may have changed.
+	RecalculateMemoryUsage() int64
 }
