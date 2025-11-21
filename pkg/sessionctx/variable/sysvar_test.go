@@ -105,10 +105,12 @@ func TestTiDBTraceEventSysVar(t *testing.T) {
 		return
 	}
 
-	err := sv.SetGlobal(context.Background(), vars, `{"enabled_categories": ["-", "tikv_write_details", "tikv_read_details"], "dump_trigger": {"type": "sampling", "sampling": 1}}`)
+	err := sv.SetGlobal(context.Background(), vars, `{"enabled_categories": ["*"], "dump_trigger": {"type": "sampling", "sampling": 1}}`)
 	require.NoError(t, err)
 	var config traceevent.FlightRecorderConfig
-	config.Initialize()
+	config.EnabledCategories = []string{"*"}
+	config.DumpTrigger.Type = "sampling"
+	config.DumpTrigger.Sampling = 1
 	require.Equal(t, traceevent.GetFlightRecorder().Config, &config)
 
 	config.DumpTrigger.Sampling = 10

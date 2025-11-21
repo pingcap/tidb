@@ -251,6 +251,9 @@ const (
 	// TiKVReadDetails maps to client-go's FlagTiKVCategoryReadDetails.
 	// Controls detailed read operation tracing in TiKV.
 	TiKVReadDetails
+	// RegionCache traces region cache events.
+	RegionCache
+
 	traceCategorySentinel
 )
 
@@ -307,6 +310,8 @@ func getCategoryName(category TraceCategory) string {
 		return "tikv_write_details"
 	case TiKVReadDetails:
 		return "tikv_read_details"
+	case RegionCache:
+		return "region_cache"
 	default:
 		return "unknown(" + strconv.FormatUint(uint64(category), 10) + ")"
 	}

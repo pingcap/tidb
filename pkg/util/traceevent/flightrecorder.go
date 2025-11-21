@@ -400,10 +400,10 @@ type FlightRecorderConfig struct {
 }
 
 // Initialize initializes the default flight recorder configuration.
-// It will dump all the events, but excludes TiKV write/read details by default
+// It will dump all the events, but excludes TiKV write/read details and developer debug by default
 // to avoid excessive overhead.
 func (c *FlightRecorderConfig) Initialize() {
-	c.EnabledCategories = []string{"-", "tikv_write_details", "tikv_read_details"}
+	c.EnabledCategories = []string{"-", "tikv_write_details", "tikv_read_details", "dev_debug"}
 	c.DumpTrigger.Type = "sampling"
 	c.DumpTrigger.Sampling = 1
 }
@@ -538,7 +538,8 @@ func (r *Trace) markBits(idx int) {
 
 const maxEvents = 4096
 
-func (r *HTTPFlightRecorder) checkSampling(conf *DumpTriggerConfig) bool {
+// CheckSampling checks whether the trace should be sampled.
+func (r *HTTPFlightRecorder) CheckSampling(conf *DumpTriggerConfig) bool {
 	v := r.counter.Add(1)
 	if v >= conf.Sampling {
 		r.counter.Store(0)
@@ -551,8 +552,6 @@ func (r *HTTPFlightRecorder) checkSampling(conf *DumpTriggerConfig) bool {
 func (r *Trace) DiscardOrFlush(ctx context.Context) {
 	sink := globalHTTPFlightRecorder.Load()
 	if sink != nil {
-		CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.sampling", sink.checkSampling)
-
 		var shouldFlush bool
 		var eventsToFlush []Event
 		// Read phase: use RLock to safely read keep flag and clone events.
