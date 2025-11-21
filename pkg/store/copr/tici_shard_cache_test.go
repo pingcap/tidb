@@ -96,7 +96,7 @@ func (m *mockClient) Close() {
 func TestShardCache(t *testing.T) {
 	client := newMockClient()
 
-	cache := NewTiCIShardCache(client)
+	cache := NewTiCIShardCache(client, 0)
 	ctx := context.Background()
 
 	ranges := make([]kv.KeyRange, 0)
