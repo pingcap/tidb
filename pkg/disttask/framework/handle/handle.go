@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	goerrors "errors"
+	"fmt"
 	"path"
 	"strconv"
 	"time"
@@ -28,6 +29,7 @@ import (
 	extstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -395,6 +397,33 @@ func newObjStore(ctx context.Context, uri string, opts *extstorage.ExternalStora
 		return nil, err
 	}
 	return store, nil
+}
+
+// SendRowAndSizeMeterData sends the row count and size metering data.
+func SendRowAndSizeMeterData(ctx context.Context, task *proto.Task, rows int64,
+	dataKVSize, indexKVSize int64, logger *zap.Logger) error {
+	start := time.Now()
+	// in case of network errors, write might success, but return error, and we
+	// will retry sending metering data in next cleanup, to avoid duplicated data,
+	// we always use the task's last update time as the metering time and let the
+	// SDK overwrite existing file.
+	ts := task.StateUpdateTime.Truncate(time.Minute).Unix()
+	item := metering.GetBaseMeterItem(task.ID, task.Keyspace, task.Type.String())
+	item["row_count"] = rows
+	// add-index tasks don't have data kv size.
+	if dataKVSize > 0 {
+		item["data_kv_bytes"] = dataKVSize
+	}
+	item["index_kv_bytes"] = indexKVSize
+	// same as above reason, we use the task ID as the uuid, and we also need to
+	// send different file as the metering service itself to avoid overwrite.
+	if err := metering.WriteMeterData(ctx, ts, fmt.Sprintf("%s_%d", task.Type, task.ID), []map[string]any{item}); err != nil {
+		return errors.Trace(err)
+	}
+	logger.Info("succeed to send size and row metering data", zap.Any("data", item),
+		zap.Duration("duration", time.Since(start)))
+	failpoint.InjectCall("afterSendRowAndSizeMeterData", item)
+	return nil
 }
 
 func init() {

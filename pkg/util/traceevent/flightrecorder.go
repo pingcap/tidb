@@ -46,7 +46,7 @@ type HTTPFlightRecorder struct {
 	ch                   chan<- []Event
 	oldEnabledCategories TraceCategory
 	Config               *FlightRecorderConfig
-	dumpTriggerConfigCompiled
+	compiledDumpTriggerConfig
 }
 
 // UserCommandConfig is the configuration for DumpTriggerConfig of user command type.
@@ -188,13 +188,21 @@ type SuspiciousEventConfig struct {
 	// QueryFail error code?
 	// ResolveLock?
 	// RegionError
-	DevDebug *DevDebugConfig `json:"dev_debug,omitempty"`
+	IsInternal bool            `json:"is_internal,omitempty"`
+	DevDebug   *DevDebugConfig `json:"dev_debug,omitempty"`
 }
 
 // DevDebugConfig is the configuration for development debugging.
 type DevDebugConfig struct {
 	Type string
 }
+
+const (
+	// DevDebugTypeExecuteInternalTraceMissing is the type for execute internal trace missing.
+	DevDebugTypeExecuteInternalTraceMissing = "execute_internal_trace_missing"
+	// DevDebugTypeSendRequestTraceIDMissing is the type for send request trace id missing.
+	DevDebugTypeSendRequestTraceIDMissing = "send_request_trace_id_missing"
+)
 
 // compile validates the development debugging configuration.
 func (c *DevDebugConfig) compile(b *strings.Builder, mapping *dumpTriggerConfigCompiled) (uint64, error) {
@@ -203,12 +211,8 @@ func (c *DevDebugConfig) compile(b *strings.Builder, mapping *dumpTriggerConfigC
 	}
 	b.WriteString(".dev_debug")
 	switch c.Type {
-	case "execute_internal_trace_missing":
-		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, c.check)
-	case "send_request_trace_id_missing":
-		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, c.check)
+	case DevDebugTypeExecuteInternalTraceMissing, DevDebugTypeExecuteInternalTraceMissing:
+		return mapping.addTrigger(b.String(), c.check)
 	}
 	return 0, fmt.Errorf("wrong dump_trigger.suspicious_event.dev_debug.type")
 }
@@ -235,6 +239,14 @@ func (c *SuspiciousEventConfig) check(val any) bool {
 
 // compile compiles the suspicious event configuration.
 func (c *SuspiciousEventConfig) compile(b *strings.Builder, mapping *dumpTriggerConfigCompiled) (uint64, error) {
+	case DevDebugTypeExecuteInternalTraceMissing, DevDebugTypeSendRequestTraceIDMissing:
+		return mapping.addTrigger(b.String(), conf)
+	}
+	return 0, fmt.Errorf("wrong dump_trigger.suspicious_event.dev_debug.type")
+}
+
+// compile compiles the suspicious event configuration.
+func (c *SuspiciousEventConfig) compile(b *strings.Builder, mapping *compiledDumpTriggerConfig, conf *DumpTriggerConfig) (uint64, error) {
 	if c == nil {
 		return 0, fmt.Errorf("dump_trigger.suspicious_event missing")
 	}
@@ -252,6 +264,10 @@ func (c *SuspiciousEventConfig) compile(b *strings.Builder, mapping *dumpTrigger
 	case "region_error":
 		canonicalName := b.String()
 		return mapping.addTrigger(canonicalName, c.check)
+	case "is_internal":
+		b.WriteString(".is_internal")
+		canonicalName := b.String()
+		return mapping.addTrigger(canonicalName, conf)
 	case "dev_debug":
 		return c.DevDebug.compile(b, mapping)
 	}
@@ -272,7 +288,7 @@ type DumpTriggerConfig struct {
 
 // Compile compiles the DumpTriggerConfig.
 // When compile successfully, it returns nil, strings.Builder will contain the canonical name of the trigger.
-func (c *DumpTriggerConfig) Compile(b *strings.Builder, mapping *dumpTriggerConfigCompiled) ([]uint64, error) {
+func (c *DumpTriggerConfig) Compile(b *strings.Builder, mapping *compiledDumpTriggerConfig) ([]uint64, error) {
 	if c == nil {
 		return nil, fmt.Errorf("dump_trigger missing")
 	}
@@ -362,7 +378,7 @@ func (c *DumpTriggerConfig) Compile(b *strings.Builder, mapping *dumpTriggerConf
 // We can use bit & to check if a condition is satisfied. 1011 & 1101 => 1001, the first check fail;
 // 1011 & 1011 => 1011, the second check pass, it is an OR condition
 // So this sequence satisfies the condition.
-type dumpTriggerConfigCompiled struct {
+type compiledDumpTriggerConfig struct {
 	// nameMapping maps a dump trigger canonical name to a bit representation
 	nameMapping   map[string]int
 	configChecker []func(val any) bool
@@ -440,7 +456,7 @@ func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, val
 		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger assertion fails, sink should be a Trace object")
 		return
 	}
-	idx, ok := flightRecorder.dumpTriggerConfigCompiled.nameMapping[triggerName]
+	idx, ok := flightRecorder.compiledDumpTriggerConfig.nameMapping[triggerName]
 	if !ok {
 		return
 	}
@@ -490,9 +506,9 @@ func (c *FlightRecorderConfig) Initialize() {
 }
 
 // Compile compiles the flight recorder configuration.
-func (c *FlightRecorderConfig) Compile() (dumpTriggerConfigCompiled, error) {
+func (c *FlightRecorderConfig) Compile() (compiledDumpTriggerConfig, error) {
 	var b strings.Builder
-	result := dumpTriggerConfigCompiled{
+	result := compiledDumpTriggerConfig{
 		nameMapping: make(map[string]int),
 	}
 	truthTable, err := c.DumpTrigger.Compile(&b, &result)
@@ -536,7 +552,7 @@ func newHTTPFlightRecorder(config *FlightRecorderConfig) (*HTTPFlightRecorder, e
 	ret := &HTTPFlightRecorder{
 		oldEnabledCategories:      tracing.GetEnabledCategories(),
 		Config:                    config,
-		dumpTriggerConfigCompiled: compiled,
+		compiledDumpTriggerConfig: compiled,
 	}
 	logutil.BgLogger().Info("start http flight recorder",
 		zap.Stringer("category", categories),

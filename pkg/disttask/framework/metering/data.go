@@ -57,13 +57,7 @@ func (d *Data) calMeterDataItem(other *Data) map[string]any {
 	if d.equals(other) {
 		return nil
 	}
-	item := map[string]any{
-		"version":     "1",
-		"cluster_id":  d.keyspace,
-		"source_name": category,
-		"task_type":   d.taskType,
-		"task_id":     d.taskID,
-	}
+	item := GetBaseMeterItem(d.taskID, d.keyspace, d.taskType)
 	if diff := d.getRequests - other.getRequests; diff > 0 {
 		item[getRequestsField] = diff
 	}
@@ -98,4 +92,16 @@ func (d *Data) String() string {
 		units.BytesSize(float64(d.clusterReadBytes)),
 		units.BytesSize(float64(d.clusterWriteBytes)),
 	)
+}
+
+// GetBaseMeterItem returns the base metering data item.
+func GetBaseMeterItem(taskID int64, keyspace, taskType string) map[string]any {
+	return map[string]any{
+		"version":     "1",
+		"source_name": category,
+		"task_id":     taskID,
+		// in nextgen, cluster_id is used as the keyspace name.
+		"cluster_id": keyspace,
+		"task_type":  taskType,
+	}
 }

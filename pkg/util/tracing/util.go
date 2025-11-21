@@ -48,6 +48,8 @@ func (cr CallbackRecorder) RecordSpan(sp basictracer.RawSpan) {
 type TraceInfo struct {
 	// SessionAlias is the alias of session
 	SessionAlias string `json:"session_alias"`
+	// TraceID is the trace id for every SQL statement
+	TraceID []byte `json:"trace_id"`
 	// ConnectionID is the id of the connection
 	ConnectionID uint64 `json:"connection_id"`
 }
@@ -228,8 +230,6 @@ const (
 	StmtLifecycle
 	// StmtPlan traces statement plan digest and optimization.
 	StmtPlan
-	// DevDebug traces development/debugging events.
-	DevDebug
 	// KvRequest traces client-go kv request and responses
 	KvRequest
 	// UnknownClient is the fallback category for unmapped client-go trace events.
@@ -238,6 +238,10 @@ const (
 	UnknownClient
 	// General is used by tracing API
 	General
+	// DDLJob traces DDL job events.
+	DDLJob
+	// DevDebug traces development/debugging events.
+	DevDebug
 	// TiKVRequest maps to client-go's FlagTiKVCategoryRequest.
 	// Controls request-level tracing in TiKV.
 	TiKVRequest
@@ -287,14 +291,16 @@ func getCategoryName(category TraceCategory) string {
 		return "stmt_lifecycle"
 	case StmtPlan:
 		return "stmt_plan"
-	case DevDebug:
-		return "dev_debug"
 	case KvRequest:
 		return "kv_request"
 	case UnknownClient:
 		return "unknown_client"
 	case General:
 		return "general"
+	case DDLJob:
+		return "ddl_job"
+	case DevDebug:
+		return "dev_debug"
 	case TiKVRequest:
 		return "tikv_request"
 	case TiKVWriteDetails:
