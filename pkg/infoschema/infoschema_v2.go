@@ -852,8 +852,9 @@ func (is *infoschemaV2) searchTableItemByID(tableID int64) (*tableItem, bool) {
 }
 
 // TableByID implements the InfoSchema interface.
-// As opposed to TableByName, TableByID will not refill cache when schema cache miss and the available schema cache size is not enough,
-// unless the caller changes the behavior by passing a context use WithRefillOption.
+// As opposed to TableByName, TableByID will not refill cache when schema cache
+// miss and the available schema cache size is not enough, unless the caller changes
+// the behavior by passing a context use WithRefillOption.
 func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
 		return
@@ -920,6 +921,7 @@ type TableItem struct {
 // IterateAllTableItems is used for special performance optimization.
 // Used by executor/infoschema_reader.go to handle reading from INFORMATION_SCHEMA.TABLES.
 // If visit return false, stop the iterate process.
+// NOTE: the output order is reversed by (dbName, tableName).
 func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 	maxv, ok := is.byName.Load().Max()
 	if !ok {
@@ -1126,6 +1128,8 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) 
 			tables = append(tables, tbl.Meta())
 			return true
 		})
+		// Reverse to make the order consistent with fetching from storage.
+		slices.Reverse(tables)
 		return tables, nil
 	}
 
@@ -1820,14 +1824,16 @@ type refillOption struct{}
 var refillOptionKey refillOption
 
 // WithRefillOption controls the infoschema v2 cache refill operation.
-// By default, TableByID does not refill schema cache if the available cache size is less than 30%, and TableByName does.
+// By default, TableByID does not refill schema cache if the available cache
+// size is less than 30%, and TableByName does.
 // The behavior can be changed by providing the context.Context.
 func WithRefillOption(ctx context.Context, evict bool) context.Context {
 	return context.WithValue(ctx, refillOptionKey, evict)
 }
 
-// refillIfNoEvict refills the table cache only if the current size is larger than 70% of the capacity.
-// We want to cache as many tables as possible, but we also want to avoid evicting useful cached tables by some list operations.
+// refillIfNoEvict refills the table cache only if the current size is larger
+// than 70% of the capacity. We want to cache as many tables as possible, but
+// we also want to avoid evicting useful cached tables by some list operations.
 func (is *infoschemaV2) refillIfNoEvict(key tableCacheKey, value table.Table) {
 	if is.tableCache.Size() < uint64(float64(is.tableCache.Capacity())*0.7) {
 		is.tableCache.Set(key, value)

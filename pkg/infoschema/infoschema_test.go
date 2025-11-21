@@ -651,7 +651,7 @@ func TestWithRefillOption(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
+	vardef.SchemaCacheSize.Store(100)
 
 	tk.MustExec("create table t1 (id int)")
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
@@ -677,23 +677,32 @@ func TestWithRefillOption(t *testing.T) {
 		{"TableByID", infoschema.WithRefillOption(context.Background(), false), miss},
 	}
 
-	for i, testCase := range testCases {
-		// Mock t1 schema cache been evicted.
-		v2.EvictTable(ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	runtest := func() {
+		for i, testCase := range testCases {
+			// Mock t1 schema cache been evicted.
+			v2.EvictTable(ast.NewCIStr("test"), ast.NewCIStr("t1"))
 
-		// Test the API
-		switch testCase.OP {
-		case "TableByID":
-			_, found := is.TableByID(testCase.ctx, tblInfo.ID)
-			require.True(t, found)
-		case "TableByName":
-			_, err := is.TableByName(testCase.ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
-			require.NoError(t, err)
+			// Test the API
+			switch testCase.OP {
+			case "TableByID":
+				_, found := is.TableByID(testCase.ctx, tblInfo.ID)
+				require.True(t, found)
+			case "TableByName":
+				_, err := is.TableByName(testCase.ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
+				require.NoError(t, err)
+			}
+
+			got := v2.HasCache(tblInfo.ID, is.SchemaMetaVersion())
+			require.Equal(t, testCase.expect, got, fmt.Sprintf("case %d failed", i))
 		}
-
-		got := v2.HasCache(tblInfo.ID, is.SchemaMetaVersion())
-		require.Equal(t, testCase.expect, got, fmt.Sprintf("case %d failed", i))
 	}
+	runtest()
+	// Test that with a larger schema cache size, all test cases hit the cache even if WithRefillOption(ctx, false).
+	vardef.SchemaCacheSize.Store(10000)
+	for _, testCase := range testCases {
+		testCase.expect = true
+	}
+	runtest()
 }
 
 func TestLocalTemporaryTables(t *testing.T) {
