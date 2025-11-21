@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -1188,13 +1189,22 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 	if tblInfo.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
 		for _, idxCol := range pkIdx.Columns {
-			if idxCol.Length == types.UnspecifiedLength {
-				continue
-			}
 			col := tblInfo.Columns[idxCol.Offset]
-			if col.FieldType.IsVarLengthType() {
-				unSupportedReason = "common handle table is not supported"
-				break
+			switch col.FieldType.GetType() {
+			case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeJSON, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeTiDBVectorFloat32:
+				if idxCol.Length != types.UnspecifiedLength {
+					unSupportedReason = "common handle is not supported with unspecified length varchar"
+				}
+				if collate.NewCollationEnabled() {
+					switch col.GetCollate() {
+					case charset.CollationUTF8MB4, charset.CollationBin:
+					default:
+						unSupportedReason = "common handle is not supported with non-default collation"
+					}
+				}
+			case mysql.TypeNewDecimal, mysql.TypeSet, mysql.TypeEnum:
+				// see https://github.com/tikv/tikv/blob/d9384318a310e11fef7085cc294cd2452114366c/components/tidb_query_datatype/src/codec/datum.rs#L1015
+				unSupportedReason = "common handle is not supported with some type"
 			}
 		}
 	}

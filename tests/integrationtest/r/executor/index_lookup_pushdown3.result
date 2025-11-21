@@ -718,8 +718,8 @@ IndexLookUp_8	3333.33	root	partition:all
 └─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct5	keep order:false, stats:pseudo
 select /*+ index_lookup_pushdown(ct5, idx_a) */ * from ct5 where a > 200;
 id	id_str	a	b
-3	测试主键	500	600
 2	键值2	300	400
+3	测试主键	500	600
 explain select /*+ index_lookup_pushdown(ct6, idx_a) */ * from ct6 where a > 200;
 id	estRows	task	access object	operator info
 IndexLookUp_8	3333.33	root	partition:all	
@@ -729,8 +729,8 @@ IndexLookUp_8	3333.33	root	partition:all
 └─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct6	keep order:false, stats:pseudo
 select /*+ index_lookup_pushdown(ct6, idx_a) */ * from ct6 where a > 200;
 id	id_str	a	b
-3	test_key	500	600
 2	鍵值2	300	400
+3	test_key	500	600
 explain select /*+ index_lookup_pushdown(ct7, idx_a) */ * from ct7 where a > 200;
 id	estRows	task	access object	operator info
 IndexLookUp_8	3333.33	root	partition:all	
@@ -744,26 +744,30 @@ id	id_str	a	b
 3	test_key	500	600
 explain select /*+ index_lookup_pushdown(ct8, idx_a) */ * from ct8 where a > 200;
 id	estRows	task	access object	operator info
-IndexLookUp_8	3333.33	root	partition:all	
-├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1 2]
-│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct8, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
-│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct8	keep order:false, stats:pseudo
-└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct8	keep order:false, stats:pseudo
+TableReader_8	3333.33	root	partition:all	data:Selection_7
+└─Selection_7	3333.33	cop[tikv]		gt(executor__index_lookup_pushdown3.ct8.a, 200)
+  └─TableFullScan_6	10000.00	cop[tikv]	table:ct8	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
 select /*+ index_lookup_pushdown(ct8, idx_a) */ * from ct8 where a > 200;
 id1	id2	a	b
 2	测试值2	300	400
 3	test_value	500	600
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
 explain select /*+ index_lookup_pushdown(ct9, idx_a) */ * from ct9 where a > 200;
 id	estRows	task	access object	operator info
-IndexLookUp_8	3333.33	root	partition:all	
-├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1 2]
-│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:ct9, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
-│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:ct9	keep order:false, stats:pseudo
-└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:ct9	keep order:false, stats:pseudo
+TableReader_8	3333.33	root	partition:all	data:Selection_7
+└─Selection_7	3333.33	cop[tikv]		gt(executor__index_lookup_pushdown3.ct9.a, 200)
+  └─TableFullScan_6	10000.00	cop[tikv]	table:ct9	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
 select /*+ index_lookup_pushdown(ct9, idx_a) */ * from ct9 where a > 200;
 id1	id2	a	b
 2	naïve_test	300	400
 3	señor_test	500	600
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with non-default collation
 set time_zone = '+00:00';
 explain select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
 id	estRows	task	access object	operator info
@@ -1255,14 +1259,16 @@ id	key_str	a	b	c
 3	binary_key_003	{"name": "test3", "value": 300}	345678901.3456789010	binary_data_3
 explain select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 300;
 id	estRows	task	access object	operator info
-IndexLookUp_8	3333.33	root	partition:all	
-├─LocalIndexLookUp_10(Build)	3333.33	cop[tikv]		index handle offsets:[1 2 3]
-│ ├─IndexRangeScan_6(Build)	3333.33	cop[tikv]	table:pt4, index:idx_a(a)	range:(300,+inf], keep order:false, stats:pseudo
-│ └─TableRowIDScan_9(Probe)	3333.33	cop[tikv]	table:pt4	keep order:false, stats:pseudo
-└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt4	keep order:false, stats:pseudo
+TableReader_8	3333.33	root	partition:all	data:Selection_7
+└─Selection_7	3333.33	cop[tikv]		gt(executor__index_lookup_pushdown3.pt4.a, 300)
+  └─TableFullScan_6	10000.00	cop[tikv]	table:pt4	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with decimal
 select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 300;
 id1	id2	id3	a	b
 3	300.34567	uuid-3333-3333	500	600
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with decimal
 explain select /*+ index_lookup_pushdown(pt5, idx_sum) */ * from pt5 where gen_sum > 200;
 id	estRows	task	access object	operator info
 IndexLookUp_8	3333.33	root	partition:all	
@@ -1379,16 +1385,17 @@ id	a	b	c
 1000000003	300	3000003	test_string_3
 explain select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 200 and (id1 = 2 or id3 = 'uuid-3333-3333');
 id	estRows	task	access object	operator info
-IndexLookUp_9	6.66	root	partition:all	
-├─LocalIndexLookUp_11(Build)	6.66	cop[tikv]		index handle offsets:[1 2 3]
-│ ├─Selection_8(Build)	6.66	cop[tikv]		or(eq(executor__index_lookup_pushdown3.pt4.id1, 2), eq(executor__index_lookup_pushdown3.pt4.id3, "uuid-3333-3333"))
-│ │ └─IndexRangeScan_6	3333.33	cop[tikv]	table:pt4, index:idx_a(a)	range:(200,+inf], keep order:false, stats:pseudo
-│ └─TableRowIDScan_10(Probe)	6.66	cop[tikv]	table:pt4	keep order:false, stats:pseudo
-└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:pt4	keep order:false, stats:pseudo
+TableReader_8	6.66	root	partition:all	data:Selection_7
+└─Selection_7	6.66	cop[tikv]		gt(executor__index_lookup_pushdown3.pt4.a, 200), or(eq(executor__index_lookup_pushdown3.pt4.id1, 2), eq(executor__index_lookup_pushdown3.pt4.id3, "uuid-3333-3333"))
+  └─TableFullScan_6	10000.00	cop[tikv]	table:pt4	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with decimal
 select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 200 and (id1 = 2 or id3 = 'uuid-3333-3333');
 id1	id2	id3	a	b
 2	200.23456	uuid-2222-2222	300	400
 3	300.34567	uuid-3333-3333	500	600
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle is not supported with decimal
 explain select /*+ index_lookup_pushdown(pt1, idx_a) agg_to_cop() */ count(*), avg(a), max(b) from pt1 where a > 200;
 id	estRows	task	access object	operator info
 HashAgg_15	1.00	root		funcs:count(Column#9)->Column#5, funcs:avg(Column#10, Column#11)->Column#6, funcs:max(Column#12)->Column#7

@@ -546,46 +546,57 @@ select /*+ index_lookup_pushdown(ct1, idx_a) */ * from ct1 where a = 'TEST STRIN
 
 # Test with primary key charset scenarios
 explain select /*+ index_lookup_pushdown(ct5, idx_a) */ * from ct5 where a > 200;
+--sorted_result
 select /*+ index_lookup_pushdown(ct5, idx_a) */ * from ct5 where a > 200;
 
 explain select /*+ index_lookup_pushdown(ct6, idx_a) */ * from ct6 where a > 200;
+--sorted_result
 select /*+ index_lookup_pushdown(ct6, idx_a) */ * from ct6 where a > 200;
 
 explain select /*+ index_lookup_pushdown(ct7, idx_a) */ * from ct7 where a > 200;
+--sorted_result
 select /*+ index_lookup_pushdown(ct7, idx_a) */ * from ct7 where a > 200;
 
 # Test composite primary key with charset
 explain select /*+ index_lookup_pushdown(ct8, idx_a) */ * from ct8 where a > 200;
+--sorted_result
 select /*+ index_lookup_pushdown(ct8, idx_a) */ * from ct8 where a > 200;
 
 explain select /*+ index_lookup_pushdown(ct9, idx_a) */ * from ct9 where a > 200;
+--sorted_result
 select /*+ index_lookup_pushdown(ct9, idx_a) */ * from ct9 where a > 200;
 
 # Test timezone scenarios with different settings
 set time_zone = '+00:00';
 explain select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+--sorted_result
 select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
 
 set time_zone = '+08:00';
 explain select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+--sorted_result
 select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
 
 set time_zone = '-05:00';
 explain select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
+--sorted_result
 select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-06-01 00:00:00';
 
 # Test timestamp column (timezone-sensitive)
 set time_zone = '+00:00';
 explain select /*+ index_lookup_pushdown(ct10, idx_b) */ * from ct10 where b > '2024-06-01 00:00:00';
+--sorted_result
 select /*+ index_lookup_pushdown(ct10, idx_b) */ * from ct10 where b > '2024-06-01 00:00:00';
 
 set time_zone = '+08:00';
 explain select /*+ index_lookup_pushdown(ct10, idx_b) */ * from ct10 where b > '2024-06-01 00:00:00';
+--sorted_result
 select /*+ index_lookup_pushdown(ct10, idx_b) */ * from ct10 where b > '2024-06-01 00:00:00';
 
 # Test with system timezone changes
 set @@session.time_zone = 'SYSTEM';
 explain select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-01-01 00:00:00';
+--sorted_result
 select /*+ index_lookup_pushdown(ct10, idx_a) */ * from ct10 where a > '2024-01-01 00:00:00';
 
 # Reset timezone
@@ -895,62 +906,79 @@ select /*+ index_lookup_pushdown(pt5, idx_cond) */ * from pt5 where gen_cond = 1
 
 # Test virtual generated columns
 explain select /*+ index_lookup_pushdown(pt7, idx_virt_dbl) */ * from pt7 where virt_dbl > 100;
+--sorted_result
 select /*+ index_lookup_pushdown(pt7, idx_virt_dbl) */ * from pt7 where virt_dbl > 100;
 
 explain select /*+ index_lookup_pushdown(pt7, idx_virt_sum) */ * from pt7 where virt_sum > 200;
+--sorted_result
 select /*+ index_lookup_pushdown(pt7, idx_virt_sum) */ * from pt7 where virt_sum > 200;
 
 # Test table with many indexes
 explain select /*+ index_lookup_pushdown(pt6, idx_a) */ * from pt6 where a > 15;
+--sorted_result
 select /*+ index_lookup_pushdown(pt6, idx_a) */ * from pt6 where a > 15;
 
 explain select /*+ index_lookup_pushdown(pt6, idx_ab) */ * from pt6 where a > 15 and b < 40;
+--sorted_result
 select /*+ index_lookup_pushdown(pt6, idx_ab) */ * from pt6 where a > 15 and b < 40;
 
 # Test with LIMIT and OFFSET
 explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 100 limit 2;
+--sorted_result
 select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 100 limit 2;
 
 explain select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a > 1100 limit 1, 3;
+--sorted_result
 select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a > 1100 limit 1, 3;
 
 # Test complex WHERE conditions
 explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 200 and b < 4000000 and c like 'test_string%';
+--sorted_result
 select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > 200 and b < 4000000 and c like 'test_string%';
 
 explain select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 200 and (id1 = 2 or id3 = 'uuid-3333-3333');
+--sorted_result
 select /*+ index_lookup_pushdown(pt4, idx_a) */ * from pt4 where a > 200 and (id1 = 2 or id3 = 'uuid-3333-3333');
 
 # Test with aggregation
 explain select /*+ index_lookup_pushdown(pt1, idx_a) agg_to_cop() */ count(*), avg(a), max(b) from pt1 where a > 200;
+--sorted_result
 select /*+ index_lookup_pushdown(pt1, idx_a) agg_to_cop() */ count(*), avg(a), max(b) from pt1 where a > 200;
 
 explain select /*+ index_lookup_pushdown(pt5, idx_sum) agg_to_cop() */ sum(gen_sum), count(*) from pt5 where gen_sum > 100;
+--sorted_result
 select /*+ index_lookup_pushdown(pt5, idx_sum) agg_to_cop() */ sum(gen_sum), count(*) from pt5 where gen_sum > 100;
 
 # Test with subqueries
 explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > (select avg(a) from pt1) limit 2;
+--sorted_result
 select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a > (select avg(a) from pt1) limit 2;
 
 # Test with IN clauses
 explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a in (200, 300, 500);
+--sorted_result
 select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a in (200, 300, 500);
 
 explain select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a in (1100, 1200, 1300, 1400);
+--sorted_result
 select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a in (1100, 1200, 1300, 1400);
 
 # Test with BETWEEN
 explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a between 200 and 400;
+--sorted_result
 select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where a between 200 and 400;
 
 explain select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a between 1100 and 1300;
+--sorted_result
 select /*+ index_lookup_pushdown(pt2, idx_a) */ * from pt2 where a between 1100 and 1300;
 
 # Test with functions on indexed columns
 explain select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where abs(a - 300) < 50;
+--sorted_result
 select /*+ index_lookup_pushdown(pt1, idx_a) */ * from pt1 where abs(a - 300) < 50;
 
 explain select /*+ index_lookup_pushdown(pt3, idx_b) */ * from pt3 where round(b, 5) > 234567890;
+--sorted_result
 select /*+ index_lookup_pushdown(pt3, idx_b) */ * from pt3 where round(b, 5) > 234567890;
 
 # Test with JOIN operations
