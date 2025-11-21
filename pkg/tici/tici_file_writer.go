@@ -17,7 +17,7 @@ package tici
 import (
 	"context"
 	"encoding/binary"
-	"path"
+	"net/url"
 	"time"
 
 	"github.com/docker/go-units"
@@ -93,8 +93,8 @@ func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataF
 }
 
 // URI returns the URI of the key stored in external storage.
-func (w *FileWriter) URI() string {
-	return path.Join(w.store.URI(), w.dataFile)
+func (w *FileWriter) URI() (string, error) {
+	return url.JoinPath(w.store.URI(), w.dataFile)
 }
 
 // WriteRow writes a key-value pair to the S3 file.
