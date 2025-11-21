@@ -28,6 +28,7 @@ func RegisterWithClientGo() {
 	trace.SetTraceEventFunc(handleClientGoTraceEvent)
 	trace.SetIsCategoryEnabledFunc(handleClientGoIsCategoryEnabled)
 	trace.SetTraceControlExtractor(handleTraceControlExtractor)
+	trace.SetCheckFlightRecorderDumpTriggerFunc(CheckFlightRecorderDumpTrigger)
 }
 
 // handleClientGoTraceEvent is the function called by client-go to emit trace events.
@@ -103,6 +104,8 @@ func mapCategory(category trace.Category) TraceCategory {
 		return tracing.TxnLockResolve
 	case trace.CategoryKVRequest:
 		return tracing.KvRequest
+	case trace.CategoryDevDebug:
+		return tracing.DevDebug
 	default:
 		return tracing.UnknownClient
 	}

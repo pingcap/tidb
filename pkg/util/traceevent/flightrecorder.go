@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -44,7 +45,6 @@ var globalHTTPFlightRecorder atomic.Pointer[HTTPFlightRecorder]
 type HTTPFlightRecorder struct {
 	ch                   chan<- []Event
 	oldEnabledCategories TraceCategory
-	counter              atomic.Int64 // used when dump trigger config is sampling
 	Config               *FlightRecorderConfig
 	compiledDumpTriggerConfig
 }
@@ -60,8 +60,72 @@ type UserCommandConfig struct {
 	Table      string `json:"table"`
 }
 
+type sqlRegexp struct {
+	*regexp.Regexp
+}
+
+func (r sqlRegexp) checkSQLRegexp(val any) bool {
+	str, ok := val.(string)
+	if !ok {
+		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger(\"dump_trigger.user_command.sql_regexp\") called with wrong value type",
+			zap.Any("value", val))
+		return false
+	}
+	return r.Regexp.MatchString(str)
+}
+
+func (c *UserCommandConfig) checkSQLDigest(val any) bool {
+	str, ok := val.(string)
+	if !ok {
+		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger(\"dump_trigger.user_command.sql_digest\") called with wrong value type",
+			zap.Any("value", val))
+		return false
+	}
+	return str == c.SQLDigest
+}
+
+func (c *UserCommandConfig) checkPlanDigest(val any) bool {
+	str, ok := val.(string)
+	if !ok {
+		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger(\"dump_trigger.user_command.plan_digest\") called with wrong value type",
+			zap.Any("value", val))
+		return false
+	}
+	return str == c.PlanDigest
+}
+
+func (c *UserCommandConfig) checkStmtLabel(val any) bool {
+	str, ok := val.(string)
+	if !ok {
+		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger(\"dump_trigger.user_command.stmt_label\") called with wrong value type",
+			zap.Any("value", val))
+		return false
+	}
+	return str == c.StmtLabel
+}
+
+func (c *UserCommandConfig) checkByUser(val any) bool {
+	str, ok := val.(string)
+	if !ok {
+		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger(\"dump_trigger.user_command.by_user\") called with wrong value type",
+			zap.Any("value", val))
+		return false
+	}
+	return str == c.ByUser
+}
+
+func (c *UserCommandConfig) checkTable(val any) bool {
+	str, ok := val.(string)
+	if !ok {
+		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger(\"dump_trigger.user_command.table\") called with wrong value type",
+			zap.Any("value", val))
+		return false
+	}
+	return str == c.Table
+}
+
 // compile compiles the UserCommandConfig.
-func (c *UserCommandConfig) compile(b *strings.Builder, mapping *compiledDumpTriggerConfig, conf *DumpTriggerConfig) (uint64, error) {
+func (c *UserCommandConfig) compile(b *strings.Builder, mapping *dumpTriggerConfigCompiled) (uint64, error) {
 	if c == nil {
 		return 0, fmt.Errorf("dump_trigger.user_command missing")
 	}
@@ -73,42 +137,46 @@ func (c *UserCommandConfig) compile(b *strings.Builder, mapping *compiledDumpTri
 		}
 		b.WriteString(".sql_regexp")
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf)
+		r, err := regexp.Compile(c.SQLRegexp)
+		if err != nil {
+			return 0, fmt.Errorf("dump_trigger.user_command.sql_regexp compile error: %v", err)
+		}
+		return mapping.addTrigger(canonicalName, sqlRegexp{r}.checkSQLRegexp)
 	case "sql_digest":
 		if c.SQLDigest == "" {
 			return 0, fmt.Errorf("dump_trigger.user_command.sql_digest should not be empty")
 		}
 		b.WriteString(".sql_digest")
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf)
+		return mapping.addTrigger(canonicalName, c.checkSQLDigest)
 	case "plan_digest":
 		if c.PlanDigest == "" {
 			return 0, fmt.Errorf("dump_trigger.user_command.plan_digest should not be empty")
 		}
 		b.WriteString(".plan_digest")
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf)
+		return mapping.addTrigger(canonicalName, c.checkPlanDigest)
 	case "stmt_label":
 		if c.StmtLabel == "" {
 			return 0, fmt.Errorf("dump_trigger.user_command.stmt_label should not be empty, should be something in https://github.com/pingcap/tidb/blob/adf08267939416d1b989e56dba6a6544bf34a8dd/pkg/parser/ast/ast.go#L160")
 		}
 		b.WriteString(".stmt_label")
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf)
+		return mapping.addTrigger(canonicalName, c.checkStmtLabel)
 	case "by_user":
 		if c.ByUser == "" {
 			return 0, fmt.Errorf("dump_trigger.user_command.by_user should not be empty")
 		}
 		b.WriteString(".by_user")
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf)
+		return mapping.addTrigger(canonicalName, c.checkByUser)
 	case "table":
 		if c.Table == "" {
 			return 0, fmt.Errorf("dump_trigger.user_command.table should not be empty")
 		}
 		b.WriteString(".table")
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf)
+		return mapping.addTrigger(canonicalName, c.checkTable)
 	}
 	return 0, fmt.Errorf("wrong dump_trigger.user_command.type")
 }
@@ -137,12 +205,40 @@ const (
 )
 
 // compile validates the development debugging configuration.
-func (c *DevDebugConfig) compile(b *strings.Builder, mapping *compiledDumpTriggerConfig, conf *DumpTriggerConfig) (uint64, error) {
+func (c *DevDebugConfig) compile(b *strings.Builder, mapping *dumpTriggerConfigCompiled) (uint64, error) {
 	if c == nil {
 		return 0, fmt.Errorf("dump_trigger.suspicious_event.dev_debug missing")
 	}
 	b.WriteString(".dev_debug")
 	switch c.Type {
+	case DevDebugTypeExecuteInternalTraceMissing, DevDebugTypeExecuteInternalTraceMissing:
+		return mapping.addTrigger(b.String(), c.check)
+	}
+	return 0, fmt.Errorf("wrong dump_trigger.suspicious_event.dev_debug.type")
+}
+
+func (c *DevDebugConfig) check(val any) bool {
+	str, ok := val.(string)
+	if !ok {
+		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger(\"dump_trigger.suspicious_event.dev_debug\") called with wrong value type",
+			zap.Any("value", val))
+		return false
+	}
+	return str == c.Type
+}
+
+func (c *SuspiciousEventConfig) check(val any) bool {
+	str, ok := val.(string)
+	if !ok {
+		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger(\"dump_trigger.suspicious_event\") called with wrong value type",
+			zap.Any("value", val))
+		return false
+	}
+	return c.Type == str
+}
+
+// compile compiles the suspicious event configuration.
+func (c *SuspiciousEventConfig) compile(b *strings.Builder, mapping *dumpTriggerConfigCompiled) (uint64, error) {
 	case DevDebugTypeExecuteInternalTraceMissing, DevDebugTypeSendRequestTraceIDMissing:
 		return mapping.addTrigger(b.String(), conf)
 	}
@@ -158,22 +254,22 @@ func (c *SuspiciousEventConfig) compile(b *strings.Builder, mapping *compiledDum
 	switch c.Type {
 	case "slow_query":
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf)
+		return mapping.addTrigger(canonicalName, c.check)
 	case "query_fail":
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf)
+		return mapping.addTrigger(canonicalName, c.check)
 	case "resolve_lock":
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf)
+		return mapping.addTrigger(canonicalName, c.check)
 	case "region_error":
 		canonicalName := b.String()
-		return mapping.addTrigger(canonicalName, conf)
+		return mapping.addTrigger(canonicalName, c.check)
 	case "is_internal":
 		b.WriteString(".is_internal")
 		canonicalName := b.String()
 		return mapping.addTrigger(canonicalName, conf)
 	case "dev_debug":
-		return c.DevDebug.compile(b, mapping, conf)
+		return c.DevDebug.compile(b, mapping)
 	}
 	return 0, fmt.Errorf("wrong dump_trigger.suspicious_event.type")
 }
@@ -203,19 +299,20 @@ func (c *DumpTriggerConfig) Compile(b *strings.Builder, mapping *compiledDumpTri
 			return nil, fmt.Errorf("wrong dump_trigger.sampling")
 		}
 		b.WriteString(".sampling")
-		res, err := mapping.addTrigger(b.String(), c)
+		sampleChecker := &sampleChecker{expect: c.Sampling}
+		res, err := mapping.addTrigger(b.String(), sampleChecker.checkSampling)
 		if err != nil {
 			return nil, err
 		}
 		return []uint64{res}, nil
 	case "suspicious_event":
-		ret, err := c.Event.compile(b, mapping, c)
+		ret, err := c.Event.compile(b, mapping)
 		if err != nil {
 			return nil, err
 		}
 		return []uint64{ret}, nil
 	case "user_command":
-		ret, err := c.UserCommand.compile(b, mapping, c)
+		ret, err := c.UserCommand.compile(b, mapping)
 		if err != nil {
 			return nil, err
 		}
@@ -283,13 +380,13 @@ func (c *DumpTriggerConfig) Compile(b *strings.Builder, mapping *compiledDumpTri
 // So this sequence satisfies the condition.
 type compiledDumpTriggerConfig struct {
 	// nameMapping maps a dump trigger canonical name to a bit representation
-	nameMapping map[string]int
-	configRef   []*DumpTriggerConfig
+	nameMapping   map[string]int
+	configChecker []func(val any) bool
 	// short cut for checking combinations of AND and OR conditions
 	truthTable []uint64
 }
 
-func (c *compiledDumpTriggerConfig) addTrigger(canonicalName string, config *DumpTriggerConfig) (uint64, error) {
+func (c *dumpTriggerConfigCompiled) addTrigger(canonicalName string, checker func(val any) bool) (uint64, error) {
 	_, ok := c.nameMapping[canonicalName]
 	if ok {
 		return 0, fmt.Errorf("duplicate trigger name: %s", canonicalName)
@@ -299,7 +396,7 @@ func (c *compiledDumpTriggerConfig) addTrigger(canonicalName string, config *Dum
 		return 0, fmt.Errorf("too many triggers")
 	}
 	c.nameMapping[canonicalName] = idx
-	c.configRef = append(c.configRef, config)
+	c.configChecker = append(c.configChecker, checker)
 	return 1 << idx, nil
 }
 
@@ -343,7 +440,7 @@ func checkTruthTable(bits uint64, table []uint64) bool {
 }
 
 // CheckFlightRecorderDumpTrigger checks if the flight recorder should dump based on the trigger configuration.
-func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, check func(*DumpTriggerConfig) bool) {
+func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, val any) {
 	flightRecorder := globalHTTPFlightRecorder.Load()
 	if flightRecorder == nil {
 		return
@@ -363,8 +460,8 @@ func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, che
 	if !ok {
 		return
 	}
-	conf := flightRecorder.compiledDumpTriggerConfig.configRef[idx]
-	if check(conf) {
+	check := flightRecorder.dumpTriggerConfigCompiled.configChecker[idx]
+	if check(val) {
 		trace.markBits(idx)
 	}
 }
@@ -538,9 +635,14 @@ func (r *Trace) markBits(idx int) {
 
 const maxEvents = 4096
 
-func (r *HTTPFlightRecorder) checkSampling(conf *DumpTriggerConfig) bool {
+type sampleChecker struct {
+	counter atomic.Int64 // used when dump trigger config is sampling
+	expect  int64
+}
+
+func (r *sampleChecker) checkSampling(_ any) bool {
 	v := r.counter.Add(1)
-	if v >= conf.Sampling {
+	if v >= r.expect {
 		r.counter.Store(0)
 		return true
 	}
@@ -551,7 +653,7 @@ func (r *HTTPFlightRecorder) checkSampling(conf *DumpTriggerConfig) bool {
 func (r *Trace) DiscardOrFlush(ctx context.Context) {
 	sink := globalHTTPFlightRecorder.Load()
 	if sink != nil {
-		CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.sampling", sink.checkSampling)
+		CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.sampling", true)
 
 		var shouldFlush bool
 		var eventsToFlush []Event
