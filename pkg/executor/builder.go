@@ -1051,6 +1051,45 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 	}
+
+	softDeleteTable := false
+	for _, col := range v.Table.Meta().Columns {
+		if col.Name.L == "_tidb_softdelete_time" {
+			softDeleteTable = true
+			break
+		}
+	}
+
+	if softDeleteTable {
+		rewriteMode := true
+		for _, col := range v.Columns {
+			if col.Name.L == "_tidb_softdelete_time" {
+				rewriteMode = false
+				break
+			}
+		}
+
+		if rewriteMode {
+			var checkExpr expression.Expression
+			checkExpr, b.err = expression.ParseSimpleExpr(
+				b.ctx.GetExprCtx(),
+				"`_tidb_softdelete_time` IS NOT NULL",
+				expression.WithInputSchemaAndNames(v.TableSchema, v.TableColNames, v.Table.Meta()),
+			)
+			if b.err != nil {
+				return nil
+			}
+
+			insert.replaceConflictIf = func(ctx expression.EvalContext, data []types.Datum) (bool, error) {
+				row := chunk.MutRowFromDatums(data)
+				val, isNull, err := checkExpr.EvalInt(ctx, chunk.Row(row))
+				if err != nil {
+					return false, err
+				}
+				return !isNull && val != 0, nil
+			}
+		}
+	}
 	return insert
 }
 
