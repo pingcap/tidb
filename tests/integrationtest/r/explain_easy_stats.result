@@ -15,12 +15,12 @@ set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
 explain format = 'plan_tree' select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	task	access object	operator info
-HashJoin	root		semi join, left side:Projection, equal:[eq(Column#13, Column#11)]
-├─StreamAgg(Build)	root		funcs:sum(Column#16)->Column#11
+HashJoin	root		semi join, left side:Projection, equal:[eq(Column#15, Column#13)]
+├─StreamAgg(Build)	root		funcs:sum(Column#18)->Column#13
 │ └─TableReader	root		data:StreamAgg
-│   └─StreamAgg	cop[tikv]		funcs:sum(explain_easy_stats.t3.a)->Column#16
+│   └─StreamAgg	cop[tikv]		funcs:sum(explain_easy_stats.t3.a)->Column#18
 │     └─TableFullScan	cop[tikv]	table:s	keep order:false
-└─Projection(Probe)	root		explain_easy_stats.t3.a, explain_easy_stats.t3.b, explain_easy_stats.t3.c, explain_easy_stats.t3.d, cast(explain_easy_stats.t3.a, decimal(20,0) BINARY)->Column#13
+└─Projection(Probe)	root		explain_easy_stats.t3.a, explain_easy_stats.t3.b, explain_easy_stats.t3.c, explain_easy_stats.t3.d, cast(explain_easy_stats.t3.a, decimal(20,0) BINARY)->Column#15
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t3	keep order:false
 explain format = 'plan_tree' select * from t1;
@@ -60,18 +60,19 @@ Update	root		N/A
 explain format = 'plan_tree' delete from t1 where t1.c2 = 1;
 id	task	access object	operator info
 Delete	root		N/A
-└─IndexReader	root		index:IndexRangeScan
-  └─IndexRangeScan	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
+  └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:partial[c2:missing]
 explain format = 'plan_tree' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	task	access object	operator info
-Projection	root		Column#7
+Projection	root		Column#9
 └─HashJoin	root		inner join, equal:[eq(explain_easy_stats.t1.c1, explain_easy_stats.t2.c2)]
-  ├─HashAgg(Build)	root		group by:explain_easy_stats.t2.c2, funcs:count(explain_easy_stats.t2.c2)->Column#8, funcs:firstrow(explain_easy_stats.t2.c2)->explain_easy_stats.t2.c2
+  ├─HashAgg(Build)	root		group by:explain_easy_stats.t2.c2, funcs:count(explain_easy_stats.t2.c2)->Column#10, funcs:firstrow(explain_easy_stats.t2.c2)->explain_easy_stats.t2.c2
   │ └─TableReader	root		data:Selection
   │   └─Selection	cop[tikv]		not(isnull(explain_easy_stats.t2.c2))
   │     └─TableFullScan	cop[tikv]	table:b	keep order:false
-  └─TableReader(Probe)	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:a	keep order:false
+  └─IndexReader(Probe)	root		index:IndexFullScan
+    └─IndexFullScan	cop[tikv]	table:a, index:c2(c2)	keep order:false
 explain format = 'plan_tree' select * from t2 order by t2.c2 limit 0, 1;
 id	task	access object	operator info
 TopN	root		explain_easy_stats.t2.c2, offset:0, count:1
@@ -95,17 +96,17 @@ HashJoin	root		inner join, equal:[eq(explain_easy_stats.t1.c1, explain_easy_stat
 │ └─TableReader	root		data:Selection
 │   └─Selection	cop[tikv]		not(isnull(explain_easy_stats.t2.c2))
 │     └─TableFullScan	cop[tikv]	table:t2	keep order:false
-└─TableReader(Probe)	root		data:TableFullScan
-  └─TableFullScan	cop[tikv]	table:t1	keep order:false
+└─IndexReader(Probe)	root		index:IndexFullScan
+  └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false
 explain format = 'plan_tree' select * from information_schema.columns;
 id	task	access object	operator info
 MemTableScan	root	table:COLUMNS	
 explain format = 'plan_tree' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	task	access object	operator info
-Projection	root		eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c2)->Column#11
-└─Apply	root		CARTESIAN left outer join, left side:TableReader
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false
+Projection	root		eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c2)->Column#14
+└─Apply	root		CARTESIAN left outer join, left side:IndexReader
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false
   └─TopN(Probe)	root		explain_easy_stats.t2.c1, offset:0, count:1
     └─IndexLookUp	root		
       ├─TopN(Build)	cop[tikv]		explain_easy_stats.t2.c1, offset:0, count:1
@@ -120,11 +121,11 @@ Limit	root		offset:0, count:1
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain format = 'plan_tree' select 1 in (select c2 from t2) from t1;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(1, explain_easy_stats.t2.c2)
+HashJoin	root		CARTESIAN left outer semi join, left side:IndexReader, other cond:eq(1, explain_easy_stats.t2.c2)
 ├─TableReader(Build)	root		data:TableFullScan
 │ └─TableFullScan	cop[tikv]	table:t2	keep order:false
-└─TableReader(Probe)	root		data:TableFullScan
-  └─TableFullScan	cop[tikv]	table:t1	keep order:false
+└─IndexReader(Probe)	root		index:IndexFullScan
+  └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
@@ -133,14 +134,14 @@ subgraph cluster16{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"HashJoin_16" -> "TableReader_18"
+"HashJoin_16" -> "IndexReader_20"
 "HashJoin_16" -> "TableReader_22"
 }
-subgraph cluster17{
+subgraph cluster19{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_17"
+"IndexFullScan_19"
 }
 subgraph cluster21{
 node [style=filled, color=lightgrey]
@@ -148,7 +149,7 @@ color=black
 label = "cop"
 "TableFullScan_21"
 }
-"TableReader_18" -> "TableFullScan_17"
+"IndexReader_20" -> "IndexFullScan_19"
 "TableReader_22" -> "TableFullScan_21"
 }
 

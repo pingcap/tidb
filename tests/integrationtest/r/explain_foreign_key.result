@@ -40,14 +40,16 @@ Insert	root		N/A
 explain format = 'plan_tree' update t4 set id=id+1 where id = 1;
 id	task	access object	operator info
 Update	root		N/A
-├─IndexReader	root		index:IndexRangeScan
-│ └─IndexRangeScan	cop[tikv]	table:t4, index:idx_id(id)	range:[1,1], keep order:false, stats:pseudo
+├─IndexLookUp	root		
+│ ├─IndexRangeScan(Build)	cop[tikv]	table:t4, index:idx_id(id)	range:[1,1], keep order:false, stats:pseudo
+│ └─TableRowIDScan(Probe)	cop[tikv]	table:t4	keep order:false, stats:pseudo
 └─Foreign_Key_Check	root	table:t3, index:idx	foreign_key:fk, check_exist
 explain format = 'plan_tree' delete from t3 where id > 1;
 id	task	access object	operator info
 Delete	root		N/A
-├─IndexReader	root		index:IndexRangeScan
-│ └─IndexRangeScan	cop[tikv]	table:t3, index:idx(id)	range:(1,+inf], keep order:false, stats:pseudo
+├─TableReader	root		data:Selection
+│ └─Selection	cop[tikv]		gt(explain_foreign_key.t3.id, 1)
+│   └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 └─Foreign_Key_Check	root	table:t4, index:idx_id	foreign_key:fk, check_not_exist
 explain format = 'plan_tree' update t3 set id=id+1 where id = 1;
 id	task	access object	operator info
@@ -120,8 +122,10 @@ explain format = 'plan_tree' update t_1,t_2 set t_1.id=2,t_2.id=2 where t_1.id=t
 id	task	access object	operator info
 Update	root		N/A
 ├─MergeJoin	root		inner join, left key:explain_foreign_key.t_1.id, right key:explain_foreign_key.t_2.id
-│ ├─Point_Get(Build)	root	table:t_2	handle:1
-│ └─Point_Get(Probe)	root	table:t_1	handle:1
+│ ├─TableReader(Build)	root		data:TableRangeScan
+│ │ └─TableRangeScan	cop[tikv]	table:t_2	range:[1,1], keep order:true, stats:pseudo
+│ └─TableReader(Probe)	root		data:TableRangeScan
+│   └─TableRangeScan	cop[tikv]	table:t_1	range:[1,1], keep order:true, stats:pseudo
 ├─Foreign_Key_Check	root	table:t_3	foreign_key:fk_1, check_not_exist
 ├─Foreign_Key_Check	root	table:t_3, index:fk_2	foreign_key:fk_2, check_not_exist
 ├─Foreign_Key_Check	root	table:t_4, index:fk_2	foreign_key:fk_2, check_not_exist
@@ -147,8 +151,10 @@ explain format = 'plan_tree' update t_1,t_2 set t_1.id=2,t_2.id=2 where t_1.id=t
 id	task	access object	operator info
 Update	root		N/A
 └─MergeJoin	root		inner join, left key:explain_foreign_key.t_1.id, right key:explain_foreign_key.t_2.id
-  ├─Point_Get(Build)	root	table:t_2	handle:1
-  └─Point_Get(Probe)	root	table:t_1	handle:1
+  ├─TableReader(Build)	root		data:TableRangeScan
+  │ └─TableRangeScan	cop[tikv]	table:t_2	range:[1,1], keep order:true, stats:pseudo
+  └─TableReader(Probe)	root		data:TableRangeScan
+    └─TableRangeScan	cop[tikv]	table:t_1	range:[1,1], keep order:true, stats:pseudo
 explain format = 'plan_tree' delete t_1,t_2 from t_1 join t_2 where t_1.id=t_2.id and t_1.id > 0;
 id	task	access object	operator info
 Delete	root		N/A

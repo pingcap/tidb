@@ -335,7 +335,7 @@ create table t(a bigint, b bigint);
 insert into t values(1, 1);
 explain format='plan_tree' select ifnull("aaaa", a) from t;
 id	task	access object	operator info
-Projection	root		aaaa->Column#4
+Projection	root		aaaa->Column#5
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select ifnull("aaaa", a) from t;
@@ -733,7 +733,6 @@ a	count(*)
 1	1
 select a, count(*) from t1 natural join t2 group by a;
 a	count(*)
-1	1
 select a, count(*) from t1 join t2 on t1.a=t2.a group by a;
 Error 1052 (23000): Column 'a' in field list is ambiguous
 select t1.a, t2.a from t1 join t2 using (a) group by t1.a;
@@ -767,10 +766,8 @@ a	a
 1	1
 select * from t1 natural join t2;
 a
-1
 select t1.a, t2.a from t1 natural join t2;
 a	a
-1	1
 drop table if exists e;
 create table e(e enum('c', 'b', 'a'));
 insert into e values ('a'),('b'),('a'),('b');
