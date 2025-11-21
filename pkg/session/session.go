@@ -2123,6 +2123,9 @@ func queryFailDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	if fr := traceevent.GetFlightRecorder(); fr != nil {
+		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.sampling", fr.CheckSampling)
+	}
 	rs, err := s.executeStmtImpl(ctx, stmtNode)
 	if err != nil {
 		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event", queryFailDumpTriggerCheck)
