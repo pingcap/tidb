@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -103,7 +104,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	sessionVars := e.Ctx().GetSessionVars()
 
 	// Filter the locked tables.
-	tasks, needAnalyzeTableCnt, skippedTables, err := filterAndCollectTasks(e.tasks, statsHandle, infoSchema)
+	tasks, needAnalyzeTableCnt, skippedTables, err := filterAndCollectTasks(ctx, e.tasks, statsHandle, infoSchema)
 	if err != nil {
 		return err
 	}
@@ -232,7 +233,7 @@ func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, results
 }
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
-func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, is infoschema.InfoSchema) ([]*analyzeTask, uint, []string, error) {
+func filterAndCollectTasks(ctx context.Context, tasks []*analyzeTask, statsHandle *handle.Handle, is infoschema.InfoSchema) ([]*analyzeTask, uint, []string, error) {
 	var (
 		filteredTasks       []*analyzeTask
 		skippedTables       []string
@@ -247,7 +248,15 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, is 
 		return nil, 0, nil, err
 	}
 
+	isDDLAnalyze := ddl.IsDDLAnalyzeCtx(ctx)
 	for _, task := range tasks {
+		// Wen user does the analyze during modify column, it will use the new type to collect the statistics.
+		// However, if the modify column is rollbacked, the statistics collected is invalid. So we skip the
+		// analyze task during modify column.
+		if !isDDLAnalyze && task.colExec != nil && ddl.UnderOptimizedModifyColumn(task.colExec.tableInfo) {
+			continue
+		}
+
 		// Check if the table or partition is locked.
 		tableID := getTableIDFromTask(task)
 		_, isLocked := lockedTableAndPartitionIDs[tableID.TableID]
