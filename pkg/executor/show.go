@@ -2797,6 +2797,50 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 	return fn(sysCtx)
 }
 
+type hybridFullTextSpecForShow struct {
+	Columns   []string                       `json:"columns"`
+	IndexInfo *model.HybridFulltextIndexInfo `json:"index_info,omitempty"`
+}
+
+type hybridVectorSpecForShow struct {
+	Columns   []string                     `json:"columns"`
+	IndexInfo *model.HybridVectorIndexInfo `json:"index_info,omitempty"`
+}
+
+type hybridInvertedSpecForShow struct {
+	Columns []string       `json:"columns,omitempty"`
+	Params  map[string]any `json:"params,omitempty"`
+}
+
+type hybridSortSpecForShow struct {
+	Columns []string `json:"columns,omitempty"`
+	Order   []string `json:"order,omitempty"`
+}
+
+type hybridIndexInfoForShow struct {
+	FullText []*hybridFullTextSpecForShow `json:"fulltext,omitempty"`
+	Vector   []*hybridVectorSpecForShow   `json:"vector,omitempty"`
+	Inverted []*hybridInvertedSpecForShow `json:"inverted,omitempty"`
+	Sort     *hybridSortSpecForShow       `json:"sort,omitempty"`
+}
+
+func hybridIndexColumnsToNames(cols []*model.IndexColumn) []string {
+	if len(cols) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(cols))
+	for _, col := range cols {
+		if col == nil {
+			continue
+		}
+		names = append(names, col.Name.O)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return names
+}
+
 func hybridParameterJSONForShow(tableInfo *model.TableInfo, idxInfo *model.IndexInfo) (string, error) {
 	info := idxInfo.HybridInfo
 	if info == nil {
@@ -2880,7 +2924,94 @@ func hybridParameterJSONForShow(tableInfo *model.TableInfo, idxInfo *model.Index
 		return "", nil
 	}
 
-	bytes, err := gjson.Marshal(clone)
+	show := &hybridIndexInfoForShow{}
+	if len(clone.FullText) > 0 {
+		show.FullText = make([]*hybridFullTextSpecForShow, 0, len(clone.FullText))
+		for _, spec := range clone.FullText {
+			if spec == nil {
+				continue
+			}
+			columns := hybridIndexColumnsToNames(spec.Columns)
+			if len(columns) == 0 {
+				continue
+			}
+			show.FullText = append(show.FullText, &hybridFullTextSpecForShow{
+				Columns:   columns,
+				IndexInfo: spec.IndexInfo,
+			})
+		}
+		if len(show.FullText) == 0 {
+			show.FullText = nil
+		}
+	}
+	if len(clone.Vector) > 0 {
+		show.Vector = make([]*hybridVectorSpecForShow, 0, len(clone.Vector))
+		for _, spec := range clone.Vector {
+			if spec == nil {
+				continue
+			}
+			columns := hybridIndexColumnsToNames(spec.Columns)
+			if len(columns) == 0 {
+				continue
+			}
+			show.Vector = append(show.Vector, &hybridVectorSpecForShow{
+				Columns:   columns,
+				IndexInfo: spec.IndexInfo,
+			})
+		}
+		if len(show.Vector) == 0 {
+			show.Vector = nil
+		}
+	}
+	if len(clone.Inverted) > 0 {
+		show.Inverted = make([]*hybridInvertedSpecForShow, 0, len(clone.Inverted))
+		for _, spec := range clone.Inverted {
+			if spec == nil {
+				continue
+			}
+			columns := hybridIndexColumnsToNames(spec.Columns)
+			if len(columns) == 0 && len(spec.Params) == 0 {
+				continue
+			}
+			inv := &hybridInvertedSpecForShow{
+				Columns: columns,
+			}
+			if len(spec.Params) > 0 {
+				inv.Params = spec.Params
+			}
+			show.Inverted = append(show.Inverted, inv)
+		}
+		if len(show.Inverted) == 0 {
+			show.Inverted = nil
+		}
+	}
+	if clone.Sort != nil {
+		columns := hybridIndexColumnsToNames(clone.Sort.Columns)
+		if len(columns) > 0 {
+			orders := make([]string, len(columns))
+			for i := range columns {
+				if i < len(clone.Sort.IsAsc) {
+					if clone.Sort.IsAsc[i] {
+						orders[i] = "asc"
+					} else {
+						orders[i] = "desc"
+					}
+				} else {
+					orders[i] = "asc"
+				}
+			}
+			show.Sort = &hybridSortSpecForShow{
+				Columns: columns,
+				Order:   orders,
+			}
+		}
+	}
+
+	if len(show.FullText) == 0 && len(show.Vector) == 0 && len(show.Inverted) == 0 && show.Sort == nil {
+		return "", nil
+	}
+
+	bytes, err := gjson.Marshal(show)
 	if err != nil {
 		return "", errors.Trace(err)
 	}

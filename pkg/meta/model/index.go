@@ -183,7 +183,7 @@ type HybridIndexInfo struct {
 
 // HybridFullTextSpec describes the configuration for a fulltext segment in a hybrid index.
 type HybridFullTextSpec struct {
-	Columns   []string                 `json:"columns"`
+	Columns   []*IndexColumn           `json:"columns"`
 	IndexInfo *HybridFulltextIndexInfo `json:"index_info"`
 }
 
@@ -208,7 +208,7 @@ type HybridFulltextTokenizer struct {
 
 // HybridVectorSpec describes the configuration for a vector segment in a hybrid index.
 type HybridVectorSpec struct {
-	Columns   []string               `json:"columns"`
+	Columns   []*IndexColumn         `json:"columns"`
 	IndexInfo *HybridVectorIndexInfo `json:"index_info"`
 }
 
@@ -221,14 +221,15 @@ type HybridVectorIndexInfo struct {
 
 // HybridInvertedSpec describes the configuration for an inverted segment in a hybrid index.
 type HybridInvertedSpec struct {
-	Columns []string       `json:"columns,omitempty"`
+	Columns []*IndexColumn `json:"columns,omitempty"`
 	Params  map[string]any `json:"params,omitempty"`
 }
 
 // HybridSortSpec describes the order definition of the hybrid index.
 type HybridSortSpec struct {
-	Columns []string `json:"columns,omitempty"`
-	Order   []string `json:"order,omitempty"`
+	Columns []*IndexColumn `json:"columns,omitempty"`
+	// IsAsc stores, for each column, whether it is sorted in ascending order (true) or descending order (false).
+	IsAsc []bool `json:"is_asc,omitempty"`
 }
 
 // Clone clones HybridIndexInfo.
@@ -276,9 +277,7 @@ func (c *HybridFullTextSpec) Clone() *HybridFullTextSpec {
 		return nil
 	}
 	cloned := &HybridFullTextSpec{}
-	if len(c.Columns) > 0 {
-		cloned.Columns = append([]string(nil), c.Columns...)
-	}
+	cloned.Columns = cloneIndexColumnSlice(c.Columns)
 	if c.IndexInfo != nil {
 		cloned.IndexInfo = c.IndexInfo.Clone()
 	}
@@ -333,9 +332,7 @@ func (c *HybridVectorSpec) Clone() *HybridVectorSpec {
 		return nil
 	}
 	cloned := &HybridVectorSpec{}
-	if len(c.Columns) > 0 {
-		cloned.Columns = append([]string(nil), c.Columns...)
-	}
+	cloned.Columns = cloneIndexColumnSlice(c.Columns)
 	if c.IndexInfo != nil {
 		cloned.IndexInfo = c.IndexInfo.Clone()
 	}
@@ -369,9 +366,7 @@ func (c *HybridInvertedSpec) Clone() *HybridInvertedSpec {
 		return nil
 	}
 	cloned := &HybridInvertedSpec{}
-	if len(c.Columns) > 0 {
-		cloned.Columns = append([]string(nil), c.Columns...)
-	}
+	cloned.Columns = cloneIndexColumnSlice(c.Columns)
 	if len(c.Params) > 0 {
 		cloned.Params = cloneInterfaceMap(c.Params)
 	}
@@ -384,11 +379,23 @@ func (opt *HybridSortSpec) Clone() *HybridSortSpec {
 		return nil
 	}
 	cloned := &HybridSortSpec{}
-	if len(opt.Columns) > 0 {
-		cloned.Columns = append([]string(nil), opt.Columns...)
+	cloned.Columns = cloneIndexColumnSlice(opt.Columns)
+	if len(opt.IsAsc) > 0 {
+		cloned.IsAsc = append([]bool(nil), opt.IsAsc...)
 	}
-	if len(opt.Order) > 0 {
-		cloned.Order = append([]string(nil), opt.Order...)
+	return cloned
+}
+
+func cloneIndexColumnSlice(cols []*IndexColumn) []*IndexColumn {
+	if len(cols) == 0 {
+		return nil
+	}
+	cloned := make([]*IndexColumn, len(cols))
+	for i, col := range cols {
+		if col == nil {
+			continue
+		}
+		cloned[i] = col.Clone()
 	}
 	return cloned
 }

@@ -1417,20 +1417,12 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 						}
 						switch x := byItem.Expr.(type) {
 						case *expression.Column:
-							isDesc := hybridSearchInfo.Sort.Order[orderPos] == "desc"
-							if isDesc != byItem.Desc {
+							if byItem.Desc != !hybridSearchInfo.Sort.IsAsc[orderPos] {
 								orderMatched = false
 								break checkLoop
 							}
-							colName := hybridSearchInfo.Sort.Columns[orderPos]
-							var id int64 = -1
-							for _, col := range indexScan.Table.Columns {
-								if col.Name.L == colName {
-									id = col.ID
-									break
-								}
-							}
-							if id != x.ID {
+							colID := indexScan.Table.Columns[hybridSearchInfo.Sort.Columns[orderPos].Offset].ID
+							if colID != x.ID {
 								orderMatched = false
 								break checkLoop
 							}

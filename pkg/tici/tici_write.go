@@ -17,7 +17,6 @@ package tici
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"sync/atomic"
 	"time"
 
@@ -272,7 +271,8 @@ func (g *DataWriterGroup) WriteHeader(ctx context.Context, fileWriter *FileWrite
 	if g.indexMeta.tblInfo == nil {
 		return errors.New("tblInfo is nil for DataWriter")
 	}
-	tblJSON, err := json.Marshal(g.indexMeta.tblInfo)
+	// Clone and then Marshal table info to ensure longtext/json flen is narrowed to int32
+	tblJSON, err := cloneAndMarshalTableInfo(g.indexMeta.tblInfo)
 	if err != nil {
 		return errors.Annotate(err, "marshal TableInfo (JSON)")
 	}

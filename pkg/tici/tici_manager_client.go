@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/pd/client/constants"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -198,7 +199,7 @@ func (t *ManagerCtx) getKeyspaceID() uint32 {
 
 // CreateFulltextIndex creates fulltext index on TiCI.
 func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
-	tableInfoJSON, err := json.Marshal(tblInfo)
+	tableInfoJSON, err := cloneAndMarshalTableInfo(tblInfo)
 	if err != nil {
 		return err
 	}
@@ -225,7 +226,7 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 	return nil
 }
 
-// DropFullTextIndex drop full text index on TiCI.
+// DropFullTextIndex drop fulltext index on TiCI.
 func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int64) error {
 	req := &DropIndexRequest{
 		TableId:    tableID,
@@ -564,4 +565,43 @@ func DropFullTextIndex(ctx context.Context, store kv.Storage, tableID int64, ind
 		ticiManager.SetKeyspaceID(keyspaceID)
 	}
 	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
+}
+
+// cloneAndNormalizeTableInfo deep-clones the given model.TableInfo via JSON
+// marshal/unmarshal and forces FieldType.Flen for longtext and json column types
+// through an int32 narrowing (int(int32(flen))). This ensures TiCI parses the
+// length as int32 and avoids 4GB default-value related errors.
+func cloneAndNormalizeTableInfo(tbl *model.TableInfo) (*model.TableInfo, error) {
+	intest.Assert(tbl != nil, "tableInfo is nil")
+
+	// deep clone via JSON marshal/unmarshal
+	b, err := json.Marshal(tbl)
+	if err != nil {
+		return nil, err
+	}
+	var dup model.TableInfo
+	if err := json.Unmarshal(b, &dup); err != nil {
+		return nil, err
+	}
+	// normalize flen for longtext and json types by narrowing to int32 and back
+	for i := range dup.Columns {
+		tp := dup.Columns[i].GetType()
+		if tp == mysql.TypeLongBlob || tp == mysql.TypeJSON {
+			dup.Columns[i].FieldType.SetFlen(int(int32(dup.Columns[i].FieldType.GetFlen())))
+		}
+	}
+	return &dup, nil
+}
+
+// cloneAndMarshalTableInfo clones and normalizes the given TableInfo and returns
+// the marshalled JSON bytes. It returns an error if tbl is nil or if marshalling fails.
+func cloneAndMarshalTableInfo(tbl *model.TableInfo) ([]byte, error) {
+	if tbl == nil {
+		return nil, errors.New("tableInfo is nil")
+	}
+	clonedTbl, err := cloneAndNormalizeTableInfo(tbl)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(clonedTbl)
 }
