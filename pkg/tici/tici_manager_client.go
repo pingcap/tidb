@@ -419,10 +419,11 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 	}
 
 	request := &GetShardLocalCacheRequest{
-		TableId:   tableID,
-		IndexId:   indexID,
-		KeyRanges: ticiKeyRanges,
-		Limit:     int32(limit),
+		TableId:    tableID,
+		IndexId:    indexID,
+		KeyspaceId: t.keyspaceID.Load(),
+		KeyRanges:  ticiKeyRanges,
+		Limit:      int32(limit),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()

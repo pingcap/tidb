@@ -27,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/constants"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -113,11 +115,20 @@ type TiCIShardCacheClient struct {
 }
 
 // NewTiCIShardCacheClient creates a new TiCIShardCacheClient instance.
-func NewTiCIShardCacheClient(etcdClient *clientv3.Client) (*TiCIShardCacheClient, error) {
+func NewTiCIShardCacheClient(etcdClient *clientv3.Client, pdClient *tikv.CodecPDClient) (*TiCIShardCacheClient, error) {
 	client, err := tici.NewManagerCtx(context.Background(), etcdClient)
 	if err != nil {
 		return nil, err
 	}
+	if pdClient != nil {
+		keyspaceID := uint32(pdClient.GetCodec().GetKeyspaceID())
+		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+		client.SetKeyspaceID(keyspaceID)
+	}
+
 	return &TiCIShardCacheClient{client: client, etcdClient: etcdClient}, nil
 }
 
