@@ -112,8 +112,8 @@ Insert	root		N/A
 explain format='plan_tree' delete from t;
 id	task	access object	operator info
 Delete	root		N/A
-└─TableReader	root		data:TableFullScan
-  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexReader	root		index:IndexFullScan
+  └─IndexFullScan	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
 explain format='plan_tree' delete from t where a>1;
 id	task	access object	operator info
 Delete	root		N/A

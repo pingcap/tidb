@@ -344,7 +344,7 @@ WHERE rn.id1 = '03'
 );
 id	task	access object	operator info
 Update	root		N/A
-└─Projection	root		executor__explain.t1.id1, executor__explain.t1.id2, executor__explain.t1.id3, executor__explain.t1.id4, executor__explain.t1.id5, executor__explain.t1.id6, executor__explain.t1.id7, executor__explain.t1._tidb_rowid, executor__explain.t1._tidb_commit_ts
+└─Projection	root		executor__explain.t1.id1, executor__explain.t1.id2, executor__explain.t1.id3, executor__explain.t1.id4, executor__explain.t1.id5, executor__explain.t1.id6, executor__explain.t1.id7, executor__explain.t1._tidb_rowid
   └─Selection	root		eq(minus(executor__explain.t1.id6, ifnull(executor__explain.t1.id7, 0)), ifnull(Column#26, 0))
     └─HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(executor__explain.t1.id2, executor__explain.t2.id2)]
       ├─HashAgg(Build)	root		group by:executor__explain.t2.id2, funcs:count(1)->Column#26, funcs:firstrow(executor__explain.t2.id2)->executor__explain.t2.id2

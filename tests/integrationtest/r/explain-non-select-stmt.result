@@ -13,7 +13,7 @@ explain format = 'plan_tree' delete from t where a > 100;
 id	task	access object	operator info
 Delete	root		N/A
 └─TableReader	root		data:Projection
-  └─Projection	cop[tikv]		explain-non-select-stmt.t._tidb_rowid, explain-non-select-stmt.t._tidb_commit_ts
+  └─Projection	cop[tikv]		explain-non-select-stmt.t._tidb_rowid
     └─Selection	cop[tikv]		gt(explain-non-select-stmt.t.a, 100)
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' update t set b = 100 where a = 200;

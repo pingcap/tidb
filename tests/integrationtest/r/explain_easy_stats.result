@@ -60,9 +60,8 @@ Update	root		N/A
 explain format = 'plan_tree' delete from t1 where t1.c2 = 1;
 id	task	access object	operator info
 Delete	root		N/A
-└─IndexLookUp	root		
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
-  └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:partial[c2:missing]
+└─IndexReader	root		index:IndexRangeScan
+  └─IndexRangeScan	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
 explain format = 'plan_tree' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	task	access object	operator info
 Projection	root		Column#9

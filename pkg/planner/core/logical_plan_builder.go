@@ -5484,6 +5484,14 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	proj.SetOutputNames(make(types.NameSlice, len(p.OutputNames())))
 	copy(proj.OutputNames(), p.OutputNames())
 	copy(proj.Schema().Columns, p.Schema().Columns[:oldSchemaLen])
+	for i := 0; i < len(proj.OutputNames()); i++ {
+		if proj.OutputNames()[i].ColName.L == "_tidb_commit_ts" {
+			proj.SetOutputNames(slices.Delete(proj.OutputNames(), i, i+1))
+			proj.Schema().Columns = slices.Delete(proj.Schema().Columns, i, i+1)
+			proj.Exprs = slices.Delete(proj.Exprs, i, i+1)
+			break
+		}
+	}
 	proj.SetChildren(p)
 	p = proj
 
@@ -5990,6 +5998,14 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	proj.SetChildren(p)
 	proj.SetSchema(expression.NewSchema(finalProjCols...))
 	proj.SetOutputNames(finalProjNames)
+	for i := 0; i < len(proj.OutputNames()); i++ {
+		if proj.OutputNames()[i].ColName.L == "_tidb_commit_ts" {
+			proj.SetOutputNames(slices.Delete(proj.OutputNames(), i, i+1))
+			proj.Schema().Columns = slices.Delete(proj.Schema().Columns, i, i+1)
+			proj.Exprs = slices.Delete(proj.Exprs, i, i+1)
+			break
+		}
+	}
 	p = proj
 	del.SetOutputNames(p.OutputNames())
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)

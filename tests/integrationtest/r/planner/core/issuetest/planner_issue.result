@@ -97,11 +97,10 @@ set autocommit=OFF;
 explain format='plan_tree' update ads_txn s set aml_cntpr_accno = trim(acpayr_accno) where s._tidb_rowid between 1 and 100000;
 id	task	access object	operator info
 Update	root		N/A
-└─Projection	root		planner__core__issuetest__planner_issue.ads_txn.cusno, planner__core__issuetest__planner_issue.ads_txn.txn_dt, planner__core__issuetest__planner_issue.ads_txn.unn_trno, planner__core__issuetest__planner_issue.ads_txn.aml_cntpr_accno, planner__core__issuetest__planner_issue.ads_txn.acpayr_accno, planner__core__issuetest__planner_issue.ads_txn._tidb_rowid, planner__core__issuetest__planner_issue.ads_txn._tidb_commit_ts
+└─Projection	root		planner__core__issuetest__planner_issue.ads_txn.cusno, planner__core__issuetest__planner_issue.ads_txn.txn_dt, planner__core__issuetest__planner_issue.ads_txn.unn_trno, planner__core__issuetest__planner_issue.ads_txn.aml_cntpr_accno, planner__core__issuetest__planner_issue.ads_txn.acpayr_accno, planner__core__issuetest__planner_issue.ads_txn._tidb_rowid
   └─SelectLock	root		for update 0
-    └─TableReader	root	partition:all	data:Selection
-      └─Selection	cop[tikv]		ge(planner__core__issuetest__planner_issue.ads_txn._tidb_rowid, 1), le(planner__core__issuetest__planner_issue.ads_txn._tidb_rowid, 100000)
-        └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
+    └─TableReader	root	partition:all	data:TableRangeScan
+      └─TableRangeScan	cop[tikv]	table:s	range:[1,100000], keep order:false, stats:pseudo
 CREATE TABLE tb1 (cid INT, code INT, class VARCHAR(10));
 CREATE TABLE tb2 (cid INT, code INT, class VARCHAR(10));
 UPDATE tb1, (SELECT code AS cid, code, MAX(class) AS class FROM tb2 GROUP BY code) tb3 SET tb1.cid = tb3.cid, tb1.code = tb3.code, tb1.class = tb3.class;

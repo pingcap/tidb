@@ -639,18 +639,15 @@ Note	1105	unique index PRIMARY of t4 is selected since the path only has point r
 explain format = 'verbose' update t1 set b = 2 where a = 4 or a = 6;
 id	estRows	estCost	task	access object	operator info
 Update_4	N/A	N/A	root		N/A
-└─TableReader_8	2.00	105.57	root		data:TableRangeScan_7
-  └─TableRangeScan_7	2.00	569.80	cop[tikv]	table:t1	range:[4,4], [6,6], keep order:false, stats:pseudo
+└─Batch_Point_Get_7	2.00	887.04	root	table:t1	handle:[4 6], keep order:false, desc:false
 show warnings;
 Level	Code	Message
 Note	1105	handle of t1 is selected since the path only has point ranges
 explain format = 'verbose' delete from t1 where f = 2 and g in (3, 4);
 id	estRows	estCost	task	access object	operator info
 Delete_3	N/A	N/A	root		N/A
-└─IndexLookUp_10	2.00	4886.76	root		
-  ├─IndexRangeScan_7(Build)	2.50	508.75	cop[tikv]	table:t1, index:f(f)	range:[2,2], keep order:false, stats:pseudo
-  └─Selection_9(Probe)	2.00	837.00	cop[tikv]		in(planner__core__casetest__index__index.t1.g, 3, 4)
-    └─TableRowIDScan_8	2.50	712.25	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_8	2.00	430.06	root		in(planner__core__casetest__index__index.t1.g, 3, 4)
+  └─Point_Get_7	1.00	380.16	root	table:t1, index:f(f)	
 show warnings;
 Level	Code	Message
 Note	1105	unique index f of t1 is selected since the path only has point ranges with double scan

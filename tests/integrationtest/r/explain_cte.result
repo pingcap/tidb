@@ -503,7 +503,7 @@ a	b
 explain format='plan_tree' delete from  t1 using t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
 id	task	access object	operator info
 Delete	root		N/A
-└─Projection	root		explain_cte.t1._tidb_rowid, explain_cte.t1._tidb_commit_ts, explain_cte.t2.c
+└─Projection	root		explain_cte.t1._tidb_rowid, explain_cte.t2.c
   └─HashJoin	root		inner join, equal:[eq(explain_cte.t2.c, explain_cte.t1.a)]
     ├─HashJoin(Build)	root		inner join, equal:[eq(explain_cte.t3.e, explain_cte.t2.d)]
     │ ├─TableReader(Build)	root		data:Selection

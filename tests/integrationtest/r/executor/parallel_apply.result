@@ -103,7 +103,7 @@ a	b
 explain format = 'brief' delete from t where (select min(t2.a) * 2 from t2 where t2.a < t.a) > 1;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─Projection	10000.00	root		executor__parallel_apply.t._tidb_rowid, executor__parallel_apply.t._tidb_commit_ts
+└─Projection	10000.00	root		executor__parallel_apply.t._tidb_rowid
   └─Apply	10000.00	root		CARTESIAN inner join
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

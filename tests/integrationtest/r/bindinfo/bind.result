@@ -517,11 +517,11 @@ id	task	access object	operator info
 Delete	root		N/A
 └─HashJoin	root		inner join, equal:[eq(bindinfo__bind.t1.b, bindinfo__bind.t2.b)]
   ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.b))
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  │ └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.b))
+  │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:Selection
-    └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.b))
-      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.b))
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 create global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b using delete /*+ inl_join(t1) */ t1, t2 from t1 inner join t2 on t1.b = t2.b;
 explain format='plan_tree' delete t1, t2 from t1 inner join t2 on t1.b = t2.b;
 id	task	access object	operator info
@@ -554,11 +554,11 @@ id	task	access object	operator info
 Update	root		N/A
 └─HashJoin	root		inner join, equal:[eq(bindinfo__bind.t1.b, bindinfo__bind.t2.b)]
   ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.b))
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  │ └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.b))
+  │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:Selection
-    └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.b))
-      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.b))
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 create global binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b;
 explain format='plan_tree' update t1, t2 set t1.a = 1 where t1.b = t2.b;
 id	task	access object	operator info

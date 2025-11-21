@@ -1826,7 +1826,7 @@ create table tt(a bigint, b bigint, c bigint, d bigint, e bigint, primary key(c,
 explain format='plan_tree' update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));
 id	task	access object	operator info
 Update	root		N/A
-└─HashJoin	root		inner join, equal:[eq(test.tt.c, Column#21) eq(test.tt.d, Column#22)]
+└─IndexJoin	root		inner join, inner:TableReader, outer key:Column#21, Column#22, inner key:test.tt.c, test.tt.d, equal cond:eq(Column#21, test.tt.c), eq(Column#22, test.tt.d)
   ├─Union(Build)	root		
   │ ├─Projection	root		1->Column#19, 2->Column#20, 3->Column#21, 4->Column#22
   │ │ └─TableDual	root		rows:1
@@ -1834,8 +1834,9 @@ Update	root		N/A
   │ │ └─TableDual	root		rows:1
   │ └─Projection	root		3->Column#19, 4->Column#20, 5->Column#21, 6->Column#22
   │   └─TableDual	root		rows:1
-  └─TableReader(Probe)	root		data:TableRangeScan
-    └─TableRangeScan	cop[tikv]	table:tt	range:[11 111,11 111], [22 222,22 222], [33 333,33 333], [44 444,44 444], keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444))))
+      └─TableRangeScan	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column#21) eq(test.tt.d, Column#22)], keep order:false, stats:pseudo
 CREATE TABLE test_62564(c0 DECIMAL);
 INSERT INTO test_62564 VALUES (0);
 SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE NULL END ) AS DATE);
