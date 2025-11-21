@@ -785,7 +785,8 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		rNameMap := make(map[string]int, len(rNames))
 		for _, name := range lNames {
 			// Natural join should ignore _tidb_rowid
-			if name.ColName.L == "_tidb_rowid" {
+			if name.ColName.L == "_tidb_rowid" ||
+				name.ColName.L == "_tidb_commit_ts" {
 				continue
 			}
 			// record left map
@@ -797,7 +798,8 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		}
 		for _, name := range rNames {
 			// Natural join should ignore _tidb_rowid
-			if name.ColName.L == "_tidb_rowid" {
+			if name.ColName.L == "_tidb_rowid" ||
+				name.ColName.L == "_tidb_commit_ts" {
 				continue
 			}
 			// record right map
@@ -826,7 +828,8 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	commonLen := 0
 	for i, lName := range lNames {
 		// Natural join should ignore _tidb_rowid
-		if lName.ColName.L == "_tidb_rowid" {
+		if lName.ColName.L == "_tidb_rowid" ||
+			lName.ColName.L == "_tidb_commit_ts" {
 			continue
 		}
 		for j := commonLen; j < len(rNames); j++ {
@@ -3579,7 +3582,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		}
 		if (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
-			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID {
+			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID && col.ID != model.ExtraCommitTSID {
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
 					Schema: name.DBName,
@@ -4652,6 +4655,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ds.AppendTableCol(extraCol)
 		}
 	}
+	// Append extra commit ts column to the schema.
+	commitTSCol := ds.NewExtraCommitTSSchemaCol()
+	ds.Columns = append(ds.Columns, model.NewExtraCommitTSColInfo())
+	schema.Append(commitTSCol)
+	names = append(names, &types.FieldName{
+		DBName:      dbName,
+		TblName:     tableInfo.Name,
+		ColName:     model.ExtraCommitTSName,
+		OrigColName: model.ExtraCommitTSName,
+	})
+	ds.AppendTableCol(commitTSCol)
 	ds.HandleCols = handleCols
 	ds.UnMutableHandleCols = handleCols
 	handleMap := make(map[int64][]util.HandleCols)
@@ -5470,6 +5484,14 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	proj.SetOutputNames(make(types.NameSlice, len(p.OutputNames())))
 	copy(proj.OutputNames(), p.OutputNames())
 	copy(proj.Schema().Columns, p.Schema().Columns[:oldSchemaLen])
+	for i := range len(proj.OutputNames()) {
+		if proj.OutputNames()[i].ColName.L == "_tidb_commit_ts" {
+			proj.SetOutputNames(slices.Delete(proj.OutputNames(), i, i+1))
+			proj.Schema().Columns = slices.Delete(proj.Schema().Columns, i, i+1)
+			proj.Exprs = slices.Delete(proj.Exprs, i, i+1)
+			break
+		}
+	}
 	proj.SetChildren(p)
 	p = proj
 
@@ -5976,6 +5998,14 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	proj.SetChildren(p)
 	proj.SetSchema(expression.NewSchema(finalProjCols...))
 	proj.SetOutputNames(finalProjNames)
+	for i := range len(proj.OutputNames()) {
+		if proj.OutputNames()[i].ColName.L == "_tidb_commit_ts" {
+			proj.SetOutputNames(slices.Delete(proj.OutputNames(), i, i+1))
+			proj.Schema().Columns = slices.Delete(proj.Schema().Columns, i, i+1)
+			proj.Exprs = slices.Delete(proj.Exprs, i, i+1)
+			break
+		}
+	}
 	p = proj
 	del.SetOutputNames(p.OutputNames())
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
