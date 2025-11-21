@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	goerrors "errors"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -382,14 +381,9 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 	}
 	indexIDs := make([]int64, 0, len(r.indexes))
 	uniques := make([]bool, 0, len(r.indexes))
-	var idxNames strings.Builder
 	for _, index := range r.indexes {
 		indexIDs = append(indexIDs, index.ID)
 		uniques = append(uniques, index.Unique)
-		if idxNames.Len() > 0 {
-			idxNames.WriteByte('+')
-		}
-		idxNames.WriteString(index.Name.O)
 	}
 	engines, err := backendCtx.Register(indexIDs, uniques, r.ptbl)
 	if err != nil {
@@ -399,7 +393,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job, tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
+	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job, tbl.Meta().Name.O, getIndexNames(r.indexes), r.GetMeterRecorder())
 	return NewAddIndexIngestPipeline(
 		wctx,
 		r.store,
@@ -443,14 +437,8 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		kvMeta.MergeSummary(summary)
 		s.mu.Unlock()
 	}
-	var idxNames strings.Builder
-	for _, idx := range r.indexes {
-		if idxNames.Len() > 0 {
-			idxNames.WriteByte('+')
-		}
-		idxNames.WriteString(idx.Name.O)
-	}
-	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job, tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
+
+	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job, tbl.Meta().Name.O, getIndexNames(r.indexes), r.GetMeterRecorder())
 	return NewWriteIndexToExternalStoragePipeline(
 		wctx,
 		r.store,

@@ -95,12 +95,13 @@ func (e *mergeTempIndexExecutor) initializeByMeta(subtask *proto.Subtask, meta *
 	)
 
 	// init metrics
+	idxName := getChangingIndexOriginName(e.idxInfo)
 	e.mergeCounter = metrics.GetBackfillTotalByLabel(e.job.ID,
 		metrics.LblMergeTmpIdxRate,
-		e.job.SchemaName, e.physicalTable.Meta().Name.String(), e.idxInfo.Name.L)
+		e.job.SchemaName, e.physicalTable.Meta().Name.String(), idxName)
 	e.conflictCounter = metrics.GetBackfillTotalByLabel(e.job.ID,
 		fmt.Sprintf("%s-conflict", metrics.LblMergeTmpIdxRate),
-		e.job.SchemaName, e.physicalTable.Meta().Name.String(), e.idxInfo.Name.L)
+		e.job.SchemaName, e.physicalTable.Meta().Name.String(), idxName)
 	return nil
 }
 

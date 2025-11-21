@@ -533,7 +533,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if err != nil {
 			logutil.DDLLogger().Error("Fail to get ModifyIndexArgs", zap.Error(err))
 		} else {
-			idxNames = getIdxNamesFromArgs(args)
+			idxNames = getIndexNamesFromArgs(args)
 		}
 		metrics.GetBackfillProgressByLabel(jobID, label, reorgInfo.SchemaName, tblInfo.Name.String(), idxNames).Set(progress * 100)
 	case model.ActionModifyColumn:
