@@ -668,14 +668,25 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 		}
 		ftsCols := intset.NewFastIntSet()
 		invertedIndexedCols := intset.NewFastIntSet()
-		for _, indexCol := range path.Index.Columns {
-			col := ds.TableInfo.Columns[indexCol.Offset]
-			if col.FieldType.EvalType() != types.ETString {
-				invertedIndexedCols.Insert(int(col.ID))
-				continue
+		if path.Index.FullTextInfo != nil {
+			for _, indexCol := range path.Index.Columns {
+				col := ds.TableInfo.Columns[indexCol.Offset]
+				ftsCols.Insert(int(col.ID))
 			}
-			ftsCols.Insert(int(col.ID))
-			invertedIndexedCols.Insert(int(col.ID))
+		}
+		if path.Index.HybridInfo != nil {
+			for _, ftsInfo := range path.Index.HybridInfo.FullText {
+				for _, indexCol := range ftsInfo.Columns {
+					col := ds.TableInfo.Columns[indexCol.Offset]
+					ftsCols.Insert(int(col.ID))
+				}
+			}
+			for _, invertedInfo := range path.Index.HybridInfo.Inverted {
+				for _, indexCol := range invertedInfo.Columns {
+					col := ds.TableInfo.Columns[indexCol.Offset]
+					invertedIndexedCols.Insert(int(col.ID))
+				}
+			}
 		}
 		noUnmatchedFTSFunc := true
 		tmpMatchedExprSet.Clear()

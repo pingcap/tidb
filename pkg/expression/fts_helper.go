@@ -76,7 +76,7 @@ func ExprCoveredByOneTiCIIndex(
 					return false
 				}
 			}
-		case ast.GE, ast.GT, ast.LE, ast.LT, ast.EQ, ast.NE:
+		case ast.GE, ast.GT, ast.LE, ast.LT, ast.EQ, ast.NE, ast.In:
 			lhsCol, lhsIsCol := x.GetArgs()[0].(*Column)
 			rhsCol, rhsIsCol := x.GetArgs()[1].(*Column)
 			_, lhsIsConst := x.GetArgs()[0].(*Constant)
