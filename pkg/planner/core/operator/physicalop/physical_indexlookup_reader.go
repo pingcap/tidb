@@ -258,7 +258,7 @@ func (p *PhysicalIndexLookUpReader) getHandleOffsetsInIndexPlanSchema() []uint32
 	}
 	pkColumnsLen := len(p.CommonHandleCols)
 	handleOffsets := make([]uint32, 0, pkColumnsLen)
-	for i := 0; i < pkColumnsLen; i++ {
+	for i := range pkColumnsLen {
 		handleOffsets = append(handleOffsets, uint32(indexScanSchemaLen-pkColumnsLen+i))
 	}
 	return handleOffsets
