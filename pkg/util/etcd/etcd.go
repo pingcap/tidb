@@ -53,7 +53,7 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 		if err == nil {
 			return nil
 		}
-		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+		metrics.AddRetryableError(err)
 		logutil.BgLogger().Warn("etcd-cli delete key failed", zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
 	}
 	return errors.Trace(err)

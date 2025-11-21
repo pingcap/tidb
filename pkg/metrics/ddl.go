@@ -15,17 +15,21 @@
 package metrics
 
 import (
+	"fmt"
 	"maps"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var (
@@ -98,6 +102,59 @@ var (
 	DDLRunningJobCount    *prometheus.GaugeVec
 	AddIndexScanRate      *prometheus.HistogramVec
 )
+
+var (
+	errMapMutex sync.Mutex
+	errMapLimit int                 = 64
+	errMap      map[string]struct{} = make(map[string]struct{}, errMapLimit)
+)
+
+// normalizeErrorString replaces all consecutive digits in the string with a single '?'
+// to avoid creating too many unique metric labels that only differ in numbers.
+func normalizeErrorString(s string) string {
+	runes := []rune(s)
+	result := make([]rune, 0, len(runes))
+	inNumber := false
+
+	for _, r := range runes {
+		if r >= '0' && r <= '9' {
+			if !inNumber {
+				result = append(result, '?')
+				inNumber = true
+			}
+		} else {
+			result = append(result, r)
+			inNumber = false
+		}
+	}
+	return string(result)
+}
+
+// AddRetryableError increments the retryable error counter with the given error.
+func AddRetryableError(err error) {
+	var s string
+	err = errors.Cause(err)
+	if e, ok := err.(*errors.Error); ok {
+		s = string(e.RFCCode())
+	} else if rpcStatus, ok := status.FromError(err); ok && rpcStatus.Code() != codes.Unknown {
+		s = fmt.Sprintf("rpc error: %s", rpcStatus.Code())
+	} else {
+		// TODO(joechenrh): the error displayed here may be still too long,
+		// consider mapping common errors to short strings.
+		s = normalizeErrorString(err.Error())
+	}
+
+	errMapMutex.Lock()
+	defer errMapMutex.Unlock()
+
+	errMap[s] = struct{}{}
+	if len(errMap) > errMapLimit {
+		errMap = make(map[string]struct{}, errMapLimit)
+		RetryableErrorCount.Reset()
+	}
+
+	RetryableErrorCount.WithLabelValues(s).Inc()
+}
 
 // InitDDLMetrics initializes defines DDL metrics.
 func InitDDLMetrics() {
