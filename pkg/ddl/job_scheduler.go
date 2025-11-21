@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -300,6 +301,9 @@ func (s *jobScheduler) schedule() error {
 	defer ticker.Stop()
 	s.mustReloadSchemas()
 
+	trace := traceevent.NewTrace()
+	ctx := tracing.WithFlightRecorder(s.schCtx, trace)
+
 	for {
 		if err := s.schCtx.Err(); err != nil {
 			return err
@@ -330,9 +334,10 @@ func (s *jobScheduler) schedule() error {
 			continue
 		}
 		failpoint.InjectCall("beforeLoadAndDeliverJobs")
-		if err := s.loadAndDeliverJobs(se); err != nil {
+		if err := s.loadAndDeliverJobs(ctx, se); err != nil {
 			logutil.SampleLogger().Warn("load and deliver jobs failed", zap.Error(err))
 		}
+		trace.DiscardOrFlush(ctx)
 	}
 }
 
@@ -373,11 +378,17 @@ func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 	if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
+=======
+func (s *jobScheduler) loadAndDeliverJobs(ctx context.Context, se *sess.Session) error {
+	r := tracing.StartRegion(ctx, "jobScheduler.loadAndDeliverJobs")
+	defer r.End()
+	if s.workerPoolExhausted() {
+>>>>>>> be3d5b4b0f4 (*: flight recorder tracing for internal sessions (#64341))
 		return nil
 	}
-
 	defer s.runningJobs.resetAllPending()
 
 	const getJobSQL = `select reorg, job_meta from mysql.tidb_ddl_job where job_id >= %d %s order by job_id`
@@ -386,7 +397,7 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 		whereClause = fmt.Sprintf("and job_id not in (%s)", ids)
 	}
 	sql := fmt.Sprintf(getJobSQL, s.minJobIDRefresher.GetCurrMinJobID(), whereClause)
-	rows, err := se.Execute(context.Background(), sql, "load_ddl_jobs")
+	rows, err := se.Execute(ctx, sql, "load_ddl_jobs")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -438,8 +449,13 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 			continue
 		}
 
+<<<<<<< HEAD
 		s.deliveryJob(wk, targetPool, model.NewJobW(&job, jobBinary))
 		if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
+=======
+		s.deliveryJob(ctx, wk, targetPool, model.NewJobW(&job, jobBinary))
+		if s.workerPoolExhausted() {
+>>>>>>> be3d5b4b0f4 (*: flight recorder tracing for internal sessions (#64341))
 			break
 		}
 	}
@@ -468,13 +484,23 @@ func (s *jobScheduler) mustReloadSchemas() {
 // deliveryJob deliver the job to the worker to run it asynchronously.
 // the worker will run the job until it's finished, paused or another owner takes
 // over and finished it.
-func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.JobW) {
+func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *workerPool, jobW *model.JobW) {
+	r := tracing.StartRegion(ctx, "jobScheduler.deliveryJob")
+	defer r.End()
+
+	if jobW.TraceInfo != nil && len(jobW.TraceInfo.TraceID) > 0 {
+		if traceevent.IsEnabled(tracing.DDLJob) {
+			traceevent.TraceEvent(ctx, tracing.DDLJob, "deliveryJob",
+				zap.Int64("jobID", jobW.ID),
+				zap.String("traceID", hex.EncodeToString(jobW.TraceInfo.TraceID)))
+		}
+	}
+
 	failpoint.InjectCall("beforeDeliveryJob", jobW.Job)
 	injectFailPointForGetJob(jobW.Job)
 	jobID, involvedSchemaInfos := jobW.ID, jobW.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-	jobCtx := s.getJobRunCtx(jobW.ID, jobW.TraceInfo)
 
 	s.wg.Run(func() {
 		start := time.Now()
@@ -496,6 +522,11 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 			pool.put(wk)
 		}()
+
+		trace := traceevent.NewTrace()
+		jobCtx := s.getJobRunCtx(trace, jobW.ID, jobW.TraceInfo)
+		defer trace.DiscardOrFlush(jobCtx.ctx)
+
 		for {
 			err := s.transitOneJobStepAndWaitSync(wk, jobCtx, jobW)
 			if err != nil {
@@ -532,10 +563,14 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 	})
 }
 
-func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *tracing.TraceInfo) *jobContext {
+func (s *jobScheduler) getJobRunCtx(trace *traceevent.Trace, jobID int64, traceInfo *tracing.TraceInfo) *jobContext {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
+	newCtx := tracing.WithFlightRecorder(s.schCtx, trace)
+	if len(traceInfo.TraceID) > 0 {
+		newCtx = traceevent.ContextWithTraceID(newCtx, traceInfo.TraceID)
+	}
 	return &jobContext{
-		ctx:                  s.schCtx,
+		ctx:                  newCtx,
 		unSyncedJobTracker:   s.unSyncedTracker,
 		schemaVersionManager: s.schemaVerMgr,
 		infoCache:            s.infoCache,
