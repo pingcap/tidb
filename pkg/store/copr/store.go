@@ -122,7 +122,7 @@ func NewStore(s *tikv.KVStore, tls *tls.Config, coprCacheConfig *config.Coproces
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ticiClient, err = NewTiCIShardCacheClient(etcdClient)
+		ticiClient, err = NewTiCIShardCacheClient(etcdClient, s.GetPDClient().(*tikv.CodecPDClient))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
