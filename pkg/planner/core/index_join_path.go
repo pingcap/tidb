@@ -17,12 +17,8 @@ package core
 import (
 	"bytes"
 	"fmt"
-<<<<<<< HEAD
-	"unsafe"
-=======
 	"math"
-	"strings"
->>>>>>> dbcf5a14773 (planner: integrate Skyline Pruning into index selection of IndexJoin (#63958))
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -217,7 +213,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		}
 		lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-		ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
+		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
 		return ret, false, nil
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
@@ -266,7 +262,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 			remained = append(remained, colAccesses...)
 		}
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-		ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
+		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
 		return ret, false, nil
 	}
 	tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, true, rangeMaxSize)
@@ -286,7 +282,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		lastColManager = nil
 	}
 	mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-	ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColPos)
+	ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColPos)
 	return ret, false, nil
 }
 
@@ -327,6 +323,7 @@ func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPath
 
 // indexJoinPathConstructResult constructs the index join path result.
 func indexJoinPathConstructResult(
+	sctx planctx.PlanContext,
 	indexJoinInfo *indexJoinPathInfo,
 	buildTmp *indexJoinPathTmp,
 	ranges ranger.MutableRanges,
@@ -602,116 +599,6 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 	return notKeyEqAndIn, nil
 }
 
-<<<<<<< HEAD
-=======
-func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoinKeys []*expression.Column,
-	checkPathValid func(path *util.AccessPath) bool) (
-	keyOff2IdxOff []int, newOuterJoinKeys []*expression.Column, ranges ranger.Ranges, chosenPath *util.AccessPath, ok bool) {
-	pkMatched := false
-	pkCol := ds.GetPKIsHandleCol()
-	if pkCol == nil {
-		return nil, nil, nil, nil, false
-	}
-	keyOff2IdxOff = make([]int, len(innerJoinKeys))
-	newOuterJoinKeys = make([]*expression.Column, 0)
-	for i, key := range innerJoinKeys {
-		if !key.EqualColumn(pkCol) {
-			keyOff2IdxOff[i] = -1
-			continue
-		}
-		pkMatched = true
-		keyOff2IdxOff[i] = 0
-		// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
-		newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
-	}
-	if !pkMatched {
-		return nil, nil, nil, nil, false
-	}
-	ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.GetFlag()))
-	// compute the matchProp which require the int table path first.
-	for _, path := range ds.PossibleAccessPaths {
-		if checkPathValid(path) {
-			chosenPath = path
-			break
-		}
-	}
-	return keyOff2IdxOff, newOuterJoinKeys, ranges, chosenPath, true
-}
-
-// getBestIndexJoinInnerTaskByProp tries to build the best inner child task from ds for index join by the given property.
-func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty) (base.Task, error) {
-	// the below code is quite similar from the original logic
-	// reason1: we need to leverage original indexPathInfo down related logic to build constant range for index plan.
-	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
-	// reason3: skyline pruning should not prune the possible index path which could feel the runtime EQ access conditions.
-	//
-	// here we build TableScan(TS) and IndexScan(IS) separately according to different index join prop is for we couldn't decide
-	// which one as the copTask here is better, some more possible upper attached operator cost should be
-	// considered, besides the row count, double reader cost for index lookup should also be considered as
-	// a whole, so we leave the cost compare for index join itself just like what it was before.
-	var innerCopTask base.Task
-	if prop.IndexJoinProp.TableRangeScan {
-		innerCopTask = buildDataSource2TableScanByIndexJoinProp(ds, prop)
-	} else {
-		innerCopTask = buildDataSource2IndexScanByIndexJoinProp(ds, prop)
-	}
-	if innerCopTask.Invalid() {
-		return base.InvalidTask, nil
-	}
-	if prop.TaskTp == property.RootTaskType {
-		return innerCopTask.ConvertToRootTask(ds.SCtx()), nil
-	}
-	return innerCopTask, nil
-}
-
-// getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds
-// index join path for each access path based on push-down indexIndexProp. It returns the best index join path result and the mapping.
-func getBestIndexJoinPathResultByProp(
-	innerDS *logicalop.DataSource,
-	indexJoinProp *property.IndexJoinRuntimeProp,
-	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
-	indexJoinInfo := &indexJoinPathInfo{
-		joinOtherConditions:   indexJoinProp.OtherConditions, // other conditions is for complete last col non-eq range
-		outerJoinKeys:         indexJoinProp.OuterJoinKeys,
-		innerJoinKeys:         indexJoinProp.InnerJoinKeys,
-		innerPushedConditions: innerDS.PushedDownConds,
-		innerSchema:           innerDS.Schema(),
-		innerTableStats:       innerDS.TableStats,
-	}
-	var bestResult *indexJoinPathResult
-	for _, path := range innerDS.PossibleAccessPaths {
-		if checkPathValid(path) {
-			// here we still wrap indexJoinPathInfo to call index indexJoinPathBuild to get the chosen path result.
-			result, emptyRange, err := indexJoinPathBuild(innerDS.SCtx(), path, indexJoinInfo, false)
-			if emptyRange {
-				return nil, nil
-			}
-			if err != nil {
-				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
-				continue
-			}
-			if indexJoinPathCompare(innerDS, bestResult, result) {
-				bestResult = result
-			}
-		}
-	}
-	if bestResult == nil || bestResult.chosenPath == nil {
-		return nil, nil
-	}
-	keyOff2IdxOff := make([]int, len(indexJoinProp.InnerJoinKeys))
-	for i := range keyOff2IdxOff {
-		keyOff2IdxOff[i] = -1
-	}
-	// reverse idxOff2KeyOff as keyOff2IdxOff, from the perspective of inner join key, we could easily get the offset of index col.
-	for idxOff, keyOff := range bestResult.idxOff2KeyOff {
-		if keyOff != -1 {
-			keyOff2IdxOff[keyOff] = idxOff
-		}
-	}
-	return bestResult, keyOff2IdxOff
-}
-
->>>>>>> dbcf5a14773 (planner: integrate Skyline Pruning into index selection of IndexJoin (#63958))
 // getBestIndexJoinPathResult tries to iterate all possible access paths of the inner child and builds
 // index join path for each access path. It returns the best index join path result and the mapping.
 func getBestIndexJoinPathResult(

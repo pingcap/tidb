@@ -33,12 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
->>>>>>> dbcf5a14773 (planner: integrate Skyline Pruning into index selection of IndexJoin (#63958))
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -684,13 +679,8 @@ type candidatePath struct {
 	path              *util.AccessPath
 	accessCondsColMap util.Col2Len // accessCondsColMap maps Column.UniqueID to column length for the columns in AccessConds.
 	indexCondsColMap  util.Col2Len // indexCondsColMap maps Column.UniqueID to column length for the columns in AccessConds and indexFilters.
-<<<<<<< HEAD
 	isMatchProp       bool
-=======
-	matchPropResult   property.PhysicalPropMatchResult
-
-	indexJoinCols int // how many index columns are used in access conditions in this IndexJoin.
->>>>>>> dbcf5a14773 (planner: integrate Skyline Pruning into index selection of IndexJoin (#63958))
+	indexJoinCols     int // how many index columns are used in access conditions in this IndexJoin.
 }
 
 func compareBool(l, r bool) int {
@@ -1182,7 +1172,8 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 
 func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int) *candidatePath {
 	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols}
-	candidate.matchPropResult = property.PropNotMatched
+	// cherry-pick from the master: false instead of property.PropNotMatched in PR#63958
+	candidate.isMatchProp = false
 	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 	candidate.indexCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
 	// AccessConds could miss some predicates since the DataSource can't see join predicates.
