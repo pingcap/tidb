@@ -1270,6 +1270,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			return err
 		}
 
+		curIdx := i
 		if curResultExhausted {
 			i++
 		}
@@ -1296,7 +1297,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			}
 			tableLookUpTask = w.buildTableTask(taskID, handles, retChunk)
 			if w.idxLookup.partitionTableMode {
-				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[i]
+				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curIdx]
 			}
 			taskID++
 		}
