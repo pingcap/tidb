@@ -320,7 +320,7 @@ func checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle kv.Handle,
 		}
 	}()
 	key := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
-	data, err := txn.Get(context.TODO(), key)
+	data, err := kv.GetValue(context.TODO(), txn, key)
 	if !isExist {
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			return nil
