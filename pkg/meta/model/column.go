@@ -313,3 +313,17 @@ func NewExtraPhysTblIDColInfo() *ColumnInfo {
 	colInfo.SetCollate(charset.CollationBin)
 	return colInfo
 }
+
+func NewExtraCommitTSColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		ID:   ExtraCommitTSID,
+		Name: ExtraCommitTSName,
+	}
+	colInfo.SetType(mysql.TypeLonglong)
+	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	colInfo.SetFlen(flen)
+	colInfo.SetDecimal(decimal)
+	colInfo.SetCharset(charset.CharsetBin)
+	colInfo.SetCollate(charset.CollationBin)
+	return colInfo
+}

@@ -3579,7 +3579,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		}
 		if (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
-			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID {
+			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID && col.ID != model.ExtraCommitTSID {
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
 					Schema: name.DBName,
@@ -4652,6 +4652,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ds.AppendTableCol(extraCol)
 		}
 	}
+	// Append extra commit ts column to the schema.
+	commitTSCol := ds.NewExtraCommitTSSchemaCol()
+	ds.Columns = append(ds.Columns, model.NewExtraCommitTSColInfo())
+	schema.Append(commitTSCol)
+	names = append(names, &types.FieldName{
+		DBName:      dbName,
+		TblName:     tableInfo.Name,
+		ColName:     model.ExtraCommitTSName,
+		OrigColName: model.ExtraCommitTSName,
+	})
+	ds.AppendTableCol(commitTSCol)
 	ds.HandleCols = handleCols
 	ds.UnMutableHandleCols = handleCols
 	handleMap := make(map[int64][]util.HandleCols)
