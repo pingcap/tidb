@@ -18,6 +18,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -200,7 +201,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			if !ok {
 				continue
 			}
-			table = table.CopyAs(statistics.BothMapsWritable)
 			// Fetch table info only once per table instead of once per row
 			tblInfo, ok = h.TableInfoByIDForInitStats(is, tblID)
 			if !ok {
@@ -513,12 +513,13 @@ func (h *Handle) initStatsHistogramsConcurrently(is infoschema.InfoSchema, cache
 	return nil
 }
 
-func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, totalMemory uint64) {
+func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, totalMemory uint64) int {
 	if IsFullCacheFunc(cache, totalMemory) {
-		return
+		return 0
 	}
 	affectedIndexes := make(map[*statistics.Index]struct{})
 	var table *statistics.Table
+	topNCount := 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID := row.GetInt64(0)
 		if table == nil || table.PhysicalID != tblID {
@@ -530,8 +531,6 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			if !ok {
 				continue
 			}
-			// existing idx histogram is modified have to use deep copy
-			table = table.CopyAs(statistics.AllDataWritable)
 		}
 		idx := table.GetIdx(row.GetInt64(1))
 		if idx == nil || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
@@ -544,6 +543,7 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 		data := make([]byte, len(row.GetBytes(2)))
 		copy(data, row.GetBytes(2))
 		idx.TopN.AppendTopN(data, row.GetUint64(3))
+		topNCount++
 	}
 	if table != nil {
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
@@ -551,6 +551,7 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 	for idx := range affectedIndexes {
 		idx.TopN.Sort()
 	}
+	return topNCount
 }
 
 // genInitStatsTopNSQLForIndexes generates the SQL to load all stats_top_n records for indexes.
@@ -568,37 +569,30 @@ func genInitStatsTopNSQLForIndexes(isPaging bool, tableRange [2]int64) string {
 	return selectPrefix + rangeStartClause + rangeEndClause + orderSuffix
 }
 
-func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
-	return h.Pool.SPool().WithSession(func(se *syssession.Session) error {
-		return se.WithSessionContext(func(sctx sessionctx.Context) error {
-			return h.initStatsTopNByPagingWithSCtx(sctx, cache, task, totalMemory)
-		})
-	})
-}
-
-// initStatsTopNByPagingWithSCtx contains the core business logic for initStatsTopNByPaging.
+// initStatsTopNByPagingWithSCtxAndCount contains the core business logic for initStatsTopNByPaging.
 // This method preserves git blame history by keeping the original logic intact.
-func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
+func (h *Handle) initStatsTopNByPagingWithSCtxAndCount(sctx sessionctx.Context, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) (int, error) {
 	sql := genInitStatsTopNSQLForIndexes(true, [2]int64{task.StartTid, task.EndTid})
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
+	totalTopNCount := 0
 	for {
 		err := rc.Next(ctx, req)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsTopN4Chunk(cache, iter, totalMemory)
+		totalTopNCount += h.initStatsTopN4Chunk(cache, iter, totalMemory)
 	}
-	return nil
+	return totalTopNCount, nil
 }
 
 func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
@@ -606,13 +600,23 @@ func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMem
 		return nil
 	}
 	totalTaskCnt := strategy.calculateTotalTaskCnt()
+	var totalTopNCount atomic.Int64
 	ls := initstats.NewRangeWorker(
 		"TopN",
 		func(task initstats.Task) error {
 			if IsFullCacheFunc(cache, totalMemory) {
 				return nil
 			}
-			return h.initStatsTopNByPaging(cache, task, totalMemory)
+			err := h.Pool.SPool().WithSession(func(se *syssession.Session) error {
+				return se.WithSessionContext(func(sctx sessionctx.Context) error {
+					count, err := h.initStatsTopNByPagingWithSCtxAndCount(sctx, cache, task, totalMemory)
+					if err == nil {
+						totalTopNCount.Add(int64(count))
+					}
+					return err
+				})
+			})
+			return err
 		},
 		concurrency,
 		totalTaskCnt,
@@ -621,16 +625,22 @@ func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMem
 	ls.LoadStats()
 	strategy.generateAndSendTasks(ls)
 	ls.Wait()
+	finalCount := totalTopNCount.Load()
+	if finalCount > 0 {
+		statslogutil.StatsLogger().Info("Loaded TopN entries into memory (total)",
+			zap.Int64("totalTopNCount", finalCount))
+	}
 	return nil
 }
 
-func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) int {
 	var table *statistics.Table
 	var (
 		hasErr        bool
 		failedTableID int64
 		failedHistID  int64
 	)
+	bucketCount := 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, histID := row.GetInt64(0), row.GetInt64(1)
 		if table == nil || table.PhysicalID != tableID {
@@ -643,8 +653,6 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			if !ok {
 				continue
 			}
-			// existing idx histogram is modified have to use deep copy
-			table = table.CopyAs(statistics.AllDataWritable)
 		}
 		var lower, upper types.Datum
 		var hist *statistics.Histogram
@@ -655,6 +663,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 		hist = &index.Histogram
 		lower, upper = types.NewBytesDatum(row.GetBytes(4) /*lower_bound*/), types.NewBytesDatum(row.GetBytes(5) /*upper_bound*/)
 		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(2) /*count*/, row.GetInt64(3) /*repeats*/, row.GetInt64(6) /*ndv*/)
+		bucketCount++
 	}
 	if table != nil {
 		table.SetAllIndexFullLoadForBootstrap()
@@ -663,6 +672,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 	if hasErr {
 		logutil.BgLogger().Error("failed to convert datum for at least one histogram bucket", zap.Int64("table ID", failedTableID), zap.Int64("column ID", failedHistID))
 	}
+	return bucketCount
 }
 
 // genInitStatsBucketsSQLForIndexes generates the SQL to load all stats_buckets records for indexes.
@@ -697,37 +707,30 @@ func (h *Handle) initStatsBucketsAndCalcPreScalar(cache statstypes.StatsCache, t
 	return nil
 }
 
-func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task initstats.Task) error {
-	return h.Pool.SPool().WithSession(func(se *syssession.Session) error {
-		return se.WithSessionContext(func(sctx sessionctx.Context) error {
-			return h.initStatsBucketsByPagingWithSCtx(sctx, cache, task)
-		})
-	})
-}
-
-// initStatsBucketsByPagingWithSCtx contains the core business logic for initStatsBucketsByPaging.
+// initStatsBucketsByPagingWithSCtxAndCount contains the core business logic for initStatsBucketsByPaging.
 // This method preserves git blame history by keeping the original logic intact.
-func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache statstypes.StatsCache, task initstats.Task) error {
+func (h *Handle) initStatsBucketsByPagingWithSCtxAndCount(sctx sessionctx.Context, cache statstypes.StatsCache, task initstats.Task) (int, error) {
 	sql := genInitStatsBucketsSQLForIndexes(true, [2]int64{task.StartTid, task.EndTid})
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
+	totalBucketCount := 0
 	for {
 		err := rc.Next(ctx, req)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsBuckets4Chunk(cache, iter)
+		totalBucketCount += h.initStatsBuckets4Chunk(cache, iter)
 	}
-	return nil
+	return totalBucketCount, nil
 }
 
 func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
@@ -735,13 +738,23 @@ func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, total
 		return nil
 	}
 	totalTaskCnt := strategy.calculateTotalTaskCnt()
+	var totalBucketCount atomic.Int64
 	ls := initstats.NewRangeWorker(
 		"bucket",
 		func(task initstats.Task) error {
 			if IsFullCacheFunc(cache, totalMemory) {
 				return nil
 			}
-			return h.initStatsBucketsByPaging(cache, task)
+			err := h.Pool.SPool().WithSession(func(se *syssession.Session) error {
+				return se.WithSessionContext(func(sctx sessionctx.Context) error {
+					count, err := h.initStatsBucketsByPagingWithSCtxAndCount(sctx, cache, task)
+					if err == nil {
+						totalBucketCount.Add(int64(count))
+					}
+					return err
+				})
+			})
+			return err
 		},
 		concurrency,
 		totalTaskCnt,
@@ -750,6 +763,11 @@ func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, total
 	ls.LoadStats()
 	strategy.generateAndSendTasks(ls)
 	ls.Wait()
+	finalCount := totalBucketCount.Load()
+	if finalCount > 0 {
+		statslogutil.StatsLogger().Info("Loaded buckets into memory (total)",
+			zap.Int64("totalBucketCount", finalCount))
+	}
 	return nil
 }
 

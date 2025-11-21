@@ -29,6 +29,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// cacheEntry wraps a table with its cost for storage in ristretto cache
+type cacheEntry struct {
+	table *statistics.Table
+	cost  int64
+}
+
 // LFU is a LFU based on the ristretto.Cache
 type LFU struct {
 	cache *ristretto.Cache
@@ -93,15 +99,24 @@ func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
 	if !ok {
 		return s.resultKeySet.Get(tid)
 	}
-	return result.(*statistics.Table), ok
+	entry := result.(*cacheEntry)
+	return entry.table, ok
 }
 
 // Put implements statsCacheInner
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
-	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
-	s.resultKeySet.AddKeyValue(tblID, tbl)
-	s.addCost(cost)
-	return s.cache.Set(tblID, tbl, cost)
+	newCost := tbl.MemoryUsage().TotalTrackingMemUsage()
+
+	s.resultKeySet.AddKeyValue(tblID, tbl, newCost)
+	// Add the full cost; onExit will subtract the stored old cost
+	s.addCost(newCost)
+
+	// Wrap table with cost for ristretto cache
+	entry := &cacheEntry{
+		table: tbl,
+		cost:  newCost,
+	}
+	return s.cache.Set(tblID, entry, newCost)
 }
 
 // Del implements statsCacheInner
@@ -159,12 +174,13 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// We do not need to calculate the cost during onEvict,
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
-	table := item.Value.(*statistics.Table).CopyAs(statistics.AllDataWritable)
+	entry := item.Value.(*cacheEntry)
+	table := entry.table.CopyAs(statistics.AllDataWritable)
 	table.DropEvicted()
-	s.resultKeySet.AddKeyValue(int64(item.Key), table)
 	after := table.MemoryUsage().TotalTrackingMemUsage()
-	// why add before again? because the cost will be subtracted in onExit.
-	// in fact, it is after - before
+	s.resultKeySet.AddKeyValue(int64(item.Key), table, after)
+	// why add after again? because the cost will be subtracted in onExit.
+	// in fact, it is after - before (where before is the stored cost in entry)
 	s.addCost(after)
 	s.triggerEvict()
 }
@@ -194,8 +210,9 @@ func (s *LFU) onExit(val any) {
 		return
 	}
 	s.triggerEvict()
-	// Subtract the memory usage of the table from the total memory usage.
-	s.addCost(-val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
+	// Subtract the STORED cost (not recalculated) to handle same-object updates correctly
+	entry := val.(*cacheEntry)
+	s.addCost(-entry.cost)
 }
 
 // Len implements statsCacheInner
