@@ -2706,6 +2706,7 @@ func writeOneKV(
 		if err != nil {
 			return kvBytes, errors.Trace(err)
 		}
+		// TODO this size doesn't consider keyspace prefix.
 		kvBytes += int64(len(key) + len(idxVal))
 		failpoint.Inject("mockLocalWriterError", func() {
 			failpoint.Return(0, errors.New("mock engine error"))
@@ -2937,10 +2938,8 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 
 // TaskKeyBuilder is used to build task key for the backfill job.
 type TaskKeyBuilder struct {
-	keyspace       string
 	multiSchemaSeq int32
 	mergeTempIdx   bool
-	jobID          int64
 }
 
 // NewTaskKeyBuilder creates a new TaskKeyBuilder.

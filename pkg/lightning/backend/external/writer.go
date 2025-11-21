@@ -181,12 +181,14 @@ type WriterSummary struct {
 	// will be empty if no key is written.
 	Min tidbkv.Key
 	Max tidbkv.Key
-	// TotalSize is the total size of the data written by this writer.
+	// TotalSize is the total size of the KV written by this writer.
 	// depends on onDup setting, duplicates might not be included.
 	TotalSize uint64
 	// TotalCnt is the total count of the KV written by this writer.
 	// depends on onDup setting, duplicates might not be included.
-	TotalCnt           uint64
+	TotalCnt uint64
+	// KVFileCount is the total count of the KV files written by this writer.
+	KVFileCount        int
 	MultipleFilesStats []MultipleFilesStat
 	ConflictInfo       engineapi.ConflictInfo
 }
@@ -455,6 +457,8 @@ type Writer struct {
 	maxKey    tidbkv.Key
 	totalSize uint64
 	totalCnt  uint64
+	// since we have 1 stat file per kv file, so no need to count it separately.
+	kvFileCount int
 
 	tikvCodec tikv.Codec
 	// duplicate key's statistics.
@@ -520,7 +524,12 @@ func (w *Writer) Close(ctx context.Context) error {
 		zap.String("writerID", w.writerID),
 		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
-		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
+		zap.String("maxKey", hex.EncodeToString(w.maxKey)),
+		zap.Int("kv-file-count", w.kvFileCount),
+		zap.Int("dup-file-count", len(w.conflictInfo.Files)),
+		zap.String("total-size", units.BytesSize(float64(w.totalSize))),
+		zap.Uint64("total-kv-cnt", w.totalCnt),
+	)
 
 	w.kvLocations = nil
 	w.onClose(&WriterSummary{
@@ -531,20 +540,20 @@ func (w *Writer) Close(ctx context.Context) error {
 		Max:                w.maxKey,
 		TotalSize:          w.totalSize,
 		TotalCnt:           w.totalCnt,
+		KVFileCount:        w.kvFileCount,
 		MultipleFilesStats: w.multiFileStats,
 		ConflictInfo:       w.conflictInfo,
 	})
 	return nil
 }
 
-func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
+func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key) {
 	if len(w.minKey) == 0 || newMin.Cmp(w.minKey) < 0 {
 		w.minKey = newMin.Clone()
 	}
 	if len(w.maxKey) == 0 || newMax.Cmp(w.maxKey) > 0 {
 		w.maxKey = newMax.Clone()
 	}
-	w.totalSize += size
 }
 
 const flushKVsRetryTimes = 3
@@ -636,9 +645,11 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	// maintain 500-batch statistics
 	if len(w.kvLocations) > 0 {
 		w.totalCnt += uint64(len(w.kvLocations))
+		w.totalSize += uint64(w.kvSize)
+		w.kvFileCount++
 
 		minKey, maxKey := w.getKeyByLoc(&w.kvLocations[0]), w.getKeyByLoc(&w.kvLocations[len(w.kvLocations)-1])
-		w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
+		w.recordMinMax(minKey, maxKey)
 
 		w.addNewKVFile2MultiFileStats(dataFile, statFile, minKey, maxKey)
 	}
