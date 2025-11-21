@@ -173,6 +173,8 @@ var (
 		maxWriteSpeedOption:   {},
 		cloudStorageURIOption: {},
 		threadOption:          {},
+		checksumTableOption:   {},
+		recordErrorsOption:    {},
 	}
 
 	disallowedOptionsForSEM = map[string]struct{}{
@@ -375,8 +377,8 @@ type LoadDataController struct {
 	logger    *zap.Logger
 	dataStore storage.ExternalStorage
 	dataFiles []*mydump.SourceFileMeta
-	// GlobalSortStore is used to store sorted data when using global sort.
-	GlobalSortStore storage.ExternalStorage
+	// globalSortStore is used to store sorted data when using global sort.
+	globalSortStore storage.ExternalStorage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
 }
@@ -1163,7 +1165,7 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 		if err3 != nil {
 			return err3
 		}
-		e.GlobalSortStore = store
+		e.globalSortStore = store
 	}
 	return nil
 }
@@ -1173,8 +1175,8 @@ func (e *LoadDataController) Close() {
 	if e.dataStore != nil {
 		e.dataStore.Close()
 	}
-	if e.GlobalSortStore != nil {
-		e.GlobalSortStore.Close()
+	if e.globalSortStore != nil {
+		e.globalSortStore.Close()
 	}
 }
 

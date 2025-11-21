@@ -115,7 +115,6 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.Reset()
 
 	opCtx, cancel := NewDistTaskOperatorCtx(ctx)
 	collector := &mergeTempIndexCollector{}
@@ -161,6 +160,10 @@ func (m *mergeTempIndexCollector) Processed(_, rows int64) {
 
 func (e *mergeTempIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return e.SubtaskSummary
+}
+
+func (e *mergeTempIndexExecutor) ResetSummary() {
+	e.SubtaskSummary.Reset()
 }
 
 func (e *mergeTempIndexExecutor) Cleanup(ctx context.Context) error {

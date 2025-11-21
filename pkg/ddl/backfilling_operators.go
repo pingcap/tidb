@@ -161,7 +161,7 @@ func NewAddIndexIngestPipeline(
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
 		reorgMeta.GetBatchSize(), reorgMeta, backendCtx, collector)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool,
-		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta)
+		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, collector)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, collector)
 
 	operator.Compose(srcOp, scanOp)
@@ -183,7 +183,7 @@ func NewAddIndexIngestPipeline(
 func NewWriteIndexToExternalStoragePipeline(
 	ctx *OperatorCtx,
 	store kv.Storage,
-	extStoreURI string,
+	extStore storage.ExternalStorage,
 	sessPool opSessPool,
 	taskID, subtaskID int64,
 	tbl table.PhysicalTable,
@@ -210,14 +210,6 @@ func NewWriteIndexToExternalStoragePipeline(
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
-	backend, err := storage.ParseBackend(extStoreURI, nil)
-	if err != nil {
-		return nil, err
-	}
-	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
-	if err != nil {
-		return nil, err
-	}
 	memCap := resource.Mem.Capacity()
 	memSizePerIndex := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
 	failpoint.Inject("mockWriterMemSizeInKB", func(val failpoint.Value) {
@@ -233,6 +225,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		ctx, copCtx, sessPool, taskID, subtaskID,
 		tbl, indexes, extStore, srcChkPool, writerCnt,
 		onClose, memSizePerIndex, reorgMeta, tikvCodec,
+		collector,
 	)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, collector)
 
@@ -638,6 +631,7 @@ func NewWriteExternalStoreOperator(
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
 	tikvCodec tikv.Codec,
+	collector execute.Collector,
 ) *WriteExternalStoreOperator {
 	onDuplicateKey := engineapi.OnDuplicateKeyError
 	failpoint.Inject("ignoreReadIndexDupKey", func() {
@@ -677,6 +671,7 @@ func NewWriteExternalStoreOperator(
 				srcChunkPool: srcChunkPool,
 				reorgMeta:    reorgMeta,
 				totalCount:   totalCount,
+				collector:    collector,
 			}
 		})
 	return &WriteExternalStoreOperator{
@@ -698,7 +693,6 @@ func (o *WriteExternalStoreOperator) Close() error {
 type IndexWriteResult struct {
 	ID     int
 	RowCnt int
-	Bytes  int // Bytes means the written index kv size of this result.
 }
 
 // IndexIngestOperator writes index records to ingest engine.
@@ -717,6 +711,7 @@ func NewIndexIngestOperator(
 	srcChunkPool *sync.Pool,
 	concurrency int,
 	reorgMeta *model.DDLReorgMeta,
+	collector execute.Collector,
 ) *IndexIngestOperator {
 	writerCfg := getLocalWriterConfig(len(indexes), concurrency)
 
@@ -749,6 +744,7 @@ func NewIndexIngestOperator(
 				writers:      writers,
 				srcChunkPool: srcChunkPool,
 				reorgMeta:    reorgMeta,
+				collector:    collector,
 			}
 		})
 	return &IndexIngestOperator{
@@ -772,6 +768,7 @@ type indexIngestWorker struct {
 	srcChunkPool *sync.Pool
 	// only available in global sort
 	totalCount *atomic.Int64
+	collector  execute.Collector
 }
 
 func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
@@ -791,6 +788,7 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 		w.ctx.onError(err)
 		return
 	}
+	w.collector.Processed(int64(bytes), int64(count))
 	if count == 0 {
 		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", ck.ID))
 		return
@@ -799,7 +797,6 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 		w.totalCount.Add(int64(count))
 	}
 	result.RowCnt = count
-	result.Bytes = bytes
 	if ResultCounterForTest != nil {
 		ResultCounterForTest.Add(1)
 	}
@@ -919,7 +916,6 @@ func (s *indexWriteResultSink) collectResult() error {
 				}
 				return err
 			}
-			s.collector.Processed(int64(rs.Bytes), int64(rs.RowCnt))
 			if s.backendCtx != nil { // for local sort only
 				err := s.backendCtx.IngestIfQuotaExceeded(s.ctx, rs.ID, rs.RowCnt)
 				if err != nil {

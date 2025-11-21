@@ -22,7 +22,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
@@ -91,8 +90,10 @@ func newEncodeAndSortOperator(
 		util.ImportInto,
 		concurrency,
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
-			return newChunkWorker(ctx, op, executor.dataKVMemSizePerCon,
-				executor.perIndexKVMemSizePerCon, executor.dataBlockSize, executor.indexBlockSize)
+			return newChunkWorker(ctx, op,
+				executor.dataKVMemSizePerCon, executor.perIndexKVMemSizePerCon,
+				executor.dataBlockSize, executor.indexBlockSize,
+			)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
@@ -150,8 +151,12 @@ type chunkWorker struct {
 	indexWriter *importer.IndexRouteWriter
 }
 
-func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSizePerCon,
-	perIndexKVMemSizePerCon uint64, dataBlockSize, indexBlockSize int) *chunkWorker {
+func newChunkWorker(
+	ctx context.Context,
+	op *encodeAndSortOperator,
+	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64,
+	dataBlockSize, indexBlockSize int,
+) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
@@ -164,9 +169,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
-					op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
-					metering.NewRecorder(op.tableImporter.GetKVStore(), metering.TaskTypeImportInto, op.taskID).
-						RecordPutRequestCount(summary.PutRequestCount)
+					op.sharedVars.indexKVFileCount.Add(int64(summary.KVFileCount))
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
 				SetBlockSize(indexBlockSize).
@@ -174,7 +177,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
-			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
+			writer := builder.Build(op.sharedVars.globalSortStore, prefix, writerID)
 			return writer, nil
 		}
 
@@ -182,9 +185,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(func(summary *external.WriterSummary) {
 				op.sharedVars.mergeDataSummary(summary)
-				op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
-				metering.NewRecorder(op.tableImporter.GetKVStore(), metering.TaskTypeImportInto, op.taskID).
-					RecordPutRequestCount(summary.PutRequestCount)
+				op.sharedVars.dataKVFileCount.Add(int64(summary.KVFileCount))
 			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
@@ -192,7 +193,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)
-		writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
+		writer := builder.Build(op.sharedVars.globalSortStore, prefix, writerID)
 		w.dataWriter = external.NewEngineWriter(writer)
 
 		w.indexWriter = importer.NewIndexRouteWriter(op.logger, indexWriterFn)

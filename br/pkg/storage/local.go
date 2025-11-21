@@ -273,7 +273,7 @@ func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (
 		return nil, errors.Trace(err)
 	}
 	buf := bufio.NewWriter(file)
-	return newFlushStorageWriter(buf, buf, file), nil
+	return newFlushStorageWriter(buf, buf, file, nil), nil
 }
 
 // Rename implements ExternalStorage interface.

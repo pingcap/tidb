@@ -82,7 +82,6 @@ func MergeOverlappingFiles(
 	newFilePrefix string,
 	blockSize int,
 	onWriterClose OnWriterCloseFunc,
-	onReaderClose OnReaderCloseFunc,
 	collector execute.Collector,
 	concurrency int,
 	checkHotspot bool,
@@ -113,7 +112,6 @@ func MergeOverlappingFiles(
 				uuid.New().String(),
 				blockSize,
 				onWriterClose,
-				onReaderClose,
 				collector,
 				checkHotspot,
 				onDup,
@@ -181,7 +179,6 @@ func mergeOverlappingFilesInternal(
 	writerID string,
 	blockSize int,
 	onWriterClose OnWriterCloseFunc,
-	onReaderClose OnReaderCloseFunc,
 	collector execute.Collector,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
@@ -205,9 +202,6 @@ func mergeOverlappingFilesInternal(
 		if err != nil {
 			logutil.Logger(ctx).Warn("close iterator failed", zap.Error(err))
 		}
-		onReaderClose(&ReaderSummary{
-			GetRequestCount: uint64(iter.ReloadCount()),
-		})
 	}()
 
 	writer := NewWriterBuilder().

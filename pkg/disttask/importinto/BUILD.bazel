@@ -19,6 +19,7 @@ go_library(
     deps = [
         "//br/pkg/logutil",
         "//br/pkg/storage",
+        "//br/pkg/storage/recording",
         "//br/pkg/utils",
         "//pkg/config",
         "//pkg/config/kerneltype",
