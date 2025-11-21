@@ -293,9 +293,9 @@ var (
 	DDLCommitTempIndexWrite = func(connID uint64) {}
 	// DDLRollbackTempIndexWrite rolls back the writes to a temporary index.
 	DDLRollbackTempIndexWrite = func(connID uint64) {}
-	// DDLResetTempIndexWrite resets the write count for a temporary index.
-	DDLResetTempIndexWrite = func(tblID int64) {}
-	// DDLClearTempIndexWrite clears the write count for a temporary index.
+	// DDLRemoveTempIndex remove the record for a temporary index.
+	DDLRemoveTempIndex = func(tblID int64) {}
+	// DDLClearTempIndexWrite clears the temporary index writes for a connection.
 	DDLClearTempIndexWrite = func(connID uint64) {}
 	// DDLSetTempIndexScanAndMerge sets the scan count and merge count for a temporary index.
 	DDLSetTempIndexScanAndMerge = func(tableID int64, scanCnt, mergeCnt uint64) {}
