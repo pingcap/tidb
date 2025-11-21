@@ -301,14 +301,9 @@ func (e *groupOriginalConcatDistinct) UpdatePartialResult(sctx AggFuncUpdateCont
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	v, isNull := "", false
 	memDelta += int64(-p.valsBuf.Cap()) + (int64(-cap(p.encodeBytesBuffer)))
-	if p.buffer != nil {
-		memDelta += int64(-p.buffer.Cap())
-	}
+
 	defer func() {
 		memDelta += int64(p.valsBuf.Cap()) + (int64(cap(p.encodeBytesBuffer)))
-		if p.buffer != nil {
-			memDelta += int64(p.buffer.Cap())
-		}
 	}()
 
 	collators := make([]collate.Collator, 0, len(e.args))

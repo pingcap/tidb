@@ -60,16 +60,21 @@ func generateRandomString(length int) string {
 }
 
 type aggTest struct {
-	dataType *types.FieldType
+	keyType  *types.FieldType
 	numRows  int
 	dataGen  func(i int) types.Datum
 	funcName string
 	results  []types.Datum
 	orderBy  bool
+
+	// Most data type in distinct agg only need key, such as map[string]struct{}
+	// However, some data type need both key and value, such map[string]*types.MyDecimal
+	// When this field is nil, it means that we only key.
+	valType *types.FieldType
 }
 
 func (p *aggTest) genSrcChk() *chunk.Chunk {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.keyType}, p.numRows)
 	for i := range p.numRows {
 		dt := p.dataGen(i)
 		srcChk.AppendDatum(0, &dt)
@@ -349,29 +354,35 @@ func (p *multiArgsAggTest) messUpChunk(c *chunk.Chunk) {
 	}
 }
 
-type updateMemDeltaGens func(*chunk.Chunk, *types.FieldType) (memDeltas []int64, err error)
+type updateMemDeltaGensParams struct {
+	srcChk  *chunk.Chunk
+	keyType *types.FieldType
+	valType *types.FieldType
+}
 
-func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+type updateMemDeltaGens func(param updateMemDeltaGensParams) (memDeltas []int64, err error)
+
+func defaultUpdateMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
-	for range srcChk.NumRows() {
+	for range param.srcChk.NumRows() {
 		memDeltas = append(memDeltas, int64(0))
 	}
 	return memDeltas, nil
 }
 
-func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func approxCountDistinctUpdateMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 
 	buf := make([]byte, 8)
 	p := aggfuncs.NewPartialResult4ApproxCountDistinct()
-	for i := range srcChk.NumRows() {
-		row := srcChk.GetRow(i)
+	for i := range param.srcChk.NumRows() {
+		row := param.srcChk.GetRow(i)
 		if row.IsNull(0) {
 			memDeltas = append(memDeltas, int64(0))
 			continue
 		}
 		oldMemUsage := p.MemUsage()
-		switch dataType.GetType() {
+		switch param.keyType.GetType() {
 		case mysql.TypeLonglong:
 			val := row.GetInt64(0)
 			*(*int64)(unsafe.Pointer(&buf[0])) = val
@@ -379,7 +390,7 @@ func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.
 			val := row.GetString(0)
 			buf = codec.EncodeCompactBytes(buf, hack.Slice(val))
 		default:
-			return memDeltas, errors.Errorf("unsupported type - %v", dataType.GetType())
+			return memDeltas, errors.Errorf("unsupported type - %v", param.keyType.GetType())
 		}
 
 		x := farm.Hash64(buf)
@@ -391,18 +402,18 @@ func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.
 	return memDeltas, nil
 }
 
-func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func distinctUpdateMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
 	valSet := set.NewStringSet()
 	memDeltas = make([]int64, 0)
-	for i := range srcChk.NumRows() {
-		row := srcChk.GetRow(i)
+	for i := range param.srcChk.NumRows() {
+		row := param.srcChk.GetRow(i)
 		if row.IsNull(0) {
 			memDeltas = append(memDeltas, int64(0))
 			continue
 		}
 		val := ""
 		memDelta := int64(0)
-		switch dataType.GetType() {
+		switch param.keyType.GetType() {
 		case mysql.TypeLonglong:
 			val = strconv.FormatInt(row.GetInt64(0), 10)
 		case mysql.TypeFloat:
@@ -434,11 +445,19 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 			val = string(bytes)
 			memDelta = int64(len(val))
 		default:
-			return memDeltas, errors.Errorf("unsupported type - %v", dataType.GetType())
+			return memDeltas, errors.Errorf("unsupported type - %v", param.keyType.GetType())
 		}
 		if valSet.Exist(val) {
 			memDeltas = append(memDeltas, int64(0))
 			continue
+		}
+		if param.valType != nil {
+			switch param.valType.GetType() {
+			case mysql.TypeNewDecimal:
+				memDelta += int64(unsafe.Sizeof(&types.MyDecimal{}))
+			default:
+				panic("Not supported")
+			}
 		}
 		valSet.Insert(val)
 		memDeltas = append(memDeltas, memDelta)
@@ -446,9 +465,9 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 	return memDeltas, nil
 }
 
-func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func rowMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
-	for range srcChk.NumRows() {
+	for range param.srcChk.NumRows() {
 		memDelta := aggfuncs.DefRowSize
 		memDeltas = append(memDeltas, memDelta)
 	}
@@ -498,8 +517,8 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	srcChk := p.genSrcChk()
 	iter := chunk.NewIterator4Chunk(srcChk)
 
-	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
-	ctor := collate.GetCollator(p.dataType.GetCollate())
+	args := []expression.Expression{&expression.Column{RetType: p.keyType, Index: 0}}
+	ctor := collate.GetCollator(p.keyType.GetCollate())
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
@@ -519,7 +538,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	// build final func for final phase.
 	finalFunc := aggfuncs.Build(ctx, finalDesc, 0)
 	finalPr, _ := finalFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, 1)
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.keyType}, 1)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
 		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 1)
 	}
@@ -535,7 +554,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	p.messUpChunk(srcChk)
 	err = partialFunc.AppendFinalResult2Chunk(ctx, partialResult, resultChk)
 	require.NoError(t, err)
-	dt := resultChk.GetRow(0).GetDatum(0, p.dataType)
+	dt := resultChk.GetRow(0).GetDatum(0, p.keyType)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
 		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeString))
 	}
@@ -562,7 +581,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	resultChk.Reset()
 	err = partialFunc.AppendFinalResult2Chunk(ctx, partialResult, resultChk)
 	require.NoError(t, err)
-	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
+	dt = resultChk.GetRow(0).GetDatum(0, p.keyType)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
 		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeString))
 	}
@@ -585,7 +604,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 	require.NoError(t, err)
 
-	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
+	dt = resultChk.GetRow(0).GetDatum(0, p.keyType)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
 		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeLonglong))
 	}
@@ -603,7 +622,7 @@ func buildAggTester(funcName string, tp byte, numRows int, results ...any) aggTe
 
 func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows int, results ...any) aggTest {
 	pt := aggTest{
-		dataType: ft,
+		keyType:  ft,
 		numRows:  numRows,
 		funcName: funcName,
 		dataGen:  getDataGenFunc(ft),
@@ -850,8 +869,8 @@ func testAggFunc(t *testing.T, p aggTest) {
 	srcChk := p.genSrcChk()
 	ctx := mock.NewContext()
 
-	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
-	ctor := collate.GetCollator(p.dataType.GetCollate())
+	args := []expression.Expression{&expression.Column{RetType: p.keyType, Index: 0}}
+	ctor := collate.GetCollator(p.keyType.GetCollate())
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
@@ -929,8 +948,8 @@ func testAggFunc(t *testing.T, p aggTest) {
 func testAggFuncWithoutDistinct(t *testing.T, p aggTest) {
 	srcChk := p.genSrcChk()
 
-	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
-	ctor := collate.GetCollator(p.dataType.GetCollate())
+	args := []expression.Expression{&expression.Column{RetType: p.keyType, Index: 0}}
+	ctor := collate.GetCollator(p.keyType.GetCollate())
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
@@ -977,7 +996,7 @@ func testAggMemFunc(t *testing.T, p aggMemTest) {
 	srcChk := p.aggTest.genSrcChk()
 	ctx := mock.NewContext()
 
-	args := []expression.Expression{&expression.Column{RetType: p.aggTest.dataType, Index: 0}}
+	args := []expression.Expression{&expression.Column{RetType: p.aggTest.keyType, Index: 0}}
 	if p.aggTest.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
@@ -992,7 +1011,7 @@ func testAggMemFunc(t *testing.T, p aggMemTest) {
 	finalPr, memDelta := finalFunc.AllocPartialResult()
 	require.Equal(t, p.allocMemDelta, memDelta)
 
-	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.aggTest.dataType)
+	updateMemDeltas, err := p.updateMemDeltaGens(updateMemDeltaGensParams{srcChk: srcChk, keyType: p.aggTest.keyType, valType: p.aggTest.valType})
 	require.NoError(t, err)
 	iter := chunk.NewIterator4Chunk(srcChk)
 	i := 0
@@ -1129,14 +1148,14 @@ func testMultiArgsAggMemFunc(t *testing.T, p multiArgsAggMemTest) {
 }
 
 func benchmarkAggFunc(b *testing.B, ctx *mock.Context, p aggTest) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.keyType}, p.numRows)
 	for i := range p.numRows {
 		dt := p.dataGen(i)
 		srcChk.AppendDatum(0, &dt)
 	}
 	srcChk.AppendDatum(0, &types.Datum{})
 
-	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
+	args := []expression.Expression{&expression.Column{RetType: p.keyType, Index: 0}}
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
@@ -1156,7 +1175,7 @@ func benchmarkAggFunc(b *testing.B, ctx *mock.Context, p aggTest) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		input = append(input, row)
 	}
-	b.Run(fmt.Sprintf("%v/%v", p.funcName, p.dataType), func(b *testing.B) {
+	b.Run(fmt.Sprintf("%v/%v", p.funcName, p.keyType), func(b *testing.B) {
 		baseBenchmarkAggFunc(b, ctx, finalFunc, input, resultChk)
 	})
 
@@ -1171,7 +1190,7 @@ func benchmarkAggFunc(b *testing.B, ctx *mock.Context, p aggTest) {
 	}
 	finalFunc = aggfuncs.Build(ctx, desc, 0)
 	resultChk.Reset()
-	b.Run(fmt.Sprintf("%v(distinct)/%v", p.funcName, p.dataType), func(b *testing.B) {
+	b.Run(fmt.Sprintf("%v(distinct)/%v", p.funcName, p.keyType), func(b *testing.B) {
 		baseBenchmarkAggFunc(b, ctx, finalFunc, input, resultChk)
 	})
 }

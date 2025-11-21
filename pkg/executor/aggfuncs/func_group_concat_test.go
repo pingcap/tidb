@@ -67,7 +67,7 @@ func TestMemGroupConcat(t *testing.T) {
 	multiArgsTest1 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
 		aggfuncs.DefPartialResult4GroupConcatSize+aggfuncs.DefBytesBufferSize, groupConcatMultiArgsUpdateMemDeltaGens, false)
 	multiArgsTest2 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
-		aggfuncs.DefPartialResult4GroupConcatDistinctSize+aggfuncs.DefBytesBufferSize+hack.DefBucketMemoryUsageForSetString, groupConcatDistinctMultiArgsUpdateMemDeltaGens, true)
+		aggfuncs.DefPartialResult4GroupConcatDistinctSize+aggfuncs.DefBytesBufferSize+hack.DefBucketMemoryUsageForMapStringToString, groupConcatDistinctMultiArgsUpdateMemDeltaGens, true)
 
 	multiArgsTest3 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
 		aggfuncs.DefPartialResult4GroupConcatOrderSize+aggfuncs.DefTopNRowsSize, groupConcatOrderMultiArgsUpdateMemDeltaGens, false)
@@ -150,7 +150,7 @@ func groupConcatDistinctMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcC
 			continue
 		}
 		valsBuf.Reset()
-		oldMemSize := buffer.Cap() + valsBuf.Cap() + cap(encodeBytesBuffer)
+		oldMemSize := valsBuf.Cap() + cap(encodeBytesBuffer)
 		encodeBytesBuffer = encodeBytesBuffer[:0]
 		for j := range dataType {
 			curVal := row.GetString(j)
@@ -166,11 +166,9 @@ func groupConcatDistinctMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcC
 		if i != 0 {
 			buffer.WriteString(separator)
 		}
-		buffer.WriteString(valsBuf.String())
-		memDelta := int64(len(joinedVal) + (buffer.Cap() + valsBuf.Cap() + cap(encodeBytesBuffer) - oldMemSize))
-		if i == 0 {
-			memDelta += aggfuncs.DefBytesBufferSize
-		}
+		valStr := valsBuf.String()
+		buffer.WriteString(valStr)
+		memDelta := int64(len(joinedVal) + len(valStr) + (valsBuf.Cap() + cap(encodeBytesBuffer) - oldMemSize))
 		memDeltas = append(memDeltas, memDelta)
 	}
 	return memDeltas, nil

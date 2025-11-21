@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -63,8 +62,9 @@ func TestMemSum(t *testing.T) {
 			aggfuncs.DefPartialResult4SumDistinctDecimalSize+hack.DefBucketMemoryUsageForMapStringToDecimal, distinctUpdateMemDeltaGens, true),
 	}
 
+	tests[3].aggTest.valType = types.NewFieldType(mysql.TypeNewDecimal)
+
 	for i, test := range tests {
-		log.Info(fmt.Sprintf("xzxdebug %d", i))
 		t.Run(fmt.Sprintf("%s_%d", test.aggTest.funcName, i), func(t *testing.T) {
 			testAggMemFunc(t, test)
 		})
