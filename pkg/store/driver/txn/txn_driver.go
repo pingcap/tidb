@@ -185,10 +185,10 @@ func (txn *tikvTxn) IterReverse(k kv.Key, lowerBound kv.Key) (iter kv.Iterator, 
 // BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 // Do not use len(value) == 0 or value == nil to represent non-exist.
 // If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
-func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "tikvTxn.BatchGet")
 	defer r.End()
-	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.GetSnapshot()).BatchGet(ctx, keys)
+	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.GetSnapshot()).BatchGet(ctx, keys, options...)
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
@@ -196,14 +196,14 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 	return derr.ToTiDBErr(err)
 }
 
-func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	val, err := txn.GetMemBuffer().Get(ctx, k)
+func (txn *tikvTxn) Get(ctx context.Context, k kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
+	val, err := txn.GetMemBuffer().Get(ctx, k, options...)
 	if kv.ErrNotExist.Equal(err) {
-		val, err = txn.GetSnapshot().Get(ctx, k)
+		val, err = txn.GetSnapshot().Get(ctx, k, options...)
 	}
 
-	if err == nil && len(val) == 0 {
-		return nil, kv.ErrNotExist
+	if err == nil && val.IsValueEmpty() {
+		return kv.ValueEntry{}, kv.ErrNotExist
 	}
 
 	return val, err
