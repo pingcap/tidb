@@ -5258,6 +5258,7 @@ func TestPrivilege(t *testing.T) {
 		{"GRANT PROXY ON ''@'' TO 'root'@'localhost' WITH GRANT OPTION", true, "GRANT PROXY ON ``@`` TO `root`@`localhost` WITH GRANT OPTION"},
 		{"GRANT PROXY ON 'proxied_user' TO 'proxy_user1', 'proxy_user2'", true, "GRANT PROXY ON `proxied_user`@`%` TO `proxy_user1`@`%`, `proxy_user2`@`%`"},
 		{"grant grant option on *.* to u1", true, "GRANT GRANT OPTION ON *.* TO `u1`@`%`"}, // not typical syntax, but supported
+		{"GRANT BINLOG MONITOR ON *.* TO 'user1'@'localhost'", true, "GRANT REPLICATION CLIENT ON *.* TO `user1`@`localhost`"},
 
 		// for revoke statement
 		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'LOCalhost';", true, "REVOKE ALL ON `db1`.* FROM `jeffrey`@`localhost`"},
