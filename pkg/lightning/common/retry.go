@@ -72,10 +72,14 @@ func isRetryableFromErrorMessage(err error) bool {
 func IsRetryableError(err error) bool {
 	for _, singleError := range errors.Errors(err) {
 		if !isSingleRetryableError(singleError) {
-			// we want to log its type and other info for better diagnosing and
-			// direct us to determine how to add to the retryable error list.
-			logutil.BgLogger().Info("meet un-retryable error", zap.Error(singleError),
-				zap.String("info", fmt.Sprintf("type: %T, value: %#v", singleError, singleError)))
+			// the caller might call IsRetryableError on nil, or the task is cancelled,
+			// no need to log more info in this case.
+			if singleError != nil && !goerrors.Is(singleError, context.Canceled) {
+				// we want to log its type and other info for better diagnosing and
+				// direct us to determine how to add to the retryable error list.
+				logutil.BgLogger().Info("meet un-retryable error", zap.Error(singleError),
+					zap.String("info", fmt.Sprintf("type: %T, value: %#v", singleError, singleError)))
+			}
 			return false
 		}
 	}

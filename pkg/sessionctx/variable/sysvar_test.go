@@ -1877,13 +1877,6 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 		expectError         bool
 	}{
 		{
-			name:                "Both enabled, valid input",
-			autoAnalyze:         true,
-			autoAnalyzePriority: true,
-			input:               "10",
-			expectError:         false,
-		},
-		{
 			name:                "Auto analyze disabled",
 			autoAnalyze:         false,
 			autoAnalyzePriority: true,
@@ -1903,6 +1896,14 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 			autoAnalyzePriority: false,
 			input:               "10",
 			expectError:         true,
+		},
+		// Last so it ends as its defaults
+		{
+			name:                "Both enabled, valid input",
+			autoAnalyze:         true,
+			autoAnalyzePriority: true,
+			input:               "10",
+			expectError:         false,
 		},
 	}
 
