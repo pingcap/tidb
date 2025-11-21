@@ -354,7 +354,7 @@ func (rs *Storage) doReadFile(ctx context.Context, file string) ([]byte, error) 
 				return nil, errors.Annotatef(readErr, "failed to read body from get object result, file info: input.bucket='%s', input.key='%s', retryCnt='%d'",
 					rs.options.Bucket, rs.bucketPrefix.ObjectKey(file), retryCnt)
 			}
-			metrics.RetryableErrorCount.WithLabelValues(readErr.Error()).Inc()
+			metrics.AddRetryableError(readErr)
 			continue
 		}
 		return data, nil
