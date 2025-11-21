@@ -785,7 +785,8 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		rNameMap := make(map[string]int, len(rNames))
 		for _, name := range lNames {
 			// Natural join should ignore _tidb_rowid
-			if name.ColName.L == "_tidb_rowid" {
+			if name.ColName.L == "_tidb_rowid" ||
+				name.ColName.L == "_tidb_commit_ts" {
 				continue
 			}
 			// record left map
@@ -797,7 +798,8 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		}
 		for _, name := range rNames {
 			// Natural join should ignore _tidb_rowid
-			if name.ColName.L == "_tidb_rowid" {
+			if name.ColName.L == "_tidb_rowid" ||
+				name.ColName.L == "_tidb_commit_ts" {
 				continue
 			}
 			// record right map
@@ -826,7 +828,8 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	commonLen := 0
 	for i, lName := range lNames {
 		// Natural join should ignore _tidb_rowid
-		if lName.ColName.L == "_tidb_rowid" {
+		if lName.ColName.L == "_tidb_rowid" ||
+			lName.ColName.L == "_tidb_commit_ts" {
 			continue
 		}
 		for j := commonLen; j < len(rNames); j++ {

@@ -3538,8 +3538,8 @@ insert into t1 values (1,1),(2,2);
 update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
 select * from t1;
 a	b
-1	1
-2	2
+2	3
+2	3
 drop table t1;
 create table t1 (a int primary key, b int);
 insert into t1 values (1,1),(2,2);
@@ -4049,8 +4049,8 @@ insert into t1 values (1,1),(2,2);
 update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
 select * from t1;
 a	b
-1	1
-2	2
+2	3
+2	3
 drop table t1;
 create table t1 (a int primary key, b int);
 insert into t1 values (1,1),(2,2);

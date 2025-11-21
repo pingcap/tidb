@@ -287,11 +287,11 @@ func (s *tableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, m
 	for _, c := range schemaCols {
 		if c.ID == model.ExtraHandleID {
 			hasExtraHandleID = true
-			break
+			continue
 		}
 		if c.ID == model.ExtraCommitTSID {
 			hasExtraCommitTSID = true
-			break
+			continue
 		}
 	}
 	if len(cols) < len(schemaCols) && hasExtraHandleID {
