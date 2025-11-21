@@ -248,6 +248,12 @@ func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.Tabl
 				skipSystemTableCheck = true
 			}
 		})
+
+		// In some test environments, the session pool may be nil.
+		// In such cases, we cannot determine if it's a system table, so we skip the check.
+		if se, ok := h.SPool().(*syssession.AdvancedSessionPool); ok && se == nil {
+			skipSystemTableCheck = true
+		}
 		if skipSystemTableCheck {
 			h.UpdateStatsCache(types.CacheUpdate{
 				Updated: []*statistics.Table{tbl},
@@ -290,15 +296,17 @@ func (h *Handle) isSystemTable(physicalTableID int64, tblInfo *model.TableInfo) 
 	}
 
 	isSystemTable := false
-	err := util.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
-		is := sctx.GetLatestInfoSchema()
-		db, ok := is.SchemaByID(dbID)
-		// 1 is used for some unit tests where the database is not created but directly injected.
-		intest.Assert(ok || dbID == 1, "cannot find db for table %d, dbID %d", physicalTableID, dbID)
-		if ok && filter.IsSystemSchema(db.Name.L) {
-			isSystemTable = true
-		}
-		return nil
+	err := h.SPool().WithSession(func(session *syssession.Session) error {
+		return session.WithSessionContext(func(sctx sessionctx.Context) error {
+			is := sctx.GetLatestInfoSchema()
+			db, ok := is.SchemaByID(dbID)
+			// 1 is used for some unit tests where the database is not created but directly injected.
+			intest.Assert(ok || dbID == 1, "cannot find db for table %d, dbID %d", physicalTableID, dbID)
+			if ok && filter.IsSystemSchema(db.Name.L) {
+				isSystemTable = true
+			}
+			return nil
+		})
 	})
 	if err != nil {
 		intest.Assert(err == nil, "unexpected error: %v, tableID %d, dbID %d", err, physicalTableID, dbID)
