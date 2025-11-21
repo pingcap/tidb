@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -80,6 +81,25 @@ func TestDAGPlanBuilderSimpleCase(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+func TestDAGPlanBuilderSimpleCase(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/SkipSystemTableCheck", `return(true)`)
+	if kerneltype.IsNextGen() {
+		t.Skip("Please run the TestDAGPlanBuilderSimpleCaseForNextGen")
+	}
+	testkit.RunTestUnderCascades(t, testDAGPlanBuilderSimpleCase)
+}
+
+func TestDAGPlanBuilderSimpleCaseForNextGen(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/SkipSystemTableCheck", `return(true)`)
+	if kerneltype.IsClassic() {
+		t.Skip("Please run the TestDAGPlanBuilderSimpleCase")
+	}
+	testkit.RunTestUnderCascades(t, testDAGPlanBuilderSimpleCase)
+}
+
+>>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
 func TestDAGPlanBuilderJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
