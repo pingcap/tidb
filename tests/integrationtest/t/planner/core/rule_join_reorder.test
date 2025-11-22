@@ -118,3 +118,21 @@ select * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b;
 select @@last_plan_from_binding;
 --replace_column 5 <create_time> 6 <update_time>
 show global bindings where original_sql like '%planner__core__rule_join_reorder%';
+
+
+# TestJoinReorderPushSelection
+drop table if exists t1, t2, t3, t4;
+create table t1(id int not null primary key, name varchar(100));
+create table t2(id int not null primary key, name varchar(100));
+create table t3(id int not null primary key, name varchar(100));
+create table t4(id int not null primary key, name varchar(100));
+
+# Test with selection push down disabled (default)
+set @@tidb_opt_join_reorder_push_selection = 0;
+explain format = 'plan_tree' select /*+ leading(t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4';
+explain format = 'plan_tree' select /*+ leading(t3, t4, t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4';
+
+# Test with selection push down enabled
+set @@tidb_opt_join_reorder_push_selection = 1;
+explain format = 'plan_tree' select /*+ leading(t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4';
+explain format = 'plan_tree' select /*+ leading(t3, t4, t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4';
