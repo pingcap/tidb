@@ -214,10 +214,11 @@ a	b
 115	50
 explain select /*+ index_lookup_pushdown(t2, i) */ * from t2;
 id	estRows	task	access object	operator info
-TableReader_6	10000.00	root		data:TableFullScan_5
-└─TableFullScan_5	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, common handle table is not supported
+IndexLookUp_7	10000.00	root		
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1 2]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > 'a' order by a asc;
 id	estRows	task	access object	operator info
 IndexLookUp_18	3333.33	root		
@@ -227,11 +228,11 @@ Level	Code	Message
 Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.
 explain select /*+ index_lookup_pushdown(t3, a) */ * from t3 where id < 100 and a = 1;
 id	estRows	task	access object	operator info
-TableReader_8	1.00	root	partition:p0	data:Selection_7
-└─Selection_7	1.00	cop[tikv]		eq(executor__index_lookup_pushdown.t3.a, 1)
-  └─TableRangeScan_6	3333.33	cop[tikv]	table:t3	range:[-inf,100), keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, partition table is not supported
+IndexLookUp_8	33.23	root	partition:p0	
+├─LocalIndexLookUp_10(Build)	33.23	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	33.23	cop[tikv]	table:t3, index:a(a)	range:[1 -inf,1 100), keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	33.23	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain select /*+ index_lookup_pushdown(t4, a) */ * from t4 where a < 100;
 id	estRows	task	access object	operator info
 UnionScan_7	3323.33	root		lt(executor__index_lookup_pushdown.t4.a, 100)
@@ -378,12 +379,10 @@ insert into t3 values(1, 2, 3);
 explain select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
 id	estRows	task	access object	operator info
 IndexLookUp_7	10000.00	root	partition:all	
-├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t3, index:a(a)	keep order:false, stats:pseudo
-└─TableRowIDScan_6(Probe)	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, partition table is not supported
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t3, index:a(a)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
 id	a	b
 1	2	3
-Level	Code	Message
-Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, partition table is not supported
