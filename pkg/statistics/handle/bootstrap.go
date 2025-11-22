@@ -201,6 +201,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			if !ok {
 				continue
 			}
+			table = table.CopyAs(statistics.BothMapsWritable)
 			// Fetch table info only once per table instead of once per row
 			tblInfo, ok = h.TableInfoByIDForInitStats(is, tblID)
 			if !ok {
@@ -531,6 +532,8 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			if !ok {
 				continue
 			}
+			// existing idx histogram is modified have to use deep copy
+			table = table.CopyAs(statistics.AllDataWritable)
 		}
 		idx := table.GetIdx(row.GetInt64(1))
 		if idx == nil || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
@@ -653,6 +656,8 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			if !ok {
 				continue
 			}
+			// existing idx histogram is modified have to use deep copy
+			table = table.CopyAs(statistics.AllDataWritable)
 		}
 		var lower, upper types.Datum
 		var hist *statistics.Histogram
