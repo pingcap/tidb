@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	goerrors "errors"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -43,6 +42,7 @@ import (
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/table"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -53,13 +53,14 @@ import (
 
 type readIndexStepExecutor struct {
 	taskexecutor.BaseStepExecutor
-	store    kv.Storage
-	etcdCli  *clientv3.Client
-	sessPool *sess.Pool
-	job      *model.Job
-	indexes  []*model.IndexInfo
-	ptbl     table.PhysicalTable
-	jc       *ReorgContext
+	store        kv.Storage
+	etcdCli      *clientv3.Client
+	sessPool     *sess.Pool
+	job          *model.Job
+	indexes      []*model.IndexInfo
+	ptbl         table.PhysicalTable
+	jc           *ReorgContext
+	ownerManager owner.Manager
 
 	avgRowSize      int
 	cloudStorageURI string
@@ -83,7 +84,7 @@ type readIndexSummary struct {
 func newReadIndexExecutor(
 	store kv.Storage,
 	sessPool *sess.Pool,
-	etcdCli *clientv3.Client,
+	ddlObj *ddl,
 	job *model.Job,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
@@ -93,7 +94,8 @@ func newReadIndexExecutor(
 ) (*readIndexStepExecutor, error) {
 	return &readIndexStepExecutor{
 		store:           store,
-		etcdCli:         etcdCli,
+		etcdCli:         ddlObj.etcdCli,
+		ownerManager:    ddlObj.ownerManager,
 		sessPool:        sessPool,
 		job:             job,
 		indexes:         indexes,
@@ -246,6 +248,10 @@ func (r *readIndexStepExecutor) ResetSummary() {
 
 func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
+	// For owner node, the cleanup is done when the job is finished.
+	if !r.ownerManager.IsOwner() {
+		metrics.CleanupAllMetricsForJob(r.job.ID)
+	}
 	if r.backend != nil {
 		r.backend.Close()
 	}
@@ -375,14 +381,9 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 	}
 	indexIDs := make([]int64, 0, len(r.indexes))
 	uniques := make([]bool, 0, len(r.indexes))
-	var idxNames strings.Builder
 	for _, index := range r.indexes {
 		indexIDs = append(indexIDs, index.ID)
 		uniques = append(uniques, index.Unique)
-		if idxNames.Len() > 0 {
-			idxNames.WriteByte('+')
-		}
-		idxNames.WriteString(index.Name.O)
 	}
 	engines, err := backendCtx.Register(indexIDs, uniques, r.ptbl)
 	if err != nil {
@@ -392,7 +393,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
+	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job, tbl.Meta().Name.O, getIndexNames(r.indexes), r.GetMeterRecorder())
 	return NewAddIndexIngestPipeline(
 		wctx,
 		r.store,
@@ -436,14 +437,8 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		kvMeta.MergeSummary(summary)
 		s.mu.Unlock()
 	}
-	var idxNames strings.Builder
-	for _, idx := range r.indexes {
-		if idxNames.Len() > 0 {
-			idxNames.WriteByte('+')
-		}
-		idxNames.WriteString(idx.Name.O)
-	}
-	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
+
+	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job, tbl.Meta().Name.O, getIndexNames(r.indexes), r.GetMeterRecorder())
 	return NewWriteIndexToExternalStoragePipeline(
 		wctx,
 		r.store,
@@ -473,10 +468,11 @@ type distTaskRowCntCollector struct {
 
 func newDistTaskRowCntCollector(
 	summary *execute.SubtaskSummary,
-	dbName, tblName, idxName string,
+	job *model.Job,
+	tblName, idxName string,
 	meterRec *metering.Recorder,
 ) *distTaskRowCntCollector {
-	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName)
+	counter := metrics.GetBackfillTotalByLabel(job.ID, metrics.LblAddIdxRate, job.SchemaName, tblName, idxName)
 	return &distTaskRowCntCollector{
 		summary:  summary,
 		counter:  counter,

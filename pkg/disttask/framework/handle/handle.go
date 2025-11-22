@@ -258,7 +258,7 @@ func RunWithRetry(
 			return err
 		}
 		lastErr = err
-		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+		metrics.AddRetryableError(err)
 		logger.Warn("met retryable error", zap.Int("retry-count", i),
 			zap.Int("max-retry", maxRetry), zap.Error(err))
 		select {

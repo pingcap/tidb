@@ -203,7 +203,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 		if err != nil {
 			logutil.DDLLogger().Error("Fail to get ModifyIndexArgs", zap.String("label", label), zap.String("schemaName", schemaName), zap.String("tableName", tbl.Meta().Name.String()))
 		} else {
-			colOrIdxName = getIdxNamesFromArgs(args)
+			colOrIdxName = getIndexNamesFromArgs(args)
 		}
 	case model.ActionModifyColumn:
 		oldCol, _ := getOldAndNewColumnsForUpdateColumn(tbl, rInfo.currElement.ID)
@@ -225,19 +225,30 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 		batchCnt:   batchCnt,
 		jobContext: jobCtx,
 		metricCounter: metrics.GetBackfillTotalByLabel(
-			label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
+			rInfo.Job.ID, label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
 		conflictCounter: metrics.GetBackfillTotalByLabel(
-			fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
+			rInfo.Job.ID, fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
 	}, nil
 }
 
-func getIdxNamesFromArgs(args *model.ModifyIndexArgs) string {
+func getIndexNamesFromArgs(args *model.ModifyIndexArgs) string {
 	var sb strings.Builder
 	for i, idx := range args.IndexArgs {
 		if i > 0 {
 			sb.WriteString("+")
 		}
-		sb.WriteString(idx.IndexName.O)
+		sb.WriteString(getChangingIndexOriginName(&model.IndexInfo{Name: idx.IndexName}))
+	}
+	return sb.String()
+}
+
+func getIndexNames(indexes []*model.IndexInfo) string {
+	var sb strings.Builder
+	for i, idx := range indexes {
+		if i > 0 {
+			sb.WriteString("+")
+		}
+		sb.WriteString(getChangingIndexOriginName(idx))
 	}
 	return sb.String()
 }
@@ -747,7 +758,6 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	idxCnt := len(reorgInfo.elements)
 	indexIDs := make([]int64, 0, idxCnt)
 	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
-	var indexNames strings.Builder
 	uniques := make([]bool, 0, idxCnt)
 	hasUnique := false
 	for _, e := range reorgInfo.elements {
@@ -761,10 +771,6 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 			return errors.Errorf("index info not found: %d", e.ID)
 		}
 		indexInfos = append(indexInfos, indexInfo)
-		if indexNames.Len() > 0 {
-			indexNames.WriteString("+")
-		}
-		indexNames.WriteString(indexInfo.Name.O)
 		uniques = append(uniques, indexInfo.Unique)
 		hasUnique = hasUnique || indexInfo.Unique
 	}
@@ -793,7 +799,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	rowCntListener := &localRowCntCollector{
 		prevPhysicalRowCnt: reorgCtx.getRowCount(),
 		reorgCtx:           reorgCtx,
-		counter:            metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
+		counter:            metrics.GetBackfillTotalByLabel(job.ID, metrics.LblAddIdxRate, job.SchemaName, job.TableName, getIndexNames(indexInfos)),
 	}
 
 	sctx, err := sessPool.Get()
