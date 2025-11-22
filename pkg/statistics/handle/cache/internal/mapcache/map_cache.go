@@ -55,24 +55,28 @@ func (m *MapCache) Get(k int64) (*statistics.Table, bool) {
 
 // Put implements StatsCacheInner
 func (m *MapCache) Put(k int64, v *statistics.Table) bool {
+	// Calculate the new cost first before updating anything
+	newCost := v.MemoryUsage().TotalMemUsage
+
 	item, ok := m.tables[k]
 	if ok {
+		// Store the old cost separately
 		oldCost := item.cost
-		newCost := v.MemoryUsage().TotalMemUsage
+		// Update the item with new value and cost
 		item.value = v
 		item.cost = newCost
 		m.tables[k] = item
+		// Update total memory usage with the difference
 		m.memUsage += newCost - oldCost
 		return true
 	}
-	cost := v.MemoryUsage().TotalMemUsage
 	item = cacheItem{
 		key:   k,
 		value: v,
-		cost:  cost,
+		cost:  newCost,
 	}
 	m.tables[k] = item
-	m.memUsage += cost
+	m.memUsage += newCost
 	return true
 }
 

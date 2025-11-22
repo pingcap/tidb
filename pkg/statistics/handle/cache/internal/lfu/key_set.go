@@ -22,17 +22,22 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 )
 
+type tableWithCost struct {
+	table *statistics.Table
+	cost  int64
+}
+
 type keySet struct {
-	set map[int64]*statistics.Table
+	set map[int64]*tableWithCost
 	mu  sync.RWMutex
 }
 
 func (ks *keySet) Remove(key int64) int64 {
 	var cost int64
 	ks.mu.Lock()
-	if table, ok := ks.set[key]; ok {
-		if table != nil {
-			cost = table.MemoryUsage().TotalTrackingMemUsage()
+	if entry, ok := ks.set[key]; ok {
+		if entry != nil {
+			cost = entry.cost
 		}
 		delete(ks.set, key)
 	}
@@ -54,21 +59,37 @@ func (ks *keySet) Len() int {
 	return result
 }
 
-func (ks *keySet) AddKeyValue(key int64, value *statistics.Table) {
+func (ks *keySet) AddKeyValue(key int64, value *statistics.Table, cost int64) {
 	ks.mu.Lock()
-	ks.set[key] = value
+	ks.set[key] = &tableWithCost{
+		table: value,
+		cost:  cost,
+	}
 	ks.mu.Unlock()
 }
 
 func (ks *keySet) Get(key int64) (*statistics.Table, bool) {
 	ks.mu.RLock()
-	value, ok := ks.set[key]
+	entry, ok := ks.set[key]
 	ks.mu.RUnlock()
-	return value, ok
+	if !ok || entry == nil {
+		return nil, ok
+	}
+	return entry.table, ok
+}
+
+func (ks *keySet) GetWithCost(key int64) (*statistics.Table, int64, bool) {
+	ks.mu.RLock()
+	entry, ok := ks.set[key]
+	ks.mu.RUnlock()
+	if !ok || entry == nil {
+		return nil, 0, ok
+	}
+	return entry.table, entry.cost, ok
 }
 
 func (ks *keySet) Clear() {
 	ks.mu.Lock()
-	ks.set = make(map[int64]*statistics.Table)
+	ks.set = make(map[int64]*tableWithCost)
 	ks.mu.Unlock()
 }
