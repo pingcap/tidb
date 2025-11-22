@@ -135,6 +135,7 @@ func IsInvisibleStatusVar(varName string) bool {
 // IsInvisibleSysVar returns true if the sysvar needs to be hidden
 func IsInvisibleSysVar(varNameInLower string) bool {
 	switch varNameInLower {
+<<<<<<< HEAD
 	case variable.TiDBDDLSlowOprThreshold, // ddl_slow_threshold
 		variable.TiDBCheckMb4ValueInUTF8,
 		variable.TiDBConfig,
@@ -158,6 +159,39 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		variable.TiDBRestrictedReadOnly,
 		variable.TiDBTopSQLMaxTimeSeriesCount,
 		variable.TiDBTopSQLMaxMetaCount,
+=======
+	case vardef.TiDBDDLSlowOprThreshold, // ddl_slow_threshold
+		vardef.TiDBCheckMb4ValueInUTF8,
+		vardef.TiDBConfig,
+		vardef.TiDBEnableSlowLog,
+		vardef.TiDBEnableTelemetry,
+		vardef.TiDBExpensiveQueryTimeThreshold,
+		vardef.TiDBForcePriority,
+		vardef.TiDBGeneralLog,
+		vardef.TiDBMetricSchemaRangeDuration,
+		vardef.TiDBMetricSchemaStep,
+		vardef.TiDBOptWriteRowID,
+		vardef.TiDBPProfSQLCPU,
+		vardef.TiDBRecordPlanInSlowLog,
+		vardef.TiDBRowFormatVersion,
+		vardef.TiDBSlowQueryFile,
+		vardef.TiDBSlowLogThreshold,
+		vardef.TiDBEnableCollectExecutionInfo,
+		vardef.TiDBMemoryUsageAlarmRatio,
+		vardef.TiDBRedactLog,
+		vardef.TiDBRestrictedReadOnly,
+		vardef.TiDBTopSQLMaxTimeSeriesCount,
+		vardef.TiDBTopSQLMaxMetaCount,
+		vardef.TiDBServiceScope,
+		vardef.TiDBCloudStorageURI,
+		vardef.TiDBStmtSummaryMaxStmtCount,
+		vardef.TiDBServerMemoryLimit,
+		vardef.TiDBServerMemoryLimitGCTrigger,
+		vardef.TiDBInstancePlanCacheMaxMemSize,
+		vardef.TiDBStatsCacheMemQuota,
+		vardef.TiDBMemQuotaBindingCache,
+		vardef.TiDBSchemaCacheSize,
+>>>>>>> eeee02deea7 (util/sem: remove tidb_slow_txn_log_threshold from invisible variable list (#64634))
 		tidbAuditRetractLog:
 		return true
 	}
