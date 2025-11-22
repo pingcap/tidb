@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -130,6 +131,22 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
+	// Prune indexes based on WHERE, ordering, and join columns if we have too many
+	threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
+	if len(ds.AllPossibleAccessPaths) > threshold && (len(ds.WhereColumns) > 0 || len(ds.OrderingColumns) > 0 || len(ds.JoinColumns) > 0) {
+		ds.AllPossibleAccessPaths = rule.PruneIndexesByWhereAndOrder(
+			ds,
+			ds.AllPossibleAccessPaths,
+			ds.WhereColumns,
+			ds.OrderingColumns,
+			ds.JoinColumns,
+			threshold,
+		)
+		// Make a copy for PossibleAccessPaths to avoid sharing the same slice
+		ds.PossibleAccessPaths = make([]*util.AccessPath, len(ds.AllPossibleAccessPaths))
+		copy(ds.PossibleAccessPaths, ds.AllPossibleAccessPaths)
+	}
+	// Fill index paths for all paths
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
@@ -593,7 +610,9 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			path.IsSingleScan = true
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
-			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+			if !path.IsSingleScan {
+				path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+			}
 		}
 		// step: 3
 		// Try some heuristic rules to select access path.
