@@ -1140,3 +1140,43 @@ func TestProcessInfoForStaleReadAutoCommit(t *testing.T) {
 		require.Contains(t, err.Error(), "Query execution was interrupted")
 	}, uint64(ts))
 }
+
+func TestGetDBNames(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Status.RecordDBLabel = true
+	config.StoreGlobalConfig(&newCfg)
+	defer config.StoreGlobalConfig(originCfg)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database DatabaseA;")
+	tk.MustExec("use DatabaseA;")
+	dbs := session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "DatabaseA")
+	tk.MustExec(`create table t1(id bigint primary key, a int, b varchar(32), c text)`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "DatabaseA")
+	tk.MustExec(`insert into t1 (id, b, c) values(1, 'ab', 'ab\\\\c');`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "DatabaseA")
+	tk.MustQuery("select * from t1 where id = 1").Check(testkit.Rows("1 <nil> ab ab\\\\c"))
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "DatabaseA")
+	tk.MustExec(`insert into t1 (id, b, c) values(2, 'xy', 'ab\\c');`)
+	tk.MustExec(`update t1 set a = 123 where id = 2`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "DatabaseA")
+	tk.MustExec(`delete from t1 where id = 1;`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "DatabaseA")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("2 123 xy ab\\c"))
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "DatabaseA")
+	tk.MustQuery("show tables")
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "DatabaseA")
+	tk.MustExec(`drop table t1`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "DatabaseA")
+}
