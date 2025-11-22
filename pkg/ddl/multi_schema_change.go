@@ -76,6 +76,14 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		if err != nil {
 			return ver, err
 		}
+
+		if checkNeedAnalyzeForMultiSchemaChange(job, tblInfo) {
+			w.doAnalyzeForTable(job, tblInfo)
+			if job.ReorgMeta.AnalyzeState == model.AnalyzeStateRunning {
+				return ver, nil
+			}
+		}
+
 		var schemaVersionGenerated = false
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
 		// Step the sub-jobs to the non-revertible states all at once.
@@ -195,7 +203,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 		SchemaState: jobW.SchemaState,
 		SnapshotVer: jobW.SnapshotVer,
 		Revertible:  true,
-		CtxVars:     jobW.CtxVars,
+		NeedReorg:   jobW.NeedReorg,
 		ReorgTp:     reorgTp,
 	})
 	return nil
@@ -367,15 +375,28 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	info.SubJobs = newSubJobs
 }
 
-// setNeedAnalyze sets NeedAnalyze for the last sub-job that can do embedded analyze.
-func setNeedAnalyze(info *model.MultiSchemaInfo) {
-	for i := len(info.SubJobs) - 1; i >= 0; i-- {
-		subJob := info.SubJobs[i]
-		if subJob.CanEmbeddedAnalyze() {
-			subJob.NeedAnalyze = true
-			break
+// checkNeedAnalyzeForMultiSchemaChange check if the multi-schema change job
+// need analyze after all sub jobs are non-revertible.
+func checkNeedAnalyzeForMultiSchemaChange(job *model.Job, tblInfo *model.TableInfo) bool {
+	switch job.ReorgMeta.AnalyzeState {
+	case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+		return false
+	case model.AnalyzeStateRunning:
+		return true
+	}
+
+	for _, subJob := range job.MultiSchemaInfo.SubJobs {
+		switch subJob.Type {
+		case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn:
+			if checkAnalyzeNecessary(job, tblInfo) {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+				return true
+			}
 		}
 	}
+
+	job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+	return false
 }
 
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {
