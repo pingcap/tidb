@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/testutil"
 	"github.com/stretchr/testify/require"
@@ -313,4 +314,69 @@ func TestMemoryControlWithUpdate(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return int64(0) == lfu.Cost()
 	}, 5*time.Second, 100*time.Millisecond)
+}
+
+// TestLFUSameObjectUpdate tests that when the same table object is modified
+// and put again, the cost is correctly updated based on the stored cost,
+// not the recalculated cost from the (already modified) object.
+func TestLFUSameObjectUpdate(t *testing.T) {
+	lfu, err := NewLFU(10000)
+	require.NoError(t, err)
+
+	// Create a table with 1 column and 1 index
+	// Cost = (1 col + 1 idx) * mockCMSMemoryUsage = 2 * 4 = 8
+	table := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+	require.Equal(t, int64(8), table.MemoryUsage().TotalTrackingMemUsage())
+
+	// First Put: should add full cost
+	lfu.Put(1, table)
+	lfu.wait()
+	require.Equal(t, int64(8), lfu.Cost())
+
+	// Modify the SAME table object by adding another column
+	// This simulates updating table statistics in place
+	table.SetCol(2, &statistics.Column{
+		Info:              &model.ColumnInfo{ID: 2},
+		CMSketch:          statistics.NewCMSketch(1, 1),
+		StatsVer:          statistics.Version2,
+		StatsLoadedStatus: statistics.NewStatsAllEvictedStatus(),
+	})
+
+	// Verify the table's memory usage has increased
+	// Cost = (2 col + 1 idx) * mockCMSMemoryUsage = 3 * 4 = 12
+	require.Equal(t, int64(12), table.MemoryUsage().TotalTrackingMemUsage())
+
+	// Put the SAME object again with updated memory usage
+	lfu.Put(1, table)
+	lfu.wait()
+
+	// Cost should be correctly updated to reflect the new memory usage
+	// Expected: 12 (not 20 which would happen if we added 12 again)
+	// The stored old cost (8) should be subtracted, and new cost (12) added
+	// Net effect: 8 + 12 - 8 = 12
+	require.Equal(t, int64(12), lfu.Cost())
+
+	// Modify again by adding another column
+	table.SetCol(3, &statistics.Column{
+		Info:              &model.ColumnInfo{ID: 3},
+		CMSketch:          statistics.NewCMSketch(1, 1),
+		StatsVer:          statistics.Version2,
+		StatsLoadedStatus: statistics.NewStatsAllEvictedStatus(),
+	})
+
+	// Cost = (3 col + 1 idx) * mockCMSMemoryUsage = 4 * 4 = 16
+	require.Equal(t, int64(16), table.MemoryUsage().TotalTrackingMemUsage())
+
+	// Put the same object a third time
+	lfu.Put(1, table)
+	lfu.wait()
+
+	// Cost should be updated from 12 to 16
+	require.Equal(t, int64(16), lfu.Cost())
+
+	// Verify we can still get the table
+	retrieved, ok := lfu.Get(1)
+	require.True(t, ok)
+	require.NotNil(t, retrieved)
+	require.Equal(t, int64(16), retrieved.MemoryUsage().TotalTrackingMemUsage())
 }
