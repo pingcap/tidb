@@ -139,3 +139,31 @@ HashJoin	root		inner join, equal:[eq(cd_test_utf8mb4_0900_bin.t1.code, cd_test_u
 └─TableReader(Probe)	root		data:Selection
   └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t1.code, "1"), not(isnull(cd_test_utf8mb4_0900_bin.t1.code))
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id_ci varchar(10) charset utf8mb4 collate utf8mb4_general_ci, id_bin varchar(10) charset utf8mb4 collate utf8mb4_bin);
+create table t2(id_ci varchar(10) charset utf8mb4 collate utf8mb4_general_ci, id_bin varchar(10) charset utf8mb4 collate utf8mb4_bin);
+insert into t1 values('a','A');
+insert into t2 values('A','A');
+select * from t1 join t2 on t1.id_ci = t2.id_ci;
+id_ci	id_bin	id_ci	id_bin
+explain format='plan_tree' select * from t1 join t2 on t1.id_ci = t2.id_ci;
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(cd_test_utf8mb4_0900_bin.t1.id_ci, cd_test_utf8mb4_0900_bin.t2.id_ci)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(cd_test_utf8mb4_0900_bin.t2.id_ci))
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(cd_test_utf8mb4_0900_bin.t1.id_ci))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select * from t1 join t2 on t1.id_ci = t2.id_ci where t1.id_ci in (t2.id_ci, t2.id_bin);
+id_ci	id_bin	id_ci	id_bin
+explain format='plan_tree' select * from t1 join t2 on t1.id_ci = t2.id_ci where t1.id_ci in (t2.id_ci, t2.id_bin);
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(cd_test_utf8mb4_0900_bin.t1.id_ci, cd_test_utf8mb4_0900_bin.t2.id_ci)], other cond:in(cd_test_utf8mb4_0900_bin.t1.id_ci, cd_test_utf8mb4_0900_bin.t2.id_ci, cd_test_utf8mb4_0900_bin.t2.id_bin)
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(cd_test_utf8mb4_0900_bin.t2.id_ci))
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(cd_test_utf8mb4_0900_bin.t1.id_ci))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo

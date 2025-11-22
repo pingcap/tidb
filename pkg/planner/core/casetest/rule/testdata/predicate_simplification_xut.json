@@ -6,12 +6,12 @@
         "SQL": "SELECT i.id, ip_products.products FROM t1 AS i LEFT JOIN t4 ON i.id = t4.c3 LEFT JOIN (SELECT t4.c3, GROUP_CONCAT(DISTINCT t2.c3 ORDER BY t2.c3 ASC) AS products FROM t4 JOIN t3 ON t4.c1 = t3.c1 AND t4.c2 = t3.c2 LEFT JOIN t2 ON t4.c1 = t2.c1 AND t4.c2 = t2.c2 WHERE t3.c3 = 'production' AND t4.state = 'ACTIVE' GROUP BY t4.c3, t4.c1, t4.c2) AS ip_products ON t4.c3 = ip_products.c3 LEFT JOIN t5 ON i.id = t5.c1 AND t5.c2 = 'production' WHERE t4.state = 'ACTIVE' AND t5.c1 IS NULL GROUP BY i.id, ip_products.products HAVING FIND_IN_SET('info', products) ORDER BY i.id ASC LIMIT 500 OFFSET 5500;",
         "Plan": [
           "TopN 8.00 root  test.t1.id, offset:5500, count:500",
-          "└─HashAgg 8.00 root  group by:Column#16, test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id, funcs:firstrow(Column#16)->Column#16",
+          "└─HashAgg 8.00 root  group by:Column#18, test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id, funcs:firstrow(Column#18)->Column#18",
           "  └─Selection 8.00 root  isnull(test.t5.c1)",
-          "    └─Projection 10.00 root  test.t1.id, Column#16, test.t5.c1",
+          "    └─Projection 10.00 root  test.t1.id, Column#18, test.t5.c1",
           "      └─HashJoin 10.00 root  inner join, equal:[eq(test.t4.c3, test.t4.c3)]",
-          "        ├─Selection(Build) 6.40 root  find_in_set(\"info\", Column#16)",
-          "        │ └─HashAgg 8.00 root  group by:test.t4.c1, test.t4.c2, test.t4.c3, funcs:group_concat(distinct test.t2.c3 order by test.t2.c3 separator \",\")->Column#16, funcs:firstrow(test.t4.c3)->test.t4.c3",
+          "        ├─Selection(Build) 6.40 root  find_in_set(\"info\", Column#18)",
+          "        │ └─HashAgg 8.00 root  group by:test.t4.c1, test.t4.c2, test.t4.c3, funcs:group_concat(distinct test.t2.c3 order by test.t2.c3 separator \",\")->Column#18, funcs:firstrow(test.t4.c3)->test.t4.c3",
           "        │   └─IndexJoin 15.62 root  left outer join, inner:TableReader, left side:IndexJoin, outer key:test.t4.c1, test.t4.c2, inner key:test.t2.c1, test.t2.c2, equal cond:eq(test.t4.c1, test.t2.c1), eq(test.t4.c2, test.t2.c2)",
           "        │     ├─IndexJoin(Build) 12.50 root  inner join, inner:TableReader, outer key:test.t3.c1, test.t3.c2, inner key:test.t4.c1, test.t4.c2, equal cond:eq(test.t3.c1, test.t4.c1), eq(test.t3.c2, test.t4.c2)",
           "        │     │ ├─IndexReader(Build) 10.00 root  index:IndexRangeScan",
@@ -108,6 +108,22 @@
           "  └─TopN(Probe) 1.00 cop[tikv]  test.issue64263.column_6:desc, test.issue64263.column_1:desc, offset:0, count:1000",
           "    └─Selection 1.00 cop[tikv]  or(eq(test.issue64263.column_2, 1), eq(test.issue64263.column_4, 121092106))",
           "      └─TableRowIDScan 10.00 cop[tikv] table:ISSUE64263 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "SELECT STRAIGHT_JOIN * FROM t1 LEFT JOIN t0 ON t1.a = t0.a WHERE t1.a = t0.a OR t1.a = t0.b;",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t0.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "LastPlanFromCache": [
           "1"
