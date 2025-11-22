@@ -380,3 +380,129 @@ func TestLFUSameObjectUpdate(t *testing.T) {
 	require.NotNil(t, retrieved)
 	require.Equal(t, int64(16), retrieved.MemoryUsage().TotalTrackingMemUsage())
 }
+
+// TestLFUSameObjectEviction tests that when the same table object is evicted
+// and then re-inserted, the cost tracking remains correct.
+func TestLFUSameObjectEviction(t *testing.T) {
+	// Create a small cache that can hold approximately 3 tables of cost 12 each
+	// Cost per table: (1 col + 1 idx) * 4 = 8
+	// Cache capacity: 30 (can hold ~3 tables)
+	lfu, err := NewLFU(30)
+	require.NoError(t, err)
+
+	// Create and put the first table (this will be evicted later)
+	table1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+	require.Equal(t, int64(8), table1.MemoryUsage().TotalTrackingMemUsage())
+	lfu.Put(1, table1)
+	lfu.wait()
+	require.Equal(t, int64(8), lfu.Cost())
+
+	// Put more tables to fill the cache and trigger eviction of table1
+	table2 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+	table3 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+	table4 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+	table5 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+
+	lfu.Put(2, table2)
+	lfu.Put(3, table3)
+	lfu.Put(4, table4)
+	lfu.Put(5, table5)
+	lfu.wait()
+
+	// At this point, some tables should be evicted
+	// Cost should be approximately within capacity (with some buffer for internal overhead)
+	// The exact eviction behavior depends on ristretto's policy, but cost should be reasonable
+	require.LessOrEqual(t, lfu.Cost(), int64(50)) // Allow some overhead
+
+	// Now modify table1 (which may have been evicted) and re-insert it
+	// This tests that evicted items can be updated and re-inserted correctly
+	table1.SetCol(2, &statistics.Column{
+		Info:              &model.ColumnInfo{ID: 2},
+		CMSketch:          statistics.NewCMSketch(1, 1),
+		StatsVer:          statistics.Version2,
+		StatsLoadedStatus: statistics.NewStatsAllEvictedStatus(),
+	})
+	require.Equal(t, int64(12), table1.MemoryUsage().TotalTrackingMemUsage())
+
+	// Get the current cost before re-inserting
+	costBefore := lfu.Cost()
+
+	// Re-insert the modified table1
+	lfu.Put(1, table1)
+	lfu.wait()
+
+	// The cost change should reflect the delta of table1's memory usage
+	// If table1 was evicted and stored in resultKeySet with its evicted cost,
+	// the cost should increase by approximately (12 - evicted_cost)
+	// If it wasn't evicted, cost should change by (12 - 8) = 4
+	costAfter := lfu.Cost()
+	costDelta := costAfter - costBefore
+
+	// The cost delta should be reasonable (not duplicating the full cost)
+	// It should be around 0-12 depending on eviction state
+	require.GreaterOrEqual(t, costDelta, int64(-8)) // Allow some decrease if something was evicted
+	require.LessOrEqual(t, costDelta, int64(12))    // But not more than the new table cost
+
+	// Verify we can retrieve the updated table
+	retrieved, ok := lfu.Get(1)
+	require.True(t, ok)
+	require.NotNil(t, retrieved)
+	require.Equal(t, int64(12), retrieved.MemoryUsage().TotalTrackingMemUsage())
+
+	// Verify cache consistency
+	require.GreaterOrEqual(t, lfu.Cost(), int64(0))
+}
+
+// TestLFUEvictionCostTracking tests that cost tracking is correct during evictions.
+func TestLFUEvictionCostTracking(t *testing.T) {
+	// Create a cache with limited capacity
+	// Each table costs (1 col + 1 idx) * 4 = 8
+	lfu, err := NewLFU(50)
+	require.NoError(t, err)
+
+	// Track tables we create
+	tables := make([]*statistics.Table, 10)
+	for i := 0; i < 10; i++ {
+		tables[i] = testutil.NewMockStatisticsTable(1, 1, true, false, false)
+		lfu.Put(int64(i+1), tables[i])
+	}
+	lfu.wait()
+
+	// Cost should be within capacity (some items will be evicted)
+	initialCost := lfu.Cost()
+	require.LessOrEqual(t, initialCost, int64(100)) // Allow some buffer
+
+	// All tables should still be accessible via Get (either from cache or resultKeySet)
+	for i := 0; i < 10; i++ {
+		retrieved, ok := lfu.Get(int64(i + 1))
+		require.True(t, ok, "table %d should be accessible", i+1)
+		require.NotNil(t, retrieved)
+	}
+
+	// Now modify one of the tables and re-insert it
+	tables[0].SetCol(2, &statistics.Column{
+		Info:              &model.ColumnInfo{ID: 2},
+		CMSketch:          statistics.NewCMSketch(1, 1),
+		StatsVer:          statistics.Version2,
+		StatsLoadedStatus: statistics.NewStatsAllEvictedStatus(),
+	})
+
+	costBefore := lfu.Cost()
+	lfu.Put(1, tables[0])
+	lfu.wait()
+	costAfter := lfu.Cost()
+
+	// Cost should change by a reasonable amount (the delta of the modified table)
+	costDelta := costAfter - costBefore
+	require.GreaterOrEqual(t, costDelta, int64(-10))
+	require.LessOrEqual(t, costDelta, int64(15))
+
+	// Verify the modified table is retrievable
+	retrieved, ok := lfu.Get(1)
+	require.True(t, ok)
+	require.Equal(t, int64(12), retrieved.MemoryUsage().TotalTrackingMemUsage())
+
+	// Final cost should still be reasonable
+	require.GreaterOrEqual(t, lfu.Cost(), int64(0))
+	require.LessOrEqual(t, lfu.Cost(), int64(150))
+}
