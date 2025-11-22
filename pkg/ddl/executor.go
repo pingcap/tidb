@@ -6709,7 +6709,9 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, jobW)
 	}
-	e.checkInvolvingSchemaInfoInTest(job)
+	if err := job.CheckInvolvingSchemaInfo(); err != nil {
+		return err
+	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 
