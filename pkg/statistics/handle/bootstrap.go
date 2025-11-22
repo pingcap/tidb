@@ -201,6 +201,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			if !ok {
 				continue
 			}
+			table = table.CopyAs(statistics.BothMapsWritable)
 			// Fetch table info only once per table instead of once per row
 			tblInfo, ok = h.TableInfoByIDForInitStats(is, tblID)
 			if !ok {
