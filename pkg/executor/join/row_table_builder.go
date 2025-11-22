@@ -71,6 +71,10 @@ type rowTableBuilder struct {
 	filterVector  []bool // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector []bool // nullKeyVector[i] = true if any of the key is null
 
+	rowNumberInCurrentRowTableSeg []int64
+
+	memoryUsagePerRowBuffer []int64
+
 	// When respilling a row, we need to recalculate the row's hash value.
 	// These are auxiliary utility for rehash.
 	hash      hash.Hash64
@@ -156,6 +160,12 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 	if err != nil {
 		return err
 	}
+
+	err = codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer, &(b.memoryUsagePerRowBuffer))
+	if err != nil {
+		return err
+	}
+
 	// 1. split partition
 	for index, colIdx := range b.buildKeyIndex {
 		err := codec.SerializeKeys(typeCtx, chk, b.buildKeyTypes[index], colIdx, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes[index], b.serializedKeyVectorBuffer)

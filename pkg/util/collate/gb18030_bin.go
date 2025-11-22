@@ -107,6 +107,11 @@ func (g *gb18030BinCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return buf
 }
 
+// MaxLenOneByte implement Collator interface.
+func (*gb18030BinCollator) MaxLenOneByte() int {
+	return 4
+}
+
 // Pattern implements Collator interface.
 func (*gb18030BinCollator) Pattern() WildcardPattern {
 	return &gb18030BinPattern{}
