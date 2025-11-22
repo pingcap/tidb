@@ -1041,3 +1041,39 @@ CREATE OR REPLACE VIEW v1 AS SELECT 1, 1;
 disconnect foo;
 connection default;
 
+# TestIssue64024: TRUNCATE PARTITION should require DROP privilege like DROP PARTITION
+use privilege__privileges;
+DROP TABLE IF EXISTS t_partition;
+DROP USER IF EXISTS foo;
+CREATE TABLE t_partition (id INT, year_col INT)
+PARTITION BY RANGE (year_col) (
+    PARTITION p0 VALUES LESS THAN (1991),
+    PARTITION p1 VALUES LESS THAN (1995),
+    PARTITION p2 VALUES LESS THAN (1999),
+    PARTITION p3 VALUES LESS THAN (2003),
+    PARTITION p4 VALUES LESS THAN (2007)
+);
+CREATE USER foo;
+GRANT ALTER ON privilege__privileges.t_partition TO foo;
+
+connect (foo, localhost, foo,,privilege__privileges);
+# Both TRUNCATE PARTITION and DROP PARTITION should require DROP privilege
+--error 1142
+ALTER TABLE t_partition TRUNCATE PARTITION p0;
+--error 1142
+ALTER TABLE t_partition DROP PARTITION p1;
+disconnect foo;
+
+connection default;
+# Grant DROP privilege and verify operations succeed
+GRANT DROP ON privilege__privileges.t_partition TO foo;
+
+connect (foo, localhost, foo,,privilege__privileges);
+ALTER TABLE t_partition TRUNCATE PARTITION p2;
+ALTER TABLE t_partition DROP PARTITION p3;
+disconnect foo;
+
+connection default;
+DROP TABLE t_partition;
+DROP USER foo;
+
