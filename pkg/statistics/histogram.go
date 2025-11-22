@@ -1065,6 +1065,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
 	realtimeRowCount, modifyCount, histNDV int64,
+	highIsOpenEnded bool,
 ) (result RowEstimate) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -1133,10 +1134,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 		)
 	}
 
-	// make sure l < r
-	if l >= r {
-		return DefaultRowEst(0)
-	}
+	// Use absolute value to account for the case where rows may have been added on one side,
+	// but deleted from the other, resulting in qualifying out of range rows even though
+	// realtimeRowCount is less than histogram count
+	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
 
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
@@ -1169,11 +1170,19 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}()
 	}
 
-	// keep l and r unchanged, use actualL and actualR to calculate.
-	actualL := l
-	actualR := r
+	// make sure l < r
+	if l > r {
+		return DefaultRowEst(oneValue)
+	}
+	if l == r {
+		histInvalid = true
+	}
+
 	// Only attempt to calculate the ranges if the histogram is valid
 	if !histInvalid {
+		// keep l and r unchanged, use actualL and actualR to calculate.
+		actualL := l
+		actualR := r
 		// If the range overlaps with (boundL,histL), we need to handle the out-of-range part on the left of the histogram range
 		if actualL < histL && actualR > boundL {
 			// make sure boundL <= actualL < actualR <= histL
@@ -1203,10 +1212,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 	}
 
-	// Use absolute value to account for the case where rows may have been added on one side,
-	// but deleted from the other, resulting in qualifying out of range rows even though
-	// realtimeRowCount is less than histogram count
-	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
 	// percentInHist is the percentage of rows that were included in the histogram.
 	// This is used to scale back the out-of-range estimate.
 	percentInHist := hg.NotNullCount() / hg.TotalRowCount()
@@ -1216,6 +1221,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// half are distributed out of range according to the diagram in the function description.
 	avgRowCount = (addedRows * addedOutOfRangePct) * totalPercent
 
+	// Use oneValue as lower bound and provide meaningful min/max estimates
+	finalEst := max(avgRowCount, oneValue)
 	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
 	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
 	// account for at least 1% of the total row count as a worst case for "addedRows".
@@ -1228,6 +1235,17 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// modifyCount (since outOfRangeBetweenRate has a default value of 100).
 		addedRows = max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
 	}
+	// Maximum could be as high as all added rows.
+	maxEst := max(finalEst, addedRows)
+
+	if histInvalid {
+		modifyCount = max(modifyCount, int64(addedRows))
+		maxEst = addedRows
+		if highIsOpenEnded { // if the high is open ended - there's a high probability that we're searching a large range
+			finalEst = addedRows * 0.5
+			maxEst = float64(modifyCount)
+		}
+	}
 
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
@@ -1235,19 +1253,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// Add "ratio" of the maximum row count that could be out of range, i.e. all newly added rows
 		result := CalculateSkewRatioCounts(avgRowCount, addedRows, skewRatio)
 		result.Est = max(result.Est, oneValue)
-		result.MinEst = 1
+		result.MinEst = oneValue
 		result.MaxEst = max(result.Est, addedRows)
 		return result
 	}
 
-	// Use oneValue as lower bound and provide meaningful min/max estimates
-	finalEst := max(avgRowCount, oneValue)
-	// Maximum could be as high as all added rows.
-	maxEst := max(finalEst, addedRows)
-
 	return RowEstimate{
 		Est:    finalEst,
-		MinEst: 1, // Assume a minimum of 1 row qualifies
+		MinEst: oneValue,
 		MaxEst: maxEst,
 	}
 }
