@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -122,7 +123,11 @@ func NewAddIndexIngestPipeline(
 		return nil, err
 	}
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
-	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+	readerCnt, writerCnt := int(vardef.IndexReaderConcurrency.Load()), int(vardef.IndexWriterConcurrency.Load())
+	if readerCnt <= 0 || writerCnt <= 0 {
+		readerCnt, writerCnt = expectedIngestWorkerCnt(concurrency, avgRowSize)
+	}
+	logutil.Logger(ctx).Info("add index ingest worker concurrency", zap.Int("reader", readerCnt), zap.Int("writer", writerCnt))
 
 	failpoint.InjectCall("beforeAddIndexScan")
 

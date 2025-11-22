@@ -1069,6 +1069,12 @@ const (
 	// TiDBSchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
 	TiDBSchemaCacheSize = "tidb_schema_cache_size"
 
+	// AddIndexReaderConcurrency indicates the concurrency of adding index reader.
+	AddIndexReaderConcurrency = "add_index_reader_concurrency"
+
+	// AddIndexWriterConcurrency indicates the concurrency of adding index writer.
+	AddIndexWriterConcurrency = "add_index_writer_concurrency"
+
 	// DivPrecisionIncrement indicates the number of digits by which to increase the scale of the result of
 	// division operations performed with the / operator.
 	DivPrecisionIncrement = "div_precision_increment"
@@ -1729,6 +1735,8 @@ const (
 	DefTiDBIdleTransactionTimeout                     = 0
 	DefTiDBTxnEntrySizeLimit                          = 0
 	DefTiDBSchemaCacheSize                            = 512 * 1024 * 1024
+	DefAddIndexReaderConcurrency                      = 0
+	DefAddIndexWriterConcurrency                      = 0
 	DefTiDBLowResolutionTSOUpdateInterval             = 2000
 	DefDivPrecisionIncrement                          = 4
 	DefTiDBDMLType                                    = "STANDARD"
@@ -1877,6 +1885,8 @@ var (
 	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
 	SchemaCacheSize              = atomic.NewUint64(DefTiDBSchemaCacheSize)
+	IndexReaderConcurrency       = atomic.NewInt32(DefAddIndexReaderConcurrency)
+	IndexWriterConcurrency       = atomic.NewInt32(DefAddIndexWriterConcurrency)
 	SchemaCacheSizeOriginText    = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
 	AccelerateUserCreationUpdate = atomic.NewBool(DefTiDBAccelerateUserCreationUpdate)
 

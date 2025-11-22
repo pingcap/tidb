@@ -3623,6 +3623,28 @@ var defaultSysVars = []*SysVar{
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return vardef.SchemaCacheSizeOriginText.Load(), nil
 		}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeInstance, Name: vardef.AddIndexReaderConcurrency, Value: strconv.Itoa(vardef.DefAddIndexReaderConcurrency), Type: vardef.TypeInt, MinValue: 0, MaxValue: vardef.MaxConfigurableConcurrency,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			vardef.IndexReaderConcurrency.Store(int32(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(vardef.IndexReaderConcurrency.Load())), nil
+		}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeInstance, Name: vardef.AddIndexWriterConcurrency, Value: strconv.Itoa(vardef.DefAddIndexWriterConcurrency), Type: vardef.TypeInt, MinValue: 0, MaxValue: vardef.MaxConfigurableConcurrency,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			vardef.IndexWriterConcurrency.Store(int32(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(vardef.IndexWriterConcurrency.Load())), nil
+		}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBSessionAlias, Value: "", Type: vardef.TypeStr,
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
 			chars := []rune(normalizedValue)

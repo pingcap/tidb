@@ -888,6 +888,8 @@ func setGlobalVars() {
 		setInstanceVar(vardef.TiDBStatsCacheMemQuota, strconv.FormatUint(cfg.Instance.StatsCacheMemQuota, 10))
 		setInstanceVar(vardef.TiDBMemQuotaBindingCache, strconv.FormatUint(cfg.Instance.MemQuotaBindingCache, 10))
 		setInstanceVar(vardef.TiDBSchemaCacheSize, cfg.Instance.SchemaCacheSize)
+		setInstanceVar(vardef.AddIndexReaderConcurrency, strconv.FormatUint(uint64(cfg.Instance.AddIndexReaderConcurrency), 10))
+		setInstanceVar(vardef.AddIndexWriterConcurrency, strconv.FormatUint(uint64(cfg.Instance.AddIndexWriterConcurrency), 10))
 	}
 
 	variable.SetSysVar(vardef.TiDBForcePriority, mysql.Priority2Str[priority])
