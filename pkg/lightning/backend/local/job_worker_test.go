@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -23,153 +24,232 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	ingestclimock "github.com/pingcap/tidb/pkg/ingestor/ingestcli/mock"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	rutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
-func TestRegionJobBaseWorker(t *testing.T) {
-	newWorker := func() *regionJobBaseWorker {
-		return &regionJobBaseWorker{
-			jobInCh:  make(chan *regionJob, 10),
-			jobOutCh: make(chan *regionJob, 10),
-			jobWg:    &sync.WaitGroup{},
-			preRunJobFn: func(ctx context.Context, job *regionJob) error {
-				return nil
-			},
-			writeFn: func(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
-				return &tikvWriteResult{}, nil
-			},
-			ingestFn: func(ctx context.Context, job *regionJob) error {
-				return nil
-			},
-			regenerateJobsFn: func(
-				ctx context.Context, data engineapi.IngestData, sortedJobRanges []engineapi.Range,
-				regionSplitSize, regionSplitKeys int64,
-			) ([]*regionJob, error) {
-				return []*regionJob{
-					{}, {}, {},
-				}, nil
-			},
+func newRegionJobOperatorForTest(
+	preRunJobFn func(ctx context.Context, job *regionJob) error,
+	writeFn func(ctx context.Context, job *regionJob) (*tikvWriteResult, error),
+	ingestFn func(ctx context.Context, job *regionJob) error,
+) (
+	op *jobOperator,
+	jobWg *sync.WaitGroup,
+	inChan chan<- *regionJob,
+	outChan <-chan *regionJob,
+) {
+	workGroup, workerCtx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
+	jobWg = &sync.WaitGroup{}
+	wctx := workerpool.NewContext(workerCtx)
+	jobToWorkerCh := make(chan *regionJob, 256)
+	jobFromWorkerCh := make(chan *regionJob, 256) // make a larger channel for test
+
+	if preRunJobFn == nil {
+		preRunJobFn = func(ctx context.Context, job *regionJob) error {
+			return nil
 		}
 	}
+	if writeFn == nil {
+		writeFn = func(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
+			return &tikvWriteResult{}, nil
+		}
+	}
+	if ingestFn == nil {
+		ingestFn = func(ctx context.Context, job *regionJob) error {
+			return nil
+		}
+	}
+
+	pool := workerpool.NewWorkerPool(
+		"RegionJobOperator",
+		rutil.DistTask,
+		4,
+		func() workerpool.Worker[*regionJob, *regionJob] {
+			return &regionJobBaseWorker{
+				ctx:         wctx,
+				jobInCh:     jobToWorkerCh,
+				jobOutCh:    jobFromWorkerCh,
+				jobWg:       jobWg,
+				preRunJobFn: preRunJobFn,
+				writeFn:     writeFn,
+				ingestFn:    ingestFn,
+				regenerateJobsFn: func(
+					ctx context.Context, data engineapi.IngestData, sortedJobRanges []engineapi.Range,
+					regionSplitSize, regionSplitKeys int64,
+				) ([]*regionJob, error) {
+					return []*regionJob{
+						{}, {}, {},
+					}, nil
+				},
+			}
+		},
+	)
+
+	op = &jobOperator{
+		ctx:           wctx,
+		AsyncOperator: operator.NewAsyncOperator(wctx, pool),
+		workerGroup:   workGroup,
+	}
+	op.SetSink(operator.NewSimpleDataChannel(jobFromWorkerCh))
+	op.SetSource(operator.NewSimpleDataChannel(jobToWorkerCh))
+	return op, jobWg, jobToWorkerCh, jobFromWorkerCh
+}
+
+func TestRegionJobBaseWorker(t *testing.T) {
+	// All below tests are for basic functionality of the region job operator, there
+	// are other tests inside local_test.go.
+	// To fully run a region job, we also need the job retryer and the routine to
+	// receive executed job, so we need to manually handle jobWg and jobOutCh here.
 
 	dummyRegion := &split.RegionInfo{Region: &metapb.Region{
 		Id: 1, Peers: []*metapb.Peer{{StoreId: 1}}}, Leader: &metapb.Peer{StoreId: 1},
 	}
 
-	// all below tests are for basic functionality of the worker, there are other
-	// tests inside local_test.go.
-	// to fully run a region job, we also need the job retryer and the routine to
-	// receive executed job, so we will not check some invariants, like jobWg must
-	// be 0 after run.
+	prepareAndExecute := func(
+		t *testing.T,
+		generateCount int,
+		job *regionJob,
+		preRunFn func(ctx context.Context, job *regionJob) error,
+		writeFn func(ctx context.Context, job *regionJob) (*tikvWriteResult, error),
+		ingestFn func(ctx context.Context, job *regionJob) error) (<-chan *regionJob, error,
+	) {
+		// mock jobWg.Done() called in the worker
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/lightning/backend/local/mockJobWgDone",
+			fmt.Sprintf("return(%d)", generateCount))
+		op, jobWg, jobInCh, jobOutCh := newRegionJobOperatorForTest(preRunFn, writeFn, ingestFn)
 
-	t.Run("run on closed channel", func(t *testing.T) {
-		w := newWorker()
-		close(w.jobInCh)
-		require.NoError(t, w.run(context.Background()))
-	})
+		jobInCh <- job
+		jobWg.Add(1)
+		close(jobInCh)
+
+		require.NoError(t, op.Open())
+		jobWg.Wait()
+		err := op.Close()
+		require.Equal(t, 0, len(jobInCh))
+		return jobOutCh, err
+	}
 
 	t.Run("send job to out channel after run job", func(t *testing.T) {
-		w := newWorker()
-		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion}
-		w.jobInCh <- job
-		close(w.jobInCh)
-		require.NoError(t, w.run(context.Background()))
-		require.Equal(t, 1, len(w.jobOutCh))
-		outJob := <-w.jobOutCh
+		jobOutCh, err := prepareAndExecute(
+			t, 1,
+			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
+			nil, nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(jobOutCh))
+		outJob := <-jobOutCh
 		require.Equal(t, ingested, outJob.stage)
 	})
 
 	t.Run("if the region has no leader, rescan the region", func(t *testing.T) {
-		w := newWorker()
 		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: &split.RegionInfo{
 			Region: &metapb.Region{Id: 1, Peers: []*metapb.Peer{{StoreId: 1}}},
 		}}
-		w.jobInCh <- job
-		close(w.jobInCh)
-		require.NoError(t, w.run(context.Background()))
-		require.Equal(t, 3, len(w.jobOutCh))
+
+		jobOutCh, err := prepareAndExecute(
+			t, 3, job,
+			nil, nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, 3, len(jobOutCh))
 		for range 3 {
-			outJob := <-w.jobOutCh
+			outJob := <-jobOutCh
 			require.ErrorIs(t, outJob.lastRetryableErr, errdef.ErrNoLeader)
 		}
 	})
 
 	t.Run("empty job", func(t *testing.T) {
-		w := newWorker()
-		w.writeFn = func(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
+		writeFn := func(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
 			return &tikvWriteResult{emptyJob: true}, nil
 		}
-		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion}
-		w.jobInCh <- job
-		close(w.jobInCh)
-		require.NoError(t, w.run(context.Background()))
-		require.Equal(t, 1, len(w.jobOutCh))
-		outJob := <-w.jobOutCh
+		jobOutCh, err := prepareAndExecute(
+			t, 1,
+			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
+			nil, writeFn, nil)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(jobOutCh))
+		outJob := <-jobOutCh
 		require.Equal(t, ingested, outJob.stage)
 	})
 
 	t.Run("meet non-retryable error during ingest", func(t *testing.T) {
-		w := newWorker()
-		w.ingestFn = func(ctx context.Context, job *regionJob) error {
+		ingestFn := func(ctx context.Context, job *regionJob) error {
 			return &ingestcli.IngestAPIError{Err: errdef.ErrKVDiskFull}
 		}
-		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion}
-		w.jobInCh <- job
-		close(w.jobInCh)
-		require.ErrorIs(t, w.run(context.Background()), errdef.ErrKVDiskFull)
-		require.Equal(t, 1, len(w.jobOutCh))
-		outJob := <-w.jobOutCh
+		jobOutCh, err := prepareAndExecute(
+			t, 1,
+			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
+			nil, nil, ingestFn)
+		require.ErrorIs(t, err, errdef.ErrKVDiskFull)
+		require.Equal(t, 1, len(jobOutCh))
+		outJob := <-jobOutCh
 		// the job is left in wrote stage
 		require.Equal(t, wrote, outJob.stage)
 		require.Nil(t, outJob.lastRetryableErr)
 	})
 
 	t.Run("retry job from regionScanned", func(t *testing.T) {
-		w := newWorker()
-		w.ingestFn = func(ctx context.Context, job *regionJob) error {
+		ingestFn := func(ctx context.Context, job *regionJob) error {
 			return &ingestcli.IngestAPIError{Err: errdef.ErrKVIngestFailed}
 		}
-		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion}
-		w.jobInCh <- job
-		close(w.jobInCh)
-		require.NoError(t, w.run(context.Background()))
-		require.Equal(t, 1, len(w.jobOutCh))
-		outJob := <-w.jobOutCh
+		jobOutCh, err := prepareAndExecute(
+			t, 1,
+			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
+			nil, nil, ingestFn)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(jobOutCh))
+		outJob := <-jobOutCh
 		require.Equal(t, regionScanned, outJob.stage)
 		require.ErrorIs(t, outJob.lastRetryableErr, errdef.ErrKVIngestFailed)
 	})
 
 	t.Run("retry job from regionScanned, and region got from the ingest error", func(t *testing.T) {
-		w := newWorker()
-		w.ingestFn = func(ctx context.Context, job *regionJob) error {
+		ingestFn := func(ctx context.Context, job *regionJob) error {
 			return &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch, NewRegion: &split.RegionInfo{Region: &metapb.Region{Id: 123}}}
 		}
-		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion}
-		w.jobInCh <- job
-		close(w.jobInCh)
-		require.NoError(t, w.run(context.Background()))
-		require.Equal(t, 1, len(w.jobOutCh))
-		outJob := <-w.jobOutCh
+		jobOutCh, err := prepareAndExecute(
+			t, 1,
+			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
+			nil, nil, ingestFn)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(jobOutCh))
+		outJob := <-jobOutCh
 		require.Equal(t, regionScanned, outJob.stage)
 		require.ErrorIs(t, outJob.lastRetryableErr, errdef.ErrKVEpochNotMatch)
 		require.Equal(t, &split.RegionInfo{Region: &metapb.Region{Id: 123}}, outJob.region)
 	})
 
 	t.Run("regenerate jobs", func(t *testing.T) {
-		w := newWorker()
-		w.ingestFn = func(ctx context.Context, job *regionJob) error {
+		ingestFn := func(ctx context.Context, job *regionJob) error {
 			return &ingestcli.IngestAPIError{Err: errdef.ErrKVNotLeader}
 		}
-		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion}
-		w.jobInCh <- job
-		close(w.jobInCh)
-		require.NoError(t, w.run(context.Background()))
-		require.Equal(t, 3, len(w.jobOutCh))
+		// put int 1 job, and generate 2 more jobs from regenerateFunc.
+		jobOutCh, err := prepareAndExecute(
+			t, 3,
+			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
+			nil, nil, ingestFn)
+		require.NoError(t, err)
+		require.Equal(t, 3, len(jobOutCh))
+	})
+
+	t.Run("local write prewrite fail", func(t *testing.T) {
+		preRunFn := func(ctx context.Context, job *regionJob) error {
+			return errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again")
+		}
+		_, err := prepareAndExecute(
+			t, 1,
+			&regionJob{stage: regionScanned, ingestData: mockIngestData{}, region: dummyRegion},
+			preRunFn, nil, nil)
+		require.Error(t, err)
+		require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
 	})
 }
 

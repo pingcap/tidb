@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -32,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
@@ -616,4 +619,152 @@ func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestWorkerPoolWithErrors(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
+
+	generator := func(
+		ctx context.Context,
+		jobToWorkerCh chan<- *regionJob,
+		jobWg *sync.WaitGroup,
+		mockErr bool,
+	) error {
+		counter := 0
+		for range 4 {
+			jobWg.Add(1)
+			job := &regionJob{}
+			select {
+			case jobToWorkerCh <- job:
+				counter++
+				if mockErr && counter > 2 {
+					return errors.Errorf("generator error")
+				}
+			case <-ctx.Done():
+				job.done(jobWg)
+				return nil
+			}
+		}
+		return nil
+	}
+
+	drainer := func(
+		ctx context.Context,
+		jobFromWorkerCh <-chan *regionJob,
+		jobWg *sync.WaitGroup,
+		mockErr bool,
+	) error {
+		counter := 0
+		for {
+			select {
+			case job, ok := <-jobFromWorkerCh:
+				if !ok {
+					return nil
+				}
+				job.done(jobWg)
+				counter++
+				if mockErr && counter > 2 {
+					return errors.Errorf("drainer error")
+				}
+			case <-ctx.Done():
+				return nil
+			}
+		}
+	}
+
+	type testCase struct {
+		fp               string
+		mockGeneratorErr bool
+		mockDrainerErr   bool
+		wgErr            string
+		opErr            string
+	}
+
+	singleTest := func(t *testing.T, tc testCase) {
+		testfailpoint.Enable(t, tc.fp, "return")
+
+		workGroup, workerCtx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
+		jobToWorkerCh := make(chan *regionJob)
+		jobFromWorkerCh := make(chan *regionJob)
+		jobWg := &sync.WaitGroup{}
+
+		local := &Backend{
+			writeLimiter: newStoreWriteLimiter(0),
+			BackendConfig: BackendConfig{
+				WorkerConcurrency: toAtomic(4),
+			},
+		}
+
+		op := newRegionJobOperator(
+			workerCtx, workGroup, jobWg,
+			local, nil,
+			jobToWorkerCh, jobFromWorkerCh, 1,
+		)
+		require.NoError(t, op.Open())
+
+		workGroup.Go(func() error {
+			return drainer(workerCtx, jobFromWorkerCh, jobWg, tc.mockDrainerErr)
+		})
+
+		var opErr error
+		workGroup.Go(func() error {
+			if err := generator(workerCtx, jobToWorkerCh, jobWg, tc.mockGeneratorErr); err != nil {
+				return err
+			}
+			jobWg.Wait()
+			opErr = op.Close()
+			return opErr
+		})
+
+		wgErr := workGroup.Wait()
+		if tc.opErr == "" {
+			require.NoError(t, opErr)
+		} else {
+			require.ErrorContains(t, opErr, tc.opErr)
+		}
+		if tc.wgErr == "" {
+			require.NoError(t, wgErr)
+		} else {
+			require.ErrorContains(t, wgErr, tc.wgErr)
+		}
+	}
+
+	tests := []testCase{
+		{
+			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			mockGeneratorErr: false,
+			mockDrainerErr:   false,
+			wgErr:            "",
+			opErr:            "",
+		},
+		{
+			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			mockGeneratorErr: false,
+			mockDrainerErr:   true,
+			wgErr:            "drainer error",
+			opErr:            "",
+		},
+		{
+			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			mockGeneratorErr: true,
+			mockDrainerErr:   false,
+			wgErr:            "generator error",
+			opErr:            "",
+		},
+		{
+			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/injectPanicForRegionJob",
+			mockGeneratorErr: false,
+			mockDrainerErr:   false,
+			wgErr:            "region job worker panic",
+			opErr:            "region job worker panic",
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
+			singleTest(t, tc)
+		})
+	}
 }
