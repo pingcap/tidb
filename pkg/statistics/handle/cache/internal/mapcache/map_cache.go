@@ -138,18 +138,3 @@ func (*MapCache) Close() {}
 
 // TriggerEvict implements statsCacheInner
 func (*MapCache) TriggerEvict() {}
-
-// RecalculateMemoryUsage implements StatsCacheInner
-func (m *MapCache) RecalculateMemoryUsage() int64 {
-	var totalMemUsage int64
-	for k, item := range m.tables {
-		if item.value != nil {
-			actualCost := item.value.MemoryUsage().TotalMemUsage
-			item.cost = actualCost
-			m.tables[k] = item
-			totalMemUsage += actualCost
-		}
-	}
-	m.memUsage = totalMemUsage
-	return totalMemUsage
-}

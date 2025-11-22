@@ -190,9 +190,3 @@ func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, ski
 func (sc *StatsCache) TriggerEvict() {
 	sc.c.TriggerEvict()
 }
-
-// RecalculateMemoryUsage recalculates memory usage for all cached objects
-// and returns the new total memory usage.
-func (sc *StatsCache) RecalculateMemoryUsage() int64 {
-	return sc.c.RecalculateMemoryUsage()
-}

@@ -262,9 +262,6 @@ type StatsCache interface {
 
 	// TriggerEvict triggers the cache to evict some items
 	TriggerEvict()
-
-	// RecalculateMemoryUsage recalculates memory usage for all cached objects.
-	RecalculateMemoryUsage() int64
 }
 
 // StatsLockTable is the table info of which will be locked.
