@@ -20,36 +20,40 @@ import (
 
 // Recorder is used to record metering data.
 type Recorder struct {
-	taskID       int64
-	keyspace     string
-	taskType     string
-	objStoreReqs recording.Requests
-	traffic      recording.Traffic
+	taskID         int64
+	keyspace       string
+	taskType       string
+	objStoreAccess recording.AccessStats
+	clusterTraffic recording.Traffic
 }
 
-// MergeObjStoreRequests merges the object store requests from another Requests.
-func (r *Recorder) MergeObjStoreRequests(other *recording.Requests) {
-	r.objStoreReqs.Merge(other)
+// MergeObjStoreAccess merges the object store requests from another Requests.
+func (r *Recorder) MergeObjStoreAccess(other *recording.AccessStats) {
+	r.objStoreAccess.Merge(other)
 }
 
-// IncReadBytes records the read data bytes.
-func (r *Recorder) IncReadBytes(v uint64) {
-	r.traffic.Read.Add(v)
+// IncClusterReadBytes records the read data bytes from cluster.
+func (r *Recorder) IncClusterReadBytes(n uint64) {
+	r.clusterTraffic.Read.Add(n)
 }
 
-// IncWriteBytes records the write data bytes.
-func (r *Recorder) IncWriteBytes(v uint64) {
-	r.traffic.Write.Add(v)
+// IncClusterWriteBytes records the write data bytes to cluster.
+func (r *Recorder) IncClusterWriteBytes(n uint64) {
+	r.clusterTraffic.Write.Add(n)
 }
 
 func (r *Recorder) currData() *Data {
 	return &Data{
-		taskID:      r.taskID,
-		keyspace:    r.keyspace,
-		taskType:    r.taskType,
-		getRequests: r.objStoreReqs.Get.Load(),
-		putRequests: r.objStoreReqs.Put.Load(),
-		readBytes:   r.traffic.Read.Load(),
-		writeBytes:  r.traffic.Write.Load(),
+		taskID:   r.taskID,
+		keyspace: r.keyspace,
+		taskType: r.taskType,
+		dataValues: dataValues{
+			getRequests:        r.objStoreAccess.Requests.Get.Load(),
+			putRequests:        r.objStoreAccess.Requests.Put.Load(),
+			objStoreReadBytes:  r.objStoreAccess.Traffic.Read.Load(),
+			objStoreWriteBytes: r.objStoreAccess.Traffic.Write.Load(),
+			clusterReadBytes:   r.clusterTraffic.Read.Load(),
+			clusterWriteBytes:  r.clusterTraffic.Write.Load(),
+		},
 	}
 }

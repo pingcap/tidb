@@ -111,6 +111,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//br/pkg/mock",
+        "//br/pkg/storage/recording",
         "//pkg/util/intest",
         "@com_github_aws_aws_sdk_go//aws",
         "@com_github_aws_aws_sdk_go//aws/awserr",

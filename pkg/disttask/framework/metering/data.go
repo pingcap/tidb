@@ -21,30 +21,34 @@ import (
 )
 
 const (
-	getRequestsField = "get_requests"
-	putRequestsField = "put_requests"
-	readBytesField   = "read_bytes"
-	writeBytesField  = "write_bytes"
+	getRequestsField        = "get_requests"
+	putRequestsField        = "put_requests"
+	objStoreReadBytesField  = "obj_store_read_bytes"
+	objStoreWriteBytesField = "obj_store_write_bytes"
+	clusterReadBytesField   = "cluster_read_bytes"
+	clusterWriteBytesField  = "cluster_write_bytes"
 )
 
 // Data represents the metering data.
 // we use this struct to store accumulated data.
 type Data struct {
-	getRequests uint64
-	putRequests uint64
-	readBytes   uint64
-	writeBytes  uint64
-
+	dataValues
 	taskID   int64
 	keyspace string
 	taskType string
 }
 
+type dataValues struct {
+	getRequests        uint64
+	putRequests        uint64
+	objStoreReadBytes  uint64
+	objStoreWriteBytes uint64
+	clusterReadBytes   uint64
+	clusterWriteBytes  uint64
+}
+
 func (d *Data) equals(other *Data) bool {
-	return d.getRequests == other.getRequests &&
-		d.putRequests == other.putRequests &&
-		d.readBytes == other.readBytes &&
-		d.writeBytes == other.writeBytes
+	return d.dataValues == other.dataValues
 }
 
 func (d *Data) calMeterDataItem(other *Data) map[string]any {
@@ -53,37 +57,51 @@ func (d *Data) calMeterDataItem(other *Data) map[string]any {
 	if d.equals(other) {
 		return nil
 	}
-	item := map[string]any{
-		"version":     "1",
-		"cluster_id":  d.keyspace,
-		"source_name": category,
-		"task_type":   d.taskType,
-		"task_id":     d.taskID,
+	item := GetBaseMeterItem(d.taskID, d.keyspace, d.taskType)
+	if diff := d.getRequests - other.getRequests; diff > 0 {
+		item[getRequestsField] = diff
 	}
-	if d.getRequests > other.getRequests {
-		item[getRequestsField] = d.getRequests - other.getRequests
+	if diff := d.putRequests - other.putRequests; diff > 0 {
+		item[putRequestsField] = diff
 	}
-	if d.putRequests > other.putRequests {
-		item[putRequestsField] = d.putRequests - other.putRequests
+	if diff := d.objStoreReadBytes - other.objStoreReadBytes; diff > 0 {
+		item[objStoreReadBytesField] = diff
 	}
-	if d.readBytes > other.readBytes {
-		item[readBytesField] = d.readBytes - other.readBytes
+	if diff := d.objStoreWriteBytes - other.objStoreWriteBytes; diff > 0 {
+		item[objStoreWriteBytesField] = diff
 	}
-	if d.writeBytes > other.writeBytes {
-		item[writeBytesField] = d.writeBytes - other.writeBytes
+	if diff := d.clusterReadBytes - other.clusterReadBytes; diff > 0 {
+		item[clusterReadBytesField] = diff
+	}
+	if diff := d.clusterWriteBytes - other.clusterWriteBytes; diff > 0 {
+		item[clusterWriteBytesField] = diff
 	}
 	return item
 }
 
 // String implements fmt.Stringer interface.
 func (d *Data) String() string {
-	return fmt.Sprintf("{id: %d, keyspace: %s, type: %s, requests{get: %d, put: %d}, read: %s, write: %s}",
+	return fmt.Sprintf("{id: %d, keyspace: %s, type: %s, requests{get: %d, put: %d}, obj_store{r: %s, w: %s}, cluster{r: %s, w: %s}",
 		d.taskID,
 		d.keyspace,
 		d.taskType,
 		d.getRequests,
 		d.putRequests,
-		units.BytesSize(float64(d.readBytes)),
-		units.BytesSize(float64(d.writeBytes)),
+		units.BytesSize(float64(d.objStoreReadBytes)),
+		units.BytesSize(float64(d.objStoreWriteBytes)),
+		units.BytesSize(float64(d.clusterReadBytes)),
+		units.BytesSize(float64(d.clusterWriteBytes)),
 	)
+}
+
+// GetBaseMeterItem returns the base metering data item.
+func GetBaseMeterItem(taskID int64, keyspace, taskType string) map[string]any {
+	return map[string]any{
+		"version":     "1",
+		"source_name": category,
+		"task_id":     taskID,
+		// in nextgen, cluster_id is used as the keyspace name.
+		"cluster_id": keyspace,
+		"task_type":  taskType,
+	}
 }

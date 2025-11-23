@@ -121,7 +121,6 @@ var compatibleSEMV2Config = `{
 		{"name": "tidb_row_format_version", "hidden": true},
 		{"name": "tidb_slow_query_file", "hidden": true},
 		{"name": "tidb_slow_log_threshold", "hidden": true},
-		{"name": "tidb_slow_txn_log_threshold", "hidden": true},
 		{"name": "tidb_enable_collect_execution_info", "hidden": true},
 		{"name": "tidb_memory_usage_alarm_ratio", "hidden": true},
 		{"name": "tidb_redact_log", "hidden": true},

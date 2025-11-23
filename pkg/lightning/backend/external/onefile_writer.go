@@ -317,12 +317,14 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		conflictInfo.Files = []string{w.dupFile}
 	}
 	w.onClose(&WriterSummary{
-		WriterID:           w.writerID,
-		Seq:                0,
-		Min:                minKey,
-		Max:                maxKey,
-		TotalSize:          w.totalSize,
-		TotalCnt:           w.totalCnt,
+		WriterID:  w.writerID,
+		Seq:       0,
+		Min:       minKey,
+		Max:       maxKey,
+		TotalSize: w.totalSize,
+		TotalCnt:  w.totalCnt,
+		// we only write 1 file in OneFileWriter.
+		KVFileCount:        1,
 		MultipleFilesStats: mStats,
 		ConflictInfo:       conflictInfo,
 	})

@@ -3669,16 +3669,6 @@ func (b *PlanBuilder) addAliasName(ctx context.Context, selectStmt *ast.SelectSt
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) {
-	var sb strings.Builder
-	ctx := format.NewRestoreCtx(0, &sb)
-	if err := hint.Restore(ctx); err != nil {
-		return
-	}
-	b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-		fmt.Sprintf("Hint %s is inapplicable. Please specify the table names in the arguments.", sb.String()))
-}
-
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	sessionVars := b.ctx.GetSessionVars()
@@ -4685,12 +4675,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// Init CommonHandleCols and CommonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
-		ds.CommonHandleCols, ds.CommonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
+		ds.CommonHandleCols, ds.CommonHandleLens = expression.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
 	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.AllPossibleAccessPaths {
 		if !path.IsIntHandlePath {
-			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, path.Index)
 
 			// check whether the path's index has a tidb_shard() prefix and the index column count
 			// more than 1. e.g. index(tidb_shard(a), a)
