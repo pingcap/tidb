@@ -22,13 +22,18 @@ import (
 
 func TestRecorder(t *testing.T) {
 	r := Recorder{taskID: 1, keyspace: "ks", taskType: "tt"}
-	r.objStoreReqs.Get.Add(100)
-	r.objStoreReqs.Put.Add(200)
-	r.IncReadBytes(300)
-	r.IncWriteBytes(400)
+	r.objStoreAccess.Requests.Get.Add(100)
+	r.objStoreAccess.Requests.Put.Add(200)
+	r.objStoreAccess.RecRead(11)
+	r.objStoreAccess.RecWrite(22)
+	r.IncClusterReadBytes(300)
+	r.IncClusterWriteBytes(400)
 	require.Equal(t, &Data{
 		taskID: 1, keyspace: "ks", taskType: "tt",
-		getRequests: 100, putRequests: 200,
-		readBytes: 300, writeBytes: 400,
+		dataValues: dataValues{
+			getRequests: 100, putRequests: 200,
+			objStoreReadBytes: 11, objStoreWriteBytes: 22,
+			clusterReadBytes: 300, clusterWriteBytes: 400,
+		},
 	}, r.currData())
 }

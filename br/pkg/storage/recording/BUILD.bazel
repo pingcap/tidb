@@ -13,6 +13,5 @@ go_test(
     srcs = ["recording_test.go"],
     embed = [":recording"],
     flaky = True,
-    shard_count = 2,
     deps = ["@com_github_stretchr_testify//require"],
 )

@@ -17,6 +17,7 @@ package importinto
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -139,6 +140,8 @@ type SharedVars struct {
 	SortedIndexMetas map[int64]*external.SortedKVMeta
 	ShareMu          sync.Mutex
 	globalSortStore  storage.ExternalStorage
+	dataKVFileCount  *atomic.Int64
+	indexKVFileCount *atomic.Int64
 }
 
 func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {

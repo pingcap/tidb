@@ -259,6 +259,11 @@ type session struct {
 	commitWaitGroup sync.WaitGroup
 }
 
+// GetTraceCtx returns the trace context of the session.
+func (s *session) GetTraceCtx() context.Context {
+	return s.currentCtx
+}
+
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	for _, l := range locks {
@@ -1843,6 +1848,27 @@ func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
+	if sink := tracing.GetSink(ctx); sink == nil {
+		trace := traceevent.NewTrace()
+		ctx = tracing.WithFlightRecorder(ctx, trace)
+		defer trace.DiscardOrFlush(ctx)
+
+		// A developer debugging event so we can see what trace is missing!
+		if traceevent.IsEnabled(tracing.DevDebug) {
+			traceevent.TraceEvent(ctx, tracing.DevDebug, "ExecuteInternal missing trace ctx",
+				zap.String("sql", sql),
+				zap.Stack("stack"))
+			traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.dev_debug", func(config *traceevent.DumpTriggerConfig) bool {
+				return config.Event.DevDebug.Type == traceevent.DevDebugTypeExecuteInternalTraceMissing
+			})
+		}
+	}
+
+	rs, err = s.executeInternalImpl(ctx, sql, args...)
+	return rs, err
+}
+
+func (s *session) executeInternalImpl(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
@@ -2353,7 +2379,29 @@ func queryFailDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
 	return config.Event.Type == "query_fail"
 }
 
+type isInternalAlias struct {
+	bool
+}
+
+// isInternalAlias is not intuitive, but it is defined to avoid allocation.
+// If the code is written as
+//
+//		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.is_internal", func(conf *traceevent.DumpTriggerConfig) {
+//	     	conf.Event.IsInternal = conf.Event.IsInternal
+//		})
+//
+// It's uncertain whether the Go compiler escape analysis is powerful enough to avoid allocation for the closure object.
+// isInternalAlias is defined to help the compiler, this coding style will not cause closure object allocation.
+//
+//	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.is_internal", isInternalAlias{s.isInternal()}.isInternalDumpTriggerCheck)
+func (i isInternalAlias) isInternalDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.Event.IsInternal == i.bool
+}
+
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	if fr := traceevent.GetFlightRecorder(); fr != nil {
+		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.sampling", fr.CheckSampling)
+	}
 	rs, err := s.executeStmtImpl(ctx, stmtNode)
 	if err != nil {
 		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event", queryFailDumpTriggerCheck)
@@ -2374,6 +2422,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 
 	sessVars := s.sessionVars
 	sessVars.StartTime = time.Now()
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.is_internal", isInternalAlias{s.isInternal()}.isInternalDumpTriggerCheck)
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -2608,6 +2657,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		stmtCount := uint64(s.sessionVars.TxnCtx.StatementCount)
 		traceID := traceevent.GenerateTraceID(ctx, startTS, stmtCount)
 		ctx = trace.ContextWithTraceID(ctx, traceID)
+		s.currentCtx = ctx
 
 		// Store trace ID for next statement
 		s.sessionVars.PrevTraceID = traceID
@@ -2801,6 +2851,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	stmtCount := uint64(se.sessionVars.TxnCtx.StatementCount)
 	traceID := traceevent.GenerateTraceID(ctx, startTS, stmtCount)
 	ctx = trace.ContextWithTraceID(ctx, traceID)
+	se.currentCtx = ctx
 	// Store trace ID for next statement
 	se.sessionVars.PrevTraceID = traceID
 	stmtCtx := se.sessionVars.StmtCtx
@@ -2809,6 +2860,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if stmtCtx.StmtType == "" {
 		stmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, s.GetStmtNode())
 	}
+
 	// Emit stmt.start trace event
 	if traceevent.IsEnabled(traceevent.StmtLifecycle) {
 		fields := []zap.Field{

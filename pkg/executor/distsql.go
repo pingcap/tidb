@@ -33,6 +33,7 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/expression"
 	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -987,8 +988,29 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
 	if e.stats != nil {
-		defer e.stmtRuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+		defer func() {
+			e.stmtRuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+			var indexScanCopTasks int32
+			if copStats := e.stmtRuntimeStatsColl.GetCopStats(e.getIndexPlanRootID()); copStats != nil {
+				indexScanCopTasks = copStats.GetTasks()
+			}
+			if e.indexLookUpPushDown {
+				metrics.IndexLookUpExecutorWithPushDownEnabledRowNumber.Observe(float64(e.stats.indexScanBasicStats.GetActRows()))
+				metrics.IndexLookUpIndexScanCopTasksWithPushDownEnabled.Add(float64(indexScanCopTasks))
+			} else {
+				metrics.IndexLookUpIndexScanCopTasksNormal.Add(float64(indexScanCopTasks))
+			}
+		}()
 	}
+
+	if stats := e.RuntimeStats(); stats != nil {
+		if e.indexLookUpPushDown {
+			defer func() {
+				metrics.IndexLookUpExecutorWithPushDownEnabledDuration.Observe(time.Duration(stats.GetTime()).Seconds())
+			}()
+		}
+	}
+
 	if e.indexUsageReporter != nil {
 		e.indexUsageReporter.ReportCopIndexUsageForTable(
 			e.table,
@@ -1245,7 +1267,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 		}
 
 		var completedTask *lookupTableTask
-		if len(completedRows) > 0 {
+		if rowCnt := len(completedRows); rowCnt > 0 {
+			metrics.IndexLookUpPushDownRowsCounterHit.Add(float64(rowCnt))
 			// Currently, completedRows is only produced by index lookup push down which does not support keep order.
 			// for non-keep-order request, the completed rows can be sent to resultCh directly.
 			completedTask = w.buildCompletedTask(taskID, completedRows)
@@ -1253,7 +1276,12 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 		}
 
 		var tableLookUpTask *lookupTableTask
-		if len(handles) > 0 {
+		if rowCnt := len(handles); rowCnt > 0 {
+			if w.idxLookup.indexLookUpPushDown {
+				metrics.IndexLookUpPushDownRowsCounterMiss.Add(float64(rowCnt))
+			} else {
+				metrics.IndexLookUpNormalRowsCounter.Add(float64(rowCnt))
+			}
 			tableLookUpTask = w.buildTableTask(taskID, handles, retChunk)
 			if w.idxLookup.partitionTableMode {
 				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[i]
@@ -1320,6 +1348,14 @@ func (w *indexWorker) extractLookUpPushDownRowsOrHandles(ctx context.Context, it
 	intest.Assert(w.checkIndexValue == nil, "CheckIndex or CheckTable should not use index lookup push down")
 	const channelIdxIndex = 0
 	const channelIdxRow = 1
+
+	startTime := time.Now()
+	startScanKeys := w.scannedKeys
+	defer func() {
+		if cnt := w.scannedKeys - startScanKeys; w.idxLookup.stats != nil {
+			w.idxLookup.stats.indexScanBasicStats.Record(time.Since(startTime), int(cnt))
+		}
+	}()
 
 	checkLimit := w.PushedLimit != nil
 	for len(handles)+len(rows) < w.batchSize {
