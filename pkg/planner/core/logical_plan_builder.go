@@ -5484,12 +5484,11 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	proj.SetOutputNames(make(types.NameSlice, len(p.OutputNames())))
 	copy(proj.OutputNames(), p.OutputNames())
 	copy(proj.Schema().Columns, p.Schema().Columns[:oldSchemaLen])
-	for i := range len(proj.OutputNames()) {
+	for i := len(proj.OutputNames()) - 1; i >= 0; i-- {
 		if proj.OutputNames()[i].ColName.L == "_tidb_commit_ts" {
 			proj.SetOutputNames(slices.Delete(proj.OutputNames(), i, i+1))
 			proj.Schema().Columns = slices.Delete(proj.Schema().Columns, i, i+1)
 			proj.Exprs = slices.Delete(proj.Exprs, i, i+1)
-			break
 		}
 	}
 	proj.SetChildren(p)
@@ -5822,8 +5821,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	if err != nil {
 		return nil, err
 	}
-	oldSchema := p.Schema()
-	oldLen := oldSchema.Len()
+	oldLen := p.Schema().Len()
 
 	// For explicit column usage, should use the all-public columns.
 	if ds.Where != nil {
@@ -5949,6 +5947,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 		return nil, err
 	}
 	preProjNames := p.OutputNames()[:oldLen]
+	//for i := len(preProjNames) - 1; i >= 0; i-- {
+	//	if preProjNames[i].ColName.L == "_tidb_commit_ts" {
+	//		preProjNames = slices.Delete(preProjNames, i, i+1)
+	//		oldLen--
+	//	}
+	//}
 	if del.IsMultiTable {
 		// tblID2TableName is the table map value is an array which contains table aliases.
 		// Table ID may not be unique for deleting multiple tables, for statements like
@@ -5998,14 +6002,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	proj.SetChildren(p)
 	proj.SetSchema(expression.NewSchema(finalProjCols...))
 	proj.SetOutputNames(finalProjNames)
-	for i := range len(proj.OutputNames()) {
-		if proj.OutputNames()[i].ColName.L == "_tidb_commit_ts" {
-			proj.SetOutputNames(slices.Delete(proj.OutputNames(), i, i+1))
-			proj.Schema().Columns = slices.Delete(proj.Schema().Columns, i, i+1)
-			proj.Exprs = slices.Delete(proj.Exprs, i, i+1)
-			break
-		}
-	}
 	p = proj
 	del.SetOutputNames(p.OutputNames())
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
