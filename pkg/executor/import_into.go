@@ -266,7 +266,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		zap.String("import-id", importID), zap.Int("concurrency", e.controller.ThreadCnt),
 		zap.String("target-table", e.controller.FullTableName()),
 		zap.Int64("target-table-id", e.controller.TableInfo.ID))
-	ti, err2 := importer.NewTableImporter(ctx, e.controller, importID, e.Ctx().GetStore())
+	ti, err2 := importer.NewTableImporter(ctx, e.controller, importID, e.Ctx().GetStore(), e.controller.Keyspace)
 	if err2 != nil {
 		return err2
 	}

@@ -170,6 +170,7 @@ func NewTableImporter(
 	e *LoadDataController,
 	id string,
 	kvStore tidbkv.Storage,
+	keyspaceName string,
 ) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
@@ -203,7 +204,8 @@ func NewTableImporter(
 		return nil, err
 	}
 
-	if err := localBackend.InitTiCIWriterGroup(ctx, e.Table.Meta(), e.DBName, id); err != nil {
+	keyspaceID := resolveTiCIKeyspaceID(e.logger, uint32(kvStore.GetCodec().GetKeyspaceID()), keyspaceName)
+	if err := localBackend.InitTiCIWriterGroup(ctx, e.Table.Meta(), e.DBName, id, keyspaceID); err != nil {
 		return nil, err
 	}
 
@@ -229,6 +231,21 @@ func NewTableImporter(
 		diskQuota:       adjustDiskQuota(int64(e.DiskQuota), dir, e.logger),
 		diskQuotaLock:   new(syncutil.RWMutex),
 	}, nil
+}
+
+func resolveTiCIKeyspaceID(logger *zap.Logger, defaultID uint32, keyspaceName string) uint32 {
+	keyspaceID := defaultID
+	if len(keyspaceName) > 0 {
+		if parsedID, err := strconv.ParseUint(keyspaceName, 10, 32); err == nil {
+			keyspaceID = uint32(parsedID)
+		}
+		return keyspaceID
+	}
+
+	if logger != nil {
+		logger.Info("keyspace name not provided; using current store keyspace ID", zap.Uint32("keyspace-id", keyspaceID))
+	}
+	return keyspaceID
 }
 
 // TableImporter is a table importer.

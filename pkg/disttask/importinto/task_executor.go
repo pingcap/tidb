@@ -108,7 +108,7 @@ func getTableImporter(
 		return nil, err
 	}
 
-	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
+	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store, taskMeta.Plan.Keyspace)
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) (err error) {

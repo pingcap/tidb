@@ -30,6 +30,7 @@ import (
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestPrepareSortDir(t *testing.T) {
@@ -213,4 +214,18 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 	_, _, err = GetRegionSplitSizeKeys(context.Background())
 	require.ErrorContains(t, err, "get region split size and keys failed")
 	// no positive case, more complex to mock it
+}
+
+func TestResolveTiCIKeyspaceIDFallback(t *testing.T) {
+	core, obs := observer.New(zap.InfoLevel)
+	logger := zap.New(core)
+
+	const defaultID uint32 = 1
+	keyspaceID := resolveTiCIKeyspaceID(logger, defaultID, "")
+
+	require.Equal(t, defaultID, keyspaceID)
+	logs := obs.TakeAll()
+	require.Len(t, logs, 1)
+	require.Equal(t, "keyspace name not provided; using current store keyspace ID", logs[0].Message)
+	require.Equal(t, defaultID, logs[0].ContextMap()["keyspace-id"])
 }
