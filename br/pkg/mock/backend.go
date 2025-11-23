@@ -22,74 +22,6 @@ import (
 	gomock "go.uber.org/mock/gomock"
 )
 
-// MockTargetInfoGetter is a mock of TargetInfoGetter interface.
-type MockTargetInfoGetter struct {
-	ctrl     *gomock.Controller
-	recorder *MockTargetInfoGetterMockRecorder
-	isgomock struct{}
-}
-
-// MockTargetInfoGetterMockRecorder is the mock recorder for MockTargetInfoGetter.
-type MockTargetInfoGetterMockRecorder struct {
-	mock *MockTargetInfoGetter
-}
-
-// NewMockTargetInfoGetter creates a new mock instance.
-func NewMockTargetInfoGetter(ctrl *gomock.Controller) *MockTargetInfoGetter {
-	mock := &MockTargetInfoGetter{ctrl: ctrl}
-	mock.recorder = &MockTargetInfoGetterMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockTargetInfoGetter) EXPECT() *MockTargetInfoGetterMockRecorder {
-	return m.recorder
-}
-
-// CheckRequirements mocks base method.
-func (m *MockTargetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckRequirements", ctx, checkCtx)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// CheckRequirements indicates an expected call of CheckRequirements.
-func (mr *MockTargetInfoGetterMockRecorder) CheckRequirements(ctx, checkCtx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockTargetInfoGetter)(nil).CheckRequirements), ctx, checkCtx)
-}
-
-// FetchRemoteDBModels mocks base method.
-func (m *MockTargetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchRemoteDBModels", ctx)
-	ret0, _ := ret[0].([]*model.DBInfo)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// FetchRemoteDBModels indicates an expected call of FetchRemoteDBModels.
-func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteDBModels(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteDBModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteDBModels), ctx)
-}
-
-// FetchRemoteTableModels mocks base method.
-func (m *MockTargetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string, tableNames []string) (map[string]*model.TableInfo, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchRemoteTableModels", ctx, schemaName, tableNames)
-	ret0, _ := ret[0].(map[string]*model.TableInfo)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// FetchRemoteTableModels indicates an expected call of FetchRemoteTableModels.
-func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteTableModels(ctx, schemaName, tableNames any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteTableModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteTableModels), ctx, schemaName, tableNames)
-}
-
 // MockBackend is a mock of Backend interface.
 type MockBackend struct {
 	ctrl     *gomock.Controller
@@ -112,11 +44,6 @@ func NewMockBackend(ctrl *gomock.Controller) *MockBackend {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockBackend) EXPECT() *MockBackendMockRecorder {
 	return m.recorder
-}
-
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockBackend) ISGOMOCK() struct{} {
-	return struct{}{}
 }
 
 // CleanupEngine mocks base method.
@@ -258,186 +185,6 @@ func (mr *MockBackendMockRecorder) ShouldPostProcess() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ShouldPostProcess", reflect.TypeOf((*MockBackend)(nil).ShouldPostProcess))
 }
 
-<<<<<<< HEAD
-// MockChunkFlushStatus is a mock of ChunkFlushStatus interface.
-type MockChunkFlushStatus struct {
-	ctrl     *gomock.Controller
-	recorder *MockChunkFlushStatusMockRecorder
-	isgomock struct{}
-}
-
-// MockChunkFlushStatusMockRecorder is the mock recorder for MockChunkFlushStatus.
-type MockChunkFlushStatusMockRecorder struct {
-	mock *MockChunkFlushStatus
-}
-
-// NewMockChunkFlushStatus creates a new mock instance.
-func NewMockChunkFlushStatus(ctrl *gomock.Controller) *MockChunkFlushStatus {
-	mock := &MockChunkFlushStatus{ctrl: ctrl}
-	mock.recorder = &MockChunkFlushStatusMockRecorder{mock}
-=======
-// MockEngineWriter is a mock of EngineWriter interface.
-type MockEngineWriter struct {
-	ctrl     *gomock.Controller
-	recorder *MockEngineWriterMockRecorder
-}
-
-// MockEngineWriterMockRecorder is the mock recorder for MockEngineWriter.
-type MockEngineWriterMockRecorder struct {
-	mock *MockEngineWriter
-}
-
-// NewMockEngineWriter creates a new mock instance.
-func NewMockEngineWriter(ctrl *gomock.Controller) *MockEngineWriter {
-	mock := &MockEngineWriter{ctrl: ctrl}
-	mock.recorder = &MockEngineWriterMockRecorder{mock}
->>>>>>> origin/master
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-<<<<<<< HEAD
-func (m *MockChunkFlushStatus) EXPECT() *MockChunkFlushStatusMockRecorder {
-	return m.recorder
-}
-
-// Flushed mocks base method.
-func (m *MockChunkFlushStatus) Flushed() bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Flushed")
-=======
-func (m *MockEngineWriter) EXPECT() *MockEngineWriterMockRecorder {
-	return m.recorder
-}
-
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockEngineWriter) ISGOMOCK() struct{} {
-	return struct{}{}
-}
-
-// AppendRows mocks base method.
-func (m *MockEngineWriter) AppendRows(arg0 context.Context, arg1 []string, arg2 encode.Rows) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AppendRows", arg0, arg1, arg2)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// AppendRows indicates an expected call of AppendRows.
-func (mr *MockEngineWriterMockRecorder) AppendRows(arg0, arg1, arg2 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendRows", reflect.TypeOf((*MockEngineWriter)(nil).AppendRows), arg0, arg1, arg2)
-}
-
-// Close mocks base method.
-func (m *MockEngineWriter) Close(arg0 context.Context) (common.ChunkFlushStatus, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Close", arg0)
-	ret0, _ := ret[0].(common.ChunkFlushStatus)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// Close indicates an expected call of Close.
-func (mr *MockEngineWriterMockRecorder) Close(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockEngineWriter)(nil).Close), arg0)
-}
-
-// IsSynced mocks base method.
-func (m *MockEngineWriter) IsSynced() bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsSynced")
->>>>>>> origin/master
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-<<<<<<< HEAD
-// Flushed indicates an expected call of Flushed.
-func (mr *MockChunkFlushStatusMockRecorder) Flushed() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Flushed", reflect.TypeOf((*MockChunkFlushStatus)(nil).Flushed))
-=======
-// IsSynced indicates an expected call of IsSynced.
-func (mr *MockEngineWriterMockRecorder) IsSynced() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSynced", reflect.TypeOf((*MockEngineWriter)(nil).IsSynced))
-}
-
-// MockTargetInfoGetter is a mock of TargetInfoGetter interface.
-type MockTargetInfoGetter struct {
-	ctrl     *gomock.Controller
-	recorder *MockTargetInfoGetterMockRecorder
-}
-
-// MockTargetInfoGetterMockRecorder is the mock recorder for MockTargetInfoGetter.
-type MockTargetInfoGetterMockRecorder struct {
-	mock *MockTargetInfoGetter
-}
-
-// NewMockTargetInfoGetter creates a new mock instance.
-func NewMockTargetInfoGetter(ctrl *gomock.Controller) *MockTargetInfoGetter {
-	mock := &MockTargetInfoGetter{ctrl: ctrl}
-	mock.recorder = &MockTargetInfoGetterMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockTargetInfoGetter) EXPECT() *MockTargetInfoGetterMockRecorder {
-	return m.recorder
-}
-
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockTargetInfoGetter) ISGOMOCK() struct{} {
-	return struct{}{}
-}
-
-// CheckRequirements mocks base method.
-func (m *MockTargetInfoGetter) CheckRequirements(arg0 context.Context, arg1 *backend.CheckCtx) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckRequirements", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// CheckRequirements indicates an expected call of CheckRequirements.
-func (mr *MockTargetInfoGetterMockRecorder) CheckRequirements(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockTargetInfoGetter)(nil).CheckRequirements), arg0, arg1)
-}
-
-// FetchRemoteDBModels mocks base method.
-func (m *MockTargetInfoGetter) FetchRemoteDBModels(arg0 context.Context) ([]*model.DBInfo, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchRemoteDBModels", arg0)
-	ret0, _ := ret[0].([]*model.DBInfo)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// FetchRemoteDBModels indicates an expected call of FetchRemoteDBModels.
-func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteDBModels(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteDBModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteDBModels), arg0)
-}
-
-// FetchRemoteTableModels mocks base method.
-func (m *MockTargetInfoGetter) FetchRemoteTableModels(arg0 context.Context, arg1 string, arg2 []string) (map[string]*model.TableInfo, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchRemoteTableModels", arg0, arg1, arg2)
-	ret0, _ := ret[0].(map[string]*model.TableInfo)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// FetchRemoteTableModels indicates an expected call of FetchRemoteTableModels.
-func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteTableModels(arg0, arg1, arg2 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteTableModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteTableModels), arg0, arg1, arg2)
->>>>>>> origin/master
-}
-
 // MockEngineWriter is a mock of EngineWriter interface.
 type MockEngineWriter struct {
 	ctrl     *gomock.Controller
@@ -477,10 +224,10 @@ func (mr *MockEngineWriterMockRecorder) AppendRows(ctx, columnNames, rows any) *
 }
 
 // Close mocks base method.
-func (m *MockEngineWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+func (m *MockEngineWriter) Close(ctx context.Context) (common.ChunkFlushStatus, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Close", ctx)
-	ret0, _ := ret[0].(backend.ChunkFlushStatus)
+	ret0, _ := ret[0].(common.ChunkFlushStatus)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -503,4 +250,72 @@ func (m *MockEngineWriter) IsSynced() bool {
 func (mr *MockEngineWriterMockRecorder) IsSynced() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSynced", reflect.TypeOf((*MockEngineWriter)(nil).IsSynced))
+}
+
+// MockTargetInfoGetter is a mock of TargetInfoGetter interface.
+type MockTargetInfoGetter struct {
+	ctrl     *gomock.Controller
+	recorder *MockTargetInfoGetterMockRecorder
+	isgomock struct{}
+}
+
+// MockTargetInfoGetterMockRecorder is the mock recorder for MockTargetInfoGetter.
+type MockTargetInfoGetterMockRecorder struct {
+	mock *MockTargetInfoGetter
+}
+
+// NewMockTargetInfoGetter creates a new mock instance.
+func NewMockTargetInfoGetter(ctrl *gomock.Controller) *MockTargetInfoGetter {
+	mock := &MockTargetInfoGetter{ctrl: ctrl}
+	mock.recorder = &MockTargetInfoGetterMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockTargetInfoGetter) EXPECT() *MockTargetInfoGetterMockRecorder {
+	return m.recorder
+}
+
+// CheckRequirements mocks base method.
+func (m *MockTargetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CheckRequirements", ctx, checkCtx)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CheckRequirements indicates an expected call of CheckRequirements.
+func (mr *MockTargetInfoGetterMockRecorder) CheckRequirements(ctx, checkCtx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockTargetInfoGetter)(nil).CheckRequirements), ctx, checkCtx)
+}
+
+// FetchRemoteDBModels mocks base method.
+func (m *MockTargetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchRemoteDBModels", ctx)
+	ret0, _ := ret[0].([]*model.DBInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FetchRemoteDBModels indicates an expected call of FetchRemoteDBModels.
+func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteDBModels(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteDBModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteDBModels), ctx)
+}
+
+// FetchRemoteTableModels mocks base method.
+func (m *MockTargetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string, tableNames []string) (map[string]*model.TableInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchRemoteTableModels", ctx, schemaName, tableNames)
+	ret0, _ := ret[0].(map[string]*model.TableInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FetchRemoteTableModels indicates an expected call of FetchRemoteTableModels.
+func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteTableModels(ctx, schemaName, tableNames any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteTableModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteTableModels), ctx, schemaName, tableNames)
 }
