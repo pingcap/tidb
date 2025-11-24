@@ -855,6 +855,13 @@ func (a *RenameTablesArgs) decodeV1(job *Job) error {
 		return errors.Trace(err)
 	}
 
+	// If the job is run on older TiDB versions(<=8.1), it will incorrectly remove
+	// the last arg oldTableNames.
+	// See https://github.com/pingcap/tidb/blob/293331cd9211c214f3431ff789210374378e9697/pkg/ddl/ddl_worker.go#L1442-L1447
+	if len(oldTableNames) == 0 && len(oldSchemaIDs) != 0 {
+		oldTableNames = make([]ast.CIStr, len(oldSchemaIDs))
+	}
+
 	a.RenameTableInfos = GetRenameTablesArgsFromV1(
 		oldSchemaIDs, oldSchemaNames, oldTableNames,
 		newSchemaIDs, newTableNames, tableIDs,
@@ -1026,6 +1033,8 @@ func GetAlterTablePlacementArgs(job *Job) (*AlterTablePlacementArgs, error) {
 // SetTiFlashReplicaArgs is the arguments for setting TiFlash replica ddl.
 type SetTiFlashReplicaArgs struct {
 	TiflashReplica ast.TiFlashReplicaSpec `json:"tiflash_replica,omitempty"`
+	// Note that ResetAvailable is only used in v2 job.
+	ResetAvailable bool `json:"reset_available,omitempty"`
 }
 
 func (a *SetTiFlashReplicaArgs) getArgsV1(*Job) []any {
@@ -1367,6 +1376,9 @@ type IndexArg struct {
 
 	// Only used for job args v2.
 	SplitOpt *IndexArgSplitOpt `json:"split_opt,omitempty"`
+
+	// ConditionString is used to store the partial index condition string for the index.
+	ConditionString string `json:"condition_string,omitempty"`
 }
 
 // GetColumnarIndexType gets the real columnar index type in a backward compatibility way.
@@ -1430,8 +1442,8 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 		arg := a.IndexArgs[0]
 		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr, arg.ColumnarIndexType}
 	}
-	// Add Full text index
-	if job.Type == ActionAddFullTextIndex {
+	// Add Full text index or hybrid index
+	if job.Type == ActionAddFullTextIndex || job.Type == ActionAddHybridIndex {
 		arg := a.IndexArgs[0]
 		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption}
 	}
@@ -1485,6 +1497,8 @@ func (a *ModifyIndexArgs) decodeV1(job *Job) error {
 		err = a.decodeAddColumnarIndexV1(job)
 	case ActionAddFullTextIndex:
 		err = a.decodeAddFullTextIndexV1(job)
+	case ActionAddHybridIndex:
+		err = a.decodeAddHybridIndexV1(job)
 	case ActionAddPrimaryKey:
 		err = a.decodeAddPrimaryKeyV1(job)
 	default:
@@ -1593,6 +1607,26 @@ func (a *ModifyIndexArgs) decodeAddColumnarIndexV1(job *Job) error {
 }
 
 func (a *ModifyIndexArgs) decodeAddFullTextIndexV1(job *Job) error {
+	var (
+		indexName              ast.CIStr
+		indexPartSpecification *ast.IndexPartSpecification
+		indexOption            *ast.IndexOption
+	)
+
+	if err := job.decodeArgs(
+		&indexName, &indexPartSpecification, &indexOption); err != nil {
+		return errors.Trace(err)
+	}
+
+	a.IndexArgs = []*IndexArg{{
+		IndexName:               indexName,
+		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
+		IndexOption:             indexOption,
+	}}
+	return nil
+}
+
+func (a *ModifyIndexArgs) decodeAddHybridIndexV1(job *Job) error {
 	var (
 		indexName              ast.CIStr
 		indexPartSpecification *ast.IndexPartSpecification
@@ -1764,6 +1798,7 @@ type ModifyColumnArgs struct {
 	// Finished args
 	// IndexIDs stores index ids to be added to gc table.
 	IndexIDs     []int64 `json:"index_ids,omitempty"`
+	NewIndexIDs  []int64 `json:"new_index_ids,omitempty"`
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
@@ -1788,7 +1823,7 @@ func (a *ModifyColumnArgs) decodeV1(job *Job) error {
 }
 
 func (a *ModifyColumnArgs) getFinishedArgsV1(*Job) []any {
-	return []any{a.IndexIDs, a.PartitionIDs}
+	return []any{a.IndexIDs, a.PartitionIDs, a.NewIndexIDs}
 }
 
 // GetModifyColumnArgs get the modify column argument from job.
@@ -1802,13 +1837,15 @@ func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 		var (
 			indexIDs     []int64
 			partitionIDs []int64
+			newIndexIDs  []int64
 		)
-		if err := job.decodeArgs(&indexIDs, &partitionIDs); err != nil {
+		if err := job.decodeArgs(&indexIDs, &partitionIDs, &newIndexIDs); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &ModifyColumnArgs{
 			IndexIDs:     indexIDs,
 			PartitionIDs: partitionIDs,
+			NewIndexIDs:  newIndexIDs,
 		}, nil
 	}
 	return getOrDecodeArgsV2[*ModifyColumnArgs](job)

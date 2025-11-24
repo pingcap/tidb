@@ -364,6 +364,13 @@ func extractScanAndMemoryFromBinaryPlan(binaryPlan string) ([]*TableReadCostMetr
 			return nil, err
 		}
 	}
+	// extract scan and memory from SubQueries part plan
+	for _, subQ := range explainData.Subqueries {
+		operatorExtractMetrics, err = extractMetricsFromOperatorTree(subQ, operatorExtractMetrics)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return operatorExtractMetrics, nil
 }
@@ -436,7 +443,7 @@ func extractMetricsFromOperatorTree(op *tipb.ExplainOperator, operatorMetrics []
 			})
 	case plancodec.TypePointGet, plancodec.TypeBatchPointGet:
 		if len(op.AccessObjects) == 0 {
-			return operatorMetrics, fmt.Errorf("faile to get table name while access object is empty, operator name: %s", op.Name)
+			return operatorMetrics, fmt.Errorf("failed to get table name while access object is empty, operator name: %s", op.Name)
 		}
 		// Attention: cannot handle the multi access objects from one operator
 		dbName, tableName := extractTableNameFromAccessObject(op.AccessObjects[0])

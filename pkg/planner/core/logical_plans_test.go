@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -1835,7 +1836,7 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 	if err != nil {
 		return nil, nil, err
 	}
-	p, _, err = physicalOptimize(p.(base.LogicalPlan), &PlanCounterDisabled)
+	p, _, err = physicalOptimize(p.(base.LogicalPlan))
 	return p.(base.PhysicalPlan), stmt, err
 }
 
@@ -1995,7 +1996,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where d = 1 and f > 1 and g > 1 order by c, e",
-			result: "PRIMARY_KEY,c_d_e,f_g",
+			result: "PRIMARY_KEY,c_d_e,g,f_g",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 order by b",
@@ -2011,7 +2012,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
-			result: "PRIMARY_KEY,b_c_global",
+			result: "PRIMARY_KEY,c_d_e,b_c_global",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
@@ -2311,28 +2312,6 @@ func TestFastPathInvalidBatchPointGet(t *testing.T) {
 	}
 }
 
-func TestTraceFastPlan(t *testing.T) {
-	s := coretestsdk.CreatePlannerSuiteElems()
-	defer s.Close()
-	s.GetCtx().GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-	defer func() {
-		s.GetCtx().GetSessionVars().StmtCtx.EnableOptimizeTrace = false
-	}()
-	s.GetCtx().GetSessionVars().SnapshotInfoschema = s.GetIS()
-	sql := "select * from t where a=1"
-	comment := fmt.Sprintf("sql:%s", sql)
-	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
-	require.NoError(t, err, comment)
-	nodeW := resolve.NewNodeW(stmt)
-	err = Preprocess(context.Background(), s.GetSCtx(), nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.GetIS()}))
-	require.NoError(t, err, comment)
-	plan := TryFastPlan(s.GetCtx(), nodeW)
-	require.NotNil(t, plan)
-	require.NotNil(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer)
-	require.NotNil(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer.FinalPlan)
-	require.True(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer.IsFastPlan)
-}
-
 func TestWindowLogicalPlanAmbiguous(t *testing.T) {
 	sql := "select a, max(a) over(), sum(a) over() from t"
 	var planString string
@@ -2392,6 +2371,34 @@ func TestRemoveOrderbyInSubquery(t *testing.T) {
 	}
 }
 
+func TestAddLimitForCorrelatedExistsSubquery(t *testing.T) {
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{ // First query should add LIMIT because it's an EXISTS subquery with NO_DECORRELATE
+			sql:  "select * from t t1 where exists (select /*+ NO_DECORRELATE() */ 1 from t t2 where t1.a = t2.a)",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection->Limit}->Projection",
+		},
+		{ // Second query should NOT add LIMIT because it is NOT an EXISTS subquery
+			sql:  "select * from t t1 where b in (select /*+ NO_DECORRELATE() */ b from t t2 where t1.a = t2.a)",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection}->Projection",
+		},
+	}
+
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+	ctx := context.TODO()
+	for i, tt := range tests {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.GetParser().ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
+		nodeW := resolve.NewNodeW(stmt)
+		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
+		require.NoError(t, err, comment)
+		require.Equal(t, tt.best, ToString(p), comment)
+	}
+}
 func TestRollupExpand(t *testing.T) {
 	ctx := context.Background()
 	sql := "select count(a) from t group by a, b with rollup"
@@ -2503,7 +2510,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 		require.NoError(t, err)
 		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
 		require.NoError(t, err)
-		deletePlan, ok := p.(*Delete)
+		deletePlan, ok := p.(*physicalop.Delete)
 		require.True(t, ok, comment)
 		var sb strings.Builder
 

@@ -75,6 +75,7 @@ using
 	select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 explain format = 'plan_tree' select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+drop global binding for select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 
 --echo ///// CREATE TABLE/VIEW
 drop table if exists t1;

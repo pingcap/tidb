@@ -21,9 +21,9 @@ import (
 
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	statsutil "github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -141,9 +141,6 @@ func debugTraceGetRowCountInput(
 	root.AppendStepToCurrentContext(newCtx)
 }
 
-// GetTblInfoForUsedStatsByPhysicalID get table name, partition name and TableInfo that will be used to record used stats.
-var GetTblInfoForUsedStatsByPhysicalID func(sctx planctx.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo)
-
 // recordUsedItemStatsStatus only records un-FullLoad item load status during user query
 func recordUsedItemStatsStatus(sctx planctx.PlanContext, stats any, tableID, id int64) {
 	// Sometimes we try to use stats on _tidb_rowid (id == -1), which must be empty, we ignore this case here.
@@ -177,7 +174,7 @@ func recordUsedItemStatsStatus(sctx planctx.PlanContext, stats any, tableID, id 
 	// need to record
 	statsRecord := sctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
 	if statsRecord.GetUsedInfo(tableID) == nil {
-		name, tblInfo := GetTblInfoForUsedStatsByPhysicalID(sctx, tableID)
+		name, tblInfo := statsutil.GetTblInfoForUsedStatsByPhysicalID(sctx, tableID)
 		statsRecord.RecordUsedInfo(tableID, &stmtctx.UsedStatsInfoForTable{
 			Name:    name,
 			TblInfo: tblInfo,

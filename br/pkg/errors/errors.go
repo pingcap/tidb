@@ -9,7 +9,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// Is tests whether the specificated error causes the error `err`.
+// Is tests whether the specified error causes the error `err`.
 func Is(err error, is *errors.Error) bool {
 	errorFound := errors.Find(err, func(e error) bool {
 		normalizedErr, ok := e.(*errors.Error)
@@ -49,7 +49,7 @@ var (
 	ErrPDBatchScanRegion      = errors.Normalize("batch scan region", errors.RFCCodeText("BR:PD:ErrPDBatchScanRegion"))
 	ErrPDUnknownScatterResult = errors.Normalize("failed to wait region scattered", errors.RFCCodeText("BR:PD:ErrPDUknownScatterResult"))
 	ErrPDNotFullyScatter      = errors.Normalize("pd not fully scattered", errors.RFCCodeText("BR:PD:ErrPDNotFullyScatter"))
-	ErrPDSplitFailed          = errors.Normalize("failed to wait region splitted", errors.RFCCodeText("BR:PD:ErrPDUknownScatterResult"))
+	ErrPDSplitFailed          = errors.Normalize("failed to wait region split", errors.RFCCodeText("BR:PD:ErrPDUknownScatterResult"))
 
 	ErrBackupChecksumMismatch    = errors.Normalize("backup checksum mismatch", errors.RFCCodeText("BR:Backup:ErrBackupChecksumMismatch"))
 	ErrBackupInvalidRange        = errors.Normalize("backup range invalid", errors.RFCCodeText("BR:Backup:ErrBackupInvalidRange"))
