@@ -521,12 +521,12 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("create table t(a int, b int, c int, d int, primary key(a), key idx(b), key gidx(d) global) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(11,11,11),(12,12,12),(13,13,13)")
+	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(3,3,3,3),(11,11,11,11),(12,12,12,12),(13,13,13,13)")
 	// With all columns.
 	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
 
@@ -565,8 +565,8 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	checkAnalyzedColumnStatsAllEvicted(t, p1Stats, 3)
 
 	// Another partitioned table with no analyze
-	tk.MustExec("create table t1(a int, b int, c int, primary key(a), key idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
-	tk.MustExec("insert into t1 values (1,1,1),(2,2,2),(3,3,3),(11,11,11),(12,12,12),(13,13,13)")
+	tk.MustExec("create table t1(a int, b int, c int, d int, primary key(a), key idx(b), key gidx(d) global) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("insert into t1 values (1,1,1,1),(2,2,2,2),(3,3,3,3),(11,11,11,11),(12,12,12,12),(13,13,13,13)")
 	h = dom.StatsHandle()
 	is = dom.InfoSchema()
 	// Handle DDL event to init the stats meta and histogram meta.
@@ -609,8 +609,8 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	checkNonAnalyzedColumnStats(t, t1p1Stats, tbl1.Meta())
 
 	// Another partitioned table with predicate columns
-	tk.MustExec("create table t2(a int, b int, c int, primary key(a), key idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
-	tk.MustExec("insert into t2 values (1,1,1),(2,2,2),(3,3,3),(11,11,11),(12,12,12),(13,13,13)")
+	tk.MustExec("create table t2(a int, b int, c int, d int, primary key(a), key idx(b), key gidx(d) global) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("insert into t2 values (1,1,1,1),(2,2,2,2),(3,3,3,3),(11,11,11,11),(12,12,12,12),(13,13,13,13)")
 	h = dom.StatsHandle()
 	is = dom.InfoSchema()
 	// Handle DDL event to init the stats meta and histogram meta.
