@@ -182,9 +182,10 @@ message GetShardLocalCacheRequest {
   int64 table_id = 1;
   // Index ID to filter shards
   int64 index_id = 2;
-  repeated KeyRange key_ranges = 3;
+  uint32 keyspace_id = 3;
+  repeated KeyRange key_ranges = 4;
   // at most `limit` shards can be returned
-  int32 limit = 4;
+  int32 limit = 5;
 }
 
 // Response containing shard local cache information
