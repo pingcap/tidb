@@ -584,7 +584,7 @@ func (hint *HintedTable) Match(other *HintedTable) bool {
 	return hint.SelectOffset == other.SelectOffset &&
 		hint.TblName.L == other.TblName.L &&
 		(hint.DBName.L == other.DBName.L ||
-			hint.DBName.L == "*" || other.DBName.L == "*") // for universal bindings, e.g. *.t
+			hint.DBName.L == "*" || other.DBName.L == "*") // for cross-db bindings, e.g. *.t
 }
 
 // HintedIndex indicates which index this hint should take effect on.
