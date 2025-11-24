@@ -1298,6 +1298,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 				case <-w.finished:
 					return nil
 				case w.resultCh <- completedTask:
+				}
 			}
 			if tableLookUpTask != nil {
 				select {
