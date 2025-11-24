@@ -1066,6 +1066,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	lDatum, rDatum *types.Datum,
 	realtimeRowCount, modifyCount, histNDV int64,
 	highIsOpenEnded bool,
+	colID int64,
 ) (result RowEstimate) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -1083,6 +1084,25 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 	if hg.Len() == 0 {
 		return DefaultRowEst(0)
+	}
+
+	// If this is a date/datetime/timestamp column with an open-ended high range,
+	// use the current time as the high value for more accurate estimation
+	var adjustedRDatum *types.Datum
+	if colID > 0 && highIsOpenEnded && hg.Tp != nil {
+		tp := hg.Tp.GetType()
+		if tp == mysql.TypeDate || tp == mysql.TypeDatetime || tp == mysql.TypeTimestamp {
+			now, err := sctx.GetExprCtx().GetEvalCtx().CurrentTime()
+			if err == nil {
+				// Convert current time to a Datum with the appropriate type
+				nowTime := types.NewTime(types.FromGoTime(now), tp, hg.Tp.GetDecimal())
+				nowDatum := types.NewTimeDatum(nowTime)
+				adjustedRDatum = &nowDatum
+			}
+		}
+	}
+	if adjustedRDatum != nil {
+		rDatum = adjustedRDatum
 	}
 
 	// oneValue assumes "one value qualifes", and is used as a lower bound.

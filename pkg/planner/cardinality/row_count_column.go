@@ -320,7 +320,9 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			}
 			var count statistics.RowEstimate
 			highIsOpenEnded := highVal.Kind() == types.KindMaxValue
-			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV, highIsOpenEnded))
+			// Use histogram ID as column ID for date type checking
+			colID := c.Histogram.ID
+			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV, highIsOpenEnded, colID))
 			cnt.Add(count)
 		}
 
