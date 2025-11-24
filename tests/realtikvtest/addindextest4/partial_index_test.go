@@ -20,10 +20,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table/tables/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -235,5 +237,38 @@ func TestPartialIndexDDL(t *testing.T) {
 		tk.MustExec("alter table t add index idx_b(b) where a = 1;")
 		tk.MustGetDBError("alter table t add index idx_b_2(b) where c = 1;",
 			dbterror.ErrUnsupportedAddPartialIndex)
+	})
+
+	t.Run("TestPartialIndexTotalCountIncrease", func(t *testing.T) {
+		tk.MustExec("use test;")
+		tk.MustExec("create table t (id int, ch char(255));")
+		defer tk.MustExec("drop table if exists t;")
+
+		tk.MustExec("insert into t values (1, repeat('a', 255));")
+		for range 15 {
+			tk.MustExec("insert into t select * from t;")
+		}
+
+		lastTotalCount := int64(0)
+		sendCount := 0
+		nonZeroIncrement := 0
+		// Modify the paging size to make the index backfilling job gets multiple chunks.
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/modifyKvReqForTableScan", func(kvReq *kv.Request) {
+			kvReq.Paging.MinPagingSize = 1
+			kvReq.Paging.MaxPagingSize = 16
+			kvReq.Paging.Enable = true
+		})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterSendChunk", func(totalCount int64) {
+			sendCount++
+			if totalCount > lastTotalCount {
+				nonZeroIncrement++
+			}
+			lastTotalCount = totalCount
+		})
+		tk.MustExec("alter table t add index idx_id(id) where ch is not null;")
+		testutil.CheckIndexKVCount(t, tk, dom, "t", "idx_id", 1<<15)
+
+		require.Greater(t, nonZeroIncrement, 1)
+		require.Greater(t, sendCount, 1)
 	})
 }

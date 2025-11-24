@@ -87,6 +87,7 @@ func buildTableScan(ctx context.Context, c *copr.CopContextBase, distSQLCtx *dis
 	kvReq.RequestSource.RequestSourceInternal = true
 	kvReq.RequestSource.RequestSourceType = getDDLRequestSource(model.ActionAddIndex)
 	kvReq.RequestSource.ExplicitRequestSourceType = kvutil.ExplicitTypeDDL
+	failpoint.InjectCall("modifyKvReqForTableScan", kvReq)
 	if err != nil {
 		return nil, conditionPushed, err
 	}
