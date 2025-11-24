@@ -9,7 +9,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 20,
+=======
+    shard_count = 24,
+>>>>>>> dd1df3f81b8 (planner: fix the issue that `READ_FROM_STORAGE` hint doesn't consider cross-db binding (#64644))
     deps = [
         "//pkg/bindinfo",
         "//pkg/bindinfo/internal",
