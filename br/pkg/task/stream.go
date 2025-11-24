@@ -1564,10 +1564,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := logclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
-<<<<<<< HEAD
-=======
 
->>>>>>> 9530fdc238 (Restore: implement restorer for compacted SST/Snapshot/log files (#57208))
 	err = client.Init(ctx, g, mgr.GetStorage())
 	if err != nil {
 		return nil, errors.Trace(err)
