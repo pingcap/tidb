@@ -907,9 +907,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 				id := e.Table().Meta().ID
 				startKey := tablecodec.EncodeTablePrefix(id)
 				endKey := tablecodec.EncodeTablePrefix(id + 1)
-				kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
-				kvRanges = kvRanges[:0]
-				kvRanges = append(kvRanges, []kv.KeyRange{kvRange})
+				modifiedKvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
+				kvRange = kvRange[:0]
+				kvRange = append(kvRange, modifiedKvRange)
 			}
 
 			if e.indexLookUpPushDown {
