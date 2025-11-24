@@ -4677,7 +4677,7 @@ func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	}
 
 	tblInfo := t.Meta()
-	if err := checkTableTypeForHybridIndex(tblInfo); err != nil {
+	if err := checkTableTypeForFulltextIndex(tblInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -4738,7 +4738,7 @@ func (e *executor) createHybridIndex(ctx sessionctx.Context, ti ast.Ident, index
 	}
 
 	tblInfo := t.Meta()
-	if err := checkTableTypeForFulltextIndex(tblInfo); err != nil {
+	if err := checkTableTypeForHybridIndex(tblInfo); err != nil {
 		return errors.Trace(err)
 	}
 
