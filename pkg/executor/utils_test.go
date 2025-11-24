@@ -15,9 +15,7 @@
 package executor
 
 import (
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -179,104 +177,6 @@ func TestEncodePasswordWithPlugin(t *testing.T) {
 	pwd, ok = encodePasswordWithPlugin(*u, p, "")
 	require.True(t, ok)
 	require.Equal(t, "", pwd)
-}
-
-func TestWorkerPool(t *testing.T) {
-	var (
-		list []int
-		lock sync.Mutex
-	)
-	push := func(i int) {
-		lock.Lock()
-		list = append(list, i)
-		lock.Unlock()
-	}
-	clean := func() {
-		lock.Lock()
-		list = list[:0]
-		lock.Unlock()
-	}
-	sleep := func(ms int) {
-		time.Sleep(time.Duration(ms) * time.Millisecond)
-	}
-
-	t.Run("SingleWorker", func(t *testing.T) {
-		clean()
-		pool := &workerPool{
-			needSpawn: func(workers, tasks uint32) bool {
-				return workers < 1 && tasks > 0
-			},
-		}
-		wg := sync.WaitGroup{}
-		wg.Add(1)
-		pool.submit(func() {
-			push(1)
-			wg.Add(1)
-			pool.submit(func() {
-				push(3)
-				sleep(10)
-				push(4)
-				wg.Done()
-			})
-			sleep(1)
-			push(2)
-			wg.Done()
-		})
-		wg.Wait()
-		require.Equal(t, []int{1, 2, 3, 4}, list)
-	})
-
-	t.Run("TwoWorkers", func(t *testing.T) {
-		clean()
-		pool := &workerPool{
-			needSpawn: func(workers, tasks uint32) bool {
-				return workers < 2 && tasks > 0
-			},
-		}
-		wg := sync.WaitGroup{}
-		wg.Add(1)
-		pool.submit(func() {
-			push(1)
-			wg.Add(1)
-			pool.submit(func() {
-				push(3)
-				sleep(10)
-				push(4)
-				wg.Done()
-			})
-			sleep(1)
-			push(2)
-			wg.Done()
-		})
-		wg.Wait()
-		require.Equal(t, []int{1, 3, 2, 4}, list)
-	})
-
-	t.Run("TolerateOnePendingTask", func(t *testing.T) {
-		clean()
-		pool := &workerPool{
-			needSpawn: func(workers, tasks uint32) bool {
-				return workers < 2 && tasks > 1
-			},
-		}
-		wg := sync.WaitGroup{}
-		wg.Add(1)
-		pool.submit(func() {
-			push(1)
-			wg.Add(1)
-			pool.submit(func() {
-				push(3)
-				sleep(10)
-				push(4)
-				wg.Done()
-			})
-			sleep(1)
-			push(2)
-			wg.Done()
-		})
-		wg.Wait()
-		require.Equal(t, []int{1, 2, 3, 4}, list)
-	})
 }
 
 func TestEncodedPassword(t *testing.T) {
