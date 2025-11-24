@@ -1427,9 +1427,9 @@ func IsDDLAnalyzeCtx(ctx context.Context) bool {
 	return ok
 }
 
-// WithModifyingColumn checks if columns contain any column which is modifying.
+// ContainModifyingColumn checks if columns contain any column which is modifying.
 // If so, we should skip analyzing for this table except the final analyze after job is non-revertible.
-func WithModifyingColumn(columns []*model.ColumnInfo) bool {
+func ContainModifyingColumn(columns []*model.ColumnInfo) bool {
 	for _, col := range columns {
 		if col.ChangingFieldType != nil {
 			return true
