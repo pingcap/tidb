@@ -4371,13 +4371,11 @@ func buildIndexScanOutputOffsets(p *physicalop.PhysicalIndexScan, columns []*mod
 		}
 	}
 
-	if !p.Index.IsFulltextIndexOnTiCI() {
-		handleOutputOffsetsForTiKVIndexLookUp(outputOffsets, handleLen, columns, p.NeedExtraOutputCol())
-	} else {
-		handleOutuputOffsetsForTiCIIndexLookUp(outputOffsets, handleLen)
+	if p.Index.IsFulltextIndexOnTiCI() {
+		return handleOutuputOffsetsForTiCIIndexLookUp(outputOffsets, handleLen), nil
 	}
 
-	return outputOffsets, nil
+	return handleOutputOffsetsForTiKVIndexLookUp(outputOffsets, handleLen, columns, p.NeedExtraOutputCol()), nil
 }
 
 // handleOutputOffsetsForTiKVIndexLookUp handles the output offsets for TiKV index look up requests.
