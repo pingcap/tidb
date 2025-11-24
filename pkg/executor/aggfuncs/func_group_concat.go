@@ -259,11 +259,8 @@ type groupPartialConcatDistinct struct {
 }
 
 func (e *groupPartialConcatDistinct) MergePartialResult(sctx AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
-	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
 	s, d := (*partialResult4GroupConcatDistinct)(src), (*partialResult4GroupConcatDistinct)(dst)
 
-	// TODO handle memDelta
-	// bufCapBefore := d.buffer.Cap()
 	for key, val := range s.valSet.Data {
 		if d.valSet.Exist(key) {
 			continue
@@ -273,9 +270,6 @@ func (e *groupPartialConcatDistinct) MergePartialResult(sctx AggFuncUpdateContex
 		memDelta += int64(len(e.sep) + len(key) + len(val))
 	}
 
-	// TODO handle memDelta
-	// memDelta -= int64(d.buffer.Cap() + bufCapBefore + s.buffer.Cap())
-	// return memDelta, e.truncatePartialResultIfNeed(sctx, d.buffer)
 	return memDelta, nil
 }
 

@@ -42,14 +42,14 @@ var (
 	_ AggFunc = (*countPartialWithDistinct4Decimal)(nil)
 	_ AggFunc = (*countPartialWithDistinct4Duration)(nil)
 	_ AggFunc = (*countPartialWithDistinct4String)(nil)
-	_ AggFunc = (*countPartialWithDistinct)(nil) // TODO add ut test
+	_ AggFunc = (*countPartialWithDistinct)(nil)
 
 	_ AggFunc = (*countOriginalWithDistinct4Int)(nil)
 	_ AggFunc = (*countOriginalWithDistinct4Real)(nil)
 	_ AggFunc = (*countOriginalWithDistinct4Decimal)(nil)
 	_ AggFunc = (*countOriginalWithDistinct4Duration)(nil)
 	_ AggFunc = (*countOriginalWithDistinct4String)(nil)
-	_ AggFunc = (*countOriginalWithDistinct)(nil) // TODO add ut test
+	_ AggFunc = (*countOriginalWithDistinct)(nil)
 
 	// All the AggFunc implementations for "APPROX_COUNT_DISTINCT" are listed here.
 	_ AggFunc = (*approxCountDistinctOriginal)(nil)

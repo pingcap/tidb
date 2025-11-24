@@ -99,7 +99,6 @@ type countPartialWithDistinct4Int struct {
 }
 
 func (*countPartialWithDistinct4Int) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
-	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
 	s, d := (*partialResult4CountDistinctInt)(src), (*partialResult4CountDistinctInt)(dst)
 
 	for val := range s.valSet.Int64Set {
@@ -167,7 +166,6 @@ type countPartialWithDistinct4Real struct {
 }
 
 func (*countPartialWithDistinct4Real) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
-	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
 	s, d := (*partialResult4CountDistinctReal)(src), (*partialResult4CountDistinctReal)(dst)
 
 	for val := range s.valSet.Float64Set {
@@ -235,7 +233,6 @@ type countPartialWithDistinct4Decimal struct {
 }
 
 func (*countPartialWithDistinct4Decimal) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
-	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
 	s, d := (*partialResult4CountDistinctDecimal)(src), (*partialResult4CountDistinctDecimal)(dst)
 
 	for val := range s.valSet.StringSet {
@@ -244,6 +241,7 @@ func (*countPartialWithDistinct4Decimal) MergePartialResult(_ AggFuncUpdateConte
 		}
 
 		memDelta += d.valSet.Insert(val)
+		memDelta += int64(len(val))
 	}
 	return
 }
@@ -309,7 +307,6 @@ type countPartialWithDistinct4Duration struct {
 }
 
 func (*countPartialWithDistinct4Duration) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
-	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
 	s, d := (*partialResult4CountDistinctDuration)(src), (*partialResult4CountDistinctDuration)(dst)
 
 	for val := range s.valSet.Int64Set {
@@ -378,7 +375,6 @@ type countPartialWithDistinct4String struct {
 }
 
 func (e *countPartialWithDistinct4String) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
-	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
 	s, d := (*partialResult4CountDistinctString)(src), (*partialResult4CountDistinctString)(dst)
 
 	for val := range s.valSet.StringSet {
@@ -387,6 +383,7 @@ func (e *countPartialWithDistinct4String) MergePartialResult(_ AggFuncUpdateCont
 		}
 
 		memDelta += d.valSet.Insert(val)
+		memDelta += int64(len(val))
 	}
 	return
 }
@@ -447,7 +444,6 @@ type countPartialWithDistinct struct {
 }
 
 func (e *countPartialWithDistinct) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
-	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
 	s, d := (*partialResult4CountWithDistinct)(src), (*partialResult4CountWithDistinct)(dst)
 
 	for val := range s.valSet.StringSet {
@@ -456,6 +452,7 @@ func (e *countPartialWithDistinct) MergePartialResult(_ AggFuncUpdateContext, sr
 		}
 
 		memDelta += d.valSet.Insert(val)
+		memDelta += int64(len(val))
 	}
 	return
 }

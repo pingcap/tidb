@@ -2122,6 +2122,10 @@ func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *
 		if len(aggDesc.OrderByItems) > 0 {
 			e.IsUnparallelExec = true
 		}
+
+		if aggDesc.HasDistinct {
+			e.HasDistinct = true
+		}
 	}
 	// When we set both tidb_hashagg_final_concurrency and tidb_hashagg_partial_concurrency to 1,
 	// we do not need to parallelly execute hash agg,

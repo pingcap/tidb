@@ -360,7 +360,6 @@ type sum4PartialDistinctFloat64 struct {
 }
 
 func (*sum4PartialDistinctFloat64) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
-	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
 	s, d := (*partialResult4SumDistinctFloat64)(src), (*partialResult4SumDistinctFloat64)(dst)
 	for val := range s.valSet.Float64Set {
 		if d.valSet.Exist(val) {
@@ -432,7 +431,6 @@ type sum4PartialDistinct4Decimal struct {
 }
 
 func (*sum4PartialDistinct4Decimal) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
-	// TODO outside of MergePartialResult, dst will be deleted. Memory usage of dst should be decreased
 	s, d := (*partialResult4SumDistinctDecimal)(src), (*partialResult4SumDistinctDecimal)(dst)
 	for key, val := range s.valSet.Data {
 		if d.valSet.Exist(key) {
@@ -440,7 +438,7 @@ func (*sum4PartialDistinct4Decimal) MergePartialResult(_ AggFuncUpdateContext, s
 		}
 
 		memDelta += d.valSet.Insert(key, val)
-		memDelta += int64(len(key)) + pointerSize
+		memDelta += int64(len(key) + types.MyDecimalStructSize)
 
 		newSum := new(types.MyDecimal)
 		if err = types.DecimalAdd(&d.val, val, newSum); err != nil {
