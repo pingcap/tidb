@@ -370,20 +370,12 @@ func (rc *LogClient) CleanUpKVFiles(
 	return rc.logRestoreManager.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
 }
 
-<<<<<<< HEAD
 func createSession(ctx context.Context, g glue.Glue, store kv.Storage) (glue.Session, error) {
 	unsafeSession, err := g.CreateSession(store)
-=======
-// Init create db connection and domain for storage.
-func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage) error {
-	var err error
-	rc.unsafeSession, err = g.CreateSession(store)
->>>>>>> 9530fdc238 (Restore: implement restorer for compacted SST/Snapshot/log files (#57208))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Set SQL mode to None for avoiding SQL compatibility problem
-<<<<<<< HEAD
 	err = unsafeSession.Execute(ctx, "set @@sql_mode=''")
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -420,9 +412,6 @@ func closeSessions(sessions []glue.Session) {
 func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage) error {
 	var err error
 	rc.se, err = createSession(ctx, g, store)
-=======
-	err = rc.unsafeSession.Execute(ctx, "set @@sql_mode=''")
->>>>>>> 9530fdc238 (Restore: implement restorer for compacted SST/Snapshot/log files (#57208))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1718,13 +1707,8 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 			// restored metakv and then skips repairing it.
 
 			// only when first execution or old index id is not dropped
-<<<<<<< HEAD
-			if !fromCheckpoint || sql.OldIndexIDFound {
-				if err := indexSession.ExecuteInternal(ectx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
-=======
 			if !fromCheckpoint || oldIndexIDFound {
-				if err := rc.unsafeSession.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
->>>>>>> 9530fdc238 (Restore: implement restorer for compacted SST/Snapshot/log files (#57208))
+				if err := rc.unsafeSession.ExecuteInternal(ectx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -1734,15 +1718,11 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 				}
 			})
 			// create the repaired index when first execution or not found it
-<<<<<<< HEAD
-			if err := indexSession.ExecuteInternal(ectx, sql.AddSQL, sql.AddArgs...); err != nil {
-=======
-			if err := rc.unsafeSession.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
+			if err := rc.unsafeSession.ExecuteInternal(ectx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)
 			}
 			w.Inc()
 			if err := w.Wait(ctx); err != nil {
->>>>>>> 9530fdc238 (Restore: implement restorer for compacted SST/Snapshot/log files (#57208))
 				return errors.Trace(err)
 			}
 			w.Increment()
@@ -1978,7 +1958,6 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 
 	return eg.Wait()
 }
-<<<<<<< HEAD
 
 type LogFilesIterWithSplitHelper struct {
 	iter   LogIter
@@ -2038,5 +2017,3 @@ func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key,
 	}
 	return nil
 }
-=======
->>>>>>> 9530fdc238 (Restore: implement restorer for compacted SST/Snapshot/log files (#57208))

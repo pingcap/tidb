@@ -27,20 +27,17 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	rawclient "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
-=======
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
->>>>>>> 9530fdc238 (Restore: implement restorer for compacted SST/Snapshot/log files (#57208))
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -48,12 +45,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/domain"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-=======
 	"github.com/pingcap/tidb/pkg/kv"
->>>>>>> 9530fdc238 (Restore: implement restorer for compacted SST/Snapshot/log files (#57208))
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -1533,7 +1527,6 @@ func TestPITRIDMap(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func TestRepairIngestIndex(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
@@ -1779,7 +1772,6 @@ func TestPutRawKvWithRetry(t *testing.T) {
 		})
 	}
 }
-=======
 type mockLogStrategy struct {
 	*logclient.LogSplitStrategy
 	expectSplitCount int
@@ -2252,4 +2244,3 @@ func fakeRowKey(tableID, rowID int64) kv.Key {
 func fakeRowRawKey(tableID, rowID int64) kv.Key {
 	return tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(tableID), kv.IntHandle(rowID))
 }
->>>>>>> 9530fdc238 (Restore: implement restorer for compacted SST/Snapshot/log files (#57208))

@@ -63,11 +63,7 @@ go_test(
     ],
     embed = [":split"],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 29,
-=======
-    shard_count = 26,
->>>>>>> 9530fdc238 (Restore: implement restorer for compacted SST/Snapshot/log files (#57208))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/restore/utils",
