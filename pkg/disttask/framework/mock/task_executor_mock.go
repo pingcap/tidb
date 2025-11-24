@@ -110,6 +110,21 @@ func (mr *MockTaskTableMockRecorder) GetFirstSubtaskInStates(arg0, arg1, arg2, a
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetFirstSubtaskInStates", reflect.TypeOf((*MockTaskTable)(nil).GetFirstSubtaskInStates), varargs...)
 }
 
+// GetSubtaskCheckpoint mocks base method.
+func (m *MockTaskTable) GetSubtaskCheckpoint(arg0 context.Context, arg1 int64) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetSubtaskCheckpoint", arg0, arg1)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetSubtaskCheckpoint indicates an expected call of GetSubtaskCheckpoint.
+func (mr *MockTaskTableMockRecorder) GetSubtaskCheckpoint(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskCheckpoint", reflect.TypeOf((*MockTaskTable)(nil).GetSubtaskCheckpoint), arg0, arg1)
+}
+
 // GetSubtasksByExecIDAndStepAndStates mocks base method.
 func (m *MockTaskTable) GetSubtasksByExecIDAndStepAndStates(arg0 context.Context, arg1 string, arg2 int64, arg3 proto.Step, arg4 ...proto.SubtaskState) ([]*proto.Subtask, error) {
 	m.ctrl.T.Helper()
@@ -263,6 +278,20 @@ func (m *MockTaskTable) StartSubtask(arg0 context.Context, arg1 int64, arg2 stri
 func (mr *MockTaskTableMockRecorder) StartSubtask(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartSubtask", reflect.TypeOf((*MockTaskTable)(nil).StartSubtask), arg0, arg1, arg2)
+}
+
+// UpdateSubtaskCheckpoint mocks base method.
+func (m *MockTaskTable) UpdateSubtaskCheckpoint(arg0 context.Context, arg1 int64, arg2 any) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateSubtaskCheckpoint", arg0, arg1, arg2)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateSubtaskCheckpoint indicates an expected call of UpdateSubtaskCheckpoint.
+func (mr *MockTaskTableMockRecorder) UpdateSubtaskCheckpoint(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSubtaskCheckpoint", reflect.TypeOf((*MockTaskTable)(nil).UpdateSubtaskCheckpoint), arg0, arg1, arg2)
 }
 
 // UpdateSubtaskStateAndError mocks base method.

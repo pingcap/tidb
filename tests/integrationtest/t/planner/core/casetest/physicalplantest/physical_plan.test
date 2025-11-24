@@ -288,22 +288,6 @@ select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1
 explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a;
 select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a;
 
-# TestNthPlanHintWithExplain
-drop table if exists test.tt;
-create table test.tt (a int,b int, index(a), index(b));
-insert into test.tt values (1, 1), (2, 2), (3, 4);
-set @@tidb_partition_prune_mode='static';
-explain format = 'plan_tree' select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1;
-explain format = 'plan_tree' select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;
-explain format = 'plan_tree' select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;
-explain format = 'plan_tree' select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;
-
-## Currently, its output is the same as the second test case in the testdata, which is `/*+nth_plan(2)*/`. If this doesn't
-## hold in the future, you may need to modify this.
-explain format = 'plan_tree' select * from test.tt where a=1 and b=1;
-
-set @@tidb_partition_prune_mode=DEFAULT;
-
 # TestEnumIndex
 drop table if exists t;
 create table t(e enum('c','b','a',''), index idx(e));

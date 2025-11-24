@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
@@ -107,6 +108,7 @@ var (
 	mIngestMaxSplitRangesPerSecKey = []byte("IngestMaxSplitRangesPerSec")
 	mIngestMaxInflightKey          = []byte("IngestMaxInflight")
 	mIngestMaxPerSecKey            = []byte("IngestMaxReqPerSec")
+	mDXFScheduleTuneKey            = []byte("DXFScheduleTune")
 
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
@@ -1099,10 +1101,8 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 	defer cancel()
 	workGroup, egCtx := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
 
-	if concurrency >= 15 {
-		concurrency = 15
-	}
-
+	// In case of too many goroutines or 0 concurrency. fetchAllTablesAndBuildAnalysisJobs may pass 0 concurrency on 1C machine.
+	concurrency = max(1, min(15, concurrency))
 	kvRanges := splitRangeInt64Max(int64(concurrency))
 
 	mu := sync.Mutex{}
@@ -1758,6 +1758,29 @@ func (m *Mutator) GetHistoryDDLJobsIterator(startJobID int64) (LastJobIterator, 
 	return &HLastJobIterator{
 		iter: iter,
 	}, nil
+}
+
+// SetDXFScheduleTuneFactors sets the DXF schedule TTL tune factors for a keyspace.
+func (m *Mutator) SetDXFScheduleTuneFactors(keyspace string, factors *schstatus.TTLTuneFactors) error {
+	data, err := json.Marshal(factors)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(m.txn.HSet(mDXFScheduleTuneKey, []byte(keyspace), data))
+}
+
+// GetDXFScheduleTuneFactors gets the DXF schedule TTL tune factors for a keyspace.
+func (m *Mutator) GetDXFScheduleTuneFactors(keyspace string) (*schstatus.TTLTuneFactors, error) {
+	data, err := m.txn.HGet(mDXFScheduleTuneKey, []byte(keyspace))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if data == nil {
+		return nil, nil
+	}
+	res := &schstatus.TTLTuneFactors{}
+	err = json.Unmarshal(data, res)
+	return res, errors.Trace(err)
 }
 
 // HLastJobIterator is the iterator for gets the latest history.

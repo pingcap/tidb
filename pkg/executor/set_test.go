@@ -444,7 +444,18 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect cte_max_recursion_depth value: '-1'"))
 	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("0"))
 
+	// test for instance
+	tk.MustExec("set @@instance.ddl_slow_threshold=1234")
+	tk.MustQuery("select @@instance.ddl_slow_threshold").Check(testkit.Rows("1234"))
+	tk.MustGetErrCode("set @@instance.tidb_redact_log=1", errno.ErrLocalVariable)
+	// set instance variable, but global variable is still the old value
+	tk.MustExec("set @@instance.tidb_stmt_summary_max_stmt_count=1234")
+	tk.MustQuery("select @@global.tidb_stmt_summary_max_stmt_count").Check(testkit.Rows("3000"))
+
 	// test for tidb_redact_log
+	tk.MustGetErrCode(`set @@session.tidb_redact_log=1;`, errno.ErrUnknownSystemVariable)
+	tk.MustGetErrCode(`set @@tidb_redact_log=1;`, errno.ErrUnknownSystemVariable)
+	tk.MustGetErrCode(`set @@tidb_redact_log=1;`, errno.ErrUnknownSystemVariable)
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("OFF"))
 	tk.MustExec("set global tidb_redact_log = 1")
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("ON"))
@@ -1456,8 +1467,6 @@ func TestSetConcurrency(t *testing.T) {
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.ProjectionConcurrency())
 	require.Equal(t, vardef.DefDistSQLScanConcurrency, vars.DistSQLScanConcurrency())
 
-	require.Equal(t, vardef.DefIndexSerialScanConcurrency, vars.IndexSerialScanConcurrency())
-
 	// test setting deprecated variables
 	warnTpl := "Warning 1287 '%s' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead"
 
@@ -1496,9 +1505,8 @@ func TestSetConcurrency(t *testing.T) {
 	require.Equal(t, 1, vars.DistSQLScanConcurrency())
 
 	tk.MustExec("set @@tidb_index_serial_scan_concurrency=4")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1287 The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'."))
 	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows("4"))
-	require.Equal(t, 4, vars.IndexSerialScanConcurrency())
 
 	// test setting deprecated value unset
 	tk.MustExec("set @@tidb_index_lookup_concurrency=-1;")

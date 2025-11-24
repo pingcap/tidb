@@ -746,7 +746,8 @@ type IndexOption struct {
 	SplitOpt                   *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
 	SecondaryEngineAttr        string
 	AddColumnarReplicaOnDemand int
-	TiCIParameter              string `json:"tici_parameter,omitempty"`
+	Condition                  ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
+	TiCIParameter              string   `json:"tici_parameter,omitempty"`
 }
 
 // IsEmpty is true if only default options are given
@@ -761,6 +762,7 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Visibility != IndexVisibilityDefault ||
 		n.SplitOpt != nil ||
 		len(n.SecondaryEngineAttr) > 0 ||
+		n.Condition != nil ||
 		len(n.TiCIParameter) > 0 {
 		return false
 	}
@@ -885,6 +887,16 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteString(n.SecondaryEngineAttr)
 		// If a new option is added after, please also uncomment:
 		//hasPrevOption = true
+	}
+
+	if n.Condition != nil {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("WHERE ")
+		if err := n.Condition.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing IndexOption Condition")
+		}
 	}
 
 	return nil

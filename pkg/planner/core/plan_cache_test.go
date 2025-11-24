@@ -837,13 +837,15 @@ func planCacheIndexMergePrepareData(tk *testkit.TestKit) {
 }
 
 func TestPlanCacheRandomCases(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	testRandomPlanCacheCases(t, planCacheIndexMergePrepareData, planCacheIndexMergeQueries)
-	testRandomPlanCacheCases(t, planCacheIntConvertPrepareData, planCacheIntConvertQueries)
-	testRandomPlanCacheCases(t, planCachePointGetPrepareData, planCachePointGetQueries)
+	t.Run("1", func(t *testing.T) {
+		testRandomPlanCacheCases(t, planCacheIndexMergePrepareData, planCacheIndexMergeQueries)
+	})
+	t.Run("2", func(t *testing.T) {
+		testRandomPlanCacheCases(t, planCacheIntConvertPrepareData, planCacheIntConvertQueries)
+	})
+	t.Run("3", func(t *testing.T) {
+		testRandomPlanCacheCases(t, planCachePointGetPrepareData, planCachePointGetQueries)
+	})
 }
 
 func testRandomPlanCacheCases(t *testing.T,

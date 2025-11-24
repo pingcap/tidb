@@ -640,5 +640,11 @@
       "explain format = 'plan_tree' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup having grouping(country) > 0 order by grouping(country); -- 15. 14 under gpos case",
       "explain format = 'plan_tree' SELECT year, country, product, grouping(year, country, product) from sales group by year, country, product with rollup having grouping(year, country, product) <> 0; -- 16. grouping function recreating fix"
     ]
+  },
+  {
+      "name": "TestLimitPushdown",
+      "cases": [
+          "select /*+ use_index(t1, c1) */ * from t1 order by c1 limit 200;"
+      ]
   }
 ]

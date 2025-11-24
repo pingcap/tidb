@@ -2269,3 +2269,79 @@ func TestGrantOptionWithSEMv2(t *testing.T) {
 	err = tk4.ExecToErr("GRANT FILE ON *.* TO grantee")
 	require.NoError(t, err)
 }
+
+func testProtectUserAndRoleWithRestrictedPrivileges(t *testing.T, semVer string) {
+	store := createStoreAndPrepareDB(t)
+
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec("CREATE USER restricted_user")
+	rootTk.MustExec("GRANT RESTRICTED_USER_ADMIN, SUPER, CREATE USER, SELECT ON *.* TO restricted_user WITH GRANT OPTION")
+	rootTk.MustExec("CREATE USER normal_user")
+	rootTk.MustExec("GRANT SUPER, CREATE USER, SELECT ON *.* TO normal_user WITH GRANT OPTION")
+
+	rootTk.MustExec("CREATE USER restricted_user_1")
+	rootTk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* TO restricted_user_1")
+	rootTk.MustExec("CREATE USER restricted_user_2")
+	rootTk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* TO restricted_user_2")
+	rootTk.MustExec("CREATE USER restricted_user_3")
+	rootTk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* TO restricted_user_3")
+	rootTk.MustExec("CREATE USER normal_user_1")
+
+	defer sem.SwitchToSEMForTest(t, semVer)()
+	// Accounts with RESTRICTED_USER_ADMIN are not allowed to be deleted unless we also have the
+	// RESTRICTED_USER_ADMIN privilege
+	tk1 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "normal_user", Hostname: "%"}, nil, nil, nil))
+	err := tk1.ExecToErr("DROP USER restricted_user_1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	tk2 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "restricted_user", Hostname: "%"}, nil, nil, nil))
+	err = tk2.ExecToErr("DROP USER restricted_user_1")
+	require.NoError(t, err)
+
+	// Accounts with RESTRICTED_USER_ADMIN are not allowed to be altered unless we also have the
+	// RESTRICTED_USER_ADMIN privilege
+	tk3 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk3.Session().Auth(&auth.UserIdentity{Username: "normal_user", Hostname: "%"}, nil, nil, nil))
+	err = tk3.ExecToErr("ALTER USER restricted_user_2 IDENTIFIED BY 'new_password'")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	tk4 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk4.Session().Auth(&auth.UserIdentity{Username: "restricted_user", Hostname: "%"}, nil, nil, nil))
+	err = tk4.ExecToErr("ALTER USER restricted_user_2 IDENTIFIED BY 'new_password'")
+	require.NoError(t, err)
+
+	// Accounts with RESTRICTED_USER_ADMIN are not allowed to be granted or revoked unless we also
+	// have the RESTRICTED_USER_ADMIN privilege
+	tk5 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk5.Session().Auth(&auth.UserIdentity{Username: "normal_user", Hostname: "%"}, nil, nil, nil))
+	err = tk5.ExecToErr("GRANT SELECT ON test.* TO restricted_user_3")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	err = tk5.ExecToErr("REVOKE SELECT ON test.* FROM restricted_user_3")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	tk6 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk6.Session().Auth(&auth.UserIdentity{Username: "restricted_user", Hostname: "%"}, nil, nil, nil))
+	err = tk6.ExecToErr("GRANT SELECT ON test.* TO restricted_user_3")
+	require.NoError(t, err)
+	err = tk6.ExecToErr("REVOKE SELECT ON test.* FROM restricted_user_3")
+	require.NoError(t, err)
+
+	// Accounts with RESTRICTED_USER_ADMIN are not allowed to be granted/revoked as a role unless we
+	// also have the RESTRICTED_USER_ADMIN privilege
+	tk7 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk7.Session().Auth(&auth.UserIdentity{Username: "normal_user", Hostname: "%"}, nil, nil, nil))
+	err = tk7.ExecToErr("GRANT restricted_user TO normal_user_1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	err = tk7.ExecToErr("REVOKE restricted_user FROM normal_user_1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	tk8 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk8.Session().Auth(&auth.UserIdentity{Username: "restricted_user", Hostname: "%"}, nil, nil, nil))
+	err = tk8.ExecToErr("GRANT restricted_user TO normal_user_1")
+	require.NoError(t, err)
+	err = tk8.ExecToErr("REVOKE restricted_user FROM normal_user_1")
+	require.NoError(t, err)
+}
+
+func TestProtectUserAndRoleWithRestrictedPrivileges(t *testing.T) {
+	testProtectUserAndRoleWithRestrictedPrivileges(t, sem.V1)
+	testProtectUserAndRoleWithRestrictedPrivileges(t, sem.V2)
+}

@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"encoding/hex"
 	"slices"
 
 	"github.com/pingcap/failpoint"
@@ -34,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
@@ -120,6 +123,26 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	stmtCtx.SetPlan(finalPlan)
+
+	// Emit trace event for plan digest if enabled
+	if traceevent.IsEnabled(traceevent.StmtPlan) {
+		normalized, planDigest := stmtCtx.GetPlanDigest()
+		var digestHex string
+		if planDigest != nil {
+			digestHex = hex.EncodeToString(planDigest.Bytes())
+		}
+		fields := []zap.Field{
+			zap.String("plan_digest", digestHex),
+			zap.String("stmt_type", stmtctx.GetStmtLabel(ctx, stmtNode)),
+			zap.Uint64("conn_id", sessVars.ConnectionID),
+		}
+		// Add normalized plan if present, respecting redaction
+		if normalized != "" {
+			fields = append(fields, zap.String("normalized_plan", redact.String(sessVars.EnableRedactLog, normalized)))
+		}
+		traceevent.TraceEvent(ctx, traceevent.StmtPlan, "stmt.plan.digest", fields...)
+	}
+
 	stmt := &ExecStmt{
 		GoCtx:         ctx,
 		InfoSchema:    is,
@@ -158,15 +181,15 @@ func needLowerPriority(p base.Plan) bool {
 		return isPhysicalPlanNeedLowerPriority(x)
 	case *plannercore.Execute:
 		return needLowerPriority(x.Plan)
-	case *plannercore.Insert:
+	case *physicalop.Insert:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanNeedLowerPriority(x.SelectPlan)
 		}
-	case *plannercore.Delete:
+	case *physicalop.Delete:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanNeedLowerPriority(x.SelectPlan)
 		}
-	case *plannercore.Update:
+	case *physicalop.Update:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanNeedLowerPriority(x.SelectPlan)
 		}

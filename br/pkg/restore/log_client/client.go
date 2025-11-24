@@ -154,6 +154,7 @@ func (s *SstRestoreManager) Close(ctx context.Context) {
 
 func NewSstRestoreManager(
 	ctx context.Context,
+	metaClient split.SplitClient,
 	snapFileImporter *snapclient.SnapFileImporter,
 	concurrencyPerStore uint,
 	storeCount uint,
@@ -176,7 +177,13 @@ func NewSstRestoreManager(
 			return nil, errors.Trace(err)
 		}
 	}
-	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
+	if snapFileImporter.GetMergeSst() {
+		log.Info("create batch sst restorer to restore SST files")
+		s.restorer = restore.NewBatchSstRestorer(ctx, snapFileImporter, metaClient, sstWorkerPool, checkpointRunner)
+	} else {
+		log.Info("create simple sst restorer to restore SST files")
+		s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
+	}
 	return s, nil
 }
 
@@ -549,18 +556,22 @@ func (rc *LogClient) InitClients(
 	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
+	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
+		return importer.CheckBatchDownloadSupport(ctx, stores)
+	})
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
 		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
 	)
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
-		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
+		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompacted, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	rc.sstRestoreManager, err = NewSstRestoreManager(
 		ctx,
+		metaClient,
 		snapFileImporter,
 		concurrencyPerStore,
 		uint(len(stores)),
@@ -1504,6 +1515,45 @@ func WrapLogFilesIterWithCheckpointFailpoint(
 	return logIter, nil
 }
 
+// ResetTiflashReplicas set tiflash replicas by given sqls concurrently.
+func (rc *LogClient) ResetTiflashReplicas(ctx context.Context, sqls []string, g glue.Glue) error {
+	resetSessions, err := createSessions(ctx, g, rc.dom.Store(), 16)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		closeSessions(resetSessions)
+	}()
+	workerpool := tidbutil.NewWorkerPool(16, "repair ingest index")
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, sql := range sqls {
+		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			resetSession := resetSessions[id%uint64(len(resetSessions))]
+			log.Info("reset tiflash replica", zap.Uint64("task id", id), zap.String("sql", sql))
+			var resetErr error
+			for range 5 {
+				resetErr = resetSession.ExecuteInternal(ectx, sql)
+				if resetErr == nil {
+					break
+				}
+				log.Warn("Failed to restore tiflash replica config", zap.Uint64("task id", id), zap.Error(resetErr))
+				if ectx.Err() != nil {
+					log.Warn("Stop retrying because context cancelled", zap.Error(ectx.Err()))
+					break
+				}
+			}
+			if resetErr != nil {
+				logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
+					logutil.ShortError(resetErr),
+					zap.String("sql", sql),
+				)
+			}
+			return nil
+		})
+	}
+	return eg.Wait()
+}
+
 func colsToStr(cols []ast.CIStr) string {
 	var str strings.Builder
 	for i, col := range cols {
@@ -1597,6 +1647,11 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
+		}
+		// WHERE CONDITION
+		if len(info.IndexInfo.ConditionExprString) > 0 {
+			addSQL.WriteString(" WHERE ")
+			addSQL.WriteString(info.IndexInfo.ConditionExprString)
 		}
 		// USING BTREE/HASH/RTREE
 		indexTypeStr := info.IndexInfo.Tp.String()
