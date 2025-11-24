@@ -903,13 +903,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 				builder.FullTextInfo.TableID = e.table.Meta().ID
 				builder.FullTextInfo.IndexID = e.index.ID
 				builder.FullTextInfo.ExecutorID = e.idxPlans[0].ExplainID().String()
-
-				id := e.Table().Meta().ID
-				startKey := tablecodec.EncodeTablePrefix(id)
-				endKey := tablecodec.EncodeTablePrefix(id + 1)
-				modifiedKvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
-				kvRange = kvRange[:0]
-				kvRange = append(kvRange, modifiedKvRange)
 			}
 
 			if e.indexLookUpPushDown {
