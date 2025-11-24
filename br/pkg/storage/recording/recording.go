@@ -15,6 +15,7 @@
 package recording
 
 import (
+	"fmt"
 	"net/http"
 	"sync/atomic"
 )
@@ -47,10 +48,20 @@ func (r *Requests) Merge(other *Requests) {
 	r.Put.Add(other.Put.Load())
 }
 
+// String implements the fmt.Stringer interface.
+func (r *Requests) String() string {
+	return fmt.Sprintf("{get: %d, put: %d}", r.Get.Load(), r.Put.Load())
+}
+
 // Traffic records the amount of bytes read and written to object storage.
 type Traffic struct {
 	Read  atomic.Uint64
 	Write atomic.Uint64
+}
+
+// String implements the fmt.Stringer interface.
+func (t *Traffic) String() string {
+	return fmt.Sprintf("{r: %d, w: %d}", t.Read.Load(), t.Write.Load())
 }
 
 // AccessStats records the access statistics of object storage.
@@ -88,4 +99,9 @@ func (s *AccessStats) RecWrite(n int) {
 		return
 	}
 	s.Traffic.Write.Add(uint64(n))
+}
+
+// String implements the fmt.Stringer interface.
+func (s *AccessStats) String() string {
+	return fmt.Sprintf("{requests: %s, traffic: %s}", s.Requests.String(), s.Traffic.String())
 }
