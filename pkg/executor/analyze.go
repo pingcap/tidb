@@ -253,7 +253,7 @@ func filterAndCollectTasks(ctx context.Context, tasks []*analyzeTask, statsHandl
 		// Wen user does the analyze during modify column, it will use the new type to collect the statistics.
 		// However, if the modify column is rollbacked, the statistics collected is invalid. So we skip the
 		// analyze task during modify column.
-		if !isDDLAnalyze && task.colExec != nil && ddl.UnderOptimizedModifyColumn(task.colExec.tableInfo) {
+		if !isDDLAnalyze && task.colExec != nil && ddl.WithModifyingColumn(task.colExec.colsInfo) {
 			continue
 		}
 
