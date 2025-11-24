@@ -33,7 +33,7 @@ import (
 func TestLoadFromTS(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
-	l := newLoader(store, infoschema.NewCache(nil, 1), nil, false)
+	l := newLoader(store, infoschema.NewCache(nil, 1), nil, nil)
 	ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
 	require.NoError(t, err)
 	is, hitCache, oldSchemaVersion, changes, err := l.LoadWithTS(ver.Ver, false)
@@ -70,7 +70,7 @@ func TestLoadFromTS(t *testing.T) {
 	}))
 	ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
 	require.NoError(t, err)
-	l = newLoader(store, infoschema.NewCache(nil, 1), nil, false)
+	l = newLoader(store, infoschema.NewCache(nil, 1), nil, nil)
 	is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
 	require.NoError(t, err)
 	allSchemas = is.AllSchemas()
@@ -217,7 +217,7 @@ func (testStoreWithKS) GetKeyspace() string {
 }
 
 func TestLoaderSkipLoadingDiff(t *testing.T) {
-	syncer := New(nil, nil, 0, nil, nil, false)
+	syncer := New(nil, nil, 0, nil, nil, nil)
 	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{}))
 	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{TableID: 100}))
 	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{OldTableID: 100}))
@@ -259,9 +259,12 @@ func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
 	ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
 	require.NoError(t, err)
 
-	// Create loader for BR
-	loaderForBR := newLoader(store, infoschema.NewCache(nil, 1), nil, true)
-	require.True(t, loaderForBR.forBRBackup)
+	// Create loader for BR with a filter function that only loads system and BR-related databases
+	brFilter := func(dbName ast.CIStr) bool {
+		return metadef.IsSystemDB(dbName.L) || metadef.IsBRRelatedDB(dbName.O)
+	}
+	loaderForBR := newLoader(store, infoschema.NewCache(nil, 1), nil, brFilter)
+	require.NotNil(t, loaderForBR.loadDBFilter)
 
 	// Load initial schema to populate the cache
 	_, _, _, _, err = loaderForBR.LoadWithTS(ver.Ver, false)
@@ -355,8 +358,11 @@ func TestLoadForBR(t *testing.T) {
 	ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
 	require.NoError(t, err)
 
-	// Test with loadForBR = true
-	loaderForBR := newLoader(store, infoschema.NewCache(nil, 1), nil, true)
+	// Test with BR filter (only load system and BR-related databases)
+	brFilter := func(dbName ast.CIStr) bool {
+		return metadef.IsSystemDB(dbName.L) || metadef.IsBRRelatedDB(dbName.O)
+	}
+	loaderForBR := newLoader(store, infoschema.NewCache(nil, 1), nil, brFilter)
 	is, hitCache, oldSchemaVersion, changes, err := loaderForBR.LoadWithTS(ver.Ver, false)
 	require.NoError(t, err)
 	require.False(t, hitCache)
@@ -397,15 +403,15 @@ func TestLoadForBR(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tbls, 0)
 
-	// Test with loadForBR = false for comparison
-	loaderNormal := newLoader(store, infoschema.NewCache(nil, 1), nil, false)
+	// Test with no filter (load all databases)
+	loaderNormal := newLoader(store, infoschema.NewCache(nil, 1), nil, nil)
 	isNormal, hitCache, oldSchemaVersion, changes, err := loaderNormal.LoadWithTS(ver.Ver, false)
 	require.NoError(t, err)
 	require.False(t, hitCache)
 	require.Zero(t, oldSchemaVersion)
 	require.Nil(t, changes)
 
-	// Verify all databases are loaded when loadForBR is false
+	// Verify all databases are loaded when no filter is used
 	allSchemasNormal := isNormal.AllSchemas()
 	schemaNamesNormal := make(map[string]bool)
 	for _, schema := range allSchemasNormal {

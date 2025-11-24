@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
@@ -48,12 +49,21 @@ func New() Glue {
 	}
 }
 
-type TiDBGlueDDLMode int
+func FilterLoadSysDBs(name ast.CIStr) bool {
+	return metadef.IsSystemDB(name.L) || metadef.IsBRRelatedDB(name.O)
+}
 
-const (
-	ModeFullLoad = iota
-	ModeLoadSysTables
-)
+func FilterLoadSpecifiedDBAndSysDBs(extraDBNames []string) func(dbName ast.CIStr) bool {
+	dbNameSet := make(map[string]struct{})
+	for _, name := range extraDBNames {
+		ciName := ast.NewCIStr(name)
+		dbNameSet[ciName.L] = struct{}{}
+	}
+	return func(name ast.CIStr) bool {
+		_, exists := dbNameSet[name.L]
+		return exists || metadef.IsSystemDB(name.L) || metadef.IsBRRelatedDB(name.O)
+	}
+}
 
 // Glue is an implementation of glue.Glue using a new TiDB session.
 type Glue struct {
@@ -62,7 +72,7 @@ type Glue struct {
 	tikvGlue      gluetikv.Glue
 	startDomainMu *sync.Mutex
 
-	Mode TiDBGlueDDLMode
+	LoadDBFilter func(name ast.CIStr) bool
 }
 
 func WrapSession(se sessionapi.Session) glue.Session {
@@ -74,10 +84,10 @@ type tidbSession struct {
 }
 
 func (g Glue) getDomainInner(store kv.Storage) (*domain.Domain, error) {
-	if g.Mode == ModeFullLoad {
+	if g.LoadDBFilter == nil {
 		return session.GetDomain(store)
 	}
-	return session.GetDomainForBR(store)
+	return session.GetOrCreateDomainWithFilter(store, g.LoadDBFilter)
 }
 
 // GetDomain implements glue.Glue.

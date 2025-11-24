@@ -24,6 +24,7 @@ go_library(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/parser/ast",
         "//pkg/session/sessmgr",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",

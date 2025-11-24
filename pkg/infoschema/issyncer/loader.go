@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
@@ -96,19 +97,19 @@ type Loader struct {
 	// CachedTable need internal session to access some system tables, such as
 	// mysql.table_cache_meta
 	sysExecutorFactory func() (pools.Resource, error)
-	// forBRBackup makes the loader load BR related and system tables only.
-	forBRBackup bool
+	// loadDBFilter once set, `loader` will only load databases when this predict returns "true".
+	loadDBFilter func(dbName ast.CIStr) bool
 }
 
-func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn, loadForBR bool) *Loader {
+func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn, loadDBFilter func(dbName ast.CIStr) bool) *Loader {
 	mode := LoadModeAuto
 	return &Loader{
-		mode:        mode,
-		store:       store,
-		infoCache:   infoCache,
-		deferFn:     deferFn,
-		forBRBackup: loadForBR,
-		logger:      logutil.BgLogger().With(zap.Stringer("mode", mode)),
+		mode:         mode,
+		store:        store,
+		infoCache:    infoCache,
+		deferFn:      deferFn,
+		loadDBFilter: loadDBFilter,
+		logger:       logutil.BgLogger().With(zap.Stringer("mode", mode)),
 	}
 }
 
@@ -292,7 +293,7 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 }
 
 func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
-	if l.forBRBackup {
+	if l.loadDBFilter != nil {
 		is := l.infoCache.GetLatest()
 		oldName, oldOK := is.SchemaByID(diff.OldSchemaID)
 		newName, newOK := is.SchemaByID(diff.SchemaID)
@@ -425,14 +426,11 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 			return nil, errors.New("system database not found")
 		}
 		allSchemas = []*model.DBInfo{dbInfo}
-	} else if l.forBRBackup {
+	} else if l.loadDBFilter != nil {
 		// only load system databases
 		allSchemas = make([]*model.DBInfo, 0, 6)
 		err := m.IterDatabases(func(dbInfo *model.DBInfo) error {
-			if metadef.IsSystemDB(dbInfo.Name.L) {
-				allSchemas = append(allSchemas, dbInfo)
-			}
-			if metadef.IsBRRelatedDB(dbInfo.Name.O) {
+			if l.loadDBFilter(dbInfo.Name) {
 				allSchemas = append(allSchemas, dbInfo)
 			}
 			return nil

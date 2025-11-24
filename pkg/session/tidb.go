@@ -65,14 +65,14 @@ type domainMap struct {
 // TODO decouple domain create from it, it's more clear to create domain explicitly
 // before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, false)
+	return dm.getWithEtcdClient(store, nil, nil)
 }
 
-func (dm *domainMap) GetForBR(store kv.Storage) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, true)
+func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter func(dbName ast.CIStr) bool) (d *domain.Domain, err error) {
+	return dm.getWithEtcdClient(store, nil, filter)
 }
 
-func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, loadForBR bool) (d *domain.Domain, err error) {
+func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, loadDBFilter func(dbName ast.CIStr) bool) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -106,7 +106,7 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 				return getCrossKSSessionFactory(store, targetKS, schemaValidator)
 			},
 			etcdClient,
-			loadForBR,
+			loadDBFilter,
 		)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker

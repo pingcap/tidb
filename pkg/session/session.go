@@ -4289,9 +4289,9 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domap.Get(store)
 }
 
-// GetDomainForBR gets the associated domain for BR.
-func GetDomainForBR(store kv.Storage) (*domain.Domain, error) {
-	return domap.GetForBR(store)
+// GetOrCreateDomainWithFilter gets the associated domain for store. If domain not created, create a new one with loadDBFilter.
+func GetOrCreateDomainWithFilter(store kv.Storage, loadDBFilter func(dbName ast.CIStr) bool) (*domain.Domain, error) {
+	return domap.GetOrCreateWithFilter(store, loadDBFilter)
 }
 
 // getStartMode gets the start mode according to the bootstrap version.
