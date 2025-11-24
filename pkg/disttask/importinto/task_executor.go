@@ -184,10 +184,15 @@ func (s *importStepExecutor) Processed(_, rowCnt int64) {
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	logger := s.logger.With(zap.Int64("subtask-id", subtask.ID))
 	task := log.BeginTask(logger, "run subtask")
-	var dataKVFiles, indexKVFiles atomic.Int64
+	var (
+		dataKVFiles, indexKVFiles atomic.Int64
+		accessRec                 = &recording.AccessStats{}
+		objStore                  storage.ExternalStorage
+	)
 	defer func() {
 		task.End(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
-			zap.Int64("index-kv-files", indexKVFiles.Load()))
+			zap.Int64("index-kv-files", indexKVFiles.Load()),
+			zap.Stringer("obj-store-access", accessRec))
 	}()
 
 	bs := subtask.Meta
@@ -197,10 +202,6 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		return errors.Trace(err)
 	}
 
-	var (
-		accessRec = &recording.AccessStats{}
-		objStore  storage.ExternalStorage
-	)
 	if s.tableImporter.IsGlobalSort() {
 		var err3 error
 		accessRec, objStore, err3 = handle.NewObjStoreWithRecording(ctx, s.tableImporter.CloudStorageURI)
@@ -425,7 +426,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	logger := m.logger.With(zap.Int64("subtask-id", subtask.ID), zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End(zapcore.ErrorLevel, err)
+		task.End(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
 	var mu sync.Mutex
@@ -580,7 +581,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End(zapcore.ErrorLevel, err)
+		task.End(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
