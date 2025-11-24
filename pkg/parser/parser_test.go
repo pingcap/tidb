@@ -5284,7 +5284,7 @@ func TestPrivilege(t *testing.T) {
 	RunTest(t, table, false, false)
 }
 
-func TestPrivilege_MariaDB_Enabled(t *testing.T) {
+func TestPrivilegeMariaDBEnabled(t *testing.T) {
 	// Test with additional MariaDB syntax ENABLED (arg three for RunTest==true)
 	table := []testCase{
 		{"GRANT BINLOG MONITOR ON *.* TO 'user1'@'localhost'", true, "GRANT REPLICATION CLIENT ON *.* TO `user1`@`localhost`"},
@@ -5292,7 +5292,7 @@ func TestPrivilege_MariaDB_Enabled(t *testing.T) {
 	RunTest(t, table, false, true)
 }
 
-func TestPrivilege_MariaDB_Disabled(t *testing.T) {
+func TestPrivilegeMariaDBDisabled(t *testing.T) {
 	// Test with additional MariaDB syntax DISABLED (arg three for RunTest==false)
 	table := []testCase{
 		{"GRANT BINLOG MONITOR ON *.* TO 'user1'@'localhost'", false, "GRANT REPLICATION CLIENT ON *.* TO `user1`@`localhost`"},
