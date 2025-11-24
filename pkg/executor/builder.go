@@ -4397,7 +4397,7 @@ func handleOutputOffsetsForTiKVIndexLookUp(outputOffsets []uint32, handleLen int
 // handleOutuputOffsetsForTiCIIndexLookUp handles the output offsets for TiCI index look up requests.
 // See the InitSchemaForTiCIIndex for the row layout.
 func handleOutuputOffsetsForTiCIIndexLookUp(outputOffsets []uint32, handleLen int) []uint32 {
-	for i := 0; i < handleLen; i++ {
+	for i := range handleLen {
 		outputOffsets = append(outputOffsets, uint32(i))
 	}
 	return outputOffsets
