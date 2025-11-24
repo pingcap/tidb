@@ -124,7 +124,7 @@ func NewTiCIShardCacheClient(etcdClient *clientv3.Client, pdClient *tikv.CodecPD
 		keyspaceID := uint32(pdClient.GetCodec().GetKeyspaceID())
 		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
 		if keyspaceID == constants.NullKeyspaceID {
-			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+			logutil.BgLogger().Warn("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
 		}
 		client.SetKeyspaceID(keyspaceID)
 	}
