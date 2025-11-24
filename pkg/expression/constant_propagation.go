@@ -179,8 +179,7 @@ func replaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expression) (E
 			// It is duo to ```CheckAndDeriveCollationFromExprs``` in the ```deriveCollation```.
 			// If we have an expression a in (b,c,d) with each column which has difference collation, the expression's
 			// return type is decided by ```CheckAndDeriveCollationFromExprs```. it will get diffence return type.
-			// so we must be sure that string equal condition has the same collation as the In expression's return type.
-			// then we can continue to replace condition.
+			// So when encountering a string type, we can just return it directly.
 			return cond, false
 		}
 		// for 'a in (b, c, d)', if a = b or a = c or a = d, we can replace it with true
