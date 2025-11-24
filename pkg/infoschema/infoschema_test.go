@@ -698,9 +698,9 @@ func TestWithRefillOption(t *testing.T) {
 	}
 	runtest()
 	// Test that with a larger schema cache size, all test cases hit the cache even if WithRefillOption(ctx, false).
-	vardef.SchemaCacheSize.Store(10000)
-	for _, testCase := range testCases {
-		testCase.expect = true
+	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
+	for i := range testCases {
+		testCases[i].expect = true
 	}
 	runtest()
 }
