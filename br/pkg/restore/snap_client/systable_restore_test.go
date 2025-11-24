@@ -51,50 +51,54 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	userTI, err := restore.GetTableSchema(cluster.Domain, sysDB, ast.NewCIStr("user"))
 	require.NoError(t, err)
 
+	var canLoadSysTablePhysical bool
 	// user table in cluster have more columns(success)
 	mockedUserTI := userTI.Clone()
 	userTI.Columns = append(userTI.Columns, &model.ColumnInfo{Name: ast.NewCIStr("new-name")})
-	err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedUserTI,
-	}})
+	}}, false)
 	require.NoError(t, err)
+	require.True(t, canLoadSysTablePhysical)
 	userTI.Columns = userTI.Columns[:len(userTI.Columns)-1]
 
 	// user table in cluster have less columns(failed)
 	mockedUserTI = userTI.Clone()
 	mockedUserTI.Columns = append(mockedUserTI.Columns, &model.ColumnInfo{Name: ast.NewCIStr("new-name")})
-	err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedUserTI,
-	}})
+	}}, false)
 	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
 
 	// column order mismatch(success)
 	mockedUserTI = userTI.Clone()
 	mockedUserTI.Columns[4], mockedUserTI.Columns[5] = mockedUserTI.Columns[5], mockedUserTI.Columns[4]
-	err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedUserTI,
-	}})
+	}}, false)
 	require.NoError(t, err)
+	require.True(t, canLoadSysTablePhysical)
 
 	// incompatible column type
 	mockedUserTI = userTI.Clone()
 	mockedUserTI.Columns[0].FieldType.SetFlen(2000) // Columns[0] is `Host` char(255)
-	err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedUserTI,
-	}})
+	}}, false)
 	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
 
 	// compatible
 	mockedUserTI = userTI.Clone()
-	err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedUserTI,
-	}})
+	}}, false)
 	require.NoError(t, err)
+	require.True(t, canLoadSysTablePhysical)
 
 	// use the mysql.db table to test for column count mismatch.
 	dbTI, err := restore.GetTableSchema(cluster.Domain, sysDB, ast.NewCIStr("db"))
@@ -102,11 +106,48 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 
 	// other system tables in cluster have more columns(failed)
 	mockedDBTI := dbTI.Clone()
-	dbTI.Columns = append(dbTI.Columns, &model.ColumnInfo{Name: ast.NewCIStr("new-name")})
-	err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+	//dbTI.Columns = append(dbTI.Columns, &model.ColumnInfo{Name: ast.NewCIStr("new-name")})
+	mockedDBTI.Columns = append(dbTI.Columns, &model.ColumnInfo{Name: ast.NewCIStr("new-name")})
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedDBTI,
-	}})
+	}}, false)
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
+	// collate mismatch
+	mockedDBTI = dbTI.Clone()
+	mockedDBTI.Columns[1].SetCollate("utf8mb4_bin")
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedDBTI,
+	}}, false)
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
+	// skip check collate
+	mockedDBTI = dbTI.Clone()
+	mockedDBTI.Columns[1].SetCollate("utf8mb4_bin")
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedDBTI,
+	}}, true)
+	require.NoError(t, err)
+
+	// another column collate mismatch
+	mockedDBTI = dbTI.Clone()
+	mockedDBTI.Columns[0].SetCollate("utf8mb4_general_ci")
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedDBTI,
+	}}, true)
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
+	// another column collate mismatch
+	mockedDBTI = dbTI.Clone()
+	mockedDBTI.Columns[1].SetCollate("utf8mb4_unicode_ci")
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedDBTI,
+	}}, true)
 	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
 }
 
