@@ -912,6 +912,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		}
 		_ = worker.fetchHandles(ctx1, selResultList, indexTypes)
 		cancel()
+		selResultList.Close()
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
