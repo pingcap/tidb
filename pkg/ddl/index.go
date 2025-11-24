@@ -1421,7 +1421,7 @@ func withDDLAnalyzeCtx(w *worker) context.Context {
 	return context.WithValue(w.ctx, ddlAnalyze{}, struct{}{})
 }
 
-// IsDDLAnalyzeCtx checks if the context is from DDL analyze.
+// IsDDLAnalyzeCtx checks if the analyze is triggered by DDL.
 func IsDDLAnalyzeCtx(ctx context.Context) bool {
 	_, ok := ctx.Value(ddlAnalyze{}).(struct{})
 	return ok

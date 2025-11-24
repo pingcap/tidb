@@ -250,9 +250,9 @@ func filterAndCollectTasks(ctx context.Context, tasks []*analyzeTask, statsHandl
 
 	isDDLAnalyze := ddl.IsDDLAnalyzeCtx(ctx)
 	for _, task := range tasks {
-		// Wen user does the analyze during modify column, it will use the new type to collect the statistics.
-		// However, if the modify column is rollbacked, the statistics collected is invalid. So we skip the
-		// analyze task during modify column.
+		// When a user runs ANALYZE during MODIFY COLUMN, it will use the new type to collect statistics.
+		// However, if the MODIFY COLUMN is rolled back, the collected statistics become invalid. Therefore,
+		// we skip the analyze during MODIFY COLUMN unless it's triggered by DDL.
 		if !isDDLAnalyze && task.colExec != nil && ddl.ContainModifyingColumn(task.colExec.colsInfo) {
 			continue
 		}

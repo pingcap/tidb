@@ -364,8 +364,9 @@ type IndexColumn struct {
 	// UnspecifedLength if not using prefix indexing
 	Length int `json:"length"`
 	// UseChangingType indicates which field type to use for this index column during
-	// modify column without row reorg, which works in conjunction with ChangingFieldType.
-	// When true, use ColumnInfo.ChangingFieldType, otherwise, usee ColumnInfo.FieldType.
+	// modify column without row reorg, which works together with ChangingFieldType.
+	// When it's true, this index column uses ColumnInfo.ChangingFieldType, otherwise,
+	// use ColumnInfo.FieldType.
 	//
 	// Example:
 	//   CREATE TABLE t (c1 CHAR(20), c2 CHAR(20), INDEX i1(c1, c2));
@@ -374,20 +375,20 @@ type IndexColumn struct {
 	// After backfill:
 	//   c1: FieldType=CHAR(20), ChangingFieldType=VARCHAR(10)
 	//   c2: FieldType=CHAR(20), ChangingFieldType=VARCHAR(10)
-	//   i1(UseChangingType=false, UseChangingType=false)
-	//   _Idx$_i1(UseChangingType=true, UseChangingType=true)
+	//   i1(c1:false, c2:false)
+	//   _Idx$_i1(c1:true, c2:true)
 	//
-	// After subjob1 becomes public:
+	// After subjob 1's state becomes public:
 	//   c1: FieldType=VARCHAR(10), ChangingFieldType=CHAR(20)
 	//   c2: FieldType=CHAR(20), ChangingFieldType=VARCHAR(10)
-	//   i1(UseChangingType=true, UseChangingType=false)
-	//   _Idx$_i1(UseChangingType=false, UseChangingType=true)
+	//   i1(c1:true, c2:false)
+	//   _Idx$_i1(c1:false, c2:true)
 	//
-	// After subjob2 becomes public:
+	// After subjob 2's state becomes public:
 	//   c1: FieldType=VARCHAR(10), ChangingFieldType=CHAR(20)
 	//   c2: FieldType=VARCHAR(10), ChangingFieldType=CHAR(20)
-	//   _Tombstone$_i1(UseChangingType=true, UseChangingType=true)
-	//   i1(UseChangingType=false, UseChangingType=false)
+	//   _Tombstone$_i1(c1:true, c2:true)
+	//   i1(c1:false, c2:false)
 	UseChangingType bool `json:"using_changing_type,omitempty"`
 }
 
