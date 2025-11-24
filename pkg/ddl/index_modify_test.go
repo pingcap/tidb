@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -1152,6 +1153,33 @@ LOOP:
 	require.NotContains(t, fmt.Sprintf("%v", rows), idxName)
 
 	tk.MustExec("drop table test_drop_index")
+}
+
+func TestHybridIndexDropAndTableLifecycle(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess"))
+	}()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists th")
+	tk.MustExec("create table th(a int, v varchar(20))")
+
+	param := `'{"inverted":[{"columns":["a"]}]}'`
+	tk.MustExec("create hybrid index h_idx on th(a) parameter " + param)
+	tk.MustExec("drop index h_idx on th")
+
+	tk.MustExec("alter table th add hybrid index h_idx(a) parameter " + param)
+	tk.MustExec("alter table th drop index h_idx")
+
+	tk.MustExec("drop table if exists th2")
+	tk.MustExec("create table th2(a int, hybrid index h_idx(a) parameter " + param + ")")
+	tk.MustExec("drop table th2")
 }
 
 func TestAnonymousIndex(t *testing.T) {

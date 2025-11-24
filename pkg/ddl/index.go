@@ -2935,7 +2935,7 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			if indexInfo.IsColumnarIndex() {
 				isColumnarIndex = true
 			}
-			if indexInfo.FullTextInfo != nil {
+			if indexInfo.FullTextInfo != nil || indexInfo.HybridInfo != nil {
 				isFullTextIndex = true
 			}
 			indexInfo.State = model.StateNone
