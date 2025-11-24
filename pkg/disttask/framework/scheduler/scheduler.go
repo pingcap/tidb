@@ -17,6 +17,7 @@ package scheduler
 import (
 	"context"
 	goerrors "errors"
+	"fmt"
 	"math/rand"
 	"strings"
 	"sync/atomic"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -36,6 +38,7 @@ import (
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -123,7 +126,8 @@ func (s *BaseScheduler) ScheduleTask() {
 }
 
 // Close closes the scheduler.
-func (*BaseScheduler) Close() {
+func (s *BaseScheduler) Close() {
+	dxfmetric.ScheduleEventCounter.DeletePartialMatch(prometheus.Labels{dxfmetric.LblTaskID: fmt.Sprint(s.GetTask().ID)})
 }
 
 // GetTask implements the Scheduler interface.
@@ -351,6 +355,7 @@ func (s *BaseScheduler) onReverting() error {
 		}
 		task.State = proto.TaskStateReverted
 		s.task.Store(task)
+		onTaskFinished(task.State, task.Error)
 		return nil
 	}
 	// Wait all subtasks in this step finishes.
@@ -469,6 +474,7 @@ func (s *BaseScheduler) switch2NextStep() error {
 		task.Step = nextStep
 		task.State = proto.TaskStateSucceed
 		s.task.Store(task)
+		onTaskFinished(task.State, task.Error)
 		return nil
 	}
 
@@ -579,6 +585,7 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 	task := s.getTaskClone()
 	s.logger.Warn("generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
 	if s.IsRetryableErr(err) {
+		dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventRetry).Inc()
 		return err
 	}
 	return s.revertTask(err)
@@ -690,8 +697,16 @@ func (*BaseScheduler) isStepSucceed(cntByStates map[proto.SubtaskState]int64) bo
 	return len(cntByStates) == 0 || (len(cntByStates) == 1 && ok)
 }
 
+// GetLogger returns the logger.
+func (s *BaseScheduler) GetLogger() *zap.Logger {
+	return s.logger
+}
+
 // IsCancelledErr checks if the error is a cancelled error.
 func IsCancelledErr(err error) bool {
+	if err == nil {
+		return false
+	}
 	return strings.Contains(err.Error(), taskCancelMsg)
 }
 
@@ -709,4 +724,22 @@ func getEligibleNodes(ctx context.Context, sch Scheduler, managedNodes []string)
 	}
 
 	return serverNodes, nil
+}
+
+func onTaskFinished(state proto.TaskState, taskErr error) {
+	// when task finishes, we classify the finished tasks into succeed/failed/cancelled
+	var metricState string
+
+	if state == proto.TaskStateSucceed || state == proto.TaskStateFailed {
+		metricState = state.String()
+	} else if state == proto.TaskStateReverted {
+		metricState = proto.TaskStateFailed.String()
+		if IsCancelledErr(taskErr) {
+			metricState = "cancelled"
+		}
+	}
+	if len(metricState) > 0 {
+		dxfmetric.FinishedTaskCounter.WithLabelValues("all").Inc()
+		dxfmetric.FinishedTaskCounter.WithLabelValues(metricState).Inc()
+	}
 }

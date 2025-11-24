@@ -414,7 +414,7 @@ func evalAndEncode(
 		if err != nil || isNull {
 			break
 		}
-		encodedBytes = codec.EncodeCompactBytes(encodedBytes, collator.Key(val))
+		encodedBytes = codec.EncodeCompactBytes(encodedBytes, collator.ImmutableKey(val))
 	default:
 		return nil, false, errors.Errorf("unsupported column type for encode %d", tp)
 	}

@@ -76,6 +76,8 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_risk_range_skew_ratio":                  {},
 	"tidb_opt_group_ndv_skew_ratio":                   {},
 	"tidb_opt_scale_ndv_skew_ratio":                   {},
+	"tidb_opt_always_keep_join_key":                   {},
+	"tidb_opt_cartesian_join_order_threshold":         {},
 	"tidb_index_join_batch_size":                      {},
 	"tidb_index_lookup_size":                          {},
 	"tidb_index_serial_scan_concurrency":              {},
@@ -132,6 +134,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tiflash_fine_grained_shuffle_batch_size":         {},
 	"tiflash_fine_grained_shuffle_stream_count":       {},
 	"tidb_hash_join_version":                          {},
+	"tidb_allow_tiflash_cop":                          {},
 	// Variables that is compatible with MySQL.
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},

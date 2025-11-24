@@ -18,12 +18,10 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -32,13 +30,12 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -367,7 +364,9 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	if err != nil {
 		return err
 	}
-	path.CountAfterAccess, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
+	var countEst statistics.RowEstimate
+	countEst, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
+	path.CountAfterAccess = countEst.Est
 	if !isIm {
 		// Check if we need to apply a lower bound to CountAfterAccess
 		adjustCountAfterAccess(ds, path)
@@ -515,31 +514,9 @@ func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
 	return ndvs
 }
 
-// getTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable that will be used to record used stats.
-func getTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
-	fullName = "tableID " + strconv.FormatInt(id, 10)
-
-	is := sctx.GetLatestISWithoutSessExt()
-	var tbl table.Table
-	var partDef *model.PartitionDefinition
-
-	tbl, partDef = infoschema.FindTableByTblOrPartID(is.(infoschema.InfoSchema), id)
-	if tbl == nil || tbl.Meta() == nil {
-		return
-	}
-	tblInfo = tbl.Meta()
-	fullName = tblInfo.Name.O
-	if partDef != nil {
-		fullName += " " + partDef.Name.O
-	} else if pi := tblInfo.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-		fullName += " global"
-	}
-	return
-}
-
 func initStats(ds *logicalop.DataSource) {
 	if ds.StatisticTable == nil {
-		ds.StatisticTable = getStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)
+		ds.StatisticTable = stats.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)
 	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.StatisticTable.RealtimeCount),
@@ -552,7 +529,7 @@ func initStats(ds *logicalop.DataSource) {
 	}
 
 	statsRecord := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
-	name, tblInfo := getTblInfoForUsedStatsByPhysicalID(ds.SCtx(), ds.PhysicalTableID)
+	name, tblInfo := stats.GetTblInfoForUsedStatsByPhysicalID(ds.SCtx(), ds.PhysicalTableID)
 	statsRecord.RecordUsedInfo(ds.PhysicalTableID, &stmtctx.UsedStatsInfoForTable{
 		Name:            name,
 		TblInfo:         tblInfo,
@@ -631,10 +608,10 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			path.IsSingleScan = true
 		} else if path.FtsQueryInfo != nil {
 			deriveSearchPathStats(ds, path)
-			path.IsSingleScan = isTiCISingleScan(ds)
+			path.IsSingleScan = ds.IsTiCISingleScan()
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
-			path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)
+			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
 		// step: 3
 		// Try some heuristic rules to select access path.
@@ -750,36 +727,4 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		}
 	}
 	return nil
-}
-
-// loadTableStats loads the stats of the table and store it in the statement `UsedStatsInfo` if it didn't exist
-func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) {
-	statsRecord := ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
-	if statsRecord.GetUsedInfo(pid) != nil {
-		return
-	}
-
-	pctx := ctx.GetPlanCtx()
-	tableStats := getStatsTable(pctx, tblInfo, pid)
-
-	name := tblInfo.Name.O
-	partInfo := tblInfo.GetPartitionInfo()
-	if partInfo != nil {
-		for _, p := range partInfo.Definitions {
-			if p.ID == pid {
-				name += " " + p.Name.O
-			}
-		}
-	}
-	usedStats := &stmtctx.UsedStatsInfoForTable{
-		Name:          name,
-		TblInfo:       tblInfo,
-		RealtimeCount: tableStats.HistColl.RealtimeCount,
-		ModifyCount:   tableStats.HistColl.ModifyCount,
-		Version:       tableStats.Version,
-	}
-	if tableStats.Pseudo {
-		usedStats.Version = statistics.PseudoVersion
-	}
-	statsRecord.RecordUsedInfo(pid, usedStats)
 }

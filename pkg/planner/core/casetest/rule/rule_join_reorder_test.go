@@ -103,3 +103,18 @@ func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
 		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4DynamicPartitionTable")
 	})
 }
+
+func TestJoinOrderHint4NestedLeading(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6;")
+		testKit.MustExec("create table t(a int, b int, key(a));")
+		testKit.MustExec("create table t1(a int, b int, key(a));")
+		testKit.MustExec("create table t2(a int, b int, key(a));")
+		testKit.MustExec("create table t3(a int, b int, key(a));")
+		testKit.MustExec("create table t4(a int, b int, key(a));")
+		testKit.MustExec("create table t5(a int, b int, key(a));")
+		testKit.MustExec("create table t6(a int, b int, key(a));")
+		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4NestedLeading")
+	})
+}

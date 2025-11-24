@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -378,13 +379,13 @@ func TestDMLWithLiteCopWorker(t *testing.T) {
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("2048"))
 	tk.MustQuery("split table t1 by (1025);").Check(testkit.Rows("1 1"))
 	tk.MustExec("set @@tidb_enable_paging = off")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", `return(200)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockConsumeSelectRespSlow", `return(100)`))
-	start := time.Now()
+	var fallbackTriggered atomic.Bool
+	copr.SetLiteWorkerFallbackHookForTest(func() {
+		fallbackTriggered.Store(true)
+	})
+	defer copr.SetLiteWorkerFallbackHookForTest(nil)
 	tk.MustExec("update t1 set b=b+1 where id >= 0;")
-	require.Less(t, time.Since(start), time.Millisecond*800) // 3 * 200ms + 1 * 100ms
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockConsumeSelectRespSlow"))
+	require.True(t, fallbackTriggered.Load(), "lite worker fallback hook not triggered")
 
 	// Test select after split table.
 	tk.MustExec("truncate table t1;")

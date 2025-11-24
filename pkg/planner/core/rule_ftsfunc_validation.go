@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
@@ -36,7 +35,7 @@ func (ftsFuncValidation) Name() string {
 // 1. it's pushed down after applying the predicate push down rule.
 // 2. it's really checked whether can be used to build a fts index request.
 // So final check is performed here.
-func (f *ftsFuncValidation) Optimize(ctx context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (f *ftsFuncValidation) Optimize(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	return p, false, f.doQuickValidation(ctx, p)
 }
 
