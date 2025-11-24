@@ -9,7 +9,7 @@ go_test(
         "tidb_test.go",
     ],
     flaky = True,
-    shard_count = 29,
+    shard_count = 30,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -33,6 +33,7 @@ go_test(
         "//pkg/testkit/testutil",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/dbterror/plannererrors",
         "//pkg/util/logutil",
         "//pkg/util/sqlescape",
         "//pkg/util/sqlkiller",

@@ -3896,10 +3896,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 				// Besides, it will only lock the metioned in `of` part.
 				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
 			}
-			dbName := tName.Schema.L
-			if dbName == "" {
-				dbName = b.ctx.GetSessionVars().CurrentDB
-			}
+			dbName := getLowerDB(tName.Schema, b.ctx.GetSessionVars())
 			var authErr error
 			if user := b.ctx.GetSessionVars().User; user != nil {
 				authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT with locking clause", user.AuthUsername, user.AuthHostname, tNameW.Name.L)
@@ -5418,10 +5415,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	nodeW := resolve.NewNodeWWithCtx(update.TableRefs.TableRefs, b.resolveCtx)
 	tableList := ExtractTableList(nodeW, false)
 	for _, t := range tableList {
-		dbName := t.Schema.L
-		if dbName == "" {
-			dbName = b.ctx.GetSessionVars().CurrentDB
-		}
+		dbName := getLowerDB(t.Schema, b.ctx.GetSessionVars())
 		// Avoid adding CTE table to the SELECT privilege list, maybe we have better way to do this?
 		if _, ok := b.nameMapCTE[t.Name.L]; !ok {
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
@@ -5764,7 +5758,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			dbName = dbNameTmp
 		}
 		if dbName == "" {
-			dbName = b.ctx.GetSessionVars().CurrentDB
+			dbName = strings.ToLower(b.ctx.GetSessionVars().CurrentDB)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, name.OrigTblName.L, "", nil)
 	}

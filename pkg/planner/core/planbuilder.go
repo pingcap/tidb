@@ -3900,7 +3900,7 @@ func collectVisitInfoFromRevokeStmt(ctx context.Context, sctx base.PlanContext, 
 		if sctx.GetSessionVars().CurrentDB == "" {
 			return nil, plannererrors.ErrNoDB
 		}
-		dbName = sctx.GetSessionVars().CurrentDB
+		dbName = strings.ToLower(sctx.GetSessionVars().CurrentDB)
 	}
 	var nonDynamicPrivilege bool
 	var allPrivs []mysql.PrivilegeType
@@ -4572,9 +4572,9 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		insertErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
 		deleteErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DELETE", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
 	}
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.O, p.Table.Name.O, "", insertErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.L, p.Table.Name.L, "", insertErr)
 	if p.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.O, p.Table.Name.O, "", deleteErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.L, p.Table.Name.L, "", deleteErr)
 	}
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(ctx, tableInfo.ID)
@@ -4824,11 +4824,11 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		deleteErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DELETE", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
 		alterErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
 	}
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, p.Table.Schema.O, p.Table.Name.O, "", selectErr)
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, p.Table.Schema.O, p.Table.Name.O, "", updateErr)
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.O, p.Table.Name.O, "", insertErr)
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.O, p.Table.Name.O, "", deleteErr)
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, p.Table.Schema.O, p.Table.Name.O, "", alterErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, p.Table.Schema.L, p.Table.Name.L, "", selectErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, p.Table.Schema.L, p.Table.Name.L, "", updateErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.L, p.Table.Name.L, "", insertErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.L, p.Table.Name.L, "", deleteErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, p.Table.Schema.L, p.Table.Name.L, "", alterErr)
 	if importFromServer {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	}
@@ -5001,8 +5001,8 @@ func (b *PlanBuilder) requireInsertAndSelectPriv(tables []*ast.TableName) {
 			insertErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
 			selectErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.L, tbl.Name.L, "", insertErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.L, tbl.Name.L, "", selectErr)
 	}
 }
 
@@ -5298,6 +5298,7 @@ func checkForUserVariables(in ast.Node) error {
 	}
 	return nil
 }
+
 func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan, error) {
 	var authErr error
 	switch v := node.(type) {
@@ -5318,10 +5319,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
 				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 		}
-		dbName := v.Table.Schema.L
-		if dbName == "" {
-			dbName = b.ctx.GetSessionVars().CurrentDB
-		}
+		dbName := getLowerDB(v.Table.Schema, b.ctx.GetSessionVars())
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName,
 			v.Table.Name.L, "", authErr)
 		for _, spec := range v.Specs {
