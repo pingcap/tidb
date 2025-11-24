@@ -390,7 +390,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 		*tiFlashStores = stores
 		logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)))
 	}
-	progress, err := is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, *tiFlashStores)
+	progress, _, err := is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, *tiFlashStores)
 	if err != nil {
 		return 0, err
 	}
@@ -821,10 +821,10 @@ func SyncTiFlashTableSchema(ctx context.Context, tableID int64) error {
 }
 
 // CalculateTiFlashProgress calculates TiFlash replica progress
-func CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pdhttp.StoreInfo) (float64, error) {
+func CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pdhttp.StoreInfo) (fullReplicaProgress float64, oneReplicaProgress float64, err error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 	return is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, tiFlashStores)
 }
@@ -1011,9 +1011,9 @@ func DeleteInternalSession(se any) {
 	sm.DeleteInternalSession(se)
 }
 
-// ContainsInternalSessionForTest is the entry function for check whether an internal session is in Manager.
+// ContainsInternalSession is the entry function for check whether an internal session is in Manager.
 // It is only used for test.
-func ContainsInternalSessionForTest(se any) bool {
+func ContainsInternalSession(se any) bool {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return false

@@ -22,11 +22,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	schmock "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
@@ -571,4 +575,45 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.Equal(t, expectedTask, *scheduler.GetTask())
 		require.True(t, ctrl.Satisfied())
 	})
+}
+
+func TestOnTaskFinished(t *testing.T) {
+	bak := dxfmetric.FinishedTaskCounter
+	t.Cleanup(func() {
+		dxfmetric.FinishedTaskCounter = bak
+	})
+	dxfmetric.FinishedTaskCounter = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test"}, []string{"state"})
+	collectMetricsFn := func() map[string]int {
+		var ch = make(chan prometheus.Metric)
+		items := make([]*dto.Metric, 0)
+		var wg tidbutil.WaitGroupWrapper
+		wg.Run(func() {
+			for m := range ch {
+				dm := &dto.Metric{}
+				require.NoError(t, m.Write(dm))
+				items = append(items, dm)
+			}
+		})
+		dxfmetric.FinishedTaskCounter.Collect(ch)
+		close(ch)
+		wg.Wait()
+		values := make(map[string]int)
+		for _, it := range items {
+			values[*it.GetLabel()[0].Value] = int(it.GetCounter().GetValue())
+		}
+		return values
+	}
+	onTaskFinished(proto.TaskStateSucceed, nil)
+	require.EqualValues(t, map[string]int{"all": 1, "succeed": 1}, collectMetricsFn())
+	onTaskFinished(proto.TaskStateReverted, nil)
+	require.EqualValues(t, map[string]int{"all": 2, "succeed": 1, "failed": 1}, collectMetricsFn())
+	onTaskFinished(proto.TaskStateReverted, errors.New("some err"))
+	require.EqualValues(t, map[string]int{"all": 3, "succeed": 1, "failed": 2}, collectMetricsFn())
+	onTaskFinished(proto.TaskStateReverted, errors.New(taskCancelMsg))
+	require.EqualValues(t, map[string]int{"all": 4, "succeed": 1, "failed": 2, "cancelled": 1}, collectMetricsFn())
+	onTaskFinished(proto.TaskStateFailed, errors.New("some err"))
+	require.EqualValues(t, map[string]int{"all": 5, "succeed": 1, "failed": 3, "cancelled": 1}, collectMetricsFn())
+	// noop for non-finished state.
+	onTaskFinished(proto.TaskStateRunning, nil)
+	require.EqualValues(t, map[string]int{"all": 5, "succeed": 1, "failed": 3, "cancelled": 1}, collectMetricsFn())
 }
