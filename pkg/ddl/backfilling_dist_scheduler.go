@@ -590,8 +590,8 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)),
 			zap.Int("dataFilesCnt", len(dataFiles)),
-			zap.Int("rangeJobKeysCnt", len(interiorRangeJobKeys)+2),
-			zap.Int("regionSplitKeysCnt", len(interiorRegionSplitKeys)+2),
+			zap.Int("rangeJobKeysCnt", len(interiorRangeJobKeys)),
+			zap.Int("regionSplitKeysCnt", len(interiorRegionSplitKeys)),
 		)
 
 		if bytes.Compare(startKey, endKey) >= 0 {

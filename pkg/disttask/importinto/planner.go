@@ -483,8 +483,8 @@ func splitForOneSubtask(
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)),
 			zap.Int("dataFiles", len(dataFiles)),
-			zap.Int("rangeJobKeys", len(interiorRangeJobKeys)+2),
-			zap.Int("regionSplitKeys", len(interiorRegionSplitKeys)+2),
+			zap.Int("rangeJobKeys", len(interiorRangeJobKeys)),
+			zap.Int("regionSplitKeys", len(interiorRegionSplitKeys)),
 		)
 		if startKey.Cmp(endKey) >= 0 {
 			return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
