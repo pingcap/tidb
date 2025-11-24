@@ -1399,8 +1399,13 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
-		if err = snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+		canLoadSysTablePhysical, err := snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables, false)
+		if err != nil {
 			return errors.Trace(err)
+		}
+		if loadSysTablePhysical && !canLoadSysTablePhysical {
+			log.Info("The system tables schema is not compatible. Fallback to logically load system tables.")
+			loadSysTablePhysical = false
 		}
 	}
 
