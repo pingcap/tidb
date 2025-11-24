@@ -5477,7 +5477,7 @@ func GetDBNames(seVar *variable.SessionVars) []string {
 		}
 	}
 	if len(dbNames) == 0 {
-		dbNames[seVar.CurrentDB] = struct{}{}
+		dbNames[strings.ToLower(seVar.CurrentDB)] = struct{}{}
 	}
 	ns := make([]string, 0, len(dbNames))
 	for n := range dbNames {

@@ -483,13 +483,13 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "show stats_histograms",
 			stmtType: "Show",
 			dbs:      "mysql",
-			tables:   "STATS_HISTOGRAMS", // the table name is parsed in uppercase
+			tables:   "stats_histograms",
 		},
 		{
 			sql:      "show stats_meta",
 			stmtType: "Show",
 			dbs:      "mysql",
-			tables:   "STATS_META", // the table name is parsed in uppercase
+			tables:   "stats_meta",
 		},
 		{
 			sql:      "show status",
