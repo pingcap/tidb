@@ -1824,14 +1824,14 @@ type refillOption struct{}
 var refillOptionKey refillOption
 
 // WithRefillOption controls the infoschema v2 cache refill operation.
-// By default, TableByID does not refill schema cache if the available cache
-// size is less than 30%, and TableByName does.
+// By default, TableByID does not refill schema cache if the current size is greater
+// than 70% of the capacity, and TableByName does.
 // The behavior can be changed by providing the context.Context.
 func WithRefillOption(ctx context.Context, evict bool) context.Context {
 	return context.WithValue(ctx, refillOptionKey, evict)
 }
 
-// refillIfNoEvict refills the table cache only if the current size is larger
+// refillIfNoEvict refills the table cache only if the current size is less
 // than 70% of the capacity. We want to cache as many tables as possible, but
 // we also want to avoid evicting useful cached tables by some list operations.
 func (is *infoschemaV2) refillIfNoEvict(key tableCacheKey, value table.Table) {
