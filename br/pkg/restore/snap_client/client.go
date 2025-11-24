@@ -76,6 +76,7 @@ const minBatchDdlSize = 1
 
 type SnapClient struct {
 	restorer restore.SstRestorer
+	importer *SnapFileImporter
 	// Tool clients used by SnapClient
 	pdClient     pd.Client
 	pdHTTPClient pdhttp.Client
@@ -535,7 +536,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 			mode = Txn
 		}
 		// for raw/txn mode. use backupMeta.ApiVersion to create fileImporter
-		fileImporter, err = NewSnapFileImporter(ctx, rc.backupMeta.ApiVersion, mode, opt)
+		rc.importer, err = NewSnapFileImporter(ctx, rc.backupMeta.ApiVersion, mode, opt)
 		if err != nil {
 			return errors.Trace(err)
 		}

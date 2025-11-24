@@ -409,7 +409,7 @@ func (rc *SnapClient) sendRequestToStore(
 		}
 		storeId := store.GetId()
 		pool.ApplyOnErrorGroup(eg, func() error {
-			return sendFn(ectx, rc., storeId)
+			return sendFn(ectx, rc.importer.importClient, storeId)
 		})
 	}
 	return eg.Wait()

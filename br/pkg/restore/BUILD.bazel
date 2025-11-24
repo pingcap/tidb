@@ -56,7 +56,7 @@ go_test(
         "restorer_test.go",
     ],
     flaky = True,
-    shard_count = 19,
+    shard_count = 15,
     deps = [
         ":restore",
         "//br/pkg/conn",
@@ -64,8 +64,6 @@ go_test(
         "//br/pkg/pdutil",
         "//br/pkg/restore/split",
         "//br/pkg/restore/utils",
-        "//br/pkg/storage",
-        "//br/pkg/utils",
         "//br/pkg/utils/iter",
         "//pkg/kv",
         "//pkg/parser/model",
@@ -80,7 +78,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//:client",
         "@org_golang_google_grpc//:grpc",
     ],
 )

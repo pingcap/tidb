@@ -480,8 +480,7 @@ func (rc *LogClient) InitClients(
 		rc.cipher, metaClient, importCli, backend,
 		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
 	)
-	var err error
-	rc.importer, err = snapclient.NewSnapFileImporter(
+	fileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
 	if err != nil {
 		return errors.Trace(err)
@@ -489,7 +488,7 @@ func (rc *LogClient) InitClients(
 	rc.sstRestoreManager, err = NewSstRestoreManager(
 		ctx,
 		metaClient,
-		rc.importer,
+		fileImporter,
 		concurrencyPerStore,
 		uint(len(stores)),
 		createSessionFn,
