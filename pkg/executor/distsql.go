@@ -1294,10 +1294,15 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			if completedTask != nil {
 				w.resultCh <- completedTask
 			}
-
 			if tableLookUpTask != nil {
-				w.workCh <- tableLookUpTask
-				w.resultCh <- tableLookUpTask
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-w.finished:
+					return nil
+				case w.workCh <- tableLookUpTask:
+					w.resultCh <- tableLookUpTask
+				}
 			}
 		}
 		if w.idxLookup.stats != nil {
