@@ -669,13 +669,15 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
 
-// buildChangingTypes builds the changing types to do necessary casting.
-func (e *AnalyzeColumnsExecV2) buildChangingTypes(task *samplingBuildTask) []*types.FieldType {
+// buildCastingTypes get the types to do necessary casting.
+// See model.IndexColumn and model.ColumnInfo for more details.
+func (e *AnalyzeColumnsExecV2) buildCastingTypes(task *samplingBuildTask) []*types.FieldType {
 	if task.isColumn {
+		var tp *types.FieldType
 		if e.colsInfo[task.slicePos].ChangingFieldType != nil {
-			return []*types.FieldType{e.colsInfo[task.slicePos].ChangingFieldType}
+			tp = e.colsInfo[task.slicePos].ChangingFieldType
 		}
-		return []*types.FieldType{nil}
+		return []*types.FieldType{tp}
 	}
 
 	idx := e.indexes[task.slicePos-len(e.colsInfo)]
@@ -718,7 +720,7 @@ workLoop:
 				break workLoop
 			}
 			var collector *statistics.SampleCollector
-			changingTypes := e.buildChangingTypes(task)
+			castingTps := e.buildCastingTypes(task)
 			if task.isColumn {
 				if e.colsInfo[task.slicePos].IsGenerated() && !e.colsInfo[task.slicePos].GeneratedStored {
 					hists[task.slicePos] = nil
@@ -748,8 +750,8 @@ workLoop:
 					if len(val.GetBytes()) > statistics.MaxSampleValueLength {
 						continue
 					}
-					if changingTypes[0] != nil {
-						if val, err = table.CastColumnValueWithStrictMode(val, changingTypes[0]); err != nil {
+					if castingTps[0] != nil {
+						if val, err = table.CastColumnValueWithStrictMode(val, castingTps[0]); err != nil {
 							resultCh <- err
 							continue workLoop
 						}
@@ -799,8 +801,8 @@ workLoop:
 						if len(row.Columns[col.Offset].GetBytes()) > statistics.MaxSampleValueLength {
 							continue indexSampleCollectLoop
 						}
-						if changingTypes[i] != nil {
-							row.Columns[col.Offset], err = table.CastColumnValueWithStrictMode(row.Columns[col.Offset], changingTypes[i])
+						if castingTps[i] != nil {
+							row.Columns[col.Offset], err = table.CastColumnValueWithStrictMode(row.Columns[col.Offset], castingTps[i])
 							if err != nil {
 								resultCh <- err
 								continue workLoop
