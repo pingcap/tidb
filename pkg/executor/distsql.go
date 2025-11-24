@@ -952,7 +952,7 @@ func CalculateBatchSize(estRows, initBatchSize, maxBatchSize int) int {
 func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
 	lookupConcurrencyLimit := e.indexLookupConcurrency
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
-	for i := 0; i < lookupConcurrencyLimit; i++ {
+	for i := range lookupConcurrencyLimit {
 		workerID := i
 		worker := &tableWorker{
 			idxLookup:       e,
