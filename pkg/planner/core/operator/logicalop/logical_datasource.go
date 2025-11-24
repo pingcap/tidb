@@ -605,7 +605,7 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 	matchedExprSetForChosenIndex := intset.NewFastIntSet()
 	hasUnmatchedFTSOverAllIdx := hasFTSFunc
 	// If there's no FTS functions, but there are hinted paths, we should only keep the hinted ones.
-	if !hasFTSFunc || expression.ContainsFullTextSearchFn(ds.AllConds...) {
+	if !hasFTSFunc || !expression.ContainsFullTextSearchFn(ds.AllConds...) {
 		hasHintedPath := false
 		for _, path := range ds.AllPossibleAccessPaths {
 			if path.Forced {
