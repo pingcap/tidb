@@ -97,6 +97,25 @@ func (rs *S3Storage) GetOptions() *backuppb.S3 {
 	return rs.options
 }
 
+func (rs *S3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	s, ok := e.(*S3Storage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", e)
+	}
+
+	copyInput := &s3.CopyObjectInput{
+		Bucket: aws.String(rs.options.Bucket),
+		// NOTE: Perhaps we need to allow copy cross regions / accounts.
+		CopySource: aws.String(path.Join(s.options.Bucket, s.options.Prefix, spec.From)),
+		Key:        aws.String(rs.options.Prefix + spec.To),
+	}
+
+	// NOTE: Maybe check whether the Go SDK will handle 200 OK errors.
+	// https://repost.aws/knowledge-center/s3-resolve-200-internalerror
+	_, err := s.svc.CopyObjectWithContext(ctx, copyInput)
+	return err
+}
+
 // S3Uploader does multi-part upload to s3.
 type S3Uploader struct {
 	svc           s3iface.S3API

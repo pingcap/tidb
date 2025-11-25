@@ -15,11 +15,10 @@
 package restore
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"path"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -166,7 +164,7 @@ func GetTSWithRetry(ctx context.Context, pdClient pd.Client) (uint64, error) {
 
 // HasRestoreIDColumn checks if the tidb_pitr_id_map table has restore_id column
 func HasRestoreIDColumn(dom *domain.Domain) bool {
-	table, err := GetTableSchema(dom, ast.NewCIStr("mysql"), ast.NewCIStr("tidb_pitr_id_map"))
+	table, err := GetTableSchema(dom, pmodel.NewCIStr("mysql"), pmodel.NewCIStr("tidb_pitr_id_map"))
 	if err != nil {
 		return false
 	}

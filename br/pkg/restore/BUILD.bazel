@@ -18,7 +18,6 @@ go_library(
         "//br/pkg/pdutil",
         "//br/pkg/restore/split",
         "//br/pkg/restore/utils",
-        "//br/pkg/storage",
         "//br/pkg/summary",
         "//br/pkg/utils",
         "//br/pkg/utils/iter",
