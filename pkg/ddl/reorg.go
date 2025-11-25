@@ -58,6 +58,7 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -503,7 +504,7 @@ func getReorgProgress(w *worker, tblInfo *model.TableInfo, addedRowCount int64) 
 
 	totalCount := getTableTotalCount(w, tblInfo)
 	if totalCount > 0 {
-		progress = min(1, float64(addedRowCount)/float64(totalCount))
+		progress = mathutil.Clamp(float64(addedRowCount)/float64(totalCount), 0, 1)
 	}
 
 	logutil.DDLLogger().Debug("update progress",
