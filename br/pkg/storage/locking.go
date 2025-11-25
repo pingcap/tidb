@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -297,7 +298,7 @@ func LockWithRetry(ctx context.Context, locker Locker, storage ExternalStorage, 
 			logutil.ShortError(err),
 			zap.String("path", path),
 			zap.Duration("retry-after", retryAfter),
-			zap.Int("remaining-attempts", retry.RemainingAttempts()),
+			zap.Int("remaining-attempts", retry.Attempt()),
 		)
 
 		select {
