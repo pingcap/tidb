@@ -484,8 +484,9 @@ func newDistTaskRowCntCollector(
 	}
 }
 
-func (d *distTaskRowCntCollector) Accepted(bytes int64) {
+func (d *distTaskRowCntCollector) Accepted(bytes, rows int64) {
 	d.summary.ReadBytes.Add(bytes)
+	d.summary.ReadRowCnt.Add(rows)
 	d.meterRec.IncClusterReadBytes(uint64(bytes))
 }
 

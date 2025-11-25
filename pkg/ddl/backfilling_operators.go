@@ -454,7 +454,6 @@ func NewTableScanOperator(
 				srcChkPool:    srcChkPool,
 				cpOp:          cpOp,
 				hintBatchSize: hintBatchSize,
-				totalCount:    totalCount,
 				reorgMeta:     reorgMeta,
 				collector:     collector,
 			}
@@ -484,7 +483,6 @@ type tableScanWorker struct {
 	cpOp          ingest.CheckpointOperator
 	reorgMeta     *model.DDLReorgMeta
 	hintBatchSize int
-	totalCount    *atomic.Int64
 	collector     execute.Collector
 }
 
@@ -568,14 +566,16 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				terror.Call(rs.Close)
 				return err
 			}
-			w.collector.Accepted(execDetails.UnpackedBytesReceivedKVTotal)
-			execDetails = kvutil.ExecDetails{}
+
+			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, conditionPushed: conditionPushed})
 
 			// The `tableScanRowCount-lastTableScanRowCount` is not accurate because the internal cop request will read more rows than a single
 			// chunk. We still store the approximate value for progress reporting.
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
-			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, conditionPushed: conditionPushed})
+			w.collector.Accepted(execDetails.UnpackedBytesReceivedKVTotal, tableScanRowCount-lastTableScanRowCount)
+			execDetails = kvutil.ExecDetails{}
 			idxReadSizeCheckpoints = append(idxReadSizeCheckpoints, tableScanRowCount-lastTableScanRowCount)
+
 			lastTableScanRowCount = tableScanRowCount
 		}
 		return rs.Close()
@@ -589,8 +589,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			done := i == len(idxResults)-1
 			w.cpOp.UpdateChunk(task.ID, int(idxReadSizeCheckpoints[i]), done)
 		}
-		failpoint.InjectCall("afterSendChunk", w.totalCount.Load())
-		w.totalCount.Add(idxReadSizeCheckpoints[i])
+		failpoint.InjectCall("afterSendChunk", idxReadSizeCheckpoints[i])
 	}
 
 	return err

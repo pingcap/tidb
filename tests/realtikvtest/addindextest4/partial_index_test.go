@@ -249,7 +249,6 @@ func TestPartialIndexDDL(t *testing.T) {
 			tk.MustExec("insert into t select * from t;")
 		}
 
-		lastTotalCount := int64(0)
 		sendCount := 0
 		nonZeroIncrement := 0
 		// Modify the paging size to make the index backfilling job gets multiple chunks.
@@ -258,12 +257,11 @@ func TestPartialIndexDDL(t *testing.T) {
 			kvReq.Paging.MaxPagingSize = 16
 			kvReq.Paging.Enable = true
 		})
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterSendChunk", func(totalCount int64) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterSendChunk", func(readCountIncrement int64) {
 			sendCount++
-			if totalCount > lastTotalCount {
+			if readCountIncrement > 0 {
 				nonZeroIncrement++
 			}
-			lastTotalCount = totalCount
 		})
 		tk.MustExec("alter table t add index idx_id(id) where ch is not null;")
 		testutil.CheckIndexKVCount(t, tk, dom, "t", "idx_id", 1<<15)
