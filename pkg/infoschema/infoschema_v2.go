@@ -927,8 +927,21 @@ func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 	if !ok {
 		return
 	}
+	is.iterateAllTableItemsInternal(maxv, visit)
+}
+
+// IterateAllTableItemsByDB is used for special performance optimization.
+// If visit return false, stop the iterate process.
+// NOTE: the output order is reversed by (dbName, tableName).
+func (is *infoschemaV2) IterateAllTableItemsByDB(dbID int64, visit func(TableItem) bool) {
+	var first *tableItem
+	first = &tableItem{dbID: dbID, tableID: math.MaxInt64, schemaVersion: math.MaxInt64}
+	is.iterateAllTableItemsInternal(first, visit)
+}
+
+func (is *infoschemaV2) iterateAllTableItemsInternal(first *tableItem, visit func(TableItem) bool) {
 	var pivot *tableItem
-	is.byName.Load().DescendLessOrEqual(maxv, func(item *tableItem) bool {
+	is.byID.Load().DescendLessOrEqual(first, func(item *tableItem) bool {
 		if item.schemaVersion > is.schemaMetaVersion {
 			// skip MVCC version, those items are not visible to the queried schema version
 			return true
@@ -1106,31 +1119,39 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) 
 
 	is.keepAlive()
 
-	allInCache := true
-	is.IterateAllTableItems(func(t TableItem) bool {
-		if t.DBName.L != schema.L {
-			return true
+	// Fast path: all tables are in cache. Optimize for the few tables' scenario.
+	if is.tableCache.Under70PercentUsage() {
+		allInCache := true
+		db, ok := is.SchemaByName(schema)
+		if !ok || db == nil {
+			intest.Assert(false)
+			return nil, nil
 		}
-		if !is.TableIsCached(t.TableID) {
-			allInCache = false
-			return false
-		}
-		return true
-	})
-	if allInCache {
-		tables := make([]*model.TableInfo, 0)
-		is.IterateAllTableItems(func(t TableItem) bool {
+		is.IterateAllTableItemsByDB(db.ID, func(t TableItem) bool {
 			if t.DBName.L != schema.L {
 				return true
 			}
-			tbl, ok := is.TableByID(ctx, t.TableID)
-			intest.Assert(ok, "invalid table id", t.DBName.L)
-			tables = append(tables, tbl.Meta())
+			if !is.TableIsCached(t.TableID) {
+				allInCache = false
+				return false
+			}
 			return true
 		})
-		// Reverse to make the order consistent with fetching from storage.
-		slices.Reverse(tables)
-		return tables, nil
+		if allInCache {
+			tables := make([]*model.TableInfo, 0)
+			is.IterateAllTableItems(func(t TableItem) bool {
+				if t.DBName.L != schema.L {
+					return true
+				}
+				tbl, ok := is.TableByID(ctx, t.TableID)
+				intest.Assert(ok, "invalid table id", t.DBName.L)
+				tables = append(tables, tbl.Meta())
+				return true
+			})
+			// Reverse to make the order consistent with fetching from storage.
+			slices.Reverse(tables)
+			return tables, nil
+		}
 	}
 
 retry:
@@ -1835,7 +1856,7 @@ func WithRefillOption(ctx context.Context, evict bool) context.Context {
 // than 70% of the capacity. We want to cache as many tables as possible, but
 // we also want to avoid evicting useful cached tables by some list operations.
 func (is *infoschemaV2) refillIfNoEvict(key tableCacheKey, value table.Table) {
-	if is.tableCache.Size() < uint64(float64(is.tableCache.Capacity())*0.7) {
+	if is.tableCache.Under70PercentUsage() {
 		is.tableCache.Set(key, value)
 	}
 }
