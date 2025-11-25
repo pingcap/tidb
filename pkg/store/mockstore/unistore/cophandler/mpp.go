@@ -241,6 +241,7 @@ func (b *mppExecBuilder) buildIndexLookUp(pb *tipb.IndexLookUp) (*indexLookUpExe
 				},
 			},
 		},
+		keyspaceID:          b.dagCtx.keyspaceID,
 		indexHandleOffsets:  pb.IndexHandleOffsets,
 		tblScanPB:           tblScanPB,
 		isCommonHandle:      false,
@@ -654,6 +655,9 @@ func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 		dbReader:  dbReader,
 		startTS:   req.StartTs,
 		keyRanges: req.Ranges,
+	}
+	if reqCtx := req.Context; reqCtx != nil {
+		dagCtx.keyspaceID = reqCtx.KeyspaceId
 	}
 	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	builder := mppExecBuilder{
