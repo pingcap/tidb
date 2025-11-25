@@ -154,18 +154,18 @@ type checkPrivilegeTableRowsCollateCompatiblitySQLPair struct {
 var collateCompatibilityTables = map[string]map[string]checkPrivilegeTableRowsCollateCompatiblitySQLPair{
 	"mysql": {
 		"db": {
-			upstreamCollateSQL:   "SELECT COUNT(1) FROM mysql.db",
-			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User FROM mysql.db GROUP BY Host, DB COLLATE utf8mb4_general_ci, User) as a",
+			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.db",
+			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User FROM __TiDB_BR_Temporary_mysql.db GROUP BY Host, DB COLLATE utf8mb4_general_ci, User) as a",
 			columns:              map[string]struct{}{"db": {}},
 		},
 		"tables_priv": {
-			upstreamCollateSQL:   "SELECT COUNT(1) FROM mysql.tables_priv",
-			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci FROM mysql.tables_priv GROUP BY Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci) as a",
+			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.tables_priv",
+			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci FROM __TiDB_BR_Temporary_mysql.tables_priv GROUP BY Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci) as a",
 			columns:              map[string]struct{}{"db": {}, "table_name": {}},
 		},
 		"columns_priv": {
-			upstreamCollateSQL:   "SELECT COUNT(1) FROM mysql.columns_priv",
-			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci, Column_name COLLATE utf8mb4_general_ci FROM mysql.columns_priv GROUP BY Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci, Column_name COLLATE utf8mb4_general_ci) as a",
+			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.columns_priv",
+			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci, Column_name COLLATE utf8mb4_general_ci FROM __TiDB_BR_Temporary_mysql.columns_priv GROUP BY Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci, Column_name COLLATE utf8mb4_general_ci) as a",
 			columns:              map[string]struct{}{"db": {}, "table_name": {}, "column_name": {}},
 		},
 	},
@@ -612,8 +612,10 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		log.Info("replace into existing table",
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
-		if err := rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbName, tableName, ti, db.ExistingTables[tableName]); err != nil {
-			return err
+		if rc.checkPrivilegeTableRowsCollateCompatiblity {
+			if err := rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbName, tableName, ti, db.ExistingTables[tableName]); err != nil {
+				return err
+			}
 		}
 		// target column order may different with source cluster
 		columnNames := make([]string, 0, len(ti.Columns))
@@ -647,7 +649,7 @@ func (rc *SnapClient) cleanTemporaryDatabase(ctx context.Context, originDB strin
 	}
 }
 
-func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, skipCollationCheck bool) (canLoadSysTablePhysical bool, err error) {
+func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, collationCheck bool) (canLoadSysTablePhysical bool, err error) {
 	log.Info("checking target cluster system table compatibility with backed up data")
 	canLoadSysTablePhysical = true
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
@@ -702,7 +704,7 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, sk
 					col.Name, col.FieldType.String())
 			}
 			typeEq, collateEq := utils.IsTypeCompatible(backupCol.FieldType, col.FieldType)
-			if typeEq && (!collateEq && skipCollationCheck) {
+			if typeEq && (!collateEq && collationCheck) {
 				collateEq = checkSysTableColumnCollateCompatibility(mysql.SystemDB, table.Info.Name.L, col.Name.L, backupCol.GetCollate(), col.GetCollate())
 			}
 			if !(typeEq && collateEq) {
@@ -761,7 +763,11 @@ func checkSysTableColumnCollateCompatibility(dbNameL, tableNameL, columnNameL, u
 	return exists
 }
 
-func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(ctx context.Context, dbNameL, tableNameL string, upstreamTable, downstreamTable *model.TableInfo) error {
+func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
+	ctx context.Context,
+	dbNameL, tableNameL string,
+	upstreamTable, downstreamTable *model.TableInfo,
+) error {
 	collateCompatiblityTableMap, exists := collateCompatibilityTables[dbNameL]
 	if !exists {
 		return nil
