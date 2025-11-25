@@ -1181,14 +1181,14 @@ SwitchIndexState:
 				return ver, err
 			}
 			// For multi-schema change, analyze is done by parent job.
-			if job.MultiSchemaInfo == nil && checkAnalyzeNecessary(job, tblInfo) {
+			if job.MultiSchemaInfo == nil {
 				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 			} else {
 				job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateRunning:
-			w.doAnalyzeForTable(job, tblInfo)
+			w.startAnalyzeAndWait(job, tblInfo)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			// Set column index flag.
 			for _, indexInfo := range allIndexInfos {
@@ -1384,8 +1384,81 @@ func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, s
 	}
 }
 
-func (w *worker) doAnalyzeForTable(job *model.Job, tblInfo *model.TableInfo) {
-	done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, tblInfo, job.SchemaName)
+// doAnalyzeWithoutReorg performs analyze for the table if needed without the logic of
+// reorg and and returns whether the table info is updated.
+func (w *worker) doAnalyzeWithoutReorg(
+	job *model.Job, tblInfo *model.TableInfo,
+	checkFn func(*model.Job, *model.TableInfo) bool,
+) (finished bool) {
+	switch job.ReorgMeta.AnalyzeState {
+	case model.AnalyzeStateNone:
+		if checkNeedAnalyze(job, tblInfo, checkFn) {
+			// Start analyze for the next time.
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+		} else {
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+		}
+		return false
+	case model.AnalyzeStateRunning:
+		w.startAnalyzeAndWait(job, tblInfo)
+		return false
+	default:
+		logutil.DDLLogger().Info("analyze skipped or finished for multi-schema change",
+			zap.Int64("job", job.ID), zap.Int8("state", job.ReorgMeta.AnalyzeState))
+		return true
+	}
+}
+
+func extractColumnForModifyColumn(job *model.Job, tblInfo *model.TableInfo) *model.ColumnInfo {
+	args, err := model.GetModifyColumnArgs(job)
+	if err != nil {
+		logutil.DDLLogger().Warn("get modify column args failed", zap.Stringer("job", job), zap.Error(err))
+		return nil
+	}
+
+	oldCol := getOldColumnFromArgs(tblInfo, args)
+	oldFt := oldCol.FieldType
+	newFt := args.Column.FieldType
+
+	switch args.ModifyColumnType {
+	case model.ModifyTypeNoReorgWithCheck:
+		// Although no reorg is needed, we still need to analyze in some cases.
+		if mysql.IsIntegerType(oldFt.GetType()) && mysql.IsIntegerType(newFt.GetType()) &&
+			mysql.HasUnsignedFlag(oldFt.GetFlag()) != mysql.HasUnsignedFlag(newFt.GetFlag()) {
+			return oldCol
+		} else if types.IsTypeChar(oldFt.GetType()) && types.IsTypeChar(newFt.GetType()) && oldFt.GetCollate() != newFt.GetCollate() {
+			return oldCol
+		}
+	}
+
+	return nil
+}
+
+func extractExtraColumns(job *model.Job, tblInfo *model.TableInfo) []string {
+	var extraColNames []string
+	switch job.Type {
+	case model.ActionModifyColumn:
+		if col := extractColumnForModifyColumn(job, tblInfo); col != nil {
+			extraColNames = append(extraColNames, col.Name.L)
+		}
+	case model.ActionMultiSchemaChange:
+		for i, subJob := range job.MultiSchemaInfo.SubJobs {
+			switch subJob.Type {
+			case model.ActionModifyColumn:
+				proxyJob := subJob.ToProxyJob(job, i)
+				if col := extractColumnForModifyColumn(&proxyJob, tblInfo); col != nil {
+					extraColNames = append(extraColNames, col.Name.L)
+				}
+			}
+		}
+
+	}
+
+	return extraColNames
+}
+
+func (w *worker) startAnalyzeAndWait(job *model.Job, tblInfo *model.TableInfo) {
+	done, timedOut, failed := w.analyzeTableInner(job, tblInfo, job.SchemaName)
 	failpoint.InjectCall("analyzeTableDone", job)
 	if done || timedOut || failed {
 		if done {
@@ -1400,8 +1473,8 @@ func (w *worker) doAnalyzeForTable(job *model.Job, tblInfo *model.TableInfo) {
 	}
 }
 
-// analyzeTableAfterCreateIndex analyzes the table after creating index.
-func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, tblInfo *model.TableInfo, dbName string) (done, timedOut, failed bool) {
+// analyzeTableInner analyzes the table after creating index/modify column.
+func (w *worker) analyzeTableInner(job *model.Job, tblInfo *model.TableInfo, dbName string) (done, timedOut, failed bool) {
 	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
 	tblName := tblInfo.Name.L
 	cumulativeTimeout, found := w.ddlCtx.getAnalyzeCumulativeTimeout(job.ID)
@@ -1449,7 +1522,12 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, tblInfo *model.Tab
 				w.sessPool.Put(sessCtx)
 				close(doneCh)
 			}()
-			dbTable := fmt.Sprintf("`%s`.`%s`", dbName, tblName)
+
+			sql := fmt.Sprintf("ANALYZE TABLE `%s`.`%s`", dbName, tblName)
+			extraCols := extractExtraColumns(job, tblInfo)
+			if len(extraCols) > 0 {
+				sql = fmt.Sprintf("%s COLUMNS %s", sql, strings.Join(extraCols, ", "))
+			}
 
 			exec, ok := sessCtx.(sqlexec.RestrictedSQLExecutor)
 			if !ok {
@@ -1461,7 +1539,12 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, tblInfo *model.Tab
 				return err
 			}
 			failpoint.InjectCall("beforeAnalyzeTable")
-			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
+			_, _, err = exec.ExecRestrictedSQL(
+				w.ctx,
+				[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze},
+				sql,
+				"ddl analyze table",
+			)
 			failpoint.InjectCall("afterAnalyzeTable", &err)
 			if err != nil {
 				logutil.DDLLogger().Warn("analyze table failed",

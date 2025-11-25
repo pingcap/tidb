@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -446,6 +445,36 @@ func rollbackModifyColumnJobWithIndexReorg(
 	return ver, nil
 }
 
+func getOldColumnFromArgs(
+	tblInfo *model.TableInfo,
+	args *model.ModifyColumnArgs,
+) *model.ColumnInfo {
+	var oldCol *model.ColumnInfo
+	// Use column ID to locate the old column.
+	// It is persisted to job arguments after the first execution.
+	if args.OldColumnID > 0 {
+		return model.FindColumnInfoByID(tblInfo.Columns, args.OldColumnID)
+	}
+
+	// Lower version TiDB doesn't persist the old column ID to job arguments.
+	// We have to use the old column name to locate the old column.
+	oldCol = model.FindColumnInfo(tblInfo.Columns, model.GenRemovingObjName(args.OldColumnName.L))
+	if oldCol == nil {
+		// The old column maybe not in removing state.
+		oldCol = model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
+	}
+
+	if oldCol != nil {
+		args.OldColumnID = oldCol.ID
+		logutil.DDLLogger().Info("run modify column job, find old column by name",
+			zap.String("oldColumnName", args.OldColumnName.L),
+			zap.Int64("oldColumnID", oldCol.ID),
+		)
+	}
+
+	return oldCol
+}
+
 func getModifyColumnInfo(
 	t *meta.Mutator, job *model.Job, args *model.ModifyColumnArgs,
 ) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, error) {
@@ -459,28 +488,7 @@ func getModifyColumnInfo(
 		return nil, nil, nil, errors.Trace(err)
 	}
 
-	var oldCol *model.ColumnInfo
-	// Use column ID to locate the old column.
-	// It is persisted to job arguments after the first execution.
-	if args.OldColumnID > 0 {
-		oldCol = model.FindColumnInfoByID(tblInfo.Columns, args.OldColumnID)
-	} else {
-		// Lower version TiDB doesn't persist the old column ID to job arguments.
-		// We have to use the old column name to locate the old column.
-		oldCol = model.FindColumnInfo(tblInfo.Columns, model.GenRemovingObjName(args.OldColumnName.L))
-		if oldCol == nil {
-			// The old column maybe not in removing state.
-			oldCol = model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
-		}
-		if oldCol != nil {
-			args.OldColumnID = oldCol.ID
-			logutil.DDLLogger().Info("run modify column job, find old column by name",
-				zap.Int64("jobID", job.ID),
-				zap.String("oldColumnName", args.OldColumnName.L),
-				zap.Int64("oldColumnID", oldCol.ID),
-			)
-		}
-	}
+	oldCol := getOldColumnFromArgs(tblInfo, args)
 	if oldCol == nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(args.OldColumnName, tblInfo.Name))
@@ -650,10 +658,17 @@ func (w *worker) doModifyColumnWithCheck(
 
 	failpoint.InjectCall("afterDoModifyColumnSkipReorgCheck")
 
-	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
-		job.MarkNonRevertible()
-		// Store the mark and enter the next DDL handling loop.
-		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
+	if job.MultiSchemaInfo != nil {
+		if job.MultiSchemaInfo.Revertible {
+			job.MarkNonRevertible()
+			// Store the mark and enter the next DDL handling loop.
+			return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
+		}
+	} else {
+		finished := w.doAnalyzeWithoutReorg(job, tblInfo, checkFnForModifyColumn)
+		if !finished {
+			return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		}
 	}
 
 	return finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
@@ -1018,7 +1033,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
 				// For multi-schema change, analyze is done by parent job.
-				if job.MultiSchemaInfo == nil && checkAnalyzeNecessary(job, tblInfo) {
+				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo, checkFnForModifyColumn) {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 				} else {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
@@ -1026,7 +1041,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 			}
 		case model.AnalyzeStateRunning:
-			w.doAnalyzeForTable(job, tblInfo)
+			w.startAnalyzeAndWait(job, tblInfo)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
@@ -1225,7 +1240,7 @@ func (w *worker) doModifyColumnIndexReorg(
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
 				// For multi-schema change, analyze is done by parent job.
-				if job.MultiSchemaInfo == nil && checkAnalyzeNecessary(job, tblInfo) {
+				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo, checkFnForModifyColumn) {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 				} else {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
@@ -1233,7 +1248,7 @@ func (w *worker) doModifyColumnIndexReorg(
 				}
 			}
 		case model.AnalyzeStateRunning:
-			w.doAnalyzeForTable(job, tblInfo)
+			w.startAnalyzeAndWait(job, tblInfo)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
@@ -1294,35 +1309,35 @@ func (w *worker) doModifyColumnIndexReorg(
 	return ver, errors.Trace(err)
 }
 
-func checkAnalyzeNecessary(job *model.Job, tbl *model.TableInfo) bool {
-	analyzeVer := vardef.DefTiDBAnalyzeVersion
-	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
-		analyzeVer = variable.TidbOptInt(val, analyzeVer)
+// checkFnForModifyColumn checks whether we need to analyze the table after modifying column.
+func checkFnForModifyColumn(job *model.Job, tblInfo *model.TableInfo) bool {
+	args, err := model.GetModifyColumnArgs(job)
+	if err != nil {
+		logutil.DDLLogger().Warn("get modify column args failed", zap.Stringer("job", job), zap.Error(err))
+		return false
 	}
-	enableDDLAnalyze := vardef.DefTiDBEnableDDLAnalyze
-	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok {
-		enableDDLAnalyze = variable.TiDBOptOn(val)
-	}
-	hasPartition := tbl.GetPartitionInfo() != nil
 
-	// If we reach here, it means all the reorg work has been done, either after
-	// MODIFY COLUMN or ADD INDEX. So we can just check the index state to decide
-	// whether there are new indexes added.
-	hasChangingIdx := false
-	for _, idx := range tbl.Indices {
-		if idx.State != model.StatePublic {
-			hasChangingIdx = true
-			break
+	oldCol := getOldColumnFromArgs(tblInfo, args)
+	oldFt := oldCol.FieldType
+	newFt := args.Column.FieldType
+
+	switch args.ModifyColumnType {
+	case model.ModifyTypeNoReorg:
+		return false
+	case model.ModifyTypeNone, model.ModifyTypePrecheck:
+		// This shouldn't happen.
+		return false
+	case model.ModifyTypeIndexReorg, model.ModifyTypeReorg:
+		return true
+	case model.ModifyTypeNoReorgWithCheck:
+		// Although no reorg is needed, we still need to analyze in some cases.
+		if mysql.IsIntegerType(oldFt.GetType()) && mysql.IsIntegerType(newFt.GetType()) {
+			return mysql.HasUnsignedFlag(oldFt.GetFlag()) != mysql.HasUnsignedFlag(newFt.GetFlag())
+		} else if types.IsTypeChar(oldFt.GetType()) && types.IsTypeChar(newFt.GetType()) {
+			return oldFt.GetCollate() != newFt.GetCollate()
 		}
 	}
 
-	if enableDDLAnalyze && hasChangingIdx && !hasPartition && analyzeVer == 2 {
-		return true
-	}
-	logutil.DDLLogger().Info("skip analyze",
-		zap.Bool("tidb_stats_update_during_ddl", enableDDLAnalyze),
-		zap.Bool("is partitioned table", hasPartition),
-		zap.Int("tidb_analyze_version", analyzeVer))
 	return false
 }
 

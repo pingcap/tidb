@@ -15,14 +15,18 @@
 package ddl
 
 import (
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/zap"
 )
 
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
@@ -77,11 +81,9 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			return ver, err
 		}
 
-		if checkNeedAnalyzeForMultiSchemaChange(job, tblInfo) {
-			w.doAnalyzeForTable(job, tblInfo)
-			if job.ReorgMeta.AnalyzeState == model.AnalyzeStateRunning {
-				return ver, nil
-			}
+		finished := w.doAnalyzeWithoutReorg(job, tblInfo, checkFnForMultiSchemaChange)
+		if !finished {
+			return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		}
 
 		var schemaVersionGenerated = false
@@ -375,28 +377,45 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	info.SubJobs = newSubJobs
 }
 
-// checkNeedAnalyzeForMultiSchemaChange check if the multi-schema change job
-// need analyze after all sub jobs are non-revertible.
-func checkNeedAnalyzeForMultiSchemaChange(job *model.Job, tblInfo *model.TableInfo) bool {
-	switch job.ReorgMeta.AnalyzeState {
-	case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
-		return false
-	case model.AnalyzeStateRunning:
-		return true
-	}
-
-	for _, subJob := range job.MultiSchemaInfo.SubJobs {
+func checkFnForMultiSchemaChange(job *model.Job, tblInfo *model.TableInfo) bool {
+	for i, subJob := range job.MultiSchemaInfo.SubJobs {
 		switch subJob.Type {
-		case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn:
-			if checkAnalyzeNecessary(job, tblInfo) {
-				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+		case model.ActionAddIndex, model.ActionAddPrimaryKey:
+			return true
+		case model.ActionModifyColumn:
+			proxyJob := subJob.ToProxyJob(job, i)
+			if checkFnForModifyColumn(&proxyJob, tblInfo) {
 				return true
 			}
 		}
 	}
 
-	job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
 	return false
+}
+
+// checkNeedAnalyze check if the job need analyze.
+func checkNeedAnalyze(
+	job *model.Job, tblInfo *model.TableInfo,
+	checkFn func(job *model.Job, tblInfo *model.TableInfo) bool,
+) bool {
+	analyzeVer := vardef.DefTiDBAnalyzeVersion
+	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
+		analyzeVer = variable.TidbOptInt(val, analyzeVer)
+	}
+	enableDDLAnalyze := vardef.DefTiDBEnableDDLAnalyze
+	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok {
+		enableDDLAnalyze = variable.TiDBOptOn(val)
+	}
+	hasPartition := tblInfo.GetPartitionInfo() != nil
+	if !enableDDLAnalyze || hasPartition || analyzeVer != 2 {
+		logutil.DDLLogger().Info("skip analyze",
+			zap.Bool("tidb_stats_update_during_ddl", enableDDLAnalyze),
+			zap.Bool("is partitioned table", hasPartition),
+			zap.Int("tidb_analyze_version", analyzeVer))
+		return false
+	}
+
+	return checkFn(job, tblInfo)
 }
 
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {
