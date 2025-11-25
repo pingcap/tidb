@@ -413,12 +413,17 @@ func (s *propConstSolver) propagateColumnEQ() {
 			if lOk && rOk && lCol.GetType(s.ctx.GetEvalCtx()).GetCollate() == rCol.GetType(s.ctx.GetEvalCtx()).GetCollate() && !lCol.GetType(s.ctx.GetEvalCtx()).Hybrid() && !rCol.GetType(s.ctx.GetEvalCtx()).Hybrid() {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
+				visited[i] = true
 				if s.unionSet.FindRoot(lID) != s.unionSet.FindRoot(rID) {
 					// Add the equality relation to unionSet
 					// if it has been added, we don't need to process it again.
 					// It will be deleted in the replaceConditionsWithConstants
 					s.unionSet.Union(lID, rID)
-					visited[i] = true
+				} else {
+					s.conditions[i] = &Constant{
+						Value:   types.NewDatum(true),
+						RetType: types.NewFieldType(mysql.TypeTiny),
+					}
 				}
 			}
 		}
