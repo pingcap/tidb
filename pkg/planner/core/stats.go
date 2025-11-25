@@ -199,7 +199,18 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 			}
 		}
 	}
-	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl)
+	// Check if index merge might be used - if so, we need statistics even for paths without AccessConds
+	// because they might be used in an index merge path with other indexes that have AccessConds
+	stmtCtx := ds.SCtx().GetSessionVars().StmtCtx
+	indexMergeEnabled := (ds.SCtx().GetSessionVars().GetEnableIndexMerge() || len(ds.IndexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
+	hasConditions := len(conds) > 0
+	mightUseIndexMerge := indexMergeEnabled && hasConditions && len(ds.AllPossibleAccessPaths) > 1
+
+	// Compute IsSingleScan to check if this index is a covering index (all needed columns are in the index)
+	// This is needed for the optimization check - covering indexes might be used even without AccessConds
+	isSingleScan := ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+
+	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, mightUseIndexMerge, isSingleScan)
 	return err
 }
 
@@ -349,9 +360,15 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	if err != nil {
 		return err
 	}
-	var countEst statistics.RowEstimate
-	countEst, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
-	path.CountAfterAccess = countEst.Est
+	// Optimization: If there are no AccessConds, the ranges will be full range and the count will be the full table count.
+	// Skip the expensive GetRowCountByIntColumnRanges call in this case.
+	if len(path.AccessConds) == 0 {
+		path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
+	} else {
+		var countEst statistics.RowEstimate
+		countEst, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
+		path.CountAfterAccess = countEst.Est
+	}
 	if !isIm {
 		// Check if we need to apply a lower bound to CountAfterAccess
 		adjustCountAfterAccess(ds, path)
@@ -367,7 +384,9 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 	if len(conds) == 0 {
 		return nil
 	}
-	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl); err != nil {
+	// For common handle table paths, we always compute statistics as they might be used
+	isSingleScan := ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, true, isSingleScan); err != nil {
 		return err
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
@@ -401,6 +420,8 @@ func detachCondAndBuildRangeForPath(
 	path *util.AccessPath,
 	conds []expression.Expression,
 	histColl *statistics.HistColl,
+	mightUseIndexMerge bool,
+	isSingleScan bool,
 ) error {
 	if len(path.IdxCols) == 0 {
 		path.TableFilters = conds
@@ -422,6 +443,28 @@ func detachCondAndBuildRangeForPath(
 		for i := range path.ConstCols {
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
+	}
+	// Optimization: Skip expensive GetRowCountByIndexRanges call if this index has no predicates on any of its columns
+	// and won't be used for other reasons (covering scan or matching sort properties).
+	// If there are no AccessConds, this index cannot filter at the index level, so CountAfterAccess
+	// won't be reduced (it will remain the full table count). We don't need to check HasFullRange
+	// because if AccessConds is empty, the ranges will already be full range.
+	// However, we must compute statistics if:
+	// 1. The index is forced to use
+	// 2. The index is a covering index (IsSingleScan) - all needed columns are in the index
+	// 3. The index might match sort properties (checked later in physical optimization, but we can't determine here)
+	// Note: Even if index merge might be used, we skip estimation here because index merge will
+	// re-evaluate paths later with accessPathsForConds, which will compute statistics only for
+	// indexes that actually have predicates matching them.
+	// This avoids unnecessary statistics computation for indexes that have no predicates on any columns
+	// and won't be used for covering or sort matching.
+	if len(path.AccessConds) == 0 && !path.Forced && !isSingleScan {
+		// Keep the default CountAfterAccess that was set in fillIndexPath (full table count)
+		// MinCountAfterAccess and MaxCountAfterAccess are already 0
+		// Note: We can't check if this index matches sort properties at this point (prop is only
+		// available during physical optimization), so we're being conservative and skipping
+		// estimation. If the index matches sort properties, it will be re-evaluated later.
+		return nil
 	}
 	indexCols := path.IdxCols
 	if len(indexCols) > len(path.Index.Columns) { // remove clustered primary key if it has been added to path.IdxCols

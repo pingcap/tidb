@@ -810,6 +810,7 @@ func buildPartialPathUp4MVIndex(
 // buildPartialPaths4MVIndex builds partial paths by using these accessFilters upon this MVIndex.
 // The accessFilters must be corresponding to these idxCols.
 // OK indicates whether it builds successfully. These partial paths should be ignored if ok==false.
+// This version is for the cardinality package which only has PlanContext, not DataSource.
 func buildPartialPaths4MVIndex(
 	sctx planctx.PlanContext,
 	accessFilters []expression.Expression,
@@ -960,7 +961,9 @@ func buildPartialPath4MVIndex(
 		partialPath.FullIdxCols = append(partialPath.FullIdxCols, idxCols[i])
 		partialPath.FullIdxColLens = append(partialPath.FullIdxColLens, length)
 	}
-	if err := detachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl); err != nil {
+	// For index merge paths, we always compute statistics
+	// We pass false for isSingleScan since we don't have ds to compute it, but for index merge we always want stats
+	if err := detachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl, true, false); err != nil {
 		return nil, false, err
 	}
 	if len(partialPath.AccessConds) != len(accessFilters) || len(partialPath.TableFilters) > 0 {
