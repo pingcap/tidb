@@ -704,6 +704,7 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 					col.Name, col.FieldType.String())
 			}
 			typeEq, collateEq := utils.IsTypeCompatible(backupCol.FieldType, col.FieldType)
+			canLoadSysTablePhysical = canLoadSysTablePhysical && collateEq
 			if typeEq && (!collateEq && collationCheck) {
 				collateEq = checkSysTableColumnCollateCompatibility(mysql.SystemDB, table.Info.Name.L, col.Name.L, backupCol.GetCollate(), col.GetCollate())
 			}
@@ -718,7 +719,6 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 					col.Name, col.FieldType.String(),
 					backupCol.Name, backupCol.FieldType.String())
 			}
-			canLoadSysTablePhysical = canLoadSysTablePhysical && collateEq
 		}
 
 		if backupTi.Name.L == sysUserTableName {
