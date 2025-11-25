@@ -934,8 +934,7 @@ func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 // If visit return false, stop the iterate process.
 // NOTE: the output order is reversed by (dbName, tableName).
 func (is *infoschemaV2) IterateAllTableItemsByDB(dbID int64, visit func(TableItem) bool) {
-	var first *tableItem
-	first = &tableItem{dbID: dbID, tableID: math.MaxInt64, schemaVersion: math.MaxInt64}
+	first := &tableItem{dbID: dbID, tableID: math.MaxInt64, schemaVersion: math.MaxInt64}
 	is.iterateAllTableItemsInternal(first, visit)
 }
 
