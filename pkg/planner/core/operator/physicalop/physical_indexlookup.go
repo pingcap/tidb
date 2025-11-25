@@ -55,7 +55,6 @@ func buildPushDownIndexLookUpPlan(
 
 	tableScanPlan, parentOfTableScan := detachRootTableScanPlan(tablePlan)
 	indexLookUpPlan = PhysicalLocalIndexLookUp{
-		// Only int handle is supported now, so the handle is always the last column of index schema.
 		IndexHandleOffsets: handleOffsets,
 	}.Init(ctx, indexPlan, tableScanPlan, tablePlan.QueryBlockOffset())
 
