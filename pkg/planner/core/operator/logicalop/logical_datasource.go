@@ -728,14 +728,17 @@ func (ds *DataSource) CleanUnusedTiCIIndexes() {
 	ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
 		return path.Index != nil && path.Index.FullTextInfo != nil && len(path.AccessConds) == 0
 	})
+	origLen := len(ds.PossibleAccessPaths)
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
 		return path.Index != nil && path.Index.FullTextInfo != nil && len(path.AccessConds) == 0
 	})
+	nowLen := len(ds.PossibleAccessPaths)
 	stillHasHintedIndex := false
 	for _, path := range ds.PossibleAccessPaths {
 		stillHasHintedIndex = stillHasHintedIndex || path.Forced
 	}
-	if ds.HasForceHints && !stillHasHintedIndex {
+	// Here we only append warning for TiCI index's conflicting hint.
+	if origLen > nowLen && ds.HasForceHints && !stillHasHintedIndex {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
 }
