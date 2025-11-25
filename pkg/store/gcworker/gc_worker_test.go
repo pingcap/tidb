@@ -1650,6 +1650,31 @@ func TestResolveLocksWithKeyspaces_UnifiedGCInMultiBatchesOfKeyspaces_MultipleOf
 	testResolveLocksWithKeyspacesImpl(t, "UnifiedGCInMultiBatchesOfKeyspaces_MultipleOfBatchSizeToEnd")
 }
 
+func TestResolveLocksNearTxnSafePoint(t *testing.T) {
+	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore))
+
+	txnSafePoint := oracle.GoTimeToTS(time.Now().Add(-time.Minute * 5))
+
+	txns := make([]kv.Transaction, 0, 3)
+
+	for i, startTS := range []uint64{txnSafePoint - 1, txnSafePoint, txnSafePoint + 1} {
+		txn, err := s.store.Begin(tikv.WithStartTS(startTS))
+		require.NoError(t, err)
+		txn.SetOption(kv.Pessimistic, true)
+		lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
+		err = txn.LockKeys(context.Background(), lockCtx, []byte(fmt.Sprintf("k%d", i+1)))
+		require.NoError(t, err)
+		txns = append(txns, txn)
+	}
+
+	err := s.gcWorker.resolveLocks(gcContext(), txnSafePoint, 1)
+	require.NoError(t, err)
+
+	require.Error(t, txns[0].Commit(context.Background()))
+	require.NoError(t, txns[1].Commit(context.Background()))
+	require.NoError(t, txns[2].Commit(context.Background()))
+}
+
 func TestRunGCJob(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
