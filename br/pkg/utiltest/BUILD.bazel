@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//br/pkg/gluetidb/mock",
         "//br/pkg/mock",
+        "//br/pkg/restore/split",
         "//br/pkg/storage",
         "@com_github_stretchr_testify//require",
     ],

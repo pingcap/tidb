@@ -8,7 +8,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
@@ -40,7 +39,7 @@ func NewCompactedFileSplitStrategy(
 
 type sstIdentity struct {
 	EffectiveID     int64
-	RewriteBoundary *utils.RewriteRules
+	RewriteBoundary *restoreutils.RewriteRules
 }
 
 func (cs *CompactedFileSplitStrategy) inspect(ssts SSTs) sstIdentity {
@@ -52,7 +51,7 @@ func (cs *CompactedFileSplitStrategy) inspect(ssts SSTs) sstIdentity {
 		}
 	}
 
-	rule := utils.GetRewriteRuleOfTable(ssts.TableID(), r.RewrittenTo(), map[int64]int64{}, false)
+	rule := restoreutils.GetRewriteRuleOfTable(ssts.TableID(), r.RewrittenTo(), map[int64]int64{}, false)
 
 	return sstIdentity{
 		EffectiveID:     r.RewrittenTo(),
