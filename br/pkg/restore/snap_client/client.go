@@ -525,7 +525,6 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 
-	var fileImporter *SnapFileImporter
 	opt := NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
 		rc.rewriteMode, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
@@ -541,15 +540,15 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 			return errors.Trace(err)
 		}
 		// Raw/Txn restore are not support checkpoint for now
-		rc.restorer = restore.NewSimpleSstRestorer(ctx, fileImporter, rc.workerPool, nil)
+		rc.restorer = restore.NewSimpleSstRestorer(ctx, rc.importer, rc.workerPool, nil)
 	} else {
 		// or create a fileImporter with the cluster API version
-		fileImporter, err = NewSnapFileImporter(
+		rc.importer, err = NewSnapFileImporter(
 			ctx, rc.dom.Store().GetCodec().GetAPIVersion(), TiDBFull, opt)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rc.restorer = restore.NewMultiTablesRestorer(ctx, fileImporter, rc.workerPool, rc.checkpointRunner)
+		rc.restorer = restore.NewMultiTablesRestorer(ctx, rc.importer, rc.workerPool, rc.checkpointRunner)
 	}
 	return nil
 }
