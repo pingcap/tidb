@@ -199,6 +199,11 @@ type TableInfo struct {
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
 
+	// IsActiveActive means the table is active-active table.
+	IsActiveActive bool `json:"is_active_active,omitempty"`
+	// SoftdeleteInfo is softdelete TTL. It is required if IsActiveActive == true.
+	SoftdeleteInfo *SoftdeleteInfo `json:"softdelete_info,omitempty"`
+
 	// Revision is per table schema's version, it will be increased when the schema changed.
 	Revision uint64 `json:"revision"`
 
@@ -424,6 +429,13 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 			newOffset, ok := updatedOffsets[idxCol.Offset]
 			if ok {
 				idxCol.Offset = newOffset
+			}
+		}
+
+		for _, affectedCol := range idx.AffectColumn {
+			newOffset, ok := updatedOffsets[affectedCol.Offset]
+			if ok {
+				affectedCol.Offset = newOffset
 			}
 		}
 	}
@@ -1428,4 +1440,18 @@ func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 	}
 
 	return duration.ParseDuration(t.JobInterval)
+}
+
+// SoftdeleteInfo records the Softdelete config.
+type SoftdeleteInfo struct {
+	Retention string `json:"retention,omitempty"`
+	// JobEnable is used to control the cleanup JobEnable
+	JobEnable   bool   `json:"job_enable,omitempty"`
+	JobInterval string `json:"job_interval,omitempty"`
+}
+
+// Clone clones TTLInfo
+func (t *SoftdeleteInfo) Clone() *SoftdeleteInfo {
+	cloned := *t
+	return &cloned
 }

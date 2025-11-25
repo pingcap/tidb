@@ -1499,7 +1499,9 @@ func (local *Backend) doImport(
 					logutil.Key("endKey", job.keyRange.End),
 					zap.Stringer("stage", job.stage),
 					zap.Int("retryCount", job.retryCount),
-					zap.Time("waitUntil", job.waitUntil))
+					zap.Time("waitUntil", job.waitUntil),
+					log.ShortError(job.lastRetryableErr),
+				)
 				if !retryer.push(job) {
 					// retryer is closed by worker error
 					job.done(&jobWg)

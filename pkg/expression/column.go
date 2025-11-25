@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -768,27 +769,58 @@ func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.Index
 	return nil
 }
 
-func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo, onlyPrefixCols bool) ([]*Column, []int) {
-	retCols := make([]*Column, 0, len(index.Columns))
-	lens := make([]int, 0, len(index.Columns))
+type indexInfo2ColsFlags uint
+
+const (
+	extractPrefixCols indexInfo2ColsFlags = 1 << iota
+	extractFullCols
+)
+
+func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo, flags indexInfo2ColsFlags) (
+	prefixCols []*Column, prefixLens []int,
+	fullCols []*Column, fullLens []int,
+) {
+	intest.Assert(flags != 0, "at least one of indexInfo2ColsFlags must be set")
+	if flags&extractPrefixCols != 0 {
+		prefixCols = make([]*Column, 0, len(index.Columns))
+		prefixLens = make([]int, 0, len(index.Columns))
+	}
+	if flags&extractFullCols != 0 {
+		fullCols = make([]*Column, 0, len(index.Columns))
+		fullLens = make([]int, 0, len(index.Columns))
+	}
+	prefixComplete := false
+
 	for _, c := range index.Columns {
 		col := IndexCol2Col(colInfos, cols, c)
 		if col == nil {
-			if onlyPrefixCols {
-				return retCols, lens
+			prefixComplete = true
+			if flags&extractFullCols == 0 {
+				return
 			}
-			retCols = append(retCols, col)
-			lens = append(lens, types.UnspecifiedLength)
+			fullCols = append(fullCols, col)
+			fullLens = append(fullLens, types.UnspecifiedLength)
 			continue
 		}
-		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
-			lens = append(lens, types.UnspecifiedLength)
-		} else {
-			lens = append(lens, c.Length)
+
+		// We use `types.UnspecifiedLength` to specifically indicate that a column does not
+		// have a prefix length (see the `hasPrefix` function in util/ranger, for example).
+		// In other words, `length` is only used for indexed columns with a prefix length
+		// (as long as it is less than the full length).
+		length := c.Length
+		if length != types.UnspecifiedLength && length == col.RetType.GetFlen() {
+			length = types.UnspecifiedLength
+		}
+		if flags&extractPrefixCols != 0 && !prefixComplete {
+			prefixCols = append(prefixCols, col)
+			prefixLens = append(prefixLens, length)
+		}
+		if flags&extractFullCols != 0 {
+			fullCols = append(fullCols, col)
+			fullLens = append(fullLens, length)
 		}
 	}
-	return retCols, lens
+	return
 }
 
 // IndexInfo2PrefixCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
@@ -797,15 +829,25 @@ func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*Column, index *mod
 // the return value will be only the 1st corresponding *Column and its length.
 // TODO: Use a struct to represent {*Column, int}.
 func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	return indexInfo2ColsImpl(colInfos, cols, index, true)
+	prefixCols, prefixLens, _, _ := indexInfo2ColsImpl(colInfos, cols, index, extractPrefixCols)
+	return prefixCols, prefixLens
 }
 
-// IndexInfo2Cols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
+// IndexInfo2FullCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
 // together with a []int containing their lengths.
 // If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
 // the return value will be [col1, nil, col2].
-func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	return indexInfo2ColsImpl(colInfos, cols, index, false)
+func IndexInfo2FullCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+	_, _, fullCols, fullLens := indexInfo2ColsImpl(colInfos, cols, index, extractFullCols)
+	return fullCols, fullLens
+}
+
+// IndexInfo2Cols returns the combined result of IndexInfo2PrefixCols and IndexInfo2FullCols.
+func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) (
+	prefixCols []*Column, prefixLens []int,
+	fullCols []*Column, fullLens []int,
+) {
+	return indexInfo2ColsImpl(colInfos, cols, index, extractPrefixCols|extractFullCols)
 }
 
 // FindPrefixOfIndex will find columns in index by checking the unique id.

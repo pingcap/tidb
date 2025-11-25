@@ -2886,3 +2886,24 @@ func FilterClusterServerInfo(serversInfo []ServerInfo, nodeTypes, addresses set.
 	}
 	return filterServers
 }
+
+// GetDataFromStatusByConn is getting the per-connection status for `performance_schema.status_by_connection`
+func GetDataFromStatusByConn(sctx sessionctx.Context) ([][]types.Datum, error) {
+	sm := sctx.GetSessionManager()
+	if sm == nil {
+		return nil, nil
+	}
+	statusVars := sm.GetStatusVars()
+	rows := make([][]types.Datum, 0, 2*len(statusVars))
+	for pid, svar := range statusVars {
+		for varkey, varval := range svar {
+			row := types.MakeDatums(
+				pid,
+				varkey,
+				varval,
+			)
+			rows = append(rows, row)
+		}
+	}
+	return rows, nil
+}

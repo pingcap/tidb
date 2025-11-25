@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -426,14 +425,21 @@ func CalculateRegionBatch(totalRegionCnt int, nodeCnt int, useLocalDisk bool) in
 		failpoint.Return(val.(int))
 	})
 	var regionBatch int
+	if useLocalDisk {
+		// We want to avoid too may partial imports when using local disk. So we
+		// limit the node count to 3 so that at most 3 partial imports if disk
+		// space is enough.
+		nodeCnt = min(3, nodeCnt)
+	}
 	avgTasksPerInstance := (totalRegionCnt + nodeCnt - 1) / nodeCnt // ceiling
 	if useLocalDisk {
-		regionBatch = avgTasksPerInstance
+		// Special handling for small table, in this case, we want to do it on
+		// one node. 100 region data is about 10GiB.
+		regionBatch = min(max(100, avgTasksPerInstance), totalRegionCnt)
 	} else {
 		// For cloud storage, each subtask should contain no more than 4000 regions.
 		regionBatch = min(4000, avgTasksPerInstance)
 	}
-	regionBatch = max(regionBatch, 1)
 	return regionBatch
 }
 
@@ -582,7 +588,11 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		}
 		logger.Info("split subtask range",
 			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("endKey", hex.EncodeToString(endKey)))
+			zap.String("endKey", hex.EncodeToString(endKey)),
+			zap.Int("dataFilesCnt", len(dataFiles)),
+			zap.Int("rangeJobKeysCnt", len(interiorRangeJobKeys)),
+			zap.Int("regionSplitKeysCnt", len(interiorRegionSplitKeys)),
+		)
 
 		if bytes.Compare(startKey, endKey) >= 0 {
 			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
@@ -746,8 +756,7 @@ func getRangeSplitter(
 	rangeGroupSize := totalSize / instanceCnt
 	rangeGroupKeys := int64(math.MaxInt64)
 
-	var regionSplitSize = int64(config.SplitRegionSize)
-	var regionSplitKeys = int64(config.SplitRegionKeys)
+	regionSplitSize, regionSplitKeys := handle.GetDefaultRegionSplitConfig()
 	if store != nil {
 		pdCli := store.GetPDClient()
 		tls, err := ingest.NewDDLTLS()

@@ -188,7 +188,11 @@ func NewExternalEngine(
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
 	logutil.Logger(ctx).Info("create external engine",
-		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))))
+		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))),
+		zap.Int("dataFileCount", len(dataFiles)),
+		zap.Int("jobKeysCount", len(jobKeys)),
+		zap.Int("splitKeysCount", len(splitKeys)),
+	)
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
 		storage:    storage,
