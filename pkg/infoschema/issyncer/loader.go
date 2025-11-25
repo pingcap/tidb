@@ -297,10 +297,10 @@ func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
 		is := l.infoCache.GetLatest()
 		oldName, oldOK := is.SchemaByID(diff.OldSchemaID)
 		newName, newOK := is.SchemaByID(diff.SchemaID)
-		oldNameIsSysOrBRRel := oldOK && (metadef.IsSystemDB(oldName.Name.L) || metadef.IsBRRelatedDB(oldName.Name.O))
-		newNameIsSysOrBRRel := newOK && (metadef.IsSystemDB(newName.Name.L) || metadef.IsBRRelatedDB(newName.Name.O))
+		oldNameSelected := oldOK && l.loadDBFilter(oldName.Name)
+		newNameSelected := newOK && l.loadDBFilter(newName.Name)
 
-		return !(oldNameIsSysOrBRRel || newNameIsSysOrBRRel)
+		return !(oldNameSelected || newNameSelected)
 	}
 
 	if !l.crossKS {
