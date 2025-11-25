@@ -428,27 +428,6 @@ func (s *propConstSolver) propagateColumnEQ() {
 			}
 		}
 	}
-	s.replaceConditionsWithConstants(visited)
-	// Did you find that the code of `replaceConditionsWithConstants` is somewhat similar to the following code?
-	// But here we can't do the merge; we have to wait until `replaceConditionsWithConstants` is completed
-	// before we can proceed with the subsequent `tryToReplaceCond`.
-	//
-	// For example (From the third example in TestJoinReorder):
-	//    col1 = col2
-	//    col2 = col3
-	//    col3 = col4
-	//    col5 = col6
-	//    col6 = col1
-	//    col1 = col4
-	//    col6 = col3
-	// After `replaceConditionsWithConstants`, we will get the
-	//    col1 = col2
-	//    col2 = col3
-	//    col3 = col4
-	//    col5 = col6
-	// If we merge replaceConditionsWithConstants and tryToReplaceCond into one. `tryToReplaceCond` will generator the new expression.
-	// This new expression also skip the ```replaceConditionsWithConstants``` with the specific equivalence relations.
-	// The resulting expression is not the most simplified.
 	condsLen := len(s.conditions)
 	for i, coli := range s.columns {
 		for j := i + 1; j < len(s.columns); j++ {
@@ -462,6 +441,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 					// cond_k has been used to retrieve equality relation
 					continue
 				}
+				s.conditions[k], _ = replaceCond(s.ctx, coli, colj, s.conditions[k])
 				cond := s.conditions[k]
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
@@ -487,33 +467,6 @@ func (s *propConstSolver) propagateColumnEQ() {
 						s.conditions = append(s.conditions, newExpr)
 					}
 				}
-			}
-		}
-	}
-}
-
-// replaceConditionsWithConstants replaces eq condition in the condition list by constant values.
-// For example, for conditions like
-//
-//	a = b and a = b => a = b, true
-//	a = b and ( a = b or c =d ) => a = b and ( true or c = d )
-//
-// True can be removed in the shortCircuitLogicalConstants.
-func (s *propConstSolver) replaceConditionsWithConstants(visited []bool) {
-	condsLen := len(s.conditions)
-	for i, coli := range s.columns {
-		for j := i + 1; j < len(s.columns); j++ {
-			// unionSet doesn't have iterate(), we use a two layer loop to iterate col_i = col_j relation
-			if s.unionSet.FindRoot(i) != s.unionSet.FindRoot(j) {
-				continue
-			}
-			colj := s.columns[j]
-			for k := range condsLen {
-				if visited[k] {
-					// cond_k has been used to retrieve equality relation
-					continue
-				}
-				s.conditions[k], _ = replaceCond(s.ctx, coli, colj, s.conditions[k])
 			}
 		}
 	}
