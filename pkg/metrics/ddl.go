@@ -319,27 +319,6 @@ const (
 	LblReorgPartitionRate = "reorg_partition_rate"
 )
 
-// generateReorgLabel returns the label with schema name, table name and optional column/index names.
-// Multiple columns/indexes can be concatenated with "+".
-func generateReorgLabel(label, schemaName, tableName, colOrIdxNames string) string {
-	var stringBuilder strings.Builder
-	if len(colOrIdxNames) == 0 {
-		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + 2)
-	} else {
-		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + len(colOrIdxNames) + 3)
-	}
-	stringBuilder.WriteString(label)
-	stringBuilder.WriteString("-")
-	stringBuilder.WriteString(schemaName)
-	stringBuilder.WriteString("-")
-	stringBuilder.WriteString(tableName)
-	if len(colOrIdxNames) > 0 {
-		stringBuilder.WriteString("-")
-		stringBuilder.WriteString(colOrIdxNames)
-	}
-	return stringBuilder.String()
-}
-
 var cleanupFuncs = make(map[int64]map[string]func(), 8)
 
 // CleanupAllMetricsForJob cleans up all metrics registered for the given job ID.
@@ -355,10 +334,10 @@ func CleanupAllMetricsForJob(id int64) {
 }
 
 // GetBackfillTotalByLabel returns the Counter showing the speed of backfilling for the given type label.
-func GetBackfillTotalByLabel(id int64, label, schemaName, tableName, colOrIdxName string) prometheus.Counter {
+func GetBackfillTotalByLabel(id int64, labels ...string) prometheus.Counter {
 	mu.Lock()
 	defer mu.Unlock()
-	lv := generateReorgLabel(label, schemaName, tableName, colOrIdxName)
+	lv := strings.Join(labels, "-")
 	counter := BackfillTotalCounter.WithLabelValues(lv)
 
 	if _, ok := cleanupFuncs[id]; !ok {
@@ -376,10 +355,10 @@ func GetBackfillTotalByLabel(id int64, label, schemaName, tableName, colOrIdxNam
 }
 
 // GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
-func GetBackfillProgressByLabel(id int64, label, schemaName, tableName, colOrIdxName string) prometheus.Gauge {
+func GetBackfillProgressByLabel(id int64, labels ...string) prometheus.Gauge {
 	mu.Lock()
 	defer mu.Unlock()
-	lv := generateReorgLabel(label, schemaName, tableName, colOrIdxName)
+	lv := strings.Join(labels, "-")
 	counter := BackfillProgressGauge.WithLabelValues(lv)
 
 	if _, ok := cleanupFuncs[id]; !ok {

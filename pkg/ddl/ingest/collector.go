@@ -57,7 +57,8 @@ type tempIndexCollector struct {
 
 	gaugeVec *prometheus.GaugeVec
 
-	lastActive sync.Map // int64 (tableID) => bool
+	// tableIDs in last collection
+	lastActive sync.Map
 }
 
 func newTempIndexCollector() *tempIndexCollector {
@@ -187,10 +188,26 @@ func (c *tempIndexCollector) Collect(ch chan<- prometheus.Metric) {
 
 		//nolint:forcetypeassert
 		tc := value.(*committedMetric)
-		c.gaugeVec.WithLabelValues(labelSingleWrite, tableIDStr).Set(float64(tc.singleWrite.Load()))
-		c.gaugeVec.WithLabelValues(labelDoubleWrite, tableIDStr).Set(float64(tc.doubleWrite.Load()))
-		c.gaugeVec.WithLabelValues(labelMerged, tableIDStr).Set(float64(tc.merged.Load()))
-		c.gaugeVec.WithLabelValues(labelScanned, tableIDStr).Set(float64(tc.scanned.Load()))
+
+		singleWrite := tc.singleWrite.Load()
+		if singleWrite > 0 {
+			c.gaugeVec.WithLabelValues(labelSingleWrite, tableIDStr).Set(float64(singleWrite))
+		}
+
+		doubleWrite := tc.doubleWrite.Load()
+		if doubleWrite > 0 {
+			c.gaugeVec.WithLabelValues(labelDoubleWrite, tableIDStr).Set(float64(doubleWrite))
+		}
+
+		merged := tc.merged.Load()
+		if merged > 0 {
+			c.gaugeVec.WithLabelValues(labelMerged, tableIDStr).Set(float64(merged))
+		}
+
+		scanned := tc.scanned.Load()
+		if scanned > 0 {
+			c.gaugeVec.WithLabelValues(labelScanned, tableIDStr).Set(float64(scanned))
+		}
 
 		return true
 	})
