@@ -8,6 +8,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
@@ -23,7 +24,7 @@ type CompactedFileSplitStrategy struct {
 	checkpointFileProgressFn func(uint64, uint64)
 }
 
-var _ split.SplitStrategy[*backuppb.LogFileSubcompaction] = &CompactedFileSplitStrategy{}
+var _ split.SplitStrategy[SSTs] = &CompactedFileSplitStrategy{}
 
 func NewCompactedFileSplitStrategy(
 	rules map[int64]*restoreutils.RewriteRules,
@@ -65,10 +66,10 @@ func (cs *CompactedFileSplitStrategy) Accumulate(ssts SSTs) {
 	splitHelper, exist := cs.TableSplitter[identity.EffectiveID]
 	if !exist {
 		splitHelper = split.NewSplitHelper()
-		cs.TableSplitter[subCompaction.Meta.TableId] = splitHelper
+		cs.TableSplitter[ssts.TableID()] = splitHelper
 	}
 
-	for _, f := range subCompaction.SstOutputs {
+	for _, f := range ssts.GetSSTs() {
 		startKey := codec.EncodeBytes(nil, f.StartKey)
 		endKey := codec.EncodeBytes(nil, f.EndKey)
 		cs.AccumulateCount += 1
@@ -106,14 +107,14 @@ func (cs *CompactedFileSplitStrategy) ShouldSplit() bool {
 	return cs.AccumulateCount > (4096 / impactFactor)
 }
 
-func (cs *CompactedFileSplitStrategy) ShouldSkip(subCompaction *backuppb.LogFileSubcompaction) bool {
-	_, exist := cs.Rules[subCompaction.Meta.TableId]
+func (cs *CompactedFileSplitStrategy) ShouldSkip(subCompaction SSTs) bool {
+	_, exist := cs.Rules[subCompaction.TableID()]
 	if !exist {
-		log.Info("skip for no rule files", zap.Int64("tableID", subCompaction.Meta.TableId))
+		log.Info("skip for no rule files", zap.Int64("tableID", subCompaction.TableID()))
 		return true
 	}
-	sstOutputs := make([]*backuppb.File, 0, len(subCompaction.SstOutputs))
-	for _, sst := range subCompaction.SstOutputs {
+	sstOutputs := make([]*backuppb.File, 0, len(subCompaction.GetSSTs()))
+	for _, sst := range subCompaction.GetSSTs() {
 		if _, ok := cs.checkpointSets[sst.Name]; !ok {
 			sstOutputs = append(sstOutputs, sst)
 		} else {
@@ -127,9 +128,9 @@ func (cs *CompactedFileSplitStrategy) ShouldSkip(subCompaction *backuppb.LogFile
 		log.Info("all files in sub compaction skipped")
 		return true
 	}
-	if len(sstOutputs) != len(subCompaction.SstOutputs) {
+	if len(sstOutputs) != len(subCompaction.GetSSTs()) {
 		log.Info("partial files in sub compaction skipped due to checkpoint")
-		subCompaction.SstOutputs = sstOutputs
+		subCompaction.SetSSTs(sstOutputs)
 		return false
 	}
 	return false

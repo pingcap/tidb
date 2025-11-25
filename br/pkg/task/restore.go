@@ -101,9 +101,6 @@ const (
 	defaultStatsConcurrency   = 12
 	defaultBatchFlushInterval = 16 * time.Second
 	defaultFlagDdlBatchSize   = 128
-	maxRestoreBatchSizeLimit  = 10240
-	pb                        = 1024 * 1024 * 1024 * 1024 * 1024
-	resetSpeedLimitRetryTimes = 3
 )
 
 const (
@@ -831,7 +828,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UseCheckpoint {
 		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 		// for the first time.
-		existsCheckpointMetadata := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, mgr.GetDomain())
+		existsCheckpointMetadata := checkpoint.ExistsSstRestoreCheckpoint(ctx, mgr.GetDomain(), checkpoint.SnapshotRestoreCheckpointDatabaseName)
 		checkpointFirstRun = !existsCheckpointMetadata
 	}
 	if err = CheckRestoreDBAndTable(client.GetDatabases(), cfg); err != nil {
@@ -882,7 +879,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("finish removing pd scheduler")
 	}()
 
-	var checkpointFirstRun = true
 	if cfg.UseCheckpoint {
 		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 		// for the first time.
@@ -905,7 +901,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 	if !client.IsIncremental() && checkpointFirstRun && cfg.CheckRequirements {
-		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
+		if err := checkTableExistence(ctx, mgr, tables); err != nil {
 			schedulersRemovable = true
 			return errors.Trace(err)
 		}
@@ -1333,7 +1329,7 @@ func Exhaust(ec <-chan error) []error {
 	}
 }
 
-func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
+func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table) error {
 	message := "table already exists: "
 	allUnique := true
 	for _, table := range tables {

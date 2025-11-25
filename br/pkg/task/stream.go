@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
@@ -1059,7 +1058,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		optPrompt := stream.MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
 			console.Println("We are going to do the following: ")
 			tbl := console.CreateTable()
-			stream.AddMigrationToTable(m, tbl)
+			est.AddMigrationToTable(ctx, m, tbl)
 			tbl.Print()
 			return console.PromptBool("Continue? ")
 		})
@@ -1334,26 +1333,14 @@ func restoreStream(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	client := cfg.logClient
-	migs, err := client.GetLockedMigrations(ctx)
+	client, err := createRestoreClient(ctx, g, cfg, mgr)
 	if err != nil {
 		return errors.Annotate(err, "failed to create restore client")
 	}
-	client.BuildMigrations(migs.Migs)
-
-	skipCleanup := false
-	failpoint.Inject("skip-migration-read-lock-cleanup", func(_ failpoint.Value) {
-		// Skip the cleanup - this keeps the read lock held
-		// and will cause lock conflicts for other restore operations
-		log.Info("Skipping migration read lock cleanup due to failpoint")
-		skipCleanup = true
+	defer utils.WithCleanUp(&err, 10*time.Second, func(ctx context.Context) error {
+		client.Close(ctx)
+		return nil
 	})
-
-	if !skipCleanup {
-		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
-	}
-
-	defer client.RestoreSSTStatisticFields(&extraFields)
 
 	if taskInfo != nil && taskInfo.Metadata != nil {
 		// reuse the task's rewrite ts
@@ -1426,11 +1413,12 @@ func restoreStream(
 	if err != nil {
 		return err
 	}
-	migs, err := client.GetMigrations(ctx)
+	migs, err := client.GetLockedMigrations(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	client.BuildMigrations(migs)
+	client.BuildMigrations(migs.Migs)
+	defer migs.ReadLock.UnlockOnCleanUp(ctx)
 
 	// get full backup meta storage to generate rewrite rules.
 	fullBackupStorage, err := parseFullBackupTablesStorage(cfg)
@@ -1490,12 +1478,15 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	numberOfKVsInSST, err := client.LogFileManager.CountExtraSSTTotalKVs(ctx)
+	if err != nil {
+		return err
+	}
+
 	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
 
 	se, err := g.CreateSession(mgr.GetStorage())
 	if err != nil {
@@ -1508,9 +1499,7 @@ func restoreStream(
 	// TODO: need keep the order of ssts for compatible of rewrite rules
 	// compacted ssts will set ts range for filter out irrelevant data
 	// ingested ssts cannot use this ts range
-	addedSSTsIter := client.LogFileManager.GetIngestedSSTs(ctx)
 	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
-	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
 
 	totalWorkUnits := numberOfKVsInSST + client.Stats.NumEntries
 	err = glue.WithProgress(ctx, g, "Restore Files(SST + Log)", totalWorkUnits, !cfg.LogProgress, func(p glue.Progress) (pErr error) {
@@ -1532,7 +1521,7 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, p.IncBy)
+		err = client.RestoreSSTFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, p.IncBy)
 		if err != nil {
 			return errors.Trace(err)
 		}

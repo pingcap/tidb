@@ -41,7 +41,7 @@ func (cx migrateToCtx) printErr(errs []error, msg string) {
 
 func (cx migrateToCtx) askForContinue(targetMig *backuppb.Migration) bool {
 	tbl := cx.console.CreateTable()
-	stream.AddMigrationToTable(targetMig, tbl)
+	cx.est.AddMigrationToTable(context.TODO(), targetMig, tbl)
 	cx.console.Println("The migration going to be executed will be like: ")
 	tbl.Print()
 
@@ -60,7 +60,7 @@ func (cx migrateToCtx) dryRun(f func(stream.MigrationExt) stream.MergeAndMigrate
 	})
 
 	tbl := console.CreateTable()
-	stream.AddMigrationToTable(estBase.NewBase, tbl)
+	cx.est.AddMigrationToTable(context.TODO(), estBase.NewBase, tbl)
 	console.Println("The new BASE migration will be like: ")
 	tbl.Print()
 	file, err := storage.SaveJSONEffectsToTmp(effects)

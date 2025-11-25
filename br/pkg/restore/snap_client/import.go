@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -450,7 +449,7 @@ func (importer *SnapFileImporter) Import(
 			})
 		}
 		return eg.Wait()
-	}, utils.NewImportSSTBackoffStrategy())
+	}, utils.NewImportSSTBackoffer())
 	if err != nil {
 		log.Error("import sst file failed after retry, stop the whole progress", restore.ZapBatchBackupFileSet(backupFileSets), zap.Error(err))
 		return errors.Trace(err)
@@ -734,7 +733,7 @@ func (importer *SnapFileImporter) batchDownloadSST(
 				for _, req := range downloadReqMap {
 					var err error
 					var resp *import_sstpb.DownloadResponse
-					resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffStrategy(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
+					resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffer(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
 						dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
 						defer cancel()
 						if len(req.Ssts) == 0 {

@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client"
 )
 
 func TestTransferBoolToValue(t *testing.T) {
@@ -145,7 +144,7 @@ type fakeMetaClient struct {
 	t       *testing.T
 }
 
-func (fmc *fakeMetaClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, opts ...pd.GetRegionOption) ([]*split.RegionInfo, error) {
+func (fmc *fakeMetaClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
 	i, ok := slices.BinarySearchFunc(fmc.regions, key, func(regionInfo *split.RegionInfo, k []byte) int {
 		startCmpRet := bytes.Compare(regionInfo.Region.StartKey, k)
 		if startCmpRet <= 0 && (len(regionInfo.Region.EndKey) == 0 || bytes.Compare(regionInfo.Region.EndKey, k) > 0) {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -107,6 +108,8 @@ type LogFileManager struct {
 	withMigrations      *WithMigrations
 
 	metadataDownloadBatchSize uint
+
+	Stats *logFilesStatistic
 }
 
 // LogFileManagerInit is the config needed for initializing the log file manager.
@@ -331,6 +334,20 @@ func (rc *LogFileManager) LoadDMLFiles(ctx context.Context) (LogIter, error) {
 	return l, nil
 }
 
+func (rc *LogFileManager) CountExtraSSTTotalKVs(ctx context.Context) (int64, error) {
+	count := int64(0)
+	ssts := rc.GetCompactionIter(ctx)
+	for err, ssts := range iter.AsSeq(ctx, ssts) {
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		for _, sst := range ssts.GetSSTs() {
+			count += int64(sst.TotalKvs)
+		}
+	}
+	return count, nil
+}
+
 func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 	return iter.FlatMap(ms, func(m *MetaName) MetaGroupIter {
 		return iter.Map(iter.FromSlice(m.meta.FileGroups), func(g *backuppb.DataFileGroup) DDLMetaGroup {
@@ -343,7 +360,12 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 					return true
 				}
 				// count the progress
-				TotalEntryCount += d.NumberOfEntries
+				// count the progress
+				if rc.Stats != nil {
+					atomic.AddInt64(&rc.Stats.NumEntries, d.NumberOfEntries)
+					atomic.AddUint64(&rc.Stats.NumFiles, 1)
+					atomic.AddUint64(&rc.Stats.Size, d.Length)
+				}
 				return !d.IsMeta
 			})
 			return DDLMetaGroup{
@@ -356,8 +378,10 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 }
 
 // Fetch compactions that may contain file less than the TS.
-func (rc *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[*backuppb.LogFileSubcompaction] {
-	return rc.withMigrations.Compactions(ctx, rc.storage)
+func (rc *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[SSTs] {
+	return iter.Map(rc.withMigrations.Compactions(ctx, rc.storage), func(c *backuppb.LogFileSubcompaction) SSTs {
+		return &CompactedSSTs{c}
+	})
 }
 
 // the kv entry with ts, the ts is decoded from entry.

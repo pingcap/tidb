@@ -159,7 +159,6 @@ func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigr
 	withMigrations := WithMigrations{
 		skipmap:        skipmap,
 		compactionDirs: compactionDirs,
-		fullBackups:    fullBackups,
 		restoredTS:     builder.restoredTS,
 		startTS:        builder.startTS,
 		shiftStartTS:   builder.shiftStartTS,
@@ -214,7 +213,6 @@ func (mwm *MetaWithMigrations) Physicals(groupIndexIter GroupIndexIter) Physical
 type WithMigrations struct {
 	skipmap        metaSkipMap
 	compactionDirs []string
-	fullBackups    []string
 	shiftStartTS   uint64
 	startTS        uint64
 	restoredTS     uint64

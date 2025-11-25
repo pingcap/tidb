@@ -50,7 +50,6 @@ go_library(
         "//br/pkg/streamhelper/daemon",
         "//br/pkg/summary",
         "//br/pkg/utils",
-        "//br/pkg/utils/iter",
         "//br/pkg/version",
         "//pkg/config",
         "//pkg/ddl",

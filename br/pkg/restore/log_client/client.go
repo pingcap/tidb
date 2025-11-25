@@ -187,9 +187,14 @@ func NewSstRestoreManager(
 	return s, nil
 }
 
+type logFilesStatistic struct {
+	NumEntries int64
+	NumFiles   uint64
+	Size       uint64
+}
+
 type LogClient struct {
 	*LogFileManager
-	importer *snapclient.SnapFileImporter
 
 	logRestoreManager *LogRestoreManager
 	sstRestoreManager *SstRestoreManager
@@ -222,6 +227,8 @@ type LogClient struct {
 
 	// checkpoint information for log restore
 	useCheckpoint bool
+
+	logFilesStat logFilesStatistic
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -265,7 +272,7 @@ func (rc *LogClient) Close(ctx context.Context) {
 
 func (rc *LogClient) RestoreSSTFiles(
 	ctx context.Context,
-	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
+	compactionsIter iter.TryNextor[SSTs],
 	rules map[int64]*restoreutils.RewriteRules,
 	importModeSwitcher *restore.ImportModeSwitcher,
 	onProgress func(int64),
@@ -280,15 +287,15 @@ func (rc *LogClient) RestoreSSTFiles(
 			return r.Err
 		}
 		i := r.Item
-		rewriteRules, ok := rules[i.Meta.TableId]
+		rewriteRules, ok := rules[i.TableID()]
 		if !ok {
-			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.Meta.TableId))
+			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.TableID()))
 			continue
 		}
 
 		set := restore.BackupFileSet{
-			TableID:      i.Meta.TableId,
-			SSTFiles:     i.SstOutputs,
+			TableID:      i.TableID(),
+			SSTFiles:     i.GetSSTs(),
 			RewriteRules: rewriteRules,
 		}
 		backupFileSets = append(backupFileSets, set)
@@ -429,7 +436,7 @@ func closeSessions(sessions []glue.Session) {
 // Init create db connection and domain for storage.
 func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage) error {
 	var err error
-	rc.se, err = createSession(ctx, g, store)
+	rc.unsafeSession, err = createSession(ctx, g, store)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -480,7 +487,7 @@ func (rc *LogClient) InitClients(
 		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
 	)
 	fileImporter, err := snapclient.NewSnapFileImporter(
-		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
+		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompacted, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -607,6 +614,8 @@ func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restore
 	if err != nil {
 		return err
 	}
+	rc.logFilesStat = logFilesStatistic{}
+	rc.LogFileManager.Stats = &rc.logFilesStat
 	return nil
 }
 
@@ -1537,15 +1546,15 @@ func (rc *LogClient) UpdateSchemaVersion(ctx context.Context) error {
 // It uses a region splitter to handle the splitting logic based on the provided rules and checkpoint sets.
 func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	ctx context.Context,
-	compactedIter iter.TryNextor[*backuppb.LogFileSubcompaction],
+	compactedIter iter.TryNextor[SSTs],
 	rules map[int64]*restoreutils.RewriteRules,
 	checkpointSets map[string]struct{},
 	updateStatsFn func(uint64, uint64),
 	splitSize uint64,
 	splitKeys int64,
-) (iter.TryNextor[*backuppb.LogFileSubcompaction], error) {
+) (iter.TryNextor[SSTs], error) {
 	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
-	wrapper := restore.PipelineRestorerWrapper[*backuppb.LogFileSubcompaction]{
+	wrapper := restore.PipelineRestorerWrapper[SSTs]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
 	strategy := NewCompactedFileSplitStrategy(rules, checkpointSets, updateStatsFn)
@@ -1761,7 +1770,7 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 			// restored metakv and then skips repairing it.
 
 			// only when first execution or old index id is not dropped
-			if !fromCheckpoint || oldIndexIDFound {
+			if !fromCheckpoint || sql.OldIndexIDFound {
 				if err := rc.unsafeSession.ExecuteInternal(ectx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
 					return errors.Trace(err)
 				}
@@ -1772,11 +1781,7 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 				}
 			})
 			// create the repaired index when first execution or not found it
-			if err := rc.unsafeSession.ExecuteInternal(ectx, sql.AddSQL, sql.AddArgs...); err != nil {
-				return errors.Trace(err)
-			}
-			w.Inc()
-			if err := w.Wait(ctx); err != nil {
+			if err := indexSession.ExecuteInternal(ectx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)
 			}
 			w.Increment()
@@ -2011,55 +2016,6 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	}
 
 	return eg.Wait()
-}
-
-type LogFilesIterWithSplitHelper struct {
-	iter   LogIter
-	helper *split.LogSplitHelper
-	buffer []*LogDataFileInfo
-	next   int
-}
-
-const SplitFilesBufferSize = 4096
-
-func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*restoreutils.RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) LogIter {
-	return &LogFilesIterWithSplitHelper{
-		iter:   iter,
-		helper: split.NewLogSplitHelper(rules, client, splitSize, splitKeys),
-		buffer: nil,
-		next:   0,
-	}
-}
-
-func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.IterResult[*LogDataFileInfo] {
-	if splitIter.next >= len(splitIter.buffer) {
-		splitIter.buffer = make([]*LogDataFileInfo, 0, SplitFilesBufferSize)
-		for r := splitIter.iter.TryNext(ctx); !r.Finished; r = splitIter.iter.TryNext(ctx) {
-			if r.Err != nil {
-				return r
-			}
-			f := r.Item
-			splitIter.helper.Merge(f.DataFileInfo)
-			splitIter.buffer = append(splitIter.buffer, f)
-			if len(splitIter.buffer) >= SplitFilesBufferSize {
-				break
-			}
-		}
-		splitIter.next = 0
-		if len(splitIter.buffer) == 0 {
-			return iter.Done[*LogDataFileInfo]()
-		}
-		log.Info("start to split the regions")
-		startTime := time.Now()
-		if err := splitIter.helper.Split(ctx); err != nil {
-			return iter.Throw[*LogDataFileInfo](errors.Trace(err))
-		}
-		log.Info("end to split the regions", zap.Duration("takes", time.Since(startTime)))
-	}
-
-	res := iter.Emit(splitIter.buffer[splitIter.next])
-	splitIter.next += 1
-	return res
 }
 
 func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key, value []byte, originTs uint64) error {

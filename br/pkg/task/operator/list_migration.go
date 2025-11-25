@@ -40,12 +40,12 @@ func RunListMigrations(ctx context.Context, cfg ListMigrationConfig) error {
 		console.Println(statusOK(fmt.Sprintf("Total %d Migrations.", len(migs.Layers)+1)))
 		console.Printf(">   BASE   <\n")
 		tbl := console.CreateTable()
-		stream.AddMigrationToTable(migs.Base, tbl)
+		ext.AddMigrationToTable(ctx, migs.Base, tbl)
 		tbl.Print()
 		for _, t := range migs.Layers {
 			console.Printf("> %08d <\n", t.SeqNum)
 			tbl := console.CreateTable()
-			stream.AddMigrationToTable(&t.Content, tbl)
+			ext.AddMigrationToTable(ctx, &t.Content, tbl)
 			tbl.Print()
 		}
 	}

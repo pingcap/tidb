@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "client.go",
         "compacted_file_strategy.go",
-        "id_map.go",
         "import.go",
         "import_retry.go",
         "log_file_manager.go",
@@ -45,7 +44,6 @@ go_library(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
-        "//pkg/parser/ast",
         "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/codec",
