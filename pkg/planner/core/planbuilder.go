@@ -1292,11 +1292,11 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			publicPaths = append(publicPaths, path)
 		}
 	}
-	var ticiIndexPaths []*util.AccessPath = nil
+	var ticiIndexPaths []*util.AccessPath
 	if hasTiCIIndex {
 		// FTS_MATCH_XXX can only be executed in TiCI engine.
 		// So we need to store it here and try to add it later if the USE_INDEX hint delete any of them.
-		// The removal of the unhinted TiCI index paths will be done after we dicide the availabilty of each index.
+		// The removal of the unhinted TiCI index paths will be done after we dicide the availability of each index.
 		ticiIndexPaths = make([]*util.AccessPath, 0, len(publicPaths))
 		for _, path := range publicPaths {
 			if path.Index != nil && path.Index.IsFulltextIndexOnTiCI() {
@@ -1457,7 +1457,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	}
 	if hasTiCIIndex {
 		// Following previous comments, we add back the unhinted TiCI index paths.
-		// And remove them later after we dicide the availabilty of each index.
+		// And remove them later after we decide the availability of each index.
 		tiCIIndexMap := make(map[int64]*util.AccessPath)
 		for _, path := range ticiIndexPaths {
 			tiCIIndexMap[path.Index.ID] = path
