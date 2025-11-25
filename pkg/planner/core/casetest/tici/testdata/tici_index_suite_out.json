@@ -62,9 +62,9 @@
       {
         "SQL": "explain format='brief' select count(id) from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t1.id)->Column#7",
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t1.id)->Column#6",
           "    └─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -72,9 +72,9 @@
       {
         "SQL": "explain format='brief' select count(*) from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#7",
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#6",
           "    └─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -191,9 +191,9 @@
       {
         "SQL": "explain format='brief' select count(a) from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t3.a)->Column#6",
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t3.a)->Column#5",
           "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -226,9 +226,9 @@
       {
         "SQL": "explain format='brief' select count(*) from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#6",
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#5",
           "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -236,9 +236,9 @@
       {
         "SQL": "explain format='brief' select count(b) from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t3.b)->Column#6",
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t3.b)->Column#5",
           "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -246,9 +246,9 @@
       {
         "SQL": "explain format='brief' select sum(a) from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:sum(Column#5)->Column#4",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:sum(test.t3.a)->Column#6",
+          "  └─HashAgg 1.00 cop[tici]  funcs:sum(test.t3.a)->Column#5",
           "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null

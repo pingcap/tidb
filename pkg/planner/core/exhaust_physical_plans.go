@@ -1518,7 +1518,7 @@ func constructDS2IndexScanTask(
 	if cop.TablePlan != nil && ds.TableInfo.IsCommonHandle {
 		cop.CommonHandleCols = ds.CommonHandleCols
 	}
-	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.TablePlan != nil)
+	is.InitSchemaForTiKVIndex(append(path.FullIdxCols, ds.CommonHandleCols...), cop.TablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
 
 	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.
