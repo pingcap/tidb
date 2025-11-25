@@ -395,16 +395,17 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		}))
 	}
 
-	// Handle custom credentials
-	cred, err := autoNewCred(&qs)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if cred != nil {
-		configOpts = append(configOpts, config.WithCredentialsProvider(cred))
-	}
 	if qs.Profile != "" {
 		configOpts = append(configOpts, config.WithSharedConfigProfile(qs.Profile))
+	} else {
+		// Handle custom credentials
+		cred, err := autoNewCred(&qs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if cred != nil {
+			configOpts = append(configOpts, config.WithCredentialsProvider(cred))
+		}
 	}
 
 	// Load the default configuration with our options
@@ -501,16 +502,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 
 	// Handle AWS provider endpoint configuration (must be done after client creation)
 	if len(qs.Endpoint) != 0 && qs.Provider == "aws" {
-		// For AWS provider, we need to create a new client with custom endpoint resolver
-		endpointResolver := s3.EndpointResolverFunc(func(region string, options s3.EndpointResolverOptions) (aws.Endpoint, error) {
-			return aws.Endpoint{
-				URL:           qs.Endpoint,
-				SigningRegion: region,
-			}, nil
-		})
-
 		s3Opts = append(s3Opts, func(o *s3.Options) {
-			o.EndpointResolver = endpointResolver
+			o.BaseEndpoint = &qs.Endpoint
 		})
 
 		// Recreate client with endpoint resolver
@@ -539,7 +532,18 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	if len(qs.Provider) == 0 || qs.Provider == "aws" {
 		// For AWS provider, detect the actual bucket region
 		// In AWS SDK v2, GetBucketRegion has a simpler signature
-		detectedRegion, err = manager.GetBucketRegion(ctx, client, qs.Bucket)
+		detectedRegion, err = manager.GetBucketRegion(ctx, client, qs.Bucket, func(o *s3.Options) {
+			// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
+			// we need reassign credential to be compatible with minio authentication.
+			if cred := client.Options().Credentials; cred != nil {
+				o.Credentials = cred
+			}
+			// s3manager.GetBucketRegionWithClient use path style addressing default.
+			// we need set S3ForcePathStyle by our config if we set endpoint.
+			if qs.Endpoint != "" {
+				o.UsePathStyle = client.Options().UsePathStyle
+			}
+		})
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
 		}
