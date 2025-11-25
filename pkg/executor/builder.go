@@ -4375,7 +4375,7 @@ func buildIndexScanOutputOffsets(p *physicalop.PhysicalIndexScan, columns []*mod
 	}
 
 	if p.Index.IsFulltextIndexOnTiCI() {
-		return handleOutuputOffsetsForTiCIIndexLookUp(outputOffsets, handleLen), nil
+		return handleOutputOffsetsForTiCIIndexLookUp(outputOffsets, handleLen), nil
 	}
 
 	return handleOutputOffsetsForTiKVIndexLookUp(outputOffsets, handleLen, columns, p.NeedExtraOutputCol()), nil
@@ -4392,14 +4392,13 @@ func handleOutputOffsetsForTiKVIndexLookUp(outputOffsets []uint32, handleLen int
 		// need add one more column for pid or physical table id
 		outputOffsets = append(outputOffsets, uint32(len(columns)+handleLen))
 	}
-
 	return outputOffsets
 }
 
-// handleOutuputOffsetsForTiCIIndexLookUp handles the output offsets for TiCI index look up requests.
+// handleOutputOffsetsForTiCIIndexLookUp handles the output offsets for TiCI index look up requests.
 // See the InitSchemaForTiCIIndex for the row layout.
-func handleOutuputOffsetsForTiCIIndexLookUp(outputOffsets []uint32, handleLen int) []uint32 {
-	for i := 0; i < handleLen; i++ {
+func handleOutputOffsetsForTiCIIndexLookUp(outputOffsets []uint32, handleLen int) []uint32 {
+	for i := range handleLen {
 		outputOffsets = append(outputOffsets, uint32(i))
 	}
 	return outputOffsets

@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"encoding/hex"
 	"io"
 	"strings"
 	"sync"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -287,6 +289,8 @@ type objStoreRegionJobWorker struct {
 	writeBatchSize int64
 	bufPool        *membuf.Pool
 	collector      execute.Collector
+
+	ticiWriteGroup *tici.DataWriterGroup // TiCI writer group
 }
 
 func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error {
@@ -297,7 +301,7 @@ func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error
 
 // we don't need to limit write speed as we write to tikv-worker.
 func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
-	firstKey, _, err := job.ingestData.GetFirstAndLastKey(job.keyRange.Start, job.keyRange.End)
+	firstKey, lastKey, err := job.ingestData.GetFirstAndLastKey(job.keyRange.Start, job.keyRange.End)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -326,6 +330,18 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		return nil, errors.New("data commitTS is 0")
 	}
 
+	var ticiFileWriter *tici.FileWriter
+	if w.ticiWriteGroup != nil {
+		// Initialize TICI file writers for each full-text index in the group.
+		if ticiFileWriter, err = w.ticiWriteGroup.CreateFileWriter(ctx); err != nil {
+			return nil, errors.Annotatef(err, "failed to create tici file writer, startKey=%s endKey=%s", hex.EncodeToString(firstKey), hex.EncodeToString(lastKey))
+		}
+		// Write headers for all tici file writers.
+		if err = w.ticiWriteGroup.WriteHeader(ctx, ticiFileWriter, dataCommitTS); err != nil {
+			return nil, errors.Annotate(err, "failed to write header to tici file writer")
+		}
+	}
+
 	pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
 	size := int64(0)
 	totalCount := int64(0)
@@ -345,6 +361,13 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 
 		if w.collector != nil {
 			w.collector.Processed(size, int64(len(pairs)))
+		}
+
+		// If TiCI is enabled, write the batch to all TiCI writers.
+		if w.ticiWriteGroup != nil {
+			if err := w.ticiWriteGroup.WritePairs(ctx, ticiFileWriter, pairs, len(pairs)); err != nil {
+				return errors.Annotate(err, "failed to write pairs to tici file writer")
+			}
 		}
 
 		totalCount += int64(len(pairs))
@@ -383,6 +406,15 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	resp, err := writeCli.Recv()
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if w.ticiWriteGroup != nil {
+		if err := w.ticiWriteGroup.CloseFileWriters(ctx, ticiFileWriter); err != nil {
+			return nil, errors.Annotate(err, "failed to close tici file writer")
+		}
+		if err := w.ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriter, firstKey, lastKey); err != nil {
+			return nil, errors.Annotate(err, "failed to finish upload for tici file writer")
+		}
 	}
 
 	return &tikvWriteResult{

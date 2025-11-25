@@ -449,7 +449,7 @@ func (p *PhysicalIndexScan) InitSchemaForTiKVIndex(idxExprCols []*expression.Col
 	p.SetSchema(expression.NewSchema(indexCols...))
 }
 
-// InitSchemaForTiKVIndex is used to set the schema of PhysicalIndexScan.
+// InitSchemaForTiCIIndex is used to set the schema of PhysicalIndexScan.
 // Unlike the normal TiKV index, the indexed columns in TiCI index may not store its original data.
 // Currently, only primary key can return from the index library.
 func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols []*expression.Column) {
