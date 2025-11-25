@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"encoding/hex"
 	"io"
 	"strings"
 	"sync"
@@ -28,11 +29,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -155,7 +158,20 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 			// writes the data to TiKV and mark this job as wrote stage.
 			// we don't need to do cleanup for the pairs written to TiKV if encounters
 			// an error, TiKV will take the responsibility to do so.
-			// TODO: let client-go provide a high-level write interface.
+
+			// if the region has no leader, such as when PD leader fail-over, and
+			// hasn't got the region heartbeat, the scanned regions might not
+			// contain the leader info. it's meaningless to write in this case.
+			// here we check store ID, not the nilness of leader Peer, as PD will
+			// return an empty Peer if no leader instead of nil.
+			// GetStoreId will return 0 if the Peer is nil, so we can handle both
+			// cases here.
+			// Also note, valid store ID > 0.
+			if job.region.Leader.GetStoreId() == 0 {
+				job.lastRetryableErr = errdef.ErrNoLeader.GenWithStackByArgs(job.region.Region.GetId())
+				job.convertStageTo(needRescan)
+				return nil
+			}
 			res, err := w.writeFn(ctx, job)
 			err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 			if err != nil {
@@ -273,6 +289,8 @@ type objStoreRegionJobWorker struct {
 	writeBatchSize int64
 	bufPool        *membuf.Pool
 	collector      execute.Collector
+
+	ticiWriteGroup *tici.DataWriterGroup // TiCI writer group
 }
 
 func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error {
@@ -283,7 +301,7 @@ func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error
 
 // we don't need to limit write speed as we write to tikv-worker.
 func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
-	firstKey, _, err := job.ingestData.GetFirstAndLastKey(job.keyRange.Start, job.keyRange.End)
+	firstKey, lastKey, err := job.ingestData.GetFirstAndLastKey(job.keyRange.Start, job.keyRange.End)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -312,6 +330,18 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		return nil, errors.New("data commitTS is 0")
 	}
 
+	var ticiFileWriter *tici.FileWriter
+	if w.ticiWriteGroup != nil {
+		// Initialize TICI file writers for each full-text index in the group.
+		if ticiFileWriter, err = w.ticiWriteGroup.CreateFileWriter(ctx); err != nil {
+			return nil, errors.Annotatef(err, "failed to create tici file writer, startKey=%s endKey=%s", hex.EncodeToString(firstKey), hex.EncodeToString(lastKey))
+		}
+		// Write headers for all tici file writers.
+		if err = w.ticiWriteGroup.WriteHeader(ctx, ticiFileWriter, dataCommitTS); err != nil {
+			return nil, errors.Annotate(err, "failed to write header to tici file writer")
+		}
+	}
+
 	pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
 	size := int64(0)
 	totalCount := int64(0)
@@ -320,6 +350,33 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	iter := job.ingestData.NewIter(ctx, job.keyRange.Start, job.keyRange.End, w.bufPool)
 	//nolint: errcheck
 	defer iter.Close()
+
+	flushKVs := func() error {
+		in := &ingestcli.WriteRequest{
+			Pairs: pairs,
+		}
+		if err := writeCli.Write(in); err != nil {
+			return errors.Trace(err)
+		}
+
+		if w.collector != nil {
+			w.collector.Processed(size, int64(len(pairs)))
+		}
+
+		// If TiCI is enabled, write the batch to all TiCI writers.
+		if w.ticiWriteGroup != nil {
+			if err := w.ticiWriteGroup.WritePairs(ctx, ticiFileWriter, pairs, len(pairs)); err != nil {
+				return errors.Annotate(err, "failed to write pairs to tici file writer")
+			}
+		}
+
+		totalCount += int64(len(pairs))
+		totalSize += size
+		size = 0
+		pairs = pairs[:0]
+		iter.ReleaseBuf()
+		return nil
+	}
 
 	for iter.First(); iter.Valid(); iter.Next() {
 		k, v := iter.Key(), iter.Value()
@@ -330,22 +387,9 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		size += int64(len(k) + len(v))
 
 		if size >= w.writeBatchSize {
-			in := &ingestcli.WriteRequest{
-				Pairs: pairs,
-			}
-			if err := writeCli.Write(in); err != nil {
+			if err := flushKVs(); err != nil {
 				return nil, errors.Trace(err)
 			}
-
-			if w.collector != nil {
-				w.collector.Add(size, int64(len(pairs)))
-			}
-
-			totalCount += int64(len(pairs))
-			totalSize += size
-			size = 0
-			pairs = pairs[:0]
-			iter.ReleaseBuf()
 		}
 	}
 
@@ -354,21 +398,23 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	}
 
 	if len(pairs) > 0 {
-		in := &ingestcli.WriteRequest{
-			Pairs: pairs,
-		}
-		if err := writeCli.Write(in); err != nil {
+		if err := flushKVs(); err != nil {
 			return nil, errors.Trace(err)
 		}
-		totalCount += int64(len(pairs))
-		totalSize += size
-		pairs = pairs[:0]
-		iter.ReleaseBuf()
 	}
 
 	resp, err := writeCli.Recv()
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if w.ticiWriteGroup != nil {
+		if err := w.ticiWriteGroup.CloseFileWriters(ctx, ticiFileWriter); err != nil {
+			return nil, errors.Annotate(err, "failed to close tici file writer")
+		}
+		if err := w.ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriter, firstKey, lastKey); err != nil {
+			return nil, errors.Annotate(err, "failed to finish upload for tici file writer")
+		}
 	}
 
 	return &tikvWriteResult{

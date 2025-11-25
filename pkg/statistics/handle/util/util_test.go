@@ -69,6 +69,6 @@ func TestCallSCtxFailed(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Equal(t, "simulated error", err.Error())
-	notReleased := infosync.ContainsInternalSessionForTest(sctxWithFailure)
+	notReleased := infosync.ContainsInternalSession(sctxWithFailure)
 	require.False(t, notReleased)
 }

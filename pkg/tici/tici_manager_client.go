@@ -16,17 +16,21 @@ package tici
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/pd/client/constants"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -71,11 +75,12 @@ type ManagerCtx struct {
 	ctx        context.Context
 	cancel     context.CancelFunc // cancel is used to cancel the context when the manager is closed
 	wg         sync.WaitGroup     // wg is used to wait for goroutines to finish
+	keyspaceID atomic.Uint32
 }
 
-// MetaServiceEelectionKey is the election path used for meta service leader election.
+// MetaServiceElectionKey is the election path used for meta service leader election.
 // The same as https://github.com/pingcap-inc/tici/blob/master/src/servicediscovery/mod.rs#L4
-const MetaServiceEelectionKey = "/tici/metaservice/election"
+const MetaServiceElectionKey = "/tici/metaservice/election"
 
 // NewManagerCtx creates a new TiCI manager.
 func NewManagerCtx(ctx context.Context, client *clientv3.Client) (*ManagerCtx, error) {
@@ -103,7 +108,7 @@ func NewManagerCtx(ctx context.Context, client *clientv3.Client) (*ManagerCtx, e
 		ctx:        ctx,
 		cancel:     cancel,
 	}
-	ch := client.Watch(managerCtx.ctx, MetaServiceEelectionKey, clientv3.WithPrefix())
+	ch := client.Watch(managerCtx.ctx, MetaServiceElectionKey, clientv3.WithPrefix())
 	managerCtx.wg.Add(1)
 	go func() {
 		defer managerCtx.wg.Done()
@@ -113,7 +118,7 @@ func NewManagerCtx(ctx context.Context, client *clientv3.Client) (*ManagerCtx, e
 }
 
 func getMetaServiceLeaderAddress(ctx context.Context, client *clientv3.Client) (string, error) {
-	resp, err := client.Get(ctx, MetaServiceEelectionKey, clientv3.WithPrefix())
+	resp, err := client.Get(ctx, MetaServiceElectionKey, clientv3.WithPrefix())
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get meta service election key")
 	}
@@ -127,7 +132,7 @@ func getMetaServiceLeaderAddress(ctx context.Context, client *clientv3.Client) (
 	return string(kv.Value), nil
 }
 
-// updateClient listens for changes in the MetaServiceEelectionKey in etcd and updates the metaServiceClient accordingly.
+// updateClient listens for changes in the MetaServiceElectionKey in etcd and updates the metaServiceClient accordingly.
 func (t *ManagerCtx) updateClient(ch clientv3.WatchChan) {
 	for resp := range ch {
 		for _, event := range resp.Events {
@@ -178,16 +183,31 @@ func (t *ManagerCtx) checkMetaClient() error {
 			errMsg = t.err.Error()
 		}
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return errors.Wrap(t.err, "meta service client is nil")
+		return errors.Errorf("meta service client is nil: %s", errMsg)
 	}
 	return nil
 }
 
+// SetKeyspaceID configures the keyspace id carried in TiCI requests.
+func (t *ManagerCtx) SetKeyspaceID(keyspaceID uint32) {
+	t.keyspaceID.Store(keyspaceID)
+}
+
+func (t *ManagerCtx) getKeyspaceID() uint32 {
+	return t.keyspaceID.Load()
+}
+
 // CreateFulltextIndex creates fulltext index on TiCI.
 func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
+	tableInfoJSON, err := cloneAndMarshalTableInfo(tblInfo)
+	if err != nil {
+		return err
+	}
 	req := &CreateIndexRequest{
-		IndexInfo: ModelIndexToTiCIIndexInfo(indexInfo, tblInfo),
-		TableInfo: ModelTableToTiCITableInfo(tblInfo, schemaName),
+		DatabaseName: schemaName,
+		TableInfo:    tableInfoJSON,
+		IndexId:      indexInfo.ID,
+		KeyspaceId:   t.getKeyspaceID(),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -198,7 +218,7 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
-	if resp.Status != 0 {
+	if resp.Status != ErrorCode_SUCCESS {
 		logutil.BgLogger().Error("create fulltext index failed", zap.String("indexID", resp.IndexId), zap.String("errorMessage", resp.ErrorMessage))
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(resp.ErrorMessage)
 	}
@@ -206,11 +226,12 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 	return nil
 }
 
-// DropFullTextIndex drop full text index on TiCI.
+// DropFullTextIndex drop fulltext index on TiCI.
 func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int64) error {
 	req := &DropIndexRequest{
-		TableId: tableID,
-		IndexId: indexID,
+		TableId:    tableID,
+		IndexId:    indexID,
+		KeyspaceId: t.getKeyspaceID(),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -228,153 +249,162 @@ func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int
 	return nil
 }
 
-// GetCloudStoragePath requests the S3 path from TiCI Meta Service
-// for a baseline shard upload.
-func (t *ManagerCtx) GetCloudStoragePath(
+// GetCloudStoragePrefix returns a cloud storage prefix from TiCI with a unique identifier
+// (naming tidbTaskID) for each standalone job. TiCI ensures different "standalone job"
+// will return different cloud storage prefixes. For example,
+// "s3://my-bucket/t_{table_id}/i_{index_id}/import/{import_job_id}".
+func (t *ManagerCtx) GetCloudStoragePrefix(
 	ctx context.Context,
-	tblInfo *model.TableInfo,
-	indexInfo *model.IndexInfo,
-	schemaName string,
-	lowerBound, upperBound []byte,
-) (string, error) {
-	// Convert model.IndexInfo to IndexInfo and extract information needed
-	indexColumns := make([]*ColumnInfo, 0)
-	for i := range indexInfo.Columns {
-		offset := indexInfo.Columns[i].Offset
-		indexColumns = append(indexColumns, &ColumnInfo{
-			ColumnId:     tblInfo.Columns[offset].ID,
-			ColumnName:   tblInfo.Columns[offset].Name.String(),
-			Type:         int32(tblInfo.Columns[offset].GetType()),
-			ColumnLength: int32(tblInfo.Columns[offset].FieldType.StorageLength()),
-			Decimal:      int32(tblInfo.Columns[offset].GetDecimal()),
-			DefaultVal:   tblInfo.Columns[offset].DefaultValueBit,
-			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[offset].GetFlag()),
-			IsArray:      len(indexInfo.Columns) > 1,
-		})
+	tidbTaskID string,
+	tableID int64,
+	indexIDs []int64,
+) (string, uint64, error) {
+	// TODO: Can we set the start tso here?
+	if len(indexIDs) == 0 {
+		return "", 0, errors.New("indexIDs is invalid")
 	}
-	indexerIndexInfo := &IndexInfo{
-		TableId:   tblInfo.ID,
-		IndexId:   indexInfo.ID,
-		IndexName: indexInfo.Name.String(),
-		IndexType: IndexType_FULL_TEXT,
-		Columns:   indexColumns,
-		IsUnique:  indexInfo.Unique,
-		ParserInfo: &ParserInfo{
-			ParserType: ParserType_DEFAULT_PARSER,
-		},
-	}
-
-	tableColumns := make([]*ColumnInfo, 0)
-	for i := range tblInfo.Columns {
-		tableColumns = append(tableColumns, &ColumnInfo{
-			ColumnId:     tblInfo.Columns[i].ID,
-			ColumnName:   tblInfo.Columns[i].Name.String(),
-			Type:         int32(tblInfo.Columns[i].GetType()),
-			ColumnLength: int32(tblInfo.Columns[i].FieldType.StorageLength()),
-			Decimal:      int32(tblInfo.Columns[i].GetDecimal()),
-			DefaultVal:   tblInfo.Columns[i].DefaultValueBit,
-			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[i].GetFlag()),
-			IsArray:      len(tblInfo.Columns) > 1,
-		})
-	}
-	indexerTableInfo := &TableInfo{
-		TableId:      tblInfo.ID,
-		TableName:    tblInfo.Name.L,
-		DatabaseName: schemaName,
-		Version:      int64(tblInfo.Version),
-		Columns:      tableColumns,
-		IsClustered:  tblInfo.HasClusteredIndex(),
-	}
-
-	req := &GetCloudStoragePathRequest{
-		IndexInfo:  indexerIndexInfo,
-		TableInfo:  indexerTableInfo,
-		LowerBound: lowerBound,
-		UpperBound: upperBound,
+	req := &GetImportStoragePrefixRequest{
+		TidbTaskId: tidbTaskID,
+		TableId:    tableID,
+		IndexIds:   indexIDs,
+		KeyspaceId: t.getKeyspaceID(),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	if err := t.checkMetaClient(); err != nil {
-		return "", err
+		return "", 0, err
 	}
-	resp, err := t.metaClient.client.GetCloudStoragePath(ctx, req)
+	resp, err := t.metaClient.client.GetImportStoragePrefix(ctx, req)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	if resp.Status != 0 {
-		logutil.BgLogger().Error("Request TiCI cloud storage path failed",
-			zap.Int64("tableID", indexerTableInfo.TableId),
-			zap.Int64("indexID", indexerIndexInfo.TableId),
-			zap.String("startKey", string(lowerBound)),
-			zap.String("endKey", string(upperBound)),
+	if resp.Status != ErrorCode_SUCCESS {
+		logutil.BgLogger().Error("GetCloudStoragePrefix failed",
+			zap.String("tidbTaskID", tidbTaskID),
+			zap.Int64("tableID", tableID),
+			zap.Int64s("indexID", indexIDs),
 			zap.String("errorMessage", resp.ErrorMessage))
-		return "", fmt.Errorf("tici cloud storage path error: %s", resp.ErrorMessage)
+		return "", 0, fmt.Errorf("tici GetCloudStoragePrefix error: %s", resp.ErrorMessage)
 	}
-	logutil.BgLogger().Info("Requested TiCI cloud storage path",
-		zap.Int64("tableID", indexerTableInfo.TableId),
-		zap.Int64("indexID", indexerIndexInfo.TableId),
-		zap.String("startKey", string(lowerBound)),
-		zap.String("endKey", string(upperBound)),
-		zap.String("filepath", resp.S3Path))
-	return resp.S3Path, nil
+	logutil.BgLogger().Info("GetCloudStoragePrefix success",
+		zap.String("tidbTaskID", tidbTaskID),
+		zap.Int64("tableID", tableID),
+		zap.Int64s("indexID", indexIDs),
+		// log down the tici job ID for tracking
+		zap.Uint64("ticiJobID", resp.JobId),
+		zap.String("ticiStorageURI", resp.StorageUri),
+	)
+	return resp.StorageUri, resp.JobId, nil
 }
 
-// MarkPartitionUploadFinished notifies TiCI Meta Service that all partitions for the given table are uploaded.
-func (t *ManagerCtx) MarkPartitionUploadFinished(
+// FinishPartitionUpload notifies TiCI that one partition for the given key-range of
+// data has been uploaded.
+//
+// There may be some retries when TiDB handling the partition data, and TiDB may upload
+// multiple files for a key-range. It is acceptable to call this RPC multiple times for
+// a key-range that may have uploaded data before. TiCI will use the latest upload data
+// to generate the index.
+// The `storage_uri` should be a file with the prefix generate by `GetImportStoragePrefix`
+// using the same `tidbTaskID`. The file stored in `storage_uri` should contain the table
+// info, indexes info and the key-value pairs within the specified key-range.
+// The file stored in `storage_uri` will be deleted after the index is built successfully
+// or the job is aborted.
+func (t *ManagerCtx) FinishPartitionUpload(
 	ctx context.Context,
-	s3Path string,
+	tidbTaskID string,
+	lowerBound, upperBound []byte,
+	storageURI string,
 ) error {
-	req := &MarkPartitionUploadFinishedRequest{
-		S3Path: s3Path,
+	req := &FinishImportPartitionUploadRequest{
+		TidbTaskId: tidbTaskID,
+		KeyRange: &KeyRange{
+			StartKey: lowerBound,
+			EndKey:   upperBound,
+		},
+		StorageUri: storageURI,
+		KeyspaceId: t.getKeyspaceID(),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	if err := t.checkMetaClient(); err != nil {
 		return err
 	}
-	resp, err := t.metaClient.client.MarkPartitionUploadFinished(ctx, req)
+	resp, err := t.metaClient.client.FinishImportPartitionUpload(ctx, req)
 	if err != nil {
 		return err
 	}
-	if resp.Status != 0 {
-		logutil.BgLogger().Error("MarkPartitionUploadFinished failed",
-			zap.String("s3Path", s3Path),
+	if resp.Status != ErrorCode_SUCCESS {
+		logutil.BgLogger().Error("FinishPartitionUpload failed",
+			zap.String("tidbTaskID", tidbTaskID),
+			zap.String("startKey", hex.EncodeToString(lowerBound)),
+			zap.String("endKey", hex.EncodeToString(upperBound)),
 			zap.String("errorMessage", resp.ErrorMessage))
-		return fmt.Errorf("tici mark partition upload finished error: %s", resp.ErrorMessage)
+		return fmt.Errorf("tici FinishPartitionUpload error: %s", resp.ErrorMessage)
 	}
-	logutil.BgLogger().Info("MarkPartitionUploadFinished success", zap.String("s3Path", s3Path))
 	return nil
 }
 
-// MarkTableUploadFinished notifies TiCI Meta Service that the whole table/index upload is finished.
-func (t *ManagerCtx) MarkTableUploadFinished(
+// FinishIndexUpload notifies TiCI that all partitions for the given job in all TiDB instances
+// have been uploaded ** successfully **.
+// TiCI will mark the job as finished and make the files available to GC data after consumed
+// by downstream consumers.
+func (t *ManagerCtx) FinishIndexUpload(
 	ctx context.Context,
-	tableID int64,
-	indexID int64,
+	tidbTaskID string,
 ) error {
-	req := &MarkTableUploadFinishedRequest{
-		TableId: tableID,
-		IndexId: indexID,
+	req := &FinishImportIndexUploadRequest{
+		TidbTaskId: tidbTaskID,
+		Status:     ErrorCode_SUCCESS,
+		KeyspaceId: t.getKeyspaceID(),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	if err := t.checkMetaClient(); err != nil {
 		return err
 	}
-	resp, err := t.metaClient.client.MarkTableUploadFinished(ctx, req)
+	resp, err := t.metaClient.client.FinishImportIndexUpload(ctx, req)
 	if err != nil {
 		return err
 	}
-	if resp.Status != 0 {
-		logutil.BgLogger().Error("MarkTableUploadFinished failed",
-			zap.Int64("tableID", tableID),
-			zap.Int64("indexID", indexID),
+	if resp.Status != ErrorCode_SUCCESS {
+		logutil.BgLogger().Error("FinishIndexUpload failed",
+			zap.String("tidbTaskID", tidbTaskID),
 			zap.String("errorMessage", resp.ErrorMessage))
-		return fmt.Errorf("tici mark table upload finished error: %s", resp.ErrorMessage)
+		return fmt.Errorf("tici FinishIndexUpload error: %s", resp.ErrorMessage)
 	}
-	logutil.BgLogger().Info("MarkTableUploadFinished success",
-		zap.Int64("tableID", tableID),
-		zap.Int64("indexID", indexID))
+	return nil
+}
+
+// AbortIndexUpload notifies TiCI that the job has failed and the related TiCI job should be aborted.
+// TiCI will clean up all the related data belonging to the tidbTaskID.
+// It is not currently being called by TiDB, but rather reserved for future use, if any.
+func (t *ManagerCtx) AbortIndexUpload(
+	ctx context.Context,
+	tidbTaskID string,
+	errMsg string,
+) error {
+	req := &FinishImportIndexUploadRequest{
+		TidbTaskId:   tidbTaskID,
+		Status:       ErrorCode_UNKNOWN_ERROR,
+		ErrorMessage: errMsg,
+		KeyspaceId:   t.getKeyspaceID(),
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if err := t.checkMetaClient(); err != nil {
+		return err
+	}
+	resp, err := t.metaClient.client.FinishImportIndexUpload(ctx, req)
+	if err != nil {
+		return err
+	}
+	if resp.Status != ErrorCode_SUCCESS {
+		logutil.BgLogger().Error("AbortIndexUpload failed",
+			zap.String("tidbTaskID", tidbTaskID),
+			zap.String("reason", errMsg),
+			zap.String("errorMessage", resp.ErrorMessage))
+		return fmt.Errorf("tici AbortIndexUpload error: %s", resp.ErrorMessage)
+	}
 	return nil
 }
 
@@ -389,10 +419,11 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 	}
 
 	request := &GetShardLocalCacheRequest{
-		TableId:   tableID,
-		IndexId:   indexID,
-		KeyRanges: ticiKeyRanges,
-		Limit:     int32(limit),
+		TableId:    tableID,
+		IndexId:    indexID,
+		KeyspaceId: t.keyspaceID.Load(),
+		KeyRanges:  ticiKeyRanges,
+		Limit:      int32(limit),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -411,7 +442,7 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 	for _, info := range resp.ShardLocalCacheInfos {
 		if info != nil {
 			s += fmt.Sprintf("[ShardId: %d, StartKey: %v, EndKey: %v, Epoch: %d, LocalCacheAddrs: %v; ]",
-				info.Shard.ShardId, info.Shard.StartKey, info.Shard.EndKey, info.Shard.Epoch, info.LocalCacheAddrs)
+				info.Shard.ShardId, hex.EncodeToString(info.Shard.StartKey), hex.EncodeToString(info.Shard.EndKey), info.Shard.Epoch, info.LocalCacheAddrs)
 		}
 	}
 	s += "]"
@@ -482,33 +513,96 @@ func ModelIndexToTiCIIndexInfo(indexInfo *model.IndexInfo, tblInfo *model.TableI
 }
 
 // CreateFulltextIndex create fulltext index on TiCI.
-func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
+func CreateFulltextIndex(ctx context.Context, store kv.Storage, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
 	failpoint.Inject("MockCreateTiCIIndexSuccess", func(val failpoint.Value) {
 		if x := val.(bool); x {
 			failpoint.Return(nil)
 		}
 		failpoint.Return(dbterror.ErrInvalidDDLJob.FastGenByArgs("mock create TiCI index failed"))
 	})
-	ticiManager, err := NewManagerCtx(ctx, infosync.GetEtcdClient())
+	etcdClient, err := getEtcdClient()
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	ticiManager, err := NewManagerCtx(ctx, etcdClient)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
 	defer ticiManager.Close()
+	if store != nil {
+		keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
+		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+		ticiManager.SetKeyspaceID(keyspaceID)
+	}
 	return ticiManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
 }
 
 // DropFullTextIndex drop fulltext index on TiCI.
-func DropFullTextIndex(ctx context.Context, tableID int64, indexID int64) error {
+func DropFullTextIndex(ctx context.Context, store kv.Storage, tableID int64, indexID int64) error {
 	failpoint.Inject("MockDropTiCIIndexSuccess", func(val failpoint.Value) {
 		if x := val.(bool); x {
 			failpoint.Return(nil)
 		}
 		failpoint.Return(errors.New("mock drop TiCI index failed"))
 	})
-	ticiManager, err := NewManagerCtx(ctx, infosync.GetEtcdClient())
+	etcdClient, err := getEtcdClient()
 	if err != nil {
-		return err
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	ticiManager, err := NewManagerCtx(ctx, etcdClient)
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
 	defer ticiManager.Close()
+	if store != nil {
+		keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
+		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+		ticiManager.SetKeyspaceID(keyspaceID)
+	}
 	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
+}
+
+// cloneAndNormalizeTableInfo deep-clones the given model.TableInfo via JSON
+// marshal/unmarshal and forces FieldType.Flen for longtext and json column types
+// through an int32 narrowing (int(int32(flen))). This ensures TiCI parses the
+// length as int32 and avoids 4GB default-value related errors.
+func cloneAndNormalizeTableInfo(tbl *model.TableInfo) (*model.TableInfo, error) {
+	intest.Assert(tbl != nil, "tableInfo is nil")
+
+	// deep clone via JSON marshal/unmarshal
+	b, err := json.Marshal(tbl)
+	if err != nil {
+		return nil, err
+	}
+	var dup model.TableInfo
+	if err := json.Unmarshal(b, &dup); err != nil {
+		return nil, err
+	}
+	// normalize flen for longtext and json types by narrowing to int32 and back
+	for i := range dup.Columns {
+		tp := dup.Columns[i].GetType()
+		if tp == mysql.TypeLongBlob || tp == mysql.TypeJSON {
+			dup.Columns[i].FieldType.SetFlen(int(int32(dup.Columns[i].FieldType.GetFlen())))
+		}
+	}
+	return &dup, nil
+}
+
+// cloneAndMarshalTableInfo clones and normalizes the given TableInfo and returns
+// the marshalled JSON bytes. It returns an error if tbl is nil or if marshalling fails.
+func cloneAndMarshalTableInfo(tbl *model.TableInfo) ([]byte, error) {
+	if tbl == nil {
+		return nil, errors.New("tableInfo is nil")
+	}
+	clonedTbl, err := cloneAndNormalizeTableInfo(tbl)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(clonedTbl)
 }

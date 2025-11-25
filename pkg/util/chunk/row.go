@@ -145,80 +145,60 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 
 // DatumWithBuffer gets datum using the buffer d.
 func (r Row) DatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) {
+	if r.IsNull(colIdx) {
+		d.SetNull()
+		return
+	}
 	switch tp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		if !r.IsNull(colIdx) {
-			if mysql.HasUnsignedFlag(tp.GetFlag()) {
-				d.SetUint64(r.GetUint64(colIdx))
-			} else {
-				d.SetInt64(r.GetInt64(colIdx))
-			}
+		if mysql.HasUnsignedFlag(tp.GetFlag()) {
+			d.SetUint64(r.GetUint64(colIdx))
+		} else {
+			d.SetInt64(r.GetInt64(colIdx))
 		}
 	case mysql.TypeYear:
 		// FIXBUG: because insert type of TypeYear is definite int64, so we regardless of the unsigned flag.
-		if !r.IsNull(colIdx) {
-			d.SetInt64(r.GetInt64(colIdx))
-		}
+		d.SetInt64(r.GetInt64(colIdx))
 	case mysql.TypeFloat:
-		if !r.IsNull(colIdx) {
-			d.SetFloat32(r.GetFloat32(colIdx))
-		}
+		d.SetFloat32(r.GetFloat32(colIdx))
 	case mysql.TypeDouble:
-		if !r.IsNull(colIdx) {
-			d.SetFloat64(r.GetFloat64(colIdx))
-		}
+		d.SetFloat64(r.GetFloat64(colIdx))
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		if !r.IsNull(colIdx) {
-			d.SetString(r.GetString(colIdx), tp.GetCollate())
-		}
+		d.SetString(r.GetString(colIdx), tp.GetCollate())
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		if !r.IsNull(colIdx) {
-			d.SetMysqlTime(r.GetTime(colIdx))
-		}
+		d.SetMysqlTime(r.GetTime(colIdx))
 	case mysql.TypeDuration:
-		if !r.IsNull(colIdx) {
-			duration := r.GetDuration(colIdx, tp.GetDecimal())
-			d.SetMysqlDuration(duration)
-		}
+		duration := r.GetDuration(colIdx, tp.GetDecimal())
+		d.SetMysqlDuration(duration)
 	case mysql.TypeNewDecimal:
-		if !r.IsNull(colIdx) {
-			dec := r.GetMyDecimal(colIdx)
-			d.SetMysqlDecimal(dec)
-			d.SetLength(tp.GetFlen())
-			// If tp.decimal is unspecified(-1), we should set it to the real
-			// fraction length of the decimal value, if not, the d.Frac will
-			// be set to MAX_UINT16 which will cause unexpected BadNumber error
-			// when encoding.
-			if tp.GetDecimal() == types.UnspecifiedLength {
-				d.SetFrac(int(dec.GetDigitsFrac()))
-			} else {
-				d.SetFrac(tp.GetDecimal())
-			}
+		dec := r.GetMyDecimal(colIdx)
+		d.SetMysqlDecimal(dec)
+		d.SetLength(tp.GetFlen())
+		// If tp.decimal is unspecified(-1), we should set it to the real
+		// fraction length of the decimal value, if not, the d.Frac will
+		// be set to MAX_UINT16 which will cause unexpected BadNumber error
+		// when encoding.
+		if tp.GetDecimal() == types.UnspecifiedLength {
+			d.SetFrac(int(dec.GetDigitsFrac()))
+		} else {
+			d.SetFrac(tp.GetDecimal())
 		}
 	case mysql.TypeEnum:
-		if !r.IsNull(colIdx) {
-			d.SetMysqlEnum(r.GetEnum(colIdx), tp.GetCollate())
-		}
+		d.SetMysqlEnum(r.GetEnum(colIdx), tp.GetCollate())
 	case mysql.TypeSet:
-		if !r.IsNull(colIdx) {
-			d.SetMysqlSet(r.GetSet(colIdx), tp.GetCollate())
-		}
+		d.SetMysqlSet(r.GetSet(colIdx), tp.GetCollate())
 	case mysql.TypeBit:
-		if !r.IsNull(colIdx) {
-			d.SetMysqlBit(r.GetBytes(colIdx))
-		}
+		d.SetMysqlBit(r.GetBytes(colIdx))
 	case mysql.TypeJSON:
-		if !r.IsNull(colIdx) {
-			d.SetMysqlJSON(r.GetJSON(colIdx))
-		}
+		d.SetMysqlJSON(r.GetJSON(colIdx))
 	case mysql.TypeTiDBVectorFloat32:
-		if !r.IsNull(colIdx) {
-			d.SetVectorFloat32(r.GetVectorFloat32(colIdx))
-		}
+		d.SetVectorFloat32(r.GetVectorFloat32(colIdx))
 	}
-	if r.IsNull(colIdx) {
-		d.SetNull()
-	}
+}
+
+// GetRawLen returns the byte length of a row
+func (r Row) GetRawLen(colIdx int) int {
+	return r.c.columns[colIdx].GetRawLength(r.idx)
 }
 
 // GetRaw returns the underlying raw bytes with the colIdx.

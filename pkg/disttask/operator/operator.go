@@ -15,7 +15,6 @@
 package operator
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
@@ -43,13 +42,13 @@ type TunableOperator interface {
 // use the same channel, Then op2's worker will handle
 // the result from op1.
 type AsyncOperator[T workerpool.TaskMayPanic, R any] struct {
-	ctx  context.Context
+	ctx  *workerpool.Context
 	pool *workerpool.WorkerPool[T, R]
 }
 
 // NewAsyncOperatorWithTransform create an AsyncOperator with a transform function.
 func NewAsyncOperatorWithTransform[T workerpool.TaskMayPanic, R any](
-	ctx context.Context,
+	ctx *workerpool.Context,
 	name string,
 	workerNum int,
 	transform func(T) R,
@@ -59,7 +58,9 @@ func NewAsyncOperatorWithTransform[T workerpool.TaskMayPanic, R any](
 }
 
 // NewAsyncOperator create an AsyncOperator.
-func NewAsyncOperator[T workerpool.TaskMayPanic, R any](ctx context.Context, pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
+// To catch the error and close the whole pipeline, you should pass the
+// same context to each operator in the pipeline.
+func NewAsyncOperator[T workerpool.TaskMayPanic, R any](ctx *workerpool.Context, pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
 	return &AsyncOperator[T, R]{
 		ctx:  ctx,
 		pool: pool,
@@ -75,9 +76,7 @@ func (c *AsyncOperator[T, R]) Open() error {
 // Close implements the Operator's Close interface.
 func (c *AsyncOperator[T, R]) Close() error {
 	// Wait all tasks done.
-	// We don't need to close the task channel because
-	// it is maintained outside this operator, see SetSource.
-	c.pool.Wait()
+	// The task channel will be closed by the pool, so we don't need to close it here.
 	c.pool.Release()
 	return nil
 }
@@ -121,9 +120,12 @@ func newAsyncWorkerCtor[T workerpool.TaskMayPanic, R any](transform func(T) R) f
 	}
 }
 
-func (s *asyncWorker[T, R]) HandleTask(task T, rsFn func(R)) {
+func (s *asyncWorker[T, R]) HandleTask(task T, rsFn func(R)) error {
 	result := s.transform(task)
 	rsFn(result)
+	return nil
 }
 
-func (*asyncWorker[T, R]) Close() {}
+func (*asyncWorker[T, R]) Close() error {
+	return nil
+}

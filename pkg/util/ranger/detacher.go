@@ -338,13 +338,12 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 		}
 		// take the union of the two columnValues
 		columnValues = unionColumnValues(columnValues, res.ColumnValues)
-		if len(res.AccessConds) == 0 || len(res.RemainedConds) > 0 {
+		if len(res.AccessConds) == 0 {
 			continue
 		}
 		curRes := getCNFItemRangeResult(sctx, res, i)
 		bestRes = mergeTwoCNFRanges(sctx, cond, bestRes, curRes)
 	}
-
 	if bestRes != nil && bestRes.rangeResult != nil {
 		bestRes.rangeResult.IsDNFCond = false
 	}
@@ -732,7 +731,13 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 	rb := builder{sctx: sctx}
 	accesses = make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
-	mergedAccesses := make([]expression.Expression, len(cols))
+	mergedAccesses := expression.GetExpressionSlices(len(cols))
+	for range cols {
+		mergedAccesses = append(mergedAccesses, nil)
+	}
+	defer func() {
+		expression.PutExpressionSlices(mergedAccesses)
+	}()
 	newConditions = make([]expression.Expression, 0, len(conditions))
 	columnValues = make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))

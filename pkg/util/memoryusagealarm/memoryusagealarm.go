@@ -125,6 +125,7 @@ type memoryUsageAlarm struct {
 	lastCheckTime                 time.Time
 	lastUpdateVariableTime        time.Time
 	err                           error
+	configProvider                ConfigProvider
 	baseRecordDir                 string
 	lastRecordDirName             []string
 	lastRecordMemUsed             uint64
@@ -133,7 +134,6 @@ type memoryUsageAlarm struct {
 	serverMemoryLimit             uint64
 	isServerMemoryLimitSet        bool
 	initialized                   bool
-	configProvider                ConfigProvider
 }
 
 func (record *memoryUsageAlarm) updateVariable() {
@@ -183,6 +183,9 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use `system total memory size * MemoryUsageAlarmRatio` to check oom risk.
 func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm sessmgr.Manager) {
+	if memory.UsingGlobalMemArbitration() {
+		return
+	}
 	if !record.initialized {
 		record.initMemoryUsageAlarmRecord()
 		if record.err != nil {

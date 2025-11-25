@@ -193,12 +193,31 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
 		builder.dag = dag
-		if execCnt := len(dag.Executors); execCnt != 0 && dag.Executors[execCnt-1].GetLimit() != nil {
+		execCnt := len(dag.Executors)
+		if execCnt != 0 && dag.Executors[execCnt-1].GetLimit() != nil {
 			limit := dag.Executors[execCnt-1].GetLimit()
 			builder.Request.LimitSize = limit.GetLimit()
-			// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
-			if execCnt == 2 {
-				if limit.Limit < estimatedRegionRowCount {
+		}
+
+		if execCnt >= 2 {
+			// When the DAG is just a simple scan and small limit, set concurrency to 1 would be sufficient.
+			secondExec := dag.Executors[1]
+			if limit := secondExec.GetLimit(); limit != nil && limit.Limit < estimatedRegionRowCount {
+				minimalConcurrency := false
+				if execCnt == 2 {
+					// execCnt == 2 indicates TableScan / IndexScan -> Limit
+					minimalConcurrency = true
+				} else {
+					// if execCnt > 2 and the limit's parent is IndexLookup,
+					// it means the DAG is a push-down IndexLookUp and its build side is IndexScan -> Limit.
+					// We can also apply minimal concurrency here.
+					limitParent := int(secondExec.GetParentIdx())
+					if limitParent > 0 && dag.Executors[limitParent].IndexLookup != nil {
+						minimalConcurrency = true
+					}
+				}
+
+				if minimalConcurrency {
 					if kr := builder.Request.KeyRanges; kr != nil {
 						builder.Request.Concurrency = kr.PartitionNum()
 					} else {
@@ -907,7 +926,15 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 // FulltextIndexRangesToKVRanges converts fulltext index ranges to "KeyRange".
 // This is a temporary solution, and we should implement the fulltext index
 // ranges conversion in the future.
-func FulltextIndexRangesToKVRanges(dctx *distsqlctx.DistSQLContext, tids []int64, ranges []*ranger.Range) (*kv.KeyRanges, error) {
+func FulltextIndexRangesToKVRanges(_ *distsqlctx.DistSQLContext, tids []int64, _ []*ranger.Range) (*kv.KeyRanges, error) {
 	// Mocking the fulltext index ranges to be the same as the table ranges.
-	return CommonHandleRangesToKVRanges(dctx, tids, ranges)
+	kvRanges := make([][]kv.KeyRange, 0, len(tids))
+	for _, id := range tids {
+		startKey := tablecodec.EncodeTablePrefix(id)
+		endKey := tablecodec.EncodeTablePrefix(id + 1)
+		kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
+		kvRanges = kvRanges[:0]
+		kvRanges = append(kvRanges, []kv.KeyRange{kvRange})
+	}
+	return kv.NewPartitionedKeyRanges(kvRanges), nil
 }

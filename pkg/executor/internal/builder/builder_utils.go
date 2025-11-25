@@ -58,7 +58,7 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 		var divPrecIncr uint32 = uint32(ctx.GetSessionVars().GetDivPrecisionIncrement())
 		dagReq.DivPrecisionIncrement = &divPrecIncr
 	}
-	if storeType == kv.TiFlash {
+	if storeType == kv.TiFlash || storeType == kv.TiCI {
 		var executors []*tipb.Executor
 		executors, err = ConstructTreeBasedDistExec(ctx.GetBuildPBCtx(), plans[0])
 		dagReq.RootExecutor = executors[0]
@@ -68,4 +68,22 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 
 	distsql.SetEncodeType(ctx.GetDistSQLCtx(), dagReq)
 	return dagReq, err
+}
+
+// ConstructDAGReqForUnNatureOrderPlans constructs DAGRequest for physical plans.
+// The unNatureOrders map is used to set the ParentIdx of executors in DAGRequest.
+// `unNatureOrders` is a map with layout {childIndex => parentIndex} and
+// contains the children indexes whose parent is not the next one.
+func ConstructDAGReqForUnNatureOrderPlans(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, unNatureOrders map[int]int, storeType kv.StoreType) (*tipb.DAGRequest, error) {
+	dagReq, err := ConstructDAGReq(ctx, plans, storeType)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, j := range unNatureOrders {
+		parentIdx := uint32(j)
+		dagReq.Executors[i].ParentIdx = &parentIdx
+	}
+
+	return dagReq, nil
 }

@@ -458,7 +458,7 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 	return false
 }
 
-func scalarExprSupportedByTiCI(ctx EvalContext, function *ScalarFunction) bool {
+func scalarExprSupportedByTiCI(_ EvalContext, function *ScalarFunction) bool {
 	switch function.FuncName.L {
 	case ast.FTSMatchWord, ast.FTSMatchPrefix:
 		return true
