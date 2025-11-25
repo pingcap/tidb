@@ -808,7 +808,8 @@ func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 	changingTp := changingCol.GetType()
 
 	if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
-		return false
+		// Only optimize for integer with same signedness.
+		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
 	}
 
 	// _bin collation has padding, it must need reorg.
@@ -816,7 +817,14 @@ func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 		return true
 	}
 
-	return !types.IsTypeChar(oldTp) || !types.IsTypeChar(changingTp)
+	// Only optimize for CHAR-CHAR or VARCHAR-VARCHAR with same collation.
+	if (oldTp == mysql.TypeString && changingTp == mysql.TypeString) ||
+		(oldTp == mysql.TypeVarchar && changingTp == mysql.TypeVarchar) {
+		return oldCol.GetCollate() != changingCol.GetCollate()
+	}
+
+	// All other type changes need reorg.
+	return true
 }
 
 // checkModifyColumnData checks the values of the old column data
