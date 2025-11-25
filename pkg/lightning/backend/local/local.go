@@ -1628,6 +1628,7 @@ func (local *Backend) newRegionJobWorker(
 			writeBatchSize: local.KVWriteBatchSize,
 			bufPool:        local.engineMgr.getBufferPool(),
 			collector:      local.collector,
+			ticiWriteGroup: local.ticiWriteGroup,
 		}
 		base.writeFn = cloudW.write
 		base.ingestFn = cloudW.ingest
