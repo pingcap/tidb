@@ -43,9 +43,16 @@ const (
 	extractFullCols
 )
 
-func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*expression.Column, index *model.IndexInfo, flags indexInfo2ColsFlags) (
-	prefixCols []*expression.Column, prefixLens []int,
-	fullCols []*expression.Column, fullLens []int,
+func indexInfo2ColsImpl(
+	colInfos []*model.ColumnInfo,
+	cols []*expression.Column,
+	index *model.IndexInfo,
+	flags indexInfo2ColsFlags,
+) (
+	prefixCols []*expression.Column,
+	prefixLens []int,
+	fullCols []*expression.Column,
+	fullLens []int,
 ) {
 	intest.Assert(flags != 0, "at least one of indexInfo2ColsFlags must be set")
 	if flags&extractPrefixCols != 0 {
@@ -95,18 +102,22 @@ func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*expression.Column,
 // If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *expression.Column,
 // the return value will be only the 1st corresponding *expression.Column and its length.
 // TODO: Use a struct to represent {*expression.Column, int}.
-func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*expression.Column, index *model.IndexInfo) ([]*expression.Column, []int) {
-	prefixCols, prefixLens, _, _ := indexInfo2ColsImpl(colInfos, cols, index, extractPrefixCols)
-	return prefixCols, prefixLens
+func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*expression.Column, index *model.IndexInfo) (
+	prefixCols []*expression.Column, prefixLens []int,
+) {
+	prefixCols, prefixLens, _, _ = indexInfo2ColsImpl(colInfos, cols, index, extractPrefixCols)
+	return
 }
 
 // IndexInfo2FullCols gets the corresponding []*expression.Column of the indexInfo's []*IndexColumn,
 // together with a []int containing their lengths.
 // If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *expression.Column,
 // the return value will be [col1, nil, col2].
-func IndexInfo2FullCols(colInfos []*model.ColumnInfo, cols []*expression.Column, index *model.IndexInfo) ([]*expression.Column, []int) {
-	_, _, fullCols, fullLens := indexInfo2ColsImpl(colInfos, cols, index, extractFullCols)
-	return fullCols, fullLens
+func IndexInfo2FullCols(colInfos []*model.ColumnInfo, cols []*expression.Column, index *model.IndexInfo) (
+	fullCols []*expression.Column, fullLens []int,
+) {
+	_, _, fullCols, fullLens = indexInfo2ColsImpl(colInfos, cols, index, extractFullCols)
+	return
 }
 
 // IndexInfo2Cols returns the combined result of IndexInfo2PrefixCols and IndexInfo2FullCols.
