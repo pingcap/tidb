@@ -1,0 +1,189 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package importinto
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/pingcap/tidb/pkg/importsdk"
+	"github.com/pingcap/tidb/pkg/lightning/log"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+)
+
+// JobOrchestrator orchestrates the submission and monitoring of import jobs.
+type JobOrchestrator interface {
+	SubmitAndWait(ctx context.Context, tables []*importsdk.TableMeta) error
+}
+
+// DefaultJobOrchestrator is the default implementation of JobOrchestrator.
+type DefaultJobOrchestrator struct {
+	submitter         JobSubmitter
+	cpMgr             CheckpointManager
+	monitor           JobMonitor
+	submitConcurrency int
+	logger            log.Logger
+}
+
+// OrchestratorConfig configures the job orchestrator.
+type OrchestratorConfig struct {
+	Submitter         JobSubmitter
+	CheckpointMgr     CheckpointManager
+	SDK               importsdk.SDK
+	Monitor           JobMonitor
+	SubmitConcurrency int
+	PollInterval      time.Duration
+	Logger            log.Logger
+}
+
+// NewJobOrchestrator creates a new job orchestrator.
+func NewJobOrchestrator(cfg OrchestratorConfig) JobOrchestrator {
+	submitConcurrency := cfg.SubmitConcurrency
+	if submitConcurrency <= 0 {
+		submitConcurrency = 10 // Default to 10 concurrent submissions
+	}
+	pollInterval := cfg.PollInterval
+	if pollInterval == 0 {
+		pollInterval = 2 * time.Second
+	}
+
+	monitor := cfg.Monitor
+	if monitor == nil {
+		monitor = NewJobMonitor(cfg.SDK, cfg.CheckpointMgr, pollInterval, cfg.Logger)
+	}
+
+	return &DefaultJobOrchestrator{
+		submitter:         cfg.Submitter,
+		cpMgr:             cfg.CheckpointMgr,
+		monitor:           monitor,
+		submitConcurrency: submitConcurrency,
+		logger:            cfg.Logger,
+	}
+}
+
+// SubmitAndWait submits all jobs and waits for their completion.
+func (o *DefaultJobOrchestrator) SubmitAndWait(ctx context.Context, tables []*importsdk.TableMeta) error {
+	// Phase 1: Submit all jobs
+	jobs, err := o.submitAllJobs(ctx, tables)
+	if err != nil {
+		return fmt.Errorf("submit jobs: %w", err)
+	}
+
+	if len(jobs) == 0 {
+		o.logger.Info("no jobs to execute")
+		return nil
+	}
+
+	o.logger.Info("all jobs submitted", zap.Int("count", len(jobs)))
+
+	// Phase 2: Wait for all jobs to complete (delegated to monitor)
+	return o.monitor.WaitForJobs(ctx, jobs)
+}
+
+func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*importsdk.TableMeta) ([]*ImportJob, error) {
+	var (
+		mu   sync.Mutex
+		jobs []*ImportJob
+	)
+
+	eg, egCtx := errgroup.WithContext(ctx)
+	sem := make(chan struct{}, o.submitConcurrency)
+
+	for _, table := range tables {
+		eg.Go(func() error {
+			// Acquire semaphore to limit concurrent submissions
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// Check if we can resume an existing job
+			cp, err := o.cpMgr.Get(table.Database, table.Table)
+			if err != nil {
+				return fmt.Errorf("get checkpoint for %s.%s: %w", table.Database, table.Table, err)
+			}
+
+			if cp != nil && cp.Status == CheckpointStatusFinished {
+				o.logger.Info("table already completed in previous run",
+					zap.String("database", table.Database),
+					zap.String("table", table.Table),
+				)
+				return nil
+			}
+
+			var job *ImportJob
+			if cp != nil && cp.JobID > 0 && cp.Status == CheckpointStatusRunning {
+				// Resume existing running job
+				o.logger.Info("resuming previously running job",
+					zap.String("database", table.Database),
+					zap.String("table", table.Table),
+					zap.Int64("jobID", cp.JobID),
+				)
+				job = &ImportJob{
+					JobID:     cp.JobID,
+					TableMeta: table,
+					GroupKey:  o.submitter.GetGroupKey(),
+				}
+			} else {
+				// Need to submit new job
+				// This handles: no checkpoint, failed checkpoint, or cancelled checkpoint
+				if cp != nil {
+					o.logger.Info("previous job failed or cancelled, submitting new job",
+						zap.String("database", table.Database),
+						zap.String("table", table.Table),
+						zap.String("previousStatus", cp.Status.String()),
+						zap.Int64("previousJobID", cp.JobID),
+					)
+				} else {
+					o.logger.Info("submitting new import job",
+						zap.String("database", table.Database),
+						zap.String("table", table.Table),
+					)
+				}
+
+				job, err = o.submitter.SubmitTable(egCtx, table)
+				if err != nil {
+					return fmt.Errorf("submit table %s.%s: %w", table.Database, table.Table, err)
+				}
+
+				if err := o.recordSubmission(egCtx, job); err != nil {
+					return fmt.Errorf("record submission for %s.%s: %w", table.Database, table.Table, err)
+				}
+			}
+
+			mu.Lock()
+			jobs = append(jobs, job)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+
+	return jobs, nil
+}
+
+func (o *DefaultJobOrchestrator) recordSubmission(ctx context.Context, job *ImportJob) error {
+	return o.cpMgr.Update(ctx, &TableCheckpoint{
+		DBName:    job.TableMeta.Database,
+		TableName: job.TableMeta.Table,
+		JobID:     job.JobID,
+		Status:    CheckpointStatusRunning,
+		GroupKey:  job.GroupKey,
+	})
+}

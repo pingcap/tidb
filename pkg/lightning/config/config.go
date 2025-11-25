@@ -353,6 +353,7 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		if l.IndexConcurrency == 0 {
 			l.IndexConcurrency = l.RegionConcurrency
 		}
+	case BackendImportInto:
 	case BackendLocal:
 		if l.IndexConcurrency == 0 {
 			l.IndexConcurrency = defaultIndexConcurrency
@@ -1141,6 +1142,7 @@ func (t *TikvImporter) adjust() error {
 				"`tikv-importer.logical-import-batch-rows` got %d, should be larger than 0",
 				t.LogicalImportBatchRows)
 		}
+	case BackendImportInto:
 	case BackendLocal:
 		if t.RegionSplitBatchSize <= 0 {
 			return common.ErrInvalidConfig.GenWithStack(

@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/lightning/importinto/mock",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/importsdk",
         "//pkg/lightning/importinto",
         "@org_uber_go_mock//gomock",
     ],
