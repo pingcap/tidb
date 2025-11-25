@@ -199,18 +199,12 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 			}
 		}
 	}
-	// Check if index merge might be used - if so, we need statistics even for paths without AccessConds
-	// because they might be used in an index merge path with other indexes that have AccessConds
-	stmtCtx := ds.SCtx().GetSessionVars().StmtCtx
-	indexMergeEnabled := (ds.SCtx().GetSessionVars().GetEnableIndexMerge() || len(ds.IndexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
-	hasConditions := len(conds) > 0
-	mightUseIndexMerge := indexMergeEnabled && hasConditions && len(ds.AllPossibleAccessPaths) > 1
 
 	// Compute IsSingleScan to check if this index is a covering index (all needed columns are in the index)
 	// This is needed for the optimization check - covering indexes might be used even without AccessConds
 	isSingleScan := ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 
-	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, mightUseIndexMerge, isSingleScan)
+	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, isSingleScan)
 	return err
 }
 
@@ -386,7 +380,7 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 	}
 	// For common handle table paths, we always compute statistics as they might be used
 	isSingleScan := ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
-	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, true, isSingleScan); err != nil {
+	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, isSingleScan); err != nil {
 		return err
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
@@ -420,7 +414,6 @@ func detachCondAndBuildRangeForPath(
 	path *util.AccessPath,
 	conds []expression.Expression,
 	histColl *statistics.HistColl,
-	mightUseIndexMerge bool,
 	isSingleScan bool,
 ) error {
 	if len(path.IdxCols) == 0 {

@@ -963,7 +963,7 @@ func buildPartialPath4MVIndex(
 	}
 	// For index merge paths, we always compute statistics
 	// We pass false for isSingleScan since we don't have ds to compute it, but for index merge we always want stats
-	if err := detachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl, true, false); err != nil {
+	if err := detachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl, false); err != nil {
 		return nil, false, err
 	}
 	if len(partialPath.AccessConds) != len(accessFilters) || len(partialPath.TableFilters) > 0 {
