@@ -362,7 +362,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		SetMemTracker(e.memTracker).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.netDataSize)).
 		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
-	if e.index.IsFulltextIndexOnTiCI() {
+	if e.index.IsTiCIIndex() {
 		builder.SetStoreType(kv.TiFlash).SetPaging(false).SetFullText(true).SetAllowBatchCop(true)
 		builder.FullTextInfo.TableID = e.table.Meta().ID
 		builder.FullTextInfo.IndexID = e.index.ID
@@ -383,7 +383,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
-		if !e.index.IsFulltextIndexOnTiCI() {
+		if !e.index.IsTiCIIndex() {
 			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans)
 		} else {
 			var executors []*tipb.Executor
@@ -645,7 +645,7 @@ func buildKeyRanges(dctx *distsqlctx.DistSQLContext,
 		if pRange, ok := rangeOverrideForPartitionID[physicalID]; ok {
 			ranges = pRange
 		}
-		if index.IsFulltextIndexOnTiCI() {
+		if index.IsTiCIIndex() {
 			kvRanges, err := distsql.FulltextIndexRangesToKVRanges(dctx, []int64{physicalID}, ranges)
 			if err != nil {
 				return nil, err
@@ -730,7 +730,7 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 
 	var err error
 	if e.corColInIdxSide {
-		if !e.index.IsFulltextIndexOnTiCI() {
+		if !e.index.IsTiCIIndex() {
 			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans)
 		} else {
 			var executors []*tipb.Executor
@@ -898,7 +898,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
 				SetMemTracker(tracker).
 				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
-			if e.index.IsFulltextIndexOnTiCI() {
+			if e.index.IsTiCIIndex() {
 				builder.SetPaging(false).SetFullText(true).SetAllowBatchCop(true).SetStoreType(kv.TiFlash)
 				builder.FullTextInfo.TableID = e.table.Meta().ID
 				builder.FullTextInfo.IndexID = e.index.ID
