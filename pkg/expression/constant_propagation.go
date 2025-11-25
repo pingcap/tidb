@@ -419,7 +419,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 					// if it has been added, we don't need to process it again.
 					// It will be deleted in the replaceConditionsWithConstants
 					s.unionSet.Union(lID, rID)
-				} else {
+				} else if lID != rID {
 					s.conditions[i] = &Constant{
 						Value:   types.NewDatum(true),
 						RetType: types.NewFieldType(mysql.TypeTiny),
