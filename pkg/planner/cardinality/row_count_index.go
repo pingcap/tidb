@@ -352,7 +352,11 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		count.MultiplyAll(increaseFactor)
 
 		// handling the out-of-range part
-		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
+		// When using index statistics, we should only check if the entire concatenated predicate is out of range
+		// of the histogram bucket. We check the full encoded key against the index histogram.
+		outOfRangeOnLeft := outOfRangeOnIndex(idx, l)
+		outOfRangeOnRight := outOfRangeOnIndex(idx, r)
+		if (outOfRangeOnLeft && !(isSingleColIdx && lowIsNull)) || outOfRangeOnRight {
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {

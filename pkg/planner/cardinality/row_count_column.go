@@ -312,7 +312,9 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		cnt.MultiplyAll(increaseFactor)
 
 		// handling the out-of-range part
-		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
+		outOfRangeOnLeft := c.OutOfRange(lowVal)
+		outOfRangeOnRight := c.OutOfRange(highVal)
+		if (outOfRangeOnLeft && !lowVal.IsNull()) || outOfRangeOnRight {
 			histNDV := c.NDV
 			// Exclude the TopN
 			if c.StatsVer == statistics.Version2 {
