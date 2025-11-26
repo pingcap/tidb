@@ -1307,9 +1307,11 @@ func testResolveLocksWithKeyspacesImpl(t *testing.T, subCaseName string) {
 			scanLockCounter.Add(1)
 			scanLockReq := req.ScanLock()
 			scanLockRangeCh <- reqRange{
-				StartKey:     scanLockReq.GetStartKey(),
-				EndKey:       scanLockReq.GetEndKey(),
-				TxnSafePoint: scanLockReq.GetMaxVersion(),
+				StartKey: scanLockReq.GetStartKey(),
+				EndKey:   scanLockReq.GetEndKey(),
+				// When resolving locks, the maxVersion parameter is set to txnSafePoint-1, so plus 1 back to retrieve
+				// the txnSafePoint.
+				TxnSafePoint: scanLockReq.GetMaxVersion() + 1,
 			}
 			// Only collect the request, without generating the result. Return nil to continue calling the inner client.
 			return nil, nil
@@ -1648,6 +1650,79 @@ func TestResolveLocksWithKeyspaces_UnifiedGCInMultiBatchesOfKeyspaces_MultipleOf
 
 func TestResolveLocksWithKeyspaces_UnifiedGCInMultiBatchesOfKeyspaces_MultipleOfBatchSizeToEnd(t *testing.T) {
 	testResolveLocksWithKeyspacesImpl(t, "UnifiedGCInMultiBatchesOfKeyspaces_MultipleOfBatchSizeToEnd")
+}
+
+func TestResolveLocksNearTxnSafePoint(t *testing.T) {
+	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore))
+
+	currentTS, err := s.oracle.GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	txnSafePoint := oracle.GoTimeToTS(oracle.GetTimeFromTS(currentTS).Add(-time.Minute * 5))
+
+	txns := make([]kv.Transaction, 0, 3)
+
+	for i, startTS := range []uint64{txnSafePoint - 1, txnSafePoint, txnSafePoint + 1} {
+		txn, err := s.store.Begin(tikv.WithStartTS(startTS))
+		require.NoError(t, err)
+		txn.SetOption(kv.Pessimistic, true)
+		lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
+		err = txn.LockKeys(context.Background(), lockCtx, []byte(fmt.Sprintf("k%d", i+1)))
+		require.NoError(t, err)
+		txns = append(txns, txn)
+	}
+
+	err = s.gcWorker.resolveLocks(gcContext(), txnSafePoint, 1)
+	require.NoError(t, err)
+
+	// Prevent amending lock behavior by making new write to the keys.
+	otherTxns := make([]kv.Transaction, 0, 3)
+	resCh := make(chan error, 3)
+	for i := range 3 {
+		txn, err := s.store.Begin()
+		require.NoError(t, err)
+		txn.SetOption(kv.Pessimistic, true)
+		key := []byte(fmt.Sprintf("k%d", i+1))
+		go func() {
+			lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
+			err := txn.LockKeys(context.Background(), lockCtx, key)
+			resCh <- err
+		}()
+		otherTxns = append(otherTxns, txn)
+	}
+
+	// It's expected that only the first transaction in `txns` should be rolled back by GC, so that one of `otherTxns`
+	// should proceed while the other two should be blocked.
+	select {
+	case err = <-resCh:
+		require.NoError(t, err)
+	case <-time.After(time.Millisecond * 200):
+		require.Fail(t, "no transaction is resolved, which is not expected")
+	}
+
+	select {
+	case err = <-resCh:
+		require.Fail(t, "more than one transaction is resolved, which is not expected")
+	case <-time.After(time.Millisecond * 50):
+	}
+
+	require.Error(t, txns[0].Commit(context.Background()))
+	require.NoError(t, txns[1].Commit(context.Background()))
+	require.NoError(t, txns[2].Commit(context.Background()))
+
+	for range 2 {
+		select {
+		case err = <-resCh:
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "Write conflict")
+		case <-time.After(time.Millisecond * 200):
+			require.Fail(t, "not all transactions are finished")
+		}
+	}
+
+	// Clear unfinished transactions.
+	for _, txn := range otherTxns {
+		require.NoError(t, txn.Rollback())
+	}
 }
 
 func TestRunGCJob(t *testing.T) {
