@@ -18,6 +18,7 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
@@ -121,10 +122,17 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			}
 		}
 
+		// Check if this is a multi-value index that could be used for JSON predicates
+		isMVIndex := path.Index != nil && path.Index.MVIndex
+		hasJSONPredicates := isMVIndex && hasJSONPredicatesInConditions(ds)
+
 		// Early skip for indexes that don't match any leading columns
+		// Exception: keep MVIndexes if there are JSON predicates that could use them
 		whereListLength := len(preferredWhereIndexes)
 		if whereListLength >= minToKeep && (idxScore.consecutiveWhereCount == 0 && idxScore.consecutiveJoinCount == 0) {
-			continue
+			if !hasJSONPredicates {
+				continue
+			}
 		}
 
 		// Skip non-single-scan indexes if we already have enough single-scan ones
@@ -471,4 +479,43 @@ func calculateScoreFromCoverage(info indexWithScore, totalWhereColumns, totalJoi
 	}
 
 	return score
+}
+
+// hasJSONPredicatesInConditions checks if the DataSource conditions contain JSON predicates
+// that could potentially use a multi-value index (MEMBER OF, JSON_CONTAINS, JSON_OVERLAPS).
+func hasJSONPredicatesInConditions(ds *logicalop.DataSource) bool {
+	// Check both PushedDownConds and AllConds to catch OR conditions that might not be pushed down
+	allConds := append([]expression.Expression{}, ds.PushedDownConds...)
+	allConds = append(allConds, ds.AllConds...)
+
+	for _, cond := range allConds {
+		if containsJSONPredicate(cond) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsJSONPredicate recursively checks if an expression contains JSON predicates
+// (JSONMemberOf, JSONContains, JSONOverlaps) that could use a multi-value index.
+func containsJSONPredicate(expr expression.Expression) bool {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+
+	// Check if this is a JSON predicate function
+	funcName := sf.FuncName.L
+	if funcName == ast.JSONMemberOf || funcName == ast.JSONContains || funcName == ast.JSONOverlaps {
+		return true
+	}
+
+	// Recursively check arguments (for OR/AND conditions)
+	for _, arg := range sf.GetArgs() {
+		if containsJSONPredicate(arg) {
+			return true
+		}
+	}
+
+	return false
 }
