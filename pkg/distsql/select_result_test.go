@@ -34,7 +34,15 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	require.Nil(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl)
 
 	sr.rootPlanID = 1234
+<<<<<<< HEAD
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "a"}}, 0)
+=======
+	backOffSleep := make(map[string]time.Duration, 1)
+	backOffSleep["RegionMiss"] = time.Duration(100)
+	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "a", BackoffSleep: backOffSleep}}, 0, false)
+	// RuntimeStatsColl is nil, so the update doesn't take efffect
+	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(0))
+>>>>>>> c0a5bceae40 (executor: fix fake "invalid cop task execution summaries length" log (#64679))
 
 	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 	// refresh the ctx after assigning `RuntimeStatsColl`.
@@ -48,13 +56,23 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 
 	require.NotEqual(t, len(sr.copPlanIDs), len(sr.selectResp.GetExecutionSummaries()))
 
+<<<<<<< HEAD
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee"}}, 0)
+=======
+	backOffSleep["RegionMiss"] = time.Duration(200)
+	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0, false)
+>>>>>>> c0a5bceae40 (executor: fix fake "invalid cop task execution summaries length" log (#64679))
 	require.False(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234))
 
 	sr.copPlanIDs = []int{sr.rootPlanID}
 	require.NotNil(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl)
 	require.Equal(t, len(sr.copPlanIDs), len(sr.selectResp.GetExecutionSummaries()))
 
+<<<<<<< HEAD
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee"}}, 0)
+=======
+	backOffSleep["RegionMiss"] = time.Duration(300)
+	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0, false)
+>>>>>>> c0a5bceae40 (executor: fix fake "invalid cop task execution summaries length" log (#64679))
 	require.Equal(t, "tikv_task:{time:1ns, loops:1}", ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String())
 }
