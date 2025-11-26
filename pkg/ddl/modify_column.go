@@ -144,6 +144,7 @@ func getModifyColumnType(
 	}
 
 	// Both encoding of row and index are not changed, just need to check existing data.
+	// e.g. integer without sign changed, or char without collation and needRestore changed.
 	if !needRowReorg(oldCol, args.Column) && !needIndexReorg(oldCol, args.Column) {
 		return ModifyTypeNoReorgWithCheck
 	}
