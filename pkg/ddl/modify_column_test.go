@@ -171,14 +171,13 @@ func TestModifyColumnNullToNotNullWithChangingVal2(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// insert null value before modifying column
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDoModifyColumnSkipReorgCheck", func() {
-		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec("insert into test.tt values (NULL, NULL)")
-	})
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockInsertValueAfterCheckNull", `return("insert into test.tt values (NULL, NULL)")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockInsertValueAfterCheckNull"))
+	}()
 
 	tk.MustExec("drop table if exists tt;")
-	tk.MustExec(`create table tt (a bigint, b int);`)
+	tk.MustExec(`create table tt (a bigint, b int, unique index idx(a));`)
 	tk.MustExec("insert into tt values (1,1),(2,2),(3,3);")
 	err := tk.ExecToErr("alter table tt modify a int not null;")
 	require.EqualError(t, err, "[ddl:1138]Invalid use of NULL value")
@@ -258,8 +257,7 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 			return
 		}
 		once.Do(func() {
-			// Insert null value to make modify column fail.
-			require.NoError(t, tk2.ExecToErr("insert into t1 values ()"))
+			checkErr = tk2.ExecToErr("insert into t1 values ()")
 		})
 	})
 	err := tk1.ExecToErr("alter table t1 change c2 c2 tinyint not null")
@@ -284,6 +282,7 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 		checkErr = tk2.ExecToErr("insert into t1 values ()")
 	})
 	tk1.MustExec("alter table t1 change c2 c2 tinyint not null")
+	require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
 
 	c2 := external.GetModifyColumn(t, tk1, "test", "t1", "c2", false)
 	require.True(t, mysql.HasNotNullFlag(c2.GetFlag()))
