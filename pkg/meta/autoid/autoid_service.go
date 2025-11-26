@@ -260,10 +260,7 @@ func (sp *singlePointAlloc) Transfer(databaseID, tableID int64) error {
 	}
 	sp.dbID = databaseID
 	sp.tblID = tableID
-	if sp.lastAllocated > 0 {
-		return sp.Rebase(context.Background(), sp.lastAllocated+1, false)
-	}
-	return nil
+	return sp.Rebase(context.Background(), sp.lastAllocated+1, false)
 }
 
 // AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
