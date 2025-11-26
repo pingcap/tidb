@@ -1377,10 +1377,32 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
 		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
 		if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
-			if path := getTablePath(publicPaths); path != nil {
-				hasUseOrForce = true
-				path.Forced = true
-				available = append(available, path)
+			if hint.HintType == ast.HintIndex {
+				// case: INDEX
+				// if no index is specified, INDEX will consider all available index paths
+				for _, path := range publicPaths {
+					if !path.IsTablePath() {
+						hasUseOrForce = true
+						path.Forced = true
+						available = append(available, path)
+					}
+				}
+			} else if hint.HintType == ast.HintNoIndex {
+				// case: NO_INDEX
+				// if no index is specified, NO_INDEX will ignore all the index paths
+				for _, path := range publicPaths {
+					if path.Index != nil && !path.IsTablePath() {
+						ignored = append(ignored, path)
+					}
+				}
+			} else {
+				// case: USE_INDEX or FORCE_INDEX
+				// if no index is specified, USE_INDEX and FORCE_INDEX will consider table scan path
+				if path := getTablePath(publicPaths); path != nil {
+					hasUseOrForce = true
+					path.Forced = true
+					available = append(available, path)
+				}
 			}
 		}
 		for _, idxName := range hint.IndexNames {
@@ -1394,7 +1416,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
 			}
-			if hint.HintType == ast.HintIgnore {
+			if hint.HintType == ast.HintIgnore || hint.HintType == ast.HintNoIndex {
 				// Collect all the ignored index hints.
 				ignored = append(ignored, path)
 				continue
