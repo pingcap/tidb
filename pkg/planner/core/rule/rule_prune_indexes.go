@@ -62,30 +62,28 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	// since indexes are only useful for filtering/ordering, or as covering indexes to avoid table lookups
 	noRequiredColumns := len(whereColumns) == 0 && len(orderingColumns) == 0 && len(joinColumns) == 0
 
-	// maxIndexes allows a minimum number of indexes to be kept regardless of threshold.
-	// max/minToKeep only calculate index plans to keep in addition to table plans.
-	// This avoids extreme pruning when threshold is very low (or even zero).
-	// If threshold is less than the number of input paths, use threshold as maxIndexes.
-	// Note: We assume there's typically only one table path, so index path count is approximately len(paths) - 1
-	const defaultMaxIndexes = 10
-	maxIndexes := defaultMaxIndexes
 	// Approximate index path count (assuming 1 table path)
+	// Note: table paths and MVIndex paths are always kept separately, so maxToKeep only applies to regular index paths
 	approxIndexPathCount := len(paths) - 1
-	if threshold > 0 && threshold < approxIndexPathCount {
-		maxIndexes = threshold
-	}
 
 	// If approxIndexPathCount <= threshold, we should keep all indexes with score > 0 (no pruning)
 	// Only prune when we have more index paths than the threshold
-	shouldPrune := approxIndexPathCount > threshold
-	maxToKeep := max(maxIndexes, threshold)
-	if !shouldPrune {
-		// Set maxToKeep to a large value to keep all indexes with score > 0
+	const defaultMaxIndexes = 10
+	var maxToKeep int
+	if approxIndexPathCount > threshold {
+		// When pruning, use threshold if provided, otherwise use defaultMaxIndexes
+		if threshold > 0 {
+			maxToKeep = threshold
+		} else {
+			maxToKeep = defaultMaxIndexes
+		}
+	} else {
+		// When not pruning (len(paths) < threshold), set maxToKeep to keep all indexes with score > 0
 		maxToKeep = approxIndexPathCount + 1
 	}
 
-	preferredWhereIndexes := make([]indexWithScore, 0, maxIndexes)
-	preferredJoinIndexes := make([]indexWithScore, 0, maxIndexes)
+	preferredWhereIndexes := make([]indexWithScore, 0, maxToKeep)
+	preferredJoinIndexes := make([]indexWithScore, 0, maxToKeep)
 	tablePaths := make([]*util.AccessPath, 0, 1)
 	mvIndexPaths := make([]*util.AccessPath, 0, 1)
 
@@ -113,10 +111,21 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		// Calculate aggregate metrics
 		totalLocalCovered := idxScore.whereCount + idxScore.orderingCount
 		totalJoinCovered := idxScore.joinCount + idxScore.whereCount
+		totalConsecutive := idxScore.consecutiveWhereCount + idxScore.consecutiveOrderingCount + idxScore.consecutiveJoinCount
 
 		// If there are no required columns, only keep covering indexes (IsSingleScan)
 		if noRequiredColumns || totalLocalCovered >= req.totalLocalRequiredCols && totalJoinCovered >= req.totalJoinRequiredCols {
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+		}
+
+		// Add to preferred indexes if it has any coverage or is a covering scan
+		shouldAddWhere := totalConsecutive > 0 || path.IsSingleScan || idxScore.whereCount > 0
+		if shouldAddWhere {
+			preferredWhereIndexes = append(preferredWhereIndexes, idxScore)
+		}
+
+		if idxScore.consecutiveJoinCount > 0 {
+			preferredJoinIndexes = append(preferredJoinIndexes, idxScore)
 		}
 	}
 
@@ -128,8 +137,8 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		return paths
 	}
 
-	// Additional safety: if we only have table paths and no indexes, keep original
-	if len(result) == len(tablePaths) && len(preferredWhereIndexes) == 0 && len(preferredJoinIndexes) == 0 {
+	// Additional safety: if we only have table paths and MVIndex paths and no regular indexes, keep original
+	if len(result) == len(tablePaths)+len(mvIndexPaths) && len(preferredWhereIndexes) == 0 && len(preferredJoinIndexes) == 0 {
 		return paths
 	}
 
