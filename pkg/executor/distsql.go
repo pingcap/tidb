@@ -1285,30 +1285,23 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 		}
 
 		finishBuild := time.Now()
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-w.finished:
-			return nil
-		default:
-			if completedTask != nil {
-				select {
-				case <-ctx.Done():
-					return nil
-				case <-w.finished:
-					return nil
-				case w.resultCh <- completedTask:
-				}
+		if completedTask != nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-w.finished:
+				return nil
+			case w.resultCh <- completedTask:
 			}
-			if tableLookUpTask != nil {
-				select {
-				case <-ctx.Done():
-					return nil
-				case <-w.finished:
-					return nil
-				case w.workCh <- tableLookUpTask:
-					w.resultCh <- tableLookUpTask
-				}
+		}
+		if tableLookUpTask != nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-w.finished:
+				return nil
+			case w.workCh <- tableLookUpTask:
+				w.resultCh <- tableLookUpTask
 			}
 		}
 		if w.idxLookup.stats != nil {
