@@ -5260,6 +5260,13 @@ func pruneAndBuildColPositionInfoForDelete(
 	if !hasFK {
 		nonPruned = bitset.New(uint(len(names)))
 		nonPruned.SetAll()
+		// find _tidb_commit_ts in names and clear the index in nonPruned
+		for i, name := range names {
+			if name.ColName.L == model.ExtraCommitTSName.L {
+				nonPruned.Clear(uint(i))
+				break
+			}
+		}
 	}
 	cols2PosInfos := make(physicalop.TblColPosInfoSlice, 0, len(tblID2Handle))
 	for tid, handleCols := range tblID2Handle {
@@ -5284,16 +5291,18 @@ func pruneAndBuildColPositionInfoForDelete(
 		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
 		// nonPrunedSet will be nil if it's a point get or has foreign keys.
 		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
-			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo)
+			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo, prunedColCnt)
 			if err != nil {
 				return nil, nil, err
 			}
+			prunedColCnt++
 			continue
 		}
 		prunedColCnt, err = pruneAndBuildSingleTableColPosInfoForDelete(tbl, tblInfo.Name.O, names, cols2PosInfo, prunedColCnt, nonPruned)
 		if err != nil {
 			return nil, nil, err
 		}
+		prunedColCnt++
 	}
 	return cols2PosInfos, nonPruned, nil
 }
@@ -5315,11 +5324,9 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 
 // buildSingleTableColPosInfoForDelete builds columns mapping for delete without pruning any columns.
 // It's temp code path for partition table, foreign key and point get plan.
-func buildSingleTableColPosInfoForDelete(
-	tbl table.Table,
-	colPosInfo *physicalop.TblColPosInfo,
-) error {
+func buildSingleTableColPosInfoForDelete(tbl table.Table, colPosInfo *physicalop.TblColPosInfo, prePrunedCount int) error {
 	tblLen := len(tbl.DeletableCols())
+	colPosInfo.Start -= prePrunedCount
 	colPosInfo.End = colPosInfo.Start + tblLen
 	return nil
 }
