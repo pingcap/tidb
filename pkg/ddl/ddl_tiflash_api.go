@@ -109,6 +109,7 @@ func NewPollTiFlashBackoffContext(minThreshold, maxThreshold TiFlashTick, capaci
 
 // TiFlashManagementContext is the context for TiFlash Replica Management
 type TiFlashManagementContext struct {
+	// The latest TiFlash stores info. For Classic kernel, it contains all TiFlash nodes. For NextGen kernel, it contains only TiFlash write nodes.
 	TiFlashStores map[int64]pd.StoreInfo
 	PollCounter   uint64
 	Backoff       *PollTiFlashBackoffContext
@@ -254,7 +255,8 @@ func LoadTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplic
 	}
 }
 
-func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
+// updateTiFlashWriteStores updates TiFlash (write) stores info from PD to `pollTiFlashContext.TiFlashStores`.
+func updateTiFlashWriteStores(pollTiFlashContext *TiFlashManagementContext) error {
 	// We need the up-to-date information about TiFlash stores.
 	// Since TiFlash Replica synchronize may happen immediately after new TiFlash stores are added.
 	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
@@ -264,11 +266,12 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	}
 	pollTiFlashContext.TiFlashStores = make(map[int64]pd.StoreInfo)
 	for _, store := range tikvStats.Stores {
-		if engine.IsTiFlashHTTPResp(&store.Store) {
+		// Note that only TiFlash write nodes need to be polled under NextGen kernel.
+		if engine.IsTiFlashWriteHTTPResp(&store.Store) {
 			pollTiFlashContext.TiFlashStores[store.Store.ID] = store
 		}
 	}
-	logutil.DDLLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(pollTiFlashContext.TiFlashStores)))
+	logutil.DDLLogger().Debug("updateTiFlashWriteStores finished", zap.Int("TiFlash store count", len(pollTiFlashContext.TiFlashStores)))
 	return nil
 }
 
@@ -347,8 +350,9 @@ func PollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Cont
 
 func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) error {
 	if pollTiFlashContext.PollCounter%UpdateTiFlashStoreTick.Load() == 0 {
-		if err := updateTiFlashStores(pollTiFlashContext); err != nil {
-			// If we failed to get from pd, retry every time.
+		// Update store info from pd every `UpdateTiFlashStoreTick` ticks.
+		if err := updateTiFlashWriteStores(pollTiFlashContext); err != nil {
+			// If we failed to get stores from pd, retry every time.
 			pollTiFlashContext.PollCounter = 0
 			return err
 		}
@@ -416,7 +420,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 				continue
 			}
 
-			// Collect the replica progress for this table from TiFlash stores.
+			// Collect the replica progress for this table from all TiFlash stores.
 			// fullReplicasProgress is the progress of all TiFlash replicas is setup, while oneReplicaProgress is the progress of at least 1 replicas.
 			fullReplicasProgress, oneReplicaProgress, err := infosync.CalculateTiFlashProgress(tb.ID, tb.Count, pollTiFlashContext.TiFlashStores)
 			if err != nil {
