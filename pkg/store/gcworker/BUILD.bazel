@@ -55,7 +55,11 @@ go_test(
     embed = [":gcworker"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 26,
+=======
+    shard_count = 36,
+>>>>>>> 98b9eb8dd7d (gc_worker: Fix the problem that GC may kill the transaction whose start ts is exactly the same as the txn safe point (#64663))
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
