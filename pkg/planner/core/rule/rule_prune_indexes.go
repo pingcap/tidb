@@ -55,20 +55,35 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		return paths
 	}
 
-	// If there are no required columns, don't prune - just return all paths
-	if len(whereColumns) == 0 && len(orderingColumns) == 0 && len(joinColumns) == 0 {
-		return paths
-	}
-
 	// Build column ID maps and calculate totals
 	req := buildColumnRequirements(whereColumns, orderingColumns, joinColumns)
+
+	// If there are no required columns, only keep table paths and covering indexes (IsSingleScan)
+	// since indexes are only useful for filtering/ordering, or as covering indexes to avoid table lookups
+	noRequiredColumns := len(whereColumns) == 0 && len(orderingColumns) == 0 && len(joinColumns) == 0
 
 	// maxIndexes allows a minimum number of indexes to be kept regardless of threshold.
 	// max/minToKeep only calculate index plans to keep in addition to table plans.
 	// This avoids extreme pruning when threshold is very low (or even zero).
-	const maxIndexes = 10
+	// If threshold is less than the number of input paths, use threshold as maxIndexes.
+	// Note: We assume there's typically only one table path, so index path count is approximately len(paths) - 1
+	const defaultMaxIndexes = 10
+	maxIndexes := defaultMaxIndexes
+	// Approximate index path count (assuming 1 table path)
+	approxIndexPathCount := len(paths) - 1
+	if threshold > 0 && threshold < approxIndexPathCount {
+		maxIndexes = threshold
+	}
+
+	// If approxIndexPathCount <= threshold, we should keep all indexes with score > 0 (no pruning)
+	// Only prune when we have more index paths than the threshold
+	shouldPrune := approxIndexPathCount > threshold
 	minToKeep := max(1, min(maxIndexes, threshold))
 	maxToKeep := max(maxIndexes, threshold)
+	if !shouldPrune {
+		// Set maxToKeep to a large value to keep all indexes with score > 0
+		maxToKeep = approxIndexPathCount + 1
+	}
 
 	preferredWhereIndexes := make([]indexWithScore, 0, maxIndexes)
 	preferredJoinIndexes := make([]indexWithScore, 0, maxIndexes)
@@ -88,6 +103,19 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		// If we have forced paths, we shouldn't prune any paths
 		if path.Forced {
 			return paths
+		}
+
+		// If there are no required columns, only keep covering indexes (IsSingleScan)
+		if noRequiredColumns {
+			// Check if this is a covering index
+			if path.FullIdxCols != nil {
+				path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+				if !path.IsSingleScan {
+					continue
+				}
+			} else {
+				continue
+			}
 		}
 
 		// Calculate coverage for this index
@@ -260,6 +288,10 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 	scored := make([]scoredIndex, 0, len(indexes))
 	for _, candidate := range indexes {
 		score := calculateScoreFromCoverage(candidate, req.totalWhereColumns, req.totalJoinColumns, req.totalOrderingColumns, candidate.path.IsSingleScan)
+		// Skip indexes with score == 0 as they don't provide any value
+		if score == 0 {
+			continue
+		}
 		cols := len(candidate.path.FullIdxCols)
 		totalConsecutive := candidate.consecutiveWhereCount + candidate.consecutiveJoinCount + candidate.consecutiveOrderingCount
 		scored = append(scored, scoredIndex{
@@ -324,11 +356,22 @@ func buildFinalResult(tablePaths []*util.AccessPath, whereIndexes, joinIndexes [
 			if remaining == 0 {
 				break
 			}
-			if entry.score < maxWhereScore {
-				if _, kept := lowerScoreKept[entry.score]; kept {
-					continue
+			// Only exclude indexes with the same score if consecutiveWhereCount <= 1
+			if entry.score <= maxWhereScore {
+				if entry.info.consecutiveWhereCount <= 1 {
+					if entry.score < maxWhereScore {
+						if _, kept := lowerScoreKept[entry.score]; kept {
+							continue
+						}
+						lowerScoreKept[entry.score] = struct{}{}
+					} else if entry.score == maxWhereScore {
+						// For same score, only skip if we've already kept one with consecutiveWhereCount <= 1
+						if _, kept := lowerScoreKept[entry.score]; kept {
+							continue
+						}
+						lowerScoreKept[entry.score] = struct{}{}
+					}
 				}
-				lowerScoreKept[entry.score] = struct{}{}
 			}
 			result = append(result, path)
 			added[path] = struct{}{}
@@ -360,11 +403,22 @@ func buildFinalResult(tablePaths []*util.AccessPath, whereIndexes, joinIndexes [
 				if remaining == 0 {
 					break
 				}
-				if entry.score < maxJoinScore {
-					if _, kept := lowerJoinKept[entry.score]; kept {
-						continue
+				// Only exclude indexes with the same score if consecutiveWhereCount <= 1
+				if entry.score <= maxJoinScore {
+					if entry.info.consecutiveWhereCount <= 1 {
+						if entry.score < maxJoinScore {
+							if _, kept := lowerJoinKept[entry.score]; kept {
+								continue
+							}
+							lowerJoinKept[entry.score] = struct{}{}
+						} else if entry.score == maxJoinScore {
+							// For same score, only skip if we've already kept one with consecutiveWhereCount <= 1
+							if _, kept := lowerJoinKept[entry.score]; kept {
+								continue
+							}
+							lowerJoinKept[entry.score] = struct{}{}
+						}
 					}
-					lowerJoinKept[entry.score] = struct{}{}
 				}
 				result = append(result, path)
 				added[path] = struct{}{}

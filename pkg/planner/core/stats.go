@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -131,21 +130,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
-	// Prune indexes based on WHERE, ordering, and join columns if we have too many
-	threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
-	if len(ds.AllPossibleAccessPaths) > threshold && (len(ds.WhereColumns) > 0 || len(ds.OrderingColumns) > 0 || len(ds.JoinColumns) > 0) {
-		ds.AllPossibleAccessPaths = rule.PruneIndexesByWhereAndOrder(
-			ds,
-			ds.AllPossibleAccessPaths,
-			ds.WhereColumns,
-			ds.OrderingColumns,
-			ds.JoinColumns,
-			threshold,
-		)
-		// Make a copy for PossibleAccessPaths to avoid sharing the same slice
-		ds.PossibleAccessPaths = make([]*util.AccessPath, len(ds.AllPossibleAccessPaths))
-		copy(ds.PossibleAccessPaths, ds.AllPossibleAccessPaths)
-	}
+	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
 	// Fill index paths for all paths
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
@@ -366,9 +351,15 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	if err != nil {
 		return err
 	}
-	var countEst statistics.RowEstimate
-	countEst, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
-	path.CountAfterAccess = countEst.Est
+	// Optimization: If there are no AccessConds, the ranges will be full range and the count will be the full table count.
+	// Skip the expensive GetRowCountByIntColumnRanges call in this case.
+	if len(path.AccessConds) == 0 {
+		path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
+	} else {
+		var countEst statistics.RowEstimate
+		countEst, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
+		path.CountAfterAccess = countEst.Est
+	}
 	if !isIm {
 		// Check if we need to apply a lower bound to CountAfterAccess
 		adjustCountAfterAccess(ds, path)
