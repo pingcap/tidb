@@ -405,6 +405,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 	} else {
 		s.unionSet.GrowNewIntSet(len(s.columns))
 	}
+	allVisited := true
 	for i := range s.conditions {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
@@ -425,8 +426,13 @@ func (s *propConstSolver) propagateColumnEQ() {
 						RetType: types.NewFieldType(mysql.TypeTiny),
 					}
 				}
+				continue
 			}
 		}
+		allVisited = false
+	}
+	if allVisited {
+		return
 	}
 	condsLen := len(s.conditions)
 	for i, coli := range s.columns {
