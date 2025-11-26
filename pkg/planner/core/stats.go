@@ -85,7 +85,7 @@ func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Sc
 		is.Ranges = ranger.FullRange()
 	}
 	is.IdxCols, is.IdxColLens, is.FullIdxCols, is.FullIdxColLens =
-		expression.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
+		util.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
 	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.IdxCols) {
 		handleCol := is.GetPKIsHandleCol(selfSchema)
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
@@ -176,7 +176,7 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	path.MinCountAfterAccess = 0
 	path.MaxCountAfterAccess = 0
 	path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
-		expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
 		handleCol := ds.GetPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
@@ -363,7 +363,7 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.Ranges = ranger.FullNotNullRange()
 	path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
-		expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	if len(conds) == 0 {
 		return nil
 	}

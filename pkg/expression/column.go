@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -752,120 +751,6 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 		}
 	}
 	return nil
-}
-
-// IndexCol2Col finds the corresponding column of the IndexColumn in a column slice.
-func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
-	for i, info := range colInfos {
-		if info.Name.L == col.Name.L {
-			if col.Length > 0 && info.FieldType.GetFlen() > col.Length {
-				c := *cols[i]
-				c.IsPrefix = true
-				return &c
-			}
-			return cols[i]
-		}
-	}
-	return nil
-}
-
-type indexInfo2ColsFlags uint
-
-const (
-	extractPrefixCols indexInfo2ColsFlags = 1 << iota
-	extractFullCols
-)
-
-func indexInfo2ColsImpl(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo, flags indexInfo2ColsFlags) (
-	prefixCols []*Column, prefixLens []int,
-	fullCols []*Column, fullLens []int,
-) {
-	intest.Assert(flags != 0, "at least one of indexInfo2ColsFlags must be set")
-	if flags&extractPrefixCols != 0 {
-		prefixCols = make([]*Column, 0, len(index.Columns))
-		prefixLens = make([]int, 0, len(index.Columns))
-	}
-	if flags&extractFullCols != 0 {
-		fullCols = make([]*Column, 0, len(index.Columns))
-		fullLens = make([]int, 0, len(index.Columns))
-	}
-	prefixComplete := false
-
-	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
-		if col == nil {
-			prefixComplete = true
-			if flags&extractFullCols == 0 {
-				return
-			}
-			fullCols = append(fullCols, col)
-			fullLens = append(fullLens, types.UnspecifiedLength)
-			continue
-		}
-
-		// We use `types.UnspecifiedLength` to specifically indicate that a column does not
-		// have a prefix length (see the `hasPrefix` function in util/ranger, for example).
-		// In other words, `length` is only used for indexed columns with a prefix length
-		// (as long as it is less than the full length).
-		length := c.Length
-		if length != types.UnspecifiedLength && length == col.RetType.GetFlen() {
-			length = types.UnspecifiedLength
-		}
-		if flags&extractPrefixCols != 0 && !prefixComplete {
-			prefixCols = append(prefixCols, col)
-			prefixLens = append(prefixLens, length)
-		}
-		if flags&extractFullCols != 0 {
-			fullCols = append(fullCols, col)
-			fullLens = append(fullLens, length)
-		}
-	}
-	return
-}
-
-// IndexInfo2PrefixCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
-// together with a []int containing their lengths.
-// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be only the 1st corresponding *Column and its length.
-// TODO: Use a struct to represent {*Column, int}.
-func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	prefixCols, prefixLens, _, _ := indexInfo2ColsImpl(colInfos, cols, index, extractPrefixCols)
-	return prefixCols, prefixLens
-}
-
-// IndexInfo2FullCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
-// together with a []int containing their lengths.
-// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be [col1, nil, col2].
-func IndexInfo2FullCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	_, _, fullCols, fullLens := indexInfo2ColsImpl(colInfos, cols, index, extractFullCols)
-	return fullCols, fullLens
-}
-
-// IndexInfo2Cols returns the combined result of IndexInfo2PrefixCols and IndexInfo2FullCols.
-func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) (
-	prefixCols []*Column, prefixLens []int,
-	fullCols []*Column, fullLens []int,
-) {
-	return indexInfo2ColsImpl(colInfos, cols, index, extractPrefixCols|extractFullCols)
-}
-
-// FindPrefixOfIndex will find columns in index by checking the unique id.
-// So it will return at once no matching column is found.
-func FindPrefixOfIndex(cols []*Column, idxColIDs []int64) []*Column {
-	retCols := make([]*Column, 0, len(idxColIDs))
-idLoop:
-	for _, id := range idxColIDs {
-		for _, col := range cols {
-			if col.UniqueID == id {
-				retCols = append(retCols, col)
-				continue idLoop
-			}
-		}
-		// If no matching column is found, just return.
-		return retCols
-	}
-	return retCols
 }
 
 // EvalVirtualColumn evals the virtual column
