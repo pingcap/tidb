@@ -18,7 +18,6 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
@@ -89,6 +88,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	preferredWhereIndexes := make([]indexWithScore, 0, maxIndexes)
 	preferredJoinIndexes := make([]indexWithScore, 0, maxIndexes)
 	tablePaths := make([]*util.AccessPath, 0, 1)
+	mvIndexPaths := make([]*util.AccessPath, 0, 1)
 
 	maxConsecutiveWhere, maxConsecutiveJoin := 0, 0
 	hasWhereSingleScan := false
@@ -98,6 +98,12 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	for _, path := range paths {
 		if path.IsTablePath() {
 			tablePaths = append(tablePaths, path)
+			continue
+		}
+
+		// Always keep multi-value indexes (like table paths)
+		if path.Index != nil && path.Index.MVIndex {
+			mvIndexPaths = append(mvIndexPaths, path)
 			continue
 		}
 
@@ -122,17 +128,10 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			}
 		}
 
-		// Check if this is a multi-value index that could be used for JSON predicates
-		isMVIndex := path.Index != nil && path.Index.MVIndex
-		hasJSONPredicates := isMVIndex && hasJSONPredicatesInConditions(ds)
-
 		// Early skip for indexes that don't match any leading columns
-		// Exception: keep MVIndexes if there are JSON predicates that could use them
 		whereListLength := len(preferredWhereIndexes)
 		if whereListLength >= minToKeep && (idxScore.consecutiveWhereCount == 0 && idxScore.consecutiveJoinCount == 0) {
-			if !hasJSONPredicates {
-				continue
-			}
+			continue
 		}
 
 		// Skip non-single-scan indexes if we already have enough single-scan ones
@@ -164,7 +163,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	}
 
 	// Build final result by sorting and selecting top indexes
-	result := buildFinalResult(tablePaths, preferredWhereIndexes, preferredJoinIndexes, maxToKeep, req)
+	result := buildFinalResult(tablePaths, mvIndexPaths, preferredWhereIndexes, preferredJoinIndexes, maxToKeep, req)
 
 	// Safety check: if we ended up with nothing, return the original paths
 	if len(result) == 0 {
@@ -323,19 +322,25 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 	return scored
 }
 
-func buildFinalResult(tablePaths []*util.AccessPath, whereIndexes, joinIndexes []indexWithScore, maxToKeep int, req columnRequirements) []*util.AccessPath {
+func buildFinalResult(tablePaths, mvIndexPaths []*util.AccessPath, whereIndexes, joinIndexes []indexWithScore, maxToKeep int, req columnRequirements) []*util.AccessPath {
 	const maxIndexes = 10
 	result := make([]*util.AccessPath, 0, maxIndexes)
 
 	// CRITICAL: Always include table paths - this is mandatory for correctness
 	result = append(result, tablePaths...)
+	// CRITICAL: Always include multi-value index paths - we do not have sufficient
+	// information to determine if they should be pruned in this function.
+	result = append(result, mvIndexPaths...)
 
 	if maxToKeep <= 0 {
 		return result
 	}
 
-	added := make(map[*util.AccessPath]struct{}, len(tablePaths))
+	added := make(map[*util.AccessPath]struct{}, len(tablePaths)+len(mvIndexPaths))
 	for _, path := range tablePaths {
+		added[path] = struct{}{}
+	}
+	for _, path := range mvIndexPaths {
 		added[path] = struct{}{}
 	}
 
@@ -428,17 +433,6 @@ func buildFinalResult(tablePaths []*util.AccessPath, whereIndexes, joinIndexes [
 	return result
 }
 
-// compareIndexScores compares two index scores for sorting (higher score first).
-func compareIndexScores(a, b indexWithScore, req columnRequirements) int {
-	scoreA := calculateScoreFromCoverage(a, req.totalWhereColumns, req.totalJoinColumns, req.totalOrderingColumns, a.path.IsSingleScan)
-	scoreB := calculateScoreFromCoverage(b, req.totalWhereColumns, req.totalJoinColumns, req.totalOrderingColumns, b.path.IsSingleScan)
-	if scoreA != scoreB {
-		return scoreB - scoreA // Higher score first
-	}
-	// Tie-breaker: shorter index first
-	return len(a.path.Index.Columns) - len(b.path.Index.Columns)
-}
-
 // calculateScoreFromCoverage calculates a ranking score using already-computed coverage information.
 // This avoids re-iterating through index columns.
 func calculateScoreFromCoverage(info indexWithScore, totalWhereColumns, totalJoinColumns, totalOrderingCols int, isSingleScan bool) int {
@@ -479,43 +473,4 @@ func calculateScoreFromCoverage(info indexWithScore, totalWhereColumns, totalJoi
 	}
 
 	return score
-}
-
-// hasJSONPredicatesInConditions checks if the DataSource conditions contain JSON predicates
-// that could potentially use a multi-value index (MEMBER OF, JSON_CONTAINS, JSON_OVERLAPS).
-func hasJSONPredicatesInConditions(ds *logicalop.DataSource) bool {
-	// Check both PushedDownConds and AllConds to catch OR conditions that might not be pushed down
-	allConds := append([]expression.Expression{}, ds.PushedDownConds...)
-	allConds = append(allConds, ds.AllConds...)
-
-	for _, cond := range allConds {
-		if containsJSONPredicate(cond) {
-			return true
-		}
-	}
-	return false
-}
-
-// containsJSONPredicate recursively checks if an expression contains JSON predicates
-// (JSONMemberOf, JSONContains, JSONOverlaps) that could use a multi-value index.
-func containsJSONPredicate(expr expression.Expression) bool {
-	sf, ok := expr.(*expression.ScalarFunction)
-	if !ok {
-		return false
-	}
-
-	// Check if this is a JSON predicate function
-	funcName := sf.FuncName.L
-	if funcName == ast.JSONMemberOf || funcName == ast.JSONContains || funcName == ast.JSONOverlaps {
-		return true
-	}
-
-	// Recursively check arguments (for OR/AND conditions)
-	for _, arg := range sf.GetArgs() {
-		if containsJSONPredicate(arg) {
-			return true
-		}
-	}
-
-	return false
 }
