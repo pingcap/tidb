@@ -15,10 +15,8 @@
 package executor
 
 import (
-	"runtime"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -177,72 +175,4 @@ func encodedPassword(n *ast.UserSpec, defaultPlugin string) (string, bool) {
 		return "", false
 	}
 	return opt.HashString, true
-}
-
-var globalTaskPool = sync.Pool{
-	New: func() any { return &workerTask{} },
-}
-
-type workerTask struct {
-	f    func()
-	next *workerTask
-}
-
-type workerPool struct {
-	lock sync.Mutex
-	head *workerTask
-	tail *workerTask
-
-	tasks     uint32
-	workers   uint32
-	needSpawn func(workers, tasks uint32) bool
-}
-
-func (p *workerPool) submit(f func()) {
-	task := globalTaskPool.Get().(*workerTask)
-	task.f, task.next = f, nil
-
-	spawn := false
-	p.lock.Lock()
-	if p.head == nil {
-		p.head = task
-	} else {
-		p.tail.next = task
-	}
-	p.tail = task
-	p.tasks++
-	if p.workers == 0 || p.needSpawn == nil || p.needSpawn(p.workers, p.tasks) {
-		p.workers++
-		spawn = true
-	}
-	p.lock.Unlock()
-
-	if spawn {
-		go p.run()
-	}
-}
-
-func (p *workerPool) run() {
-	for {
-		var task *workerTask
-
-		p.lock.Lock()
-		if p.head == nil {
-			p.workers--
-			p.lock.Unlock()
-			return
-		}
-		task, p.head = p.head, p.head.next
-		p.tasks--
-		p.lock.Unlock()
-
-		task.f()
-		globalTaskPool.Put(task)
-	}
-}
-
-//go:noinline
-func growWorkerStack16K() {
-	var data [8192]byte
-	runtime.KeepAlive(&data)
 }

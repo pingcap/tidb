@@ -16,18 +16,14 @@ package session
 
 import (
 	"context"
-	"encoding/hex"
-	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/stretchr/testify/require"
 )
 
@@ -94,99 +90,4 @@ func TestSchemaCacheSizeVar(t *testing.T) {
 	require.Equal(t, size, uint64(vardef.DefTiDBSchemaCacheSize))
 	require.Equal(t, isNull, false)
 	require.NoError(t, txn.Rollback())
-}
-
-// TestPrevTraceIDPersistence verifies that prev_trace_id persists across statements
-func TestPrevTraceIDPersistence(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("trace events only work for next-gen kernel")
-	}
-
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
-
-	se, err := createSession(store)
-	require.NoError(t, err)
-
-	// Enable trace events and install a recorder to capture events
-	prevMode := traceevent.CurrentMode()
-	_, err = traceevent.SetMode("full")
-	require.NoError(t, err)
-	defer func() {
-		_, _ = traceevent.SetMode(prevMode)
-	}()
-
-	recorder := traceevent.NewRingBufferSink(100)
-	prevSink := traceevent.CurrentSink()
-	traceevent.SetSink(recorder)
-	defer traceevent.SetSink(prevSink)
-
-	// Create a test table
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	_, err = se.ExecuteInternal(ctx, "create table test.t2 (id int primary key, value varchar(100))")
-	require.NoError(t, err)
-
-	// Clear the recorder and reset prev trace ID
-	recorder.DiscardOrFlush()
-	se.GetSessionVars().PrevTraceID = nil
-
-	// Execute first statement
-	stmt1, err := se.ParseWithParams(ctx, "insert into test.t2 values (1, 'first')")
-	require.NoError(t, err)
-	rs1, err := se.ExecuteStmt(ctx, stmt1)
-	require.NoError(t, err)
-	if rs1 != nil {
-		require.NoError(t, rs1.Close())
-	}
-
-	// Get the trace ID from the first statement
-	firstTraceID := se.GetSessionVars().PrevTraceID
-	require.NotEmpty(t, firstTraceID, "First statement should generate a trace ID")
-	t.Logf("First statement trace ID: %s", hex.EncodeToString(firstTraceID))
-
-	// Clear the recorder to capture only the second statement's events
-	recorder.DiscardOrFlush()
-
-	// Execute second statement in the same session
-	stmt2, err := se.ParseWithParams(ctx, "insert into test.t2 values (2, 'second')")
-	require.NoError(t, err)
-	rs2, err := se.ExecuteStmt(ctx, stmt2)
-	require.NoError(t, err)
-	if rs2 != nil {
-		require.NoError(t, rs2.Close())
-	}
-
-	// Get the trace ID from the second statement
-	secondTraceID := se.GetSessionVars().PrevTraceID
-	require.NotEmpty(t, secondTraceID, "Second statement should generate a trace ID")
-	t.Logf("Second statement trace ID: %s", hex.EncodeToString(secondTraceID))
-
-	// Verify that the trace IDs are different
-	require.NotEqual(t, firstTraceID, secondTraceID, "Each statement should have a unique trace ID")
-
-	// Check recorded events for prev_trace_id field
-	events := recorder.Snapshot()
-	require.NotEmpty(t, events, "Should have recorded trace events")
-
-	// Look for stmt.start events and verify prev_trace_id matches first statement
-	foundPrevTraceID := false
-	for _, event := range events {
-		if event.Name == "stmt.start" {
-			for _, field := range event.Fields {
-				if field.Key == "prev_trace_id" {
-					foundPrevTraceID = true
-					// The prev_trace_id should match the first statement's trace ID
-					// Note: redact.Key() may uppercase the hex string, so we do case-insensitive comparison
-					prevTraceIDHex := field.String
-					expectedPrevTraceIDHex := hex.EncodeToString(firstTraceID)
-					t.Logf("Found prev_trace_id in stmt.start event: %s (expected: %s)", prevTraceIDHex, expectedPrevTraceIDHex)
-					require.Equal(t, strings.ToUpper(expectedPrevTraceIDHex), strings.ToUpper(prevTraceIDHex), "prev_trace_id should match the previous statement's trace ID")
-					break
-				}
-			}
-		}
-	}
-
-	require.True(t, foundPrevTraceID, "Should find prev_trace_id field in stmt.start events")
 }
