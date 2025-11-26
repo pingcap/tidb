@@ -815,7 +815,8 @@ func SyncTiFlashTableSchema(ctx context.Context, tableID int64) error {
 	}
 	tiflashStores := make([]pdhttp.StoreInfo, 0, len(tikvStats.Stores))
 	for _, store := range tikvStats.Stores {
-		if engine.IsTiFlashHTTPResp(&store.Store) {
+		// Only need to sync schema to TiFlash write nodes under NextGen kernel.
+		if engine.IsTiFlashWriteHTTPResp(&store.Store) {
 			tiflashStores = append(tiflashStores, store)
 		}
 	}
