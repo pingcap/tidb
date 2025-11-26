@@ -161,8 +161,8 @@ func validEqualCond(ctx EvalContext, cond Expression) (*Column, *Constant) {
 	return nil, nil
 }
 
-// replaceCond replaces eq condition in 'cond' by true if both 'src' and 'tgt' appear in 'eq cond'.
-func replaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expression) (Expression, bool) {
+// replaceEqCondtionWithTrue replaces eq condition in 'cond' by true if both 'src' and 'tgt' appear in 'eq cond'.
+func replaceEqCondtionWithTrue(ctx BuildContext, src *Column, tgt *Column, cond Expression) (Expression, bool) {
 	if src.RetType.GetType() != tgt.RetType.GetType() {
 		return cond, false
 	}
@@ -211,7 +211,7 @@ func replaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expression) (E
 	case ast.LogicOr, ast.LogicAnd:
 		for idx, expr := range args {
 			if sf, ok := expr.(*ScalarFunction); ok {
-				newExpr, subReplaced := replaceCond(ctx, src, tgt, sf)
+				newExpr, subReplaced := replaceEqCondtionWithTrue(ctx, src, tgt, sf)
 				if subReplaced {
 					replaced = true
 					args[idx] = newExpr
@@ -417,7 +417,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 				if s.unionSet.FindRoot(lID) != s.unionSet.FindRoot(rID) {
 					// Add the equality relation to unionSet
 					// if it has been added, we don't need to process it again.
-					// It will be deleted in the replaceConditionsWithConstants
+					// It will be deleted in the replaceEqCondtionWithTrueitionsWithConstants
 					s.unionSet.Union(lID, rID)
 				} else if lID != rID {
 					s.conditions[i] = &Constant{
@@ -441,7 +441,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 					// cond_k has been used to retrieve equality relation
 					continue
 				}
-				s.conditions[k], _ = replaceCond(s.ctx, coli, colj, s.conditions[k])
+				s.conditions[k], _ = replaceEqCondtionWithTrue(s.ctx, coli, colj, s.conditions[k])
 				cond := s.conditions[k]
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
