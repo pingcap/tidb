@@ -17,6 +17,7 @@ package local
 import (
 	"context"
 	"io"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -379,6 +380,9 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 }
 
 func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) error {
+	if rand.Int()%2 == 0 {
+		return errors.New("injected random error")
+	}
 	in := &ingestcli.IngestRequest{
 		Region:    job.region,
 		WriteResp: job.writeResult.nextGenWriteResp,
