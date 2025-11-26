@@ -78,7 +78,6 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	// If approxIndexPathCount <= threshold, we should keep all indexes with score > 0 (no pruning)
 	// Only prune when we have more index paths than the threshold
 	shouldPrune := approxIndexPathCount > threshold
-	minToKeep := max(1, min(maxIndexes, threshold))
 	maxToKeep := max(maxIndexes, threshold)
 	if !shouldPrune {
 		// Set maxToKeep to a large value to keep all indexes with score > 0
@@ -89,10 +88,6 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	preferredJoinIndexes := make([]indexWithScore, 0, maxIndexes)
 	tablePaths := make([]*util.AccessPath, 0, 1)
 	mvIndexPaths := make([]*util.AccessPath, 0, 1)
-
-	maxConsecutiveWhere, maxConsecutiveJoin := 0, 0
-	hasWhereSingleScan := false
-	hasJoinSingleScan := false
 
 	// Categorize each index path
 	for _, path := range paths {
@@ -118,47 +113,10 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		// Calculate aggregate metrics
 		totalLocalCovered := idxScore.whereCount + idxScore.orderingCount
 		totalJoinCovered := idxScore.joinCount + idxScore.whereCount
-		totalConsecutive := idxScore.consecutiveWhereCount + idxScore.consecutiveOrderingCount + idxScore.consecutiveJoinCount
 
 		// If there are no required columns, only keep covering indexes (IsSingleScan)
 		if noRequiredColumns || totalLocalCovered >= req.totalLocalRequiredCols && totalJoinCovered >= req.totalJoinRequiredCols {
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
-			if noRequiredColumns && !path.IsSingleScan {
-				continue
-			}
-		}
-
-		// Early skip for indexes that don't match any leading columns
-		whereListLength := len(preferredWhereIndexes)
-		if whereListLength >= minToKeep && (idxScore.consecutiveWhereCount == 0 && idxScore.consecutiveJoinCount == 0) {
-			continue
-		}
-
-		// Skip non-single-scan indexes if we already have enough single-scan ones
-		skipWhere := whereListLength >= minToKeep && !path.IsSingleScan &&
-			(hasWhereSingleScan || whereListLength > maxToKeep) &&
-			idxScore.consecutiveWhereCount <= maxConsecutiveWhere && idxScore.consecutiveJoinCount <= maxConsecutiveJoin
-
-		shouldAddWhere := totalConsecutive > 0 || path.IsSingleScan || idxScore.whereCount > 0
-		if shouldAddWhere && !skipWhere {
-			preferredWhereIndexes = append(preferredWhereIndexes, idxScore)
-			if path.IsSingleScan {
-				hasWhereSingleScan = true
-			}
-			maxConsecutiveWhere = max(maxConsecutiveWhere, idxScore.consecutiveWhereCount)
-			maxConsecutiveJoin = max(maxConsecutiveJoin, idxScore.consecutiveJoinCount)
-		}
-
-		if idxScore.consecutiveJoinCount > 0 {
-			joinListLength := len(preferredJoinIndexes)
-			skipJoin := joinListLength >= minToKeep && !path.IsSingleScan &&
-				(hasJoinSingleScan || joinListLength > maxToKeep)
-			if !skipJoin {
-				preferredJoinIndexes = append(preferredJoinIndexes, idxScore)
-				if path.IsSingleScan {
-					hasJoinSingleScan = true
-				}
-			}
 		}
 	}
 
@@ -348,6 +306,7 @@ func buildFinalResult(tablePaths, mvIndexPaths []*util.AccessPath, whereIndexes,
 	joinScored := scoreAndSort(joinIndexes, req)
 
 	remaining := maxToKeep
+	hasNonZeroScore := false
 	if len(whereScored) > 0 && remaining > 0 {
 		maxWhereScore := whereScored[0].score
 		lowerScoreKept := make(map[int]struct{})
@@ -358,6 +317,10 @@ func buildFinalResult(tablePaths, mvIndexPaths []*util.AccessPath, whereIndexes,
 			}
 			if remaining == 0 {
 				break
+			}
+			// If we have at least 1 index with score > 0, don't append any with score == 0
+			if hasNonZeroScore && entry.score == 0 {
+				continue
 			}
 			// Only exclude indexes with the same score if consecutiveWhereCount <= 1
 			if entry.score <= maxWhereScore {
@@ -378,6 +341,9 @@ func buildFinalResult(tablePaths, mvIndexPaths []*util.AccessPath, whereIndexes,
 			}
 			result = append(result, path)
 			added[path] = struct{}{}
+			if entry.score > 0 {
+				hasNonZeroScore = true
+			}
 			remaining--
 		}
 	}
@@ -388,6 +354,9 @@ func buildFinalResult(tablePaths, mvIndexPaths []*util.AccessPath, whereIndexes,
 		if _, ok := added[bestJoinPath]; !ok {
 			result = append(result, bestJoinPath)
 			added[bestJoinPath] = struct{}{}
+			if maxJoinScore > 0 {
+				hasNonZeroScore = true
+			}
 			if remaining > 0 {
 				remaining--
 			}
@@ -405,6 +374,10 @@ func buildFinalResult(tablePaths, mvIndexPaths []*util.AccessPath, whereIndexes,
 				}
 				if remaining == 0 {
 					break
+				}
+				// If we have at least 1 index with score > 0, don't append any with score == 0
+				if hasNonZeroScore && entry.score == 0 {
+					continue
 				}
 				// Only exclude indexes with the same score if consecutiveWhereCount <= 1
 				if entry.score <= maxJoinScore {
@@ -425,6 +398,9 @@ func buildFinalResult(tablePaths, mvIndexPaths []*util.AccessPath, whereIndexes,
 				}
 				result = append(result, path)
 				added[path] = struct{}{}
+				if entry.score > 0 {
+					hasNonZeroScore = true
+				}
 				remaining--
 			}
 		}
