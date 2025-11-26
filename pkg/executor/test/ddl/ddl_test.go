@@ -24,11 +24,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD
-=======
 	_ "github.com/pingcap/tidb/pkg/autoid_service" // Init MockForTest
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
->>>>>>> cf9095a5368 (autoid: fix missing id rebase after rename table between database (#64680))
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddltestutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
