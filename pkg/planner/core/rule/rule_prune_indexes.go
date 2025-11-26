@@ -105,36 +105,26 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			return paths
 		}
 
-		// If there are no required columns, only keep covering indexes (IsSingleScan)
-		if noRequiredColumns {
-			// Check if this is a covering index
-			if path.FullIdxCols != nil {
-				path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
-				if !path.IsSingleScan {
-					continue
-				}
-			} else {
-				continue
-			}
-		}
-
 		// Calculate coverage for this index
 		idxScore := scoreIndexPath(path, req)
-
-		// Early skip for indexes that don't match any leading columns
-		whereListLength := len(preferredWhereIndexes)
-		if whereListLength >= minToKeep && (idxScore.consecutiveWhereCount == 0 && idxScore.consecutiveJoinCount == 0) {
-			continue
-		}
 
 		// Calculate aggregate metrics
 		totalLocalCovered := idxScore.whereCount + idxScore.orderingCount
 		totalJoinCovered := idxScore.joinCount + idxScore.whereCount
 		totalConsecutive := idxScore.consecutiveWhereCount + idxScore.consecutiveOrderingCount + idxScore.consecutiveJoinCount
 
-		// Check if this is a covering index and set IsSingleScan
-		if totalLocalCovered >= req.totalLocalRequiredCols && totalJoinCovered >= req.totalJoinRequiredCols {
+		// If there are no required columns, only keep covering indexes (IsSingleScan)
+		if noRequiredColumns || totalLocalCovered >= req.totalLocalRequiredCols && totalJoinCovered >= req.totalJoinRequiredCols {
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+			if noRequiredColumns && !path.IsSingleScan {
+				continue
+			}
+		}
+
+		// Early skip for indexes that don't match any leading columns
+		whereListLength := len(preferredWhereIndexes)
+		if whereListLength >= minToKeep && (idxScore.consecutiveWhereCount == 0 && idxScore.consecutiveJoinCount == 0) {
+			continue
 		}
 
 		// Skip non-single-scan indexes if we already have enough single-scan ones

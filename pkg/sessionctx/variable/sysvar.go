@@ -326,7 +326,7 @@ var defaultSysVars = []*SysVar{
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, vardef.DefTiDBOptimizerSelectivityLevel)
 		return nil
 	}},
-	{Scope: vardef.ScopeSession, Name: vardef.TIDBOptIndexPruneThreshold, Value: strconv.Itoa(vardef.DefTIDBOptIndexPruneThreshold), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeSession, Name: vardef.TIDBOptIndexPruneThreshold, Value: strconv.Itoa(vardef.DefTIDBOptIndexPruneThreshold), Type: vardef.TypeUnsigned, MinValue: -1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.OptIndexPruneThreshold = tidbOptPositiveInt32(val, vardef.DefTIDBOptIndexPruneThreshold)
 		return nil
 	}},

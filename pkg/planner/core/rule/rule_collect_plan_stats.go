@@ -207,11 +207,11 @@ func (c *CollectPredicateColumnsPoint) pruneIndexesForAllDataSources(plan base.L
 func (c *CollectPredicateColumnsPoint) collectAndPruneDataSources(plan base.LogicalPlan, keptIndexIDs map[int64]map[int64]struct{}) {
 	switch p := plan.(type) {
 	case *logicalop.DataSource:
-		c.pruneIndexesForDataSource(p, keptIndexIDs)
+		pruneIndexesForDataSource(p, keptIndexIDs)
 	case *logicalop.LogicalIndexScan:
-		c.pruneIndexesForDataSource(p.Source, keptIndexIDs)
+		pruneIndexesForDataSource(p.Source, keptIndexIDs)
 	case *logicalop.LogicalTableScan:
-		c.pruneIndexesForDataSource(p.Source, keptIndexIDs)
+		pruneIndexesForDataSource(p.Source, keptIndexIDs)
 	}
 
 	for _, child := range plan.Children() {
@@ -220,7 +220,7 @@ func (c *CollectPredicateColumnsPoint) collectAndPruneDataSources(plan base.Logi
 }
 
 // pruneIndexesForDataSource prunes indexes for a single DataSource if needed.
-func (c *CollectPredicateColumnsPoint) pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]map[int64]struct{}) {
+func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]map[int64]struct{}) {
 	threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
 	if threshold < 0 {
 		return
