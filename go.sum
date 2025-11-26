@@ -46,8 +46,8 @@ dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7
 filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
 filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
 gioui.org v0.0.0-20210308172011-57750fc8a0a6/go.mod h1:RSH6KIUZ0p2xy5zHDxgAM4zumjgTw83q2ge/PI+yyw8=
-git.pingcap.net/pingkai/tipb v0.0.0-20251106073343-eb6839a87365 h1:EG3pI9D1XrM7mhze/XjHN5EeSRzrzBVP2KXwLd0DaEw=
-git.pingcap.net/pingkai/tipb v0.0.0-20251106073343-eb6839a87365/go.mod h1:RM8iRcMalzOthG2XJxnNBniM4xFGb/lDwHUwqkaVzt4=
+git.pingcap.net/pingkai/tipb v0.0.0-20251126083016-e6803ab73334 h1:UnaqteJZbNqYb5CqLy6hFsU7A2msfPTMC+cnv/klfiI=
+git.pingcap.net/pingkai/tipb v0.0.0-20251126083016-e6803ab73334/go.mod h1:RM8iRcMalzOthG2XJxnNBniM4xFGb/lDwHUwqkaVzt4=
 git.sr.ht/~sbinet/gg v0.3.1/go.mod h1:KGYtlADtqsqANL9ueOFkWymvzUvLMQllU5Ixo+8v3pc=
 gitee.com/Trisia/gotlcp v1.3.18 h1:eVa41lAeNHsiT6uR/zWlY3dlqXVJ2aEqJ4qsQjfqAK8=
 gitee.com/Trisia/gotlcp v1.3.18/go.mod h1:neIy4hVQh598WBn2DwMlBuOE8E+SlW6z4GEfUfvww0o=

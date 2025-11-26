@@ -257,6 +257,7 @@ func (p PhysicalUnionScan) Init(ctx base.PlanContext, stats *property.StatsInfo,
 func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, tryPushDownIndexLookUp bool) *PhysicalIndexLookUpReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
 	p.schema = p.tablePlan.Schema()
+	setTableScanToTableRowIDScan(p.tablePlan)
 	p.SetStats(p.tablePlan.StatsInfo())
 	if tryPushDownIndexLookUp {
 		p.tryPushDownLookUp(ctx)

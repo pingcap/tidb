@@ -41,7 +41,7 @@ Projection_17	1.00	root		planner__core__casetest__hint__hint.t1.a, planner__core
 └─IndexLookUp_16	1.00	root		limit embedded(offset:0, count:1)
   ├─Limit_15(Build)	1.00	cop[tikv]		offset:0, count:1
   │ └─IndexRangeScan_13	1.00	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:true, stats:pseudo
-  └─TableFullScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 Limit_11	1.00	root		offset:0, count:1
@@ -54,7 +54,7 @@ TopN_9	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
 └─IndexLookUp_16	1.00	root		
   ├─TopN_15(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
   │ └─IndexRangeScan_13	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
-  └─TableFullScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 TopN_8	1.00	root		planner__core__casetest__hint__hint.t.a, offset:0, count:1
@@ -66,7 +66,7 @@ id	estRows	task	access object	operator info
 IndexLookUp_13	1.00	root		limit embedded(offset:0, count:1)
 ├─Limit_12(Build)	1.00	cop[tikv]		offset:0, count:1
 │ └─IndexRangeScan_10	1.00	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
-└─TableFullScan_11(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_11(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ no_order_index(t, primary) */ * from t where a<10 limit 1;
 id	estRows	task	access object	operator info
 Limit_8	1.00	root		offset:0, count:1
@@ -115,28 +115,28 @@ Projection_19	1.00	root		planner__core__casetest__hint__hint.t1.a, planner__core
 └─IndexLookUp_18	1.00	root		limit embedded(offset:0, count:1)
   ├─Limit_17(Build)	1.00	cop[tikv]		offset:0, count:1
   │ └─IndexRangeScan_13	1.00	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:true, stats:pseudo
-  └─TableFullScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 Projection_19	1.00	root		planner__core__casetest__hint__hint.t1.a, planner__core__casetest__hint__hint.t1.b
 └─IndexLookUp_18	1.00	root		limit embedded(offset:0, count:1)
   ├─Limit_17(Build)	1.00	cop[tikv]		offset:0, count:1
   │ └─IndexRangeScan_13	1.00	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:true, stats:pseudo
-  └─TableFullScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 Projection_19	1.00	root		planner__core__casetest__hint__hint.t1.a, planner__core__casetest__hint__hint.t1.b
 └─IndexLookUp_18	1.00	root		limit embedded(offset:0, count:1)
   ├─Limit_17(Build)	1.00	cop[tikv]		offset:0, count:1
   │ └─IndexRangeScan_13	1.00	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:true, stats:pseudo
-  └─TableFullScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 Projection_19	1.00	root		planner__core__casetest__hint__hint.t1.a, planner__core__casetest__hint__hint.t1.b
 └─IndexLookUp_18	1.00	root		limit embedded(offset:0, count:1)
   ├─Limit_17(Build)	1.00	cop[tikv]		offset:0, count:1
   │ └─IndexRangeScan_13	1.00	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:true, stats:pseudo
-  └─TableFullScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 TopN_8	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
@@ -210,28 +210,28 @@ TopN_9	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
 └─IndexLookUp_18	1.00	root		
   ├─TopN_17(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
   │ └─IndexRangeScan_13	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
-  └─TableFullScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ no_order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 TopN_9	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
 └─IndexLookUp_18	1.00	root		
   ├─TopN_17(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
   │ └─IndexRangeScan_13	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
-  └─TableFullScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ no_order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 TopN_9	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
 └─IndexLookUp_18	1.00	root		
   ├─TopN_17(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
   │ └─IndexRangeScan_13	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
-  └─TableFullScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ no_order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 TopN_9	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
 └─IndexLookUp_18	1.00	root		
   ├─TopN_17(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
   │ └─IndexRangeScan_13	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
-  └─TableFullScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ no_order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 TopN_8	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
@@ -245,7 +245,7 @@ Projection_19	1.00	root		planner__core__casetest__hint__hint.t1.a, planner__core
 └─IndexLookUp_18	1.00	root		limit embedded(offset:0, count:1)
   ├─Limit_17(Build)	1.00	cop[tikv]		offset:0, count:1
   │ └─IndexRangeScan_15	1.00	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:true, stats:pseudo
-  └─TableFullScan_16(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableRowIDScan_16(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ qb_name(qb, v1) order_index(t@qb, primary) */ * from v1;
 id	estRows	task	access object	operator info
 Limit_13	1.00	root		offset:0, count:1
@@ -258,7 +258,7 @@ TopN_11	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
 └─IndexLookUp_18	1.00	root		
   ├─TopN_17(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
   │ └─IndexRangeScan_15	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
-  └─TableFullScan_16(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableRowIDScan_16(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ qb_name(qb, v1) no_order_index(t@qb, primary) */ * from v1;
 id	estRows	task	access object	operator info
 TopN_10	1.00	root		planner__core__casetest__hint__hint.t.a, offset:0, count:1
@@ -279,7 +279,7 @@ CTE_0	0.80	root		Non-Recursive CTE
     └─IndexLookUp_28	1.00	root		limit embedded(offset:0, count:1)
       ├─Limit_27(Build)	1.00	cop[tikv]		offset:0, count:1
       │ └─IndexRangeScan_25	1.00	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:true, stats:pseudo
-      └─TableFullScan_26(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─TableRowIDScan_26(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain WITH CTE AS (select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
 id	estRows	task	access object	operator info
 HashAgg_28	2.00	root		group by:Column#7, Column#8, funcs:firstrow(Column#7)->Column#7, funcs:firstrow(Column#8)->Column#8
@@ -308,7 +308,7 @@ CTE_0	0.80	root		Non-Recursive CTE
     └─IndexLookUp_28	1.00	root		
       ├─TopN_27(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
       │ └─IndexRangeScan_25	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
-      └─TableFullScan_26(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─TableRowIDScan_26(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain WITH CTE AS (select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
 id	estRows	task	access object	operator info
 HashAgg_28	2.00	root		group by:Column#7, Column#8, funcs:firstrow(Column#7)->Column#7, funcs:firstrow(Column#8)->Column#8
@@ -353,7 +353,7 @@ Projection_17	1.00	root		planner__core__casetest__hint__hint.thh.a, planner__cor
 └─IndexLookUp_16	1.00	root	partition:all	limit embedded(offset:0, count:1)
   ├─Limit_15(Build)	1.00	cop[tikv]		offset:0, count:1
   │ └─IndexRangeScan_13	1.00	cop[tikv]	table:thh, index:a(a)	range:[-inf,1), keep order:true, stats:pseudo
-  └─TableFullScan_14(Probe)	1.00	cop[tikv]	table:thh	keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:thh	keep order:false, stats:pseudo
 set tidb_cost_model_version=2;
 drop view if exists v, v1, v2;
 drop table if exists t, t1, t2;
@@ -1528,11 +1528,11 @@ HashJoin_42	6944.44	root		CARTESIAN inner join
 ├─IndexLookUp_51(Build)	83.33	root		
 │ ├─IndexRangeScan_48(Build)	250.00	cop[tikv]	table:t4, index:idx_b(b)	range:(3,10), keep order:false, stats:pseudo
 │ └─Selection_50(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2)
-│   └─TableFullScan_49	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+│   └─TableRowIDScan_49	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 └─IndexLookUp_47(Probe)	83.33	root		
   ├─IndexRangeScan_44(Build)	250.00	cop[tikv]	table:t4, index:idx_a(a)	range:(2,8), keep order:false, stats:pseudo
   └─Selection_46(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.b, 3)
-    └─TableFullScan_45	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+    └─TableRowIDScan_45	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain with d1 as (
 select a from (
 select a from (
@@ -1549,7 +1549,7 @@ HashJoin_42	6944.44	root		CARTESIAN inner join
 └─IndexLookUp_47(Probe)	83.33	root		
   ├─IndexRangeScan_44(Build)	250.00	cop[tikv]	table:t4, index:idx_a(a)	range:(2,8), keep order:false, stats:pseudo
   └─Selection_46(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.b, 3)
-    └─TableFullScan_45	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+    └─TableRowIDScan_45	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain with d1 as (
 select a from (
 select a from (
@@ -1563,7 +1563,7 @@ HashJoin_42	6944.44	root		CARTESIAN inner join
 ├─IndexLookUp_58(Build)	83.33	root		
 │ ├─IndexRangeScan_55(Build)	250.00	cop[tikv]	table:t4, index:idx_b(b)	range:(3,10), keep order:false, stats:pseudo
 │ └─Selection_57(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2)
-│   └─TableFullScan_56	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+│   └─TableRowIDScan_56	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 └─TableReader_46(Probe)	83.33	root		data:Selection_45
   └─Selection_45	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2), gt(planner__core__casetest__hint__hint.t4.b, 3), lt(planner__core__casetest__hint__hint.t4.a, 10), lt(planner__core__casetest__hint__hint.t4.a, 8), lt(planner__core__casetest__hint__hint.t4.a, 9)
     └─TableFullScan_44	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
@@ -1576,7 +1576,7 @@ id	estRows	task	access object	operator info
 IndexLookUp	0.02	root		
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:b(b)	range:[1,1], keep order:false, stats:pseudo
 └─Selection(Probe)	0.02	cop[tikv]		or(eq(planner__core__casetest__hint__hint.t.a, 1), eq(planner__core__casetest__hint__hint.t.c, 1))
-  └─TableFullScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, c) */ * from t where b = 1 and (a = 1 or c = 1);
 id	estRows	task	access object	operator info
 IndexMerge	0.02	root		type: union
@@ -1656,7 +1656,7 @@ Sort	12487.50	root		planner__core__casetest__hint__hint.t.a
     └─IndexLookUp(Probe)	12487.50	root		
       ├─Selection(Build)	12487.50	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.b))
       │ └─IndexRangeScan	12500.00	cop[tikv]	table:t2, index:b(b)	range: decided by [eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.a)], keep order:false, stats:pseudo
-      └─TableFullScan(Probe)	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
+      └─TableRowIDScan(Probe)	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 desc format = 'brief' select /*+ INL_HASH_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a;
 id	estRows	task	access object	operator info
 Sort	12487.50	root		planner__core__casetest__hint__hint.t.a
@@ -1667,7 +1667,7 @@ Sort	12487.50	root		planner__core__casetest__hint__hint.t.a
     └─IndexLookUp(Probe)	12487.50	root		
       ├─Selection(Build)	12487.50	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.b))
       │ └─IndexRangeScan	12500.00	cop[tikv]	table:t2, index:b(b)	range: decided by [eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.a)], keep order:false, stats:pseudo
-      └─TableFullScan(Probe)	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
+      └─TableRowIDScan(Probe)	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 desc format = 'brief' select /*+ INL_MERGE_JOIN(t2)*/ t1.a, t2.a from t t1, t t2 ,t t3 where t1.a = t2.a and t3.a=t2.a;
 id	estRows	task	access object	operator info
 MergeJoin	15625.00	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:planner__core__casetest__hint__hint.t.a
@@ -1778,13 +1778,13 @@ id	estRows	task	access object	operator info
 IndexLookUp_8	10.00	root		
 ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
 └─Selection_7(Probe)	10.00	cop[tikv]		eq(test.t.a, 1)
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─TableRowIDScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select /*+ index(t b xxxx) */ * from t where a = 1;
 id	estRows	task	access object	operator info
 IndexLookUp_8	10.00	root		
 ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
 └─Selection_7(Probe)	10.00	cop[tikv]		eq(test.t.a, 1)
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─TableRowIDScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1176	Key 'xxxx' doesn't exist in table 't'
 explain select /*+ index(t xxx) */ * from t where a = 1;
@@ -1804,7 +1804,7 @@ id	estRows	task	access object	operator info
 IndexLookUp_8	10.00	root		
 ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
 └─Selection_7(Probe)	10.00	cop[tikv]		eq(test.t.a, 1)
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─TableRowIDScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 use test;
 drop table if exists t;
@@ -1820,7 +1820,7 @@ id	estRows	task	access object	operator info
 IndexLookUp_8	0.01	root		
 ├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[2,2], keep order:false, stats:pseudo
 └─Selection_7(Probe)	0.01	cop[tikv]		eq(test.t.b, 2)
-  └─TableFullScan_6	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─TableRowIDScan_6	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select /*+ no_index(t idx_c) */ * from t where c = 2;
 id	estRows	task	access object	operator info
 TableReader_7	10.00	root		data:Selection_6
@@ -1849,7 +1849,7 @@ explain format = 'brief' select /*+ INDEX_LOOKUP_PUSH_DOWN(t1, idx_a) */ * from 
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_a(a)	range:[2,2], keep order:false, stats:pseudo
-└─TableFullScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	8061	Optimizer hint INDEX_LOOKUP_PUSH_DOWN is not supported by TiDB and is ignored
 explain format = 'brief' select /*+ INDEX_LOOKUP_PUSH_DOWN(t1, idx_b) */ * from t1 where b=3;

@@ -265,8 +265,7 @@ func (dagBuilder *dagBuilder) addSelection(expr *tipb.Expr) *dagBuilder {
 	dagBuilder.executors = append(dagBuilder.executors, &tipb.Executor{
 		Tp: tipb.ExecType_TypeSelection,
 		Selection: &tipb.Selection{
-			Conditions:       []*tipb.Expr{expr},
-			XXX_unrecognized: nil,
+			Conditions: []*tipb.Expr{expr},
 		},
 	})
 	return dagBuilder
