@@ -183,3 +183,26 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, sql1, sql2 string, se1,
 	wg.Wait()
 	f(t, err1, err2)
 }
+
+func TestAlterTableCompression(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+
+	// Test COMPRESSION='NONE' should succeed
+	tk.MustExec("alter table t compression='NONE'")
+
+	// Test COMPRESSION='ZLIB' should fail
+	err := tk.ExecToErr("alter table t compression='ZLIB'")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported")
+
+	// Test COMPRESSION='LZ4' should fail
+	err = tk.ExecToErr("alter table t compression='LZ4'")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported")
+
+	tk.MustExec("drop table t")
+}
