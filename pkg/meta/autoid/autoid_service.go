@@ -254,7 +254,15 @@ func (d *ClientDiscover) ResetConn(reason error) {
 	}
 }
 
-func (*singlePointAlloc) Transfer(_, _ int64) error {
+func (sp *singlePointAlloc) Transfer(databaseID, tableID int64) error {
+	if sp.dbID == databaseID && sp.tblID == tableID {
+		return nil
+	}
+	sp.dbID = databaseID
+	sp.tblID = tableID
+	if sp.lastAllocated > 0 {
+		return sp.Rebase(context.Background(), sp.lastAllocated+1, false)
+	}
 	return nil
 }
 
