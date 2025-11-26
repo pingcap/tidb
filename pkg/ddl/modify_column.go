@@ -143,15 +143,17 @@ func getModifyColumnType(
 		return ModifyTypeReorg
 	}
 
-	if needRowReorg(oldCol, args.Column) {
-		return ModifyTypeReorg
-	}
-
-	relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
-	if len(relatedIndexes) == 0 || !needIndexReorg(oldCol, args.Column) {
+	// Both encoding of row and index are not changed, just need to check existing data.
+	if !needRowReorg(oldCol, args.Column) && !needIndexReorg(oldCol, args.Column) {
 		return ModifyTypeNoReorgWithCheck
 	}
-	return ModifyTypeIndexReorg
+
+	// For hotfix #64671:
+	// needIndexReorg return true means the encoding rule for index is changes. In such
+	// case, we still need to reorg the row data even if the row data remains unchanged.
+	// So both old and new indexes can points to the correct field type. Otherwise, the
+	// index stats collected by ddl is not correct.
+	return ModifyTypeReorg
 }
 
 func getChangingCol(
@@ -808,8 +810,7 @@ func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 	changingTp := changingCol.GetType()
 
 	if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
-		// Only optimize for integer with same signedness.
-		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
+		return false
 	}
 
 	// _bin collation has padding, it must need reorg.
@@ -817,14 +818,7 @@ func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 		return true
 	}
 
-	// Only optimize for CHAR-CHAR or VARCHAR-VARCHAR with same collation.
-	if (oldTp == mysql.TypeString && changingTp == mysql.TypeString) ||
-		(oldTp == mysql.TypeVarchar && changingTp == mysql.TypeVarchar) {
-		return oldCol.GetCollate() != changingCol.GetCollate()
-	}
-
-	// All other type changes need reorg.
-	return true
+	return !types.IsTypeChar(oldTp) || !types.IsTypeChar(changingTp)
 }
 
 // checkModifyColumnData checks the values of the old column data
