@@ -39,3 +39,14 @@ func IsTiFlashHTTPResp(store *pdhttp.MetaStore) bool {
 	}
 	return false
 }
+
+// IsTiFlashWriteHTTPResp tests whether the store is a TiFlash node under Classic kernel
+// or TiFlash write node under NextGen kernel from a PD HTTP response.
+func IsTiFlashWriteHTTPResp(store *pdhttp.MetaStore) bool {
+	for _, label := range store.Labels {
+		if label.Key == "engine" && label.Value == "tiflash" {
+			return true
+		}
+	}
+	return false
+}

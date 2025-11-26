@@ -382,6 +382,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 			return 0, err
 		}
 		stores := make(map[int64]pdhttp.StoreInfo)
+		// FIXME: Check whether we need to change IsTiFlashHTTPResp to IsTiFlashWriteHTTPResp here.
 		for _, store := range tikvStats.Stores {
 			if engine.IsTiFlashHTTPResp(&store.Store) {
 				stores[store.Store.ID] = store
