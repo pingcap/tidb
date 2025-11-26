@@ -71,6 +71,7 @@ type TestKit struct {
 	store   kv.Storage
 	session sessiontypes.Session
 	alloc   chunk.Allocator
+	Res     []*Result
 }
 
 // NewTestKit returns a new *TestKit.
@@ -117,6 +118,7 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Sessi
 		store:   store,
 		session: se,
 		alloc:   chunk.NewAllocator(),
+		Res:     make([]*Result, 0),
 	}
 }
 
@@ -215,6 +217,42 @@ func (tk *TestKit) MustQuery(sql string, args ...any) *Result {
 	rs2.Check(rs1.Rows())
 	rs1.rows = rs1Row
 	return rs1
+}
+
+// MultiHanldeNodeWithResult for execute procedure SQL with result
+func (tk *TestKit) MultiHanldeNodeWithResult(_ context.Context, stmt ast.StmtNode) error {
+	ctx := context.Background()
+	comment := fmt.Sprintf("stmt:%v", stmt)
+	var rs sqlexec.RecordSet
+	var err error
+	if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
+		rs, err = session.HandleNonTransactionalDML(ctx, s, tk.Session())
+	} else {
+		rs, err = tk.Session().ExecuteStmt(ctx, stmt)
+	}
+	if err != nil {
+		tk.session.GetSessionVars().StmtCtx.AppendError(err)
+		return err
+	}
+	tk.require.NotNil(rs, comment)
+	tk.Res = append(tk.Res, tk.ResultSetToResultWithCtx(ctx, rs, comment))
+	return nil
+}
+
+// InProcedure init status for procedure
+func (tk *TestKit) InProcedure() {
+	tk.session.SetSessionExec(tk)
+	tk.MustExec("set global tidb_enable_procedure = ON")
+	tk.MustExec("set global tidb_enable_sp_param_substitute = ON")
+	tk.MustExec("set tidb_enable_sp_param_substitute = ON")
+}
+
+// ClearProcedureRes clear procedure result
+func (tk *TestKit) ClearProcedureRes() {
+	for id := 0; id < len(tk.Res); id++ {
+		tk.Res[id] = nil
+	}
+	tk.Res = tk.Res[0:0]
 }
 
 // EventuallyMustQueryAndCheck query the statements and assert that
@@ -513,10 +551,14 @@ func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	_, err := tk.Exec(sql)
 	tk.require.Errorf(err, "sql: %s", sql)
 	originErr := errors.Cause(err)
-	tErr, ok := originErr.(*terror.Error)
-	tk.require.Truef(ok, "sql: %s, expect type 'terror.Error', but obtain '%T': %v", sql, originErr, originErr)
-	sqlErr := terror.ToSQLError(tErr)
-	tk.require.Equalf(errCode, int(sqlErr.Code), "sql: %s, Assertion failed, origin err:\n  %v", sql, sqlErr)
+	switch v := originErr.(type) {
+	case *terror.Error:
+		tk.require.Equalf(errCode, int(v.Code()), "sql: %s, Assertion failed, origin err:\n  %v", sql, v)
+	case *terror.TiDBError:
+		tk.require.Equalf(errCode, int(v.MYSQLERRNO), "sql: %s, Assertion failed, origin err:\n  %v", sql, v)
+	default:
+		tk.require.Truef(false, "sql: %s, expect type 'terror.Error', but obtain '%T': %v", sql, originErr, originErr)
+	}
 }
 
 // MustGetErrMsg executes a sql statement and assert its error message.

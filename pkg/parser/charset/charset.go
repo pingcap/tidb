@@ -71,16 +71,18 @@ var CharacterSetInfos = map[string]*Charset{
 	CharsetLatin1:  {CharsetLatin1, CollationLatin1, make(map[string]*Collation), "Latin1", 1},
 	CharsetBin:     {CharsetBin, CollationBin, make(map[string]*Collation), "binary", 1},
 	CharsetGBK:     {CharsetGBK, CollationGBKBin, make(map[string]*Collation), "Chinese Internal Code Specification", 2},
+	CharsetGB18030: {CharsetGB18030, CollationGB18030Bin, make(map[string]*Collation), "China National Standard GB18030", 4},
 }
 
 // All the names supported collations should be in the following table.
 var supportedCollationNames = map[string]struct{}{
-	CollationUTF8:    {},
-	CollationUTF8MB4: {},
-	CollationASCII:   {},
-	CollationLatin1:  {},
-	CollationBin:     {},
-	CollationGBKBin:  {},
+	CollationUTF8:       {},
+	CollationUTF8MB4:    {},
+	CollationASCII:      {},
+	CollationLatin1:     {},
+	CollationBin:        {},
+	CollationGBKBin:     {},
+	CollationGB18030Bin: {},
 }
 
 // TiFlashSupportedCharsets is a map which contains TiFlash supports charsets.
@@ -238,6 +240,10 @@ const (
 	CollationGBKBin = "gbk_bin"
 	// CollationGBKChineseCI is the default collation for CharsetGBK when new collation is enabled.
 	CollationGBKChineseCI = "gbk_chinese_ci"
+	// CollationGB18030Bin is the default collation for CharsetGB18030 when new collation is disabled.
+	CollationGB18030Bin = "gb18030_bin"
+	// CollationGB18030ChineseCI is the default collation for CharsetGB18030 when new collation is enabled.
+	CollationGB18030ChineseCI = "gb18030_chinese_ci"
 )
 
 const (
@@ -253,6 +259,8 @@ const (
 	CharsetUTF8MB3 = "utf8mb3"
 	// CharsetUTF8MB4 represents 4 bytes utf8, which works the same way as utf8 in Go.
 	CharsetUTF8MB4 = "utf8mb4"
+	// CharsetGB18030 represents 4 bytes gb18030.
+	CharsetGB18030 = "gb18030"
 	//revive:disable:exported
 	CharsetARMSCII8 = "armscii8"
 	CharsetBig5     = "big5"
@@ -267,7 +275,6 @@ const (
 	CharsetDEC8     = "dec8"
 	CharsetEUCJPMS  = "eucjpms"
 	CharsetEUCKR    = "euckr"
-	CharsetGB18030  = "gb18030"
 	CharsetGB2312   = "gb2312"
 	CharsetGBK      = "gbk"
 	CharsetGEOSTD8  = "geostd8"
@@ -298,28 +305,28 @@ var charsets = map[string]*Charset{
 	CharsetASCII:    {Name: CharsetASCII, Maxlen: 1, DefaultCollation: "ascii_general_ci", Desc: "US ASCII", Collations: make(map[string]*Collation)},
 	CharsetBig5:     {Name: CharsetBig5, Maxlen: 2, DefaultCollation: "big5_chinese_ci", Desc: "Big5 Traditional Chinese", Collations: make(map[string]*Collation)},
 	CharsetBin:      {Name: CharsetBin, Maxlen: 1, DefaultCollation: "binary", Desc: "Binary pseudo charset", Collations: make(map[string]*Collation)},
-	CharsetLatin1:   {Name: CharsetLatin1, Maxlen: 1, DefaultCollation: "cp1250_general_ci", Desc: "Windows Central European", Collations: make(map[string]*Collation)},
-	CharsetCP1250:   {Name: CharsetCP1250, Maxlen: 1, DefaultCollation: "cp1251_general_ci", Desc: "Windows Cyrillic", Collations: make(map[string]*Collation)},
-	CharsetCP1251:   {Name: CharsetCP1251, Maxlen: 1, DefaultCollation: "cp1256_general_ci", Desc: "Windows Arabic", Collations: make(map[string]*Collation)},
-	CharsetCP1256:   {Name: CharsetCP1256, Maxlen: 1, DefaultCollation: "cp1257_general_ci", Desc: "Windows Baltic", Collations: make(map[string]*Collation)},
-	CharsetCP1257:   {Name: CharsetCP1257, Maxlen: 1, DefaultCollation: "cp850_general_ci", Desc: "DOS West European", Collations: make(map[string]*Collation)},
-	CharsetCP850:    {Name: CharsetCP850, Maxlen: 1, DefaultCollation: "cp852_general_ci", Desc: "DOS Central European", Collations: make(map[string]*Collation)},
-	CharsetCP852:    {Name: CharsetCP852, Maxlen: 1, DefaultCollation: "cp866_general_ci", Desc: "DOS Russian", Collations: make(map[string]*Collation)},
-	CharsetCP866:    {Name: CharsetCP866, Maxlen: 1, DefaultCollation: "cp932_japanese_ci", Desc: "SJIS for Windows Japanese", Collations: make(map[string]*Collation)},
-	CharsetCP932:    {Name: CharsetCP932, Maxlen: 2, DefaultCollation: "dec8_swedish_ci", Desc: "DEC West European", Collations: make(map[string]*Collation)},
-	CharsetDEC8:     {Name: CharsetDEC8, Maxlen: 1, DefaultCollation: "eucjpms_japanese_ci", Desc: "UJIS for Windows Japanese", Collations: make(map[string]*Collation)},
-	CharsetEUCJPMS:  {Name: CharsetEUCJPMS, Maxlen: 3, DefaultCollation: "euckr_korean_ci", Desc: "EUC-KR Korean", Collations: make(map[string]*Collation)},
-	CharsetEUCKR:    {Name: CharsetEUCKR, Maxlen: 2, DefaultCollation: "gb18030_chinese_ci", Desc: "China National Standard GB18030", Collations: make(map[string]*Collation)},
-	CharsetGB18030:  {Name: CharsetGB18030, Maxlen: 4, DefaultCollation: "gb2312_chinese_ci", Desc: "GB2312 Simplified Chinese", Collations: make(map[string]*Collation)},
-	CharsetGB2312:   {Name: CharsetGB2312, Maxlen: 2, DefaultCollation: "gbk_chinese_ci", Desc: "GBK Simplified Chinese", Collations: make(map[string]*Collation)},
-	CharsetGBK:      {Name: CharsetGBK, Maxlen: 2, DefaultCollation: "geostd8_general_ci", Desc: "GEOSTD8 Georgian", Collations: make(map[string]*Collation)},
-	CharsetGEOSTD8:  {Name: CharsetGEOSTD8, Maxlen: 1, DefaultCollation: "greek_general_ci", Desc: "ISO 8859-7 Greek", Collations: make(map[string]*Collation)},
-	CharsetGreek:    {Name: CharsetGreek, Maxlen: 1, DefaultCollation: "hebrew_general_ci", Desc: "ISO 8859-8 Hebrew", Collations: make(map[string]*Collation)},
-	CharsetHebrew:   {Name: CharsetHebrew, Maxlen: 1, DefaultCollation: "hp8_english_ci", Desc: "HP West European", Collations: make(map[string]*Collation)},
-	CharsetHP8:      {Name: CharsetHP8, Maxlen: 1, DefaultCollation: "keybcs2_general_ci", Desc: "DOS Kamenicky Czech-Slovak", Collations: make(map[string]*Collation)},
-	CharsetKEYBCS2:  {Name: CharsetKEYBCS2, Maxlen: 1, DefaultCollation: "koi8r_general_ci", Desc: "KOI8-R Relcom Russian", Collations: make(map[string]*Collation)},
+	CharsetCP1250:   {Name: CharsetCP1250, Maxlen: 1, DefaultCollation: "cp1250_general_ci", Desc: "Windows Central European", Collations: make(map[string]*Collation)},
+	CharsetCP1251:   {Name: CharsetCP1251, Maxlen: 1, DefaultCollation: "cp1251_general_ci", Desc: "Windows Cyrillic", Collations: make(map[string]*Collation)},
+	CharsetCP1256:   {Name: CharsetCP1256, Maxlen: 1, DefaultCollation: "cp1256_general_ci", Desc: "Windows Arabic", Collations: make(map[string]*Collation)},
+	CharsetCP1257:   {Name: CharsetCP1257, Maxlen: 1, DefaultCollation: "cp1257_general_ci", Desc: "Windows Baltic", Collations: make(map[string]*Collation)},
+	CharsetCP850:    {Name: CharsetCP850, Maxlen: 1, DefaultCollation: "cp850_general_ci", Desc: "DOS West European", Collations: make(map[string]*Collation)},
+	CharsetCP852:    {Name: CharsetCP852, Maxlen: 1, DefaultCollation: "cp852_general_ci", Desc: "DOS Central European", Collations: make(map[string]*Collation)},
+	CharsetCP866:    {Name: CharsetCP866, Maxlen: 1, DefaultCollation: "cp866_general_ci", Desc: "DOS Russian", Collations: make(map[string]*Collation)},
+	CharsetCP932:    {Name: CharsetCP932, Maxlen: 2, DefaultCollation: "cp932_japanese_ci", Desc: "SJIS for Windows Japanese", Collations: make(map[string]*Collation)},
+	CharsetDEC8:     {Name: CharsetDEC8, Maxlen: 1, DefaultCollation: "dec8_swedish_ci", Desc: "DEC West European", Collations: make(map[string]*Collation)},
+	CharsetEUCJPMS:  {Name: CharsetEUCJPMS, Maxlen: 3, DefaultCollation: "eucjpms_japanese_ci", Desc: "UJIS for Windows Japanese", Collations: make(map[string]*Collation)},
+	CharsetEUCKR:    {Name: CharsetEUCKR, Maxlen: 2, DefaultCollation: "euckr_korean_ci", Desc: "EUC-KR Korean", Collations: make(map[string]*Collation)},
+	CharsetGB18030:  {Name: CharsetGB18030, Maxlen: 4, DefaultCollation: "gb18030_chinese_ci", Desc: "China National Standard GB18030", Collations: make(map[string]*Collation)},
+	CharsetGB2312:   {Name: CharsetGB2312, Maxlen: 2, DefaultCollation: "gb2312_chinese_ci", Desc: "GB2312 Simplified Chinese", Collations: make(map[string]*Collation)},
+	CharsetGBK:      {Name: CharsetGBK, Maxlen: 2, DefaultCollation: "gbk_chinese_ci", Desc: "GBK Simplified Chinese", Collations: make(map[string]*Collation)},
+	CharsetGEOSTD8:  {Name: CharsetGEOSTD8, Maxlen: 1, DefaultCollation: "geostd8_general_ci", Desc: "GEOSTD8 Georgian", Collations: make(map[string]*Collation)},
+	CharsetGreek:    {Name: CharsetGreek, Maxlen: 1, DefaultCollation: "greek_general_ci", Desc: "ISO 8859-7 Greek", Collations: make(map[string]*Collation)},
+	CharsetHebrew:   {Name: CharsetHebrew, Maxlen: 1, DefaultCollation: "hebrew_general_ci", Desc: "ISO 8859-8 Hebrew", Collations: make(map[string]*Collation)},
+	CharsetHP8:      {Name: CharsetHP8, Maxlen: 1, DefaultCollation: "hp8_english_ci", Desc: "HP West European", Collations: make(map[string]*Collation)},
+	CharsetKEYBCS2:  {Name: CharsetKEYBCS2, Maxlen: 1, DefaultCollation: "keybcs2_general_ci", Desc: "DOS Kamenicky Czech-Slovak", Collations: make(map[string]*Collation)},
 	CharsetKOI8R:    {Name: CharsetKOI8R, Maxlen: 1, DefaultCollation: "koi8u_general_ci", Desc: "KOI8-U Ukrainian", Collations: make(map[string]*Collation)},
-	CharsetKOI8U:    {Name: CharsetKOI8U, Maxlen: 1, DefaultCollation: "latin1_swedish_ci", Desc: "cp1252 West European", Collations: make(map[string]*Collation)},
+	CharsetKOI8U:    {Name: CharsetKOI8U, Maxlen: 1, DefaultCollation: "koi8r_general_ci", Desc: "KOI8-R Relcom Russian", Collations: make(map[string]*Collation)},
+	CharsetLatin1:   {Name: CharsetLatin1, Maxlen: 1, DefaultCollation: "latin1_swedish_ci", Desc: "cp1252 West European", Collations: make(map[string]*Collation)},
 	CharsetLatin2:   {Name: CharsetLatin2, Maxlen: 1, DefaultCollation: "latin2_general_ci", Desc: "ISO 8859-2 Central European", Collations: make(map[string]*Collation)},
 	CharsetLatin5:   {Name: CharsetLatin5, Maxlen: 1, DefaultCollation: "latin5_turkish_ci", Desc: "ISO 8859-9 Turkish", Collations: make(map[string]*Collation)},
 	CharsetLatin7:   {Name: CharsetLatin7, Maxlen: 1, DefaultCollation: "latin7_general_ci", Desc: "ISO 8859-13 Baltic", Collations: make(map[string]*Collation)},
