@@ -2721,10 +2721,8 @@ func (do *Domain) gcStatsWorker() {
 
 func (do *Domain) dumpColStatsUsageWorker() {
 	logutil.BgLogger().Info("dumpColStatsUsageWorker started.")
-	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
-	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
-	dumpDuration := 100*do.statsLease + randDuration
-	dumpColStatsUsageTicker := time.NewTicker(dumpDuration)
+	lease := do.statsLease
+	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
