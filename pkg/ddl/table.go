@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"go.uber.org/zap"
@@ -127,6 +128,20 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			err = asyncNotifyEvent(jobCtx, dropTableEvent, job, noSubJob, w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)
+			}
+
+			// Drop fulltext indexes on TiCI before finalizing the job.
+			for _, idx := range tblInfo.Indices {
+				if idx.FullTextInfo != nil {
+					if e := tici.DropFullTextIndex(jobCtx.stepCtx, tblInfo.ID, idx.ID); e != nil {
+						if job.IsRollingback() {
+							logutil.DDLLogger().Warn("drop table: drop fulltext index on TiCI failed",
+								zap.Error(e))
+						} else {
+							return ver, errors.Trace(e)
+						}
+					}
+				}
 			}
 		}
 
