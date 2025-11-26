@@ -36,7 +36,6 @@ var (
 	_ AggFunc = (*countOriginal4VectorFloat32)(nil)
 	_ AggFunc = (*countOriginal4String)(nil)
 
-	// TODO disable spill function when there is a distinct aggregation function
 	_ AggFunc = (*countPartialWithDistinct4Int)(nil)
 	_ AggFunc = (*countPartialWithDistinct4Real)(nil)
 	_ AggFunc = (*countPartialWithDistinct4Decimal)(nil)
