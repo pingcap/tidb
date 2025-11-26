@@ -184,14 +184,17 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 	}
 
 	// Store WHERE columns directly in the DataSource
-	// PushedDownConds contains WHERE clause conditions and join conditions that have been pushed down
+	// We need to check both PushedDownConds and AllConds because:
+	// - PushedDownConds contains conditions that can be pushed to storage
+	// - AllConds contains all WHERE conditions, including OR conditions that might not be pushed down
+	//   but still reference columns that are relevant for index selection
 	// We need to extract only local WHERE conditions (those that reference only this table's columns)
 	// A column can appear in both local WHERE and join predicates - e.g., "WHERE t1.a = t2.a AND t1.a = 5"
 	whereColSet := make(map[int64]struct{})
+	allConds := make(map[string]struct{})
+	// First, process PushedDownConds
 	for _, cond := range ds.PushedDownConds {
-		// Extract all columns from this condition
 		condCols := expression.ExtractColumns(cond)
-		// Check if all columns in this condition belong to this DataSource's schema
 		allLocal := true
 		for _, col := range condCols {
 			if !ds.Schema().Contains(col) {
@@ -199,7 +202,31 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 				break
 			}
 		}
-		// Only extract columns from local conditions for WhereColumns
+		if allLocal {
+			for _, col := range condCols {
+				if _, exists := whereColSet[col.UniqueID]; !exists {
+					ds.WhereColumns = append(ds.WhereColumns, col)
+					whereColSet[col.UniqueID] = struct{}{}
+				}
+			}
+		}
+		// Track which conditions we've already processed
+		allConds[string(cond.HashCode())] = struct{}{}
+	}
+	// Also process AllConds to catch OR conditions and other conditions that weren't pushed down
+	for _, cond := range ds.AllConds {
+		// Skip if we already processed this condition
+		if _, exists := allConds[string(cond.HashCode())]; exists {
+			continue
+		}
+		condCols := expression.ExtractColumns(cond)
+		allLocal := true
+		for _, col := range condCols {
+			if !ds.Schema().Contains(col) {
+				allLocal = false
+				break
+			}
+		}
 		if allLocal {
 			for _, col := range condCols {
 				if _, exists := whereColSet[col.UniqueID]; !exists {
