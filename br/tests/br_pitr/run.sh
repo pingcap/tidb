@@ -20,7 +20,7 @@ CUR=$(cd `dirname $0`; pwd)
 
 # const value
 PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
-res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
+res_file="$TEST_DIR/sql_res.$TEST_NAME.log"
 TASK_NAME="br_pitr"
 
 restart_services_allowing_huge_index() {
