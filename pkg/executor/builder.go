@@ -4151,7 +4151,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *physicalop.PhysicalIndexRead
 	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	indexPlans := v.IndexPlans
 	storeType := kv.TiKV
-	if is.Index.IsFulltextIndexOnTiCI() {
+	if is.Index.IsTiCIIndex() {
 		indexPlans = []base.PhysicalPlan{v.IndexPlans[len(v.IndexPlans)-1]}
 		storeType = kv.TiFlash
 	}
@@ -4374,7 +4374,7 @@ func buildIndexScanOutputOffsets(p *physicalop.PhysicalIndexScan, columns []*mod
 		}
 	}
 
-	if p.Index.IsFulltextIndexOnTiCI() {
+	if p.Index.IsTiCIIndex() {
 		return handleOutputOffsetsForTiCIIndexLookUp(outputOffsets, handleLen), nil
 	}
 
