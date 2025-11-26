@@ -114,7 +114,7 @@ func getModifyColumnType(
 	args *model.ModifyColumnArgs,
 	tblInfo *model.TableInfo,
 	oldCol *model.ColumnInfo,
-	sqlMode mysql.SQLMode) byte {
+	_ mysql.SQLMode) byte {
 	newCol := args.Column
 	if noReorgDataStrict(tblInfo, oldCol, args.Column) {
 		// It's not NULL->NOTNULL change
@@ -1829,7 +1829,7 @@ func GetModifiableColumnJob(
 
 // noReorgDataStrict is a strong check to decide whether we need to change the column data.
 // If it returns true, it means we don't need the reorg no matter what the data is.
-func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
+func noReorgDataStrict(_ *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.GetFlag())
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.GetFlag())
 	needTruncationOrToggleSign := func() bool {
