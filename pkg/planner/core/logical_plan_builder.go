@@ -5328,6 +5328,9 @@ func buildSingleTableColPosInfoForDelete(tbl table.Table, colPosInfo *physicalop
 	tblLen := len(tbl.DeletableCols())
 	colPosInfo.Start -= prePrunedCount
 	colPosInfo.End = colPosInfo.Start + tblLen
+	for col := range colPosInfo.HandleCols.IterColumns() {
+		col.Index -= prePrunedCount
+	}
 	return nil
 }
 

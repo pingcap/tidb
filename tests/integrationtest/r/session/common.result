@@ -217,7 +217,6 @@ insert into t (F1) values ('1'), ('2');
 delete m1, m2 from t m1,t m2 where m1.F1>m2.F1;
 select * from t;
 F1
-1
 drop table if exists t;
 create table t (F1 VARCHAR(30));
 insert into t (F1) values ('1'), ('2');

@@ -803,7 +803,6 @@ select * from t1;
 c1
 select * from t2;
 c2
-NULL
 drop table if exists t1, t2;
 create table t1 (pk int(11) primary key, a int(11) not null, b int(11), key idx_b(b), key idx_a(a));
 insert into `t1` values (1,1,0),(2,7,6),(3,2,null),(4,1,null),(5,4,5);
