@@ -1287,7 +1287,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				publicPaths = append(publicPaths, path)
 				continue
 			}
-			hasTiCIIndex = hasTiCIIndex || index.IsFulltextIndexOnTiCI()
+			hasTiCIIndex = hasTiCIIndex || index.IsTiCIIndex()
 			path := &util.AccessPath{Index: index}
 			publicPaths = append(publicPaths, path)
 		}
@@ -1299,7 +1299,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		// The removal of the unhinted TiCI index paths will be done after we dicide the availabilty of each index.
 		ticiIndexPaths = make([]*util.AccessPath, 0, len(publicPaths))
 		for _, path := range publicPaths {
-			if path.Index != nil && path.Index.IsFulltextIndexOnTiCI() {
+			if path.Index != nil && path.Index.IsTiCIIndex() {
 				ticiIndexPaths = append(ticiIndexPaths, path)
 			}
 		}
@@ -1463,7 +1463,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			tiCIIndexMap[path.Index.ID] = path
 		}
 		for _, path := range available {
-			if path.Index != nil && path.Index.IsFulltextIndexOnTiCI() {
+			if path.Index != nil && path.Index.IsTiCIIndex() {
 				delete(tiCIIndexMap, path.Index.ID)
 			}
 		}
