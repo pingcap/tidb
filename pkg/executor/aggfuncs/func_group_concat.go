@@ -133,6 +133,16 @@ func (e *baseGroupConcatDistinct4String) AppendFinalResult2Chunk(sctx AggFuncUpd
 	return nil
 }
 
+// SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
+func (e *baseGroupConcatDistinct4String) SetTruncated(t *int32) {
+	e.truncated = t
+}
+
+// GetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
+func (e *baseGroupConcatDistinct4String) GetTruncated() *int32 {
+	return e.truncated
+}
+
 // nolint:structcheck
 type basePartialResult4GroupConcat struct {
 	valsBuf *bytes.Buffer
