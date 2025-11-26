@@ -4,6 +4,7 @@ go_library(
     name = "util",
     srcs = [
         "byitem.go",
+        "column.go",
         "explain_misc.go",
         "expression.go",
         "funcdep_misc.go",
@@ -44,15 +45,27 @@ go_test(
     name = "util_test",
     timeout = "short",
     srcs = [
+        "column_test.go",
         "main_test.go",
         "path_test.go",
     ],
     embed = [":util"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 4,
+>>>>>>> 47d17123d6d (expression,planner: move planner-specific functions out of expression (#64675))
     deps = [
         "//pkg/domain",
+        "//pkg/expression",
         "//pkg/meta/model",
+<<<<<<< HEAD
         "//pkg/planner/core",
+=======
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/planner/util/coretestsdk",
+>>>>>>> 47d17123d6d (expression,planner: move planner-specific functions out of expression (#64675))
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/collate",
