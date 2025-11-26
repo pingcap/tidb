@@ -212,7 +212,13 @@ func newBackfillCtx(id int, rInfo *reorgInfo, tbl table.Table, jobCtx *ReorgCont
 			colOrIdxName = getIndexNamesFromArgs(args)
 		}
 	case model.ActionModifyColumn:
-		colOrIdxName = getChangingColumnOriginName(model.FindColumnInfoByID(tbl.Meta().Columns, rInfo.currElement.ID))
+		if rInfo.reorgType == model.ActionAddIndex {
+			idx := model.FindIndexInfoByID(tbl.Meta().Indices, rInfo.currElement.ID)
+			colOrIdxName = getChangingIndexOriginName(idx)
+		} else {
+			col := model.FindColumnInfoByID(tbl.Meta().Columns, rInfo.currElement.ID)
+			colOrIdxName = getChangingColumnOriginName(col)
+		}
 	}
 
 	return &backfillCtx{
