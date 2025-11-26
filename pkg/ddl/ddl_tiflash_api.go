@@ -19,20 +19,15 @@
 package ddl
 
 import (
-	"bytes"
 	"container/list"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -40,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	pd "github.com/tikv/pd/client/http"
@@ -237,44 +231,6 @@ var (
 	RefreshProgressMaxTableCount uint64 = 1000
 )
 
-func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
-	configURL := fmt.Sprintf("%s://%s/config",
-		util.InternalHTTPSchema(),
-		statusAddr,
-	)
-	resp, err := util.InternalHTTPClient().Get(configURL)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	defer func() {
-		resp.Body.Close()
-	}()
-
-	buf := new(bytes.Buffer)
-	_, err = buf.ReadFrom(resp.Body)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-
-	var j map[string]any
-	err = json.Unmarshal(buf.Bytes(), &j)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-
-	engineStore, ok := j["engine-store"].(map[string]any)
-	if !ok {
-		return "", errors.New("Error json")
-	}
-	port64, ok := engineStore["http_port"].(float64)
-	if !ok {
-		return "", errors.New("Error json")
-	}
-
-	addr := net.JoinHostPort(host, strconv.FormatUint(uint64(port64), 10))
-	return addr, nil
-}
-
 // LoadTiFlashReplicaInfo parses model.TableInfo into []TiFlashReplicaStatus.
 func LoadTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplicaStatus) {
 	if tblInfo.TiFlashReplica == nil {
@@ -296,44 +252,6 @@ func LoadTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplic
 		logutil.DDLLogger().Debug(fmt.Sprintf("Table %v has no partition\n", tblInfo.ID))
 		*tableList = append(*tableList, TiFlashReplicaStatus{tblInfo.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.Available, tblInfo.TiFlashReplica.Available, false, false})
 	}
-}
-
-// UpdateTiFlashHTTPAddress report TiFlash's StatusAddress's port to Pd's etcd.
-func (d *ddl) UpdateTiFlashHTTPAddress(store *pd.StoreInfo) error {
-	host, _, err := net.SplitHostPort(store.Store.StatusAddress)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	httpAddr, err := getTiflashHTTPAddr(host, store.Store.StatusAddress)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Report to pd
-	key := fmt.Sprintf("/tiflash/cluster/http_port/%v", store.Store.Address)
-	if d.etcdCli == nil {
-		return errors.New("no etcdCli in ddl")
-	}
-	origin := ""
-	resp, err := d.etcdCli.Get(d.ctx, key)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Try to update.
-	for _, kv := range resp.Kvs {
-		if string(kv.Key) == key {
-			origin = string(kv.Value)
-			break
-		}
-	}
-	if origin != httpAddr {
-		logutil.DDLLogger().Warn(fmt.Sprintf("Update status addr of %v from %v to %v", key, origin, httpAddr))
-		err := ddlutil.PutKVToEtcd(d.ctx, d.etcdCli, 1, key, httpAddr)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	return nil
 }
 
 func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
