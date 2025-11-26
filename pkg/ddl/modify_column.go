@@ -123,36 +123,7 @@ func getModifyColumnType(
 		return ModifyTypeNoReorgWithCheck
 	}
 
-	// For backward compatibility
-	if args.ModifyColumnType == mysql.TypeNull {
-		return ModifyTypeReorg
-	}
-
-	// FIXME(joechenrh): handle partition table case
-	if tblInfo.Partition != nil {
-		return ModifyTypeReorg
-	}
-
-	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
-		if v, ok := val.(bool); ok && v {
-			failpoint.Return(ModifyTypeReorg)
-		}
-	})
-
-	if !sqlMode.HasStrictMode() {
-		return ModifyTypeReorg
-	}
-
-	// Both encoding of row and index are not changed, just need to check existing data.
-	// e.g. integer without sign changed, or char without collation and needRestore changed.
-	if !needRowReorg(oldCol, args.Column) && !needIndexReorg(oldCol, args.Column) {
-		return ModifyTypeNoReorgWithCheck
-	}
-
-	// For hotfix #64671:
-	// needIndexReorg return true means the encoding rule for index is changes. In such
-	// case, we still need to reorg the row data even if it remains unchanged. Otherwise,
-	// the index stats collected by ddl embedded analyze is not correct.
+	// Temporarily disable lossy ddl optimization.
 	return ModifyTypeReorg
 }
 
@@ -1847,19 +1818,8 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 		return !needTruncationOrToggleSign()
 	}
 
-	oldTp := oldCol.GetType()
-	newTp := newCol.GetType()
-	// VARCHAR->CHAR, may need reorg.
-	if types.IsTypeVarchar(oldTp) && newTp == mysql.TypeString {
+	if ConvertBetweenCharAndVarchar(oldCol.GetType(), newCol.GetType()) {
 		return false
-	}
-	// CHAR->VARCHAR
-	if oldTp == mysql.TypeString && types.IsTypeVarchar(newTp) {
-		// If there are related index, the index may need reorg.
-		relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
-		if len(relatedIndexes) > 0 {
-			return false
-		}
 	}
 
 	// Deal with the different type.
