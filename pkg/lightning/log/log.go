@@ -167,7 +167,7 @@ func SetLevel(level zapcore.Level) zapcore.Level {
 	return oldLevel
 }
 
-// ShortError contructs a field which only records the error message without the
+// ShortError constructs a field which only records the error message without the
 // verbose text (i.e. excludes the stack trace).
 //
 // In Lightning, all errors are almost always propagated back to `main()` where
