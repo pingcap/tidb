@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"encoding/json"
+	goerrors "errors"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -240,15 +241,18 @@ func (e *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []by
 func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
 	logutil.Logger(ctx).Info("cloud import executor update resource")
 	newConcurrency := int(newResource.CPU.Capacity())
-	if newConcurrency == e.backend.Concurrency() {
+	if newConcurrency == e.backend.GetWorkerConcurrency() {
 		return nil
 	}
 
 	eng := e.engine.Load()
-	if eng != nil {
-		if err := eng.UpdateResource(ctx, newConcurrency, newResource.Mem.Capacity()); err != nil {
-			return err
-		}
+	if eng == nil {
+		// let framework retry
+		return goerrors.New("engine not started")
+	}
+
+	if err := eng.UpdateResource(ctx, newConcurrency, newResource.Mem.Capacity()); err != nil {
+		return err
 	}
 
 	e.backend.SetConcurrency(newConcurrency)

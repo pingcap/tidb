@@ -467,7 +467,7 @@ func newRegionJobOperator(
 	pool := workerpool.NewWorkerPool(
 		"RegionJobOperator",
 		rutil.DistTask,
-		local.Concurrency(),
+		local.GetWorkerConcurrency(),
 		func() workerpool.Worker[*regionJob, *regionJob] {
 			return local.newRegionJobWorker(wctx, clusterID, sourceChannel, jobFromWorkerCh, jobWg, afterExecuteJob)
 		},
