@@ -5257,17 +5257,17 @@ func pruneAndBuildColPositionInfoForDelete(
 	// Use a very relax check for foreign key cascades and checks.
 	// If there's one table containing foreign keys, all of the tables would not do pruning.
 	// It should be strict in the future or just support pruning column when there is foreign key.
-	if !hasFK {
-		nonPruned = bitset.New(uint(len(names)))
-		nonPruned.SetAll()
-		// find _tidb_commit_ts in names and clear the index in nonPruned
-		for i, name := range names {
-			if name.ColName.L == model.ExtraCommitTSName.L {
-				nonPruned.Clear(uint(i))
-				break
-			}
+	//if !hasFK {
+	nonPruned = bitset.New(uint(len(names)))
+	nonPruned.SetAll()
+	// find _tidb_commit_ts in names and clear the index in nonPruned
+	for i, name := range names {
+		if name.ColName.L == model.ExtraCommitTSName.L {
+			nonPruned.Clear(uint(i))
+			continue
 		}
 	}
+	//}
 	cols2PosInfos := make(physicalop.TblColPosInfoSlice, 0, len(tblID2Handle))
 	for tid, handleCols := range tblID2Handle {
 		for _, handleCol := range handleCols {
