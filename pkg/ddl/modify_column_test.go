@@ -632,7 +632,6 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 }
 
 func TestMultiSchemaModifyColumnWithSkipReorg(t *testing.T) {
-	t.Skip("skip for hotfix")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
