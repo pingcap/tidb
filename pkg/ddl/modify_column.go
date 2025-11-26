@@ -151,9 +151,8 @@ func getModifyColumnType(
 
 	// For hotfix #64671:
 	// needIndexReorg return true means the encoding rule for index is changes. In such
-	// case, we still need to reorg the row data even if the row data remains unchanged.
-	// So both old and new indexes can points to the correct field type. Otherwise, the
-	// index stats collected by ddl is not correct.
+	// case, we still need to reorg the row data even if it remains unchanged. Otherwise,
+	// the index stats collected by ddl embedded analyze is not correct.
 	return ModifyTypeReorg
 }
 
