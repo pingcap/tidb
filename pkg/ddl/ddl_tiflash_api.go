@@ -267,6 +267,7 @@ func updateTiFlashWriteStores(pollTiFlashContext *TiFlashManagementContext) erro
 	pollTiFlashContext.TiFlashStores = make(map[int64]pd.StoreInfo)
 	for _, store := range tikvStats.Stores {
 		// Note that only TiFlash write nodes need to be polled under NextGen kernel.
+		// TiFlash compute nodes under NextGen kernel do not hold any Regions data, so it is excluded here.
 		if engine.IsTiFlashWriteHTTPResp(&store.Store) {
 			pollTiFlashContext.TiFlashStores[store.Store.ID] = store
 		}
