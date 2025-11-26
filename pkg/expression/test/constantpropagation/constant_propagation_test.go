@@ -58,4 +58,14 @@ func TestConstantPropagation(t *testing.T) {
 		`    └─TableReader(Probe) root  data:Selection`,
 		`      └─Selection cop[tikv]  in(test.tafab9ab4.col_35, 78, 177), le(test.tafab9ab4.col_35, 1)`,
 		`        └─TableFullScan cop[tikv] table:tafab9ab4 keep order:false, stats:pseudo`))
+	tk.MustExec(`CREATE TABLE a1 (a int PRIMARY KEY, b int);`)
+	tk.MustExec(`CREATE TABLE a2 (a int PRIMARY KEY, b int);`)
+	for range 20 {
+		tk.MustQuery(`EXPLAIN FORMAT='plan_tree' SELECT STRAIGHT_JOIN * FROM a1 LEFT JOIN a2 ON a1.a = a2.a WHERE a1.a IN(a2.a, a2.b);`).Check(testkit.Rows(
+			`MergeJoin root  inner join, left key:test.a1.a, right key:test.a2.a`,
+			`├─TableReader(Build) root  data:TableFullScan`,
+			`│ └─TableFullScan cop[tikv] table:a2 keep order:true, stats:pseudo`,
+			`└─TableReader(Probe) root  data:TableFullScan`,
+			`  └─TableFullScan cop[tikv] table:a1 keep order:true, stats:pseudo`))
+	}
 }

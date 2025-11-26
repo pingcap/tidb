@@ -19,6 +19,7 @@ go_library(
     deps = [
         "//br/pkg/logutil",
         "//br/pkg/storage",
+        "//br/pkg/storage/recording",
         "//br/pkg/utils",
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -132,6 +133,7 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/planner/core",
+        "//pkg/resourcemanager/pool/workerpool",
         "//pkg/session",
         "//pkg/store",
         "//pkg/store/driver/error",

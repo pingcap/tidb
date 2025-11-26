@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -20,6 +21,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -115,6 +117,7 @@ type GCSStorage struct {
 	handles      []*storage.BucketHandle
 	clients      []*storage.Client
 	clientCancel context.CancelFunc
+	accessRec    *recording.AccessStats
 }
 
 // CopyFrom implements Copier.
@@ -203,6 +206,7 @@ func (s *GCSStorage) WriteFile(ctx context.Context, name string, data []byte) er
 	if err != nil {
 		return errors.Trace(err)
 	}
+	s.accessRec.RecWrite(len(data))
 	return wc.Close()
 }
 
@@ -226,6 +230,7 @@ func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 		b = make([]byte, size)
 		_, err = io.ReadFull(rc, b)
 	}
+	s.accessRec.RecRead(len(b))
 	return b, errors.Trace(err)
 }
 
@@ -343,7 +348,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		wc := s.GetBucketHandle().Object(object).NewWriter(ctx)
 		wc.StorageClass = s.gcs.StorageClass
 		wc.PredefinedACL = s.gcs.PredefinedAcl
-		return newFlushStorageWriter(wc, &callbackFlusher{wo.OnUpload}, wc), nil
+		return newFlushStorageWriter(wc, &emptyFlusher{}, wc, s.accessRec), nil
 	}
 	uri := s.objectName(name)
 	// 5MB is the minimum part size for GCS.
@@ -352,8 +357,9 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
-	bw := newBufferedWriter(fw, int(partSize), NoCompression, wo.OnUpload)
+	fw := newFlushStorageWriter(w, &emptyFlusher{}, w, s.accessRec)
+	// we already pass the accessRec to flushStorageWriter.
+	bw := newBufferedWriter(fw, int(partSize), NoCompression, nil)
 	return bw, nil
 }
 
@@ -420,11 +426,22 @@ skipHandleCred:
 		clientOps = append(clientOps, option.WithEndpoint(gcs.Endpoint))
 	}
 
-	if opts.HTTPClient != nil {
+	httpClient := opts.HTTPClient
+	if opts.AccessRecording != nil {
+		if httpClient == nil {
+			transport, _ := http.DefaultTransport.(*http.Transport)
+			httpClient = &http.Client{Transport: transport.Clone()}
+		}
+		httpClient.Transport = &roundTripperWrapper{
+			RoundTripper: httpClient.Transport,
+			accessRec:    opts.AccessRecording,
+		}
+	}
+	if httpClient != nil {
 		// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
 		// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
 		// type of credential-file.
-		newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
+		newTransport, err := htransport.NewTransport(ctx, httpClient.Transport,
 			append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
 		if err != nil {
 			if intest.InTest && !mustReportCredErr {
@@ -432,9 +449,9 @@ skipHandleCred:
 			}
 			return nil, errors.Trace(err)
 		}
-		opts.HTTPClient.Transport = newTransport
+		httpClient.Transport = newTransport
 	skipHandleTransport:
-		clientOps = append(clientOps, option.WithHTTPClient(opts.HTTPClient))
+		clientOps = append(clientOps, option.WithHTTPClient(httpClient))
 	}
 
 	if !opts.SendCredentials {
@@ -447,6 +464,7 @@ skipHandleCred:
 		idx:       atomic.NewInt64(0),
 		clientCnt: gcsClientCnt,
 		clientOps: clientOps,
+		accessRec: opts.AccessRecording,
 	}
 	if err := ret.Reset(ctx); err != nil {
 		return nil, errors.Trace(err)
@@ -619,6 +637,7 @@ func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 		}
 	}
 	n, err = r.reader.Read(p)
+	r.storage.accessRec.RecRead(n)
 	r.pos += int64(n)
 	return n, err
 }
@@ -683,4 +702,14 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 
 func (r *gcsObjectReader) GetFileSize() (int64, error) {
 	return r.totalSize, nil
+}
+
+type roundTripperWrapper struct {
+	http.RoundTripper
+	accessRec *recording.AccessStats
+}
+
+func (rt *roundTripperWrapper) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.accessRec.RecRequest(req)
+	return rt.RoundTripper.RoundTrip(req)
 }

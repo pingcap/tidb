@@ -1590,7 +1590,7 @@ func (store *MVCCStore) Cleanup(reqCtx *requestCtx, key []byte, startTS, current
 
 func (store *MVCCStore) appendScannedLock(locks []*kvrpcpb.LockInfo, it *lockstore.Iterator, maxTS uint64) []*kvrpcpb.LockInfo {
 	lock := mvcc.DecodeLock(it.Value())
-	if lock.StartTS < maxTS {
+	if lock.StartTS <= maxTS {
 		locks = append(locks, lock.ToLockInfo(slices.Clone(it.Key())))
 	}
 	return locks
