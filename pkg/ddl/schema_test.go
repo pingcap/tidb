@@ -556,6 +556,37 @@ func TestAlterSchemaReadonlyPrivilege(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestSchemaReadOnlyAffectAllUsers(t *testing.T) {
+	enableReadOnlyDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("create table if not exists test.t(a int)")
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer se.Close()
+	tcs := []struct {
+		user string
+		priv string
+	}{
+		{"u1", "all"},
+		{"u2", "super"},
+		{"u3", "insert"},
+	}
+	tk.MustExec("alter database test read only = 1")
+	for _, tc := range tcs {
+		tk.MustExec(fmt.Sprintf("create user '%s'@'%%'", tc.user))
+		tk.MustExec(fmt.Sprintf("grant %s on *.* to '%s'@'%%'", tc.priv, tc.user))
+		require.NoError(t, se.Auth(&auth.UserIdentity{Username: tc.user, Hostname: "%"}, nil, nil, nil))
+		tk.MustGetErrMsg("insert into test.t values (1)", "[schema:3809]Schema 'test' is in read only mode.")
+	}
+	tk.MustExec("alter database test read only = 0")
+	for _, tc := range tcs {
+		require.NoError(t, se.Auth(&auth.UserIdentity{Username: tc.user, Hostname: "%"}, nil, nil, nil))
+		tk.MustExec("insert into test.t values (1)")
+	}
+}
+
 func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
 	enableReadOnlyDDLFp(t)
 	store := testkit.CreateMockStore(t)

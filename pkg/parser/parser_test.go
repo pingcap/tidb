@@ -2722,6 +2722,18 @@ func TestDDL(t *testing.T) {
 		{"ALTER DATABASE test READ ONLY = true", false, ""},
 		{"CREATE DATABASE test READ ONLY = 1", false, ""},
 		{"ALTER DATABASE test CHARSET = gbk READ ONLY = 1", false, ""},
+		{"ALTER SCHEMA S READ ONLY only=on", false, ""},
+		{"ALTER SCHEMA S READ ONLY=off", false, ""},
+		{"ALTER SCHEMA S READ ONLY=-1", false, ""},
+		{"ALTER SCHEMA S READ-ONLY=0", false, ""},
+		{"ALTER SCHEMA S READ-ONLY=0", false, ""},
+		{"ALTER SCHEMA S READ ONLY=0 READ ONLY=0", false, ""},
+		{"ALTER SCHEMA S READ ONLY=1 READ ONLY=0", false, ""},
+		{"ALTER SCHEMA S READ ONLY=default READ ONLY=1", false, ""},
+		{"ALTER SCHEMA S READ ONLY=default CHARSET=gbk", false, ""},
+		{"ALTER SCHEMA S READ ONLY=default COLLATION = utf8_general_ci", false, ""},
+		{"CREATE SCHEMA S(a INT, READ ONLY=0)", false, ""},
+
 		// 5. create partition
 		{`create table m (c int) partition by range (c) (partition p1 values less than (200) primary_region="us");`, false, ""},
 		{`create table m (c int) partition by range (c) (partition p1 values less than (200) regions="us,3");`, false, ""},
