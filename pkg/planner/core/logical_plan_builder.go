@@ -5252,13 +5252,12 @@ func pruneAndBuildColPositionInfoForDelete(
 	tblID2Table map[int64]table.Table,
 	hasFK bool,
 ) (physicalop.TblColPosInfoSlice, *bitset.BitSet, error) {
-	var nonPruned *bitset.BitSet
 	// If there is foreign key, we can't prune the columns.
 	// Use a very relax check for foreign key cascades and checks.
 	// If there's one table containing foreign keys, all of the tables would not do pruning.
 	// It should be strict in the future or just support pruning column when there is foreign key.
 	//if !hasFK {
-	nonPruned = bitset.New(uint(len(names)))
+	nonPruned := bitset.New(uint(len(names)))
 	nonPruned.SetAll()
 	// find _tidb_commit_ts in names and clear the index in nonPruned
 	for i, name := range names {
