@@ -1243,6 +1243,17 @@ func (a *ExecStmt) logAudit() {
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
 			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
+<<<<<<< HEAD
+=======
+			if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
+				ctx = context.WithValue(ctx, plugin.PrepareStmtIDCtxKey, execStmt.PrepStmtId)
+			}
+			ctx = context.WithValue(ctx, plugin.IsRetryingCtxKey, a.retryCount > 0 || sessVars.RetryInfo.Retrying)
+			if intest.InTest && (cmdBin == mysql.ComStmtPrepare ||
+				cmdBin == mysql.ComStmtExecute || cmdBin == mysql.ComStmtClose) {
+				intest.Assert(ctx.Value(plugin.PrepareStmtIDCtxKey) != nil, "prepare statement id should not be nil")
+			}
+>>>>>>> b302859f2c4 (plugin: add retry information in the plugin completed event. (#64692))
 			audit.OnGeneralEvent(ctx, sessVars, plugin.Completed, cmd)
 		}
 		return nil
