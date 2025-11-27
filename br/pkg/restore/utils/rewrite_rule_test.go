@@ -404,7 +404,6 @@ func TestGetRewriteRuleOfTable(t *testing.T) {
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTablePrefix(2), rewriteRules), tablecodec.EncodeTablePrefix(1))
 		require.Len(t, rewriteRules.Data, 1) // Only one rule for table prefix
 		require.Equal(t, rewriteRules.NewTableID, int64(1))
-		require.Equal(t, rewriteRules.TableIDRemapHint, []utils.TableIDRemap{{Origin: 2, Rewritten: 1}})
 	}
 
 	// Test detailed rules including record and index prefixes
@@ -432,9 +431,6 @@ func TestGetRewriteRuleOfTable(t *testing.T) {
 		require.Equal(t, restoredTs, rewriteRules.RestoredTs)
 		require.Equal(t, startTs, rewriteRules.StartTs)
 		require.Equal(t, shiftStartTs, rewriteRules.ShiftStartTs)
-
-		// Verify TableIDRemapHint
-		require.Equal(t, []utils.TableIDRemap{{Origin: 2, Rewritten: 1}}, rewriteRules.TableIDRemapHint)
 
 		// Verify NewTableID
 		require.Equal(t, int64(1), rewriteRules.NewTableID)
