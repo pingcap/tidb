@@ -82,7 +82,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 		require.Equal(t, kvs[i].Val, value)
 	}
 	_, _, err = kvReader.NextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
 	statReader, err := newStatsReader(ctx, memStore, kvAndStat[1], bufSize)
@@ -149,7 +149,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 		require.Equal(t, kvs[i].Val, value)
 	}
 	_, _, err = kvReader.NextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
 	statReader, err := newStatsReader(ctx, memStore, kvAndStat[1], bufSize)
@@ -240,7 +240,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		kvs = append(kvs, KVPair{Key: clonedKey, Value: clonedVal})
 	}
 	_, _, err = kvReader.NextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
 	data := &MemoryIngestData{
@@ -335,7 +335,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		require.Equal(t, kvs[i].Val, value)
 	}
 	_, _, err = kvReader.NextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
 	// check writerSummary.

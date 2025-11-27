@@ -88,7 +88,6 @@ type OneFileWriter struct {
 
 	logger *zap.Logger
 
-	lastKey  []byte
 	partSize int64
 }
 
@@ -154,11 +153,7 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
-	if slices.Compare(w.lastKey, idxKey) == 0 && w.onDup == common.OnDuplicateKeyError {
-		return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
-	}
 	if w.onDup != common.OnDuplicateKeyIgnore {
-		// must be Record or Remove right now
 		return w.handleDupAndWrite(ctx, idxKey, idxVal)
 	}
 	return w.doWriteRow(ctx, idxKey, idxVal)
@@ -189,6 +184,8 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 				}
 				w.recordedDupCnt++
 			}
+		} else if w.onDup == common.OnDuplicateKeyError {
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
 		}
 	} else {
 		return w.onNextPivot(ctx, idxKey, idxVal)
@@ -253,7 +250,6 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
-	w.lastKey = slices.Clone(idxKey)
 	writeDuration := time.Since(writeStartTime)
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("merge_sort_write").Observe(writeDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("merge_sort_write").

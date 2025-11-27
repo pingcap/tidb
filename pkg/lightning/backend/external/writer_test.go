@@ -146,7 +146,7 @@ func TestWriter(t *testing.T) {
 		require.Equal(t, kvs[i].Val, value)
 	}
 	_, _, err = kvReader.NextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
 	statReader, err := newStatsReader(ctx, memStore, kvAndStat[1], bufSize)
@@ -582,11 +582,15 @@ func TestRandPartitionedPrefix(t *testing.T) {
 	prefix := "write-prefix"
 	partitioned := randPartitionedPrefix(prefix, rnd)
 	require.Equal(t, partitionHeaderChar, partitioned[0])
-	require.Equal(t, partitioned[4:], prefix)
-	require.True(t, isValidPartition([]byte(partitioned[:3])))
+	require.Equal(t, partitioned[10:], prefix)
+	require.True(t, isValidPartition([]byte(partitioned[:9])))
 
 	require.False(t, isValidPartition([]byte("aa")))
 	require.False(t, isValidPartition([]byte("aaa")))
 	require.False(t, isValidPartition([]byte("paz")))
 	require.False(t, isValidPartition([]byte("pza")))
+	require.False(t, isValidPartition([]byte("p000000000")))
+	require.False(t, isValidPartition([]byte("p0000000")))
+	require.False(t, isValidPartition([]byte("p0000000a")))
+	require.False(t, isValidPartition([]byte("p00000002")))
 }
