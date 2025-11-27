@@ -1964,6 +1964,9 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 	if err := rc.checkCSVHeader(ctx); err != nil {
 		return common.ErrCheckCSVHeader.Wrap(err).GenWithStackByArgs()
 	}
+	if err := rc.checkParquetImport(ctx); err != nil {
+		return common.ErrCheckParquetImport.Wrap(err).GenWithStackByArgs()
+	}
 
 	return nil
 }

@@ -51,6 +51,7 @@ var (
 	ErrCheckLocalResource         = errors.Normalize("check local storage resource error", errors.RFCCodeText("Lightning:PreCheck:ErrCheckLocalResource"))
 	ErrCheckTableEmpty            = errors.Normalize("check table empty error", errors.RFCCodeText("Lightning:PreCheck:ErrCheckTableEmpty"))
 	ErrCheckCSVHeader             = errors.Normalize("check csv header error", errors.RFCCodeText("Lightning:PreCheck:ErrCheckCSVHeader"))
+	ErrCheckParquetImport         = errors.Normalize("check parquet import error", errors.RFCCodeText("Lightning:PreCheck:ErrCheckParquetImport"))
 	ErrCheckDataSource            = errors.Normalize("check data source error", errors.RFCCodeText("Lightning:PreCheck:ErrCheckDataSource"))
 	ErrCheckCDCPiTR               = errors.Normalize("check TiCDC/PiTR task error", errors.RFCCodeText("Lightning:PreCheck:ErrCheckCDCPiTR"))
 	ErrCheckPDTiDBFromSameCluster = errors.Normalize("check PD and TiDB in the same cluster error", errors.RFCCodeText("Lightning:PreCheck:ErrCheckPDTiDBSameCluster"))

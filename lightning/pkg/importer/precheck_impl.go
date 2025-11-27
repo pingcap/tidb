@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -1113,6 +1114,75 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 			tableInfo.DB, tableInfo.Name, col, col))
 	}
 	return msgs, nil
+}
+
+type parquetImportCheckItem struct {
+	cfg           *config.Config
+	preInfoGetter PreImportInfoGetter
+	dbMetas       []*mydump.MDDatabaseMeta
+}
+
+func NewParquetImportCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) precheck.Checker {
+	return &parquetImportCheckItem{
+		cfg:           cfg,
+		preInfoGetter: preInfoGetter,
+		dbMetas:       dbMetas,
+	}
+}
+
+func (*parquetImportCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckParquetImport
+}
+
+func (ci *parquetImportCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
+		Item:     ci.GetCheckItemID(),
+		Severity: precheck.Critical,
+		Passed:   true,
+	}
+
+	store := ci.preInfoGetter.GetStorage()
+
+	// For each table, we check the first 32 parquet files to see if they have the same schema.
+	for _, dbMeta := range ci.dbMetas {
+		for _, tblMeta := range dbMeta.Tables {
+			var firstCheck atomic.Bool
+			checkFn := func(ctx context.Context, file mydump.SourceFileMeta) (mydump.ParquetCheckResult, error) {
+				checkMemoryConsumption := firstCheck.CompareAndSwap(true, false)
+				return mydump.CheckParquetImport(ctx, store, file.Path, checkMemoryConsumption)
+			}
+
+			checkFiles := make([]mydump.SourceFileMeta, 0, 32)
+			for _, f := range tblMeta.DataFiles {
+				if f.FileMeta.Type == mydump.SourceTypeParquet {
+					checkFiles = append(checkFiles, f.FileMeta)
+					if len(checkFiles) >= 32 {
+						break
+					}
+				}
+			}
+
+			// Do the check
+			checkRes, err := mydump.ParallelProcess(ctx, checkFiles, 8, checkFn)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			for _, r := range checkRes {
+				if !r.SchemaValid {
+					theResult.Passed = false
+					theResult.Message = "parquet files contains unsupported data types"
+					return theResult, nil
+				}
+				if !r.MemoryValid {
+					theResult.Passed = false
+					theResult.Message = "parquet files is too large and may cause OOM, consider changing to CSV format"
+					return theResult, nil
+				}
+			}
+		}
+	}
+
+	return theResult, nil
 }
 
 type csvHeaderCheckItem struct {

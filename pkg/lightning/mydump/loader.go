@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -92,9 +93,8 @@ type MDTableMeta struct {
 
 // ParquetFileMeta contains some analyzed metadata for a parquet file by MyDumper Loader.
 type ParquetFileMeta struct {
-	// memory usage for reader, preserve for later PR
-	MemoryUsage int
-	Loc         *time.Location
+	allocator memory.Allocator
+	Loc       *time.Location
 }
 
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.

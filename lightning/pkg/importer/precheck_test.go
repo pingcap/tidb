@@ -41,6 +41,7 @@ func TestPrecheckBuilderBasic(t *testing.T) {
 		precheck.CheckSourceSchemaValid,
 		precheck.CheckCheckpoints,
 		precheck.CheckCSVHeader,
+		precheck.CheckParquetImport,
 		precheck.CheckTargetClusterSize,
 		precheck.CheckTargetClusterEmptyRegion,
 		precheck.CheckTargetClusterRegionDist,

@@ -18,7 +18,10 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/arrow-go/v18/parquet"
@@ -41,6 +44,12 @@ const (
 	// data is stored in this buffer to avoid potentially reopening the
 	// underlying file when the gap size is less than the buffer size.
 	defaultBufSize = 64 * 1024
+
+	// parquetParserMemoryLimit is the memory limit for the parquet parser.
+	// If the memory consumption exceeds this limit during schema check,
+	// the import is rejected. It might not be an optimal value, but should
+	// be sufficient for most cases.
+	parquetParserMemoryLimit = 512 << 20 // 512MB
 )
 
 var (
@@ -547,7 +556,10 @@ func NewParquetParser(
 		}
 	}
 
-	allocator := memory.NewGoAllocator()
+	allocator := meta.allocator
+	if allocator == nil {
+		allocator = memory.NewGoAllocator()
+	}
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
 	prop.BufferSize = 1024
@@ -563,8 +575,11 @@ func NewParquetParser(
 
 	for i := range colTypes {
 		desc := reader.MetaData().Schema.Column(i)
-		colNames = append(colNames, strings.ToLower(desc.Name()))
+		if desc.MaxDefinitionLevel() > 1 {
+			return nil, errors.Errorf("unsupported parquet schema: %s has nested schema", desc.Name())
+		}
 
+		colNames = append(colNames, strings.ToLower(desc.Name()))
 		logicalType := desc.LogicalType()
 		if logicalType.IsValid() {
 			colTypes[i].converted, colTypes[i].decimalMeta = logicalType.ToConvertedType()
@@ -581,12 +596,13 @@ func NewParquetParser(
 		}
 
 		if _, ok := unsupportedParquetTypes[colTypes[i].converted]; ok {
-			return nil, errors.Errorf("unsupported parquet logical type %s", colTypes[i].converted.String())
+			return nil, errors.Errorf("unsupported parquet schema: %s's logical type %s is not supported",
+				desc.Name(), colTypes[i].converted.String())
 		}
 	}
 
 	numColumns := len(colTypes)
-	pool := zeropool.New(func() []types.Datum {
+	rowPool := zeropool.New(func() []types.Datum {
 		return make([]types.Datum, numColumns)
 	})
 
@@ -596,7 +612,7 @@ func NewParquetParser(
 		colNames: colNames,
 		alloc:    allocator,
 		logger:   logger,
-		rowPool:  &pool,
+		rowPool:  &rowPool,
 	}
 	if err := parser.Init(meta.Loc); err != nil {
 		return nil, errors.Trace(err)
@@ -653,4 +669,99 @@ func SampleStatisticsFromParquet(
 
 	avgRowSize = float64(rowSize) / float64(rowCount)
 	return totalReadRows, avgRowSize, err
+}
+
+// ParquetCheckResult is the result of parquet import check.
+type ParquetCheckResult struct {
+	SchemaValid bool
+	MemoryValid bool
+}
+
+// CheckParquetImport checks whether the parquet import is valid.
+func CheckParquetImport(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	path string,
+	checkMemoryConsumption bool,
+) (ParquetCheckResult, error) {
+	r, err := store.Open(ctx, path, nil)
+	if err != nil {
+		return ParquetCheckResult{false, false}, err
+	}
+
+	allocator := &simpleAllocator{}
+	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{allocator: allocator})
+
+	if err != nil {
+		return ParquetCheckResult{false, false}, err
+	}
+
+	if err != nil {
+		if strings.Contains(err.Error(), "unsupported parquet schema") {
+			return ParquetCheckResult{false, true}, nil
+		}
+		return ParquetCheckResult{false, false}, err
+	}
+
+	//nolint: errcheck
+	defer parser.Close()
+
+	if !checkMemoryConsumption {
+		return ParquetCheckResult{true, true}, nil
+	}
+
+	reader := parser.reader
+	for range reader.MetaData().NumRows {
+		err = parser.ReadRow()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				break
+			}
+			return ParquetCheckResult{false, false}, err
+		}
+		parser.RecycleRow(parser.LastRow())
+	}
+
+	return ParquetCheckResult{true, allocator.peakAllocation.Load() < parquetParserMemoryLimit}, nil
+}
+
+// addressOf returns the address of a buffer, return 0 if the buffer is nil or empty.
+// This is used to create unique identifiers for tracking buffer allocations.
+func addressOf(buf []byte) uintptr {
+	if buf == nil || cap(buf) == 0 {
+		return 0
+	}
+	buf = buf[:1]
+	return uintptr(unsafe.Pointer(&buf[0]))
+}
+
+type simpleAllocator struct {
+	currentAllocation atomic.Int64
+	peakAllocation    atomic.Int64
+	allocMap          sync.Map // uintptr -> size
+}
+
+func (a *simpleAllocator) Allocate(n int) []byte {
+	b := make([]byte, n)
+	a.allocMap.Store(addressOf(b), n)
+
+	current := a.currentAllocation.Add(int64(n))
+	if current > a.peakAllocation.Load() {
+		a.peakAllocation.Store(current)
+	}
+	return b
+}
+
+func (a *simpleAllocator) Free(b []byte) {
+	addr := addressOf(b)
+	size, ok := a.allocMap.Load(addr)
+	if ok {
+		a.currentAllocation.Add(-int64(size.(int)))
+		a.allocMap.Delete(addr)
+	}
+}
+
+func (a *simpleAllocator) Reallocate(size int, b []byte) []byte {
+	a.Free(b)
+	return a.Allocate(size)
 }
