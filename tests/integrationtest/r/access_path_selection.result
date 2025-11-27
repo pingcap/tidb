@@ -39,7 +39,7 @@ StreamAgg	root		funcs:max(access_path_selection.access_path_selection._tidb_rowi
       └─TableFullScan	cop[tikv]	table:access_path_selection	keep order:true, desc, stats:pseudo
 explain format = 'plan_tree' select count(1) from access_path_selection;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#18)->Column#4
+StreamAgg	root		funcs:count(Column#9)->Column#4
 └─TableReader	root		data:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#18
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#9
     └─TableFullScan	cop[tikv]	table:access_path_selection	keep order:false, stats:pseudo

@@ -16,11 +16,11 @@ package rule
 
 import (
 	"slices"
-	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 )
 
 // indexWithScore stores an access path along with its coverage scores for ranking.
@@ -46,6 +46,15 @@ type columnRequirements struct {
 	totalJoinRequiredCols  int // JOIN + WHERE columns
 }
 
+// ShouldPreferIndexMerge returns true if index merge should be preferred, either due to hints or fix control.
+func ShouldPreferIndexMerge(ds *logicalop.DataSource) bool {
+	return len(ds.IndexMergeHints) > 0 || fixcontrol.GetBoolWithDefault(
+		ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
+		fixcontrol.Fix52869,
+		false,
+	)
+}
+
 // PruneIndexesByWhereAndOrder prunes indexes based on their coverage of WHERE, join and ordering columns.
 // It keeps the most promising indexes up to the threshold, prioritizing those that:
 // 1. Cover more required columns (WHERE, JOIN, ORDER BY)
@@ -61,17 +70,16 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 
 	// If there are no required columns, only keep table paths and covering indexes (IsSingleScan)
 	// since indexes are only useful for filtering/ordering, or as covering indexes to avoid table lookups
-	noRequiredColumns := len(whereColumns) == 0 && len(orderingColumns) == 0 && len(joinColumns) == 0
+	//noRequiredColumns := len(whereColumns) == 0 && len(orderingColumns) == 0 && len(joinColumns) == 0
 
-	// Approximate index path count (assuming 1 table path)
-	// Note: table paths and MVIndex paths are always kept separately, so maxToKeep only applies to regular index paths
-	approxIndexPathCount := len(paths) - 1
+	totalPathCount := len(paths)
 
-	// If approxIndexPathCount <= threshold, we should keep all indexes with score > 0 (no pruning)
-	// Only prune when we have more index paths than the threshold
+	// If totalPathCount <= threshold, we should keep all indexes with score > 0
+	// Which means only prune with score ==0
+	// Only prune with score > 0 when we have more index paths than the threshold
 	const defaultMaxIndexes = 10
 	var maxToKeep int
-	if approxIndexPathCount > threshold {
+	if totalPathCount > threshold {
 		// When pruning, use threshold if provided, otherwise use defaultMaxIndexes
 		if threshold > 0 {
 			maxToKeep = threshold
@@ -80,7 +88,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		}
 	} else {
 		// When not pruning (len(paths) < threshold), set maxToKeep to keep all indexes with score > 0
-		maxToKeep = approxIndexPathCount + 1
+		maxToKeep = totalPathCount
 	}
 
 	preferredWhereIndexes := make([]indexWithScore, 0, maxToKeep)
@@ -88,6 +96,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	tablePaths := make([]*util.AccessPath, 0, 1)
 	mvIndexPaths := make([]*util.AccessPath, 0, 1)
 	indexMergeIndexPaths := make([]*util.AccessPath, 0, 1)
+	preferMerge := ShouldPreferIndexMerge(ds)
 
 	// Categorize each index path
 	for _, path := range paths {
@@ -107,23 +116,21 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			return paths
 		}
 
-		// Always keep indexes that are specified in IndexMerge hints, as index merge needs them to build partial paths
-		if path.Index != nil && isSpecifiedInIndexMergeHints(ds, path.Index.Name.L) {
-			indexMergeIndexPaths = append(indexMergeIndexPaths, path)
-			continue
-		}
-
 		// Calculate coverage for this index
 		idxScore := scoreIndexPath(path, req)
 
 		// Calculate aggregate metrics
-		totalLocalCovered := idxScore.whereCount + idxScore.orderingCount
-		totalJoinCovered := idxScore.joinCount + idxScore.whereCount
+		//totalLocalCovered := idxScore.whereCount + idxScore.orderingCount
+		//totalJoinCovered := idxScore.joinCount + idxScore.whereCount
 		totalConsecutive := idxScore.consecutiveWhereCount + idxScore.consecutiveOrderingCount + idxScore.consecutiveJoinCount
 
-		// If there are no required columns, only keep covering indexes (IsSingleScan)
-		if noRequiredColumns || totalLocalCovered >= req.totalLocalRequiredCols && totalJoinCovered >= req.totalJoinRequiredCols {
-			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+		path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+
+		// If index merge is preferred, keep all indexes as index merge might need any of them
+		if preferMerge && totalConsecutive > 0 {
+			// Keep all indexes when index merge is preferred
+			preferredWhereIndexes = append(preferredWhereIndexes, idxScore)
+			continue
 		}
 
 		// Add to preferred indexes if it has any coverage or is a covering scan
@@ -241,21 +248,6 @@ func scoreIndexPath(path *util.AccessPath, req columnRequirements) indexWithScor
 	return score
 }
 
-// isSpecifiedInIndexMergeHints returns true if the input index name is specified in the IndexMerge hint.
-func isSpecifiedInIndexMergeHints(ds *logicalop.DataSource, name string) bool {
-	for _, hint := range ds.IndexMergeHints {
-		if hint.IndexHint == nil || len(hint.IndexHint.IndexNames) == 0 {
-			continue
-		}
-		for _, hintName := range hint.IndexHint.IndexNames {
-			if strings.EqualFold(name, hintName.String()) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // buildFinalResult sorts and selects the top indexes to keep, combining table paths,
 // multi-value indexes, index merge indexes, and preferred indexes.
 type scoredIndex struct {
@@ -312,29 +304,6 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 	return scored
 }
 
-// shouldSkipDuplicateScore determines if an index should be skipped due to duplicate score handling.
-// It returns true if the index should be skipped based on the rule: only exclude indexes with the same score
-// if consecutiveWhereCount <= 1.
-func shouldSkipDuplicateScore(entry scoredIndex, maxScore int, lowerScoreKept map[int]struct{}) bool {
-	if entry.score <= maxScore {
-		if entry.info.consecutiveWhereCount <= 1 {
-			if entry.score < maxScore {
-				if _, kept := lowerScoreKept[entry.score]; kept {
-					return true
-				}
-				lowerScoreKept[entry.score] = struct{}{}
-			} else if entry.score == maxScore {
-				// For same score, only skip if we've already kept one with consecutiveWhereCount <= 1
-				if _, kept := lowerScoreKept[entry.score]; kept {
-					return true
-				}
-				lowerScoreKept[entry.score] = struct{}{}
-			}
-		}
-	}
-	return false
-}
-
 func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, whereIndexes, joinIndexes []indexWithScore, maxToKeep int, req columnRequirements) []*util.AccessPath {
 	const maxIndexes = 10
 	result := make([]*util.AccessPath, 0, maxIndexes)
@@ -368,8 +337,6 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 	remaining := maxToKeep
 	hasNonZeroScore := false
 	if len(whereScored) > 0 && remaining > 0 {
-		maxWhereScore := whereScored[0].score
-		lowerScoreKept := make(map[int]struct{})
 		for _, entry := range whereScored {
 			path := entry.info.path
 			if _, ok := added[path]; ok {
@@ -380,10 +347,6 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 			}
 			// If we have at least 1 index with score > 0, don't append any with score == 0
 			if hasNonZeroScore && entry.score == 0 {
-				continue
-			}
-			// Only exclude indexes with the same score if consecutiveWhereCount <= 1
-			if shouldSkipDuplicateScore(entry, maxWhereScore, lowerScoreKept) {
 				continue
 			}
 			result = append(result, path)
@@ -409,7 +372,6 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 			}
 		}
 		if remaining > 0 {
-			lowerJoinKept := make(map[int]struct{})
 			for idx := range joinScored {
 				if idx == 0 {
 					continue
@@ -424,10 +386,6 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 				}
 				// If we have at least 1 index with score > 0, don't append any with score == 0
 				if hasNonZeroScore && entry.score == 0 {
-					continue
-				}
-				// Only exclude indexes with the same score if consecutiveWhereCount <= 1
-				if shouldSkipDuplicateScore(entry, maxJoinScore, lowerJoinKept) {
 					continue
 				}
 				result = append(result, path)
