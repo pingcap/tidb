@@ -78,7 +78,7 @@ const (
 	// resumeTaskByIDSQLTemplate is the SQL template for resuming a paused task by its ID
 	resumeTaskByIDSQLTemplate = `
 		UPDATE %s.%s
-		SET status = 'running', last_heartbeat_time = %%?
+		SET status = 'running', last_heartbeat_time = FROM_UNIXTIME(%%?)
 		WHERE id = %%?`
 
 	// deleteRegistrationSQLTemplate is the SQL template for deleting a registration
@@ -97,17 +97,17 @@ const (
 		INSERT INTO %s.%s
 		(filter_strings, filter_hash, start_ts, restored_ts, upstream_cluster_id,
 		 with_sys_table, status, cmd, task_start_time, last_heartbeat_time)
-		VALUES (%%?, MD5(%%?), %%?, %%?, %%?, %%?, 'running', %%?, %%?, %%?)`
+		VALUES (%%?, MD5(%%?), %%?, %%?, %%?, %%?, 'running', %%?, FROM_UNIXTIME(%%?), FROM_UNIXTIME(%%?))`
 
 	// selectTaskHeartbeatSQLTemplate is the SQL template for getting a specific task's heartbeat time
 	selectTaskHeartbeatSQLTemplate = `
-		SELECT last_heartbeat_time
+		SELECT CAST(UNIX_TIMESTAMP(last_heartbeat_time) AS UNSIGNED INTEGER)
 		FROM %s.%s
 		WHERE id = %%?`
 
 	// selectConflictingTaskSQLTemplate is the SQL template for finding tasks with same parameters
 	selectConflictingTaskSQLTemplate = `
-		SELECT id, restored_ts, status, last_heartbeat_time FROM %s.%s
+		SELECT id, restored_ts, status, CAST(UNIX_TIMESTAMP(last_heartbeat_time) AS UNSIGNED INTEGER) FROM %s.%s
 		WHERE filter_hash = MD5(%%?)
 		AND start_ts = %%?
 		AND upstream_cluster_id = %%?
@@ -158,7 +158,7 @@ const (
 	transitionStaleTaskToPausedSQLTemplate = `
 		UPDATE %s.%s
 		SET status = 'paused'
-		WHERE id = %%? AND status IN ('running', 'resetting') AND last_heartbeat_time = %%?`
+		WHERE id = %%? AND status IN ('running', 'resetting') AND last_heartbeat_time = FROM_UNIXTIME(%%?)`
 )
 
 // TaskStatus represents the current state of a restore task
@@ -344,7 +344,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 
 			// strictly check for paused status
 			if status == string(TaskStatusPaused) {
-				currentTime := time.Now()
+				currentTime := time.Now().UTC().Unix()
 				updateSQL := fmt.Sprintf(resumeTaskByIDSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 				_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, updateSQL, currentTime, existingTaskID)
 				if err != nil {
@@ -368,7 +368,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		}
 
 		// no existing task found, create a new one
-		currentTime := time.Now()
+		currentTime := time.Now().UTC().Unix()
 		insertSQL := fmt.Sprintf(createNewTaskSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 		_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, insertSQL,
 			filterStrings, filterStrings, info.StartTS, info.RestoredTS,
@@ -684,7 +684,7 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 	conflictingTaskID := rows[0].GetUint64(0)
 	existingRestoredTS := rows[0].GetUint64(1)
 	existingStatus := rows[0].GetString(2)
-	initialHeartbeatTime := rows[0].GetTime(3).String()
+	initialHeartbeatTimestamp := rows[0].GetInt64(3)
 
 	log.Info("found existing task with same parameters",
 		zap.Uint64("existing_task_id", conflictingTaskID),
@@ -693,7 +693,7 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 		zap.Uint64("current_restored_ts", info.RestoredTS),
 		zap.Strings("filters", info.FilterStrings),
 		zap.Uint64("start_ts", info.StartTS),
-		zap.String("last heartbeat time", initialHeartbeatTime),
+		zap.String("last heartbeat time", time.Unix(initialHeartbeatTimestamp, 0).String()),
 	)
 
 	// if restoredTS values are different and user explicitly specified it, use current restoredTS
@@ -718,7 +718,7 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 		log.Info("existing task is running, checking if it's stale",
 			zap.Uint64("existing_task_id", conflictingTaskID))
 
-		isStale, err := r.isTaskStale(ctx, conflictingTaskID, initialHeartbeatTime)
+		isStale, err := r.isTaskStale(ctx, conflictingTaskID, initialHeartbeatTimestamp)
 		if err != nil {
 			log.Warn("failed to check if task is stale, using current restoredTS",
 				zap.Uint64("task_id", conflictingTaskID),
@@ -732,7 +732,7 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 				zap.Uint64("existing_restored_ts", existingRestoredTS))
 
 			// atomically transition the stale task to paused state
-			transitioned, transitionErr := r.transitionStaleTaskToPaused(ctx, conflictingTaskID, initialHeartbeatTime)
+			transitioned, transitionErr := r.transitionStaleTaskToPaused(ctx, conflictingTaskID, initialHeartbeatTimestamp)
 			if transitionErr != nil {
 				log.Warn("failed to transition stale task to paused, using current restoredTS",
 					zap.Uint64("task_id", conflictingTaskID),
@@ -764,12 +764,12 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 }
 
 // isTaskStale checks if a running task is stale by waiting up to 5 minutes and checking if heartbeat updates
-func (r *Registry) isTaskStale(ctx context.Context, taskID uint64, initialHeartbeatTime string) (bool, error) {
+func (r *Registry) isTaskStale(ctx context.Context, taskID uint64, initialHeartbeatTimestamp int64) (bool, error) {
 	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	log.Info("checking if task is stale, will check heartbeat every minute up to 5 minutes",
 		zap.Uint64("task_id", taskID),
-		zap.String("initial_heartbeat", initialHeartbeatTime))
+		zap.String("initial_heartbeat", time.Unix(initialHeartbeatTimestamp, 0).String()))
 
 	// check heartbeat every minute for up to 5 minutes
 	ticker := time.NewTicker(time.Minute)
@@ -796,15 +796,14 @@ func (r *Registry) isTaskStale(ctx context.Context, taskID uint64, initialHeartb
 			if len(currentRows) == 0 {
 				return false, nil // task not found (might have been deleted), proceed with user's restoredTS
 			}
-
-			currentHeartbeatTime := currentRows[0].GetTime(0).String()
+			currentHeartbeatTimestamp := currentRows[0].GetInt64(0)
 
 			// if heartbeat changed, task is active - exit early
-			if currentHeartbeatTime != initialHeartbeatTime {
+			if currentHeartbeatTimestamp != initialHeartbeatTimestamp {
 				log.Info("task heartbeat updated, task is active",
 					zap.Uint64("task_id", taskID),
-					zap.String("initial_heartbeat", initialHeartbeatTime),
-					zap.String("current_heartbeat", currentHeartbeatTime),
+					zap.String("initial_heartbeat", time.Unix(initialHeartbeatTimestamp, 0).String()),
+					zap.String("current_heartbeat", time.Unix(currentHeartbeatTimestamp, 0).String()),
 					zap.Int("minutes_waited", StaleTaskThresholdMinutes-remainingMinutes))
 				return false, nil
 			}
@@ -820,7 +819,7 @@ func (r *Registry) isTaskStale(ctx context.Context, taskID uint64, initialHeartb
 	// if we get here, heartbeat hasn't changed for 5 minutes - task is stale
 	log.Info("task heartbeat unchanged for 5 minutes, task is stale",
 		zap.Uint64("task_id", taskID),
-		zap.String("initial_heartbeat", initialHeartbeatTime))
+		zap.String("initial_heartbeat", time.Unix(initialHeartbeatTimestamp, 0).String()))
 
 	return true, nil
 }
@@ -828,25 +827,17 @@ func (r *Registry) isTaskStale(ctx context.Context, taskID uint64, initialHeartb
 // transitionStaleTaskToPaused atomically transitions a stale running task to paused state
 // if the heartbeat timestamp hasn't changed. Returns whether the transition was successful.
 func (r *Registry) transitionStaleTaskToPaused(ctx context.Context, taskID uint64,
-	expectedHeartbeatTime string) (bool, error) {
+	expectedHeartbeatTimestamp int64) (bool, error) {
 	log.Info("attempting to transition stale task to paused state",
 		zap.Uint64("task_id", taskID),
-		zap.String("expected_heartbeat", expectedHeartbeatTime))
+		zap.String("expected_heartbeat", time.Unix(expectedHeartbeatTimestamp, 0).String()))
 
 	var transitioned bool
 	err := r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
 		sessionOpts []sqlexec.OptionFuncAlias) error {
 		// atomically update task to paused only if it's still running with the same heartbeat time
 		updateSQL := fmt.Sprintf(transitionStaleTaskToPausedSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
-
-		// We need to parse the heartbeat time string back to time.Time for the SQL query
-		// The expectedHeartbeatTime comes from MySQL's time format
-		expectedTime, parseErr := time.Parse("2006-01-02 15:04:05", expectedHeartbeatTime)
-		if parseErr != nil {
-			return errors.Annotatef(parseErr, "failed to parse expected heartbeat time: %s", expectedHeartbeatTime)
-		}
-
-		_, _, updateErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, updateSQL, taskID, expectedTime)
+		_, _, updateErr := execCtx.ExecRestrictedSQL(ctx, sessionOpts, updateSQL, taskID, expectedHeartbeatTimestamp)
 		if updateErr != nil {
 			return errors.Annotate(updateErr, "failed to transition stale task to paused")
 		}
@@ -1036,10 +1027,10 @@ func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 				return nil
 			}
 
-			initialHeartbeatTime := heartbeatRows[0].GetTime(0).String()
+			initialHeartbeatTimestamp := heartbeatRows[0].GetInt64(0)
 
 			// check if the task is stale (not updating heartbeat)
-			isStale, staleErr := r.isTaskStale(ctx, taskID, initialHeartbeatTime)
+			isStale, staleErr := r.isTaskStale(ctx, taskID, initialHeartbeatTimestamp)
 			if staleErr != nil {
 				log.Warn("failed to determine if task is stale, skipping abort",
 					zap.Uint64("task_id", taskID),

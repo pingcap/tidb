@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -327,26 +328,28 @@ func isVaildForRetry(task *statstypes.NeededItemTask) bool {
 }
 
 func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err error) {
-	se, err := s.statsHandle.SPool().Get()
-	if err != nil {
-		return err
-	}
-	sctx := se.(sessionctx.Context)
-	sctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
-		if err == nil { // only recycle when no error
-			sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
-			s.statsHandle.SPool().Put(se)
-		} else {
-			// Note: Otherwise, the session will be leaked.
-			s.statsHandle.SPool().Destroy(se)
-		}
 	}()
+
+	return s.statsHandle.SPool().WithSession(func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			sctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
+			defer func() {
+				sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
+			}()
+			return s.handleOneItemTaskWithSCtx(sctx, task)
+		})
+	})
+}
+
+// handleOneItemTaskWithSCtx contains the core business logic for handling one item task.
+// This method preserves git blame history by keeping the original logic intact.
+func (s *statsSyncLoad) handleOneItemTaskWithSCtx(sctx sessionctx.Context, task *statstypes.NeededItemTask) error {
 	var skipTypes map[string]struct{}
 	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
 	if err != nil {
@@ -451,8 +454,11 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 		return nil, err
 	}
 	if hg == nil {
-		statslogutil.StatsLogger().Warn("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
-			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex),
+		statslogutil.StatsSampleLogger().Warn(
+			"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
+			zap.Int64("tableID", item.TableID),
+			zap.Int64("histID", item.ID),
+			zap.Bool("isIndex", item.IsIndex),
 		)
 		return nil, errGetHistMeta
 	}
@@ -590,9 +596,10 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		if colHist.StatsAvailable() {
 			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, true)
 		}
-		// All the objects shares the same stats version. Update it here.
+		// All the objects share the same stats version. Update it here.
 		if colHist.StatsVer != statistics.Version0 {
-			tbl.StatsVer = statistics.Version0
+			// SAFETY: The stats version only has a limited range, it is safe to convert int64 to int here.
+			tbl.StatsVer = int(colHist.StatsVer)
 		}
 		// we have to refresh the map for the possible change to ensure that the map information is not missing.
 		tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.StatsAvailable())
@@ -608,8 +615,9 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		// If the index is analyzed we refresh the map for the possible change.
 		if idxHist.IsAnalyzed() {
 			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, true)
-			// All the objects shares the same stats version. Update it here.
-			tbl.StatsVer = statistics.Version0
+			// All the objects share the same stats version. Update it here.
+			// SAFETY: The stats version only has a limited range, it is safe to convert int64 to int here.
+			tbl.StatsVer = int(idxHist.StatsVer)
 		}
 	}
 	s.statsHandle.UpdateStatsCache(statstypes.CacheUpdate{

@@ -28,7 +28,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -758,8 +757,8 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 			Name:   ast.NewCIStr("t1"),
 		},
 		{
-			Schema: ast.NewCIStr("test"),
-			Name:   ast.NewCIStr("t2"),
+			Schema: ast.NewCIStr("Test"),
+			Name:   ast.NewCIStr("T2"),
 		},
 	}
 
@@ -769,6 +768,8 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	require.Equal(t, "t1", pb.visitInfo[0].table)
 	require.Equal(t, mysql.InsertPriv, pb.visitInfo[0].privilege)
 	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
+	require.Equal(t, "test", pb.visitInfo[2].db)
+	require.Equal(t, "t2", pb.visitInfo[2].table)
 }
 
 func TestBuildRefreshStatsPrivileges(t *testing.T) {
@@ -1113,24 +1114,14 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 func TestProcessNextGenS3Path(t *testing.T) {
 	u, err := url.Parse("S3://bucket?External-id=abc")
 	require.NoError(t, err)
-	_, err = processSemNextGenS3Path(u)
+	err = checkNextGenS3PathWithSem(u)
 	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
 	require.ErrorContains(t, err, "IMPORT INTO with S3 external ID")
 
-	bak := config.GetGlobalKeyspaceName()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.KeyspaceName = "sem-next-gen"
-	})
-	t.Cleanup(func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = bak
-		})
-	})
 	u, err = url.Parse("s3://bucket")
 	require.NoError(t, err)
-	newPath, err := processSemNextGenS3Path(u)
+	err = checkNextGenS3PathWithSem(u)
 	require.NoError(t, err)
-	require.Equal(t, "s3://bucket?external-id=sem-next-gen", newPath)
 }
 
 func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {

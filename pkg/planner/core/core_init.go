@@ -29,27 +29,15 @@ import (
 func init() {
 	// For code refactor init.
 	utilfuncp.FindBestTask4BaseLogicalPlan = findBestTask
-	utilfuncp.FindBestTask4LogicalCTE = findBestTask4LogicalCTE
-	utilfuncp.FindBestTask4LogicalShow = findBestTask4LogicalShow
-	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
 	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
-	utilfuncp.FindBestTask4LogicalShowDDLJobs = findBestTask4LogicalShowDDLJobs
 	utilfuncp.ExhaustPhysicalPlans4LogicalJoin = exhaustPhysicalPlans4LogicalJoin
 	utilfuncp.ExhaustPhysicalPlans4LogicalApply = exhaustPhysicalPlans4LogicalApply
-	utilfuncp.ExhaustPhysicalPlans4LogicalWindow = exhaustPhysicalPlans4LogicalWindow
-	utilfuncp.ExhaustPhysicalPlans4LogicalExpand = exhaustPhysicalPlans4LogicalExpand
-	utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll = exhaustPhysicalPlans4LogicalUnionAll
-	utilfuncp.ExhaustPhysicalPlans4LogicalSequence = exhaustPhysicalPlans4LogicalSequence
-	utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow = exhaustPhysicalPlans4LogicalMaxOneRow
-	utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll = exhaustPhysicalPlans4LogicalPartitionUnionAll
 
 	// for physical operators.
 	utilfuncp.GetActualProbeCntFromProbeParents = getActualProbeCntFromProbeParents
 	utilfuncp.GetEstimatedProbeCntFromProbeParents = getEstimatedProbeCntFromProbeParents
 	// for physical sort.
-	utilfuncp.ToPB4PhysicalSort = toPB4PhysicalSort
 	utilfuncp.GetCost4PhysicalSort = getCost4PhysicalSort
-	utilfuncp.ResolveIndicesForSort = resolveIndicesForSort
 	utilfuncp.Attach2Task4PhysicalSort = attach2Task4PhysicalSort
 	utilfuncp.GetPlanCostVer14PhysicalSort = getPlanCostVer14PhysicalSort
 	utilfuncp.GetPlanCostVer24PhysicalSort = getPlanCostVer24PhysicalSort
@@ -161,9 +149,6 @@ func init() {
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost
-	utilfuncp.IsSingleScan = isSingleScan
-	utilfuncp.WindowIsTopN = windowIsTopN
-	utilfuncp.LoadTableStats = loadTableStats
 	utilfuncp.AttachPlan2Task = attachPlan2Task
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CompareTaskCost = compareTaskCost
@@ -175,7 +160,6 @@ func init() {
 	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
 
 	// For mv index init.
-	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
 	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
 	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
 	statistics.PrepareCols4MVIndex = PrepareIdxColsAndUnwrapArrayType

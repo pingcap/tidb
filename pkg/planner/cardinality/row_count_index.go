@@ -362,7 +362,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 				// If this is single column predicate - use the column's information rather than index.
 				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
-				if isSingleColRange && c != nil && c.Histogram.NDV > 0 {
+				if isSingleColRange && c != nil && c.Histogram.NDV > 0 && c.Histogram.Len() > 0 {
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
 					count.Add(c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, histNDV))
 				} else {
@@ -429,8 +429,8 @@ func estimateRowCountWithUniformDistribution(
 	increaseFactor := stats.GetIncreaseFactor(realtimeRowCount)
 	notNullCount := histogram.NotNullCount()
 
-	// Branch 1: all NDV's are in TopN, and no histograms.
-	if histNDV <= 0 || notNullCount == 0 {
+	var avgRowEstimate float64
+	if histNDV <= 0 || notNullCount == 0 { // Branch 1: all NDV's are in TopN, and no histograms.
 		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
 		// This can happen when sampling collects fewer than all NDV.
 		if histNDV > 0 && modifyCount == 0 {
@@ -441,12 +441,11 @@ func estimateRowCountWithUniformDistribution(
 		if notNullCount <= 0 {
 			notNullCount = totalRowCount - float64(histogram.NullCount)
 		}
-		outOfRangeCnt := outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
-		return statistics.DefaultRowEst(outOfRangeCnt)
+		avgRowEstimate = outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
+	} else { // Branch 2: some NDV's are in histograms
+		// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
+		avgRowEstimate = notNullCount / histNDV
 	}
-	// branch 2: some NDV's are in histograms
-	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
-	avgRowEstimate := notNullCount / histNDV
 
 	// skewRatio determines how much of the potential skew should be considered
 	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio

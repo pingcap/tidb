@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -172,6 +173,8 @@ var (
 		maxWriteSpeedOption:   {},
 		cloudStorageURIOption: {},
 		threadOption:          {},
+		checksumTableOption:   {},
+		recordErrorsOption:    {},
 	}
 
 	disallowedOptionsForSEM = map[string]struct{}{
@@ -255,6 +258,10 @@ type Plan struct {
 	// operation.
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
+
+	// Location is used to convert time type for parquet, see
+	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
+	Location *time.Location
 
 	SQLMode mysql.SQLMode
 	// Charset is the charset of the data file when file is CSV or TSV.
@@ -374,8 +381,8 @@ type LoadDataController struct {
 	logger    *zap.Logger
 	dataStore storage.ExternalStorage
 	dataFiles []*mydump.SourceFileMeta
-	// GlobalSortStore is used to store sorted data when using global sort.
-	GlobalSortStore storage.ExternalStorage
+	// globalSortStore is used to store sorted data when using global sort.
+	globalSortStore storage.ExternalStorage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
 }
@@ -485,6 +492,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		FieldNullDef:   defaultFieldNullDef,
 		LineFieldsInfo: lineFieldsInfo,
 
+		Location:         userSctx.GetSessionVars().Location(),
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		ImportantSysVars: getImportantSysVars(userSctx),
 
@@ -690,6 +698,8 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if p.DataSourceType == DataSourceTypeQuery {
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
 		}
+	}
+	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		// we put the check here, not in planner, to make sure the cloud_storage_uri
 		// won't change in between.
 		if p.IsLocalSort() {
@@ -702,7 +712,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 	}
 
-	if semv1.IsEnabled() {
+	if sem.IsEnabled() {
 		for k := range disallowedOptionsForSEM {
 			if _, ok := specifiedOptions[k]; ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "SEM enabled")
@@ -1160,7 +1170,7 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 		if err3 != nil {
 			return err3
 		}
-		e.GlobalSortStore = store
+		e.globalSortStore = store
 	}
 	return nil
 }
@@ -1170,8 +1180,8 @@ func (e *LoadDataController) Close() {
 	if e.dataStore != nil {
 		e.dataStore.Close()
 	}
-	if e.GlobalSortStore != nil {
-		e.GlobalSortStore.Close()
+	if e.globalSortStore != nil {
+		e.globalSortStore.Close()
 	}
 }
 
@@ -1196,6 +1206,34 @@ func initExternalStore(ctx context.Context, u *url.URL, target string) (storage.
 		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, errors.GetErrStackMsg(err))
 	}
 	return s, nil
+}
+
+func estimateCompressionRatio(
+	ctx context.Context,
+	filePath string,
+	fileSize int64,
+	tp mydump.SourceType,
+	store storage.ExternalStorage,
+) (float64, error) {
+	if tp != mydump.SourceTypeParquet {
+		return 1.0, nil
+	}
+	failpoint.Inject("skipEstimateCompressionForParquet", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(2.0, nil)
+		}
+	})
+	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
+	if err != nil {
+		return 1.0, err
+	}
+	// No row in the file, use 2.0 as default compression ratio.
+	if rowSize == 0 || rows == 0 {
+		return 2.0, nil
+	}
+
+	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
+	return compressionRatio, nil
 }
 
 // InitDataFiles initializes the data store and files.
@@ -1249,8 +1287,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-		totalSize  int64
-		sourceType mydump.SourceType
+		totalSize        int64
+		sourceType       mydump.SourceType
+		compressionRatio = 1.0
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1267,10 +1306,14 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}()
 		size, err3 := fileReader.Seek(0, io.SeekEnd)
 		if err3 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "failed to read file size by seek")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err3), "failed to read file size by seek")
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
+		compressionRatio, err := estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
@@ -1279,6 +1322,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Type:        sourceType,
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
 		totalSize = size
 	} else {
@@ -1296,26 +1340,34 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		allFiles := make([]mydump.RawFile, 0, 16)
 		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
-				// we have checked in LoadDataExec.Next
-				//nolint: errcheck
-				match, _ := filepath.Match(escapedPath, remotePath)
-				if !match {
-					return nil
-				}
-				// pick arbitrary one file to detect the format.
-				e.detectAndUpdateFormat(remotePath)
-				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
-				totalSize += size
 				return nil
 			}); err != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to walk dir")
 		}
 
 		var err error
-		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
+		var processedFiles []*mydump.SourceFileMeta
+		var once sync.Once
+		if processedFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
+				// we have checked in LoadDataExec.Next
+				//nolint: errcheck
+				match, _ := filepath.Match(escapedPath, f.Path)
+				if !match {
+					return nil, nil
+				}
 				path, size := f.Path, f.Size
+				// pick arbitrary one file to detect the format.
+				var err2 error
+				once.Do(func() {
+					e.detectAndUpdateFormat(path)
+					sourceType = e.getSourceType()
+					compressionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+				})
+				if err2 != nil {
+					return nil, err2
+				}
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
@@ -1324,9 +1376,17 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Type:        sourceType,
 				}
 				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
+		}
+		// filter unmatch files
+		for _, f := range processedFiles {
+			if f != nil {
+				dataFiles = append(dataFiles, f)
+				totalSize += f.FileSize
+			}
 		}
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
@@ -1492,6 +1552,7 @@ func (e *LoadDataController) GetParser(
 			e.dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.ParquetMeta,
 		)
 	}
 	if err != nil {

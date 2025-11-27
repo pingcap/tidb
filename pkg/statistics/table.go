@@ -785,11 +785,16 @@ func (t *Table) IsEligibleForAnalysis() bool {
 	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
 	// 2. If the table is too small, we don't want to waste time to analyze it.
 	//    Leave the opportunity to other bigger tables.
-	if t == nil || t.Pseudo || t.RealtimeCount < AutoAnalyzeMinCnt {
+	if !t.MeetAutoAnalyzeMinCnt() || t.Pseudo {
 		return false
 	}
 
 	return true
+}
+
+// MeetAutoAnalyzeMinCnt checks whether the table meets the minimum count required for auto-analyze.
+func (t *Table) MeetAutoAnalyzeMinCnt() bool {
+	return t != nil && t.RealtimeCount >= AutoAnalyzeMinCnt
 }
 
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
@@ -990,10 +995,12 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 // GenerateHistCollFromColumnInfo generates a new HistColl whose ColUniqueID2IdxIDs and Idx2ColUniqueIDs is built from the given parameter.
 func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
+	colInfoID2Col := make(map[int64]*expression.Column, len(columns))
 	colInfoID2UniqueID := make(map[int64]int64, len(columns))
 	uniqueID2colInfoID := make(map[int64]int64, len(columns))
 	idxID2idxInfo := make(map[int64]*model.IndexInfo)
 	for _, col := range columns {
+		colInfoID2Col[col.ID] = col
 		colInfoID2UniqueID[col.ID] = col.UniqueID
 		uniqueID2colInfoID[col.UniqueID] = col.ID
 	}
@@ -1032,7 +1039,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		newIdxHistMap[idxHist.ID] = idxHist
 		idx2Columns[idxHist.ID] = ids
 		if idxInfo.MVIndex {
-			cols, ok := PrepareCols4MVIndex(tblInfo, idxInfo, columns, true)
+			cols, ok := PrepareCols4MVIndex(tblInfo, idxInfo, colInfoID2Col, true)
 			if ok {
 				mvIdx2Columns[id] = cols
 			}
@@ -1137,6 +1144,6 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 var PrepareCols4MVIndex func(
 	tableInfo *model.TableInfo,
 	mvIndex *model.IndexInfo,
-	tblCols []*expression.Column,
+	tblColsByID map[int64]*expression.Column,
 	checkOnly1ArrayTypeCol bool,
 ) (idxCols []*expression.Column, ok bool)

@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -55,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -63,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/table/temptable"
@@ -75,7 +72,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	h "github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -3673,16 +3669,6 @@ func (b *PlanBuilder) addAliasName(ctx context.Context, selectStmt *ast.SelectSt
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) {
-	var sb strings.Builder
-	ctx := format.NewRestoreCtx(0, &sb)
-	if err := hint.Restore(ctx); err != nil {
-		return
-	}
-	b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-		fmt.Sprintf("Hint %s is inapplicable. Please specify the table names in the arguments.", sb.String()))
-}
-
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	sessionVars := b.ctx.GetSessionVars()
@@ -3910,10 +3896,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 				// Besides, it will only lock the metioned in `of` part.
 				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
 			}
-			dbName := tName.Schema.L
-			if dbName == "" {
-				dbName = b.ctx.GetSessionVars().CurrentDB
-			}
+			dbName := getLowerDB(tName.Schema, b.ctx.GetSessionVars())
 			var authErr error
 			if user := b.ctx.GetSessionVars().User; user != nil {
 				authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT with locking clause", user.AuthUsername, user.AuthHostname, tNameW.Name.L)
@@ -4127,99 +4110,8 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 		ColName:     model.ExtraPhysTblIDName,
 		OrigColName: model.ExtraPhysTblIDName,
 	}))
-	ds.TblCols = append(ds.TblCols, pidCol)
+	ds.AppendTableCol(pidCol)
 	return pidCol
-}
-
-// getStatsTable gets statistics information for a table specified by "tableID".
-// A pseudo statistics table is returned in any of the following scenario:
-// 1. tidb-server started and statistics handle has not been initialized.
-// 2. table row count from statistics is zero.
-// 3. statistics is outdated.
-// Note: please also update getLatestVersionFromStatsTable() when logic in this function changes.
-func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *statistics.Table {
-	var statsHandle *handle.Handle
-	dom := domain.GetDomain(ctx)
-	if dom != nil {
-		statsHandle = dom.StatsHandle()
-	}
-	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
-	var statsTbl *statistics.Table
-	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ctx)
-		defer func() {
-			debugTraceGetStatsTbl(ctx,
-				tblInfo,
-				pid,
-				statsHandle == nil,
-				usePartitionStats,
-				countIs0,
-				pseudoStatsForUninitialized,
-				pseudoStatsForOutdated,
-				statsTbl,
-			)
-			debugtrace.LeaveContextCommon(ctx)
-		}()
-	}
-	// 1. tidb-server started and statistics handle has not been initialized.
-	if statsHandle == nil {
-		return statistics.PseudoTable(tblInfo, false, true)
-	}
-
-	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-	} else {
-		usePartitionStats = true
-		statsTbl = statsHandle.GetPhysicalTableStats(pid, tblInfo)
-	}
-	intest.Assert(statsTbl.ColAndIdxExistenceMap != nil, "The existence checking map must not be nil.")
-
-	allowPseudoTblTriggerLoading := false
-	// In OptObjectiveDeterminate mode, we need to ignore the real-time stats.
-	// To achieve this, we copy the statsTbl and reset the real-time stats fields (set ModifyCount to 0 and set
-	// RealtimeCount to the row count from the ANALYZE, which is fetched from loaded stats in GetAnalyzeRowCount()).
-	if ctx.GetSessionVars().GetOptObjective() == vardef.OptObjectiveDeterminate {
-		analyzeCount := max(int64(statsTbl.GetAnalyzeRowCount()), 0)
-		// If the two fields are already the values we want, we don't need to modify it, and also we don't need to copy.
-		if statsTbl.RealtimeCount != analyzeCount || statsTbl.ModifyCount != 0 {
-			// Here is a case that we need specially care about:
-			// The original stats table from the stats cache is not a pseudo table, but the analyze row count is 0 (probably
-			// because of no col/idx stats are loaded), which will makes it a pseudo table according to the rule 2 below.
-			// Normally, a pseudo table won't trigger stats loading since we assume it means "no stats available", but
-			// in such case, we need it able to trigger stats loading.
-			// That's why we use the special allowPseudoTblTriggerLoading flag here.
-			if !statsTbl.Pseudo && statsTbl.RealtimeCount > 0 && analyzeCount == 0 {
-				allowPseudoTblTriggerLoading = true
-			}
-			// Copy it so we can modify the ModifyCount and the RealtimeCount safely.
-			statsTbl = statsTbl.CopyAs(statistics.MetaOnly)
-			statsTbl.RealtimeCount = analyzeCount
-			statsTbl.ModifyCount = 0
-		}
-	}
-
-	// 2. table row count from statistics is zero.
-	if statsTbl.RealtimeCount == 0 {
-		countIs0 = true
-		core_metrics.PseudoEstimationNotAvailable.Inc()
-		return statistics.PseudoTable(tblInfo, allowPseudoTblTriggerLoading, true)
-	}
-
-	// 3. statistics is uninitialized or outdated.
-	pseudoStatsForUninitialized = !statsTbl.IsInitialized()
-	pseudoStatsForOutdated = ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() && statsTbl.IsOutdated()
-	if pseudoStatsForUninitialized || pseudoStatsForOutdated {
-		tbl := *statsTbl
-		tbl.Pseudo = true
-		statsTbl = &tbl
-		if pseudoStatsForUninitialized {
-			core_metrics.PseudoEstimationNotAvailable.Inc()
-		} else {
-			core_metrics.PseudoEstimationOutdate.Inc()
-		}
-	}
-
-	return statsTbl
 }
 
 // getLatestVersionFromStatsTable gets statistics information for a table specified by "tableID", and get the max
@@ -4695,6 +4587,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		Columns:                make([]*model.ColumnInfo, 0, countCnt),
 		PartitionNames:         tn.PartitionNames,
 		TblCols:                make([]*expression.Column, 0, countCnt),
+		TblColsByID:            make(map[int64]*expression.Column, countCnt),
 		PreferPartitions:       make(map[int][]ast.CIStr),
 		IS:                     b.is,
 		IsForUpdateRead:        b.isForUpdateRead,
@@ -4724,7 +4617,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			handleCols = util.NewIntHandleCols(newCol)
 		}
 		schema.Append(newCol)
-		ds.TblCols = append(ds.TblCols, newCol)
+		ds.AppendTableCol(newCol)
 	}
 	// We append an extra handle column to the schema when the handle
 	// column is not the primary key of "ds".
@@ -4743,7 +4636,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				ColName:     model.ExtraHandleName,
 				OrigColName: model.ExtraHandleName,
 			})
-			ds.TblCols = append(ds.TblCols, extraCol)
+			ds.AppendTableCol(extraCol)
 		}
 	}
 	ds.HandleCols = handleCols
@@ -4779,12 +4672,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// Init CommonHandleCols and CommonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
-		ds.CommonHandleCols, ds.CommonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
+		ds.CommonHandleCols, ds.CommonHandleLens = expression.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
 	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.AllPossibleAccessPaths {
 		if !path.IsIntHandlePath {
-			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, path.Index)
 
 			// check whether the path's index has a tidb_shard() prefix and the index column count
 			// more than 1. e.g. index(tidb_shard(a), a)
@@ -5361,9 +5254,17 @@ func pruneAndBuildColPositionInfoForDelete(
 		cols2PosInfo := &cols2PosInfos[i]
 		tbl := tblID2Table[cols2PosInfo.TblID]
 		tblInfo := tbl.Meta()
-		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
+		// If it's partitioned table, or has foreign keys, or has partial index, or is point get plan, we can't prune the columns, currently.
 		// nonPrunedSet will be nil if it's a point get or has foreign keys.
-		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
+		skipPruning := tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil
+		for _, idx := range tblInfo.Indices {
+			if len(idx.ConditionExprString) > 0 {
+				// If the index has a partial index condition, we can't prune the columns.
+				skipPruning = true
+				break
+			}
+		}
+		if skipPruning {
 			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo)
 			if err != nil {
 				return nil, nil, err
@@ -5514,10 +5415,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	nodeW := resolve.NewNodeWWithCtx(update.TableRefs.TableRefs, b.resolveCtx)
 	tableList := ExtractTableList(nodeW, false)
 	for _, t := range tableList {
-		dbName := t.Schema.L
-		if dbName == "" {
-			dbName = b.ctx.GetSessionVars().CurrentDB
-		}
+		dbName := getLowerDB(t.Schema, b.ctx.GetSessionVars())
 		// Avoid adding CTE table to the SELECT privilege list, maybe we have better way to do this?
 		if _, ok := b.nameMapCTE[t.Name.L]; !ok {
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
@@ -5860,7 +5758,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			dbName = dbNameTmp
 		}
 		if dbName == "" {
-			dbName = b.ctx.GetSessionVars().CurrentDB
+			dbName = strings.ToLower(b.ctx.GetSessionVars().CurrentDB)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, name.OrigTblName.L, "", nil)
 	}

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -519,20 +520,27 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		s.beforeMerge()
 	}
 
+	wctx := workerpool.NewContext(ctx)
+
 	now := time.Now()
-	err = MergeOverlappingFiles(
-		ctx,
-		datas,
+	op := NewMergeOperator(
+		wctx,
 		s.store,
 		int64(5*size.MB),
 		mergeOutput,
 		DefaultBlockSize,
 		onClose,
-		dummyOnReaderCloseFunc,
 		nil,
 		s.concurrency,
 		s.mergeIterHotspot,
 		engineapi.OnDuplicateKeyIgnore,
+	)
+
+	err = MergeOverlappingFiles(
+		wctx,
+		datas,
+		s.concurrency,
+		op,
 	)
 
 	intest.AssertNoError(err)
@@ -578,7 +586,6 @@ func newMergeStep(t *testing.T, s *mergeTestSuite) {
 		1*size.MB,
 		8*1024,
 		onClose,
-		dummyOnReaderCloseFunc,
 		s.concurrency,
 		s.mergeIterHotspot,
 	)
@@ -692,7 +699,7 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	output := &memKVsAndBuffers{}
 	now := time.Now()
 
-	err = readAllData(ctx, store, dataFiles, statFiles, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output, dummyOnReaderCloseFunc)
+	err = readAllData(ctx, store, dataFiles, statFiles, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
 	t.Logf("read all data cost: %s", time.Since(now))
 	intest.AssertNoError(err)
 }
@@ -841,7 +848,7 @@ finishCreateFiles:
 	output := &memKVsAndBuffers{}
 	p.beforeTest()
 	now := time.Now()
-	err = readAllData(ctx, store, dataFiles, statFiles, readRangeStart, readRangeEnd, smallBlockBufPool, largeBlockBufPool, output, dummyOnReaderCloseFunc)
+	err = readAllData(ctx, store, dataFiles, statFiles, readRangeStart, readRangeEnd, smallBlockBufPool, largeBlockBufPool, output)
 	require.NoError(t, err)
 	output.build(ctx)
 	elapsed := time.Since(now)

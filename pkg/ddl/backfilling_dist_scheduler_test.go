@@ -131,11 +131,17 @@ func TestCalculateRegionBatch(t *testing.T) {
 
 	// Test calculate in local storage.
 	batchCnt = ddl.CalculateRegionBatch(100, 8, true)
-	require.Equal(t, 13, batchCnt)
+	require.Equal(t, 100, batchCnt)
 	batchCnt = ddl.CalculateRegionBatch(2, 8, true)
-	require.Equal(t, 1, batchCnt)
+	require.Equal(t, 2, batchCnt)
 	batchCnt = ddl.CalculateRegionBatch(24, 8, true)
-	require.Equal(t, 3, batchCnt)
+	require.Equal(t, 24, batchCnt)
+	batchCnt = ddl.CalculateRegionBatch(1000, 8, true)
+	require.Equal(t, 334, batchCnt)
+	batchCnt = ddl.CalculateRegionBatch(1000, 2, true)
+	require.Equal(t, 500, batchCnt)
+	batchCnt = ddl.CalculateRegionBatch(200, 3, true)
+	require.Equal(t, 100, batchCnt)
 }
 
 func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
@@ -329,7 +335,7 @@ func createAddIndexTask(t *testing.T,
 			ReorgMeta: &model.DDLReorgMeta{
 				SQLMode:     defaultSQLMode,
 				Location:    &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
-				ReorgTp:     model.ReorgTypeLitMerge,
+				ReorgTp:     model.ReorgTypeIngest,
 				IsDistReorg: true,
 			},
 			Version: model.JobVersion2,
