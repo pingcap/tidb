@@ -2272,7 +2272,7 @@ func TestIssue59877(t *testing.T) {
 	tk.MustExec("set tiflash_fine_grained_shuffle_stream_count=8")
 	tk.MustExec("set tidb_enforce_mpp=1")
 	tk.MustQuery("explain format=\"brief\" select /*+ hash_join_build(t3) */ count(*) from t1 straight_join t2 on t1.id = t2.id straight_join t3 on t1.id = t3.id").Check(
-		testkit.Rows("HashAgg 1.00 root  funcs:count(Column#18)->Column#10",
+		testkit.Rows("HashAgg 1.00 root  funcs:count(Column#21)->Column#13",
 			"└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
 			"  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
 			"    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#21",
@@ -2283,7 +2283,7 @@ func TestIssue59877(t *testing.T) {
 			"          │   └─Projection 9990.00 mpp[tiflash]  test.t3.id, cast(test.t3.id, decimal(20,0))->Column#20",
 			"          │     └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.id))",
 			"          │       └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
-			"          └─Projection(Probe) 12487.50 mpp[tiflash]  test.t1.id, Column#14",
+			"          └─Projection(Probe) 12487.50 mpp[tiflash]  test.t1.id, Column#17",
 			"            └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t1.id, test.t2.id)]",
 			"              ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
 			"              │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#16, collate: binary]",
