@@ -62,7 +62,6 @@ func FilterLoadSpecifiedDBAndSysDBs(extraDBNames []string) func(dbName ast.CIStr
 	return func(name ast.CIStr) bool {
 		_, exists := dbNameSet[name.L]
 		shouldLoad := exists || metadef.IsSystemDB(name.L) || metadef.IsBRRelatedDB(name.O)
-		log.Info("Checking whether a database should be loaded.", zap.String("database", name.O), zap.Bool("shouldLoad", shouldLoad))
 		return shouldLoad
 	}
 }

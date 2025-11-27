@@ -277,6 +277,13 @@ func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
 	}
 	require.False(t, loaderForBR.skipLoadingDiff(systemDiff), "should NOT skip diff for system database")
 
+	// Test case 1.1: CREATE DATABASE diff should always pass through the filter
+	createDBDiff := &model.SchemaDiff{
+		Type:     model.ActionCreateSchema,
+		SchemaID: 4,
+	}
+	require.False(t, loaderForBR.skipLoadingDiff(createDBDiff), "should NOT skip CREATE DATABASE diffs even when the schema name is unknown")
+
 	// Test case 2: Schema diff for BR-related database - should NOT skip
 	brDiff := &model.SchemaDiff{
 		SchemaID: 2, // BR-related database
@@ -291,21 +298,21 @@ func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
 	}
 	require.True(t, loaderForBR.skipLoadingDiff(userDiff), "should skip diff for user database")
 
-	// Test case 4: Schema diff with OldSchemaID for system database - should NOT skip
+	// Test case 4: Schema diff with OldSchemaID for system database - still skipped because selection is based on SchemaID
 	oldSystemDiff := &model.SchemaDiff{
 		OldSchemaID: 1, // mysql system database
 		SchemaID:    3, // user database
 		TableID:     40,
 	}
-	require.False(t, loaderForBR.skipLoadingDiff(oldSystemDiff), "should NOT skip diff when OldSchemaID is system database")
+	require.True(t, loaderForBR.skipLoadingDiff(oldSystemDiff), "should skip diff when SchemaID is filtered out even if OldSchemaID is system database")
 
-	// Test case 5: Schema diff with OldSchemaID for BR-related database - should NOT skip
+	// Test case 5: Schema diff with OldSchemaID for BR-related database - still skipped because SchemaID is filtered out
 	oldBRDiff := &model.SchemaDiff{
 		OldSchemaID: 2, // BR-related database
 		SchemaID:    3, // user database
 		TableID:     50,
 	}
-	require.False(t, loaderForBR.skipLoadingDiff(oldBRDiff), "should NOT skip diff when OldSchemaID is BR-related database")
+	require.True(t, loaderForBR.skipLoadingDiff(oldBRDiff), "should skip diff when SchemaID is filtered out even if OldSchemaID is BR-related database")
 
 	// Test case 6: Schema diff with both SchemaID and OldSchemaID as user databases - should skip
 	userToUserDiff := &model.SchemaDiff{

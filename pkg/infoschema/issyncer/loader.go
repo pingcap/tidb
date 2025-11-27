@@ -294,13 +294,16 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 
 func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
 	if l.loadDBFilter != nil {
-		is := l.infoCache.GetLatest()
-		oldName, oldOK := is.SchemaByID(diff.OldSchemaID)
-		newName, newOK := is.SchemaByID(diff.SchemaID)
-		oldNameSelected := oldOK && l.loadDBFilter(oldName.Name)
-		newNameSelected := newOK && l.loadDBFilter(newName.Name)
+		// Always accept newly created schema as we cannot access its name in this context.
+		if diff.Type == model.ActionCreateSchema {
+			l.logger.Warn("Load DB filter was ignored in a `CREATE DATABASE`", zap.Int64("diff", diff.Version))
+			return false
+		}
 
-		return !(oldNameSelected || newNameSelected)
+		is := l.infoCache.GetLatest()
+		schema, ok := is.SchemaByID(diff.SchemaID)
+		selected := ok && l.loadDBFilter(schema.Name)
+		return !selected
 	}
 
 	if !l.crossKS {

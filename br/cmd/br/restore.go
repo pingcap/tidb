@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/trace"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/session"
@@ -81,7 +82,7 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	if len(cfg.Schemas) > 0 {
 		extraDBNames := make([]string, 0, len(cfg.Schemas))
 		for schema := range cfg.Schemas {
-			extraDBNames = append(extraDBNames, schema)
+			extraDBNames = append(extraDBNames, utils.UnquoteName(schema))
 		}
 		filter := gluetidb.FilterLoadSpecifiedDBAndSysDBs(extraDBNames)
 		restore := setTiDBGlueDBFilter(filter)
