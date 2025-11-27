@@ -13,6 +13,7 @@ import (
 
 type metrics struct {
 	finishedSizeGauge              *prometheus.GaugeVec
+	compressedSizeGauge            *prometheus.GaugeVec
 	finishedRowsGauge              *prometheus.GaugeVec
 	finishedTablesCounter          *prometheus.CounterVec
 	estimateTotalRowsCounter       *prometheus.CounterVec
@@ -34,6 +35,14 @@ func newMetrics(f promutil.Factory, constLabels prometheus.Labels) *metrics {
 			Subsystem:   "dump",
 			Name:        "finished_size",
 			Help:        "counter for dumpling finished file size",
+			ConstLabels: constLabels,
+		}, []string{})
+	m.compressedSizeGauge = f.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace:   "dumpling",
+			Subsystem:   "dump",
+			Name:        "compressed_size",
+			Help:        "counter for dumpling compressed file size",
 			ConstLabels: constLabels,
 		}, []string{})
 	m.estimateTotalRowsCounter = f.NewCounterVec(
@@ -99,6 +108,7 @@ func newMetrics(f promutil.Factory, constLabels prometheus.Labels) *metrics {
 
 func (m *metrics) registerTo(registry promutil.Registry) {
 	registry.MustRegister(m.finishedSizeGauge)
+	registry.MustRegister(m.compressedSizeGauge)
 	registry.MustRegister(m.finishedRowsGauge)
 	registry.MustRegister(m.estimateTotalRowsCounter)
 	registry.MustRegister(m.finishedTablesCounter)
@@ -110,6 +120,7 @@ func (m *metrics) registerTo(registry promutil.Registry) {
 
 func (m *metrics) unregisterFrom(registry promutil.Registry) {
 	registry.Unregister(m.finishedSizeGauge)
+	registry.Unregister(m.compressedSizeGauge)
 	registry.Unregister(m.finishedRowsGauge)
 	registry.Unregister(m.estimateTotalRowsCounter)
 	registry.Unregister(m.finishedTablesCounter)

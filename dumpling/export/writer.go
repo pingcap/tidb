@@ -249,8 +249,13 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 			return tearDownErr
 		}
 
-		if w, ok := fileWriter.(*InterceptFileWriter); ok && !w.SomethingIsWritten {
-			break
+		if iw, ok := fileWriter.(*InterceptFileWriter); ok {
+			if !iw.SomethingIsWritten {
+				break
+			}
+			if bw, ok := iw.ExternalFileWriter.(*storage.BufferedWriter); ok {
+				AddGauge(w.metrics.compressedSizeGauge, float64(bw.Size()))
+			}
 		}
 
 		tctx.L().Debug("finish dumping table(chunk)",
