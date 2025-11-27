@@ -17,6 +17,7 @@ package importinto
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"io"
 	"time"
 
@@ -363,7 +364,7 @@ func readOneFile(ctx context.Context, store storage.ExternalStorage, file string
 	for {
 		key, val, err := reader.NextKV()
 		if err != nil {
-			if err == io.EOF {
+			if goerrors.Is(err, io.EOF) {
 				break
 			}
 			return err

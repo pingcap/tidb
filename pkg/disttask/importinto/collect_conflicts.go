@@ -160,23 +160,15 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 
 	pairCh := startReadFiles(egCtx, eg, e.tableImporter.GlobalSortStore, ci.Files)
 
-	var initMu sync.Mutex
-	initHandlerWithLockFn := func(handler conflictKVHandler) error {
-		initMu.Lock()
-		defer initMu.Unlock()
-		// when create encoder, if the table have generated column, when calling
-		// backend/kv.CollectGeneratedColumns(), buildSimpleExpr will rewrite the
-		// AST node, and data race.
-		return handler.init()
+	handlers, err := e.buildHandlers(egCtx, concurrency, kvGroup)
+	if err != nil {
+		return nil, err
 	}
 	result = newCollectConflictResultForMerge()
 	var mu sync.Mutex
-	for i := 0; i < concurrency; i++ {
-		handler := e.getHandler(kvGroup)
+	for _, h := range handlers {
+		handler := h
 		eg.Go(func() error {
-			if err := initHandlerWithLockFn(handler); err != nil {
-				return errors.Trace(err)
-			}
 			if err := handler.run(egCtx, pairCh); err != nil {
 				_ = handler.close(egCtx)
 				return err
@@ -192,6 +184,30 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 		})
 	}
 	return result, eg.Wait()
+}
+
+func (e *collectConflictsStepExecutor) buildHandlers(ctx context.Context, concurrency int, kvGroup string) (handlers []conflictKVHandler, err error) {
+	handlers = make([]conflictKVHandler, 0, concurrency)
+	defer func() {
+		if err != nil {
+			for _, hdl := range handlers {
+				_ = hdl.close(ctx)
+			}
+		}
+	}()
+	for range concurrency {
+		handler := e.getHandler(kvGroup)
+		// when create encoder, if the table have generated column, when calling
+		// backend/kv.CollectGeneratedColumns(), buildSimpleExpr will rewrite the
+		// AST node, and data race. and the data race might happen during encoding,
+		// in EvalGeneratedColumns, so we have to finish initialize all handlers
+		// before running them.
+		if err = handler.init(); err != nil {
+			return nil, err
+		}
+		handlers = append(handlers, handler)
+	}
+	return handlers, nil
 }
 
 func (e *collectConflictsStepExecutor) getHandler(kvGroup string) conflictKVHandler {

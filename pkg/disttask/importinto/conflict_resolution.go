@@ -17,7 +17,6 @@ package importinto
 import (
 	"context"
 	"encoding/json"
-	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -104,19 +103,14 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 
 	pairCh := startReadFiles(egCtx, eg, e.tableImporter.GlobalSortStore, ci.Files)
 
-	var initMu sync.Mutex
-	initHandlerWithLockFn := func(handler conflictKVHandler) error {
-		initMu.Lock()
-		defer initMu.Unlock()
-		// when create encoder, if the table have generated column, when calling
-		// backend/kv.CollectGeneratedColumns(), buildSimpleExpr will rewrite the
-		// AST node, and data race.
-		return handler.init()
+	keysToDeleteCh := make(chan []tidbkv.Key)
+	handlers, deleters, err := e.buildHandlersAndDeleters(egCtx, concurrency, kvGroup, keysToDeleteCh)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	var finishedHandlers atomic.Int32
-	keysToDeleteCh := make(chan []tidbkv.Key)
 	for i := 0; i < concurrency; i++ {
-		handler, deleter := e.getHandlerAndDeleter(kvGroup, keysToDeleteCh)
+		handler, deleter := handlers[i], deleters[i]
 		eg.Go(func() error {
 			defer func() {
 				count := finishedHandlers.Add(1)
@@ -124,9 +118,6 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 					close(keysToDeleteCh)
 				}
 			}()
-			if err := initHandlerWithLockFn(handler); err != nil {
-				return errors.Trace(err)
-			}
 			if err := handler.run(egCtx, pairCh); err != nil {
 				_ = handler.close(egCtx)
 				return err
@@ -138,6 +129,34 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 		})
 	}
 	return eg.Wait()
+}
+
+func (e *conflictResolutionStepExecutor) buildHandlersAndDeleters(
+	ctx context.Context, concurrency int, kvGroup string, keysToDeleteCh chan []tidbkv.Key,
+) (handlers []conflictKVHandler, deleters []*conflictKVDeleter, err error) {
+	handlers = make([]conflictKVHandler, 0, concurrency)
+	deleters = make([]*conflictKVDeleter, 0, concurrency)
+	defer func() {
+		if err != nil {
+			for _, hdl := range handlers {
+				_ = hdl.close(ctx)
+			}
+		}
+	}()
+	for range concurrency {
+		handler, deleter := e.getHandlerAndDeleter(kvGroup, keysToDeleteCh)
+		// when create encoder, if the table have generated column, when calling
+		// backend/kv.CollectGeneratedColumns(), buildSimpleExpr will rewrite the
+		// AST node, and data race. and the data race might happen during encoding,
+		// in EvalGeneratedColumns, so we have to finish initialize all handlers
+		// before running them.
+		if err = handler.init(); err != nil {
+			return nil, nil, err
+		}
+		handlers = append(handlers, handler)
+		deleters = append(deleters, deleter)
+	}
+	return handlers, deleters, nil
 }
 
 func (e *conflictResolutionStepExecutor) getHandlerAndDeleter(kvGroup string, keysToDelCh chan []tidbkv.Key) (
