@@ -95,14 +95,6 @@ func (en *TableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 	return en.Record2KV(record, row, rowID)
 }
 
-// GetColumnSize get column size.
-func (en *TableKVEncoder) GetColumnSize() map[int64]int64 {
-	sessionVars := en.SessionCtx.GetSessionVars()
-	sessionVars.TxnCtxMu.Lock()
-	defer sessionVars.TxnCtxMu.Unlock()
-	return sessionVars.TxnCtx.TableDeltaMap[en.Table.Meta().ID].ColSize
-}
-
 // todo merge with code in load_data.go
 func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
 	row := make([]types.Datum, 0, len(en.insertColumns))

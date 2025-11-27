@@ -68,7 +68,7 @@ type BackfillSubTaskMeta struct {
 	// EleIDs stands for the index/column IDs to backfill with distributed framework.
 	// After the subtask is finished, EleIDs should have the same length as
 	// MetaGroups, and they are in the same order.
-	EleIDs []int64 `json:"ele_ids,omitempty"`
+	EleIDs []int64 `json:"ele_ids,omitempty" external:"true"`
 	// Only used for adding one single index.
 	// Keep this for compatibility with v7.5.
 	external.SortedKVMeta `json:",inline" external:"true"`
