@@ -3756,7 +3756,7 @@
                             "unsigned": false
                           },
                           {
-                            "avgRowCount": 0,
+                            "avgRowCount": 154.37797031265498,
                             "boundL": -2997,
                             "boundR": 2997,
                             "histL": -999,
@@ -3765,13 +3765,13 @@
                             "rPercent": 0
                           },
                           {
-                            "Result": 1
+                            "Result": 154.37797031265498
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 1,
+                          "RowCount": 154.37797031265498,
                           "Type": "Range"
                         }
                       }
@@ -3780,7 +3780,7 @@
                   {
                     "Name": "a",
                     "Result": {
-                      "Est": 1,
+                      "Est": 154.37797031265498,
                       "MaxEst": 1100,
                       "MinEst": 1
                     }
@@ -4099,7 +4099,7 @@
                             "unsigned": false
                           },
                           {
-                            "avgRowCount": 0,
+                            "avgRowCount": 154.37797031265498,
                             "boundL": -2997,
                             "boundR": 2997,
                             "histL": -999,
@@ -4108,13 +4108,13 @@
                             "rPercent": 0
                           },
                           {
-                            "Result": 1
+                            "Result": 154.37797031265498
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 1,
+                          "RowCount": 154.37797031265498,
                           "Type": "Range"
                         }
                       }
@@ -4122,7 +4122,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 1
+                    "Result": 154.37797031265498
                   }
                 ]
               },
@@ -4275,7 +4275,7 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0.0003246753246753247,
+                "Selectivity": 0.05012271763397889,
                 "partial cover": false
               },
               {
