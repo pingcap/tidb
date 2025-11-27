@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -350,7 +351,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				newRows[i] = nil
 				break
 			} else if e.ignoreErr {
-				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
 				if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
 					e.Ctx().GetSessionVars().LockUnchangedKeys {
 					// lock duplicated row key on insert-ignore
@@ -371,12 +372,10 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				if err != nil {
 					return err
 				}
-
-				if unchanged {
-					newRows[i] = nil
-					break
-				}
+				intest.Assert(!unchanged, "old row should not be identical to the new row, it's supposed that change happens")
 			}
+			removeOldRows = removeOldRows[:0]
+
 			err := e.addRecord(ctx, newRows[i], addRecordDupKeyCheck)
 			if err != nil {
 				return err

@@ -786,3 +786,148 @@ func TestInsertNullIntoNotNullGenerated(t *testing.T) {
 	tk.MustExec(`delete from t3 where c2 = ""`)
 	tk.MustQuery(`select * from t3`).Check(testkit.Rows())
 }
+
+type softDelete struct {
+	*testkit.TestKit
+}
+
+func (sd softDelete) testSoftDeleteInsert(t *testing.T) {
+	tk := sd.TestKit
+	for _, clustered := range []string{"clustered", "nonclustered"} {
+		tk.MustExec(fmt.Sprintf(`create table t (
+			id int primary key %s,
+			_tidb_softdelete_time bigint default null)`, clustered))
+
+		tk.MustExec("insert into t(id) values (1), (2)")
+		tk.MustExec("update t set _tidb_softdelete_time = now() where id = 1")
+		// cover 3 scenarios: new record, meet old record, meet old soft-deleted record
+		// 1 tombstone
+		// 2 null
+		// 3 <- not exist
+		tk.ExecToErr("insert into t(id) values (1), (2), (3)") // duplicate key 2
+		tk.MustQuery("select id from t where _tidb_softdelete_time is null").Check(testkit.Rows("2"))
+		tk.MustQuery("select id from t").Check(testkit.Rows("1", "2"))
+		tk.MustExec("insert into t(id) values (1), (3)")
+		tk.MustQuery("select id from t where _tidb_softdelete_time is null").Sort().Check(testkit.Rows("1", "2", "3"))
+
+		tk.MustExec("drop table t")
+	}
+}
+
+func (sd softDelete) testSoftDeleteInsertIgnore(t *testing.T) {
+	// insert ignore
+	tk := sd.TestKit
+	// for _, clustered := range []string{"clustered", "nonclustered"} {
+	for _, clustered := range []string{"nonclustered"} {
+		tk.MustExec(fmt.Sprintf(`create table t (
+			id int primary key %s,
+			v int,
+			_tidb_softdelete_time bigint default null)`, clustered))
+
+		tk.MustExec(`insert into t(id, v) values (1, 1), (2, 2)`)
+		// soft delete (1, 1)
+		tk.MustExec(`update t set _tidb_softdelete_time = now() where id = 1`)
+		tk.MustExec(`insert ignore into t (id, v) values (1, 11), (2, 12), (3, 13)`)
+		// (2, 12) conflicts with the old row (2, 2), it should be ignored.
+		tk.MustQuery(`select id, v from t where _tidb_softdelete_time is null`).Sort().Check(testkit.Rows("1 11", "2 2", "3 13"))
+
+		tk.MustExec(`drop table t`)
+	}
+}
+
+func (sd softDelete) testSoftDeleteInsertOnDuplicate(t *testing.T) {
+	// insert on duplicate key update
+	tk := sd.TestKit
+	for _, clustered := range []string{"clustered", "nonclustered"} {
+		tk.MustExec(fmt.Sprintf(`create table t (
+			id int primary key %s,
+			v int,
+			_tidb_softdelete_time bigint default null)`, clustered))
+
+		tk.MustExec(`insert into t (id, v) values (1, 1), (2, 2)`)
+		// soft delete (1, 1)
+		tk.MustExec(`update t set _tidb_softdelete_time = now() where id = 1`)
+		tk.MustExec(`insert into t (id, v) values (1, 11), (2, 12), (3, 13) on duplicate key update v = 666`)
+		// (2, 12) conflicts with the old row (2, 2), it should be updated.
+		tk.MustQuery(`select id, v from t where _tidb_softdelete_time is null`).Sort().Check(testkit.Rows("1 11", "2 666", "3 13"))
+		tk.MustExec(`truncate table t`)
+
+		// What if the on duplicate key update row duplicates with soft-deleted row again?
+		// Currently we do not support changing the primary key, so this case would not happen.
+		// TODO: update here when changing primary key is supported
+		// tk.MustExec(`insert into t2 (id, v) values (1, 1), (2, 2)`)
+		// tk.MustExec(`update t2 set _tidb_softdelete_time = now() where id = 1`)
+		// tk.MustExec(`insert into t2 (id, v) values (2, 12) on duplicate key update id = 1`)
+		// tk.MustQuery(`select id, v from t2 where _tidb_softdelete_time is null`).Sort().Check(testkit.Rows("1 2"))
+
+		tk.MustExec(`drop table t`)
+	}
+}
+
+func (sd softDelete) testSoftDeleteReplace(t *testing.T) {
+	// replace
+	tk := sd.TestKit
+	for _, clustered := range []string{"clustered", "nonclustered"} {
+		tk.MustExec(fmt.Sprintf(`create table t (
+			id int primary key %s,
+			v int,
+			_tidb_softdelete_time bigint default null)`, clustered))
+
+		tk.MustExec(`insert into t (id, v) values (1, 1), (2, 2)`)
+		// soft delete (1, 1)
+		tk.MustExec(`update t set _tidb_softdelete_time = now() where id = 1`)
+		tk.MustExec(`replace into t (id, v) values (1, 11), (2, 12), (3, 13)`)
+		// (2, 12) conflicts with the old row (2, 2), it should be updated.
+		tk.MustQuery(`select id, v from t where _tidb_softdelete_time is null`).Sort().Check(testkit.Rows("1 11", "2 12", "3 13"))
+
+		tk.MustExec(`drop table t`)
+	}
+
+}
+
+func (sd softDelete) testSoftDeleteUpdate(t *testing.T) {
+	// Update is handled by SQL rewrite, so no logic here
+}
+
+func TestSoftDelete(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	sd := softDelete{tk}
+
+	t.Run("testSoftDeleteInsert", sd.testSoftDeleteInsert)
+	t.Run("testSoftDeleteInsertIgnore", sd.testSoftDeleteInsertIgnore)
+	t.Run("testSoftDeleteInsertOnDuplicate", sd.testSoftDeleteInsertOnDuplicate)
+	t.Run("testSoftDeleteReplace", sd.testSoftDeleteReplace)
+	t.Run("testSoftDeleteUpdate", sd.testSoftDeleteUpdate)
+
+	t.Run("testSoftDeleteMultipleTombstones", func(t *testing.T) {
+		tk.MustExec(`create table t (
+			id int primary key,
+			_tidb_softdelete_time bigint default null)`)
+
+		// multiple soft-delete tombstone
+		tk.MustExec(`insert into t(id) values (1), (2)`)
+		tk.MustExec(`update t set _tidb_softdelete_time = now() where id in (1, 2)`)
+		tk.MustExec(`insert into t(id) values (1), (2)`)
+		tk.MustQuery(`select id from t`).Check(testkit.Rows("1", "2"))
+		tk.MustExec("drop table t")
+	})
+
+	// TODO: report error for this? should be covered by DDL?
+	// tk.MustExec(`create table t(
+	// 	id int primary key,
+	// 	uk int unique key,
+	// 	_tidb_softdelete_time bigint default null)`)
+
+	// The following case is not supported yet, because currently we don't support soft delete table with unique keys.
+	// tk.MustExec(`create table t(
+	// 	id int primary key,
+	// 	uk int unique key,
+	// 	_tidb_softdelete_time bigint default null)`)
+	// tk.MustExec(`insert into t(id, uk) values (1, 10), (2, 6)`)
+	// tk.MustExec(`update t set _tidb_softdelete_time = now() where id in (1, 2)`)
+	// // this step conflicts with both soft delete rows, it triggers removal of two old soft deleted rows
+	// tk.MustExec(`insert into t(id, uk) values (1, 6)`)
+	// tk.MustQuery(`select id, uk from t where _tidb_softdelete_time is null`).Check(testkit.Rows("1 6"))
+}
