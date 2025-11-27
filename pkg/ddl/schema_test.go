@@ -587,18 +587,6 @@ func TestSchemaReadOnlyAffectAllUsers(t *testing.T) {
 	}
 }
 
-func TestSchemaReadOnlyAffectAllUssers(t *testing.T) {
-	enableReadOnlyDDLFp(t)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database if not exists test")
-	tk.MustExec("create table if not exists test.t(a int)")
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	defer se.Close()
-	tk.MustExec("alter database test read only = 1 read only = 1")
-}
-
 func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
 	enableReadOnlyDDLFp(t)
 	store := testkit.CreateMockStore(t)
