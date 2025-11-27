@@ -268,12 +268,12 @@ func TestBitColumnPushDown(t *testing.T) {
 		testKit.MustQuery(sql).Sort().Check(testkit.Rows("2", "2", "3", "3", "4", "4"))
 		rows := [][]any{
 			{"Projection_15", "root", "test.t1.b"},
-			{"└─Apply_19", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#7)"},
+			{"└─Apply_19", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#9)"},
 			{"  ├─TableReader_22(Build)", "root", "data:Selection_21"},
 			{"  │ └─Selection_21", "cop[tikv]", "not(isnull(test.t1.b))"},
 			{"  │   └─TableFullScan_20", "cop[tikv]", "keep order:false, stats:pseudo"},
-			{"  └─Selection_23(Probe)", "root", "not(isnull(Column#7))"},
-			{"    └─StreamAgg_30", "root", "funcs:min(test.t2.b)->Column#7"},
+			{"  └─Selection_23(Probe)", "root", "not(isnull(Column#9))"},
+			{"    └─StreamAgg_30", "root", "funcs:min(test.t2.b)->Column#9"},
 			{"      └─TopN_31", "root", "test.t2.b, offset:0, count:1"},
 			{"        └─TableReader_41", "root", "data:TopN_40"},
 			{"          └─TopN_40", "cop[tikv]", "test.t2.b, offset:0, count:1"},
