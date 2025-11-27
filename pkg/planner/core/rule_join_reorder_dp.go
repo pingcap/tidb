@@ -133,7 +133,9 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan) (base.LogicalP
 		if err != nil {
 			return nil, err
 		}
-		joins = append(joins, join)
+		// Apply retained selections that can be pushed down to this join
+		newJoinPlan := s.basicJoinGroupInfo.applyRetainedSelections(join)
+		joins = append(joins, newJoinPlan)
 	}
 	remainedOtherConds := make([]expression.Expression, 0, len(totalNonEqEdges))
 	for _, edge := range totalNonEqEdges {
@@ -279,7 +281,10 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalPla
 			otherConds, usedOtherConds = expression.FilterOutInPlace(otherConds, func(expr expression.Expression) bool {
 				return expression.ExprFromSchema(expr, mergedSchema)
 			})
-			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, base.InnerJoin))
+			newJoin := s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, base.InnerJoin)
+			// Apply retained selections that can be pushed down to this join
+			newJoinPlan := s.basicJoinGroupInfo.applyRetainedSelections(newJoin)
+			resultJoinGroup = append(resultJoinGroup, newJoinPlan)
 		}
 		cartesianJoinGroup = resultJoinGroup
 	}
