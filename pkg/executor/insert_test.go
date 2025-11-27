@@ -844,12 +844,12 @@ func (sd softDelete) testSoftDeleteInsertOnDuplicate(t *testing.T) {
 			v int,
 			_tidb_softdelete_time bigint default null)`, clustered))
 
-		tk.MustExec(`insert into t (id, v) values (1, 1), (2, 2)`)
-		// soft delete (1, 1)
-		tk.MustExec(`update t set _tidb_softdelete_time = now() where id = 1`)
-		tk.MustExec(`insert into t (id, v) values (1, 11), (2, 12), (3, 13) on duplicate key update v = 666`)
-		// (2, 12) conflicts with the old row (2, 2), it should be updated.
-		tk.MustQuery(`select id, v from t where _tidb_softdelete_time is null`).Sort().Check(testkit.Rows("1 11", "2 666", "3 13"))
+		tk.MustExec(`insert into t (id, v) values (1, 1), (2, 2), (3, 3), (4, 4)`)
+		// soft delete (1, 1), (2, 2)
+		tk.MustExec(`update t set _tidb_softdelete_time = now() where id in (1, 2)`)
+		// multiple duplicate id = 3, 4, multiple tombstone id = 1, 2
+		tk.MustExec(`insert into t (id, v) values (1, 11), (2, 12), (3, 13), (4, 14), (5, 15) on duplicate key update v = 666`)
+		tk.MustQuery(`select id, v from t where _tidb_softdelete_time is null`).Sort().Check(testkit.Rows("1 11", "2 12", "3 666", "4 666", "5 15"))
 		tk.MustExec(`truncate table t`)
 
 		// What if the on duplicate key update row duplicates with soft-deleted row again?
