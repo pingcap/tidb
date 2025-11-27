@@ -46,9 +46,8 @@ Update	root		N/A
 explain format = 'plan_tree' delete from t3 where id > 1;
 id	task	access object	operator info
 Delete	root		N/A
-├─TableReader	root		data:Selection
-│ └─Selection	cop[tikv]		gt(explain_foreign_key.t3.id, 1)
-│   └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+├─IndexReader	root		index:IndexRangeScan
+│ └─IndexRangeScan	cop[tikv]	table:t3, index:idx(id)	range:(1,+inf], keep order:false, stats:pseudo
 └─Foreign_Key_Check	root	table:t4, index:idx_id	foreign_key:fk, check_not_exist
 explain format = 'plan_tree' update t3 set id=id+1 where id = 1;
 id	task	access object	operator info

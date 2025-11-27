@@ -195,7 +195,6 @@ delete m1 from t m2,t m1 where m1.F1>1;
 select * from t;
 F1
 1
-2
 drop table if exists t;
 create table t (F1 VARCHAR(30));
 insert into t (F1) values ('1'), ('2');

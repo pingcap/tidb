@@ -6015,6 +6015,15 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	del.SetOutputNames(p.OutputNames())
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 
+	// resolve indices for handle columns in del.TblColPosInfos
+	for i, colPosInfo := range del.TblColPosInfos {
+		resolvedHandleCols, err := colPosInfo.HandleCols.ResolveIndices(del.SelectPlan.Schema())
+		if err != nil {
+			return nil, err
+		}
+		del.TblColPosInfos[i].HandleCols = resolvedHandleCols
+	}
+
 	return del, err
 }
 
