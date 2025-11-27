@@ -100,6 +100,8 @@ type ShuffleExec struct {
 	finishCh chan struct{}
 	outputCh chan *shuffleOutput
 
+	counterForTest atomic.Int32
+
 	allSourceAndWorkerExitForTest atomic.Bool
 }
 
@@ -177,7 +179,7 @@ func (e *ShuffleExec) Close() error {
 		channel.Clear(e.outputCh)
 	}
 
-	if intest.InTest && !e.allSourceAndWorkerExitForTest.Load() {
+	if intest.InTest && !e.allSourceAndWorkerExitForTest.Load() && e.prepared {
 		panic("there are still some running sources or workers")
 	}
 
@@ -218,14 +220,21 @@ func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
 	waitGroup := &sync.WaitGroup{}
 	num := len(e.workers) + len(e.dataSources)
 	waitGroup.Add(num)
+	e.counterForTest.Store(int32(num))
 	e.allSourceAndWorkerExitForTest.Store(false)
 	// create a goroutine for each dataSource to fetch and split data
 	for i := range e.dataSources {
-		go e.fetchDataAndSplit(ctx, i, waitGroup)
+		go func(i int) {
+			defer e.counterForTest.Add(-1)
+			e.fetchDataAndSplit(ctx, i, waitGroup)
+		}(i)
 	}
 
 	for _, w := range e.workers {
-		go w.run(ctx, waitGroup)
+		go func() {
+			defer e.counterForTest.Add(-1)
+			w.run(ctx, waitGroup)
+		}()
 	}
 
 	go e.waitWorkerAndCloseOutput(waitGroup)
