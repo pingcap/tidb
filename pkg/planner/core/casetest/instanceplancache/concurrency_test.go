@@ -65,9 +65,10 @@ func isTxn(stmt string) bool {
 }
 
 type worker struct {
-	tk    *testkit.TestKit
-	stmts []*testStmt
-	wg    *sync.WaitGroup
+	tk       *testkit.TestKit
+	stmts    []*testStmt
+	wg       *sync.WaitGroup
+	dmlMutex *sync.Mutex // Optional mutex for synchronizing DML operations across databases
 }
 
 func (w *worker) run() {
@@ -82,16 +83,25 @@ func (w *worker) run() {
 			preparedResult := w.tk.MustQuery(stmt.execStmt)
 			normalResult.Sort().Check(preparedResult.Sort().Rows())
 		} else if isDML(stmt.normalStmt) { // DML
+			// Synchronize DML operations if mutex is provided
+			if w.dmlMutex != nil {
+				w.dmlMutex.Lock()
+			}
 			w.tk.MustExec(stmt.normalStmt)
 			w.tk.MustExec(stmt.prepStmt)
 			w.tk.MustExec(stmt.setStmt)
 			w.tk.MustExec(stmt.execStmt)
+			if w.dmlMutex != nil {
+				w.dmlMutex.Unlock()
+			}
 		}
 	}
 }
 
 func testWithWorkers(TKs []*testkit.TestKit, stmts []*testStmt) {
 	nStmts := make([][]*testStmt, len(TKs))
+	var dmlMutex sync.Mutex // Synchronize DML operations across databases
+
 	for _, stmt := range stmts {
 		if isDML(stmt.normalStmt) { // avoid duplicate DML
 			x := rand.Intn(len(TKs))
@@ -105,7 +115,7 @@ func testWithWorkers(TKs []*testkit.TestKit, stmts []*testStmt) {
 
 	var wg sync.WaitGroup
 	for i, tk := range TKs {
-		w := worker{tk: tk, stmts: nStmts[i], wg: &wg}
+		w := worker{tk: tk, stmts: nStmts[i], wg: &wg, dmlMutex: &dmlMutex}
 		wg.Add(1)
 		go w.run()
 	}
