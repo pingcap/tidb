@@ -601,9 +601,9 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			path.IsSingleScan = true
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
-			if !path.IsSingleScan {
-				path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
-			}
+			// Reevaluate path.IsSingleScan because it may have been set incorrectly
+			// in the pruning logic.
+			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
 		// step: 3
 		// Try some heuristic rules to select access path.

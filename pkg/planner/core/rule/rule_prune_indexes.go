@@ -16,6 +16,7 @@ package rule
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -86,6 +87,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	preferredJoinIndexes := make([]indexWithScore, 0, maxToKeep)
 	tablePaths := make([]*util.AccessPath, 0, 1)
 	mvIndexPaths := make([]*util.AccessPath, 0, 1)
+	indexMergeIndexPaths := make([]*util.AccessPath, 0, 1)
 
 	// Categorize each index path
 	for _, path := range paths {
@@ -103,6 +105,12 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		// If we have forced paths, we shouldn't prune any paths
 		if path.Forced {
 			return paths
+		}
+
+		// Always keep indexes that are specified in IndexMerge hints, as index merge needs them to build partial paths
+		if path.Index != nil && isSpecifiedInIndexMergeHints(ds, path.Index.Name.L) {
+			indexMergeIndexPaths = append(indexMergeIndexPaths, path)
+			continue
 		}
 
 		// Calculate coverage for this index
@@ -130,7 +138,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	}
 
 	// Build final result by sorting and selecting top indexes
-	result := buildFinalResult(tablePaths, mvIndexPaths, preferredWhereIndexes, preferredJoinIndexes, maxToKeep, req)
+	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredWhereIndexes, preferredJoinIndexes, maxToKeep, req)
 
 	// Safety check: if we ended up with nothing, return the original paths
 	if len(result) == 0 {
@@ -233,8 +241,23 @@ func scoreIndexPath(path *util.AccessPath, req columnRequirements) indexWithScor
 	return score
 }
 
+// isSpecifiedInIndexMergeHints returns true if the input index name is specified in the IndexMerge hint.
+func isSpecifiedInIndexMergeHints(ds *logicalop.DataSource, name string) bool {
+	for _, hint := range ds.IndexMergeHints {
+		if hint.IndexHint == nil || len(hint.IndexHint.IndexNames) == 0 {
+			continue
+		}
+		for _, hintName := range hint.IndexHint.IndexNames {
+			if strings.EqualFold(name, hintName.String()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // buildFinalResult sorts and selects the top indexes to keep, combining table paths,
-// perfect covering indexes, and preferred indexes.
+// multi-value indexes, index merge indexes, and preferred indexes.
 type scoredIndex struct {
 	info                indexWithScore
 	score               int
@@ -289,7 +312,30 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 	return scored
 }
 
-func buildFinalResult(tablePaths, mvIndexPaths []*util.AccessPath, whereIndexes, joinIndexes []indexWithScore, maxToKeep int, req columnRequirements) []*util.AccessPath {
+// shouldSkipDuplicateScore determines if an index should be skipped due to duplicate score handling.
+// It returns true if the index should be skipped based on the rule: only exclude indexes with the same score
+// if consecutiveWhereCount <= 1.
+func shouldSkipDuplicateScore(entry scoredIndex, maxScore int, lowerScoreKept map[int]struct{}) bool {
+	if entry.score <= maxScore {
+		if entry.info.consecutiveWhereCount <= 1 {
+			if entry.score < maxScore {
+				if _, kept := lowerScoreKept[entry.score]; kept {
+					return true
+				}
+				lowerScoreKept[entry.score] = struct{}{}
+			} else if entry.score == maxScore {
+				// For same score, only skip if we've already kept one with consecutiveWhereCount <= 1
+				if _, kept := lowerScoreKept[entry.score]; kept {
+					return true
+				}
+				lowerScoreKept[entry.score] = struct{}{}
+			}
+		}
+	}
+	return false
+}
+
+func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, whereIndexes, joinIndexes []indexWithScore, maxToKeep int, req columnRequirements) []*util.AccessPath {
 	const maxIndexes = 10
 	result := make([]*util.AccessPath, 0, maxIndexes)
 
@@ -298,16 +344,21 @@ func buildFinalResult(tablePaths, mvIndexPaths []*util.AccessPath, whereIndexes,
 	// CRITICAL: Always include multi-value index paths - we do not have sufficient
 	// information to determine if they should be pruned in this function.
 	result = append(result, mvIndexPaths...)
+	// CRITICAL: Always include indexes specified in IndexMerge hints - index merge needs them to build partial paths
+	result = append(result, indexMergeIndexPaths...)
 
 	if maxToKeep <= 0 {
 		return result
 	}
 
-	added := make(map[*util.AccessPath]struct{}, len(tablePaths)+len(mvIndexPaths))
+	added := make(map[*util.AccessPath]struct{}, len(tablePaths)+len(mvIndexPaths)+len(indexMergeIndexPaths))
 	for _, path := range tablePaths {
 		added[path] = struct{}{}
 	}
 	for _, path := range mvIndexPaths {
+		added[path] = struct{}{}
+	}
+	for _, path := range indexMergeIndexPaths {
 		added[path] = struct{}{}
 	}
 
@@ -332,21 +383,8 @@ func buildFinalResult(tablePaths, mvIndexPaths []*util.AccessPath, whereIndexes,
 				continue
 			}
 			// Only exclude indexes with the same score if consecutiveWhereCount <= 1
-			if entry.score <= maxWhereScore {
-				if entry.info.consecutiveWhereCount <= 1 {
-					if entry.score < maxWhereScore {
-						if _, kept := lowerScoreKept[entry.score]; kept {
-							continue
-						}
-						lowerScoreKept[entry.score] = struct{}{}
-					} else if entry.score == maxWhereScore {
-						// For same score, only skip if we've already kept one with consecutiveWhereCount <= 1
-						if _, kept := lowerScoreKept[entry.score]; kept {
-							continue
-						}
-						lowerScoreKept[entry.score] = struct{}{}
-					}
-				}
+			if shouldSkipDuplicateScore(entry, maxWhereScore, lowerScoreKept) {
+				continue
 			}
 			result = append(result, path)
 			added[path] = struct{}{}
@@ -389,21 +427,8 @@ func buildFinalResult(tablePaths, mvIndexPaths []*util.AccessPath, whereIndexes,
 					continue
 				}
 				// Only exclude indexes with the same score if consecutiveWhereCount <= 1
-				if entry.score <= maxJoinScore {
-					if entry.info.consecutiveWhereCount <= 1 {
-						if entry.score < maxJoinScore {
-							if _, kept := lowerJoinKept[entry.score]; kept {
-								continue
-							}
-							lowerJoinKept[entry.score] = struct{}{}
-						} else if entry.score == maxJoinScore {
-							// For same score, only skip if we've already kept one with consecutiveWhereCount <= 1
-							if _, kept := lowerJoinKept[entry.score]; kept {
-								continue
-							}
-							lowerJoinKept[entry.score] = struct{}{}
-						}
-					}
+				if shouldSkipDuplicateScore(entry, maxJoinScore, lowerJoinKept) {
+					continue
 				}
 				result = append(result, path)
 				added[path] = struct{}{}

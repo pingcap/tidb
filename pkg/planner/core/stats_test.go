@@ -72,10 +72,8 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	if len(whereColumns) == 0 && len(dsBaseline.PushedDownConds) > 0 {
 		whereColumns = expression.ExtractColumnsFromExpressions(dsBaseline.PushedDownConds, nil)
 	}
-	//orderingColumns := []*expression.Column{}
-	paths := dsBaseline.AllPossibleAccessPaths
 
-	t.Logf("WHERE columns: %d (from PushedDownConds: %d), paths: %d", len(whereColumns), len(dsBaseline.PushedDownConds), len(paths))
+	t.Logf("WHERE columns: %d (from PushedDownConds: %d), paths: %d", len(whereColumns), len(dsBaseline.PushedDownConds), len(dsBaseline.AllPossibleAccessPaths))
 	for i, col := range whereColumns {
 		t.Logf("WHERE col %d: ID=%d", i, col.ID)
 	}
@@ -90,7 +88,7 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	t.Run("threshold_20", func(t *testing.T) {
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=20")
 		ds20 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
-		require.Greater(t, 22, len(ds20.AllPossibleAccessPaths), "With threshold 20, should prune to less than or equal to 20 indexes + 1 table path == 21")
+		require.LessOrEqual(t, len(ds20.AllPossibleAccessPaths), 21, "With threshold 20, should prune to less than or equal to 20 indexes + 1 table path == 21")
 		// Verify all paths are valid
 		for _, path := range ds20.AllPossibleAccessPaths {
 			require.NotNil(t, path)

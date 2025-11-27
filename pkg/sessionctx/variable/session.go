@@ -2249,7 +2249,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		BroadcastJoinThresholdSize:    vardef.DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
-		OptIndexPruneThreshold:        vardef.DefTIDBOptIndexPruneThreshold,
+		OptIndexPruneThreshold:        vardef.DefTiDBOptIndexPruneThreshold,
 		RiskScaleNDVSkewRatio:         vardef.DefOptRiskScaleNDVSkewRatio,
 		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
 		AlwaysKeepJoinKey:             vardef.DefOptAlwaysKeepJoinKey,
