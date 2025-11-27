@@ -1304,6 +1304,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				continue
 			}
 			path := &util.AccessPath{Index: index}
+			if ctx.GetSessionVars().EnableIndexLookUpPushDown && checkIndexLookUpPushDownSupported(ctx, tblInfo, index) {
+				path.IsIndexLookUpPushDown = true
+			}
 			publicPaths = append(publicPaths, path)
 		}
 	}

@@ -24,6 +24,8 @@ const (
 	TiDBXStoreBatchGet = "tidbx_store_batch_get"
 	// TiDBXEnableFastPath indicates whether to enable the fast path, for performance testing.
 	TiDBXEnableFastPath = "tidbx_fast_path"
+	// TiDBXEnableIndexLookUpPushDown indicates whether to enable index lookup push down optimization.
+	TiDBXEnableIndexLookUpPushDown = "tidbx_enable_index_lookup_push_down"
 )
 
 // Default TiDB system variable values.
@@ -43,6 +45,7 @@ const (
 	DefTiDBXLocalCallNoMarshallOpt     = false
 	DefTiDBXStoreBatchGetOpt           = false
 	DefTiDBXFastPath                   = false
+	DefTiDBXEnableIndexLookUpPushDown  = false
 )
 
 // UnspecifiedServerID indicates the unspecified server id.

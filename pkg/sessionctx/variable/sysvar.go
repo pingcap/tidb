@@ -3648,6 +3648,10 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(EnableFastPath.Load()), nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBXEnableIndexLookUpPushDown, Value: BoolToOnOff(DefTiDBXEnableIndexLookUpPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableIndexLookUpPushDown = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

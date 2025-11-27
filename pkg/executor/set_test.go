@@ -1009,6 +1009,21 @@ func TestPingKaiDBSetVar(t *testing.T) {
 	tk.MustExec("set global tidbx_fast_path = 0")
 	tk.MustQuery("select @@global.tidbx_fast_path").Check(testkit.Rows("0"))
 	require.False(t, variable.EnableFastPath.Load())
+
+	// test tidbx_enable_index_lookup_push_down
+	// global scope
+	tk.MustQuery("select @@global.tidbx_enable_index_lookup_push_down").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set global tidbx_enable_index_lookup_push_down = 1")
+	tk.MustQuery("select @@global.tidbx_enable_index_lookup_push_down").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidbx_enable_index_lookup_push_down = 0")
+	tk.MustQuery("select @@global.tidbx_enable_index_lookup_push_down").Check(testkit.Rows("0"))
+	// session scope
+	tk.MustQuery("select @@session.tidbx_enable_index_lookup_push_down").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set session tidbx_enable_index_lookup_push_down = 1")
+	tk.MustQuery("select @@session.tidbx_enable_index_lookup_push_down").Check(testkit.Rows("1"))
+	require.True(t, tk.Session().GetSessionVars().EnableIndexLookUpPushDown)
+	tk.MustExec("set session tidbx_enable_index_lookup_push_down = 0")
+	tk.MustQuery("select @@session.tidbx_enable_index_lookup_push_down").Check(testkit.Rows("0"))
 }
 
 func TestSetCollationAndCharset(t *testing.T) {

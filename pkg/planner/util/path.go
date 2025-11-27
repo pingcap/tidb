@@ -128,6 +128,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		ForceNoKeepOrder:             path.ForceNoKeepOrder,
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
+		IsIndexLookUpPushDown:        path.IsIndexLookUpPushDown,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
 	}
 	if path.IndexMergeORSourceFilter != nil {

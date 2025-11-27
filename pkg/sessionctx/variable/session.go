@@ -1730,7 +1730,8 @@ type SessionVars struct {
 	// CreateFromSelectUsingImport indicates whether to use import into to create table as select.
 	CreateFromSelectUsingImport bool
 	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
-	CacheStmtExecInfo *stmtsummary.StmtExecInfo
+	CacheStmtExecInfo         *stmtsummary.StmtExecInfo
+	EnableIndexLookUpPushDown bool
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
