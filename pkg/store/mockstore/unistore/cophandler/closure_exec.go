@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 const chunkMaxRows = 1024
@@ -563,7 +563,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 	for i, ran := range e.kvRanges {
 		e.curNdv = 0
 		if e.isPointGetRange(ran) {
-			val, _, err := dbReader.Get(ran.StartKey, e.startTS)
+			val, commitTS, err := dbReader.Get(ran.StartKey, e.startTS)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -574,7 +574,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 				e.counts[i]++
 				e.ndvs[i] = 1
 			}
-			err = e.processor.Process(ran.StartKey, val)
+			err = e.processor.Process(ran.StartKey, val, commitTS)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -643,7 +643,7 @@ type countStarProcessor struct {
 }
 
 // countStarProcess is used for `count(*)`.
-func (e *countStarProcessor) Process(key, value []byte) error {
+func (e *countStarProcessor) Process(key, value []byte, commitTS uint64) error {
 	defer func(begin time.Time) {
 		if e.idxScanCtx != nil {
 			e.idxScanCtx.execDetail.update(begin, true)
@@ -679,7 +679,7 @@ type countColumnProcessor struct {
 	*closureExecutor
 }
 
-func (e *countColumnProcessor) Process(key, value []byte) error {
+func (e *countColumnProcessor) Process(key, value []byte, commitTS uint64) error {
 	gotRow := false
 	defer func(begin time.Time) {
 		if e.idxScanCtx != nil {
@@ -740,13 +740,13 @@ type tableScanProcessor struct {
 	*closureExecutor
 }
 
-func (e *tableScanProcessor) Process(key, value []byte) error {
+func (e *tableScanProcessor) Process(key, value []byte, commitTS uint64) error {
 	if e.rowCount == e.limit {
 		return dbreader.ErrScanBreak
 	}
 	e.rowCount++
 	e.curNdv++
-	err := e.tableScanProcessCore(key, value)
+	err := e.tableScanProcessCore(key, value, commitTS)
 	if e.scanCtx.chk.NumRows() == chunkMaxRows {
 		err = e.chunkToOldChunk(e.scanCtx.chk)
 	}
@@ -757,14 +757,14 @@ func (e *tableScanProcessor) Finish() error {
 	return e.scanFinish()
 }
 
-func (e *closureExecutor) processCore(key, value []byte) error {
+func (e *closureExecutor) processCore(key, value []byte, commitTS uint64) error {
 	if e.mockReader != nil {
 		return e.mockReadScanProcessCore(key, value)
 	}
 	if e.idxScanCtx != nil {
 		return e.indexScanProcessCore(key, value)
 	}
-	return e.tableScanProcessCore(key, value)
+	return e.tableScanProcessCore(key, value, commitTS)
 }
 
 func (e *closureExecutor) hasSelection() bool {
@@ -834,7 +834,7 @@ func (e *closureExecutor) mockReadScanProcessCore(key, value []byte) error {
 	return nil
 }
 
-func (e *closureExecutor) tableScanProcessCore(key, value []byte) error {
+func (e *closureExecutor) tableScanProcessCore(key, value []byte, commitTS uint64) error {
 	incRow := false
 	defer func(begin time.Time) {
 		e.scanCtx.execDetail.update(begin, incRow)
@@ -843,7 +843,7 @@ func (e *closureExecutor) tableScanProcessCore(key, value []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.scanCtx.decoder.DecodeToChunk(value, handle, e.scanCtx.chk)
+	err = e.scanCtx.decoder.DecodeToChunk(value, commitTS, handle, e.scanCtx.chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -866,7 +866,7 @@ type indexScanProcessor struct {
 	*closureExecutor
 }
 
-func (e *indexScanProcessor) Process(key, value []byte) error {
+func (e *indexScanProcessor) Process(key, value []byte, commitTS uint64) error {
 	if e.rowCount == e.limit {
 		return dbreader.ErrScanBreak
 	}
@@ -903,19 +903,10 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 			restoredCols = append(restoredCols, c)
 		}
 	}
-	decodedKey := key
-	if !kv.Key(key).HasPrefix(tablecodec.TablePrefix()) {
-		// If the key is in API V2, then ignore the prefix
-		_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		decodedKey = k
-		if !kv.Key(decodedKey).HasPrefix(tablecodec.TablePrefix()) {
-			return errors.Errorf("invalid index key %q after decoded", key)
-		}
+	if kerneltype.IsNextGen() && len(key) > 4 && key[0] == 'x' {
+		key = key[4:] // remove the keyspace prefix
 	}
-	values, err := tablecodec.DecodeIndexKV(decodedKey, value, e.idxScanCtx.columnLen, handleStatus, restoredCols)
+	values, err := tablecodec.DecodeIndexKV(key, value, e.idxScanCtx.columnLen, handleStatus, restoredCols)
 	if err != nil {
 		return err
 	}
@@ -942,7 +933,7 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	// If we need pid, it already filled by above loop. Because `DecodeIndexKV` func will return pid in `values`.
 	// The following if statement is to fill in the tid when we needed it.
 	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID && len(e.columnInfos) >= len(values) {
-		tblID := tablecodec.DecodeTableID(decodedKey)
+		tblID := tablecodec.DecodeTableID(key)
 		chk.AppendInt64(len(e.columnInfos)-1, tblID)
 	}
 	gotRow = true
@@ -983,7 +974,7 @@ type selectionProcessor struct {
 	*closureExecutor
 }
 
-func (e *selectionProcessor) Process(key, value []byte) error {
+func (e *selectionProcessor) Process(key, value []byte, commitTS uint64) error {
 	var gotRow bool
 	defer func(begin time.Time) {
 		e.selectionCtx.execDetail.update(begin, gotRow)
@@ -991,7 +982,7 @@ func (e *selectionProcessor) Process(key, value []byte) error {
 	if e.rowCount == e.limit {
 		return dbreader.ErrScanBreak
 	}
-	err := e.processCore(key, value)
+	err := e.processCore(key, value, commitTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1017,12 +1008,12 @@ type topNProcessor struct {
 	*closureExecutor
 }
 
-func (e *topNProcessor) Process(key, value []byte) (err error) {
+func (e *topNProcessor) Process(key, value []byte, commitTS uint64) (err error) {
 	gotRow := false
 	defer func(begin time.Time) {
 		e.topNCtx.execDetail.update(begin, gotRow)
 	}(time.Now())
-	if err = e.processCore(key, value); err != nil {
+	if err = e.processCore(key, value, commitTS); err != nil {
 		return err
 	}
 	if e.hasSelection() {
@@ -1066,7 +1057,7 @@ func (e *topNProcessor) Finish() error {
 	sort.Sort(&ctx.heap.topNSorter)
 	chk := e.scanCtx.chk
 	for _, row := range ctx.heap.rows {
-		err := e.processCore(row.data[0], row.data[1])
+		err := e.processCore(row.data[0], row.data[1], 0)
 		if err != nil {
 			return err
 		}
@@ -1090,12 +1081,12 @@ type hashAggProcessor struct {
 	aggCtxsMap   map[string][]*aggregation.AggEvaluateContext
 }
 
-func (e *hashAggProcessor) Process(key, value []byte) (err error) {
+func (e *hashAggProcessor) Process(key, value []byte, commitTS uint64) (err error) {
 	incRow := false
 	defer func(begin time.Time) {
 		e.aggCtx.execDetail.update(begin, incRow)
 	}(time.Now())
-	err = e.processCore(key, value)
+	err = e.processCore(key, value, commitTS)
 	if err != nil {
 		return err
 	}

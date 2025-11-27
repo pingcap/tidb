@@ -65,6 +65,8 @@ type BatchPointGetExec struct {
 	lock           bool
 	waitTime       int64
 	inited         uint32
+	commitTSOffset int
+	commitTSs      []uint64
 	values         [][]byte
 	index          int
 	rowDecoder     *rowcodec.ChunkDecoder
@@ -217,7 +219,11 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	start := e.index
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, req, e.rowDecoder)
+		commitTS := uint64(0)
+		if e.commitTSOffset >= 0 {
+			commitTS = e.commitTSs[e.index]
+		}
+		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, commitTS, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
@@ -436,6 +442,13 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		existKeys = make([]kv.Key, 0, 2*len(values))
 	}
 	e.values = make([][]byte, 0, len(values))
+	e.commitTSOffset = -1
+	for i, col := range e.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			e.commitTSs = make([]uint64, 0, len(values))
+			e.commitTSOffset = i
+		}
+	}
 	for i, key := range keys {
 		val := values[string(key)]
 		if val.IsValueEmpty() {
@@ -462,6 +475,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			continue
 		}
 		e.values = append(e.values, val.Value)
+		if e.commitTSOffset >= 0 {
+			e.commitTSs = append(e.commitTSs, val.CommitTS)
+		}
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
