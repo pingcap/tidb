@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -652,6 +653,11 @@ func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	}
 
 	if tablecodec.IsTempIndexKey(k) {
+		// We force DMLs to lock all temporary index keys in next-gen, because
+		// next-gen enforces conflict check on all keys, including non-unique index keys.
+		if kerneltype.IsNextGen() {
+			return true
+		}
 		tmpVal, err := tablecodec.DecodeTempIndexValue(v)
 		if err != nil {
 			logutil.BgLogger().Warn("decode temp index value failed", zap.Error(err))

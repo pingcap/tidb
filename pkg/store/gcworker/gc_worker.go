@@ -15,7 +15,6 @@
 package gcworker
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -1143,20 +1142,6 @@ func (w *GCWorker) getStoresForGC(ctx context.Context) ([]*metapb.Store, error) 
 	return upStores, nil
 }
 
-func (w *GCWorker) getStoresMapForGC(ctx context.Context) (map[uint64]*metapb.Store, error) {
-	stores, err := w.getStoresForGC(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	storesMap := make(map[uint64]*metapb.Store, len(stores))
-	for _, store := range stores {
-		storesMap[store.Id] = store
-	}
-
-	return storesMap, nil
-}
-
 func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 	str, err := w.loadValueFromSysTable(gcConcurrencyKey)
 	if err != nil {
@@ -1407,52 +1392,6 @@ func (w *GCWorker) broadcastGCSafePoint(ctx context.Context, gcSafePoint uint64)
 	}
 
 	return nil
-}
-
-func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []byte, safePoint uint64) (rangetask.TaskStat, error) {
-	var stat rangetask.TaskStat
-	defer func() {
-		metrics.GCActionRegionResultCounter.WithLabelValues("success").Add(float64(stat.CompletedRegions))
-		metrics.GCActionRegionResultCounter.WithLabelValues("fail").Add(float64(stat.FailedRegions))
-	}()
-	key := startKey
-	for {
-		bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
-		loc, err := w.tikvStore.GetRegionCache().LocateKey(bo, key)
-		if err != nil {
-			return stat, errors.Trace(err)
-		}
-
-		var regionErr *errorpb.Error
-		regionErr, err = w.doGCForRegion(bo, safePoint, loc.Region)
-
-		// we check regionErr here first, because we know 'regionErr' and 'err' should not return together, to keep it to
-		// make the process correct.
-		if regionErr != nil {
-			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
-			if err == nil {
-				continue
-			}
-		}
-
-		if err != nil {
-			logutil.BgLogger().Warn("[gc worker]",
-				zap.String("uuid", w.uuid),
-				zap.String("gc for range", fmt.Sprintf("[%d, %d)", startKey, endKey)),
-				zap.Uint64("safePoint", safePoint),
-				zap.Error(err))
-			stat.FailedRegions++
-		} else {
-			stat.CompletedRegions++
-		}
-
-		key = loc.EndKey
-		if len(key) == 0 || bytes.Compare(key, endKey) >= 0 {
-			break
-		}
-	}
-
-	return stat, nil
 }
 
 // doGCForRegion used for gc for region.

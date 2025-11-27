@@ -138,6 +138,14 @@ var (
 	ExecutorNetworkTransmissionSentTiFlashCrossZone     prometheus.Counter
 	ExecutorNetworkTransmissionReceivedTiFlashTotal     prometheus.Counter
 	ExecutorNetworkTransmissionReceivedTiFlashCrossZone prometheus.Counter
+
+	IndexLookUpNormalRowsCounter                    prometheus.Counter
+	IndexLookUpPushDownRowsCounterHit               prometheus.Counter
+	IndexLookUpPushDownRowsCounterMiss              prometheus.Counter
+	IndexLookUpExecutorWithPushDownEnabledRowNumber prometheus.Observer
+	IndexLookUpExecutorWithPushDownEnabledDuration  prometheus.Observer
+	IndexLookUpIndexScanCopTasksNormal              prometheus.Counter
+	IndexLookUpIndexScanCopTasksWithPushDownEnabled prometheus.Counter
 )
 
 func init() {
@@ -234,6 +242,14 @@ func InitMetricsVars() {
 	ExecutorNetworkTransmissionSentTiFlashCrossZone = metrics.NetworkTransmissionStats.WithLabelValues("sent_tiflash_cross_zone")
 	ExecutorNetworkTransmissionReceivedTiFlashTotal = metrics.NetworkTransmissionStats.WithLabelValues("received_tiflash_total")
 	ExecutorNetworkTransmissionReceivedTiFlashCrossZone = metrics.NetworkTransmissionStats.WithLabelValues("received_tiflash_cross_zone")
+
+	IndexLookUpNormalRowsCounter = metrics.IndexLookRowsCounter.WithLabelValues("normal")
+	IndexLookUpPushDownRowsCounterHit = metrics.IndexLookRowsCounter.WithLabelValues("index_lookup_push_down_hit")
+	IndexLookUpPushDownRowsCounterMiss = metrics.IndexLookRowsCounter.WithLabelValues("index_lookup_push_down_miss")
+	IndexLookUpExecutorWithPushDownEnabledRowNumber = metrics.IndexLookUpExecutorRowNumber.WithLabelValues("enable_index_lookup_push_down")
+	IndexLookUpExecutorWithPushDownEnabledDuration = metrics.IndexLookUpExecutorDuration.WithLabelValues("enable_index_lookup_push_down")
+	IndexLookUpIndexScanCopTasksNormal = metrics.IndexLookUpCopTaskCount.WithLabelValues("index_scan_normal")
+	IndexLookUpIndexScanCopTasksWithPushDownEnabled = metrics.IndexLookUpCopTaskCount.WithLabelValues("index_scan_with_lookup_push_down")
 }
 
 // InitPhaseDurationObserverMap init observer map

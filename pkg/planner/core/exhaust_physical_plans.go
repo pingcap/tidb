@@ -50,49 +50,59 @@ import (
 // It will return:
 // 1. All possible plans that can match the required property.
 // 2. Whether the SQL hint can work. Return true if there is no hint.
-func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) (physicalPlans [][]base.PhysicalPlan, hintCanWork bool, err error) {
+	var ops []base.PhysicalPlan
+
 	switch x := lp.(type) {
 	case *logicalop.LogicalCTE:
-		return physicalop.ExhaustPhysicalPlans4LogicalCTE(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalCTE(x, prop)
 	case *logicalop.LogicalSort:
-		return physicalop.ExhaustPhysicalPlans4LogicalSort(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalSort(x, prop)
 	case *logicalop.LogicalTopN:
+		// ExhaustPhysicalPlans4LogicalTopN return PhysicalLimit and PhysicalTopN in different slice.
+		// So we can always choose limit plan with pushdown when comparing with a limit plan without pushdown directly,
+		// and choose a better plan by checking their cost when comparing a limit plan and a topn plan.
 		return physicalop.ExhaustPhysicalPlans4LogicalTopN(x, prop)
 	case *logicalop.LogicalLock:
-		return physicalop.ExhaustPhysicalPlans4LogicalLock(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalLock(x, prop)
 	case *logicalop.LogicalJoin:
-		return exhaustPhysicalPlans4LogicalJoin(x, prop)
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalJoin(x, prop)
 	case *logicalop.LogicalApply:
-		return exhaustPhysicalPlans4LogicalApply(x, prop)
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalApply(x, prop)
 	case *logicalop.LogicalLimit:
-		return physicalop.ExhaustPhysicalPlans4LogicalLimit(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalLimit(x, prop)
 	case *logicalop.LogicalWindow:
-		return physicalop.ExhaustPhysicalPlans4LogicalWindow(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalWindow(x, prop)
 	case *logicalop.LogicalExpand:
-		return physicalop.ExhaustPhysicalPlans4LogicalExpand(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalExpand(x, prop)
 	case *logicalop.LogicalUnionAll:
-		return physicalop.ExhaustPhysicalPlans4LogicalUnionAll(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalUnionAll(x, prop)
 	case *logicalop.LogicalSequence:
-		return physicalop.ExhaustPhysicalPlans4LogicalSequence(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalSequence(x, prop)
 	case *logicalop.LogicalSelection:
-		return physicalop.ExhaustPhysicalPlans4LogicalSelection(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalSelection(x, prop)
 	case *logicalop.LogicalMaxOneRow:
-		return physicalop.ExhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
 	case *logicalop.LogicalUnionScan:
-		return physicalop.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
 	case *logicalop.LogicalProjection:
-		return physicalop.ExhaustPhysicalPlans4LogicalProjection(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalProjection(x, prop)
 	case *logicalop.LogicalAggregation:
-		return physicalop.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
 	case *logicalop.LogicalPartitionUnionAll:
-		return physicalop.ExhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
 	case *memo.GroupExpression:
 		return memo.ExhaustPhysicalPlans4GroupExpression(x, prop)
 	case *mockLogicalPlan4Test:
-		return ExhaustPhysicalPlans4MockLogicalPlan(x, prop)
+		ops, hintCanWork, err = ExhaustPhysicalPlans4MockLogicalPlan(x, prop)
 	default:
 		panic("unreachable")
 	}
+
+	if len(ops) == 0 || err != nil {
+		return nil, hintCanWork, err
+	}
+	return [][]base.PhysicalPlan{ops}, hintCanWork, nil
 }
 
 func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
@@ -1884,10 +1894,12 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
 }
 
-func enumerationContainIndexJoin(candidates []base.PhysicalPlan) bool {
-	return slices.ContainsFunc(candidates, func(candidate base.PhysicalPlan) bool {
-		_, _, ok := getIndexJoinSideAndMethod(candidate)
-		return ok
+func enumerationContainIndexJoin(candidates [][]base.PhysicalPlan) bool {
+	return slices.ContainsFunc(candidates, func(candidate []base.PhysicalPlan) bool {
+		return slices.ContainsFunc(candidate, func(op base.PhysicalPlan) bool {
+			_, _, ok := getIndexJoinSideAndMethod(op)
+			return ok
+		})
 	})
 }
 
@@ -2004,9 +2016,9 @@ func recordIndexJoinHintWarnings(p *logicalop.LogicalJoin, prop *property.Physic
 	return nil
 }
 
-func applyLogicalHintVarEigen(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+func applyLogicalHintVarEigen(lp base.LogicalPlan, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
 	return applyLogicalJoinHint(lp, pp) ||
-		applyLogicalTopNAndLimitHint(lp, state, pp, childTasks) ||
+		applyLogicalTopNAndLimitHint(lp, pp, childTasks) ||
 		applyLogicalAggregationHint(lp, pp, childTasks)
 }
 
@@ -2062,8 +2074,8 @@ func applyLogicalAggregationHint(lp base.LogicalPlan, physicPlan base.PhysicalPl
 	return false
 }
 
-func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
-	hintPrefer, meetThreshold := pushLimitOrTopNForcibly(lp, pp)
+func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+	hintPrefer, _ := pushLimitOrTopNForcibly(lp, pp)
 	if hintPrefer {
 		// if there is a user hint control, try to get the copTask as the prior.
 		// here we don't assert task itself, because when topN attach 2 cop task, it will become root type automatically.
@@ -2072,6 +2084,11 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 		}
 		return false
 	}
+	return false
+}
+
+func hasNormalPreferTask(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+	_, meetThreshold := pushLimitOrTopNForcibly(lp, pp)
 	if meetThreshold {
 		// previously, we set meetThreshold for pruning root task type but mpp task type. so:
 		// 1: when one copTask exists, we will ignore root task type.

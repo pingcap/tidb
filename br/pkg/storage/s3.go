@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
+	"github.com/aws/aws-sdk-go/aws/defaults"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
@@ -86,8 +88,9 @@ var WriteBufferSize = 5 * 1024 * 1024
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `ExternalStorage` interface.
 type S3Storage struct {
-	svc     s3iface.S3API
-	options *backuppb.S3
+	svc       s3iface.S3API
+	options   *backuppb.S3
+	accessRec *recording.AccessStats
 }
 
 func (*S3Storage) MarkStrongConsistency() {
@@ -319,10 +322,11 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 }
 
 // NewS3StorageForTest creates a new S3Storage for testing only.
-func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3) *S3Storage {
+func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3, accessRec *recording.AccessStats) *S3Storage {
 	return &S3Storage{
-		svc:     svc,
-		options: options,
+		svc:       svc,
+		options:   options,
+		accessRec: accessRec,
 	}
 }
 
@@ -412,6 +416,12 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		awsSessionOpts.Profile = qs.Profile
 		// Use default credential chain when profile is specified
 		awsSessionOpts.SharedConfigState = session.SharedConfigEnable
+	}
+	if opts.AccessRecording != nil {
+		awsSessionOpts.Handlers = defaults.Handlers()
+		awsSessionOpts.Handlers.Send.PushBack(func(r *request.Request) {
+			opts.AccessRecording.RecRequest(r.HTTPRequest)
+		})
 	}
 	ses, err := session.NewSessionWithOptions(awsSessionOpts)
 	if err != nil {
@@ -504,8 +514,9 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 
 	s3Storage := &S3Storage{
-		svc:     c,
-		options: &qs,
+		svc:       c,
+		options:   &qs,
+		accessRec: opts.AccessRecording,
 	}
 	if opts.CheckS3ObjectLockOptions {
 		backend.ObjectLockEnabled = s3Storage.IsObjectLockEnabled()
@@ -544,7 +555,7 @@ func getObjectCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error
 	}
 	_, err := svc.GetObject(input)
 	if aerr, ok := err.(awserr.Error); ok {
-		if aerr.Code() == "NoSuchKey" {
+		if aerr.Code() == s3.ErrCodeNoSuchKey {
 			// if key not exists and we reach this error, that
 			// means we have the correct permission to GetObject
 			// other we will get another error
@@ -571,7 +582,7 @@ func PutAndDeleteObjectCheck(ctx context.Context, svc s3iface.S3API, options *ba
 		}
 		_, err2 := svc.DeleteObjectWithContext(ctx, input)
 		if aerr, ok := err2.(awserr.Error); ok {
-			if aerr.Code() != "NoSuchKey" {
+			if aerr.Code() != s3.ErrCodeNoSuchKey {
 				log.Warn("failed to delete object used for permission check",
 					zap.String("bucket", options.Bucket),
 					zap.String("key", *input.Key), zap.Error(err2))
@@ -635,6 +646,7 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rs.accessRec.RecWrite(len(data))
 	hinput := &s3.HeadObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
@@ -670,6 +682,7 @@ func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) 
 			}
 			continue
 		}
+		rs.accessRec.RecRead(len(data))
 		return data, nil
 	}
 }
@@ -1018,8 +1031,6 @@ type s3ObjectReader struct {
 	pos       int64
 	rangeInfo RangeInfo
 	// reader context used for implement `io.Seek`
-	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
-	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
 	ctx          context.Context
 	prefetchSize int
 }
@@ -1066,6 +1077,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		n, err = r.reader.Read(p[:maxCnt])
 	}
 
+	r.storage.accessRec.RecRead(n)
 	r.pos += int64(n)
 	return
 }
@@ -1233,17 +1245,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	var onFlush func()
-	if option != nil {
-		onFlush = option.OnUpload
-		if onFlush != nil {
-			// Total number of PUT operations for an multi-part uploaded file = total file size / part-size + 2. For details, see
-			// https://repost.aws/questions/QUXmwDga0VRvSOOjYWMfor-w/are-we-billed-a-put-request-for-each-part-with-s3-multipart-upload-or-only-once-for-the-final-merged-file
-			onFlush() // Initiate: PUT
-			onFlush() // Complete: PUT
-		}
-	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, onFlush)
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, rs.accessRec)
 	return uploaderWriter, nil
 }
 
