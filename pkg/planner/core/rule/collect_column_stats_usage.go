@@ -294,6 +294,11 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 	// derive the new current op's new asked column groups accordingly.
 	curColGroups := lp.ExtractColGroups(askedColGroups)
 
+	// Save the current state of orderingColumns and joinColumns to restore after visiting children.
+	// This prevents columns from different branches of the plan tree from contaminating each other.
+	savedOrderingColumns := c.orderingColumns
+	savedJoinColumns := c.joinColumns
+
 	switch x := lp.(type) {
 	case *logicalop.LogicalSort:
 		// Extract and store ordering columns to propagate to DataSource
@@ -345,6 +350,9 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 	for _, child := range lp.Children() {
 		// passing the new asked column groups down.
 		c.collectFromPlan(curColGroups, child)
+		// Restore the state after visiting each child to prevent cross-contamination between siblings
+		c.orderingColumns = savedOrderingColumns
+		c.joinColumns = savedJoinColumns
 	}
 	switch x := lp.(type) {
 	case *logicalop.DataSource:
@@ -370,13 +378,16 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		c.addPredicateColumnsFromExpressions(x.GroupByItems, false)
 		// Schema change from children to self.
 		schema := x.Schema()
-		for i, aggFunc := range x.AggFuncs {
-			c.updateColMapFromExpressions(schema.Columns[i], aggFunc.Args)
-			// Extract columns from MIN/MAX/FIRST_VALUE aggregates - these can benefit from ordered indexes
+		// Extract columns from MIN/MAX/FIRST_VALUE aggregates - these can benefit from ordered indexes
+		// Do this before visiting children so the ordering columns are available to DataSource nodes below
+		for _, aggFunc := range x.AggFuncs {
 			if aggFunc.Name == ast.AggFuncMin || aggFunc.Name == ast.AggFuncMax || aggFunc.Name == ast.AggFuncFirstRow {
 				minMaxCols := expression.ExtractColumnsFromExpressions(aggFunc.Args, nil)
 				c.orderingColumns = append(c.orderingColumns, minMaxCols...)
 			}
+		}
+		for i, aggFunc := range x.AggFuncs {
+			c.updateColMapFromExpressions(schema.Columns[i], aggFunc.Args)
 		}
 	case *logicalop.LogicalWindow:
 		// Statistics of the columns in LogicalWindow.PartitionBy are used in optimizeByShuffle4Window.

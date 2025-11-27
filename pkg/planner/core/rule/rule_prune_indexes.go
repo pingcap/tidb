@@ -116,6 +116,11 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			return paths
 		}
 
+		// Skip paths with nil Index or uninitialized FullIdxCols
+		if path.Index == nil || path.FullIdxCols == nil {
+			continue
+		}
+
 		// Calculate coverage for this index
 		idxScore := scoreIndexPath(path, req)
 
@@ -205,7 +210,14 @@ func buildColumnRequirements(whereColumns, orderingColumns, joinColumns []*expre
 func scoreIndexPath(path *util.AccessPath, req columnRequirements) indexWithScore {
 	score := indexWithScore{path: path}
 
+	if path.FullIdxCols == nil {
+		return score
+	}
+
 	for i, idxCol := range path.FullIdxCols {
+		if idxCol == nil {
+			continue
+		}
 		idxColID := idxCol.ID
 
 		// Check if this index column matches a WHERE column
