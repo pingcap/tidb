@@ -865,7 +865,6 @@ func (sd softDelete) testSoftDeleteInsertOnDuplicate(t *testing.T) {
 }
 
 func (sd softDelete) testSoftDeleteReplace(t *testing.T) {
-	// replace
 	tk := sd.TestKit
 	for _, clustered := range []string{"clustered", "nonclustered"} {
 		tk.MustExec(fmt.Sprintf(`create table t (
@@ -882,7 +881,6 @@ func (sd softDelete) testSoftDeleteReplace(t *testing.T) {
 
 		tk.MustExec(`drop table t`)
 	}
-
 }
 
 func (sd softDelete) testSoftDeleteUpdate(t *testing.T) {
