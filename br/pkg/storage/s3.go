@@ -371,7 +371,7 @@ func createOssRAMCred() (aws.CredentialsProvider, error) {
 
 type pingcapLogger struct{}
 
-func (pingcapLogger) Logf(classification logging.Classification, format string, v ...interface{}) {
+func (pingcapLogger) Logf(classification logging.Classification, format string, v ...any) {
 	var loggerF func(string, ...zap.Field)
 	switch classification {
 	case logging.Warn:
@@ -450,7 +450,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 
 	s3Opts = append(s3Opts, func(o *s3.Options) {
 		o.Logger = pingcapLogger{}
-		o.ClientLogMode |= aws.LogRetries
+		// These logs will be printed when log level is `DEBUG`.
+		o.ClientLogMode |= aws.LogRetries | aws.LogRequest | aws.LogResponse
 	})
 
 	// ⚠️ Do NOT set a global endpoint in the AWS config.

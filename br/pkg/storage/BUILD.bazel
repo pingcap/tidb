@@ -51,6 +51,7 @@ go_library(
         "@com_github_aws_aws_sdk_go_v2_service_s3//types",
         "@com_github_aws_aws_sdk_go_v2_service_sts//:sts",
         "@com_github_aws_smithy_go//:smithy-go",
+        "@com_github_aws_smithy_go//logging",
         "@com_github_aws_smithy_go//middleware",
         "@com_github_aws_smithy_go//transport/http",
         "@com_github_azure_azure_sdk_for_go_sdk_azcore//:azcore",
