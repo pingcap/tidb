@@ -73,13 +73,11 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	gctuner.GlobalMemoryLimitTuner.DisableAdjustMemoryLimit()
 	defer gctuner.GlobalMemoryLimitTuner.EnableAdjustMemoryLimit()
 
-	utils.DumpGoroutineWhenExit.Store(true)
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
 		printWorkaroundOnFullRestoreError(err)
 		return errors.Trace(err)
 	}
-	utils.DumpGoroutineWhenExit.Store(false)
 	return nil
 }
 
