@@ -28,6 +28,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/logging"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/google/uuid"
@@ -368,6 +369,23 @@ func createOssRAMCred() (aws.CredentialsProvider, error) {
 	), nil
 }
 
+type pingcapLogger struct{}
+
+func (pingcapLogger) Logf(classification logging.Classification, format string, v ...interface{}) {
+	var loggerF func(string, ...zap.Field)
+	switch classification {
+	case logging.Warn:
+		loggerF = log.Warn
+	case logging.Debug:
+		loggerF = log.Debug
+	default:
+		loggerF = log.Info
+	}
+
+	msg := fmt.Sprintf(format, v...)
+	loggerF(msg)
+}
+
 // NewS3Storage initialize a new s3 storage for metadata.
 func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
@@ -381,6 +399,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		region = defaultRegion
 	}
 	configOpts = append(configOpts, config.WithRegion(region))
+	configOpts = append(configOpts, config.WithLogger(pingcapLogger{}))
 
 	// Configure custom retryer
 	if opts.S3Retryer.MaxAttempts() > 0 {
@@ -428,6 +447,11 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 			o.UsePathStyle = true
 		})
 	}
+
+	s3Opts = append(s3Opts, func(o *s3.Options) {
+		o.Logger = pingcapLogger{}
+		o.ClientLogMode |= aws.LogRetries
+	})
 
 	// ⚠️ Do NOT set a global endpoint in the AWS config.
 	// Setting a global endpoint will break AssumeRoleWithWebIdentity,
@@ -546,6 +570,11 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		})
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
+		}
+		if len(detectedRegion) == 0 {
+			// AWS GO SDK v1 normalized the response of `GetBucketRegion` while v2 doesn't.
+			// Manually "normalize" here to be compatible with old behavior.
+			detectedRegion = defaultRegion
 		}
 	} else {
 		// For other S3 compatible providers like OVH storage that don't return the region correctly,
