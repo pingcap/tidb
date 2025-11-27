@@ -115,6 +115,7 @@ import (
 	hintIndex                 "INDEX"
 	hintOrderIndex            "ORDER_INDEX"
 	hintNoOrderIndex          "NO_ORDER_INDEX"
+	hintIndexLookUpPushDown   "INDEX_LOOKUP_PUSHDOWN"
 	hintUsePlanCache          "USE_PLAN_CACHE"
 	hintUseToja               "USE_TOJA"
 	hintTimeRange             "TIME_RANGE"
@@ -663,13 +664,14 @@ UnsupportedIndexLevelOptimizerHintName:
 
 SupportedIndexLevelOptimizerHintName:
 	"USE_INDEX"
-|   "INDEX"
+|	"INDEX"
 |	"IGNORE_INDEX"
-|   "NO_INDEX"
+|	"NO_INDEX"
 |	"USE_INDEX_MERGE"
 |	"FORCE_INDEX"
 |	"ORDER_INDEX"
 |	"NO_ORDER_INDEX"
+|	"INDEX_LOOKUP_PUSHDOWN"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
@@ -772,6 +774,7 @@ Identifier:
 |	"USE_INDEX"
 |	"ORDER_INDEX"
 |	"NO_ORDER_INDEX"
+|	"INDEX_LOOKUP_PUSHDOWN"
 |	"USE_PLAN_CACHE"
 |	"USE_TOJA"
 |	"TIME_RANGE"

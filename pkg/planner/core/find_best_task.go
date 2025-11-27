@@ -2066,6 +2066,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 		}
 		cop.tablePlan = ts
+		cop.indexLookUpPushDown = candidate.path.IsIndexLookUpPushDown
 	}
 	task = cop
 	if cop.tablePlan != nil && ds.TableInfo.IsCommonHandle {
@@ -2525,7 +2526,6 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 					DistanceMetric: tipb.VectorDistanceMetric(distanceMetricPB),
 					TopK:           prop.VectorProp.TopK,
 					ColumnName:     ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
-					ColumnId:       prop.VectorProp.Column.ID,
 					IndexId:        candidate.path.Index.ID,
 					RefVecF32:      prop.VectorProp.Vec.SerializeTo(nil),
 				},

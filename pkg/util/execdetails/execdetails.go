@@ -818,15 +818,15 @@ func (e *basicCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionS
 			maxRemoteStreamMs:         tiflashScanContext.GetMaxRemoteStreamMs(),
 			regionsOfInstance:         regionsOfInstance,
 
-			totalVectorIdxLoadFromS3:           tiflashScanContext.GetTotalVectorIdxLoadFromS3(),
-			totalVectorIdxLoadFromDisk:         tiflashScanContext.GetTotalVectorIdxLoadFromDisk(),
-			totalVectorIdxLoadFromCache:        tiflashScanContext.GetTotalVectorIdxLoadFromCache(),
-			totalVectorIdxLoadTimeMs:           tiflashScanContext.GetTotalVectorIdxLoadTimeMs(),
-			totalVectorIdxSearchTimeMs:         tiflashScanContext.GetTotalVectorIdxSearchTimeMs(),
-			totalVectorIdxSearchVisitedNodes:   tiflashScanContext.GetTotalVectorIdxSearchVisitedNodes(),
-			totalVectorIdxSearchDiscardedNodes: tiflashScanContext.GetTotalVectorIdxSearchDiscardedNodes(),
-			totalVectorIdxReadVecTimeMs:        tiflashScanContext.GetTotalVectorIdxReadVecTimeMs(),
-			totalVectorIdxReadOthersTimeMs:     tiflashScanContext.GetTotalVectorIdxReadOthersTimeMs(),
+			totalVectorIdxLoadFromS3:           tiflashScanContext.GetVectorIdxLoadFromS3(),
+			totalVectorIdxLoadFromDisk:         tiflashScanContext.GetVectorIdxLoadFromDisk(),
+			totalVectorIdxLoadFromCache:        tiflashScanContext.GetVectorIdxLoadFromCache(),
+			totalVectorIdxLoadTimeMs:           tiflashScanContext.GetVectorIdxLoadTimeMs(),
+			totalVectorIdxSearchTimeMs:         tiflashScanContext.GetVectorIdxSearchTimeMs(),
+			totalVectorIdxSearchVisitedNodes:   tiflashScanContext.GetVectorIdxSearchVisitedNodes(),
+			totalVectorIdxSearchDiscardedNodes: tiflashScanContext.GetVectorIdxSearchDiscardedNodes(),
+			totalVectorIdxReadVecTimeMs:        tiflashScanContext.GetVectorIdxReadVecTimeMs(),
+			totalVectorIdxReadOthersTimeMs:     tiflashScanContext.GetVectorIdxReadOthersTimeMs(),
 		})
 	}
 	if tiflashWaitSummary := summary.GetTiflashWaitSummary(); tiflashWaitSummary != nil {

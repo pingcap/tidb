@@ -21,9 +21,13 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"go.uber.org/zap"
 )
 
 // Init initializes PhysicalSelection.
@@ -250,12 +254,55 @@ func (p PhysicalUnionScan) Init(ctx base.PlanContext, stats *property.StatsInfo,
 }
 
 // Init initializes PhysicalIndexLookUpReader.
-func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexLookUpReader {
+func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, tryPushDownIndexLookUp bool) *PhysicalIndexLookUpReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 	p.schema = p.tablePlan.Schema()
+	setTableScanToTableRowIDScan(p.tablePlan)
+	p.SetStats(p.tablePlan.StatsInfo())
+	if tryPushDownIndexLookUp {
+		p.tryPushDownLookUp(ctx)
+	}
+	p.TablePlans = FlattenListPushDownPlan(p.tablePlan)
+	p.IndexPlans, p.IndexPlansUnNatureOrders = FlattenTreePushDownPlan(p.indexPlan)
 	return &p
+}
+
+// tryPushDownLookUp tries to push down the index lookup to TiKV.
+func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext) {
+	intest.Assert(!p.IndexLookUpPushDown)
+	if p.keepOrder {
+		// Though most of the index-lookup push-down constraints should be checked in
+		// `checkIndexLookUpPushDownSupported` if possible,
+		// however, the keep order cannot be determined until the final plan is constructed.
+		// So we have to check the keep order here, and if it is required, we should not push down it and use
+		// the normal index-lookup instead.
+		ctx.GetSessionVars().StmtCtx.SetHintWarning("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.")
+		return
+	}
+
+	indexLookUpPlan, err := buildPushDownIndexLookUpPlan(ctx, p.indexPlan, p.tablePlan)
+	if err != nil {
+		// This should not happen, but if it happens, we just log a warning and continue to use the original plan.
+		intest.AssertNoError(err)
+		logutil.BgLogger().Warn("try to push down index lookup failed", zap.Error(err))
+		return
+	}
+	p.indexPlan = indexLookUpPlan
+	// Currently, it's hard to estimate how many rows can be looked up locally when push-down.
+	// So we just use the row count as 0 of tablePlan in TiDB side which displays all lookup
+	// can be performed in the TiKV side.
+	resetRowCountAsZeroRecursively(ctx.GetSessionVars(), p.tablePlan)
+	// The status info of IndexLookupReader should be the same as indexPlan in the push-down mode if
+	// all lookup can be performed in the TiKV side.
+	p.SetStats(p.indexPlan.StatsInfo())
+	p.IndexLookUpPushDown = true
+}
+
+func resetRowCountAsZeroRecursively(vars *variable.SessionVars, p base.PhysicalPlan) {
+	p.SetStats(p.StatsInfo().Scale(0))
+	for _, child := range p.Children() {
+		resetRowCountAsZeroRecursively(vars, child)
+	}
 }
 
 // Init initializes PhysicalIndexMergeReader.
@@ -273,11 +320,11 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 	}
 	p.PartialPlans = make([][]base.PhysicalPlan, 0, len(p.partialPlans))
 	for _, partialPlan := range p.partialPlans {
-		tempPlans := flattenPushDownPlan(partialPlan)
+		tempPlans := FlattenListPushDownPlan(partialPlan)
 		p.PartialPlans = append(p.PartialPlans, tempPlans)
 	}
 	if p.tablePlan != nil {
-		p.TablePlans = flattenPushDownPlan(p.tablePlan)
+		p.TablePlans = FlattenListPushDownPlan(p.tablePlan)
 		p.schema = p.tablePlan.Schema()
 		p.HandleCols = p.TablePlans[0].(*PhysicalTableScan).HandleCols
 	} else {
@@ -342,7 +389,7 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 	if p.tablePlan == nil {
 		return &p
 	}
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.TablePlans = FlattenListPushDownPlan(p.tablePlan)
 	p.schema = p.tablePlan.Schema()
 	p.adjustReadReqType(ctx)
 	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
@@ -437,23 +484,72 @@ func (p PhysicalExchangeReceiver) Init(ctx base.PlanContext, stats *property.Sta
 	return &p
 }
 
-func flattenTreePlan(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.PhysicalPlan {
+// flattenPlanWithPreorderTraversal flattens a plan tree to a list with preorder traversal.
+func flattenPlanWithPreorderTraversal(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.PhysicalPlan {
 	plans = append(plans, plan)
 	for _, child := range plan.Children() {
-		plans = flattenTreePlan(child, plans)
+		plans = flattenPlanWithPreorderTraversal(child, plans)
 	}
 	return plans
 }
 
-// flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
-func flattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
+// FlattenListPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
+// It is used to flatten the plan tree that all parents have only one child.
+func FlattenListPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
 	plans := make([]base.PhysicalPlan, 0, 5)
-	plans = flattenTreePlan(p, plans)
-	for i := 0; i < len(plans)/2; i++ {
+	plans = flattenPlanWithPreorderTraversal(p, plans)
+	for i := range len(plans) / 2 {
 		j := len(plans) - i - 1
 		plans[i], plans[j] = plans[j], plans[i]
 	}
 	return plans
+}
+
+// flattenPlanWithPostorderTraversal flattens a plan tree to a list with postorder traversal.
+// The unNatureOrdersMaps the childPlanIndex => parentPlanIndex for those plans whose parent's index
+// is not equal to the child's index + 1.
+func flattenPlanWithPostorderTraversal(plan base.PhysicalPlan, plans []base.PhysicalPlan, unNatureOrdersMap map[int]int) ([]base.PhysicalPlan, map[int]int) {
+	//nolint: prealloc
+	var unNatureOrderChildren []int
+	children := plan.Children()
+	if len(children) > 1 && unNatureOrdersMap == nil {
+		unNatureOrdersMap = make(map[int]int)
+		unNatureOrderChildren = make([]int, 0, len(children))
+	}
+	for _, child := range children {
+		plans, unNatureOrdersMap = flattenPlanWithPostorderTraversal(child, plans, unNatureOrdersMap)
+		unNatureOrderChildren = append(unNatureOrderChildren, len(plans)-1)
+	}
+	plans = append(plans, plan)
+	for _, childIndex := range unNatureOrderChildren {
+		if parentIndex := len(plans) - 1; parentIndex != childIndex+1 {
+			unNatureOrdersMap[childIndex] = parentIndex
+		}
+	}
+	return plans, unNatureOrdersMap
+}
+
+// FlattenTreePushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
+// The returned list follows the order of depth-first search with post-order traversal.
+// That is: left child first, then right child, then parent.
+// For example, a DAG:
+//
+//	         A
+//	        /
+//	       B
+//	     /   \
+//	    C     D
+//	   /     / \
+//	  E     F   G
+//	 /
+//	H
+//
+// Its order should be: [H, E, C, F, G, D, B, A]
+// This function also returns a map which records the childPlanIndex => parentPlanIndex if
+// the child's index + 1 is not equal to the parent's index.
+// This function should NOT be used by TiFlash
+func FlattenTreePushDownPlan(p base.PhysicalPlan) ([]base.PhysicalPlan, map[int]int) {
+	return flattenPlanWithPostorderTraversal(p, make([]base.PhysicalPlan, 0, 5), nil)
 }
 
 // Init only assigns type and context.
